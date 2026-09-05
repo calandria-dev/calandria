@@ -1,11 +1,11 @@
-/* Supervisor tests — plain `node desktop/test-supervisor.js`, no deps, no GUI.
+/* Supervisor tests. Run with plain `node desktop/test-supervisor.js`, no
+ * deps, no GUI.
  *
- * Deliberately NOT a vitest file: the point of this spike is that the shell's
- * risky half (process supervision) can be verified on a headless box with
- * nothing installed, including under Electron's own runtime
- * (`ELECTRON_RUN_AS_NODE=1 electron desktop/test-supervisor.js`). Folding it
- * into the repo suite would drag `desktop/` into everyone's `npm test` before
- * anyone has decided the wrapper ships at all.
+ * Not a vitest file: the shell's process-supervision logic needs to be
+ * verifiable on a headless box with nothing installed, including under
+ * Electron's own runtime (`ELECTRON_RUN_AS_NODE=1 electron
+ * desktop/test-supervisor.js`). Folding it into the repo suite would drag
+ * `desktop/` into every `npm test` run before the wrapper ships at all.
  */
 "use strict";
 const assert = require("node:assert/strict");
@@ -65,11 +65,11 @@ const {
 } = require("./tray-residency");
 
 const HERE = __dirname;
-// Three cases below assert POSIX process semantics rather than merely using
+// Three cases below assert POSIX process semantics instead of merely using
 // them, and one asserts the win32 branch. Following tests/platform.ts's rule:
-// a construct a test only USES gets a portable spelling; a test ABOUT a
+// a construct a test only uses gets a portable spelling; a test about a
 // platform's semantics gets a branch that says what the other platform does,
-// never a skip that quietly pins nothing.
+// never a skip that pins nothing.
 const IS_WIN = process.platform === "win32";
 const stubOpts = (extra = {}) => ({
   repoRoot: HERE,
@@ -91,18 +91,13 @@ async function test(name, fn) {
 }
 
 /**
- * Point a tunnel at desktop/stub-ssh.js instead of the real ssh.
- *
- * Through the injected `spawnFn` rather than a launcher script on PATH. The
- * argv is fixed by the spec and has nowhere in it to put a script path, so the
- * stub has to be reached some other way, and a shell script was the first
- * answer: it died on Windows with `spawn EINVAL`, because Node refuses to
- * `spawn()` a `.cmd` without `shell: true` (CVE-2024-27980) and the app must
- * never pass that — a real `ssh.exe` spawns fine, so hardening the product for
- * the fixture would have been the wrong repair. One code path on every
- * platform now: no shebang, no exec bit, no `.cmd`. What it gives up is proof
- * that `sshPath` resolves to a real binary, which is desktop/e2e's job anyway
- * since only there is the binary a real OpenSSH.
+ * Points a tunnel at desktop/stub-ssh.js instead of the real ssh, through
+ * the injected `spawnFn`: the argv is fixed by the spec and has nowhere in
+ * it to put a script path. No shebang, no exec bit, no `.cmd`, so the same
+ * code path runs on every platform; the app must never pass `shell: true`
+ * (CVE-2024-27980), which a shell-script stub would need on Windows. This
+ * gives up proof that `sshPath` resolves to a real binary: that is
+ * desktop/e2e's job, since only there is the binary a real OpenSSH.
  */
 function fakeSshOptions(dir, env = {}) {
   const stub = path.join(HERE, "stub-ssh.js");
@@ -113,7 +108,7 @@ function fakeSshOptions(dir, env = {}) {
   };
 }
 
-/** Poll a predicate rather than sleeping a guessed interval. */
+/** Poll a predicate until it passes, with no fixed sleep. */
 async function waitUntil(fn, timeoutMs, what) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -138,8 +133,8 @@ function hold(port) {
     const n = resolveNode({ env: process.env });
     assert.match(n.version, /^v\d+\./);
     assert.ok(!/electron/i.test(path.basename(n.path)), `resolved ${n.path} — must not be Electron`);
-    // Under Electron (including ELECTRON_RUN_AS_NODE) execPath is the Electron
-    // binary, so it must not be what we picked.
+    // Under Electron, including ELECTRON_RUN_AS_NODE, execPath is the
+    // Electron binary, so it must not be what we picked.
     if (process.versions.electron) assert.notEqual(n.source, "execPath");
   });
 
@@ -185,9 +180,9 @@ function hold(port) {
   });
 
   await test("sidecarEnv sets NODE_ENV only when the caller names one, and deletes an inherited one otherwise", async () => {
-    // issue #102 §2: the pty sidecar (and, through it, every agent turn) must
-    // not inherit NODE_ENV=production just because the launching shell had it —
-    // only the caller building the APP sidecar's env asks for it by name.
+    // The pty sidecar, and through it every agent turn, must not inherit
+    // NODE_ENV=production merely because the launching shell had it; only
+    // the caller building the app sidecar's env sets it by name.
     const named = sidecarEnv({ env: {}, port: 1, ptyPort: 2, nodeEnv: "production" });
     assert.equal(named.NODE_ENV, "production");
     const unnamed = sidecarEnv({ env: { NODE_ENV: "production" }, port: 1, ptyPort: 2 });
@@ -196,11 +191,10 @@ function hold(port) {
 
   await test("sidecarEnv never invents a SHELL — the pty sidecar probes a better one", async () => {
     // pty-server.js resolves CALANDRIA_PTY_SHELL, then $SHELL, then a probed
-    // default (docs/WINDOWS.md). The supervisor used to fill $SHELL in on win32
-    // from COMSPEC, back when that probe was a hardcoded "/bin/zsh"; now that it
-    // prefers pwsh.exe, setting $SHELL SHORT-CIRCUITS it and pins every desktop
-    // terminal tab to cmd.exe. So the same assertion holds on both platforms:
-    // an inherited SHELL is passed through, and an absent one stays absent.
+    // default. Setting SHELL here would short-circuit that probe and pin
+    // every desktop terminal tab to the wrong default shell. The same
+    // assertion holds on both platforms: an inherited SHELL is passed
+    // through, and an absent one stays absent.
     const win = sidecarEnv({ env: { COMSPEC: "C:\\Windows\\system32\\cmd.exe" }, port: 1, ptyPort: 2 });
     const noComspec = sidecarEnv({ env: {}, port: 1, ptyPort: 2 });
     const preset = sidecarEnv({ env: { SHELL: "C:\\ProgramData\\nu\\nu.exe", COMSPEC: "cmd.exe" }, port: 1, ptyPort: 2 });
@@ -210,9 +204,9 @@ function hold(port) {
   });
 
   // ---------------------------------------------------------------------------
-  // The desktop launch env file (env-file.js, issue #102 §1) — the desktop
-  // app's only substitute for a launcher script that sources a file and
-  // `exec npm start`s.
+  // The desktop launch env file (env-file.js): the desktop app's only
+  // substitute for a launcher script that sources a file and `exec npm
+  // start`s.
   // ---------------------------------------------------------------------------
 
   await test("envFilePath resolves CALANDRIA_ENV_FILE, then XDG_CONFIG_HOME, then the ~/.config default", async () => {
@@ -284,7 +278,7 @@ function hold(port) {
   });
 
   /* ----------------------------------------------------------------------- *
-   * instances.js — the saved instance list and the version handshake.
+   * instances.js: the saved instance list and the version handshake.
    * ----------------------------------------------------------------------- */
 
   await test("instancesFilePath sits beside the env file and honours the same overrides", async () => {
@@ -340,7 +334,7 @@ function hold(port) {
 
     let added;
     ({ state, instance: added } = addUrlInstance(state, { name: "", url: "lab.example.com:8443" }));
-    // An unnamed instance is named after its host rather than left blank.
+    // An unnamed instance takes its host as the name.
     assert.equal(added.name, "lab.example.com:8443");
     assert.equal(added.url, "https://lab.example.com:8443");
     assert.equal(added.kind, "url");
@@ -412,7 +406,7 @@ function hold(port) {
       assert.equal(missing.state.instances.length, 1);
 
       const { state } = addUrlInstance(missing.state, { name: "Lab", url: "https://lab.example.com" });
-      // The parent directory does not exist yet — saving has to make it.
+      // The parent directory does not exist yet: saving has to make it.
       saveInstances(setActive(state, state.instances[1].id), { file });
       const back = loadInstances({ file });
       assert.equal(back.found, true);
@@ -438,8 +432,8 @@ function hold(port) {
     if (IS_WIN) {
       // There is no launchd and no GUI-vs-shell PATH split on Windows: a
       // process started from Explorer inherits the same machine+user PATH a
-      // console does. So the repair is refused outright rather than reaching
-      // for a login shell that does not exist — asserted here, because the
+      // console does. So the repair is refused outright instead of reaching
+      // for a login shell that does not exist. Asserted here because the
       // failure mode of getting this wrong is a `sh -ilc` spawn on every
       // desktop launch.
       assert.equal(needsPathRepair({ PATH: "/usr/bin:/bin:/usr/sbin:/sbin" }), false);
@@ -456,7 +450,7 @@ function hold(port) {
 
   await test("loginShellPath fences the PATH out of a chatty login shell", async () => {
     if (IS_WIN) {
-      // Not "unavailable here" — refused by contract. `-ilc`, `printf` and
+      // Not "unavailable here": refused by contract. `-ilc`, `printf` and
       // `$PATH` are POSIX shell syntax, and there is nothing on Windows that
       // both understands them and would answer with a PATH worth adopting.
       assert.equal(loginShellPath({ env: { ...process.env, SHELL: "powershell.exe" } }), null);
@@ -536,14 +530,14 @@ function hold(port) {
     // The end-to-end half of `sidecarEnv` above: what the child's OWN
     // process.env says, after a real spawn. Both facts are Windows facts.
     //
-    //   nodeenv  — package.json's scripts reach NODE_ENV through cross-env
-    //              because an inline `NODE_ENV=production node …` prefix is
-    //              POSIX shell syntax that cmd.exe reads as a program name.
-    //              The shell sidesteps the question entirely: it spawns the
-    //              resolved node binary with the script as argv[1] and puts
-    //              NODE_ENV in the env object, so no shell parses anything.
-    //   argv0    — the same claim from the other side. `npm`/`npm.cmd` or a
-    //              `shell: true` spawn would put a wrapper here.
+    //   nodeenv: package.json's scripts reach NODE_ENV through cross-env
+    //            because an inline `NODE_ENV=production node …` prefix is
+    //            POSIX shell syntax that cmd.exe reads as a program name.
+    //            The shell spawns the resolved node binary with the script
+    //            as argv[1] and puts NODE_ENV in the env object, so no
+    //            shell parses anything.
+    //   argv0:   the same claim from the other side. `npm`/`npm.cmd` or a
+    //            `shell: true` spawn would put a wrapper here.
     const sup = new Supervisor(stubOpts({ port: 45110, ptyPort: 45111 }));
     try {
       await sup.start();
@@ -552,10 +546,10 @@ function hold(port) {
       assert.match(line, /nodeenv=production/);
       assert.match(line, IS_WIN ? /argv0=node\.exe/i : /argv0=node/);
       assert.match(line, new RegExp(`ppid=${process.pid}\\b`), "the sidecar's parent should be this process, with no shell in between");
-      // No $SHELL assertion here on purpose: the supervisor deliberately does
-      // not invent one (see the sidecarEnv test above), so what the child sees
-      // is whatever the launching desktop session had — and on Windows that is
-      // usually nothing, which is the case pty-server.js's own probe handles.
+      // No $SHELL assertion here: the supervisor does not invent one (see the
+      // sidecarEnv test above), so the child sees whatever the launching
+      // desktop session had. On Windows that is usually nothing, which is
+      // the case pty-server.js's own probe handles.
     } finally {
       await sup.stop();
     }
@@ -574,25 +568,25 @@ function hold(port) {
     await sup.start();
     await sup.stop();
     assert.ok(sup.children.every((c) => c.exited), "every sidecar should be reaped");
-    // The platform-independent half, and the point of the whole route: the
-    // drain is a request the SHELL made, carrying the same header server.js
-    // sends, so it lands without any signal having to be deliverable.
+    // The platform-independent half: the drain is a request the shell made,
+    // carrying the same header server.js sends, so it lands without any
+    // signal having to be deliverable.
     assert.equal(fs.readFileSync(drainLog, "utf8").trim(), "drain token=stub-token");
     const log = sup.recentLog(50);
     assert.ok(log.includes("drain complete"), "stop() should have waited for the drain, not fired and forgotten");
     assert.ok(log.includes("[shell] drained in-flight turns (status 200)"), "the shell should say it drained");
     if (IS_WIN) {
-      // There is still no deliverable SIGTERM here — `child.kill("SIGTERM")`
+      // There is still no deliverable SIGTERM here: `child.kill("SIGTERM")`
       // is a TerminateProcess and the stub's signal handler never runs. That
-      // is now a property of the BACKSTOP rather than a gap: everything the
-      // app needed to settle settled over HTTP a moment earlier.
+      // is a property of the backstop, not a gap: everything the app needed
+      // to settle already settled over HTTP.
       assert.ok(!log.includes("drained, exiting"), "a SIGTERM handler cannot have run on win32");
       return;
     }
-    // On POSIX the signal path still runs afterwards, unchanged — server.js
-    // POSTs the same route from its own handler and exits 0. It finds nothing
-    // left in flight, which is why the drain above is the mechanism and this
-    // is the backstop.
+    // On POSIX the signal path still runs afterwards: server.js POSTs the
+    // same route from its own handler and exits 0. It finds nothing left in
+    // flight, which is why the drain above is the mechanism and this is the
+    // backstop.
     assert.ok(log.includes("draining"), "server should have run its own SIGTERM drain handler too");
     assert.ok(log.includes("drained, exiting"), "the signal-side drain should have been allowed to finish");
     assert.equal(sup.children.find((c) => c.name === "app").exited.code, 0);
@@ -601,8 +595,8 @@ function hold(port) {
   await test("the drain still lands when the signal buys nothing (the Windows case, on any box)", async () => {
     // `ignore-term` stands in for TerminateProcess semantics on a POSIX box:
     // the signal accomplishes nothing the server can act on, so a drain that
-    // rode on it would not happen at all. What is asserted is the ORDER —
-    // drained, then killed — because "the file exists afterwards" would also
+    // rode on it would not happen at all. What is asserted is the order,
+    // drained then killed, because "the file exists afterwards" would also
     // be true of a shell that drained a corpse.
     const drainLog = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "calandria-drain-")), "drain.log");
     fs.writeFileSync(drainLog, ""); // so "never drained" reads as an empty file rather than an ENOENT
@@ -651,10 +645,10 @@ function hold(port) {
     const app = sup.children.find((c) => c.name === "app");
     assert.ok(app.exited, "killed child should be reaped");
     if (IS_WIN) {
-      // "ignore-term" is unreachable on Windows — the first kill is already
+      // "ignore-term" is unreachable on Windows: the first kill is already
       // the termination, so there is nothing left to escalate to. Asserting
-      // the ABSENCE of the escalation is what makes that visible: a SIGKILL
-      // line here would mean a child had somehow survived a TerminateProcess.
+      // the absence of the escalation makes that visible: a SIGKILL line
+      // here would mean a child had somehow survived a TerminateProcess.
       assert.ok(!sup.recentLog(50).includes("SIGKILL"), "nothing to escalate: the first kill is terminal");
       return;
     }
@@ -671,14 +665,15 @@ function hold(port) {
   });
 
   await test("a sidecar that dies during boot fails start() at once, naming the real cause", async () => {
-    // The bug: waitForReady polls a port and knows nothing about the process it
-    // is waiting for, so an app that exited one second in still sat out the
-    // whole readiness timeout and then rejected with "server did not become
-    // ready … (fetch failed)". The db lock is just the cheapest way to make a
-    // sidecar die on purpose; the fix is about ANY boot-time exit.
+    // waitForReady only polls a port; it has no way to know about the
+    // process it is waiting for. An app that exits early must still fail
+    // fast, instead of sitting out the whole readiness timeout and
+    // rejecting with "server did not become ready … (fetch failed)". The db
+    // lock is just a convenient way to make a sidecar exit; the fix covers
+    // any boot-time exit.
     //
-    // The timeout here is deliberately far larger than the assertion below: a
-    // start() that merely got faster would still pass a small one, whereas
+    // The timeout here is far larger than the assertion below: a start()
+    // that merely got faster would still pass a small one, whereas
     // 30s-vs-5s can only be met by not waiting for the deadline at all.
     const sup = new Supervisor(
       stubOpts({
@@ -691,9 +686,9 @@ function hold(port) {
     await assert.rejects(
       () => sup.start(),
       (err) => {
-        // Not the timeout's words: the child's own. Both halves matter — a
-        // message that merely said "the app sidecar exited" would be fast and
-        // still send the user looking in the wrong place.
+        // Not the timeout's words: the child's own. Both halves matter, since
+        // a message that merely said "the app sidecar exited" would be fast
+        // but still send the user looking in the wrong place.
         assert.ok(!/did not become ready/.test(err.message), `still the timeout's error: ${err.message}`);
         assert.match(err.message, /app sidecar exited with code 1/);
         assert.match(err.message, /already holds this database/);
@@ -739,9 +734,9 @@ function hold(port) {
   await test("preferredPorts reads PORT/PTY_PORT and ignores junk", async () => {
     assert.deepEqual(preferredPorts({ PORT: "4830", PTY_PORT: "4831" }), { port: 4830, ptyPort: 4831 });
     assert.deepEqual(preferredPorts({ PORT: " 4830 " }), { port: 4830 });
-    // Absent/unusable values must leave the option UNSET, not pass a 0 or NaN
-    // through — the Supervisor's `opts.port || 3000` fallback is the intended
-    // default, and sidecarEnv treats 0 as "don't set PORT at all".
+    // Absent or unusable values must leave the option unset, never pass a 0
+    // or NaN through: the Supervisor's `opts.port || 3000` fallback is the
+    // intended default, and sidecarEnv treats 0 as "don't set PORT at all".
     assert.deepEqual(preferredPorts({}), {});
     for (const bad of ["", "0", "-1", "70000", "http://x", "3000.5", "3000a"]) {
       assert.deepEqual(preferredPorts({ PORT: bad, PTY_PORT: bad }), {}, `PORT=${bad} should be dropped`);
@@ -756,9 +751,9 @@ function hold(port) {
       assert.equal(sup.preferredPort, base);
       assert.equal(sup.preferredPtyPort, base + 10);
       const res = await sup.start();
-      // Preference, not demand: base is taken, so the app lands just past it —
-      // what makes a second Calandria on a dev box survivable. The free
-      // preference is honoured exactly.
+      // Preference, not demand: base is taken, so the app lands just past it.
+      // That's what makes a second Calandria on a dev box survivable, and
+      // the free preference is honoured exactly.
       assert.equal(res.port, base + 1);
       assert.equal(res.ptyPort, base + 10);
       assert.equal(res.url, `http://127.0.0.1:${base + 1}`);
@@ -771,11 +766,11 @@ function hold(port) {
   });
 
   await test("main.js actually passes the env ports to the Supervisor", async () => {
-    // The bug this pins was entirely in the WIRING: supervisor.js supported
-    // `port`/`ptyPort` all along and main.js never passed them, so a documented
-    // PORT=4830 launch bound 3002. Nothing here can be exercised without a
-    // display, so assert on the source — main.js is `require("electron")` at
-    // line 1 and cannot be loaded by this runner.
+    // Pins the wiring: supervisor.js supports `port`/`ptyPort`, and main.js
+    // must pass them or a documented PORT=4830 launch binds 3002 instead.
+    // Nothing here can be exercised without a display, so this asserts on
+    // the source: main.js is `require("electron")` at line 1 and cannot be
+    // loaded by this runner.
     const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
     const ctor = src.indexOf("new Supervisor(");
     const wiring = src.indexOf("...preferredPorts(process.env)");
@@ -785,18 +780,18 @@ function hold(port) {
   });
 
   // ---------------------------------------------------------------------------
-  // Notifications, badge, tray (notifier.js). Everything below runs headless on
-  // purpose: the policy — which events raise a toast, what the badge counts,
-  // when a toast would be redundant — is exactly the part a display cannot
-  // check for you, and desktop/e2e is where the Electron calls get exercised.
+  // Notifications, badge, tray (notifier.js). Everything below runs headless:
+  // the policy (which events raise a toast, what the badge counts, when a
+  // toast would be redundant) is the part a display cannot check for you.
+  // desktop/e2e is where the Electron calls get exercised.
   // ---------------------------------------------------------------------------
 
   await test("the SSE reader reassembles frames split across chunks and drops keep-alives", async () => {
     const got = [];
     const parser = createSseParser((d) => got.push(d));
-    // Exactly what /api/events writes on connect, then a frame torn in half by
-    // a chunk boundary — the case that makes this a push parser rather than a
-    // split().
+    // Exactly what /api/events writes on connect, then a frame torn in half
+    // by a chunk boundary: the case that makes this a push parser instead of
+    // a split().
     parser.push(": connected\n\n");
     parser.push('data: {"type":"task","taskId":"a"}\n\ndata: {"type":"notif');
     assert.deepEqual(got, ['{"type":"task","taskId":"a"}']);
@@ -812,8 +807,8 @@ function hold(port) {
   await test("the badge counts every live project, and asks to reseed when it cannot", async () => {
     const n = new NeedsYou();
     // Deprecated projects are excluded here for the same reason the titlebar
-    // pill excludes them (app/shell/useShell.ts) — an archived project must not
-    // badge the dock.
+    // pill excludes them (app/shell/useShell.ts): an archived project must
+    // not badge the dock.
     assert.equal(
       n.seed([
         { id: "p1", awaiting_count: 2 },
@@ -827,7 +822,7 @@ function hold(port) {
     assert.equal(n.total, 6);
     assert.equal(n.apply({ type: "task_deleted", projectId: "p1", awaiting_count: 0 }), "ok");
     assert.equal(n.total, 4);
-    // Silent on events that say nothing about the count.
+    // Returns null for events that say nothing about the count.
     assert.equal(n.apply({ type: "agent_auth", agent: "claude", broken: true }), null);
     assert.equal(n.total, 4);
     // The two cases only the server can settle.
@@ -837,10 +832,11 @@ function hold(port) {
 
   await test("the shell suppresses exactly one toast: the task you are looking at", async () => {
     const payload = { id: "awaiting_input:t1", taskId: "t1", title: "Waiting for input", body: "…" };
-    // The whole rule, matching shouldDisplay in app/shell/useNotifications.ts.
+    // Matches shouldDisplay in app/shell/useNotifications.ts.
     assert.equal(shouldNotify(payload, { focused: true, selectedTaskId: "t1" }), false);
     assert.equal(shouldNotify(payload, { focused: true, selectedTaskId: "t2" }), true);
-    // Hidden to the tray, or behind the editor: this is what the shell is for.
+    // Unfocused still notifies, even for the same task: that's the case the
+    // tray and notification center exist for.
     assert.equal(shouldNotify(payload, { focused: false, selectedTaskId: "t1" }), true);
     // A test send (Settings → "Send test notification") belongs to no task, so
     // it must show even while that very screen is focused.
@@ -851,9 +847,9 @@ function hold(port) {
   });
 
   await test("the selected task is readable off the window URL alone", async () => {
-    // This is what makes the suppression above possible with no preload and no
-    // IPC: the app mirrors its selection into the query string
-    // (app/shell/persist.ts), so webContents.getURL() is the answer.
+    // The app mirrors its selection into the query string
+    // (app/shell/persist.ts), so webContents.getURL() is enough to read it
+    // with no preload and no IPC.
     assert.equal(selectedTaskFromUrl("http://127.0.0.1:3000/?project=p1&task=t9"), "t9");
     assert.equal(selectedTaskFromUrl("http://127.0.0.1:3000/?project=p1"), null);
     assert.equal(selectedTaskFromUrl(`file://${path.join(HERE, "loading.html")}`), null);
@@ -874,8 +870,9 @@ function hold(port) {
       const name = overlayIconName(i);
       assert.ok(fs.existsSync(path.join(assets, name)), `missing overlay asset ${name}`);
     }
-    // The tray icons, including the macOS template pair — a Tray constructed
-    // from a missing path throws, which would take the whole shell down at boot.
+    // The tray icons, including the macOS template pair: a Tray constructed
+    // from a missing path throws, which would take the whole shell down at
+    // boot.
     for (const f of ["tray.png", "trayTemplate.png", "trayTemplate@2x.png"]) {
       assert.ok(fs.existsSync(path.join(assets, f)), `missing tray asset ${f}`);
     }
@@ -908,7 +905,7 @@ function hold(port) {
 
   await test("a cross-instance notification click carries its task in the URL", async () => {
     // The switch is a page load in another session partition, so there is no
-    // running SPA to dispatch into — the selection rides in the query the app
+    // running SPA to dispatch into: the selection rides in the query the app
     // restores from (app/shell/persist.ts).
     assert.equal(
       gotoUrl("https://lab.example.com", { projectId: "p1", taskId: "t9" }),
@@ -931,11 +928,11 @@ function hold(port) {
     assert.equal(added.instance.name, "lab.example.com");
     assert.equal(derivedNameFor(added.instance), "lab.example.com");
 
-    // The handshake knows better.
+    // The server-reported name overrides the derived one.
     state = adoptServerName(state, added.instance.id, "Lab");
     assert.equal(findInstance(state, added.instance.id).name, "Lab");
 
-    // Idempotent, and no longer derived — so a server that renames itself does
+    // Idempotent, and no longer derived: a server that renames itself does
     // not keep rewriting a name the user is now reading in their menus.
     const again = adoptServerName(state, added.instance.id, "Lab annexe");
     assert.equal(again, state, "a name already adopted is not re-adopted");
@@ -954,9 +951,9 @@ function hold(port) {
   });
 
   await test("the event subscription seeds the badge, delivers notifications, and reconnects", async () => {
-    // A stand-in for /api/events and /api/projects, so the whole loop —
-    // seed, subscribe, parse, drop, reconnect, reseed — runs with no display
-    // and no server build.
+    // Stands in for /api/events and /api/projects, so the seed, subscribe,
+    // parse, drop, reconnect and reseed sequence runs with no display and no
+    // server build.
     const notified = [];
     const badges = [];
     let streams = 0;
@@ -992,9 +989,10 @@ function hold(port) {
       assert.fail(`timed out waiting for ${what}`);
     };
     try {
-      // Seeded from the project list before a single event arrives — a fresh
-      // launch usually has work waiting from the last session, and a badge that
-      // only appears on the next turn boundary would be wrong until then.
+      // Seeded from the project list before a single event arrives: a fresh
+      // launch usually has work waiting from the last session, and a badge
+      // that only appeared on the next turn boundary would be wrong until
+      // then.
       await events.refreshProjects();
       assert.deepEqual(badges, [2]);
       events.start();
@@ -1020,13 +1018,13 @@ function hold(port) {
 
   // ---------------------------------------------------------------------------
   // Is the tray icon really there? (tray-residency.js). The probe talks to a
-  // session bus, so every case below injects the `exec` instead — what is being
-  // pinned is the VERDICT each reply implies, and in particular the difference
-  // between "the session said no" and "the session could not be asked", which
-  // is the distinction the close handler hangs on.
+  // session bus, so every case below injects `exec` instead. What is pinned
+  // is the verdict each reply implies, in particular the difference between
+  // "the session said no" and "the session could not be asked", which is the
+  // distinction the close handler hangs on.
   // ---------------------------------------------------------------------------
 
-  // Replies as the two CLIs really print them, captured on the bench.
+  // Replies as the two CLIs actually print them.
   const GDBUS_TRUE = "(<true>,)\n";
   const GDBUS_FALSE = "(<false>,)\n";
   const GDBUS_ITEMS = (...names) => `(<[${names.map((n) => `'${n}'`).join(", ")}]>,)\n`;
@@ -1062,7 +1060,7 @@ function hold(port) {
 
   await test("D-Bus replies parse the same whichever CLI printed them", async () => {
     // gdbus single-quotes and dbus-send double-quotes; the parsers tolerate
-    // both rather than branching, which is what lets either tool answer.
+    // both without branching, so either tool can answer.
     assert.deepEqual(parseDbusStrings(GDBUS_ITEMS(":1.25/StatusNotifierItem", ":1.9")), [
       ":1.25/StatusNotifierItem",
       ":1.9",
@@ -1095,8 +1093,8 @@ function hold(port) {
     const exec = fakeExec((file, args) => {
       if (args.includes("IsStatusNotifierHostRegistered")) return GDBUS_TRUE;
       if (args.includes("RegisteredStatusNotifierItems")) return GDBUS_ITEMS(":1.9", ":1.25/StatusNotifierItem");
-      // Somebody else's icon first, ours second — the reason the match is on
-      // the connection's pid and not on the item's name.
+      // Somebody else's icon first, ours second: the match is on the
+      // connection's pid, not the item's name.
       if (args.includes(":1.9")) return GDBUS_PID(777);
       if (args.includes(":1.25")) return GDBUS_PID(4242);
       return undefined;
@@ -1107,9 +1105,9 @@ function hold(port) {
   });
 
   await test("a session with no status-notifier host is a definite no", async () => {
-    // THE BENCH BUG, in the shape it reaches us: xfce4-panel's systray plugin
-    // crashes when Electron registers its item and takes the watcher name off
-    // the bus with it. `new Tray()` succeeded; there is no icon.
+    // xfce4-panel's systray plugin can crash when Electron registers its
+    // item, taking the watcher name off the bus with it. `new Tray()`
+    // succeeds; there is no icon.
     const exec = fakeExec(() => serviceUnknown());
     const v = await probeTrayResidency({ platform: "linux", env: busEnv, pid: 4242, exec });
     assert.equal(v.hosted, false, v.reason);
@@ -1117,8 +1115,8 @@ function hold(port) {
   });
 
   await test("a watcher with no host, and a host that never took our icon, are both no", async () => {
-    // A watcher can exist with nothing drawing for it — that is what
-    // `IsStatusNotifierHostRegistered` is for.
+    // A watcher can exist with nothing drawing for it: that is what
+    // `IsStatusNotifierHostRegistered` checks.
     const noHost = fakeExec((file, args) =>
       args.includes("IsStatusNotifierHostRegistered") ? GDBUS_FALSE : undefined,
     );
@@ -1126,7 +1124,7 @@ function hold(port) {
     assert.equal(a.hosted, false, a.reason);
     assert.match(a.reason, /no host has registered/);
 
-    // And a host that is drawing somebody else's icons but not ours.
+    // A host drawing icons, none of them ours.
     const notOurs = fakeExec((file, args) => {
       if (args.includes("IsStatusNotifierHostRegistered")) return GDBUS_TRUE;
       if (args.includes("RegisteredStatusNotifierItems")) return GDBUS_ITEMS(":1.9");
@@ -1175,8 +1173,8 @@ function hold(port) {
 
   await test("no session bus, and the platforms that own their own status area, skip the bus entirely", async () => {
     const exec = fakeExec(() => new Error("should not have been called"));
-    // Nowhere for Electron to have registered the icon either — a definite no,
-    // and checked here rather than left to the CLI because gdbus would try to
+    // Nowhere for Electron to have registered the icon either, so this is
+    // checked here instead of left to the CLI, because gdbus would try to
     // autolaunch a bus daemon of its own.
     const linux = await probeTrayResidency({ platform: "linux", env: {}, pid: 1, exec });
     assert.equal(linux.hosted, false, linux.reason);
@@ -1184,7 +1182,7 @@ function hold(port) {
     // An address that is SET but dead is the same no, and it is the one every
     // CI lane in this suite runs under: e2e/fixtures.ts points
     // DBUS_SESSION_BUS_ADDRESS at a socket that does not exist so libnotify
-    // fails fast (docs/DESKTOP_E2E.md §1). Both CLIs' real wording, measured.
+    // fails fast. Both CLIs' real wording.
     for (const stderr of [
       "Error connecting: Could not connect: No such file or directory",
       'Failed to open connection to "session" message bus: Failed to connect to socket /nope: No such file or directory',
@@ -1250,8 +1248,6 @@ function hold(port) {
     // THE TOKEN. It authorizes the database this machine's server owns, so a
     // `url` instance must never see it. There is exactly one reader, and it
     // refuses anything that is not `local`.
-    // `.SERVICE_TOKEN`, so the prose above serviceTokenFor() explaining the rule
-    // does not count as a second place that breaks it.
     const reads = [...src.matchAll(/\.SERVICE_TOKEN\b/g)].length;
     assert.equal(reads, 1, `SERVICE_TOKEN should be read in exactly one place, found ${reads}`);
     const gate = src.indexOf("function serviceTokenFor(");
@@ -1282,10 +1278,9 @@ function hold(port) {
 
   await test("main.js watches every reachable instance, not only the one on screen", async () => {
     // Source-pinned for the same reason: main.js requires electron at line 1.
-    // What is being pinned is the shape of the badge — a sum over live
-    // subscribers — because the failure mode is silent. A shell that kept one
-    // subscriber would look completely normal and simply never mention the
-    // other machine.
+    // What is pinned is the shape of the badge: a sum over live subscribers.
+    // The failure mode is easy to miss: a shell that kept one subscriber
+    // would look completely normal and never mention the other machine.
     const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
 
     assert.ok(/const subscribers = new Map\(\)/.test(src), "one subscriber per instance, keyed by id");
@@ -1310,8 +1305,8 @@ function hold(port) {
     assert.ok(!/stopSubscribers\(\)/.test(applyBody), "switching must not stop the other instances' streams");
     assert.ok(/stopSubscribers\(\)/.test(src.slice(0, src.indexOf("app.whenReady"))), "quitting stops all of them");
 
-    // THE TOAST. It names its instance and, when clicked, goes to the instance
-    // it came from rather than the one on screen.
+    // THE TOAST. It names its instance and, when clicked, goes to the
+    // instance it came from, not the one on screen.
     const notify = src.indexOf("function notify(payload, sub)");
     assert.notEqual(notify, -1, "notify must know which instance raised the payload");
     const notifyBody = src.slice(notify, notify + 1200);
@@ -1327,12 +1322,11 @@ function hold(port) {
   });
 
   await test("the instance dialog is closed before its answer is acted on", async () => {
-    // The dialog is a MODAL CHILD of the main window, and answering it usually
+    // The dialog is a modal child of the main window, and answering it usually
     // ends with that window being rebuilt. `BrowserWindow.close()` is
-    // asynchronous, so resolving the answer first left a live modal parented to
-    // a window about to be destroyed — which took the whole process down, with
-    // no crash output and no quit path taken. Measured under the desktop e2e on
-    // a bare X server: the shell stopped existing between two log lines.
+    // asynchronous, so the answer must not resolve before the modal closes:
+    // resolving first can parent a live modal to a window mid-destruction and
+    // take the whole process down with no crash output.
     const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
     const open = src.indexOf("function openInstanceDialog(");
     assert.notEqual(open, -1, "main.js should have an instance dialog");
@@ -1348,8 +1342,8 @@ function hold(port) {
   await test("main.js attaches by URL, warns on an old server, and keeps the local one running", async () => {
     const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
     assert.ok(/async function attachUrl\(/.test(src), "main.js should have a url attach path");
-    // Everything past "we have an origin" is shared with the `ssh` kind, which
-    // is why these assertions live on attachOrigin rather than attachUrl.
+    // Everything past "we have an origin" is shared with the `ssh` kind, so
+    // these assertions live on attachOrigin, not attachUrl.
     const attach = src.indexOf("async function attachOrigin(");
     assert.notEqual(attach, -1, "main.js should converge both remote kinds on attachOrigin");
     const body = src.slice(attach, attach + 2000);
@@ -1360,30 +1354,30 @@ function hold(port) {
     // every Cloudflare Access instance on an error screen it can never leave.
     assert.ok(/probe\.signIn/.test(body), "a sign-in must not be treated as unreachable");
     assert.ok(/serverTooOld\(/.test(body) && /showVersionBanner\(/.test(body), "an older server loads with a banner");
-    // The origin, plus a task a notification click asked for — `takePendingGoto`
-    // returns the bare origin when there is none, so this is still the one load.
+    // The origin, plus a task a notification click asked for: `takePendingGoto`
+    // returns the bare origin when there is none, so this is still the one
+    // load.
     assert.ok(/loadURL\(takePendingGoto\(inst, origin\)\)/.test(body), "and then it is loaded");
     assert.ok(/api\/version/.test(src.slice(src.indexOf("async function probeVersion("), src.indexOf("async function probeVersion(") + 900)));
 
     // Switching away from local must not stop its server: turns are detached
-    // and server-owned, which is the whole point of the app.
+    // and server-owned.
     const apply = src.indexOf("async function applyActiveInstance()");
     assert.notEqual(apply, -1);
     const applyBody = src.slice(apply, apply + 1800);
     assert.ok(!/supervisor\.stop\(\)/.test(applyBody), "a switch must never stop the local server");
     assert.ok(/createWindow\(\)/.test(applyBody), "a partition change means a new window");
-    // ORDER, and it is load-bearing. Electron emits `window-all-closed`
-    // synchronously from `destroy()`, and this shell answers that by quitting
-    // when nothing is hosting its tray icon — so destroying before building
-    // exits the app halfway through every switch on a session with no status
-    // area. Measured against the desktop e2e, which quit mid-spec.
+    // Order matters here. Electron emits `window-all-closed` synchronously
+    // from `destroy()`, and this shell quits when nothing is hosting its
+    // tray icon, so destroying before building exits the app halfway
+    // through every switch on a session with no status area.
     assert.ok(
       applyBody.indexOf("createWindow();") < applyBody.indexOf("old?.destroy();"),
       "the replacement window must be built BEFORE the old one is destroyed",
     );
     // And `appUrl` is cleared first, or `createWindow()` opens the replacement
-    // on the PREVIOUS instance's origin — inside the new instance's partition,
-    // which is one server's page in another's cookie jar.
+    // on the previous instance's origin inside the new instance's partition:
+    // one server's page in another's cookie jar.
     assert.ok(
       applyBody.indexOf("appUrl = null;") < applyBody.indexOf("createWindow();"),
       "appUrl must be cleared before the replacement window is built",
@@ -1393,10 +1387,10 @@ function hold(port) {
     assert.ok(/function instanceMenuTemplate\(/.test(src));
     const template = src.slice(src.indexOf("function instanceMenuTemplate("), src.indexOf("function instanceMenuTemplate(") + 1800);
     assert.ok(/type: "radio"/.test(template), "the instance list is a radio group");
-    // Off the menu callback. Switching destroys a window and replaces the
-    // application menu; doing either from inside the activation handler of an
-    // item in that very menu wedged the whole main process on the second
-    // switch, reproducibly, under the desktop e2e.
+    // Off the menu callback: switching destroys a window and replaces the
+    // application menu, and doing either from inside the activation handler
+    // of an item in that same menu wedges the whole main process on the
+    // second switch.
     assert.ok(
       /click: \(\) => setImmediate\(\(\) => void switchTo\(/.test(template),
       "an instance switch must be deferred off the menu click",
@@ -1413,13 +1407,12 @@ function hold(port) {
 
   await test("main.js wires the shell half of all of that", async () => {
     // main.js is `require("electron")` at line 1 and cannot be loaded by this
-    // runner, so the wiring — as opposed to the policy above — is asserted on
-    // the source. Same approach as the port-wiring case, and for the same
-    // reason: every one of these was once absent and none of them has a
-    // headless failure mode.
+    // runner, so the wiring, as opposed to the policy above, is asserted on
+    // the source. Same approach as the port-wiring case: every one of these
+    // was once absent and none of them has a headless failure mode.
     const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
-    // The main process is the notification channel, so the renderer's must be
-    // off — granting both gives two toasts per event out of one payload.
+    // The main process is the notification channel, so the renderer's must
+    // be off: granting both gives two toasts per event out of one payload.
     assert.ok(
       /setPermissionRequestHandler[\s\S]{0,400}?callback\(permission === "clipboard-sanitized-write"\)/.test(src),
       "the renderer must NOT be granted the notifications permission",
@@ -1429,8 +1422,7 @@ function hold(port) {
     assert.ok(/new Tray\(/.test(src) && /setContextMenu/.test(src), "main.js should build a tray with a menu");
     assert.ok(/setBadgeCount/.test(src) && /setOverlayIcon/.test(src), "both badge APIs should be wired");
     // Close hides; quitting is asked for by name. If this ever flips back,
-    // desktop/e2e/03-quit-drain.spec.ts and §5.1 of docs/DESKTOP_APP.md have to
-    // move with it.
+    // desktop/e2e/03-quit-drain.spec.ts has to move with it.
     const close = src.indexOf('win.on("close"');
     assert.notEqual(close, -1, "main.js should intercept the window close");
     const body = src.slice(close, close + 700);
@@ -1442,16 +1434,17 @@ function hold(port) {
     assert.notEqual(decide, -1, "main.js should have a decideClose()");
     const decideBody = src.slice(decide, decide + 700);
     assert.ok(/win\.hide\(\)/.test(decideBody), "closing the window should hide it");
-    // ...but only where there is something to come back from, and NOT merely
-    // where `new Tray()` returned an object: on Linux it does that on a session
-    // with no status area, and hiding into one of those is how a user loses the
-    // app. The answer comes from the session (tray-residency.js), which is also
-    // why this is re-read per close rather than trusted from boot.
+    // ...but only where there is something to come back from, not merely
+    // where `new Tray()` returned an object: on Linux it does that on a
+    // session with no status area, and hiding into one of those is how a
+    // user loses the app. The answer comes from the session
+    // (tray-residency.js), so it is re-read per close instead of trusted
+    // from boot.
     assert.ok(/refreshTrayResidency\(/.test(decideBody), "hiding must be gated on a confirmed tray");
     assert.ok(/app\.quit\(\)/.test(decideBody), "an unconfirmed tray must fall back to quitting");
     // The one message that tells the user where the window went. Raised on a
     // session with no icon, it sends them looking for something that is not
-    // there — worse than saying nothing.
+    // there, worse than saying nothing.
     const announce = src.indexOf("function announceTrayResidency()");
     assert.notEqual(announce, -1, "main.js should announce the first hide");
     assert.ok(
@@ -1461,15 +1454,16 @@ function hold(port) {
   });
 
   // ---------------------------------------------------------------------------
-  // The ssh transport (ssh-tunnel.js). Phase 2 of the remote-instances design.
+  // The ssh transport (ssh-tunnel.js).
   //
-  // Everything here runs against desktop/stub-ssh.js rather than a real sshd,
-  // which is the only way to ask for the cases that matter: a host that refuses
-  // the key under BatchMode, a forward that comes up and then drops, an ssh
-  // that stays alive and never listens. desktop/e2e/13-ssh-instance.spec.ts is
-  // the other half — it drives a REAL `ssh localhost` when the box has one, and
-  // skips when it does not, because a stub cannot show that the argv this file
-  // pins is one OpenSSH actually accepts.
+  // Everything here runs against desktop/stub-ssh.js instead of a real sshd,
+  // which is the only way to ask for the cases that matter: a host that
+  // refuses the key under BatchMode, a forward that comes up and then drops,
+  // an ssh that stays alive and never listens.
+  // desktop/e2e/13-ssh-instance.spec.ts is the other half: it drives a real
+  // `ssh localhost` when the box has one, and skips when it does not, because
+  // a stub cannot show that the argv this file pins is one OpenSSH actually
+  // accepts.
   // ---------------------------------------------------------------------------
 
   await test("the forward is spawned exactly as the spec writes it", async () => {
@@ -1488,7 +1482,7 @@ function hold(port) {
     // not offered to the LAN, the remote one because the server over there is
     // bound to loopback and that is what makes SSH the credential.
     assert.equal(args[args.indexOf("-L") + 1], "127.0.0.1:3100:127.0.0.1:8080");
-    // BatchMode is not optional — a window has no terminal for a password.
+    // BatchMode is not optional: a window has no terminal for a password.
     assert.ok(args.includes("BatchMode=yes"));
     // Without this an ssh whose local port is taken stays up with no forward,
     // and "connected" would mean nothing.
@@ -1522,9 +1516,9 @@ function hold(port) {
     try {
       // Scanning steps past a busy port...
       assert.equal(await pickLocalPort(0, { base: 45320, probes: 5 }), 45321);
-      // ...but a port the user WROTE DOWN is not silently swapped for another,
-      // because the whole reason to configure one is that something else on
-      // this machine expects the forward to be there.
+      // ...but a port the user wrote down is never swapped for another: the
+      // reason to configure one is that something else on this machine
+      // expects the forward to be there.
       await assert.rejects(() => pickLocalPort(45320), /already in use/);
     } finally {
       held.close();
@@ -1542,9 +1536,9 @@ function hold(port) {
       }, 150);
     });
     try {
-      // Nothing is listening yet — this has to keep probing rather than answer
-      // the first refusal, which is the whole difference between a forward that
-      // is up and an ssh that has only just been spawned.
+      // Nothing is listening yet, so this has to keep probing instead of
+      // answering the first refusal: that is the difference between a
+      // forward that is up and an ssh that has only just been spawned.
       await waitForPort(45330, { timeoutMs: 5_000, intervalMs: 25 });
       await opening;
     } finally {
@@ -1657,7 +1651,7 @@ function hold(port) {
       assert.equal(tunnel.localPort, port, "a reconnect must return to the SAME origin");
       assert.equal(await fetch(`${tunnel.url}/`).then((r) => r.text()), "still here");
       assert.equal(downs.length, 2, "both failures should have been reported to the window");
-      // The first report is the drop, not an auth failure — the host had
+      // The first report is the drop, not an auth failure: the host had
       // already let us in.
       assert.ok(!downs[0].error.includes("ssh-copy-id"), downs[0].error);
       assert.ok(downs[1].error.includes("Permission denied"), downs[1].error);
@@ -1699,7 +1693,7 @@ function hold(port) {
       instances: [
         { id: "local", kind: "local" },
         { id: "9c2e", kind: "ssh", name: "Build box", ssh: { host: "build", remotePort: 3000 } },
-        // The one input rule that is about safety rather than typos: this value
+        // The one input rule that is about safety, not typos: this value
         // becomes an argv entry, and ssh reads a leading `-` as an option.
         { id: "bad1", kind: "ssh", name: "Sneaky", ssh: { host: "-oProxyCommand=touch /tmp/pwned" } },
         { id: "bad2", kind: "ssh", name: "No host", ssh: {} },
@@ -1713,7 +1707,7 @@ function hold(port) {
     );
     assert.equal(state.active, "9c2e");
     assert.deepEqual(state.instances[1].ssh, { host: "build", remotePort: 3000 });
-    // A saved localPort is kept — it is how someone pins the origin.
+    // A saved localPort is kept: it is how someone pins the origin.
     const pinned = normalizeState({
       instances: [{ id: "aa11", kind: "ssh", ssh: { host: "me@build", remotePort: 8080, localPort: 3199 } }],
     });
@@ -1791,7 +1785,7 @@ function hold(port) {
     // A quit is not consent to be upgraded.
     assert.equal(quitAction({ installRequested: false, phase: "ready" }), "exit");
     // And a stale request with nothing downloaded would hang the quit on an
-    // empty installer path rather than fail it.
+    // empty installer path instead of failing it.
     assert.equal(quitAction({ installRequested: true, phase: "downloading" }), "exit");
     assert.equal(quitAction({}), "exit");
   });
@@ -1832,12 +1826,12 @@ function hold(port) {
 
   await test("every local module the desktop entrypoints require is one electron-builder packs", async () => {
     // electron-builder.cjs's `files` is an explicit whitelist, and asar packs
-    // exactly what it names. A new sibling module — env-file.js was the one
-    // that prompted this — resolves fine from a checkout under `npm start` and
-    // from `node test-supervisor.js`, and then throws MODULE_NOT_FOUND inside
-    // the packaged .app, at boot, with a stack nobody can reproduce locally.
-    // Nothing else catches it: the unit tests run from source and the packaged
-    // e2e (06-packaged.spec.ts) only runs on a labelled CI lane.
+    // exactly what it names. A new sibling module resolves fine from a
+    // checkout under `npm start` and from `node test-supervisor.js`, but
+    // throws MODULE_NOT_FOUND inside the packaged .app at boot, with a stack
+    // nobody can reproduce locally. Nothing else catches it: the unit tests
+    // run from source and the packaged e2e (06-packaged.spec.ts) only runs
+    // on a labelled CI lane.
     const { files } = require("./electron-builder.cjs");
     const packed = new Set(files.filter((f) => f.endsWith(".js")));
     const entrypoints = ["main.js", "supervisor.js", "notifier.js", "tray-residency.js", "updater.js", "instances.js"];

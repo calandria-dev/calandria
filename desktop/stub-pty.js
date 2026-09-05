@@ -1,4 +1,4 @@
-/* Stand-in for pty-server.js — binds PTY_PORT and exits cleanly on SIGTERM. */
+/* Stand-in for pty-server.js. Binds PTY_PORT and exits cleanly on SIGTERM. */
 "use strict";
 const http = require("node:http");
 const server = http.createServer((_req, res) => res.writeHead(404).end());

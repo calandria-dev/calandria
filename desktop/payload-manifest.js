@@ -1,23 +1,22 @@
 /* What a packaged desktop app has to carry so `node server.js` can boot.
  *
- * This is the SAME inventory the Dockerfile's runtime stage COPYs, for the same
- * reason: Next's build output does not include the plain-Node `.mjs` files the
- * two entrypoints dynamic-import, so every one of them has to be named
- * explicitly or the app boots into an unresolved import. The Dockerfile carries
- * the prose explaining *why* each file is in the set (which entrypoint imports
- * it, and what breaks without it) — read it there rather than duplicating it
- * here, and add new entries to BOTH. `tests/desktopPayload.test.ts` fails the
- * suite when they drift, which is the only thing keeping two hand-maintained
- * lists honest; CLAUDE.md already flags this pair as a repeat offender.
+ * This is the same inventory the Dockerfile's runtime stage COPYs, for the
+ * same reason: Next's build output does not include the plain-Node `.mjs`
+ * files the two entrypoints dynamic-import, so every one of them has to be
+ * named explicitly or the app boots into an unresolved import. The
+ * Dockerfile carries the prose explaining why each file is in the set (which
+ * entrypoint imports it, and what breaks without it); read it there instead
+ * of duplicating it here, and add new entries to both. `tests/desktopPayload.test.ts`
+ * fails the suite when they drift, keeping the two hand-maintained lists honest.
  *
- * Deliberately CommonJS with no dependencies: the build script requires it, and
- * so does a vitest test in the root package, which must not need anything from
- * desktop/node_modules (Electron never enters the app's install — see
+ * CommonJS with no dependencies: the build script requires it, and so does a
+ * vitest test in the root package, which must not need anything from
+ * desktop/node_modules (Electron never enters the app's install; see
  * desktop/README.md).
  */
 "use strict";
 
-// Installed into the payload rather than copied from the repo, so the desktop
+// Installed into the payload instead of copied from the repo, so the desktop
 // build gets a pruned production tree instead of the dev checkout's.
 const NODE_MODULES = "node_modules";
 
@@ -54,11 +53,11 @@ const COPY_FILES = [
 // The set the Dockerfile's runtime stage must agree with, exactly.
 const DOCKER_PARITY = [NODE_MODULES, ...COPY_DIRS, ...COPY_FILES];
 
-// Needed to *produce* the payload, not to run it, so they are not part of the
-// parity set — the Dockerfile gets these in its build stage instead.
+// Needed to produce the payload, not to run it, so they are not part of the
+// parity set; the Dockerfile gets these in its build stage instead.
 // `.npmrc` pins engine-strict + legacy-peer-deps, and `scripts/fix-pty.js` is
-// the root package's postinstall (node-pty's exec bit), which would fail the
-// staged `npm ci` by absence.
+// the root package's postinstall (node-pty's exec bit), whose absence would
+// fail the staged `npm ci`.
 const BUILD_ONLY = [
   "package-lock.json",
   ".npmrc",

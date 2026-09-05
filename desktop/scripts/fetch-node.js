@@ -1,24 +1,14 @@
-/* Download an official Node runtime into desktop/vendor/node.
+/* Downloads an official Node runtime into desktop/vendor/node.
  *
- * WHY the app ships its own Node at all: supervisor.js runs the server under a
- * real Node, never under Electron (docs/DESKTOP_APP.md §2), and `resolveNode`
- * already prefers `<resourcesPath>/node/bin/node` — the "bundled" source. That
- * branch exists precisely so a double-clicked app does not depend on the user's
- * PATH, which on macOS is launchd's stub and on a fresh Linux box may have no
- * Node at all. It is also the only way to PIN THE ABI: better-sqlite3 ships
- * per-`NODE_MODULE_VERSION` prebuilds, so a payload installed against one major
- * and then run under whatever `node` the user happens to have is a coin flip
- * that lands as "was compiled against a different Node.js version" at first
- * query. Bundling makes the runtime and the prebuild one decision.
+ * supervisor.js runs the server under a real Node, never under Electron
+ * (docs/DESKTOP_APP.md §2), and `resolveNode` prefers this vendored copy so a
+ * double-clicked app does not depend on the user's PATH. It also pins the
+ * ABI: better-sqlite3 ships per-`NODE_MODULE_VERSION` prebuilds, so the
+ * vendored Node must match whatever installed the payload's node_modules.
  *
- * WHICH version: whatever installed the payload's node_modules, i.e. the host's
- * own Node, unless CALANDRIA_DESKTOP_NODE_VERSION overrides it. Pinning a
- * constant here would fail the ABI check on every machine that isn't on that
- * major, which is a worse default than "matches by construction". CI pins the
- * env var when it wants reproducibility.
- *
- * Only the `node` binary is taken — not npm, not the headers. The payload is
- * already installed; nothing in a running Calandria shells out to npm.
+ * The version defaults to the host's own Node; CALANDRIA_DESKTOP_NODE_VERSION
+ * overrides it for a reproducible CI build. Only the `node` binary is
+ * fetched, never npm or the headers.
  */
 "use strict";
 
@@ -90,9 +80,8 @@ async function fetchNode({
     download(`${DIST}/${v}/SHASUMS256.txt`).then((b) => b.toString("utf8")),
   ]);
 
-  // Verify before unpacking. This binary is executed on the user's machine by
-  // every launch of the packaged app; an unverified download is the one place
-  // in this build where a bad byte becomes code execution.
+  // Verify before unpacking: this binary runs on the user's machine at every
+  // launch of the packaged app, so an unverified download risks code execution.
   const want = sums
     .split("\n")
     .map((l) => l.trim().split(/\s+/))
