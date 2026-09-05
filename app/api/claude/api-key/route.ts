@@ -5,9 +5,9 @@ import { setAgentConnection, clearAgentConnection } from "@/lib/agents/connectio
 
 export const dynamic = "force-dynamic";
 
-// The "I have an API key instead" alternative to the subscription login. Stores
-// the key in the instance env (persisted to a 0600 file on the volume — see
-// lib/anthropic-key.ts) so the SDK bills per-token against it. The wizard's
+// The "I have an API key instead" alternative to the subscription login.
+// Stores the key in the instance env, persisted to a 0600 file on the volume
+// (lib/anthropic-key.ts), so the SDK bills per-token against it. The wizard's
 // Verify step then proves it actually works.
 export async function POST(req: Request) {
   const { key } = (await req.json()) as { key?: string };

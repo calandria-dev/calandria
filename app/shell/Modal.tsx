@@ -45,8 +45,8 @@ export function FolderPicker({ initial, onClose, onPick }: { initial?: string; o
   const [data, setData] = useState<FsListing | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  // Last path requested — so Retry after a failed listing re-asks for the same
-  // folder rather than resetting the whole picker to its initial directory.
+  // Last path requested, so Retry after a failed listing re-asks for the same
+  // folder instead of resetting the whole picker to its initial directory.
   const lastReq = useRef<string | undefined>(undefined);
   const load = useCallback((p?: string) => {
     lastReq.current = p;
@@ -94,9 +94,9 @@ export function FolderPicker({ initial, onClose, onPick }: { initial?: string; o
 }
 
 // "Browse" control for a working-dir field. Tries the OS-native folder chooser
-// first (search, new-folder, Finder favorites); silently falls back to the
-// in-app FolderPicker when no native dialog is available (non-macOS / headless)
-// or the call errors. Cancelling the native dialog is a no-op.
+// first (search, new-folder, Finder favorites); falls back to the in-app
+// FolderPicker with no message when no native dialog is available (non-macOS
+// / headless) or the call errors. Cancelling the native dialog is a no-op.
 export function BrowseDirButton({ initial, onPick }: { initial?: string; onPick: (p: string) => void }) {
   const [browsing, setBrowsing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -125,21 +125,21 @@ export function BrowseDirButton({ initial, onPick }: { initial?: string; onPick:
  * The one model input, in both of its shapes.
  *
  * A cloud project gets a <select> over the driver's own catalog (modelOptions
- * over the capability descriptor — the same one the session rail's picker
+ * over the capability descriptor, the same one the session rail's picker
  * reads), so a Vertex instance's corrected windows and a new driver's models
- * arrive here with no edit. A <select> rather than the `seg wrap` its
+ * arrive here with no edit. Uses a <select> instead of the `seg wrap` its
  * neighbours use because Claude Code offers a dozen-plus entries across three
  * groups; consecutive options sharing a `group` render under one <optgroup>,
  * matching the rail's headers. It renders nothing when the agent contributes no
- * models — that's the capabilities bundle not having loaded, and the synthetic
+ * models: that means the capabilities bundle has not loaded, and the synthetic
  * "Inherit" head alone is not a choice.
  *
  * `freeForm` is the local-model case (lib/agentEnv.ts): the catalog is the
- * VENDOR's line-up while the ids on the machine are whatever was pulled, so a
+ * vendor's line-up while the ids on the machine are whatever was pulled, so a
  * closed list can only be wrong. The field becomes a text box whose
- * `suggestions` are what the endpoint itself reports — a datalist, not a
+ * `suggestions` are what the endpoint itself reports, a datalist instead of a
  * select, because a model pulled a second ago must be typeable before any probe
- * has seen it. Deliberately the same component: the two shapes share the label,
+ * has seen it. The same component serves both shapes: they share the label,
  * the inherit semantics of `null` and the help line, and a second component
  * would drift from this one the first time either changed.
  */
@@ -149,7 +149,7 @@ export function ModelField({ options, value, onChange, help, label = "Model", no
   /** Accept any id and offer `suggestions` instead of restricting to `options`. */
   freeForm?: boolean;
   suggestions?: string[];
-  /** Replaces the catalog's subtitle in free-form mode — what the endpoint said. */
+  /** Replaces the catalog's subtitle in free-form mode: what the endpoint said. */
   status?: React.ReactNode;
 }) {
   // Consecutive same-group runs, in catalog order. Built before the early
@@ -175,10 +175,10 @@ export function ModelField({ options, value, onChange, help, label = "Model", no
     );
   }
   if (options.length <= 1) return null;
-  // A model the catalog no longer lists — an id pinned before the instance was
+  // A model the catalog no longer lists: an id pinned before the instance was
   // pointed at Vertex, or carried in from another agent. Kept as an entry of its
   // own so the select shows what the task will actually run instead of reading
-  // as blank, and so touching an unrelated field can't silently drop it.
+  // as blank, and so touching an unrelated field cannot drop it.
   const known = options.some((o) => o.value === value);
   const sel = options.find((o) => o.value === value);
   return (
@@ -201,12 +201,13 @@ export function ModelField({ options, value, onChange, help, label = "Model", no
  * The free-form model input itself: a text box with a <datalist> of whatever
  * the endpoint reports.
  *
- * Its own component because the project settings dialog needs the input WITHOUT
- * ModelField's label-and-help chrome (it sits inline beside the base URL), and
- * two hand-rolled inputs would be two behaviours. A datalist rather than a
- * combobox because the browser's own is exactly right here: suggestions filter
- * as you type and anything typed is still accepted — which is the requirement,
- * since a model pulled a second ago won't be in a list probed before it.
+ * Its own component because the project settings dialog needs the input
+ * without ModelField's label-and-help chrome (it sits inline beside the base
+ * URL), and two hand-rolled inputs would be two behaviours. Uses a datalist
+ * instead of a combobox because the browser's own is exactly right here:
+ * suggestions filter as you type and anything typed is still accepted, which
+ * is the requirement since a model pulled a second ago will not be in a list
+ * probed before it.
  */
 export function FreeFormModel({ value, onChange, suggestions, placeholder, label = "Model", className = "ctx-mono", style, title }: {
   value: string; onChange: (v: string) => void; suggestions: string[];
@@ -242,19 +243,19 @@ export function PrioritySeg({ value, onChange }: { value: Priority; onChange: (p
   );
 }
 
-// "Blocked by" picker — choose the tasks that must reach Done before this one can
+// "Blocked by" picker: choose the tasks that must reach Done before this one can
 // start. Candidates are the other tasks in the project (self excluded by caller),
 // minus the terminal ones, which can't block anything and so aren't offered, and
-// listed alphabetically rather than in the caller's recency order.
+// listed alphabetically instead of in the caller's recency order.
 // With any blockers selected, offers the per-task "Start when unblocked" opt-in:
-// the last blocker flipping to Done launches this task's first turn by itself.
+// the last blocker flipping to Done launches this task's first turn on its own.
 export function DepPicker({ candidates, value, onChange, autoStart, onAutoStart }: {
   candidates: TaskRow[]; value: string[]; onChange: (ids: string[]) => void;
   autoStart: boolean; onAutoStart: (on: boolean) => void;
 }) {
   const rows = useMemo(() => blockerCandidates(candidates, value), [candidates, value]);
   // blockerCandidates only lists a suggestion that's already an edge, so in
-  // practice every suggested row here is ticked — the `value` check is what
+  // practice every suggested row here is ticked. The `value` check is what
   // keeps the notice honest if that ever stops being true.
   const pendingSuggestions = useMemo(() => rows.filter((c) => c.suggested && value.includes(c.id)).length, [rows, value]);
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);

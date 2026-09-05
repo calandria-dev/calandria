@@ -5,7 +5,7 @@ import { parseTagColor } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-/** The project's tags with their derived counts — the same rows the project GET embeds. */
+/** The project's tags with their derived counts: the same rows the project GET embeds. */
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!getProject(id)) return NextResponse.json({ error: "no such project" }, { status: 404 });
@@ -28,7 +28,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       description: typeof body.description === "string" ? body.description : "",
       color: color.color,
     });
-    // "" because no task published this — see the tags_changed note in lib/events.ts.
+    // "" because no task published this; see the tags_changed note in lib/events.ts.
     publishGlobal("", { type: "tags_changed", projectId: id });
     return NextResponse.json(tag, { status: 201 });
   } catch (e) {

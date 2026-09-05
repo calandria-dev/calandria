@@ -36,9 +36,9 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   const { id } = await params;
   const before = getRunbook(id);
   if (!before) return NextResponse.json({ error: "no such runbook" }, { status: 404 });
-  // Hard delete, like everything else here — but a linked schedule keeps
-  // working: deleteRunbook copies the recipe back into it first, in the same
-  // transaction. The tasks it dispatched survive too.
+  // Hard delete. A linked schedule keeps working because deleteRunbook copies
+  // the recipe back into it first, in the same transaction. The tasks it
+  // dispatched survive too.
   deleteRunbook(id);
   publishGlobal("", { type: "runbooks_changed", projectId: before.project_id });
   return NextResponse.json({ ok: true });

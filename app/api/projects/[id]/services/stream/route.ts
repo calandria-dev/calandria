@@ -8,7 +8,7 @@ export const maxDuration = 300;
 /**
  * Watch a project's services as SSE: a `snapshot` (current services + captured
  * logs) followed by a live tail of status/log events from the in-process service
- * supervisor (lib/services.ts). Reconnect-safe — each connect re-snapshots — and
+ * supervisor (lib/services.ts). Reconnect-safe (each connect re-snapshots) and
  * fan-out-safe. Closing the stream never touches the running processes.
  */
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {

@@ -10,12 +10,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   return NextResponse.json({ comments: listTaskComments(id) });
 }
 
-// File a review comment anchored to a file + side + line range, stamped with
-// the diff HEAD (anchorSha) it was written against — see TaskComment in
-// lib/types.ts for why both exist. sentToAgent only marks the row — the
-// caller (TaskChanges) is responsible for actually starting the turn, since
-// that path runs through the client's runTurn to keep local running state in
-// sync.
+// File a review comment anchored to a file, side, and line range, stamped with
+// the diff HEAD (anchorSha) it was written against; see TaskComment in
+// lib/types.ts for why both exist. sentToAgent only marks the row. The caller
+// (TaskChanges) is responsible for starting the turn, since that path runs
+// through the client's runTurn to keep local running state in sync.
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!getTask(id)) return NextResponse.json({ error: "not found" }, { status: 404 });

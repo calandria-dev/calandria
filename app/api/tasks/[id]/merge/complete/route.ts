@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 // Accept a resolved conflict: commit the merge in the worktree and land the
-// (now conflict-free) work branch into the base branch — or, with `resolveOnly`,
+// now conflict-free work branch into the base branch. With `resolveOnly`,
 // stop at the commit, which is all a PR-landing project can honestly offer.
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -51,7 +51,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // so nothing is merged and no insight row is owed. Recording either would put
     // a merge on the board that the base branch has never seen.
     if (result.ok && !resolveOnly) {
-      // Record the merge and advance the diff base — but do NOT change status.
+      // Record the merge and advance the diff base, but do not change status.
       // Merging (even after resolving conflicts) is a git action, not a sign the
       // task is finished; the user owns the "done" status and sets it manually.
       updateTask(id, {
@@ -65,8 +65,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           additions: result.additions ?? 0, deletions: result.deletions ?? 0,
         });
       // The mirror of a merged PR: this task's work is now in the base branch, so
-      // its checkout is disposable. A no-op unless the project opted in, and
-      // never awaited — the reclaim fetches origin (lib/reclaim.ts).
+      // its checkout is disposable. A no-op unless the project opted in, and not
+      // awaited, since the reclaim fetches origin (lib/reclaim.ts).
       maybeAutoReclaim(id);
     }
     return NextResponse.json(result, { status: result.ok ? 200 : 409 });

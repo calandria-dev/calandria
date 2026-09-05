@@ -1,4 +1,4 @@
-/* Calandria — icon set (ported from the design's icons.js) */
+/* Calandria icon set (ported from the design's icons.js) */
 import type { SVGProps } from "react";
 
 type P = SVGProps<SVGSVGElement>;
@@ -61,15 +61,15 @@ export const Icon = {
   terminal: (p?: P) => S(<><rect x={3} y={4} width={18} height={16} rx={2} /><path d="M7 9l3 3-3 3" /><line x1={13} y1={15} x2={17} y2={15} /></>, p),
   archive: (p?: P) => S(<><rect x={3} y={4} width={18} height={4} rx={1} /><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" /><line x1={10} y1={12} x2={14} y2={12} /></>, p),
   restore: (p?: P) => S(<><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v4h4" /><path d="M12 8v4l3 2" /></>, p),
-  // Mobile tab bar's "Diffs" tab — a branch peeling off with a change-marker dot.
+  // Mobile tab bar's "Diffs" tab: a branch peeling off with a change-marker dot.
   diff: (p?: P) => S(<><path d="M7 3v9a4 4 0 0 0 4 4h4" /><circle cx={18} cy={17.5} r={2.3} /></>, p),
 };
 
 // ---- agent brand marks ----
 // Logos, not line icons: filled paths in `currentColor` (the stroked `S()` set
 // above would smear these at avatar size). Keyed by agent driver id so any UI
-// that knows a task's `agent` can stamp the right mark; unknown/legacy ids get
-// no entry and callers fall back to a generic glyph.
+// that knows a task's `agent` can stamp the right mark; an unknown or legacy id
+// gets no entry, and callers fall back to a generic glyph.
 
 function Brand(children: React.ReactNode, props?: P) {
   return (
@@ -88,9 +88,8 @@ export const AgentMark: Record<string, (p?: P) => React.ReactElement> = {
     <path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.911 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.182a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.998-2.9 6.056 6.056 0 0 0-.748-7.073zm-9.022 12.608a4.476 4.476 0 0 1-2.876-1.04l.142-.081 4.778-2.758a.795.795 0 0 0 .393-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.495 4.494zM3.6 18.304a4.471 4.471 0 0 1-.535-3.014l.142.085 4.783 2.758a.771.771 0 0 0 .78 0l5.843-3.368v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.499 4.499 0 0 1-6.14-1.646zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973V11.6a.766.766 0 0 0 .388.677l5.814 3.354-2.02 1.169a.076.076 0 0 1-.071 0l-4.83-2.787A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.856L13.104 8.364 15.119 7.2a.076.076 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667zm2.01-3.024l-.141-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .028-.061l4.83-2.787a4.499 4.499 0 0 1 6.681 4.66zM8.307 12.863l-2.02-1.164a.08.08 0 0 1-.038-.057V6.074a4.499 4.499 0 0 1 7.376-3.453l-.142.08-4.778 2.758a.795.795 0 0 0-.393.682zm1.097-2.365l2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5z" />,
     p,
   ),
-  // Antigravity runs Gemini models on a Google login, and Google's mark for
-  // that family is the four-pointed spark — the one thing on this card a user
-  // will recognize without reading the label. The product name beside it stays
+  // Antigravity runs Gemini models on a Google login; Google's mark for that
+  // family is the four-pointed spark. The product name beside it stays
   // "Antigravity" (the CLI's own name); only the glyph is the model family's.
   gemini: (p?: P) => Brand(
     <path d="M12 24A14.304 14.304 0 0 0 0 12 14.304 14.304 0 0 0 12 0a14.305 14.305 0 0 0 12 12 14.305 14.305 0 0 0-12 12" />,

@@ -8,35 +8,34 @@ import { StatusDot } from "./shared";
 import { TAG_COLORS, type TagRow, type TaskRow } from "./types";
 import { tagTint } from "./TagChips";
 
-// The tag strip: what a lit chip expands into. There is no tag route and no tag
-// page — a tag's whole detail view is this band under the chip bar (design:
-// docs/superpowers/specs/2026-08-27-tags-design.md). It shows the description,
-// the progress, where the plan came from, the tasks in the order they have to
-// happen, and the two verbs a tag has (Edit, Delete). Everything else about a
-// tag IS its tasks.
+// The tag strip: what a lit chip expands into. There is no tag route and no
+// tag page; a tag's whole detail view is this band under the chip bar (see
+// docs/FEATURES.md). It shows the description, the progress, where the plan
+// came from, the tasks in the order they have to happen, and the two verbs a
+// tag has (Edit, Delete).
 //
-// Shown only when exactly ONE chip is lit. Two lit chips are a filter over two
-// plans, and stacking two strips (or picking one of them to expand) would put a
-// band of prose about one feature above a list showing both. The chip bar is
-// the multi-tag surface; this is the single-tag one.
+// Shown only when exactly one chip is lit: two lit chips are a filter over
+// two plans, and stacking two strips would put a band of prose about one
+// feature above a list showing both. The chip bar is the multi-tag surface;
+// this is the single-tag one.
 
 /**
- * The members in dependency order — a topological sort over `depends_on`
+ * The members in dependency order: a topological sort over `depends_on`
  * restricted to the group, with ties broken by `position`, the project's
  * filing sequence.
  *
- * Filing order, deliberately, and NOT the order the caller passed: the tray
- * sorts by recency, and a plan's steps must not renumber themselves every time
- * one of them runs. `position` is the one total order both sides can agree on
- * (`created_at` collides — a planning turn files its whole batch inside one
- * millisecond), and lib/tagContext.ts sorts by exactly the same thing, so
- * "step 3 of 7" in a session's context and "3" on the user's screen keep
+ * Filing order, not the order the caller passed: the tray sorts by recency,
+ * and a plan's steps must not renumber themselves every time one of them
+ * runs. `position` is the one total order both sides can agree on
+ * (`created_at` collides, since a planning turn files its whole batch inside
+ * one millisecond), and lib/tagContext.ts sorts by exactly the same thing,
+ * so "step 3 of 7" in a session's context and "3" on the user's screen keep
  * naming the same task.
  *
- * Edges to tasks WITHOUT this tag are ignored rather than treated as
- * blockers: tags and dependencies are orthogonal (a member may legitimately
- * wait on something in another feature), and ordering this list by them would
- * make "step 3 of 7" depend on tasks the list doesn't show.
+ * Edges to tasks without this tag are ignored: tags and dependencies are
+ * orthogonal (a member may legitimately wait on something in another
+ * feature), and ordering this list by them would make "step 3 of 7" depend
+ * on tasks the list doesn't show.
  */
 export function topoMembers(members: TaskRow[]): TaskRow[] {
   members = [...members].sort((a, b) => a.position - b.position);
@@ -47,7 +46,7 @@ export function topoMembers(members: TaskRow[]): TaskRow[] {
   while (out.length < members.length) {
     const ready = members.find((m) => !placed.has(m.id) && deps.get(m.id)!.every((d) => placed.has(d)));
     // setTaskDeps refuses cycles, so `ready` is only ever empty if the graph
-    // arrived broken — take the next unplaced member rather than spinning.
+    // arrived broken. Take the next unplaced member instead of spinning.
     const pick = ready ?? members.find((m) => !placed.has(m.id))!;
     placed.add(pick.id);
     out.push(pick);
@@ -57,11 +56,11 @@ export function topoMembers(members: TaskRow[]): TaskRow[] {
 
 /**
  * "5 done · 2 withdrawn". Terminal members are counted the way `blocks()`
- * counts them, so a tag on seven tasks with two withdrawn suggestions really is
- * finished at five — but the withdrawals are named beside the fraction rather
- * than folded into it, or `5/5` on a seven-row list reads as a lie. Withdrawn
- * and plainly cancelled are told apart here (the strip has the rows; the
- * tag's derived counts only know `cancelled`).
+ * counts them, so a tag on seven tasks with two withdrawn suggestions really
+ * is finished at five. The withdrawals are named beside the fraction instead
+ * of folded into it, since `5/5` on a seven-row list would read as a lie.
+ * Withdrawn and plainly cancelled are told apart here (the strip has the
+ * rows; the tag's derived counts only know `cancelled`).
  */
 export function memberProgress(members: TaskRow[]): { done: number; of: number; pct: number; parts: string[] } {
   const done = members.filter((m) => m.status === "done").length;
@@ -75,29 +74,29 @@ export function memberProgress(members: TaskRow[]): { done: number; of: number; 
 }
 
 /**
- * What setting this tag's base branch would actually do — the line under the
+ * What setting this tag's base branch would actually do: the line under the
  * field, computed against the members on screen.
  *
- * This exists because `base_branch` is the one tag field whose blast radius
- * isn't obvious from the form, and the count is the whole reason editing it is
- * safe: inheritance stops at the worktree cut, so a member that has already been
- * cut keeps the branch its work is built on no matter what is typed here.
+ * `base_branch` is the one tag field whose blast radius isn't obvious from
+ * the form, and the count is why editing it is safe: inheritance stops at
+ * the worktree cut, so a member that has already been cut keeps the branch
+ * its work is built on no matter what is typed here.
  *
- * It also has to name the OTHER-TAG case. A task carries as many tags as it has
- * reasons to, and the base comes from the first one (in tag order) that sets a
- * branch — so a member of this tag can perfectly well take its base from a
- * different tag. Resolving that silently would make a branch appear from a tag
- * the user wasn't looking at; saying which tag won is the price of resolving it
- * instead of refusing it (lib/baseBranch.ts).
+ * It also names the other-tag case. A task carries as many tags as it has
+ * reasons to, and the base comes from the first one (in tag order) that sets
+ * a branch, so a member of this tag can take its base from a different tag.
+ * Resolving that without saying so would make a branch appear from a tag the
+ * user wasn't looking at, so naming which tag won is the price of resolving
+ * it instead of refusing it (lib/baseBranch.ts).
  *
- * `base` is the PENDING value in the form, not the saved one, so the line moves
- * as the field is typed into.
+ * `base` is the pending value in the form, not the saved one, so the line
+ * moves as the field is typed into.
  */
 export function baseConsequence(args: {
   tag: TagRow;
   base: string;
   members: TaskRow[];
-  /** Every tag in the project — a member's base may come from any of them. */
+  /** Every tag in the project: a member's base may come from any of them. */
   allTags: TagRow[];
   projectBranch: string;
 }): string[] {
@@ -116,7 +115,7 @@ export function baseConsequence(args: {
       continue;
     }
     const winner = (m.tag_ids ?? []).find((id) => baseOf(id));
-    if (!winner) continue; // nothing sets a base — it follows the project either way
+    if (!winner) continue; // nothing sets a base: it follows the project either way
     if (winner === tag.id) inherits++;
     else {
       const name = byId.get(winner)?.name ?? "another tag";
@@ -147,8 +146,8 @@ export function baseConsequence(args: {
   return lines;
 }
 
-/** What `GET /api/tags/[id]/sync` answers with — `lib/git.ts`'s BranchDrift, plus
- *  the two shapes that need no git at all. */
+/** What `GET /api/tags/[id]/sync` answers with: `lib/git.ts`'s BranchDrift,
+ *  plus the two shapes that need no git at all. */
 export interface TagDriftInfo {
   inherited?: boolean; // the tag has no base of its own
   sameAsProject?: boolean; // its base IS the project default
@@ -165,26 +164,24 @@ export interface TagDriftInfo {
 
 /**
  * The one line a drift reading is worth, and whether Sync or Create is on
- * offer — split out from the component because it is the whole judgement and
- * the rest is plumbing.
+ * offer. Split out from the component: it is the judgement, and the rest is
+ * plumbing.
  *
- * `null` means say nothing: a tag that follows the project default, or names it
- * explicitly, has no second branch to fall behind. "Up to date" IS said, though,
- * because the absence of a warning is not the same as having been told, and this
- * band is where someone comes to check.
+ * `null` means say nothing: a tag that follows the project default, or
+ * names it explicitly, has no second branch to fall behind. "Up to date" is
+ * said, though, since the absence of a warning is not the same as having
+ * been told, and this band is where someone comes to check.
  *
  * Being ahead is not reported. An integration branch is ahead of main by
- * definition — that's what it's for — and counting it beside the number that
- * matters would bury it.
+ * definition, and counting it beside the number that matters would bury it.
  */
 export function driftLine(d: TagDriftInfo): { text: string; tone: "ok" | "warn" | "bad"; syncable: boolean; creatable?: boolean } | null {
   if (d.inherited || d.sameAsProject) return null;
   const branch = d.branch || "this tag's base branch";
   const against = d.against || d.projectBranch || "the project default";
   // Git can't tell a deleted branch from one nobody has created yet, and the
-  // usual case is the latter: a base typed into the editor before any plan cut
-  // it. Said as "yet", with Create on offer, rather than mourning a branch that
-  // never was.
+  // usual case is the latter: a base typed into the editor before any plan
+  // cut it. Said as "yet", with Create on offer.
   if (d.exists === false)
     return {
       text: `${branch} doesn't exist here yet — new tasks are cut from HEAD until it does`,
@@ -201,12 +198,12 @@ export function driftLine(d: TagDriftInfo): { text: string; tone: "ok" | "warn" 
 
 /**
  * Drift of the tag's base branch from the project default, and the Sync that
- * closes it. Sits above the strip's two modes so the editor — where the base
- * branch is typed — shows it as well as the read view where the badge is.
+ * closes it. Sits above the strip's two modes so the editor (where the base
+ * branch is typed) shows it, as well as the read view where the badge is.
  *
- * Fetched per tag on open rather than served with the tag list: see the route.
- * The saved `tag.base_branch` is the key, so typing in the editor doesn't refetch
- * on every keystroke, and saving a new branch does.
+ * Fetched per tag on open, not served with the tag list: see the route. The
+ * saved `tag.base_branch` is the key, so typing in the editor doesn't
+ * refetch on every keystroke, and saving a new branch does.
  */
 function TagDriftRow({ tag }: { tag: TagRow }) {
   const [drift, setDrift] = useState<TagDriftInfo | null>(null);
@@ -235,10 +232,10 @@ function TagDriftRow({ tag }: { tag: TagRow }) {
       const r = await jsend<{ behind?: number }>(`/api/tags/${tag.id}/sync`, "POST");
       setNote(`Merged ${r.behind ?? 0} commit(s) in.`);
     } catch (e) {
-      // Every refusal — a dirty worktree holding the branch, a conflict, a
-      // missing ref — arrives as the route's 409 and `jsend` unwraps its
-      // `error` verbatim, which is the whole point of phrasing them for a
-      // reader in lib/git.ts.
+      // Every refusal (a dirty worktree holding the branch, a conflict, a
+      // missing ref) arrives as the route's 409, and `jsend` unwraps its
+      // `error` verbatim: that's why they're phrased for a reader in
+      // lib/git.ts.
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
@@ -286,7 +283,7 @@ function TagDriftRow({ tag }: { tag: TagRow }) {
   );
 }
 
-/** Mirrors TagRefreshState in lib/tagRefresh.ts — what GET/POST/DELETE .../refresh return. */
+/** Mirrors TagRefreshState in lib/tagRefresh.ts: what GET/POST/DELETE .../refresh return. */
 type JobState = {
   status: TagRow["refresh_status"];
   stage: string;
@@ -295,7 +292,7 @@ type JobState = {
   started_at: number;
 };
 
-/** The job as the tag row last recorded it — the reconnect seed. */
+/** The job as the tag row last recorded it: the reconnect seed. */
 const jobOf = (t: TagRow): JobState => ({
   status: t.refresh_status,
   stage: t.refresh_stage,
@@ -306,7 +303,7 @@ const jobOf = (t: TagRow): JobState => ({
 
 export function TagStrip({ tag, members, allTags, projectBranch, originTask, onSelectTask, onDeleted }: {
   tag: TagRow;
-  /** Every task carrying the tag, in tray order — the strip sorts them itself. */
+  /** Every task carrying the tag, in tray order: the strip sorts them itself. */
   members: TaskRow[];
   /** Every tag in the project, so the base-branch line can name the tag that wins. */
   allTags: TagRow[];
@@ -328,17 +325,18 @@ export function TagStrip({ tag, members, allTags, projectBranch, originTask, onS
   const [base, setBase] = useState(tag.base_branch);
   const [job, setJob] = useState<JobState>(() => jobOf(tag));
 
-  // The job outlives this component. Its state is on the tag ROW, which arrives
-  // with every tags_changed refetch (TagRow IS Tag), so a strip mounting fresh —
-  // after lighting another chip, switching project, or a reload — already knows
-  // a run is in flight and picks the bar back up without asking.
+  // The job outlives this component. Its state is on the tag row, which
+  // arrives with every tags_changed refetch (TagRow is Tag), so a strip
+  // mounting fresh (after lighting another chip, switching project, or a
+  // reload) already reflects a run in flight and picks the bar back up
+  // without asking.
   useEffect(() => {
     setJob(jobOf(tag));
   }, [tag.id, tag.refresh_status, tag.refresh_stage, tag.refresh_summary, tag.refresh_error, tag.refresh_started_at]);
 
-  // The row only moves on tags_changed, which the job publishes at its two ENDS.
-  // Polling is what makes the stage label advance in between, and what settles a
-  // run promptly rather than on the next global event.
+  // The row only moves on tags_changed, which the job publishes at its two
+  // ends. Polling makes the stage label advance in between, and settles a
+  // run promptly instead of waiting for the next global event.
   useEffect(() => {
     if (job.status !== "running") return;
     let live = true;
@@ -352,8 +350,8 @@ export function TagStrip({ tag, members, allTags, projectBranch, originTask, onS
 
   const refresh = async () => {
     setErr(null);
-    // Optimistic: the POST returns the running state, but the click should light
-    // the bar immediately rather than a request round-trip later.
+    // Optimistic: the POST returns the running state, but the click lights
+    // the bar immediately instead of waiting for the request round-trip.
     setJob({ status: "running", stage: "Reading the plan", summary: "", error: "", started_at: Date.now() });
     try {
       setJob(await jsend<JobState>(`/api/tags/${tag.id}/refresh`, "POST"));
@@ -384,9 +382,9 @@ export function TagStrip({ tag, members, allTags, projectBranch, originTask, onS
     setBusy(true);
     setErr(null);
     try {
-      // The tags_changed echo refetches the project, so nothing is
-      // written into local state here — the chip bar and this strip re-render
-      // from the same read.
+      // The tags_changed echo refetches the project, so nothing is written
+      // into local state here: the chip bar and this strip re-render from
+      // the same read.
       await jsend(`/api/tags/${tag.id}`, "PATCH", {
         name: name.trim(), description: desc, color: color ?? "", base_branch: base.trim(),
       });
@@ -459,18 +457,20 @@ export function TagStrip({ tag, members, allTags, projectBranch, originTask, onS
             <span className="gs-name">{tag.name}</span>
             <span className="gs-frac mono">{p.parts.join(" · ")}</span>
             <span className="spacer" />
-            {/* Shown only when the tag sets one: every tag reading "main" would
-                be noise, the one reading "feature/auth" is the whole point. */}
+            {/* Shown only when the tag sets one: every tag reading "main"
+                would be noise; the one reading "feature/auth" is the useful
+                one. */}
             {tag.base_branch && (
               <span className="gs-base-badge mono" title={`Tasks tagged this are cut from ${tag.base_branch} instead of ${projectBranch}`}>
                 {tag.base_branch}
               </span>
             )}
-            {/* The plan's own maintenance verb. It reads the tasks against the
-                code and fixes what drifted — so it sits with Edit rather than
-                inside it: editing is what the user writes, this is what the
-                repo says. Disabled while running, because the job is keyed by
-                tag and a second click would only return the first one's state. */}
+            {/* The plan's own maintenance verb. It reads the tasks against
+                the code and fixes what drifted, and sits beside Edit instead
+                of inside it: editing is what the user writes, this is what
+                the repo says. Disabled while running, because the job is
+                keyed by tag and a second click would only return the first
+                one's state. */}
             <button className="btn btn-ghost btn-sm" disabled={job.status === "running" || !ordered.length}
               onClick={() => void refresh()}
               title={ordered.length
@@ -495,12 +495,13 @@ export function TagStrip({ tag, members, allTags, projectBranch, originTask, onS
             aria-label={`${tag.name} progress`}>
             <span style={{ width: `${p.pct}%` }} />
           </div>
-          {/* The job's own band, directly under the progress bar and above the
-              description it is about to rewrite. Indeterminate on purpose: the
-              long phase is an agent reading a repo, and a bar that claimed a
-              percentage would be inventing one. The stage says what it's doing
-              and the note says the part people actually worry about — that
-              navigating away doesn't cancel it. */}
+          {/* The job's own band, directly under the progress bar and above
+              the description it is about to rewrite. Indeterminate on
+              purpose: the long phase is an agent reading a repo, and a bar
+              that claimed a percentage would be inventing one. The stage
+              says what it's doing, and the note says the part people
+              actually worry about: that navigating away doesn't cancel
+              it. */}
           {job.status === "running" && (
             <div className="gs-job" role="status" aria-live="polite">
               <div className="gs-job-bar" aria-hidden="true"><span /></div>

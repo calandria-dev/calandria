@@ -8,13 +8,13 @@ import type { AgentEditChange, Priority, Status, Task } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-// Terminal = no longer blocking anything, the same pair lib/autoStart's blocks()
-// uses and PATCH /api/tasks/[id] repeats.
+// Terminal statuses no longer block anything, matching the pair
+// lib/autoStart's blocks() uses and PATCH /api/tasks/[id] repeats.
 const isTerminal = (s: string) => s === "done" || s === "cancelled";
 
-// The read side of the "changed since you accepted it" chip: the full history
-// behind one task's rows in task_agent_edits, newest first — what the diff
-// panel renders when the user opens it.
+// The read side of the "changed since you accepted it" chip: the full
+// history behind one task's rows in task_agent_edits, newest first, which
+// the diff panel renders when opened.
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!getTask(id)) return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -22,15 +22,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 }
 
 /**
- * Fold one AgentEditChange's `before_value` into the patch that restores it —
- * every field except `blocked_by`, `tags`, `base_branch` and `project`, which
- * POST handles separately (the first two live in their own tables; the other
- * two have to go back through the same operation that set them, since a raw
- * column write would leave `base_sha` describing a branch the task is no longer
- * on, and would strand a moved task's sessions, usage and merges in the project
- * it left). A failure in any of the four has to become a 409 with the row
- * untouched.
- * Accumulated into ONE patch rather than written per field: a revert of a
+ * Folds one AgentEditChange's `before_value` into the patch that restores
+ * it, for every field except `blocked_by`, `tags`, `base_branch` and
+ * `project`, which POST handles separately. The first two live in their own
+ * tables; the other two must go back through the same operation that set
+ * them, since a raw column write would leave `base_sha` describing a branch
+ * the task is no longer on, and would strand a moved task's sessions, usage
+ * and merges in the project it left. A failure in any of the four becomes a
+ * 409 with the row untouched.
+ * Accumulated into one patch instead of written per field: a revert of a
  * four-field edit is one user action and should be one row write, so a
  * listener refetching on task_edited can never catch it half-applied.
  */
@@ -59,10 +59,10 @@ function foldScalarChange(patch: Partial<Task>, change: AgentEditChange): void {
 const sameSet = (a: string[], b: string[]) => a.length === b.length && [...a].sort().every((v, i) => v === [...b].sort()[i]);
 
 /**
- * The fields of an edit whose live value no longer matches what the edit left
- * behind, each rendered for the refusal. Scalars compare through `after` (raw
- * there); tags and blocked_by need `after_value`, and a row recorded before
- * that existed is reverted unchecked for those two, as it always was.
+ * The fields of an edit whose live value no longer matches what the edit
+ * left behind, each rendered for the refusal. Scalars compare through
+ * `after` (raw there); tags and blocked_by need `after_value`, and a row
+ * recorded before that field existed is reverted unchecked for those two.
  */
 function staleFields(task: Task, changes: AgentEditChange[]): string[] {
   const out: string[] = [];
@@ -81,15 +81,17 @@ function staleFields(task: Task, changes: AgentEditChange[]): string[] {
         if (Array.isArray(c.after_value) && !sameSet(getTaskDeps(task.id), c.after_value)) out.push("blocked_by has changed");
         break;
       case "base_branch":
-        // The RAW column, not `after` — that one is the resolved name for
-        // reading ("main" where the column says ""), and comparing against it
-        // would call an untouched task stale the moment its pin was cleared.
+        // Compares the raw column, not `after`: that one is the resolved
+        // name for reading ("main" where the column says ""), and comparing
+        // against it would call an untouched task stale the moment its pin
+        // was cleared.
         if (typeof c.after_value === "string" && task.base_branch !== c.after_value)
           out.push(`the base branch is now "${task.base_branch || "inherited"}"`);
         break;
       case "project":
-        // Ids, not the readable names, for base_branch's reason: two projects
-        // may share a name, and the name is only what the panel prints.
+        // Compares ids, not readable names, for the same reason as
+        // base_branch: two projects may share a name, and the name is only
+        // what the panel prints.
         if (typeof c.after_value === "string" && task.project_id !== c.after_value)
           out.push(`the task has been moved to another project since`);
         break;
@@ -105,9 +107,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!body || typeof body.action !== "string") return NextResponse.json({ error: "action is required" }, { status: 400 });
 
   if (body.action === "ack") {
-    // Acknowledging clears the chip WITHOUT touching history — the audit trail
-    // (task_agent_edits) always outlives it, so "I've seen this" and "undo
-    // this" stay two separate actions even though both can clear the badge.
+    // Acknowledging clears the chip without touching history: the audit
+    // trail (task_agent_edits) always outlives it, so "I've seen this" and
+    // "undo this" stay two separate actions even though both can clear the
+    // badge.
     acknowledgeAgentEdits(id);
     publishGlobal(id, { type: "task_edited" });
     return NextResponse.json({ task: getTask(id) });
@@ -120,13 +123,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (edit.task_id !== id) return NextResponse.json({ error: "that edit belongs to another task" }, { status: 400 });
     if (edit.reverted_at > 0) return NextResponse.json({ error: "already reverted" }, { status: 400 });
 
-    // Compare-and-swap, not an unconditional write. The panel shows what THIS
-    // edit changed, not the live row, so a field the user (or a later agent
-    // edit) has since moved on would be silently overwritten by an older
-    // before_value — a rename to C lost to a revert of A→B, or two stacked
-    // edits A→B→C reverted oldest-first landing on B with both rows marked
-    // reverted. Refuse with the current value instead; reverting newest-first
-    // still walks the whole stack back.
+    // Compare-and-swap, not an unconditional write. The panel shows what
+    // this edit changed, not the live row, so a field the user (or a later
+    // agent edit) has since moved on would otherwise be overwritten by an
+    // older before_value: a rename to C lost to a revert of A to B, or two
+    // stacked edits A to B to C reverted oldest-first landing on B with both
+    // rows marked reverted. Refuses with the current value instead;
+    // reverting newest-first still walks the whole stack back.
     const stale = staleFields(getTask(id)!, edit.changes);
     if (stale.length) {
       return NextResponse.json(
@@ -135,14 +138,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
 
-    // The move goes FIRST, ahead of even the base branch: it re-parents the row
-    // and every project-keyed child of it (sessions, usage, merges), so a
-    // refusal here has to leave the whole edit un-reverted rather than land the
-    // other fields on a task sitting in the wrong project. Routed through the
-    // same operation that made the move, never a `project_id` write, and with
-    // no discard acknowledgement — a task started since the move can't be moved
-    // back without destroying its checkout, and that is still the user's answer
-    // to give, from the board's Move dialog rather than from an undo button.
+    // The move goes first, ahead of even the base branch: it re-parents
+    // the row and every project-keyed child of it (sessions, usage, merges),
+    // so a refusal here must leave the whole edit un-reverted instead of
+    // landing the other fields on a task sitting in the wrong project.
+    // Routed through the same operation that made the move, never a
+    // `project_id` write, and with no discard acknowledgement: a task
+    // started since the move can't be moved back without destroying its
+    // checkout, and that answer still belongs to the user, from the board's
+    // Move dialog rather than an undo button.
     const projectChange = edit.changes.find((c) => c.field === "project");
     if (projectChange) {
       const back = typeof projectChange.before_value === "string" ? projectChange.before_value : "";
@@ -158,19 +162,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
-    // The base branch goes FIRST, before anything is written: putting it back
-    // re-runs the whole retarget (git, a possible reset --hard, a branch that
-    // may since have been deleted or checked out elsewhere), so it is by far the
-    // likeliest half to refuse — and a refusal has to leave the edit entirely
-    // un-reverted rather than land its other fields. Routed through
-    // setTaskBaseBranch, never a column write: an UPDATE would restore the name
-    // while leaving base_sha pointing at a commit on the branch being left.
+    // The base branch goes first, before anything else is written: putting
+    // it back re-runs the whole retarget (git, a possible reset --hard, a
+    // branch that may since have been deleted or checked out elsewhere), so
+    // it is the likeliest half to refuse, and a refusal must leave the edit
+    // entirely un-reverted instead of landing its other fields. Routed
+    // through setTaskBaseBranch, never a column write: an UPDATE would
+    // restore the name while leaving base_sha pointing at a commit on the
+    // branch being left.
     const baseChange = edit.changes.find((c) => c.field === "base_branch");
     if (baseChange) {
       const task = getTask(id)!;
       const project = getProject(task.project_id);
       if (!project) return NextResponse.json({ error: "that task's project no longer exists" }, { status: 409 });
-      // "" is a real value here — the edit may have pinned a task that was
+      // "" is a real value here: the edit may have pinned a task that was
       // inheriting, and setTaskBaseBranch reconciles that case too.
       const back = await setTaskBaseBranch(task, project, typeof baseChange.before_value === "string" ? baseChange.before_value : "");
       if (!back.ok)
@@ -180,27 +185,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         );
     }
 
-    // Deps next, exactly like updateTaskForAgent orders edges before fields:
-    // a cycle can have appeared since this edit landed (a later edit, or a
-    // manual change), and a refusal here must leave the row completely
-    // untouched rather than half-reverted under a 200.
+    // Deps next, ordered the same way updateTaskForAgent orders edges
+    // before fields: a cycle can have appeared since this edit landed (a
+    // later edit, or a manual change), and a refusal here must leave the row
+    // completely untouched instead of half-reverted under a 200.
     const depsChange = edit.changes.find((c) => c.field === "blocked_by");
     if (depsChange) {
       try {
         setTaskDeps(id, depsChange.before_value as string[]);
       } catch (e) {
         // Only a cycle reaches here. A blocker id that no longer exists is
-        // silently dropped by setTaskDeps — that's fine, don't fight it.
+        // dropped by setTaskDeps, which is fine and not worth fighting.
         return NextResponse.json({ error: e instanceof Error ? e.message : "invalid dependencies" }, { status: 409 });
       }
     }
-    // Tags next, for the same reason and with the same failure shape: setTaskTags
-    // refuses a tag that has since been deleted or moved, and that refusal must
-    // not land on top of a half-applied revert.
+    // Tags next, for the same reason and with the same failure shape:
+    // setTaskTags refuses a tag that has since been deleted or moved, and
+    // that refusal must not land on top of a half-applied revert.
     const tagsChange = edit.changes.find((c) => c.field === "tags");
     if (tagsChange) {
       try {
-        // A tag deleted since the edit is dropped rather than refused — the
+        // A tag deleted since the edit is dropped instead of refused, the
         // same tolerance setTaskDeps shows a vanished blocker.
         setTaskTags([id], (tagsChange.before_value as string[]).filter((tagId) => !!getTag(tagId)));
       } catch (e) {
@@ -213,15 +218,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (Object.keys(patch).length) updateTask(id, patch);
 
     markAgentEditReverted(edit.id);
-    // Putting a status back can itself be a non-terminal → terminal transition
-    // (an agent moved a done task to in_progress; the user disagrees), and that
-    // is exactly what "Start when unblocked" waits on — the same rule PATCH
-    // /api/tasks/[id] follows. Without this, undoing the agent's change would
-    // leave every auto_start dependent unblocked but never launched.
+    // Putting a status back can itself be a non-terminal to terminal
+    // transition (an agent moved a done task to in_progress; the user
+    // disagrees), and that is exactly what "Start when unblocked" waits on,
+    // the same rule PATCH /api/tasks/[id] follows. Without this, undoing the
+    // agent's change would leave every auto_start dependent unblocked but
+    // never launched.
     if (isTerminal(getTask(id)!.status) && !isTerminal(prevStatus)) maybeAutoStartDependents(id);
-    // Only the LAST outstanding edit reverting clears the chip — an earlier
-    // one in the history may still be applied and unacknowledged. (Acked rows
-    // don't count: that's what acknowledged_at is for.)
+    // Only reverting the last outstanding edit clears the chip; an earlier
+    // one in the history may still be applied and unacknowledged. Acked rows
+    // don't count, which is what acknowledged_at is for.
     if (!hasOutstandingAgentEdits(id)) clearAgentEditFlag(id);
 
     publishGlobal(id, { type: "task_edited" });

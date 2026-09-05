@@ -6,14 +6,15 @@ import { logAgentToolArrival } from "@/lib/agentToolLog";
 export const dynamic = "force-dynamic";
 
 // Internal endpoint behind the `update_tag` tool for the stdio MCP bridge
-// (scripts/calandria-mcp.mjs) — the same write the Claude driver mounts
+// (scripts/calandria-mcp.mjs), the same write the Claude driver mounts
 // in-process. Auth is the per-instance SERVICE_TOKEN (middleware.ts,
 // isAgentToolPath).
 //
-// `projectId` is where the SESSION runs, and unlike the other tools there is no
+// `projectId` is where the SESSION runs. Unlike the other tools there is no
 // `project` override: a tag never spans repositories, so the ref is resolved
 // inside the caller's own project and nothing the model sends can point it
-// elsewhere. Membership is NOT here either — that's `update_task`'s `tags`.
+// elsewhere. Membership is not handled here either; that's `update_task`'s
+// `tags`.
 //
 // All of the policy (strict id-or-exact-name resolution, the rename conflict,
 // the branch-name check, "" clearing the default) is in updateTagForAgent,

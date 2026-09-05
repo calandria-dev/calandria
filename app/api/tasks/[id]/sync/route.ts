@@ -20,8 +20,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   if (!project) return NextResponse.json({ error: "no project" }, { status: 400 });
   if (!task.worktree_path || !task.work_branch) return NextResponse.json({ isolated: false });
 
-  // The task's own base when it has one — this response is what the session's
-  // sync banner renders, so a task on feature/auth says feature/auth.
+  // The task's own base when it has one, since this response is what the
+  // session's sync banner renders, so a task on feature/auth says feature/auth.
   const baseBranch = resolveBaseBranch(task, project);
   const status = await worktreeSyncStatus({
     repoPath: project.repo_path,
@@ -33,13 +33,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 }
 
 // POST: actually bring the worktree up to date with the base branch. Triggered by
-// the Sync button (clean merge) — the fast-forward tier resolves silently on the
-// next follow-up message instead (see the messages route).
+// the Sync button (clean merge). The fast-forward tier resolves with no separate
+// step on the next follow-up message (see the messages route).
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   // Runs under the per-task lock shared with the turn-launch path so the
-  // running check stays true for the whole sync — a turn can't start writing
-  // into the worktree while the fast-forward/merge below is rewriting it.
+  // running check stays true for the whole sync, and a turn cannot start
+  // writing into the worktree while the fast-forward/merge below is
+  // rewriting it.
   return jsonGuard(`sync ${id}`, () => withTaskLock(id, async () => {
     const task = getTask(id);
     if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -57,7 +58,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       workBranch: task.work_branch,
       baseBranch,
     });
-    // Nothing was compared, so "up to date" would be a lie — and every tier below
+    // Nothing was compared, so "up to date" would be a lie, and every tier below
     // would fail against a branch git doesn't have. Refuse and name it.
     if (status.baseMissing)
       return NextResponse.json(
@@ -67,8 +68,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     if (status.behind === 0) return NextResponse.json({ ok: true, upToDate: true, behind: 0 });
 
     // Tier 1: fast-forward (no divergent work + clean tree). After it, the work
-    // branch == base tip, so reset the diff base there too (the branch's changes
-    // are all in the base now — nothing task-specific to show).
+    // branch == base tip, so reset the diff base there too: the branch's changes
+    // are all in the base now, so there is nothing task-specific to show.
     if (status.canFastForward) {
       const ok = await fastForwardWorktree(task.worktree_path, baseBranch);
       if (ok && status.baseTip) updateTask(id, { base_sha: status.baseTip });
@@ -78,9 +79,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       );
     }
 
-    // Tier 2/3: merge the base branch INTO the work branch inside the isolated
-    // worktree — the same prepareWorktreeMerge used for conflict resolution, but
-    // WITHOUT the auto-land step (a sync brings the worktree up to date; it does
+    // Tier 2/3: merge the base branch into the work branch inside the isolated
+    // worktree, using the same prepareWorktreeMerge as conflict resolution, but
+    // without the auto-land step (a sync brings the worktree up to date; it does
     // not push the task's work into main).
     const message = syncCommitMessage(baseBranch, task);
     const prep = await prepareWorktreeMerge({
@@ -92,16 +93,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     if (!prep.ok) return NextResponse.json({ ok: false, error: prep.error }, { status: 409 });
 
     if (prep.clean) {
-      // Merge committed cleanly — base tip is now an ancestor of HEAD, so advance the
-      // diff base to it: the Changes view then shows only the task's own work on top
+      // Merge committed cleanly: base tip is now an ancestor of HEAD, so advance the
+      // diff base to it. The Changes view then shows only the task's own work on top
       // of main, not all of main's intervening commits.
       if (status.baseTip) updateTask(id, { base_sha: status.baseTip });
       return NextResponse.json({ ok: true, synced: true, behind: status.behind });
     }
 
-    // Conflicts (prediction can be wrong at the margin) — markers are now in the
-    // worktree. Hand back the file lists + a resolution prompt so the client can
-    // escalate to the existing Fix-with-AI flow.
+    // Conflicts (prediction can be wrong at the margin): markers are now in the
+    // worktree. Hand back the file lists plus a resolution prompt so the client
+    // can escalate to the existing Fix-with-AI flow.
     return NextResponse.json(
       { ok: true, conflicts: prep.conflicts, binaryConflicts: prep.binaryConflicts, prompt: buildConflictPrompt(baseBranch, prep.conflicts) },
       { status: 200 }

@@ -30,15 +30,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (body[k] !== undefined) fields[k] = body[k];
   }
   // Pause/resume. Resuming recomputes from NOW, so unpausing a schedule parked
-  // for a month doesn't greet the user with a month of missed occurrences.
+  // for a month does not surface a month of missed occurrences.
   if (body.enabled !== undefined) fields.enabled = body.enabled ? 1 : 0;
   if (fields.once_date !== undefined && typeof fields.once_date !== "string") {
     return NextResponse.json({ error: "once_date must be 'YYYY-MM-DD' or ''" }, { status: 400 });
   }
   if (body.send_context !== undefined) fields.send_context = body.send_context ? 1 : 0;
-  // Link or unlink the runbook this schedule fires. Compared against the
-  // SCHEDULE's project, not a path id — see the POST route's note on why a
-  // cross-project link is refused rather than resolved.
+  // Link or unlink the runbook this schedule fires, compared against the
+  // SCHEDULE's project. See the POST route's note on why a cross-project link
+  // is refused.
   if (body.runbook_id !== undefined) {
     if (body.runbook_id === null || body.runbook_id === "") {
       fields.runbook_id = null;
@@ -63,9 +63,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  // Hard delete, like everything else here. The tasks it minted survive
-  // (tasks.schedule_id is ON DELETE SET NULL) — deleting the schedule must not
-  // delete the work it produced.
+  // Hard delete. The tasks it minted survive (tasks.schedule_id is ON DELETE
+  // SET NULL); deleting the schedule must not delete the work it produced.
   deleteSchedule(id);
   return NextResponse.json({ ok: true });
 }

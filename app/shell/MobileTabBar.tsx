@@ -11,11 +11,11 @@ const TABS: { id: MobileTabId; label: string; icon: () => React.ReactElement }[]
   { id: "insights", label: "Insights", icon: Icon.chart },
 ];
 
-// Bottom tab bar (phone only). A plain flex sibling of .body inside .app.mobile
-// rather than a fixed overlay — it claims its own row and .body's flex:1 shrinks
-// to fit above it, so no manual bottom-padding/z-index bookkeeping is needed.
+// Bottom tab bar (phone only). A plain flex sibling of .body inside .app.mobile,
+// not a fixed overlay: it claims its own row and .body's flex:1 shrinks to fit
+// above it, so no manual bottom-padding/z-index bookkeeping is needed.
 // `active: null` covers Settings, which is reachable but isn't one of these four
-// tabs — nothing lights up while it's on screen.
+// tabs, so nothing lights up while it's on screen.
 export function MobileTabBar({ active, onSelect }: { active: MobileTabId | null; onSelect: (id: MobileTabId) => void }) {
   return (
     <nav className="mtabbar">

@@ -11,7 +11,7 @@ import { endpointSummary, type EndpointModelsState } from "./modelEndpoint";
 // Touch-device detection, shared by every surface that must behave differently
 // under a finger (TaskBoard drops draggable=true, the Composer's return key
 // inserts a newline instead of sending). SSR renders false and the effect
-// corrects on mount — the same pattern as useIsMobile in Shell.tsx.
+// corrects on mount, the same pattern as useIsMobile in Shell.tsx.
 export function useCoarsePointer() {
   const [coarse, setCoarse] = useState(false);
   useEffect(() => {
@@ -27,11 +27,11 @@ export function useCoarsePointer() {
 export function StatusDot({ status, running, awaiting, background, lg }: { status: Status; running?: boolean; awaiting?: boolean; background?: boolean; lg?: boolean }) {
   // Signal language (mission-control): "needs your input" is an alert coral, a
   // *live* working session is blue (both pulse to draw the eye), and an idle
-  // status falls back to its base color. Awaiting wins over running — a turn
-  // parked on a question is technically live but it's really waiting on you.
+  // status falls back to its base color. Awaiting wins over running: a turn
+  // parked on a question is technically live but is really waiting on you.
   // Background (a hollow blue ring) sits between: the session is live and held
-  // open for run_in_background work, but the model isn't talking — nothing
-  // needs the user, so it must NOT read as either "waiting" or plain "working".
+  // open for run_in_background work, but the model isn't talking, so nothing
+  // needs the user and it must not read as either "waiting" or plain "working".
   const cls = awaiting ? "c" : background ? "bg" : running ? "b" : SCLS[status];
   return (
     <span
@@ -69,22 +69,20 @@ export function Avatar({ who, agent }: { who: "user" | "cc"; agent?: string | nu
   return <span className={`av cc${mark ? ` ${agent}` : ""}`}>{mark ? mark() : Icon.bolt()}</span>;
 }
 
-// Which agent driver a task runs under (Claude Code / Codex …), as the brand
-// mark alone, sat left of the title it qualifies. Hidden when only one agent is
-// available (nothing to disambiguate) so single-agent workspaces stay
+// Which agent driver a task runs under (Claude Code / Codex …), shown as the
+// brand mark alone, left of the title it qualifies. Hidden when only one agent
+// is available (nothing to disambiguate) so single-agent workspaces stay
 // clutter-free. `multi` is passed by the caller from the agents bundle.
 //
-// The label moved to the tooltip. A word of prose was spending chip-width the
-// title beside it wanted, to say what a 14px logo says at a glance, and unlike
-// the tags it used to sit with there is nothing to DO with the agent: it's
-// fixed for the life of the session and clicking it filters nothing.
+// The mark carries no text label: it is fixed for the life of the session and
+// clicking it filters nothing, so a word of prose would spend chip-width the
+// title beside it wants without giving the user anything to act on.
 //
-// An agent with no mark of its own (a third driver, the e2e mock) falls back to
-// the generic bolt exactly as `Avatar` does, rather than to the name. The slot
-// has to stay a FIXED, non-shrinking glyph: the title beside it is
-// `flex:1;min-width:0`, so a nowrap text chip in this row squeezes it to zero
-// width on a narrow column — which is the very crowding that had banished the
-// old chip to the card footer. The name is a hover away either way.
+// An agent with no mark of its own (a third driver, the e2e mock) falls back
+// to the generic bolt, the same as `Avatar`, not to the name. The slot has to
+// stay a FIXED, non-shrinking glyph: the title beside it is
+// `flex:1;min-width:0`, so a nowrap text chip in this row would squeeze it to
+// zero width on a narrow column. The name is a hover away either way.
 export function AgentBadge({ agent, label, multi }: { agent?: string | null; label: string; multi: boolean }) {
   if (!multi) return null;
   const mark = agent ? AgentMark[agent] : undefined;
@@ -98,7 +96,7 @@ export function AgentBadge({ agent, label, multi }: { agent?: string | null; lab
 // Which ENDPOINT a task's turns run against, when it isn't the agent's own
 // cloud (lib/agentEnv.ts): a local model server or a custom base URL, set on
 // the project or overridden on the task. Sits beside the agent mark and says
-// the one thing the mark can't — that this Claude Code session is talking to
+// the one thing the mark can't: that this Claude Code session is talking to
 // Ollama, and isn't billed as Anthropic spend. Same fixed, non-shrinking
 // discipline as AgentBadge: the title beside it is `flex:1;min-width:0`.
 // Renders nothing for the cloud, so single-endpoint instances never see it.
@@ -125,7 +123,7 @@ export function ProviderBadge({ provider }: { provider: AgentProvider }) {
 }
 
 // ---- async-state primitives (pair with the .spinner/.load-note/.skel/.err-note
-// styles in globals.css) — every panel that fetches uses these, so loading and
+// styles in globals.css). Every panel that fetches uses these, so loading and
 // error presentation stays uniform across the app. ----
 
 export function Spinner({ size }: { size?: number }) {
@@ -155,9 +153,9 @@ export function ErrNote({ children, onRetry, retryLabel = "Retry", style }: {
   );
 }
 
-// Collapsed raw output beneath a one-line error headline — a rejected push's
-// pre-push/pre-receive hook output, which a single-line error would otherwise
-// throw away. Closed by default so it reads as detail, not noise.
+// Collapsed raw output beneath a one-line error headline, e.g. a rejected
+// push's pre-push/pre-receive hook output, which a single-line error would
+// otherwise throw away. Closed by default so it reads as detail, not noise.
 export function ErrDetail({ detail }: { detail?: string }) {
   if (!detail) return null;
   return (
@@ -169,12 +167,11 @@ export function ErrDetail({ detail }: { detail?: string }) {
 }
 
 // A dropdown menu anchored to its trigger. It renders into document.body via a
-// portal and positions itself `fixed` from the trigger's measured rect, so it is
-// never clipped or pushed off-screen by an ancestor's `overflow` — which is
-// exactly what happened on mobile, where the trigger lives inside the
-// horizontally-scrolling `.sh-tools` rail (the menu opened ~570px to the right of
-// a 390px-wide screen and was unreachable). The trigger is found as the parent of
-// an in-place marker span, so call sites don't need to pass a ref.
+// portal and positions itself `fixed` from the trigger's measured rect, so it
+// is never clipped or pushed off-screen by an ancestor's `overflow`, which
+// matters on mobile where the trigger can sit inside the horizontally-
+// scrolling `.sh-tools` rail. The trigger is found as the parent of an
+// in-place marker span, so call sites don't need to pass a ref.
 export function Popover({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   const markerRef = useRef<HTMLSpanElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -196,7 +193,7 @@ export function Popover({ children, onClose }: { children: React.ReactNode; onCl
   }, []);
 
   // Close on any outside click (the trigger and menu stopPropagation), and on
-  // scroll of an *ancestor* — a fixed menu doesn't follow a scrolling ancestor, so
+  // scroll of an *ancestor*: a fixed menu doesn't follow a scrolling ancestor, so
   // dismiss instead. But scrolling inside the menu itself (a long, overflow-scroll
   // list) must NOT close it, so ignore scroll events originating within the menu.
   useEffect(() => {
@@ -227,9 +224,9 @@ export function Popover({ children, onClose }: { children: React.ReactNode; onCl
 
 /**
  * That sentence as the picker renders it: plain when the endpoint answered, and
- * flagged when it didn't — an unreachable endpoint means every turn this
- * project starts will fail, which is worth saying before the task is created
- * rather than in the transcript afterwards.
+ * flagged when it didn't. An unreachable endpoint means every turn this
+ * project starts will fail, which is worth saying before the task is created,
+ * not only in the transcript afterwards.
  */
 export function EndpointNote({ state }: { state: EndpointModelsState }) {
   const text = endpointSummary(state.data, state.loading);

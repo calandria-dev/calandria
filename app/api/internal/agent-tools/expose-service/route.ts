@@ -6,7 +6,7 @@ import { logAgentToolArrival } from "@/lib/agentToolLog";
 export const dynamic = "force-dynamic";
 
 // Internal endpoint the stdio MCP bridge (scripts/calandria-mcp.mjs) proxies the
-// `expose_service` tool call to — the HTTP counterpart of the Claude driver's
+// `expose_service` tool call to, the HTTP counterpart of the Claude driver's
 // in-process tool. Auth is the per-instance SERVICE_TOKEN (middleware.ts).
 export async function POST(req: NextRequest) {
   let body: { projectId?: string; name?: string; port?: number };

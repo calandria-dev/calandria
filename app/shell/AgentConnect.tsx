@@ -11,15 +11,13 @@ import type { AgentInfo, AgentInfoT, AgentsResponseT, AgentLoginT, ClaudeVerifyT
 const NUDGE_DISMISSED = "calandria_agent_nudge_dismissed";
 const LEGACY_NUDGE_DISMISSED = "orch_agent_nudge_dismissed";
 
-// The instance-wide "your agent login died" strip, under the titlebar.
+// Instance-wide "your agent login died" strip, under the titlebar.
 //
-// An expired OAuth session is per-INSTANCE (one login per agent, shared by every
-// task), but it only shows up as a failed turn inside whichever task ran first —
-// so without this you'd have to open that task to learn that nothing can run.
-// The flag is server-persisted (lib/agents/connections.ts) and broadcast on
-// GET /api/events, so this appears in every tab within a moment of the failure
-// and disappears the instant a turn succeeds again. Deliberately not
-// dismissible: no session can run until it's fixed.
+// An expired OAuth session is per instance: one login per agent, shared by
+// every task, but it surfaces only as a failed turn in whichever task ran
+// first. The flag is server-persisted (lib/agents/connections.ts) and
+// broadcast on GET /api/events, so it appears in every tab and clears once a
+// turn succeeds again. Not dismissible: no session can run until it's fixed.
 export function AgentAuthBanner({ broken, onReconnect }: { broken: AgentInfo[]; onReconnect: () => void }) {
   if (broken.length === 0) return null;
   const names = broken.map((a) => a.label).join(" & ");
@@ -27,14 +25,14 @@ export function AgentAuthBanner({ broken, onReconnect }: { broken: AgentInfo[]; 
   // confused with "revoked key" or a network blip. Several: keep it to the names.
   const detail = broken.length === 1 ? broken[0].authBroken?.reason : null;
   // A spent LiteLLM gateway budget rides this same flag and relay
-  // (lib/budgetFailure.ts, lib/runner.ts) so every tab hears about it too, but
-  // reconnecting the agent's login fixes nothing here — the fix is the budget's
-  // own reset (or a raise). Matched verbatim, same convention as the
+  // (lib/budgetFailure.ts, lib/runner.ts), so every tab shows it too.
+  // Reconnecting the agent's login fixes nothing here; only the budget's own
+  // reset or a raise does. Matched verbatim, same convention as the
   // per-message notices in Transcript.tsx.
   const budget = broken.every((a) => a.authBroken?.reason === BUDGET_EXCEEDED_BANNER_REASON);
   // Flagged while still connected on record means the login died in flight.
-  // Flagged with NO record means the record was dropped on purpose — the CLI's
-  // provider changed under a verified login (lib/agents/connections.ts) — and
+  // Flagged with no record means the record was dropped because the CLI's
+  // provider changed under a verified login (lib/agents/connections.ts);
   // "expired" would send the user chasing the wrong fix.
   const expired = broken.every((a) => a.authenticated);
   return (
@@ -56,12 +54,12 @@ export function AgentAuthBanner({ broken, onReconnect }: { broken: AgentInfo[]; 
   );
 }
 
-// Post-setup nudge: once the wizard's one required connection is done, gently
-// suggest connecting the agents that are still unconnected (any of Codex,
-// Antigravity, Claude) so tasks can run on them too.
-// Optional and dismissible (once, via localStorage) — the wizard never requires
-// a second agent. Renders nothing until it confirms there's an unconnected agent
-// to offer, so it never flashes for a single-agent instance.
+// Post-setup nudge: once the wizard's one required connection is done,
+// suggest connecting whichever of Codex, Antigravity or Claude are still
+// unconnected, so tasks can run on them too. Optional and dismissible (once,
+// via localStorage); the wizard never requires a second agent. Renders
+// nothing until it confirms there is an unconnected agent to offer, so it
+// never flashes for a single-agent instance.
 export function AgentNudge({ ready, onConnect }: { ready: boolean; onConnect: () => void }) {
   const [pending, setPending] = useState<AgentInfoT[] | null>(null);
   const [open, setOpen] = useState(false);
@@ -106,15 +104,15 @@ export function AgentNudge({ ready, onConnect }: { ready: boolean; onConnect: ()
 
 // Generic "connect an agent" card, driven entirely by the agent-scoped auth
 // routes (/api/agents/[id]/{login,login/code,verify,api-key}) and the driver's
-// capabilities from GET /api/agents. One component serves every agent — Claude's
-// paste-a-code OAuth, Codex's device-code flow and Antigravity's Google login
-// all fit. Where the third one didn't fit it was made to fit with DATA rather
-// than a branch on an agent id: `loginCompletesOutOfBand` (this login can land
-// without the code box, so watch authStatus too) and `connectHint` (the one
-// caveat the generic prose can't carry — Antigravity's is that a container has
-// no keyring for its token). Used by the Settings "Agents" section and the
-// post-setup "connect another agent" nudge. (The first-run wizard keeps its own
-// Claude-specific step so it can drive the onboarding funnel.)
+// capabilities from GET /api/agents. One component serves every agent:
+// Claude's paste-a-code OAuth, Codex's device-code flow and Antigravity's
+// Google login. Agent-specific behavior comes from data on the capability
+// descriptor: `loginCompletesOutOfBand` (this login can land without the code
+// box, so watch authStatus too) and `connectHint` (a caveat the generic prose
+// can't carry, e.g. Antigravity's containers having no keyring for its
+// token). Used by the Settings "Agents" section and the post-setup "connect
+// another agent" nudge. The first-run wizard keeps its own Claude-specific
+// step to drive the onboarding funnel.
 export function AgentConnect({
   agent,
   onConnected,
@@ -128,11 +126,11 @@ export function AgentConnect({
   const [mode, setMode] = useState<"subscription" | "api_key">(agent.account?.method === "api_key" ? "api_key" : "subscription");
   const [reconnect, setReconnect] = useState(false);
 
-  // Connected on record, but its credentials died in flight (lib/authFailure.ts)
-  // — or, for a gateway task, its LiteLLM key ran out of budget
-  // (lib/budgetFailure.ts), which rides the same flag but isn't fixed by
-  // signing in again. Never show the green "is connected" state here: the
-  // banner sends people to this card to FIX it, so lead with what broke.
+  // Connected on record, but its credentials died in flight
+  // (lib/authFailure.ts), or, for a gateway task, its LiteLLM key ran out of
+  // budget (lib/budgetFailure.ts), which rides the same flag but isn't fixed
+  // by signing in again. Never show the green "is connected" state here: the
+  // banner sends people to this card to fix it, so lead with what broke.
   if (agent.connected && agent.authBroken && !reconnect) {
     const budget = agent.authBroken.reason === BUDGET_EXCEEDED_BANNER_REASON;
     return (
@@ -157,7 +155,7 @@ export function AgentConnect({
     );
   }
 
-  // Already connected from a prior run — show the state + a reconnect affordance.
+  // Already connected from a prior run: show the state and a reconnect affordance.
   if (agent.connected && !reconnect) {
     return (
       <div className="wiz-connected">
@@ -245,7 +243,7 @@ function SubscriptionConnect({ agent, onConnected, compact }: { agent: AgentInfo
     try {
       const r = await jsend<ClaudeVerifyT>(`/api/agents/${agent.id}/verify`, "POST");
       if (r.connected) {
-        fired.current = true; // verify already ran — succeed() would run it again
+        fired.current = true; // verify already ran; succeed() would run it again
         onConnected?.();
       } else {
         setVerifyErr(r.error ?? `no working ${agent.label} sign-in found on this machine`);
@@ -285,19 +283,19 @@ function SubscriptionConnect({ agent, onConnected, compact }: { agent: AgentInfo
     return () => clearInterval(t);
   }, [login, base, succeed]);
 
-  // Some logins can finish WITHOUT the code box ever being used: Antigravity's
+  // Some logins can finish without the code box ever being used: Antigravity's
   // OAuth redirect lands on Google's own callback page, which completes the
   // exchange for the CLI waiting on it, so a user who closes the tab without
-  // copying anything is nonetheless signed in. The login session can't see
-  // that (nothing is written to the pty), so ask the driver's authStatus —
-  // its authoritative "is this CLI signed in" probe — alongside the poll
-  // above. Opt-in per driver (capabilities.loginCompletesOutOfBand) because it
-  // costs a real CLI probe each time, and pointless for a flow where the code
-  // IS the exchange.
+  // copying anything is still signed in. The login session cannot see that
+  // (nothing is written to the pty), so this also polls the driver's
+  // authStatus, its "is this CLI signed in" probe, alongside the poll above.
+  // Opt-in per driver (capabilities.loginCompletesOutOfBand) since it costs a
+  // real CLI probe each time and is pointless for a flow where the code is
+  // the exchange.
   //
-  // Keyed on the login's STATUS, never on the login object: the poll above
+  // Keyed on the login's status, never on the login object: the poll above
   // replaces that object every 1.8s, so an effect depending on it would clear
-  // and re-arm this interval before it could ever fire.
+  // and re-arm this interval before it could fire.
   const phase = login?.status ?? "idle";
   useEffect(() => {
     if (!agent.capabilities.loginCompletesOutOfBand) return;
@@ -315,8 +313,8 @@ function SubscriptionConnect({ agent, onConnected, compact }: { agent: AgentInfo
           if (stopped || !s?.authenticated) return;
           stopped = true;
           clearInterval(t);
-          // Signed in, so nothing further is wanted from the pty the login is
-          // holding open on the CLI's onboarding screens.
+          // Signed in: the pty the login is holding open on the CLI's
+          // onboarding screens is no longer needed.
           jsend(base, "DELETE").catch(() => {});
           setLogin((p) => ({ ...(p as AgentLoginT), status: "success", email: s.email ?? null, plan: s.plan ?? null }));
           succeed();
@@ -394,9 +392,9 @@ function SubscriptionConnect({ agent, onConnected, compact }: { agent: AgentInfo
         {/* Always reachable from here, not only from the error card. A login
             can stall in this state with nothing to click: the authorization
             link expires on the provider's clock (Antigravity's is 60s and not
-            configurable), and the code the user is holding is bound to THIS
-            child's PKCE verifier, so the only recovery is a fresh child and a
-            fresh URL — which is exactly what this does. */}
+            configurable), and the code the user is holding is bound to this
+            child's PKCE verifier. The only recovery is a fresh child and
+            fresh URL, which this button provides. */}
         <div className="hlp" style={{ marginTop: 14 }}>
           Link expired, or the code refused?{" "}
           <button className="linkbtn" onClick={start} disabled={busy}>Start again</button>
@@ -413,7 +411,7 @@ function SubscriptionConnect({ agent, onConnected, compact }: { agent: AgentInfo
     return <div className="wiz-verify"><span className="wiz-spin" /> <span>Starting sign-in… preparing your authorization link.</span></div>;
   }
 
-  // idle — initial CTA
+  // idle: initial CTA
   return (
     <div className="field" style={{ maxWidth: 560 }}>
       {!compact && (
@@ -437,8 +435,8 @@ function SubscriptionConnect({ agent, onConnected, compact }: { agent: AgentInfo
       {verifyErr && !verifying && (
         <div className="hlp" style={{ color: "var(--red)", marginTop: 6 }}>⚠ {verifyErr}</div>
       )}
-      {/* The one caveat the generic prose above can't carry, supplied by the
-          driver's capability descriptor rather than branched on here — the
+      {/* Caveat the generic prose above cannot carry, supplied by the
+          driver's capability descriptor instead of a branch here, so the
           card stays agent-agnostic (lib/agents/types.ts connectHint). */}
       {agent.capabilities.connectHint && (
         <div className="hlp" style={{ marginTop: 10 }}>{agent.capabilities.connectHint}</div>

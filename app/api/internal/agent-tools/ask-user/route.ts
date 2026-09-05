@@ -8,13 +8,13 @@ import type { AskQuestion, AskOption } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 // Internal endpoint the stdio MCP bridge (scripts/calandria-mcp.mjs) proxies the
-// `ask_user` tool call to. Persists + publishes the interactive ask card and
-// parks a detached waiter on the user's answer; the bridge then polls the
-// sibling `wait` endpoint for the outcome. Auth is the per-instance
-// SERVICE_TOKEN, enforced in middleware.ts (isAgentToolPath).
+// `ask_user` tool call to. Persists and publishes the interactive ask card and
+// parks a detached waiter on the user's answer; the bridge polls the sibling
+// `wait` endpoint for the outcome. Auth is the per-instance SERVICE_TOKEN,
+// enforced in middleware.ts (isAgentToolPath).
 
-// Clamp bridge-supplied questions to the AskQuestion shape the UI renders.
-// Anything without a question text or at least one labeled option is dropped —
+// Clamps bridge-supplied questions to the AskQuestion shape the UI renders.
+// Anything without question text or at least one labeled option is dropped:
 // a card the user can't answer would deadlock the turn on a broken picker.
 function sanitizeQuestions(raw: unknown): AskQuestion[] {
   if (!Array.isArray(raw)) return [];
@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
 
   const task = body.taskId ? getTask(body.taskId) : undefined;
   if (!task) return NextResponse.json({ error: "unknown task" }, { status: 404 });
-  // Asks only make sense mid-turn: with no live turn there is no agent waiting
+  // Asks only make sense mid-turn. With no live turn there is no agent waiting
   // for the outcome, and the parked waiter would have no abort signal to tie to.
   if (!hasTurn(task.id)) return NextResponse.json({ error: "no active turn for this task" }, { status: 409 });
 

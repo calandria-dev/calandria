@@ -7,16 +7,15 @@ import { jget, jsend } from "./api";
 import { AgentConnect } from "./AgentConnect";
 import type { AgentInfoT, AgentsResponseT, ClaudeVerifyT, OnboardingT, OnbStep } from "./types";
 
-// The first-run wizard, trimmed to the two irreducible auth steps: connect a
-// coding agent, then verify it responds. "An agent" — not Claude specifically:
-// every registered driver (Claude Code, Codex, …) is offered via the same
-// generic AgentConnect card the Settings surface uses, and connecting ANY of
-// them satisfies the step, so a Codex-only first run completes cleanly (the
-// server adopts the connected agent as the default on finish — lib/onboarding).
-// Claude stays the recommended tab. Everything else — creating a real project —
-// is deferred until after the built-in "Welcome" tutorial. State persists
-// server-side (lib/onboarding) so abandoning mid-way resumes at the right step;
-// it's re-runnable from Settings and skippable for power users.
+// The first-run wizard, trimmed to the two auth steps: connect a coding agent,
+// then verify it responds. Any registered driver (Claude Code, Codex, …) is
+// offered via the same generic AgentConnect card the Settings surface uses, and
+// connecting any one of them satisfies the step, so a Codex-only first run
+// completes cleanly (the server adopts the connected agent as the default on
+// finish, lib/onboarding). Claude stays the recommended tab. Creating a real
+// project is deferred until after the built-in "Welcome" tutorial. State
+// persists server-side (lib/onboarding) so abandoning mid-way resumes at the
+// right step; it's re-runnable from Settings and skippable for power users.
 
 const STEPS: { id: OnbStep; label: string; icon: () => React.ReactNode }[] = [
   { id: "connect", label: "Connect an agent", icon: Icon.bolt },
@@ -34,7 +33,7 @@ export function OnboardingWizard({
   // / "notifications"); collapse anything that isn't "verify" back to "connect".
   const [step, setStep] = useState<OnbStep>(initial.step === "verify" ? "verify" : "connect");
   const [bundle, setBundle] = useState<AgentsResponseT | null>(null);
-  // The agent connected during THIS wizard run — the one the Verify step tests.
+  // The agent connected during this wizard run, the one the Verify step tests.
   // On resume (nothing connected this run) fall back to any connected agent.
   const [justConnected, setJustConnected] = useState<string | null>(null);
   const idx = STEPS.findIndex((s) => s.id === step);
@@ -122,8 +121,8 @@ function StepHead({ n, title, sub }: { n: number; title: string; sub: React.Reac
 // ---------- Step 1: Connect an agent ----------
 
 // One tab per registered driver, each rendering the same generic AgentConnect
-// card (subscription sign-in + API-key path) the Settings surface uses — so
-// agent #3 shows up here with zero wizard edits. Connecting any ONE agent
+// card (subscription sign-in + API-key path) the Settings surface uses, so a
+// third agent shows up here with zero wizard edits. Connecting any one agent
 // unlocks Continue; the rest can be added later from Settings → Agents.
 function ConnectStep({
   bundle,

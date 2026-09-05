@@ -8,34 +8,34 @@ import { agentLabel } from "./agents";
 import type { AgentsBundle } from "./types";
 import { GATEWAY_PLAN_ID, type PlanUsageSnapshot, type PlanUsageWindow } from "@/lib/types";
 
-// The titlebar subscription-usage meter — "how much of my plan have my
-// parallel sessions burned" at a glance, which matters here more than in a
-// single terminal because this app's whole point is running many of them.
+// The titlebar subscription-usage meter: "how much of my plan have my
+// parallel sessions burned" at a glance, which matters more here than in a
+// single terminal since this app runs many sessions at once.
 // Compact pill: session % · week %, tinted by the worst window. Click for the
 // full per-window breakdown (all the windows the provider reports, including
 // per-model weeks) with reset times and data freshness.
 //
 // One pill per agent that reports usage, driven entirely by the keys in the
-// response — a driver that implements planUsage() appears here with no client
+// response: a driver that implements planUsage() appears here with no client
 // edit. Only the pill's two headline numbers need per-provider knowledge, and
 // that is the id lists below; everything else, labels included, comes from the
 // driver.
 //
 // Polls GET /api/plan-usage once a minute while the tab is visible. Cheap on
 // purpose: the server answers from an instance-wide cache and only reads a
-// provider's usage when its own fetch floor allows — see
+// provider's usage when its own fetch floor allows; see
 // lib/agents/claude/planUsage.ts and lib/agents/codex/planUsage.ts. Hidden
 // entirely when no agent reports plan usage (API-key auth, feature off,
 // nothing fetched yet).
 
 const POLL_MS = 60_000;
 
-// One poll per tab, shared: the pill was the only reader, but the queued-start
+// One poll per tab, shared: the pill is one reader, but the queued-start
 // button (SessionView's hero, the transcript's usage-limit notice) needs the
-// same snapshot to know WHEN the reset is, and a second poller per surface
-// would multiply the provider fetches the server so carefully floors. A
-// module-level store with ref-counted polling — the interval runs while any
-// subscriber is mounted and stops when the last one leaves.
+// same snapshot to know when the reset is, and a second poller per surface
+// would multiply the provider fetches the server floors. A module-level
+// store with ref-counted polling: the interval runs while any subscriber is
+// mounted and stops when the last one leaves.
 type PlanUsageMap = Record<string, PlanUsageSnapshot>;
 const EMPTY: PlanUsageMap = {};
 let current: PlanUsageMap = EMPTY;
@@ -46,7 +46,7 @@ function load() {
   if (document.hidden) return; // a hidden tab shouldn't keep the server polling the provider
   jget<{ agents: PlanUsageMap }>("/api/plan-usage")
     .then((d) => { current = d.agents; listeners.forEach((l) => l()); })
-    .catch(() => { /* transient — keep showing the last snapshot */ });
+    .catch(() => { /* transient: keep showing the last snapshot */ });
 }
 const onVis = () => { if (!document.hidden) load(); };
 function subscribe(l: () => void): () => void {
@@ -88,7 +88,7 @@ function fmtReset(ms: number): string {
 
 // Time left in a window, compact ("18m", "3h05m"). Null once the reset is
 // past or unreported. Recomputed on every poll re-render, so it's at worst a
-// minute stale — the same granularity it displays.
+// minute stale, the same granularity it displays.
 function fmtRemaining(resetsAt: number | null): string | null {
   if (resetsAt == null) return null;
   const mins = Math.ceil((resetsAt - Date.now()) / 60_000);
@@ -124,12 +124,12 @@ function Meter({ w, rejected }: { w: PlanUsageWindow; rejected: boolean }) {
 
 // Which window is "the session" and which is "the week", across providers.
 // The popover renders every window the agent reports and takes its labels from
-// the driver, but the PILL has room for two numbers and has to know which two.
+// the driver, but the pill has room for two numbers and has to know which two.
 // Claude and Antigravity tag every window with `kind` directly; Codex's
 // app-server names its windows by rank instead of duration (`primary` /
 // `secondary`, the ~5h and weekly limits) and reports no kind at all, so these
 // id lists are `AgentPlanPill`'s fallback. A provider whose keys match neither
-// still gets a pill — the single worst-window percentage below — rather than
+// still gets a pill: the single worst-window percentage below, instead of
 // being dropped.
 const SESSION_IDS = ["five_hour", "primary"];
 const WEEK_IDS = ["seven_day", "secondary"];
@@ -146,13 +146,13 @@ export function planUsageShown(appDefaults: Record<string, string>, agentId: str
 // One pill per agent that reports plan usage, in the order GET /api/plan-usage
 // lists them (driver registration order). Usually that is one (nobody runs two
 // metered subscriptions in the same instance by accident), but an Antigravity
-// + Claude workspace — or a Claude + ChatGPT one — meters two independent
+// + Claude workspace, or a Claude + ChatGPT one, meters two independent
 // quotas, and hiding either would misreport how much room the next batch of
 // turns has. Which of them earn titlebar space is the user's call
 // (`plan_usage:<agent>`, Settings → Agents): a second login you only use for
 // utility jobs is worth metering on the server and not worth a pill.
 //
-// Each pill wears its agent's brand mark and no name — the marks are what tell
+// Each pill wears its agent's brand mark and no name; the marks are what tell
 // two pills apart, and the button's tooltip and popover both spell out whose
 // plan it is.
 export function PlanUsagePill({ agents, appDefaults }: { agents: AgentsBundle; appDefaults: Record<string, string> }) {
@@ -181,7 +181,7 @@ function AgentPlanPill({ agentId, label, snap }: { agentId: string; label: strin
   const week = snap.windows.find((w) => w.kind === "week") ?? snap.windows.find((w) => WEEK_IDS.includes(w.id));
   // Session reset countdown, on the pill itself: the 5-hour window is the one
   // you pace work against ("can I dispatch another batch before it rolls?"),
-  // so its time-to-reset earns pill space where the week's doesn't — the
+  // so its time-to-reset earns pill space where the week's doesn't. The
   // popover still shows every window's reset in full.
   const sessionLeft = session ? fmtRemaining(session.resetsAt) : null;
   const rejected = snap.status === "rejected";

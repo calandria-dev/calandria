@@ -9,37 +9,24 @@ import { Skel, ErrNote } from "./shared";
 import { buildCollabPacket, isMarkdownPath, locateQuote, DEFAULT_COLLAB_EDIT_MODE, type CollabEditMode } from "@/lib/collab";
 import type { TaskDocComment } from "@/lib/types";
 
-// Document collaboration mode — a Word-style review of one file the agent
-// touched. Two tabs over ONE document state: EDIT (source editor beside a live
-// render) and COMMENT (the render, select a passage → attach a note, plus a
-// general box). A non-markdown text file gets the same two tabs with the
-// render replaced by the verbatim text — there is nothing to render, but a
-// passage of code takes a comment as well as a paragraph does — and the editor
-// picks its syntax from the filename. Send builds a single message
-// (lib/collab.ts) carrying the edit diff and/or the comments with their
-// location, and hands it to the same onSend chat uses — so it queues behind a
-// running turn like any message.
+// Document collaboration mode: a Word-style review of one file the agent
+// touched. EDIT is a source editor beside a live render; COMMENT is the
+// render, where selecting a passage attaches a note, plus a general box.
+// Send (lib/collab.ts) builds one message carrying the edit diff and/or
+// comments with their location, and queues behind a running turn like any
+// message.
 //
-// Passage comments are PERSISTED (task_doc_comments, via /api/tasks/[id]/
-// doc-comments) the moment they're added, the way the Changes tab's line
-// comments are: TaskChanges remounts on every rail collapse and tab switch,
-// which unmounts this modal, so an in-progress review has to live on the
-// server to survive it. Each row carries the file's blob sha as loaded
-// (anchor_sha) — sent comments whose anchor still matches are listed read-only
-// against the document; sent ones whose anchor doesn't are "outdated". Unsent
-// drafts stay live either way (the user decides whether they still apply) and
-// are what Send folds into the packet. Edits and the general box are still
-// modal-only.
+// Passage comments persist immediately (task_doc_comments), since
+// TaskChanges unmounts this modal on every rail collapse or tab switch.
+// Each carries the file's blob sha as loaded, so a comment is read-only and
+// current if the sha still matches, "outdated" if it doesn't; unsent
+// drafts are what Send folds into the packet.
 //
-// Edits reach the file one of two ways (`CollabEditMode`). "direct" — the
-// default — writes the edited text into the worktree first (POST
-// /api/tasks/[id]/file) and the message carries the diff as context; it's the
-// reliable route, since a model asked to apply a patch verbatim sometimes
-// doesn't. "patch" sends only the diff and asks the agent to apply it, which
-// keeps the agent's session the worktree's only writer. Direct is refused by
-// the server while a turn is running (the agent owns the worktree) and when
-// the file changed since the modal loaded it; the picker greys the option out
-// for the first case client-side, the second shows up as an error on Send.
+// Edits reach the file one of two ways (`CollabEditMode`): "direct" (the
+// default) writes into the worktree before sending, since a model asked to
+// apply a patch verbatim sometimes doesn't; "patch" sends only the diff for
+// the agent to apply. The server refuses direct while a turn is running or
+// if the file changed since the modal loaded it.
 
 const EDIT_MODE_KEY = "collab-edit-mode";
 function loadEditMode(): CollabEditMode {
@@ -139,13 +126,13 @@ async function readJson<T>(r: Response): Promise<T & { error?: string }> {
 export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }: {
   taskId: string;
   file: string;
-  running?: boolean; // a turn is live — direct writes are refused server-side, so the picker says so up front
+  running?: boolean; // a turn is live: direct writes are refused server-side, so the picker says so up front
   onClose: () => void;
   onSend: (text: string) => void;
-  onWritten?: () => void; // the file on disk changed under the Changes tab — refetch the diff
+  onWritten?: () => void; // the file on disk changed under the Changes tab: refetch the diff
 }) {
   const [original, setOriginal] = useState<string | null>(null);
-  const [sha, setSha] = useState<string | null>(null); // blob sha of `original` — the anchor new comments get
+  const [sha, setSha] = useState<string | null>(null); // blob sha of `original`: the anchor new comments get
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("comment");
@@ -161,7 +148,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
   const [mode, setMode] = useState<CollabEditMode>(loadEditMode);
   const [sendError, setSendError] = useState<string | null>(null);
   // The text a direct write already landed on disk, so a retry after a later
-  // step failed (marking drafts sent) doesn't write again — the second write
+  // step failed (marking drafts sent) doesn't write again: the second write
   // would be refused as stale, since `original` is still what the modal loaded.
   const [written, setWritten] = useState<string | null>(null);
   const docRef = useRef<HTMLDivElement>(null);
@@ -187,9 +174,9 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
   }, [taskId, file, api]);
 
   // Three buckets. Drafts are what Send folds into the packet, whatever their
-  // anchor; a sent comment is read-only and, once the file's content has moved
-  // on from the sha it was written against, outdated — its passage may be
-  // gone, so it's collapsed rather than guess-painted onto the document.
+  // anchor; a sent comment is read-only, and once the file's content has
+  // moved on from the sha it was written against, outdated: its passage may
+  // be gone, so it's collapsed instead of guess-painted onto the document.
   const drafts = useMemo(() => comments.filter((c) => !c.sent_to_agent), [comments]);
   const sentCurrent = useMemo(() => comments.filter((c) => c.sent_to_agent && sha !== null && c.anchor_sha === sha), [comments, sha]);
   const outdated = useMemo(() => comments.filter((c) => c.sent_to_agent && !(sha !== null && c.anchor_sha === sha)), [comments, sha]);
@@ -213,8 +200,8 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
     setSendError(null);
     try { localStorage.setItem(EDIT_MODE_KEY, m); } catch { /* private browsing, etc. */ }
   };
-  // Comments are saved as they're added, so only the modal-local halves —
-  // edits and the general box — can be lost by closing.
+  // Comments are saved as they're added, so only the modal-local halves
+  // (edits and the general box) can be lost by closing.
   const dirty = edited || general.trim().length > 0;
 
   // Closing with unsent work asks once; the scrim, Escape and Cancel all go
@@ -275,7 +262,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
     setCommentErr(null);
     try {
       const r = await fetch(`${api}/${encodeURIComponent(id)}`, { method: "DELETE" });
-      if (r.status === 404) { setComments((cs) => cs.filter((c) => c.id !== id)); return; } // already gone — same outcome
+      if (r.status === 404) { setComments((cs) => cs.filter((c) => c.id !== id)); return; } // already gone: same outcome
       await readJson(r);
       setComments((cs) => cs.filter((c) => c.id !== id));
     } catch (e) {
@@ -283,7 +270,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
     }
   };
 
-  // Paint every comment's passage via the CSS Custom Highlight API — no DOM
+  // Paint every comment's passage via the CSS Custom Highlight API: no DOM
   // mutation, so react-markdown's tree is never fought over, and a re-render
   // (tab switch, edit) simply repaints from the quotes. Browsers without it
   // still get the list on the right; the passage just isn't tinted. Drafts
@@ -319,9 +306,9 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
   };
 
   // Send, in three steps whose order matters. (1) In direct mode, write the
-  // edited text into the worktree — the server can refuse (live turn, file
+  // edited text into the worktree: the server can refuse (live turn, file
   // changed since load), and a refusal must leave the review exactly as it
-  // was: nothing marked, nothing sent. (2) Flip every draft to sent BEFORE
+  // was, nothing marked, nothing sent. (2) Flip every draft to sent before
   // handing the packet to chat: if the mark fails the packet isn't sent and
   // the drafts stay drafts, so nothing reaches the agent that the record
   // doesn't show; the reverse order could send a review and then leave it
@@ -374,8 +361,8 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
   ].filter(Boolean).join(" · ");
 
   // One comment card. Drafts are numbered (the packet numbers them the same
-  // way) and removable; sent ones are read-only, tagged, and — when the
-  // document has changed since — dimmed as outdated.
+  // way) and removable; sent ones are read-only, tagged, and dimmed as
+  // outdated when the document has changed since.
   const card = (c: TaskDocComment, i: number | null, variant: "draft" | "sent" | "outdated") => {
     const missing = variant === "draft" && locateQuote(text, c.quote) === null;
     return (
