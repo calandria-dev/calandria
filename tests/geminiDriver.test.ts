@@ -1,10 +1,10 @@
 // Driver-level tests for the Antigravity (Gemini) driver.
 //
-// There is no SDK to mock here — this driver spawns the `agy` CLI itself — so
-// the seam under test is `node:child_process.spawn`. The fake child replays the
-// same recorded NDJSON the event tests use, which means these exercise the real
-// argv construction, the real stream parsing, the real usage-baseline
-// persistence and the real abort path without needing a binary or a login.
+// There is no SDK to mock here, since this driver spawns the `agy` CLI itself,
+// so the seam under test is `node:child_process.spawn`. The fake child replays
+// the same recorded NDJSON the event tests use, exercising the real argv
+// construction, the real stream parsing, the real usage-baseline persistence
+// and the real abort path without needing a binary or a login.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
@@ -154,7 +154,7 @@ describe("runTurn", () => {
 
     const [, , opts] = spawnMock.mock.calls[0];
     expect(opts.cwd).toBe("/tmp");
-    // The whole reason for the override: a per-task MCP config the CLI will read.
+    // The override exists so the CLI reads a per-task MCP config.
     expect(opts.env.HOME).toContain(task.id);
     // A self-update mid-turn would swap the pinned binary out from under us.
     expect(opts.env.AGY_CLI_DISABLE_AUTO_UPDATE).toBe("true");
@@ -188,8 +188,8 @@ describe("runTurn", () => {
   });
 
   it("surfaces a soft denial the stream itself never reports", async () => {
-    // Measured: the CLI auto-denies a tool it cannot prompt about, says so only
-    // on stderr, and still exits 0. Without this the turn would look successful
+    // The CLI auto-denies a tool it cannot prompt about, reports that only on
+    // stderr, and still exits 0. Without this the turn would look successful
     // while having done nothing.
     const { project, task } = rows();
     spawnMock.mockReturnValue(
@@ -279,11 +279,11 @@ describe("per-task MCP bridge", () => {
   });
 });
 
-// Hosted LiteLLM gateway MCP servers (docs/design/litellm.md, "Mounting, per
+// Hosted LiteLLM gateway MCP servers (docs/AGENTS.md, "Mounting, per
 // driver"): merged into the same per-task mcp_config.json as the bridge, keyed
-// by the alias slugified to hyphens — Gemini CLI's policy engine splits a tool
+// by the alias slugified to hyphens. Gemini CLI's policy engine splits a tool
 // name on the first underscore after `mcp_`, so an alias with one would break
-// a wildcard permission rule for it. Unlike Codex there's no permission-mode
+// a wildcard permission rule for it. Unlike Codex there is no permission-mode
 // gate: `agy` decides tool approval from its own settings, not per-server
 // config, so bridgeConfig mounts the selection unconditionally.
 describe("hosted gateway MCP mount", () => {
@@ -347,13 +347,13 @@ describe("capabilities", () => {
   });
 });
 
-// The LiteLLM gateway (docs/design/litellm.md, "Antigravity driver"): a
-// gateway-kind turn carries GOOGLE_GEMINI_BASE_URL and GEMINI_API_KEY, and
+// The LiteLLM gateway (docs/AGENTS.md, "Antigravity driver"): a gateway-kind
+// turn carries GOOGLE_GEMINI_BASE_URL and GEMINI_API_KEY, and
 // prepareTaskHome() writes {"modelProvider":"gemini"} into the CLI's own
-// settings — the one thing that makes it read GEMINI_API_KEY at all. That
+// settings, the one thing that makes it read GEMINI_API_KEY at all. That
 // file is shared process-wide (see lib/agents/gemini/home.ts and auth.ts's
 // writeModelProviderSetting), so every case here redirects HOME to a throwaway
-// directory rather than touching the real one running this suite.
+// directory instead of touching the real one running this suite.
 describe("gateway routing", () => {
   const GW = "http://gw.example.com:4000";
   let realHome: string | undefined;

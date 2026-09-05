@@ -1,39 +1,39 @@
 // Pins the repo's line-ending contract: LF in the index, LF in every working
 // tree, on every platform.
 //
-// `.gitattributes` is one line (`* text=auto eol=lf`) and nothing in the build
+// `.gitattributes` is one line (`* text=auto eol=lf`). Nothing in the build
 // regenerates it, so unlike `tests/lockfileGypfile.test.ts` this is not
-// guarding against a tool that deletes the fix. It guards against the fix being
-// deleted by hand, weakened, or quietly bypassed — and, more usefully, against
-// a CRLF file being committed regardless of how the attribute is spelled.
+// guarding against a tool that deletes the fix. It guards against the fix
+// being deleted by hand, weakened, or bypassed without anyone noticing, and,
+// more usefully, against a CRLF file being committed regardless of how the
+// attribute is spelled.
 //
-// Why it matters is a Windows-only story with no Linux symptom. Before the
-// attribute existed the repo had NO attributes at all, so what landed in a
-// Windows checkout was decided by that machine's `core.autocrlf`, a per-machine
-// setting the repo can't see and CI doesn't share. Nothing was broken at the
-// time (the sweep for issue #53 checked): the recorded Codex JSONL fixtures are
-// `JSON.parse`d, and JSON's grammar treats a trailing CR as whitespace;
-// `tests/naming.test.ts` splits every tracked file into lines but has no
-// `$`-anchored pattern in it. The exposure is the NEXT test — a snapshot, an
-// anchored regex, a fixture compared byte-for-byte — which would pass for
-// everyone who wrote it and fail only on Windows, and only for the subset of
-// Windows developers with `core.autocrlf=true`.
+// This matters only on Windows, with no Linux symptom. With no attributes at
+// all, what lands in a Windows checkout is decided by that machine's
+// `core.autocrlf`, a per-machine setting the repo cannot see and CI does not
+// share. The recorded Codex JSONL fixtures are `JSON.parse`d, and JSON's
+// grammar treats a trailing CR as whitespace (issue #53's sweep found nothing
+// broken at the time); `tests/naming.test.ts` splits every tracked file into
+// lines but has no `$`-anchored pattern in it. The exposure is the next test:
+// a snapshot, an anchored regex, a fixture compared byte-for-byte, which would
+// pass for everyone who wrote it and fail only on Windows, and only for the
+// subset of Windows developers with `core.autocrlf=true`.
 //
-// This is deliberately NOT `outputLines` territory. That helper (same issue)
-// covers what a native Windows binary writes to a PIPE. This covers what git
-// writes to DISK. Same `\r`, different cause, and a fix for one does nothing
-// for the other.
+// This is not `outputLines` territory. That helper (same issue) covers what a
+// native Windows binary writes to a pipe. This covers what git writes to
+// disk. Same `\r`, different cause, and a fix for one does nothing for the
+// other.
 //
 // To fix a failure:
 //
-//   * "no longer resolves to text=auto eol=lf" — `.gitattributes` was deleted
-//     or edited. Restore the line rather than adding a per-path exception; the
-//     value of a blanket rule is that a new file inherits it.
-//   * "is not treated as binary" — someone hardened `text=auto` into a bare
-//     `text`. That takes git's content detection out of the loop and normalizes
-//     the tracked PNGs, WEBPs and WOFF2s on checkout, corrupting them. Put the
-//     `auto` back.
-//   * "committed with CRLF" — a file was added from a Windows checkout with
+//   * "no longer resolves to text=auto eol=lf": `.gitattributes` was deleted
+//     or edited. Restore the line instead of adding a per-path exception; a
+//     blanket rule's value is that a new file inherits it.
+//   * "is not treated as binary": `text=auto` was hardened into a bare
+//     `text`. That takes git's content detection out of the loop and
+//     normalizes the tracked PNGs, WEBPs and WOFF2s on checkout, corrupting
+//     them. Put the `auto` back.
+//   * "committed with CRLF": a file was added from a Windows checkout with
 //     conversion off. `git add --renormalize <path>` and commit the result.
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -61,7 +61,7 @@ type TrackedFile = {
  * merge.
  *
  * One `git ls-files --eol` carries all three facts this file asserts on, so
- * there is one subprocess rather than a `check-attr` per case. `-z` is for the
+ * there is one subprocess instead of a `check-attr` per case. `-z` is for the
  * separator between ENTRIES; within an entry the path still follows a tab, so
  * the split below takes the first tab only.
  */
@@ -107,8 +107,8 @@ describe(".gitattributes pins LF line endings", () => {
     // The tracked binaries: images, fonts, the webp screenshots. `text=auto`
     // means git sniffs content and marks these `-text`, so `eol=lf` never
     // reaches them. A bare `text` would instead force conversion and corrupt
-    // them on the next Windows checkout, which no unit test would notice —
-    // hence pinning it here, on the real tree rather than a list of names.
+    // them on the next Windows checkout, which no unit test would notice,
+    // which is why this is pinned on the real tree instead of a list of names.
     const binary = files.filter((f) => f.index === "-text");
     expect(
       binary.length,
@@ -124,10 +124,10 @@ describe(".gitattributes pins LF line endings", () => {
   it("has nothing committed with CRLF", (ctx) => {
     const files = trackedFiles();
     if (!files) return ctx.skip("git ls-files unavailable (worktree .git is outside the mount)");
-    // The guarantee itself, asserted on the stored bytes rather than on the
-    // attribute that is supposed to produce them. It survives someone replacing
-    // the mechanism, and it is what actually keeps a `$`-anchored assertion or
-    // a byte-for-byte fixture comparison honest on a Windows lane.
+    // The guarantee itself, asserted on the stored bytes instead of on the
+    // attribute that is supposed to produce them. It survives someone
+    // replacing the mechanism, and it is what keeps a `$`-anchored assertion
+    // or a byte-for-byte fixture comparison honest on a Windows lane.
     const dirty = files.filter((f) => f.index === "crlf" || f.index === "mixed");
     expect(
       dirty.map((f) => `${f.file} (i/${f.index})`),

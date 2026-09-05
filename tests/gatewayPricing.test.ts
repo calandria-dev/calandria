@@ -3,7 +3,7 @@ import { recordGatewayRates, estimateCostUsd, clearGatewayRates } from "@/lib/ga
 
 // lib/gatewayPricing.ts prices a gateway turn from the rate table the last
 // catalog probe left behind (lib/gatewayModels.ts calls recordGatewayRates()
-// on every successful /model/info read) — never a network call of its own.
+// on every successful /model/info read); it makes no network call of its own.
 
 afterEach(() => clearGatewayRates());
 

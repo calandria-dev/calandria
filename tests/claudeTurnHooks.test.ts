@@ -1,20 +1,19 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// The driver half of the auto-start seam (issue #40).
+// Pins the driver half of the auto-start seam.
 //
 // update_task and withdraw_suggestion can move a task to a terminal status,
-// which unblocks whatever was waiting on it — and the launch that follows lives
-// in lib/autoStart.ts, a module this driver MUST NOT import: it reaches
-// lib/runner.ts, which resolves this driver through lib/agents/registry.ts, and
-// that cycle is what made Turbopack emit lib/autoStart.ts as a sync module in
-// production, so `startTurn` was read off a pending Promise and every single
-// auto-start died. tests/importGraph.test.ts pins that the edge is gone; this
-// file pins that the BEHAVIOR it used to carry still happens, through the
+// which unblocks whatever was waiting on it. The launch that follows lives in
+// lib/autoStart.ts, a module this driver must not import: it reaches
+// lib/runner.ts, which resolves this driver through lib/agents/registry.ts,
+// and that cycle breaks Turbopack's async propagation into lib/autoStart.ts
+// in production. tests/importGraph.test.ts pins that the edge is gone; this
+// file pins that the auto-start behavior still happens, through the
 // TurnHooks callback the launcher injects (lib/agents/types.ts).
 //
-// Same trick as tests/claudeSettingSources.test.ts: the SDK is mocked at its
-// module boundary, so the REAL driver builds the REAL Calandria MCP server and
-// we can call the tools it mounted exactly as the CLI would.
+// Same approach as tests/claudeSettingSources.test.ts: the SDK is mocked at
+// its module boundary, so the real driver builds the real Calandria MCP
+// server and the tools it mounted can be called exactly as the CLI would.
 const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }));
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
@@ -61,8 +60,9 @@ describe("the Claude driver reports a cleared blocker instead of sweeping it", (
     await tools.get(UPDATE_TASK.name)!.handler({ status: "done" });
 
     expect(getTask(caller.id)!.status).toBe("done");
-    // The id of the row that WENT TERMINAL — which is what the sweep selects
-    // dependents by, and need not be the caller (update_task can write any task).
+    // The id of the row that went terminal, which is what the sweep selects
+    // dependents by; it need not be the caller, since update_task can write
+    // any task.
     expect(onTaskCleared).toHaveBeenCalledWith(caller.id);
   });
 
@@ -88,15 +88,15 @@ describe("the Claude driver reports a cleared blocker instead of sweeping it", (
     const tools = await toolsFor(getTask(caller.id)!, project, { onTaskCleared });
     await tools.get(WITHDRAW_SUGGESTION.name)!.handler({ task: inert.id, reason: "redundant" });
 
-    // Cancelled counts as cleared — a withdrawn blocker will never finish, so
+    // Cancelled counts as cleared: a withdrawn blocker will never finish, so
     // anything waiting on it must stop waiting (lib/autoStart.ts's blocks()).
     expect(getTask(inert.id)!.status).toBe("cancelled");
     expect(onTaskCleared).toHaveBeenCalledWith(inert.id);
   });
 
   it("survives a turn launched with no hooks at all", async () => {
-    // A driver run outside the runner has nobody to notify. The tool must still
-    // do its work rather than throwing at the model.
+    // A driver run outside the runner has nobody to notify. The tool must
+    // still do its work instead of throwing at the model.
     const project = createProject({ name: "HooksAbsent" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
 

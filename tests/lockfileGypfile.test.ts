@@ -1,39 +1,29 @@
-// `gypfile: false` has to be written into package-lock.json by hand, and npm
-// deletes it again the next time it regenerates the lockfile. This test is what
-// makes that deletion loud.
+// `gypfile: false` must be written into package-lock.json by hand; npm
+// deletes it whenever it regenerates the lockfile. This test makes that
+// deletion visible.
 //
-// The defect it guards: a lockfile entry carries only a subset of a package's
-// manifest, and `gypfile` is not one of the fields npm copies into it. Under
-// `npm ci` — which builds its tree from the lockfile, never from the real
-// manifests — arborist therefore reads `gypfile` as `undefined` rather than
-// `false`, sees the `binding.gyp` that is still in the published tarball, and
-// synthesizes the default `node-gyp rebuild` for a package that ships prebuilt
-// binaries and asks for no such thing (`#addToBuildSet` in
-// @npmcli/arborist/lib/arborist/rebuild.js: `gypfile !== false && !install &&
-// !preinstall && isNodeGypPackage(path)`). `npm install` has the real manifest
-// and skips it. Present in every npm from 10.9.3 through 12.0.2 — measured, not
-// assumed, so there is no "upgrade npm" version to wait for.
+// A lockfile entry carries only a subset of a package's manifest, and
+// `gypfile` is not one of the copied fields. Under `npm ci`, which builds
+// its tree from the lockfile instead of the real manifests, arborist reads
+// `gypfile` as undefined, sees the `binding.gyp` still in the published
+// tarball, and runs `node-gyp rebuild` for a package that ships prebuilt
+// binaries (`#addToBuildSet` in @npmcli/arborist/lib/arborist/rebuild.js:
+// `gypfile !== false && !install && !preinstall && isNodeGypPackage(path)`).
+// `npm install` reads the real manifest and is unaffected.
 //
-// What it costs, per platform, is why this is not cosmetic:
+// On Windows this fails `npm ci` outright: `node-gyp rebuild` dies at `gyp
+// ERR! find VS` when no MSVC toolchain matches node-gyp's expectations. On
+// Linux/macOS it produces no visible failure: better-sqlite3's binding.gyp
+// compiles nothing without `force_build`, so the run leaves a half-finished
+// `build/` and exits 0, since require-time resolution falls back to the
+// bundled prebuild regardless.
 //
-//   Windows — `node-gyp rebuild` dies at `gyp ERR! find VS` and `npm ci` exits
-//     non-zero. This is what had main red. The runner's own MSVC does not
-//     rescue it either: node-gyp 11.5.0 does not recognise the Visual Studio 18
-//     that `windows-latest` now ships.
-//   Linux/macOS — silent. better-sqlite3's binding.gyp compiles nothing unless
-//     `force_build` is set, so the run leaves a half-finished `build/`
-//     (config.gypi, an empty obj.target) and exits 0, because require-time
-//     resolution falls back to the bundled prebuild regardless. Nothing is
-//     broken; it is just a toolchain requirement nobody declared, waiting for
-//     the next machine without a compiler.
-//
-// Writing the field into the lockfile fixes it everywhere at once — CI lanes,
-// the Dockerfile builder, and anyone who clones and runs `npm ci` — which is
-// why it is preferred to `--ignore-scripts` plus explicit rebuilds in the eleven
-// places `npm ci` is invoked. The cost is exactly this test: any change that
-// regenerates the lockfile (`npm install`, a dependency bump, a Dependabot PR)
-// drops the field again, and CI has to say so rather than going quietly green
-// on Linux and red only on Windows.
+// Writing the field into the lockfile fixes every caller of `npm ci` at
+// once (CI lanes, the Dockerfile builder, a fresh clone), instead of adding
+// `--ignore-scripts` plus explicit rebuilds everywhere `npm ci` runs. The
+// cost is this test: any lockfile regeneration (`npm install`, a dependency
+// bump, a Dependabot PR) drops the field again, and this test reports it
+// instead of leaving CI green on Linux and red only on Windows.
 //
 // To fix a failure: re-add the named field to the named entry in
 // package-lock.json by hand, and commit it with the lockfile change that
@@ -60,12 +50,13 @@ function readJson(file: string): Record<string, unknown> | null {
   }
 }
 
-// The packages arborist would synthesize `node-gyp rebuild` for if the lockfile
-// did not say otherwise: an installed package that carries a binding.gyp, sets
-// `gypfile: false` in its own manifest, and declares no install/preinstall
-// script of its own. Read from node_modules, not from a list of names, so a
-// dependency that arrives with this shape later is caught the first time the
-// suite runs rather than the first time a Windows user installs it.
+// The packages arborist would run `node-gyp rebuild` for if the lockfile
+// did not say otherwise: an installed package that carries a binding.gyp,
+// sets `gypfile: false` in its own manifest, and declares no
+// install/preinstall script of its own. This reads from node_modules
+// instead of a list of names, so a dependency that arrives with this shape
+// is caught the first time the suite runs, not the first time a Windows
+// user installs it.
 function needsGypfileInLock(): string[] {
   const out: string[] = [];
   for (const [lockPath] of Object.entries(lock.packages)) {

@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { vi } from "vitest";
 
-// The Claude driver module is mocked at the seam — the runner and the clear
-// route resolve it via getDriver(task.agent) (lib/agents/registry.ts), and the
-// registry maps "claude" to this module's export, so replacing it keeps the
-// real SDK (and its env/auth needs) out of the test while still exercising the
-// registry resolution. vi.hoisted lets the hoisted vi.mock factory reference
-// these mocks.
+// The Claude driver module is mocked at the seam: the runner and the clear
+// route resolve it via getDriver(task.agent) (lib/agents/registry.ts), and
+// the registry maps "claude" to this module's export, so replacing it keeps
+// the real SDK and its env/auth needs out of the test while still exercising
+// the registry resolution. vi.hoisted lets the hoisted vi.mock factory
+// reference these mocks.
 const { runTurnMock, summarizeMock } = vi.hoisted(() => ({
   runTurnMock: vi.fn(),
   summarizeMock: vi.fn(),
@@ -60,8 +60,8 @@ describe("prompt-too-long recovery", () => {
     const project = createProject({ name: "P", repo_path: "" });
     const task = createTask({ project_id: project.id, title: "T", description: "d" });
 
-    // Turn 1: the SDK opens a session (init) and then the API rejects the turn
-    // as too long — the exact poisoning sequence.
+    // Turn 1: the SDK opens a session (init), then the API rejects the turn
+    // as too long.
     runTurnMock.mockImplementation(async function* () {
       yield { type: "session", sessionId: "sess-poisoned" };
       yield { type: "error", content: "API Error: 400 prompt is too long: 250000 tokens > 204698 maximum" };
@@ -101,7 +101,7 @@ describe("prompt-too-long recovery", () => {
     startTurn(fresh, project, "second try", "");
     await ended2;
 
-    // The driver was invoked with a task carrying no session id — a fresh run.
+    // The driver is invoked with a task carrying no session id: a fresh run.
     const secondCall = runTurnMock.mock.calls[1];
     expect((secondCall[0] as { session_id: string | null }).session_id).toBeNull();
     expect(getTask(task.id)!.session_id).toBe("sess-fresh");

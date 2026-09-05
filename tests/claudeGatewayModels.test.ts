@@ -4,10 +4,10 @@ import { gatewayModelCatalog, clearGatewayModelCache } from "@/lib/gatewayModels
 import { clearGatewayRates } from "@/lib/gatewayPricing";
 import { startFakeGateway, type FakeGateway } from "./fakeGateway";
 
-// claudeCapabilities(env)'s gateway branch (docs/design/litellm.md, "Claude
-// driver" + "Model catalog…"): reached when env.ANTHROPIC_BASE_URL IS the
-// instance's configured gateway, read via CALANDRIA_LITELLM_BASE_URL — set
-// here rather than assumed, since a hermetic run has neither by default.
+// Pins claudeCapabilities(env)'s gateway branch (docs/AGENTS.md): reached
+// when env.ANTHROPIC_BASE_URL matches the instance's configured gateway,
+// read via CALANDRIA_LITELLM_BASE_URL. Set explicitly here, since a hermetic
+// run has neither by default.
 
 async function withGatewayEnv<T>(url: string, fn: () => Promise<T> | T): Promise<T> {
   const prev = process.env.CALANDRIA_LITELLM_BASE_URL;
@@ -66,8 +66,8 @@ describe("claudeCapabilities — gateway", () => {
     gw = await startFakeGateway({ models: ["claude-sonnet-4-5"] });
     await withGatewayEnv(gw.url, async () => {
       await gatewayModelCatalog(gw!.url, "");
-      // A different base URL — a genuinely custom endpoint, not the gateway —
-      // must not pick up the gateway's catalog just because one is configured.
+      // A different, genuinely custom base URL must not pick up the
+      // gateway's catalog just because one is configured.
       expect(claudeCapabilities({ ANTHROPIC_BASE_URL: "http://localhost:11434" })).toBe(CLAUDE_CAPABILITIES);
     });
   });

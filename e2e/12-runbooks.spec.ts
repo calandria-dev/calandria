@@ -1,9 +1,9 @@
 // Runbooks are unit-tested at the store, dispatch and route layers; this proves
-// the loop a user actually performs — save a recipe on the landing pane,
+// the loop a user actually performs: save a recipe on the landing pane,
 // dispatch it, and watch a real task with a real turn come out the other end.
 //
-// It also covers the one thing no unit test can: that the card renders inside
-// ProjectLanding at all, above Schedules, in the built bundle.
+// It also covers what no unit test can: that the card renders inside
+// ProjectLanding, above Schedules, in the built bundle.
 
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import { createProject, ensureOnboarded, gotoApp, makeFixtureRepo, uid } from "./helpers";
@@ -14,7 +14,7 @@ const RECIPE = "Push and babysit CI";
 
 let destId = "";
 
-/** Save a runbook through the API — fixture setup, not the behavior under test. */
+/** Save a runbook through the API. This is fixture setup, not the behavior under test. */
 async function createRunbook(request: APIRequestContext, projectId: string, name: string, prompt = "say hello") {
   const res = await request.post(`/api/projects/${projectId}/runbooks`, {
     data: { name, description: "Push everything unpushed, then watch the pipeline.", prompt },
@@ -28,9 +28,9 @@ async function createRunbook(request: APIRequestContext, projectId: string, name
  *
  * The "Project home" click is not optional once the project has a task:
  * useRecaps.ts auto-selects the first task the moment none is selected, so a
- * bare project click lands on the session view instead — and racily, since the
- * landing pane renders for a beat first. Same reason
- * e2e/10-schedules.spec.ts's third case exists.
+ * bare project click lands on the session view instead, racily, since the
+ * landing pane renders for a beat first. e2e/10-schedules.spec.ts's third case
+ * exists for the same reason.
  */
 async function openProjectHome(page: import("@playwright/test").Page, name: string) {
   await page.getByText(name).first().click();
@@ -51,7 +51,7 @@ test.beforeAll(async ({ request }) => {
 
 test("a runbook can be saved from the card, then dispatched into a live task", async ({ page }) => {
   await gotoApp(page);
-  // No task in this project, so selecting it lands on ProjectLanding — where
+  // No task in this project, so selecting it lands on ProjectLanding, where
   // the Runbooks card lives, above Schedules.
   await openProjectHome(page, PROJECT);
 
@@ -77,11 +77,11 @@ test("a runbook can be saved from the card, then dispatched into a live task", a
   await sheet.getByLabel("Instructions for this run").fill("focus on the release branch");
   await sheet.getByRole("button", { name: "Run", exact: true }).click();
 
-  // A real task, selected, whose first user message is the composed prompt —
+  // A real task, selected, whose first user message is the composed prompt:
   // the saved recipe plus this run's extras.
   await expect(page.getByText("focus on the release branch")).toBeVisible();
 
-  // And the card now knows it has run.
+  // And the card now reflects that it has run.
   await page.getByRole("button", { name: "Project home" }).click();
   await expect(
     page.locator(".rb-row").filter({ hasText: "Nightly sweep" }).getByRole("button", { name: /^last run / })
@@ -135,22 +135,22 @@ test("deleting a runbook removes it from the card", async ({ page }) => {
   const row = page.locator(".rb-row").filter({ hasText: "Jira sweep" });
   await expect(row).toBeVisible();
   // Nothing links this one, so the confirmation is the plain can't-be-undone
-  // one rather than the schedule-detach explanation.
+  // dialog, not the schedule-detach explanation.
   page.once("dialog", (d) => void d.accept());
   await row.getByRole("button", { name: "Delete" }).click();
   await expect(row).toBeHidden();
 });
 
-// The ⌘K rows are deliberately NOT covered here. The palette lives behind
-// `omniSearch`, which DEFAULT_FEATURES ships off (lib/features.ts), so this
-// suite's server doesn't render it — and switching the flag on for the whole
-// run would test a build nobody gets by default and put an omni-search bar in
-// front of every other spec's toolbar. The ranking those rows depend on is
-// pinned in tests/runbookPalette.test.ts instead.
+// The ⌘K rows are not covered here. The palette lives behind `omniSearch`,
+// which DEFAULT_FEATURES ships off (lib/features.ts), so this suite's server
+// doesn't render it, and switching the flag on for the whole run would test a
+// build nobody gets by default and put an omni-search bar in front of every
+// other spec's toolbar. The ranking those rows depend on is pinned in
+// tests/runbookPalette.test.ts instead.
 
 test("the dispatched task remembers which project it belongs to", async ({ request }) => {
-  // A dispatch mints into the RUNBOOK's project, never the one on screen — the
-  // API is the honest place to assert that, since the UI only ever shows one.
+  // A dispatch mints into the RUNBOOK's project, never the one on screen. The
+  // API is the place to assert that, since the UI only ever shows one project.
   const rb = await createRunbook(request, destId, `Scoped ${uid()}`);
   const res = await request.post(`/api/runbooks/${rb.id}/run`, { data: { start: false } });
   expect(res.status()).toBe(201);

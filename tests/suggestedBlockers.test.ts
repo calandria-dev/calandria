@@ -1,16 +1,14 @@
 /**
- * Issue #46 — a task blocked by an unreviewed SUGGESTION.
+ * Issue #46: a task can be blocked by an unreviewed suggestion.
  *
  * `update_task`'s `blocked_by` validates same-project and acyclicity, never
  * `suggested`, so an ordered plan filed by an agent can leave an accepted task
  * waiting on siblings still sitting in the tray. That edge is real: `blocks()`
  * counts it, server-side auto-start honors it, and the board's chip shows it.
  *
- * What was missing was any way to SEE or CLEAR it — the edit dialog's picker
- * was fed real tasks only, so the blocker had no row to untick, and every save
- * re-submitted it. This file pins the two halves that fix has to stand on:
- * the wire carries the suggested blocker (so the picker can draw it), and the
- * PATCH the picker sends actually removes the edge.
+ * This file pins two things: the wire carries the suggested blocker so the
+ * edit dialog's picker can draw a row for it and let the user untick it, and
+ * the PATCH the picker sends actually removes the edge.
  */
 import { describe, it, expect } from "vitest";
 import { PATCH as patchTask } from "@/app/api/tasks/[id]/route";
@@ -33,8 +31,8 @@ describe("a suggestion as a blocker", () => {
     const { dependent, suggestion, real } = board();
     setTaskDeps(dependent.id, [suggestion.id, real.id]);
 
-    // Not filtered on the way in, and not filtered on the way out: the whole
-    // point of the bug is that this edge is load-bearing.
+    // Not filtered on the way in or the way out: blocks() must see the edge
+    // whether or not the blocking task has been reviewed.
     expect(getTaskDeps(dependent.id).sort()).toEqual([suggestion.id, real.id].sort());
     expect(blocks(suggestion.id)).toBe(true);
   });
@@ -68,8 +66,7 @@ describe("clearing a suggested blocker from the edit dialog", () => {
     setTaskDeps(dependent.id, [suggestion.id, real.id]);
 
     // What the dialog sends after the user unticks the suggestion: the whole
-    // list, minus that one. Before the fix the suggestion had no row, so it was
-    // always still in this array.
+    // list, minus that one.
     const res = await patch(dependent.id, { depends_on: [real.id] });
     expect(res.status).toBe(200);
     expect(getTaskDeps(dependent.id)).toEqual([real.id]);

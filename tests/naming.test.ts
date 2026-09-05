@@ -2,33 +2,34 @@
 //
 // The fork changed its name, and the cutover touched env vars, storage paths,
 // the MCP server, git artifacts, UI copy, internal identifiers and docs. What
-// makes a rename stick is not the sweep — it's stopping the next one from
-// growing back. So: walk every tracked text file, find every `orch`,
-// `orchestrator`, `operator` and `ORCH_`, and fail unless the file has an
-// explicit entry below saying which spellings it is allowed to keep and why.
+// makes a rename stick is stopping the next stray spelling from growing back,
+// not just sweeping the current ones. So: walk every tracked text file, find
+// every `orch`, `orchestrator`, `operator` and `ORCH_`, and fail unless the
+// file has an explicit entry below saying which spellings it is allowed to
+// keep and why.
 //
 // A hit is legitimate for exactly five reasons:
 //
-//   (a) attribution — the Apache NOTICE and README's "Name and lineage" credit
+//   (a) attribution: the Apache NOTICE and README's "Name and lineage" credit
 //       the upstream project, and must keep naming it;
 //   (b) the deprecated `ORCH_*` -> `CALANDRIA_*` alias table (lib/env.mjs and
-//       everything documenting or testing it) — a compatibility surface;
+//       everything documenting or testing it), a compatibility surface;
 //   (c) on-disk and on-wire names minted before the rename that are read on
 //       miss and never rewritten: `~/.zen-orchestrator/orchestrator.db`,
 //       `~/.agent-orchestrator/worktrees`, `orch/<id>` branches, `orch-u-*`
 //       volumes, `/home/orch`, legacy localStorage keys;
-//   (d) frozen history — docs/superpowers/ specs+plans, docs/design/ handoff,
+//   (d) frozen history: docs/superpowers/ specs+plans, docs/design/ handoff,
 //       and the release-please CHANGELOG, all of which record what was true
 //       when written;
-//   (e) "operator" the ordinary noun — the person running this instance. This
-//       one is NOT a per-file entry: it is decided from the spelling, because
+//   (e) "operator" the ordinary noun, the person running this instance. This
+//       one is not a per-file entry: it is decided from the spelling, because
 //       the brand is always capitalized and the noun is the word every doc,
 //       refusal message and comment addressed to a self-hoster reaches for. A
-//       list that grows an entry per commit does not scale — five strays
-//       arrived in one commit (5c4ce62) writing ordinary prose about the person
-//       running the instance — and each entry then blesses the whole FILE for
-//       the rest of its life. See SYSADMIN_NOUN below for the rule and the one
-//       lowercase spelling that is the product after all.
+//       list that grows an entry per commit does not scale, since ordinary
+//       prose about the person running the instance can arrive in any file
+//       and each entry then covers the whole file for the rest of its life.
+//       See SYSADMIN_NOUN below for the rule and the one lowercase spelling
+//       that is the product after all.
 //
 // The concept words "orchestration" / "orchestrates" are not matched at all
 // (\borchestrator\b doesn't fire inside "orchestration"), so ordinary prose
@@ -36,7 +37,7 @@
 //
 // To extend: add the file with the narrowest pattern that covers the line, and
 // a comment saying which of (a)-(e) it is. If it isn't one of them, the rename
-// missed a spot — fix the spot instead.
+// missed a spot; fix the spot instead.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -52,22 +53,22 @@ const TERMS = /\b(orch|orchestrators?|operators?)\b|ORCH_/i;
 
 /**
  * (e) "the operator" = whoever runs this instance. Applied to every file, by
- * DELETING the noun from the line and re-running TERMS over what is left, so a
- * line that also says "orchestrator" still fails — which a per-file allowlist
- * entry could never do, since an entry blesses the whole line.
+ * deleting the noun from the line and re-running TERMS over what is left, so a
+ * line that also says "orchestrator" still fails. A per-file allowlist entry
+ * could never do that, since an entry covers the whole line.
  *
  * Lowercase only: a capitalized "Operator" is the upstream product and stays
  * guarded, which is the distinction that makes the rule safe at all. The one
- * lowercase spelling that IS the product is the upstream repo slug, so it is
+ * lowercase spelling that is the product is the upstream repo slug, so it is
  * excluded and stays on NOTICE's and README's attribution entries.
  *
- * Deliberately kept as a strip rather than tightened further (no lookaround on
- * the trailing side): "an operator-supplied SERVICE_TOKEN" is the noun too, and
- * a rule that failed hyphenated compounds would just re-grow the allowlist it
- * replaces. Residual risk, stated rather than defended: a bare lowercase
- * "operator" meaning the upstream product in running prose passes. In a
- * document that names the fork's lineage the brand is capitalized, and that
- * document is NOTICE or README, where the entry already exists.
+ * Kept as a strip instead of tightened further (no lookaround on the trailing
+ * side): "an operator-supplied SERVICE_TOKEN" is the noun too, and a rule that
+ * failed hyphenated compounds would just re-grow the allowlist it replaces.
+ * Residual risk: a bare lowercase "operator" meaning the upstream product in
+ * running prose passes. In a document that names the fork's lineage the brand
+ * is capitalized, and that document is NOTICE or README, where the entry
+ * already exists.
  */
 const SYSADMIN_NOUN = /\boperators?\b(?!-oss)/g;
 
@@ -77,13 +78,13 @@ const LEGACY_ENV = /ORCH_/;
 /** (c) the pre-rename storage names, still read where they already exist. */
 const LEGACY_STORAGE = /\.zen-orchestrator|\.agent-orchestrator|orchestrator\.(db|lock)/;
 
-// Whole directories of frozen history — (d). Everything under these paths
+// Whole directories of frozen history, (d). Everything under these paths
 // predates the rename and is a record, not a live reference.
 const FROZEN_DIRS = [
   "docs/superpowers/", // shipped specs + plans, dated in their filenames
-  "docs/design/", //      the visual-identity handoff that COMMISSIONED the new name
+  "docs/design/", //      the visual-identity handoff that commissioned the new name
   // (d) too: release-please writes it from commit messages, and the release
-  // that performed the rename necessarily names everything it renamed — the
+  // that performed the rename necessarily names everything it renamed: the
   // 0.3.0 breaking-change note lists ORCH_*, orch/<id>, /home/orch and the
   // old MCP server by name. A generated record of what each release said,
   // never a live reference; the lineage preamble at its top is (a).
@@ -92,7 +93,7 @@ const FROZEN_DIRS = [
 
 // file -> the spellings it may keep, and why.
 const ALLOWED: Record<string, RegExp[]> = {
-  // (a) attribution — the fork's obligations under Apache-2.0 §4(d) and the
+  // (a) attribution: the fork's obligations under Apache-2.0 §4(d) and the
   // README section that credits upstream by name.
   NOTICE: [/Operator/, /operator-oss/],
   "README.md": [/Operator/, /operator-oss/],
@@ -118,8 +119,8 @@ const ALLOWED: Record<string, RegExp[]> = {
   "scripts/docker-test.sh": [/ORCH_TEST_|orch-test/], // same
 
   // (b)+(c) the container surface: ORCH_* compose interpolation kept working,
-  // and the volume/network/home names deliberately did NOT change (renaming a
-  // named volume orphans its data; /home/orch is baked into DB rows).
+  // and the volume/network/home names did NOT change (renaming a named volume
+  // orphans its data; /home/orch is baked into DB rows).
   "docker-compose.yml": [LEGACY_ENV, /orch-u-/, /\/home\/orch\b/],
   Dockerfile: [LEGACY_ENV, /\/home\/orch\b/],
   "docker/entrypoint.sh": [LEGACY_ENV, LEGACY_STORAGE],
@@ -134,9 +135,9 @@ const ALLOWED: Record<string, RegExp[]> = {
   "tests/storageDefaults.test.ts": [LEGACY_STORAGE],
   // (c) too: the desktop suite reads the database file straight off disk after
   // the shell has exited, so it has to resolve the name the way the app does
-  // rather than hardcode the current one.
+  // instead of hardcoding the current one.
   "desktop/e2e/03-quit-drain.spec.ts": [LEGACY_STORAGE],
-  // The backup script follows lib/storage.mjs rather than assuming a filename,
+  // The backup script follows lib/storage.mjs instead of assuming a filename,
   // so both it and its test name the pre-rename database they have to archive.
   "scripts/backup.mjs": [LEGACY_STORAGE],
   "tests/backup.test.ts": [LEGACY_STORAGE],
@@ -148,7 +149,7 @@ const ALLOWED: Record<string, RegExp[]> = {
 
   // (c) git artifacts minted before the rename. A branch name is written into
   // the repo once and lives there forever, so ensureWorktree's self-heal has
-  // to ADOPT an `orch/<id>` branch (legacyBranchForTask) rather than cut an
+  // to adopt an `orch/<id>` branch (legacyBranchForTask) instead of cutting an
   // empty `calandria/<id>` beside it; the merge-abort ref likewise.
   "lib/git.ts": [/refs\/worktree\/orch-merge-abort/, /`orch\/\$\{taskId\}`/, /`orch\/<id>`/],
   "tests/legacyBranchPrefix.test.ts": [/orch\\?\/|orch-merge-abort/],
@@ -167,25 +168,25 @@ const ALLOWED: Record<string, RegExp[]> = {
   // really did say "orchestrator task", and release-please rewrites this file.
 
   // (e) has no entries: SYSADMIN_NOUN decides it from the spelling, for every
-  // file. What used to be listed here (the usage route, the Claude driver and
-  // its capabilities, lib/auth/local-origin.mjs and its test, turnLogging) is
-  // prose about the person running the instance and needs no permission.
+  // file, including the usage route, the Claude driver and its capabilities,
+  // lib/auth/local-origin.mjs and its test, and turnLogging, all of which are
+  // prose about the person running the instance and need no permission.
   "server.js": [LEGACY_ENV, LEGACY_STORAGE],
 
-  // This guard, which has to spell out everything it forbids…
+  // This guard has to spell out everything it forbids.
   "tests/naming.test.ts": [/./],
-  // …and the contributor-facing note pointing at it (CONTRIBUTING.md, "Ground rules"),
-  // which quotes the guarded words in backticks.
+  // The contributor-facing note pointing at it (CONTRIBUTING.md, "Ground rules")
+  // quotes the guarded words in backticks.
   "CONTRIBUTING.md": [/`orch|`orchestrator|`operator|`ORCH_/],
 };
 
 /**
- * Tracked, non-binary text files — the surface this guard covers.
+ * Tracked, non-binary text files: the surface this guard covers.
  *
  * `null` when git can't answer: a task worktree's `.git` is a FILE pointing
  * outside the mount, so `git ls-files` fails under `npm run test:docker`
  * (e2e/README.md documents the same red herring). CI checks out a real clone,
- * which is the run that gates a merge, so the guard skips rather than walking
+ * which is the run that gates a merge, so the guard skips instead of walking
  * the filesystem and grepping a developer's untracked scratch files.
  */
 function trackedTextFiles(): string[] | null {
@@ -243,7 +244,7 @@ describe("naming guard (Operator -> Calandria)", () => {
 
   it("the allowlist has no dead entries", () => {
     // An entry whose file is gone (or no longer matches) is a rename that
-    // finished — drop it, so the list keeps meaning what it says.
+    // finished; drop it, so the list keeps meaning what it says.
     const dead = Object.keys(ALLOWED).filter((file) => {
       if (file === "tests/naming.test.ts") return false;
       const abs = path.join(ROOT, file);
@@ -260,7 +261,7 @@ describe("naming guard (Operator -> Calandria)", () => {
     const line = "// hand it to the orchestrator and let it run";
     expect(TERMS.test(line)).toBe(true);
     expect((ALLOWED["lib/runner.ts"] ?? []).some((p) => p.test(line))).toBe(false);
-    // …and does not fire on the concept word.
+    // Does not fire on the concept word.
     expect(TERMS.test("// the runner orchestrates every turn")).toBe(false);
   });
 
@@ -270,11 +271,11 @@ describe("naming guard (Operator -> Calandria)", () => {
     expect(clean(" * The refusal an operator sees. It has to answer \"what do I do now?\"")).toBe(true);
     expect(clean("# An operator-supplied SERVICE_TOKEN always wins.")).toBe(true);
     expect(clean("// two operators, one database")).toBe(true);
-    // The brand, which is what the guard is for — capitalized in prose…
+    // The brand, which is what the guard is for, capitalized in prose.
     expect(clean("// inherited from Operator, the upstream project")).toBe(false);
-    // …lowercase only as the upstream repo slug…
+    // Lowercase only as the upstream repo slug.
     expect(clean("https://github.com/iishyfishyy/operator-oss")).toBe(false);
-    // …and the noun never launders a second term sharing its line.
+    // The noun never launders a second term sharing its line.
     expect(clean("// the operator hands it to the orchestrator")).toBe(false);
     expect(clean("// the operator sets ORCH_PORT")).toBe(false);
   });

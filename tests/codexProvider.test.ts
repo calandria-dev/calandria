@@ -51,10 +51,10 @@ describe("codexProviderConfig", () => {
   });
 });
 
-// The gateway half (docs/design/litellm.md, "Codex driver"). A LiteLLM proxy is
-// the same Responses-wire mapping with three additions — a key the CLI reads
-// from a named variable, the tag header LiteLLM attributes spend by, and an id
-// of its own so a verdict earned against a local endpoint can't cover it.
+// The gateway half (docs/AGENTS.md, "Codex driver"). A LiteLLM proxy is the
+// same Responses-wire mapping with three additions: a key the CLI reads from
+// a named variable, the tag header LiteLLM attributes spend by, and an id of
+// its own so a verdict earned against a local endpoint cannot cover it.
 
 const GATEWAY = "http://gw.example:4000";
 

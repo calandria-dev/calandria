@@ -34,7 +34,7 @@ describe("persist — a restart lands on the last project, not the first", () =>
   });
 
   it("drops the remembered task when it belongs to a project we did not land on", () => {
-    // Remembered project is gone, so we fell back to `a` — `t1` is `gone`'s task.
+    // Remembered project is gone, so we fell back to `a`; `t1` is `gone`'s task.
     expect(landingSelection(P("a"), {}, { selProj: "gone", selTask: "t1" }).task).toBeNull();
   });
 
@@ -52,8 +52,9 @@ describe("persist — a pre-boot write must not erase the remembered selection",
   const stored = { selProj: "c", selTask: "t1" };
 
   it("re-writes what is on disk while boot is still in flight", () => {
-    // The live nulls here are "the project fetch has not landed", not "nothing is
-    // selected" — persisting them is what sent the next restart to project one.
+    // The live nulls here mean the project fetch has not landed, not that
+    // nothing is selected. Persisting them would send the next restart to
+    // project one.
     expect(selectionToPersist(false, { selProj: null, selTask: null }, stored)).toEqual(stored);
   });
 

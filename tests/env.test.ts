@@ -3,15 +3,15 @@ import { ALIASED_ENV_VARS, deprecatedEnvInUse, deprecatedEnvWarning, legacyNameO
 import fs from "node:fs";
 import path from "node:path";
 
-// Every case passes an explicit env object rather than mutating process.env —
-// same pattern as tests/envKeys.test.ts and tests/resolveHostname.test.ts.
+// Every case passes an explicit env object instead of mutating process.env,
+// the same pattern as tests/envKeys.test.ts and tests/resolveHostname.test.ts.
 
 // readEnv records every ORCH_* fallback it serves into a module-level Set on
 // globalThis (shared across module realms, see lib/env.mjs). That set unions
 // into deprecatedEnvInUse()'s result regardless of the env object passed in,
 // so a case that calls readEnv with a fake ORCH_* fixture would otherwise leak
-// that name into a LATER deprecatedEnvInUse() assertion made with a clean env.
-// Clear it before every case rather than relying on test order.
+// that name into a later deprecatedEnvInUse() assertion made with a clean env.
+// Clear it before every case instead of relying on test order.
 beforeEach(() => {
   (globalThis as { __calandriaDeprecatedEnv?: Set<string> }).__calandriaDeprecatedEnv?.clear();
 });
@@ -27,8 +27,8 @@ describe("readEnv", () => {
 
   it("does not let a present-but-empty CALANDRIA_X shadow a real ORCH_X", () => {
     // .env.example ships every key blank and compose forwards blanks for
-    // anything the host has not exported — an empty string must count as
-    // unset, not as "the new name wins".
+    // anything the host has not exported, so an empty string must count as
+    // unset instead of "the new name wins".
     expect(readEnv("CALANDRIA_HOSTNAME", { CALANDRIA_HOSTNAME: "", ORCH_HOSTNAME: "old" })).toBe("old");
   });
 
@@ -79,9 +79,9 @@ describe("deprecatedEnvInUse", () => {
   });
 
   it("answers about the env it was handed, not about names readEnv fell back to elsewhere", () => {
-    // The recorded-fallback safety net is scoped to the DEFAULT env, because it
-    // describes what THIS process read. A caller passing an explicit object is
-    // asking about that object — which is also what keeps a fixture in one case
+    // The recorded-fallback safety net is scoped to the default env, because it
+    // describes what this process read. A caller passing an explicit object is
+    // asking about that object, which is also what keeps a fixture in one case
     // from bleeding into a clean-env assertion in the next.
     readEnv("CALANDRIA_HOSTNAME", { ORCH_HOSTNAME: "0.0.0.0" });
     expect(deprecatedEnvInUse({})).toEqual([]);
@@ -89,7 +89,7 @@ describe("deprecatedEnvInUse", () => {
 
   it("does fold a recorded fallback into the answer for the process's own env", () => {
     // The net exists for a name read through readEnv but missing from
-    // ALIASED_ENV_VARS — the scan alone would never see it.
+    // ALIASED_ENV_VARS; the scan alone would never see it.
     process.env.ORCH_NOT_IN_THE_TABLE = "x";
     try {
       readEnv("CALANDRIA_NOT_IN_THE_TABLE");
@@ -125,8 +125,8 @@ describe("ALIASED_ENV_VARS", () => {
 describe("lib/env.mjs stays import-free and fs-free", () => {
   it("has no import/require statements in its own source", () => {
     // Both plain-Node entrypoints (server.js, pty-server.js) dynamic-import
-    // this module before Next exists, and it must stay SDK-free — a static
-    // import or an fs read would drag in state this module explicitly avoids.
+    // this module before Next exists, and it must stay SDK-free: a static
+    // import or an fs read would drag in state this module avoids.
     // Statement-shaped match, not a substring: the file's own comments talk
     // about who imports it, so a bare "import " search would fail on prose.
     const src = fs.readFileSync(path.join(__dirname, "..", "lib", "env.mjs"), "utf8");

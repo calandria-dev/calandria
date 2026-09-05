@@ -19,22 +19,19 @@ import { withTaskLock } from "@/lib/taskLock";
 import { repoLockKey, withRepoLock } from "@/lib/repoLock";
 import { commitFile, makeRepo, writeFile } from "./helpers";
 
-// Moving MANY tasks at once. The motivating case is a handful of tasks filed
-// into the wrong project: one round trip instead of eleven, one re-sync in the
-// other tabs instead of eleven.
+// Pins bulk moves of tasks across projects.
 //
-// Two rules only the batch can express, both pinned here:
-//  - a task that can't move (started, or a turn in flight) is REPORTED as
-//    skipped, not silently dropped and not fatal to the rest;
-//  - a dependency edge survives when BOTH its ends are in the moving set. It
-//    stays intra-project, so the "edges never span projects" invariant that
-//    forces the single-task move to drop everything doesn't apply.
+// A task that can't move (started, or with a turn in flight) is reported as
+// skipped, not dropped and not fatal to the rest of the batch. A dependency
+// edge survives only when both ends are in the moving set, staying
+// intra-project so the single-task move's "edges never span projects" rule
+// still holds.
 //
-// And a third, further down: a STARTED task moves here too, but only the ones
-// the caller named. The acknowledgement that throws a checkout away is PER TASK
-// — a list of ids, never a blanket flag — because eleven worktrees are eleven
-// different irreversible answers. What each one holds is read by the batch
-// preview (GET on the same route) so the answer can be given knowing the cost.
+// A started task can move too, but only for ids the caller named: the
+// acknowledgement that discards a checkout is per task id, never a blanket
+// flag, since eleven worktrees are eleven separate irreversible answers. The
+// batch preview (GET on the same route) reports what each one holds so the
+// answer can be given knowing the cost.
 
 async function bulkMove(body: Record<string, unknown>) {
   return bulkMoveRoute(new Request("http://test", { method: "POST", body: JSON.stringify(body) }));
@@ -54,10 +51,9 @@ function batch(name: string, n: number) {
 }
 
 /**
- * Two projects with real repos, and `n` STARTED tasks in the first: each holds
- * a worktree cut from that repo, with its work already landed in main. So every
- * one is a clean, safely discardable checkout until a test dirties it — which
- * is the interesting half of the selection.
+ * Two projects with real repos, and `n` started tasks in the first: each holds
+ * a worktree cut from that repo, with its work already landed in main. Every
+ * one is a clean, discardable checkout until a test dirties it.
  */
 async function startedBatch(name: string, n: number) {
   const fromRepo = await makeRepo();
@@ -87,16 +83,15 @@ describe("moveTasks (store)", () => {
     const { from, to, ids } = batch("Bulk", 3);
     createTask({ project_id: to.id, title: "Already here" });
 
-    // Deliberately out of order: the report (and the positions behind it)
-    // should follow the order they had in the source project, not the order
-    // they were clicked.
+    // Out of order: the report, and the positions behind it, follow the order
+    // the tasks had in the source project, not the order they were passed in.
     const result = moveTasks([ids[2], ids[0], ids[1]], to.id);
 
     expect(result.moved.map((t) => t.id)).toEqual(ids);
     expect(result.skipped).toEqual([]);
-    // Membership only: the tray's order is recency (tests/taskOrder.test.ts
-    // owns that) and every row here is written within the same millisecond, so
-    // asserting a sequence would pin the machine's speed rather than the move.
+    // Membership only: the tray's order is recency, covered by
+    // tests/taskOrder.test.ts, and every row here is written within the same
+    // millisecond, so asserting a sequence would just pin the machine's speed.
     expect(listTasks(to.id).map((t) => t.title).sort()).toEqual(["Already here", "Bulk 1", "Bulk 2", "Bulk 3"]);
     expect(listTasks(from.id)).toEqual([]);
   });
@@ -114,9 +109,9 @@ describe("moveTasks (store)", () => {
 
   it("resets the checkout of the named tasks only", () => {
     // The store's half of the per-task acknowledgement. A blanket flag would
-    // also switch OFF the started-task refusal for the whole batch, so an
+    // also disable the started-task refusal for the whole batch, so an
     // unacknowledged task would move with its columns cleared and its worktree
-    // left orphaned in the repo it came from.
+    // orphaned in the repo it came from.
     const { from, to, ids } = batch("Reset set", 2);
     ids.forEach((id) => updateTask(id, { started: 1, worktree_path: `/tmp/wt-${id}`, work_branch: `calandria/${id}` }));
 
@@ -152,8 +147,8 @@ describe("moveTasks (store)", () => {
   });
 
   it("drops only the skipped task's own edges when it sits mid-chain", () => {
-    // a → b → c with b unmovable: b's two edges have one end left behind, so
-    // they go. Nothing else in the selection is punished for it.
+    // a → b → c with b unmovable: b's two edges each have one end left behind,
+    // so both drop. The rest of the selection is unaffected.
     const { to, ids } = batch("Middle", 3);
     const [a, b, c] = ids;
     const d = createTask({ project_id: getTask(a)!.project_id, title: "Tail" });
@@ -208,9 +203,9 @@ describe("moveTasks (store)", () => {
 
   it("leaves a left-behind BLOCKER's own flags alone — it lost nothing", () => {
     // The severed edge cost the mover a blocker; the blocker itself is just as
-    // unblocked as it was. Its auto_start is a dead flag either way, but it is
-    // not this move's business to reap it — and touching the row would bump an
-    // updated_at the user never asked to change.
+    // unblocked as before. Its auto_start is a dead flag either way, but this
+    // move doesn't clear it, and touching the row would bump an updated_at the
+    // user never asked to change.
     const { from, to, ids } = batch("Blocker untouched", 1);
     const blocker = createTask({ project_id: from.id, title: "Stays behind" });
     setTaskDeps(ids[0], [blocker.id]);
@@ -327,8 +322,8 @@ describe("POST /api/tasks/move", () => {
 
   it("skips a task whose turn is claimed, and moves the rest", async () => {
     const { from, to, ids } = batch("Claimed", 2);
-    // POST /messages claims the turn slot BEFORE it takes the task lock, so the
-    // row still reads running=0 while a launch is in flight — the abort registry
+    // POST /messages claims the turn slot before it takes the task lock, so the
+    // row still reads running=0 while a launch is in flight. The abort registry
     // is the liveness truth the single-task route checks too.
     const controller = claimTurn(ids[0])!;
     try {
@@ -344,9 +339,9 @@ describe("POST /api/tasks/move", () => {
   });
 
   it("still no-ops a same-project move on a task whose turn is claimed", async () => {
-    // Moving a task to the project it's already in has always been an
-    // unconditional success — there is nothing to refuse, so the liveness screen
-    // must not turn it into one.
+    // Moving a task to the project it's already in is an unconditional
+    // success: there is nothing to refuse, so the liveness screen must not
+    // turn it into one.
     const { from, ids } = batch("Same project live", 1);
     const controller = claimTurn(ids[0])!;
     try {
@@ -361,9 +356,10 @@ describe("POST /api/tasks/move", () => {
   });
 
   it("404s when the destination is deleted while the move waits for the task lock", async () => {
-    // The destination is checked before the locks (so a typo fails fast) and
-    // again inside them (so a project deleted while we queued can't be moved
-    // into). The second check throws — the route has to answer 404, not 500.
+    // The destination is checked before the locks, so a typo fails fast, and
+    // again inside them, so a project deleted while the move was queued can't
+    // be moved into. The second check throws, so the route must answer 404,
+    // not 500.
     const { to, ids } = batch("Dest vanishes", 1);
     let release!: () => void;
     const held = withTaskLock(ids[0], () => new Promise<void>((r) => (release = r)));
@@ -373,9 +369,9 @@ describe("POST /api/tasks/move", () => {
 
     const pending = bulkMove({ ids, project_id: to.id });
     // The route's own withTaskLocks call re-registers a new tail chained
-    // behind `held`'s — waiting for that identity change is the real signal
-    // that the request has cleared its pre-flight checks and is now parked on
-    // the lock, rather than guessing how long that takes.
+    // behind `held`'s. Waiting for that identity change is the signal that the
+    // request has cleared its pre-flight checks and is now parked on the lock,
+    // instead of guessing how long that takes.
     await vi.waitFor(() => expect(global.__calandriaTaskLocks?.get(ids[0])).not.toBe(initialTail));
     deleteProject(to.id);
     release();
@@ -404,8 +400,8 @@ describe("discarding worktrees for part of a selection", () => {
     expect(body.moved).toEqual([ids[0], ids[2]]);
     expect(fs.existsSync(wts[0].path)).toBe(false);
     expect(fs.existsSync(wts[2].path)).toBe(false);
-    // The one nobody answered for is refused, and its checkout is untouched —
-    // which is the whole difference from a blanket switch.
+    // The one nobody answered for is refused, and its checkout is untouched,
+    // unlike a blanket switch.
     expect(body.skipped).toEqual([{ id: ids[1], reason: expect.stringMatching(/started task can't be moved/) }]);
     expect(getTask(ids[1])?.project_id).toBe(from.id);
     expect(fs.existsSync(wts[1].path)).toBe(true);
@@ -424,7 +420,8 @@ describe("discarding worktrees for part of a selection", () => {
 
   it("ignores a blanket true — the acknowledgement is a list of ids", async () => {
     // One checkbox over three irreversible answers isn't consent. A caller that
-    // sends the single route's boolean gets the plain refusal, not a shortcut.
+    // sends the single route's boolean gets the plain refusal instead of a
+    // shortcut.
     const { from, to, ids, wts } = await startedBatch("Blanket", 2);
 
     const res = await bulkMove({ ids, project_id: to.id, discard_worktree: true });
@@ -457,8 +454,8 @@ describe("discarding worktrees for part of a selection", () => {
     const body = await res.json();
 
     expect(body.moved).toEqual([ids[0], fresh.id]);
-    // Both ends came along, so the link survives — the thing only the batch can
-    // do, now available to a chain with a started task in it.
+    // Both ends came along, so the link survives, extending the batch-only
+    // behavior to a chain that includes a started task.
     expect(body.kept).toEqual([{ task_id: fresh.id, depends_on_id: ids[0] }]);
     expect(getTaskDeps(fresh.id)).toEqual([ids[0]]);
   });
@@ -517,8 +514,9 @@ describe("a dirty worktree inside a selection", () => {
   it("404s when the destination is deleted while a teardown is in flight", async () => {
     // The window the plain move doesn't have: teardown is git, so the check
     // that the destination exists is no longer adjacent to the write. Held at
-    // the repo lock, the destination is deleted underneath it — the answer is
-    // the documented 404, not the store's "project not found" as a 500.
+    // the repo lock, the destination is deleted underneath it, and the route
+    // must answer the documented 404; the store's "project not found" must not
+    // surface as a 500.
     const { to, ids, fromRepo } = await startedBatch("Dest vanishes mid-teardown", 1);
     let release!: () => void;
     const held = withRepoLock(fromRepo, () => new Promise<void>((r) => (release = r)));
@@ -529,8 +527,9 @@ describe("a dirty worktree inside a selection", () => {
 
     const pending = bulkMove({ ids, project_id: to.id, discard_worktree: ids });
     // discardCheckout's withRepoLock call re-registers a new tail chained
-    // behind `held`'s once it reaches the lock — the real signal that the
-    // teardown is now parked, rather than a guess at how long that takes.
+    // behind `held`'s once it reaches the lock. That identity change is the
+    // signal that the teardown is now parked, instead of a guess at how long
+    // that takes.
     await vi.waitFor(() => expect(global.__calandriaRepoLocks?.get(key)).not.toBe(initialTail));
     deleteProject(to.id);
     release();
@@ -549,7 +548,7 @@ describe("a dirty worktree inside a selection", () => {
     const body = await (await bulkMove({ ids, project_id: to.id, discard_worktree: ids })).json();
 
     // The answer was given about a state that no longer holds, so it doesn't
-    // carry — and it costs only its own row.
+    // carry, and it costs only its own row.
     expect(body.moved).toEqual([ids[0]]);
     expect(body.skipped[0].reason).toMatch(/unsaved work/);
     expect(getTask(ids[1])?.project_id).toBe(from.id);

@@ -184,16 +184,16 @@ describe("codex cost estimation", () => {
   it("prices gpt-6-astra off its own row, not the default-family fallback", () => {
     // Astra $10/$1/$50 per 1M. It shares no prefix with any gpt-5 row, so with
     // no row of its own it would take the unknown-model fallback and read as
-    // Sol — 6.2 against a true 11.4, i.e. half price. Standard rates: Fast mode
-    // doubles them and the usage payload doesn't say which one served the turn.
+    // Sol, 6.2 against a true 11.4, half price. Standard rates: Fast mode
+    // doubles them, and the usage payload doesn't say which one served the turn.
     expect(estimateCostUsd("gpt-6-astra", usage)).toBeCloseTo(11.4, 10); // 6.0 + 0.4 + 5.0
     expect(estimateCostUsd("gpt-6-astra", usage)).not.toBeCloseTo(estimateCostUsd(DEFAULT_CODEX_MODEL, usage), 10);
   });
 
   it("has a real price row for every model the picker offers", () => {
-    // Guards the drift that makes an estimate silently wrong: a new picker entry
-    // with no row of its own falls through to the bare "gpt-5" catch-all and
-    // quietly prices at the wrong rate instead of failing.
+    // Guards against a new picker entry with no row of its own falling through
+    // to the bare "gpt-5" catch-all and pricing at the wrong rate instead of
+    // failing.
     const catchAll = estimateCostUsd("gpt-5-nonexistent-family", usage);
     for (const m of codexCapabilities().models) {
       expect(estimateCostUsd(m.value, usage), m.value).not.toBeCloseTo(catchAll, 10);
@@ -204,8 +204,8 @@ describe("codex cost estimation", () => {
     // Cache writes are ordinary input tokens (OpenAI adds no write surcharge).
     const w = estimateCostUsd("gpt-5.1-codex-max", { input_tokens: 100, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 100 });
     expect(w).toBeCloseTo((200 * 1.25) / 1e6, 12);
-    // A bucket that somehow arrives negative contributes nothing rather than
-    // refunding the turn.
+    // A bucket that arrives negative contributes nothing; it must not refund
+    // the turn.
     const n = estimateCostUsd("gpt-5.1-codex-max", { input_tokens: -500, output_tokens: 0, cache_read_tokens: 100, cache_creation_tokens: 0 });
     expect(n).toBeCloseTo((100 * 0.125) / 1e6, 12);
   });
@@ -273,7 +273,7 @@ describe("codex cumulative usage → per-turn deltas", () => {
 
   it("takes a non-cumulative report at face value instead of zeroing the turn", () => {
     // Counters going backwards mean the thread reset (or upstream switched to
-    // per-turn reporting) — subtracting would swallow the turn entirely.
+    // per-turn reporting); subtracting would swallow the turn entirely.
     const state = newState("gpt-5.1-codex-max", { input: 99_000, cachedInput: 0, cacheWrite: 0, output: 9_000, reasoning: 0 });
     const u = usageOf(completed(5_000, 1_000, 300), state);
     expect(u).toMatchObject({ input_tokens: 4_000, cache_read_tokens: 1_000, output_tokens: 300 });

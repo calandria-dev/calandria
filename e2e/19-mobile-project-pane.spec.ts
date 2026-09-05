@@ -1,14 +1,13 @@
 // The phone's project pane. ProjectLanding is the only mount point for
-// Runbooks and Schedules, and on desktop it IS the "project open, no task
-// selected" screen — a state a phone never reaches, because there that same
-// state shows the task list. So both cards, the Groups card and the recap were
-// unreachable from a phone by construction, and the rest of the suite could
-// not see it: every other spec runs at the default desktop viewport, where
-// ProjectLanding renders exactly where desktop puts it.
+// Runbooks and Schedules, and on desktop it is the "project open, no task
+// selected" screen, a state a phone never reaches because that same state
+// shows the task list there instead. The rest of the suite runs at the
+// default desktop viewport, where ProjectLanding renders exactly where
+// desktop puts it, so a phone needs its own coverage of reaching those cards.
 //
-// This spec runs at a phone viewport and drives the whole loop the report asks
-// for: cold load → reach the Runbooks card → dispatch a runbook → the minted
-// task opens.
+// This spec runs at a phone viewport and drives the whole loop: cold load,
+// reach the Runbooks card, dispatch a runbook, and confirm the minted task
+// opens.
 
 import { expect, test, type Page } from "@playwright/test";
 import { createProject, createTask, ensureOnboarded, gotoApp, makeFixtureRepo, uid } from "./helpers";
@@ -23,8 +22,8 @@ test.beforeAll(async ({ request }) => {
   await ensureOnboarded(request);
   const project = await createProject(request, { name: PROJECT, repoPath: makeFixtureRepo("mobile-project-pane") });
   // A task, because that is the ordinary state of a project someone is working
-  // in — and on a phone it is also the state that shows the task list rather
-  // than the landing pane, i.e. exactly the one the cards were lost behind.
+  // in, and on a phone that state shows the task list instead of the landing
+  // pane, which is where the Runbooks/Schedules cards must still be reachable.
   await createTask(request, { projectId: project.id, title: "Ordinary work in progress" });
   const res = await request.post(`/api/projects/${project.id}/runbooks`, {
     data: { name: RECIPE, description: "Hold the session open and report.", prompt: "say hello" },
@@ -33,19 +32,16 @@ test.beforeAll(async ({ request }) => {
 });
 
 /**
- * Cold load → this project's task list. Boot picks a project on its own
- * (active[0] — the seeded tutorial here), which on a phone lands straight on
- * THAT project's task list, so reaching the projects pane means pressing Back
+ * Cold load to this project's task list. Boot picks a project on its own
+ * (active[0], the seeded tutorial here), which on a phone lands straight on
+ * that project's task list, so reaching the projects pane means pressing Back
  * first.
  *
- * The gate is the Back button, nothing else. An earlier version accepted
- * `.col-projects` as an alternative sign of boot — but the boot SKELETON draws
- * a `.col-projects` of its own, so on a slow runner the gate opened on the
- * skeleton, `isVisible()` on the not-yet-mounted Back button answered "no", the
- * press was skipped, and the assertion below then met the task list boot had
- * landed on in the meantime: `.col-projects` "element(s) not found" (#104). A
- * fresh context has no remembered task, so boot always lands on a task list
- * and the button is always coming.
+ * The gate is the Back button, nothing else (#104): the boot skeleton also
+ * draws a `.col-projects`, so waiting on that element instead of the Back
+ * button can match the skeleton on a slow runner. A fresh context has no
+ * remembered task, so boot always lands on a task list and the button is
+ * always coming.
  */
 async function openTaskList(page: Page): Promise<void> {
   await gotoApp(page);
@@ -60,12 +56,11 @@ async function openTaskList(page: Page): Promise<void> {
 test("the Runbooks card is reachable from a phone, and dispatch opens the task", async ({ page }) => {
   await openTaskList(page);
 
-  // The regression itself: on the task list there is no card, and before this
-  // pane existed there was nowhere else on a phone to find one.
+  // On the task list there is no Runbooks card.
   await expect(page.getByRole("heading", { name: "Runbooks" })).toBeHidden();
 
-  // Tapping the project name is the way in — the same "Project home" control
-  // desktop has in this header, which used to be a no-op on a phone.
+  // Tapping the project name is the way in: the same "Project home" control
+  // desktop has in this header.
   await page.getByRole("button", { name: "Project home" }).click();
   await expect(page.getByRole("heading", { name: "Runbooks" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Schedules" })).toBeVisible();
@@ -87,7 +82,7 @@ test("Back walks project home → task list → projects", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Runbooks" })).toBeVisible();
 
   // The pane's own back chevron returns to the task list, not to the projects
-  // list — the cards are a level BELOW the project, not beside it.
+  // list: the cards are a level below the project, not beside it.
   await page.getByRole("button", { name: "Back to tasks" }).click();
   await expect(page.getByRole("heading", { name: "Runbooks" })).toBeHidden();
   await expect(page.getByText("Ordinary work in progress")).toBeVisible();
@@ -102,8 +97,8 @@ test("Back walks project home → task list → projects", async ({ page }) => {
 });
 
 test("a refresh on the project pane lands back on it", async ({ page }) => {
-  // ?home=1 — the pane is a route, not a transient flag, so reloading (or
-  // sharing the URL) doesn't silently drop you onto the task list.
+  // ?home=1: the pane is a route, not a transient flag, so reloading (or
+  // sharing the URL) doesn't drop back onto the task list.
   await openTaskList(page);
   await page.getByRole("button", { name: "Project home" }).click();
   await expect(page.getByRole("heading", { name: "Runbooks" })).toBeVisible();

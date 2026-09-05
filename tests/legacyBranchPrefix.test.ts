@@ -11,7 +11,7 @@ import { commitFile, git, makeRepo, tmpDir, uid } from "./helpers";
 import path from "node:path";
 import fs from "node:fs";
 
-/** A task created before the rename: worktree on an `orch/<id>` branch. */
+/** A task worktree on a legacy `orch/<id>` branch. */
 async function legacyWorktree() {
   const repo = await makeRepo();
   const taskId = uid();
@@ -21,11 +21,11 @@ async function legacyWorktree() {
   return { repo, taskId, branch, wtPath };
 }
 
-// Branches minted before the rename keep their `orch/<id>` name forever — live
-// branches are never renamed, so every branch-taking path has to stay agnostic
-// about the prefix. The abort case is the one place the old spelling is read
-// back deliberately: a paused merge lives in the worktree, not the DB, so its
-// marker ref can outlive the deploy that renamed it.
+// Branches minted under the old `orch/<id>` prefix keep that name
+// permanently, since live branches are never renamed, so every branch-taking
+// path must stay agnostic to the prefix. The abort case reads the old ref
+// name because a paused merge marker lives in the worktree, not the DB, and
+// can outlive a deploy that changed the prefix.
 describe("legacy orch/ branches keep working after the calandria/ cutover", () => {
   it("syncs, merges and prunes an orch/ task", async () => {
     const { repo, branch, wtPath } = await legacyWorktree();
@@ -54,8 +54,8 @@ describe("legacy orch/ branches keep working after the calandria/ cutover", () =
     const preMerge = await commitFile(wtPath, "task.txt", "task work\n", "task edit");
     await commitFile(repo, "main.txt", "main work\n", "main edit");
 
-    // Exactly what prepareWorktreeMerge did before the rename, then a resolution
-    // merge the agent committed itself.
+    // What prepareWorktreeMerge writes under the legacy ref name, followed by
+    // a resolution merge the agent commits itself.
     await git(wtPath, "update-ref", "refs/worktree/orch-merge-abort", "HEAD");
     await git(wtPath, "merge", "--no-ff", "-m", "merge base", "main");
     expect(await git(wtPath, "rev-parse", "HEAD")).not.toBe(preMerge);
@@ -67,11 +67,11 @@ describe("legacy orch/ branches keep working after the calandria/ cutover", () =
     expect(branch).toMatch(/^orch\//);
   });
 
-  // The self-heal path is the one place a branch name is DERIVED rather than
-  // read off the row, and it runs whenever a worktree is gone — a merged
-  // worktree pruned to reclaim disk, a lost checkout. Deriving only the new
-  // spelling there cut a fresh, empty calandria/<id> beside the task's real
-  // work on orch/<id>, and every caller then wrote that branch to the row.
+  // The self-heal path derives a branch name when a worktree is gone,
+  // whether from a merged worktree pruned to reclaim disk or a lost
+  // checkout. It must derive the branch matching the task's real work
+  // (orch/<id> for a legacy task), so a caller doesn't mint a fresh, empty
+  // calandria/<id> branch and write that to the row.
   it("ensureWorktree reattaches a pruned orch/ task to its own branch, not a fresh calandria/ one", async () => {
     const { repo, taskId, branch, wtPath } = await legacyWorktree();
     await commitFile(wtPath, "task.txt", "task work\n", "task edit");
@@ -84,7 +84,8 @@ describe("legacy orch/ branches keep working after the calandria/ cutover", () =
     expect(wt).not.toBeNull();
     expect(wt!.branch).toBe(branch);
     expect((await git(wt!.path, "rev-parse", "HEAD")).trim()).toBe(work);
-    // Fork point, not today's tip: the base is where the task branched.
+    // The base is the fork point where the task branched, which may differ
+    // from the base branch's current tip.
     expect(wt!.baseSha).toBe((await git(repo, "rev-parse", "main")).trim());
     // And no shadow branch was minted.
     await expect(git(repo, "rev-parse", "--verify", `calandria/${taskId}`)).rejects.toThrow();

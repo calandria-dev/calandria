@@ -2,13 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Regression: withRepoLock keyed on the caller's `project.repo_path` verbatim,
-// so two spellings of the SAME repository — a symlinked path, a trailing slash,
-// or two projects configured against one repo — took two different locks and
-// ran concurrently. That's exactly what the lock exists to prevent: two merges
-// racing the main tree's HEAD/index, or a worktree cut mid-merge handing back a
-// base_sha read off a transient HEAD. The key is now the repo's common git dir,
-// which git canonicalizes and shares across every linked worktree.
+// withRepoLock keys on the repo's common git dir, which git canonicalizes and
+// shares across every linked worktree, so two spellings of the same
+// repository (a symlinked path, a trailing slash, two projects configured
+// against one repo) take one lock instead of two. That's what the lock
+// exists to prevent: two merges racing the main tree's HEAD/index, or a
+// worktree cut mid-merge handing back a base_sha read off a transient HEAD.
 import { repoLockKey, withRepoLock } from "../lib/repoLock";
 import { ensureWorktree } from "../lib/git";
 import { git, makeRepo, tmpDir, uid } from "./helpers";
@@ -21,24 +20,24 @@ function deferred<T = void>() {
   return { promise, resolve };
 }
 
-// Negative-timing exception only: proving a queued caller has NOT run yet
+// Negative-timing exception only: proving a queued caller has not run yet
 // requires letting its real git subprocess have a fair chance to run if the
-// lock were broken — there's no event to poll for an absence, and fake timers
+// lock were broken. There's no event to poll for an absence, and fake timers
 // don't advance real child-process I/O. Every other wait below polls a real
-// condition instead (see repoLockKey + the lock registry, or `order`/`ran`
+// condition instead (see repoLockKey and the lock registry, or `order`/`ran`
 // directly).
 const settle = () => new Promise((r) => setTimeout(r, 50));
 
 /**
- * `<kind>:` followed by an ABSOLUTE path — `/...` on POSIX, `C:\...` or `C:/...`
- * on Windows. What the assertion is really about is that the key is namespaced
- * and can't be a relative answer two callers would spell differently; the
- * leading slash was only ever how that looked on POSIX.
+ * `<kind>:` followed by an absolute path (`/...` on POSIX, `C:\...` or
+ * `C:/...` on Windows). The assertion is about the key being namespaced and
+ * not a relative answer two callers would spell differently; the leading
+ * slash was only ever how that looked on POSIX.
  *
- * BOTH Windows separators, because the two kinds of key are built differently
- * and legitimately disagree: a `git:` key is git's own `--git-common-dir`
- * output, which is forward-slashed even on Windows, while a `path:` key comes
- * from `canonicalPath` (lib/paths.ts), which normalizes to backslashes. Each is
+ * Both Windows separators are accepted, because the two kinds of key are
+ * built differently: a `git:` key is git's own `--git-common-dir` output,
+ * which is forward-slashed even on Windows, while a `path:` key comes from
+ * `canonicalPath` (lib/paths.ts), which normalizes to backslashes. Each is
  * internally consistent, which is all the lock needs.
  */
 const KEYED_ABSOLUTE = (kind: string) => new RegExp(`^${kind}:(/|[A-Za-z]:[\\\\/])`);
@@ -46,9 +45,9 @@ const KEYED_ABSOLUTE = (kind: string) => new RegExp(`^${kind}:(/|[A-Za-z]:[\\\\/
 /** `repo` reachable through a symlinked directory, the way /tmp -> /private/tmp is. */
 function symlinkTo(repo: string): string {
   const link = path.join(tmpDir("link-"), "repo");
-  // "junction" on Windows: a plain directory symlink there needs Developer Mode
-  // or an elevated process, while a junction needs neither — and both are what
-  // realpathSync resolves through, which is the property under test.
+  // "junction" on Windows: a plain directory symlink there needs Developer
+  // Mode or an elevated process, while a junction needs neither. Both are
+  // what realpathSync resolves through, which is the property under test.
   fs.symlinkSync(repo, link, process.platform === "win32" ? "junction" : "dir");
   return link;
 }
@@ -92,14 +91,14 @@ describe("repoLockKey", () => {
     // A greenfield project still serializes across spellings while it waits.
     expect(await repoLockKey(dir + "/")).toBe(key);
     expect(await repoLockKey(symlinkTo(dir))).toBe(key);
-    // ...and doesn't throw on a path that isn't there at all.
+    // It doesn't throw on a path that isn't there at all.
     expect(await repoLockKey(path.join(dir, "missing"))).toMatch(KEYED_ABSOLUTE("path"));
   });
 
   it("does not cache the miss — a dir that becomes a repo re-resolves", async () => {
     // ensureWorktree inits greenfield projects, so this transition is routine.
     // A remembered "not a repo" would key the calls after the init differently
-    // from the ones before it — two locks over one repo again.
+    // from the ones before it, producing two locks over one repo again.
     const dir = tmpDir("greenfield-");
     expect(await repoLockKey(dir)).toMatch(KEYED_ABSOLUTE("path"));
     await git(dir, "init", "-b", "main");
@@ -110,7 +109,7 @@ describe("repoLockKey", () => {
     const repo = await makeRepo();
     await repoLockKey(repo);
     expect(global.__calandriaRepoLockKeys!.has(repo)).toBe(true);
-    // Same promise instance back — no second subprocess.
+    // Same promise instance back, so there's no second subprocess.
     expect(repoLockKey(repo)).toBe(global.__calandriaRepoLockKeys!.get(repo));
   });
 });
@@ -140,8 +139,9 @@ describe("withRepoLock", () => {
     // ensureWorktree a real subprocess's worth of time to have raced ahead of
     // the holder if the lock didn't actually cover it.
     await settle();
-    // Pre-fix this read ["holder-in", "worktree-cut"]: the symlinked spelling
-    // took its own lock and cut the worktree straight through the merge.
+    // Without the shared key, this would read ["holder-in", "worktree-cut"]:
+    // the symlinked spelling taking its own lock and cutting the worktree
+    // straight through the merge.
     expect(order).toEqual(["holder-in"]);
 
     gate.resolve();
@@ -164,14 +164,14 @@ describe("withRepoLock", () => {
     const a = ensureWorktree(repo, uid()).then((wt) => (done.push("a"), wt));
     const b = ensureWorktree(link, uid()).then((wt) => (done.push("b"), wt));
     // Negative timing assertion (see comment on `settle`): `b`'s lock key isn't
-    // cached yet, so this gives its real `git rev-parse` subprocess — and a's
-    // real worktree-add, if the lock didn't actually serialize them — a fair
+    // cached yet, so this gives its real `git rev-parse` subprocess (and a's
+    // real worktree-add, if the lock didn't actually serialize them) a fair
     // chance to have run.
     await settle();
 
-    // Both are parked behind the holder, on ONE queue — the whole point. Two
-    // entries (or a finished call) means the spellings ran their git mutations
-    // concurrently; pre-fix `b` was already done here.
+    // Both are parked behind the holder, on one queue. Two entries (or a
+    // finished call) would mean the spellings ran their git mutations
+    // concurrently instead of serializing on the shared key.
     expect(done).toEqual([]);
     expect([...global.__calandriaRepoLocks!.keys()]).toHaveLength(1);
 
@@ -181,8 +181,8 @@ describe("withRepoLock", () => {
     expect(wtA!.path).not.toBe(wtB!.path);
     for (const wt of [wtA!, wtB!]) expect(fs.existsSync(path.join(wt.path, "file.txt"))).toBe(true);
     // `git worktree list` prints C:/Users/... on Windows where path.join built
-    // C:\Users\..., so the two sides are compared through canonicalPath rather
-    // than as raw strings (lib/paths.ts).
+    // C:\Users\..., so the two sides are compared through canonicalPath
+    // instead of as raw strings (lib/paths.ts).
     const listed = outputLines(await git(repo, "worktree", "list", "--porcelain"))
       .filter((line) => line.startsWith("worktree "))
       .map((line) => canonicalPath(line.slice("worktree ".length).trim()));

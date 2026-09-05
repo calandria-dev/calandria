@@ -1,13 +1,13 @@
 /* The pty sidecar's frame handling, exercised against the real process.
  *
- * Sibling of tests/ptyOrigin.test.ts: that one pins WHO gets a shell, this one
+ * Sibling of tests/ptyOrigin.test.ts: that one pins who gets a shell, this one
  * pins that a client who has one cannot kill the app with a malformed frame.
- * Worth a real process because the failure mode is invisible in-process:
- * node-pty's write() throws ERR_INVALID_ARG_TYPE on a non-string, the throw
- * escapes the ws 'message' handler, and Node's default policy exits the
- * sidecar. `npm start` ties the two lifetimes together (scripts/start.mjs), so
- * that exit takes server.js with it — every in-flight agent turn across every project, plus all SSE
- * streams, for a two-byte protocol violation on the terminal socket.
+ * This runs against a real process because the failure is invisible
+ * in-process: node-pty's write() throws ERR_INVALID_ARG_TYPE on a
+ * non-string, the throw escapes the ws 'message' handler, and Node's default
+ * policy exits the sidecar. `npm start` ties the two lifetimes together
+ * (scripts/start.mjs), so that exit takes server.js with it: every in-flight
+ * agent turn across every project, plus all SSE streams.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -60,11 +60,12 @@ function collectOutput(ws: WebSocket, ms: number): Promise<string> {
 
 beforeAll(async () => {
   // Own the whole tree: accepted connections are real pty children, and killing
-  // only the parent would orphan them onto the developer's machine. A process
-  // group on POSIX, `taskkill /T` on win32 — killChildTree() picks.
+  // only the parent would orphan them onto the developer's machine.
+  // killChildTree() uses a process group on POSIX and `taskkill /T` on win32.
   sidecar = spawn(process.execPath, [path.join(ROOT, "pty-server.js")], {
     cwd: ROOT,
-    // The knob, not $SHELL: this file needs A shell, not a POSIX one.
+    // Uses the CALANDRIA_PTY_SHELL knob: this file needs a working shell, and
+    // $SHELL may be unset.
     env: { ...process.env, PTY_PORT: String(PORT), PTY_HOST: "127.0.0.1", CALANDRIA_PTY_SHELL: TEST_SHELL },
     stdio: "ignore",
     detached: DETACHED,
@@ -87,8 +88,8 @@ afterAll(() => {
 });
 
 describe("pty sidecar frame handling", () => {
-  // The regression. Every one of these reached term.write() unguarded and threw
-  // ERR_INVALID_ARG_TYPE out of the message handler.
+  // Each of these bypasses JSON shape checks and would reach term.write()
+  // unguarded, throwing ERR_INVALID_ARG_TYPE, without the frame guard.
   const malformed: Array<[string, unknown]> = [
     ["a number", 12345],
     ["null", null],
@@ -111,8 +112,8 @@ describe("pty sidecar frame handling", () => {
     await expectSurvives("null");
   });
 
-  // Non-object scalars parse to something with no .type, which is inert — pin
-  // it so a future "just check msg.type" refactor stays honest.
+  // Non-object scalars parse to something with no .type, which is inert.
+  // Pinned so a future "just check msg.type" refactor stays honest.
   it("survives frames that parse to bare scalars", async () => {
     for (const frame of ["123", '"input"', "true"]) await expectSurvives(frame);
   });
@@ -125,7 +126,7 @@ describe("pty sidecar frame handling", () => {
     await closeSession(ws);
 
     expect(exited).toBeNull();
-    // Alive is not enough — it must still be serving. A wedged listener with a
+    // Alive is not enough: it must still be serving. A wedged listener with a
     // lingering process would pass the check above.
     await closeSession(await openSession());
   }

@@ -1,13 +1,10 @@
-// Per-project landing policy: does this project's work land by a local merge,
-// or by opening a pull request?
-//
-// The reason this is a stored fact rather than "whichever button the human
-// clicks" is buildProjectContext: it used to tell EVERY session "Merge lands
-// into it", which on a repo whose base branch requires a PR is simply false —
-// the merge is rejected and the session has no idea. These cases pin the two
-// wordings, the default that keeps every pre-existing project behaving exactly
-// as before, and the normalization that stands in for the CHECK constraint the
-// column doesn't have.
+// Per-project landing policy: work lands by a local merge or by opening a
+// pull request. buildProjectContext must describe the correct one, since a
+// merge attempt on a repo whose base branch requires a PR is rejected and
+// the session has no way to know beforehand. These cases pin the two context
+// wordings, the default for existing projects, and the write-time
+// normalization that stands in for a CHECK constraint the column doesn't
+// have.
 import { describe, expect, it } from "vitest";
 import { createProject, createTask, getProject, getTask, updateProject, updateTask } from "@/lib/store";
 import { buildProjectContext, landingSentence } from "@/lib/agents/shared";
@@ -30,7 +27,7 @@ describe("projects.landing_mode", () => {
     expect(fresh.landing_mode).toBe("pr");
     const task = createTask({ project_id: fresh.id, title: "Do a thing" });
     const ctx = buildProjectContext(fresh, task);
-    // The false sentence is gone, not merely qualified.
+    // The false sentence is removed entirely.
     expect(ctx).not.toContain("Merge lands into it");
     expect(ctx).toContain("main is protected");
     expect(ctx).toContain("Merge is rejected");
@@ -45,7 +42,7 @@ describe("projects.landing_mode", () => {
     const ctx = buildProjectContext(getProject(project.id)!, getTask(task.id)!);
     expect(ctx).toContain("feature/auth is protected");
     expect(ctx).toContain("opening a PR against feature/auth");
-    // The inherited-default parenthetical still rides along.
+    // The inherited-default parenthetical is still included.
     expect(ctx).toContain("(The project's default is main.)");
   });
 
@@ -65,13 +62,13 @@ describe("projects.landing_mode", () => {
   });
 
   it("names the tool that actually opens the PR, since the shell cannot", () => {
-    // The sentence used to say what finishing means without saying how, and a
-    // session's own `git push` is normally refused — so it went looking for a
-    // button. create_pr is registered exactly when this branch of the sentence
-    // is (lib/agents/claude/driver.ts, scripts/calandria-mcp.mjs).
+    // A session's own `git push` is normally refused, so the sentence must
+    // name the tool that finishes the job. create_pr is registered whenever
+    // this branch of the sentence is (lib/agents/claude/driver.ts,
+    // scripts/calandria-mcp.mjs).
     const sentence = landingSentence({ landing_mode: "pr" }, "main");
     expect(sentence).toContain("create_pr");
-    // And the half it must not think it can do.
+    // And the half stating that git push is not available for this.
     expect(sentence).toContain("no tool for it");
     expect(landingSentence({ landing_mode: "merge" }, "main")).not.toContain("create_pr");
   });
@@ -83,10 +80,9 @@ describe("projects.landing_mode", () => {
 });
 
 describe("detectLandingMode", () => {
-  // The probe PRESELECTS a value for a human to save; it never writes one. So
-  // the contract that matters most is that "couldn't tell" is reported as
-  // couldn't-tell (mode: null) rather than guessed at — a private repo the
-  // login can't read must not come back as "merge".
+  // The probe preselects a value for a human to save and never writes one.
+  // When it cannot tell, it must report mode: null instead of guessing, so a
+  // private repo the login can't read never comes back as "merge".
   it("reports a null mode, with a reason, when there is no repository to check", async () => {
     const probe = await detectLandingMode("", "main");
     expect(probe.mode).toBeNull();

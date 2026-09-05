@@ -1,17 +1,17 @@
-// The desktop signing policy, which is otherwise untestable anywhere the app is
+// The desktop signing policy, otherwise untestable anywhere the app is
 // developed: it decides what a macOS or Windows installer gets signed with, and
 // neither branch can be exercised without a Mac, a Windows box and two paid
-// identities. What CAN be checked on any machine is the decision itself, and the
-// decision is where the danger is — every failure mode here produces a build
-// that goes green and ships an artifact the user's OS refuses.
+// identities. What can be checked on any machine is the decision itself, and
+// that is where the danger is: every failure mode here produces a build that
+// goes green and ships an artifact the user's OS refuses.
 //
 // Four things are pinned:
 //   1. Nothing set → ad-hoc, never a real identity. Signing is opt-in by name.
-//   2. A half-configured request throws instead of quietly downgrading.
+//   2. A half-configured request throws instead of downgrading.
 //   3. The two entitlements files differ in exactly one key, and it is the one
 //      that must not reach a Developer ID build.
 //   4. desktop/package.json carries no `build` field, because one would shadow
-//      desktop/electron-builder.cjs — silently, and with it every rule above.
+//      desktop/electron-builder.cjs, along with every rule above.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -23,7 +23,7 @@ const DESKTOP = path.join(ROOT, "desktop");
 
 // Same trick as tests/desktopPayload.test.ts: desktop/ has its own package tree
 // (Electron is never installed in the app's), so these are loaded by absolute
-// path rather than through "@/*" resolution. desktop/signing.js is deliberately
+// path rather than through "@/*" resolution. desktop/signing.js is
 // dependency-free CommonJS for exactly this reason.
 const require = createRequire(import.meta.url);
 
@@ -47,7 +47,7 @@ const signing = require(path.join(DESKTOP, "signing.js")) as {
 const { macSigning, windowsSigning, notarizeCredentials } = signing;
 
 const IDENTITY = "Developer ID Application: Example (AB12CD34EF)";
-// What electron-builder must be handed instead — see `certificateQualifier`.
+// What electron-builder must be handed instead: see `certificateQualifier`.
 const QUALIFIER = "Example (AB12CD34EF)";
 const API_KEY = {
   APPLE_API_KEY: "/tmp/AuthKey_T9GPZ92M7K.p8",
@@ -73,7 +73,7 @@ describe("macOS signing policy", () => {
   it("stays ad-hoc even with a certificate in the environment, because the identity decides", () => {
     // CSC_LINK is how electron-builder imports a .p12. macCodeSign.findIdentity
     // takes the configured qualifier ahead of anything in the keychain, so
-    // identity "-" wins — which is what makes the test lane safe to run on a
+    // identity "-" wins, which is what makes the test lane safe to run on a
     // pull request. Opting in is CALANDRIA_MAC_SIGN_IDENTITY, nothing else.
     const mac = macSigning({ CSC_LINK: "https://example.invalid/cert.p12", CSC_KEY_PASSWORD: "hunter2" });
     expect(mac.signed).toBe(false);
@@ -99,7 +99,6 @@ describe("macOS signing policy", () => {
     expect(mac.entitlementsInherit).toBe("build/entitlements.mac.plist");
   });
 
-  // The first signed release lane died here, before packaging anything:
   // app-builder-lib's findIdentity throws InvalidConfigurationError on a
   // qualifier that carries a certificate type. Everything that documents,
   // stores or verifies this value uses the full name, so the strip lives in
@@ -121,8 +120,9 @@ describe("macOS signing policy", () => {
   });
 
   it("refuses a certificate type with no name after it, rather than passing on an empty qualifier", () => {
-    // "" would read to electron-builder as nothing configured, and it would
-    // answer with keychain auto-discovery — signing with whatever it finds.
+    // An empty string would read to electron-builder as nothing configured,
+    // and it would answer with keychain auto-discovery: signing with whatever
+    // it finds.
     expect(() => macSigning({ CALANDRIA_MAC_SIGN_IDENTITY: "Developer ID Application:", ...API_KEY })).toThrow(
       /certificate type with no name/i
     );
@@ -184,13 +184,12 @@ describe("macOS entitlements", () => {
     const entitlements = keys("entitlements.mac.plist");
     expect(entitlements).toContain("com.apple.security.cs.allow-jit");
     expect(entitlements).toContain("com.apple.security.cs.allow-unsigned-executable-memory");
-    // The load-bearing assertion of this file. Hardened runtime enables library
-    // validation, and the vendored resources/node/bin/node dlopens
-    // better-sqlite3 and node-pty out of the payload. @electron/osx-sign signs
-    // every Mach-O in the bundle with the same identity, so those loads should
-    // succeed on their Team ID alone. If this entitlement ever gets added to
-    // make a signed build start, something was signed by the wrong identity and
-    // the entitlement would be hiding it.
+    // Hardened runtime enables library validation, and the vendored
+    // resources/node/bin/node dlopens better-sqlite3 and node-pty out of the
+    // payload. @electron/osx-sign signs every Mach-O in the bundle with the
+    // same identity, so those loads succeed on their Team ID alone. If this
+    // entitlement is ever added to make a signed build start, something was
+    // signed by the wrong identity and the entitlement would be hiding it.
     expect(entitlements).not.toContain("com.apple.security.cs.disable-library-validation");
   });
 
@@ -235,9 +234,9 @@ describe("Windows signing policy", () => {
 describe("electron-builder config discovery", () => {
   // app-builder-lib's loader (out/util/config/load.js) reads package.json's
   // `build` field first and only scans for a standalone config file when that
-  // field is absent. It neither merges nor warns, so a `build` key restored here
-  // would shadow desktop/electron-builder.cjs entirely — every signing branch
-  // above included — and every build would still go green.
+  // field is absent. It neither merges nor warns, so a `build` key restored
+  // here would shadow desktop/electron-builder.cjs entirely, every signing
+  // branch above included, and every build would still go green.
   it("keeps desktop/package.json free of a build field", () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(DESKTOP, "package.json"), "utf8"));
     expect(pkg.build).toBeUndefined();
@@ -251,9 +250,9 @@ describe("electron-builder config discovery", () => {
   });
 
   it("assembles a config whose macOS block is ad-hoc by default", () => {
-    // Loaded with a scrubbed environment: this file's whole point is that the
-    // config reads process.env, and a developer with an Apple ID exported would
-    // otherwise get a different object than CI does.
+    // Loaded with a scrubbed environment: this file's whole reason to exist is
+    // that the config reads process.env, and a developer with an Apple ID
+    // exported would otherwise get a different object than CI does.
     const saved = { ...process.env };
     for (const key of Object.keys(process.env)) {
       if (key.startsWith("APPLE_") || key.startsWith("CALANDRIA_MAC_") || key.startsWith("AZURE_")) {

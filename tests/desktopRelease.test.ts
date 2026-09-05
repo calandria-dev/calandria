@@ -1,33 +1,33 @@
-// The wiring that decides WHERE a release's desktop artifacts land, and under
+// The wiring that decides where a release's desktop artifacts land, and under
 // what version. None of it can be exercised without cutting a real release, and
-// every failure mode is silent — nothing throws, nothing goes red, the artifacts
-// simply end up somewhere nobody looks.
+// every failure mode is silent: nothing throws, nothing goes red, the
+// artifacts simply end up somewhere nobody looks.
 //
 // Four facts are pinned:
 //
 //   1. desktop/package.json's version equals the release manifest's. This is not
 //      tidiness. electron-builder's github publisher looks the Release up BY TAG
 //      and derives that tag from `v${version}` in desktop/package.json, so a
-//      desktop package left at 0.3.0 during a v0.4.2 release does not fail — it
-//      creates a DRAFT release named v0.3.0, uploads every artifact into it, and
-//      leaves the real Release holding nothing but the Docker image.
+//      desktop package left behind during a release does not fail: it creates a
+//      DRAFT release named after the stale version, uploads every artifact into
+//      it, and leaves the real Release holding nothing but the Docker image.
 //   2. release-please-config.json carries the `extra-files` entry that keeps (1)
 //      true without anyone remembering to. JSON takes no comments, so this test
 //      is the only place that reasoning can live next to the configuration.
 //   3. The `publish` block exists and names this repository. Its presence is
 //      what makes electron-builder write latest.yml / latest-mac.yml /
-//      latest-linux.yml and the .blockmap files beside each artifact — the feed
+//      latest-linux.yml and the .blockmap files beside each artifact, the feed
 //      electron-updater reads. Without it a release publishes downloads that no
 //      updater can ever discover.
 //   4. That block says `releaseType: "release"`. This one is not hypothetical:
-//      v0.2.0 through v0.5.1 every one have ZERO assets attached. electron-
-//      publish defaults the type to "draft"; release-please has already cut a
-//      PUBLISHED release for the tag; the publisher found them incompatible,
-//      logged `GitHub release not created … existingType=release
-//      publishingType=draft`, logged `skipped publishing` once per artifact —
-//      installers and update feeds alike — and EXITED 0. Six empty releases
-//      behind three green legs. The lane now also asserts the assets really
-//      landed, because this publisher's way of refusing is to keep going.
+//      several early releases had zero assets attached. electron-publish
+//      defaults the type to "draft"; release-please has already cut a
+//      published release for the tag; the publisher finds them incompatible,
+//      logs `GitHub release not created … existingType=release
+//      publishingType=draft`, logs `skipped publishing` once per artifact,
+//      installers and update feeds alike, and exits 0. The lane now also
+//      asserts the assets really landed, because this publisher's way of
+//      refusing is to keep going.
 //
 // tests/desktopSigning.test.ts pins the other half of this config: that it is
 // found at all, and that signing is off unless asked for.
@@ -96,35 +96,35 @@ describe("desktop release publishing", () => {
 });
 
 // The `publish` block pinned above is what makes a release work, and it is also
-// what makes every OTHER lane fail unless it says otherwise. electron-builder
+// what makes every other lane fail unless it says otherwise. electron-builder
 // does not treat a missing `--publish` as "don't": PublishManager fills the
 // policy in itself, and on CI with no tag that default is `onTagOrDraft`, which
 // still constructs a GitHubPublisher to go looking for a draft. That constructor
-// throws before it does anything useful —
+// throws before it does anything useful:
 //
 //   Error: GitHub Personal Access Token is not set, neither programmatically,
 //   nor using env "GH_TOKEN"
 //
-// — so `npx electron-builder --win nsis` fails AFTER a full package build, at
-// the last step, for want of a credential the lane has no business holding.
+// So `npx electron-builder --win nsis` fails after a full package build, at the
+// last step, for a credential the lane has no business holding.
 //
-// That is not hypothetical. It went red on the first push to main that packaged
-// a real Windows target, stayed red across three consecutive pushes, and took
-// v0.5.0's desktop artifacts and Docker image with it, because both publish
+// That is not hypothetical: it went red on the first push to main that packaged
+// a real Windows target, stayed red across several consecutive pushes, and took
+// a release's desktop artifacts and Docker image with it, because both publish
 // workflows refuse a tag whose push-to-main Test run is not green. Nobody caught
 // it on a pull request: electron-publish's isPullRequest() reads a non-empty
 // GITHUB_BASE_REF and skips publishing outright, so the PR that introduced the
 // `publish` block was structurally incapable of showing the bug it introduced.
 //
 // A grep is a poor test of a workflow and a good test of exactly this, because
-// the defect is a MISSING argument on a command line — there is nothing to
+// the defect is a missing argument on a command line: there is nothing to
 // import, nothing to call, and the only way to observe it otherwise is to cut a
 // release and watch it not happen.
 describe("no lane publishes by accident", () => {
   const WORKFLOWS = path.join(ROOT, ".github", "workflows");
 
-  // The release lane passes `--publish` as an expression — `always` when its
-  // gate job decided this run publishes, `never` otherwise — so it is asserted
+  // The release lane passes `--publish` as an expression: `always` when its
+  // gate job decided this run publishes, `never` otherwise, so it is asserted
   // on separately rather than being expected to read literally "never". The
   // gate is where "only from a tag" is actually enforced: a tag push publishes,
   // a dispatch publishes only if asked, and asking off a tag is refused there.

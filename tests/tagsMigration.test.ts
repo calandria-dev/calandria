@@ -1,12 +1,12 @@
-// The groups → tags upgrade path (lib/db.ts migrate(), and
-// docs/superpowers/specs/2026-08-27-tags-design.md § Migration).
+// Tests the groups → tags upgrade path (lib/db.ts migrate(); docs/FEATURES.md
+// § Migration).
 //
-// This is the one part of the conversion a fresh install never exercises: the
-// tables it reads only exist on a database that ran the OLD schema. So the test
-// rebuilds that shape on top of the current one — the `task_groups` table, the
-// `tasks.group_id` column, a recorded agent edit naming the `group` field — and
-// runs migrate() over it, which is exactly what an upgrading instance does at
-// boot.
+// This is the one part of the conversion a fresh install never exercises,
+// since the tables it reads only exist on a database that ran the old schema.
+// The test rebuilds that shape on top of the current one (the `task_groups`
+// table, the `tasks.group_id` column, a recorded agent edit naming the
+// `group` field) and runs migrate() over it, matching what an upgrading
+// instance does at boot.
 import { describe, expect, it, beforeEach } from "vitest";
 import { getDb, migrate } from "@/lib/db";
 import { createProject, createTask, getTaskTagIds, listTags, recordAgentEdit, listAgentEdits } from "@/lib/store";
@@ -122,7 +122,7 @@ describe("groups → tags migration", () => {
        VALUES (?, ?, 'Auth migration', '', NULL, NULL, 0, ?, ?)`
     ).run(gid, pid, now, now);
     // Written through the store so the row is shaped exactly as the old
-    // update_task wrote it — a scalar group id in before_value/after_value.
+    // update_task wrote it: a scalar group id in before_value/after_value.
     recordAgentEdit({
       task_id: target.id,
       project_id: pid,
@@ -131,8 +131,8 @@ describe("groups → tags migration", () => {
       actor_agent: "claude",
       changes: [
         { field: "title" as const, before: "Old", after: "New", before_value: "Old", after_value: "New" },
-        // Cast: `group` is no longer in the union, which is the whole point —
-        // this is what a row written before the rename looks like.
+        // Cast: `group` is no longer in the union. This models a row written
+        // under the field's earlier name.
         { field: "group", before: "(none)", after: "Auth migration", before_value: null, after_value: gid } as never,
       ],
     });
@@ -142,8 +142,8 @@ describe("groups → tags migration", () => {
     const [edit] = listAgentEdits(target.id);
     const tags = edit.changes.find((c) => c.field === "tags");
     expect(tags).toBeDefined();
-    // The readable halves are untouched — they were already names — and Revert
-    // gets the id LIST it now writes back through setTaskTags.
+    // The readable halves are untouched, since they were already names, and
+    // Revert gets the id LIST it writes back through setTaskTags.
     expect(tags!.before_value).toEqual([]);
     expect(tags!.after_value).toEqual([gid]);
     // Everything else in the same row is left exactly as it was.

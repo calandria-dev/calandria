@@ -114,7 +114,7 @@ describe("buildCollabPacket", () => {
     // The file on disk IS the edited text, so comments locate against the current file.
     expect(p).toContain("Line numbers refer to the current file.");
     expect(p).not.toContain("Apply this patch");
-    // Omitted mode is the patch contract — nothing that previously called the builder changes behavior.
+    // Omitted mode is the patch contract, so existing callers of the builder see no behavior change.
     expect(buildCollabPacket({ file: "a.md", original: DOC, edited, comments: [], general: "" })).toContain("Apply this patch");
   });
 
@@ -135,7 +135,7 @@ describe("resolveWorktreeFile", () => {
     fs.writeFileSync(path.join(outside, "secret.md"), "nope\n");
     // A FILE symlink needs Developer Mode or elevation on Windows (a junction
     // only stands in for a directory one), so its absence there is a fixture
-    // limitation, not a result — the link assertion below is conditioned on it.
+    // limitation, not a result. The link assertion below is conditioned on it.
     let linked = true;
     try {
       fs.symlinkSync(path.join(outside, "secret.md"), path.join(wt, "docs", "link.md"));
@@ -153,8 +153,8 @@ describe("resolveWorktreeFile", () => {
   });
 });
 
-// The transcript's Collaborate button is keyed on the path the agent WROTE,
-// not on git status — that's what lets a gitignored doc open. The tool
+// The transcript's Collaborate button is keyed on the path the agent wrote,
+// not on git status, which is what lets a gitignored doc open. The tool
 // normalizer names the file, the runner stores it worktree-relative (or not
 // at all), and the file route serves anything inside the worktree, ignored
 // or not, while still refusing everything outside it.
@@ -173,14 +173,12 @@ describe("worktreeRelative", () => {
     expect(worktreeRelative("/wt/a", "")).toBeNull();
   });
 
-  // Regression, found by the windows-latest CI lane: "absolute" was `/...` and
-  // nothing else, so a drive-letter path fell into the relative branch. Both
-  // halves were wrong — a file plainly inside the worktree 404'd because
-  // `C:/wt/a/docs/x.md` was looked up as directories named `C:`, `wt`, ...
-  // BELOW the worktree, and a path outside it was never refused, it just missed.
-  // Asserted on every platform, not skipped off win32: the function is pure
-  // string work and takes its dialect from the shape of the paths, so a Windows
-  // spelling means the same thing wherever the test runs.
+  // A drive-letter path must be read as absolute, not fall into the relative
+  // branch: a file plainly inside the worktree must not 404, and a path
+  // outside it must be refused, not merely missed. Asserted on every
+  // platform, not skipped off win32: the function is pure string work and
+  // takes its dialect from the shape of the paths, so a Windows spelling
+  // means the same thing wherever the test runs.
   it("reads a Windows absolute path as absolute", () => {
     expect(worktreeRelative("C:\\wt\\a", "C:\\wt\\a\\docs\\x.md")).toBe("docs/x.md");
     expect(worktreeRelative("C:\\wt\\a", "C:/wt/a/docs/x.md")).toBe("docs/x.md"); // git's spelling
@@ -245,10 +243,10 @@ describe("GET /api/tasks/[id]/file", () => {
 });
 
 describe("blobSha", () => {
-  // The document comment anchor is this value, computed in-process rather
-  // than shelling out to `git hash-object` on every file read — pinned here
-  // against the real thing so it can never quietly drift from what git itself
-  // would compute for the same bytes.
+  // The document comment anchor is this value, computed in-process instead of
+  // shelling out to `git hash-object` on every file read. Pinned here against
+  // the real thing so it can never drift from what git itself would compute
+  // for the same bytes.
   it("matches `git hash-object` for a UTF-8 file with a non-ASCII character", async () => {
     const dir = tmpDir("blobsha-");
     await git(dir, "init", "-b", "main");

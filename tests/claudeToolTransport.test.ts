@@ -6,12 +6,11 @@ import { calandriaMcpConfig } from "@/lib/agents/codex/driver";
 import { CLAUDE_TOOL_TRANSPORT, AGENT_TOOL_TIMEOUT_MS, CALANDRIA_MCP_SCRIPT } from "@/lib/config";
 import type { Project, Task } from "@/lib/types";
 
-// Pins the escape hatch: serving Claude's Calandria tools over the stdio bridge
-// (scripts/calandria-mcp.mjs) instead of as the Agent SDK's in-process MCP
-// server. The in-process transport is the one the CLI cuts calls off on in
-// resumed sessions; lib/agents/CLAUDE.md has the measurement and the upstream
-// report. Switching transports must change HOW the tools arrive and nothing
-// else, which is what these cases hold.
+// Pins the escape hatch: serving Claude's Calandria tools over the stdio
+// bridge (scripts/calandria-mcp.mjs) instead of the Agent SDK's in-process
+// MCP server. The in-process transport is the one the CLI cuts calls off on
+// in resumed sessions; lib/agents/CLAUDE.md has the detail. Switching
+// transports must change how the tools arrive and nothing else.
 
 const project = { id: "p1", name: "P", repo_path: "/tmp/repo", landing_mode: "pr" } as Project;
 const task = { id: "t1", agent: "claude" } as Task;
@@ -31,9 +30,9 @@ describe("claude tool transport", () => {
   });
 
   it("hands the bridge the same per-turn env the Codex driver does", () => {
-    // Field for field, because the bridge's behaviour is entirely env-driven:
-    // a key the Codex entry sets and this one forgets is a tool that silently
-    // does something different for Claude than it does for Codex.
+    // Field for field, since the bridge's behavior is entirely env-driven: a
+    // key the Codex entry sets and this one omits makes the tool behave
+    // differently for Claude than for Codex.
     const codexEnv = ((calandriaMcpConfig(project, task) as Record<string, any>).mcp_servers.calandria.env ?? {}) as Record<string, string>;
     const claudeEnv = calandriaBridgeServer(project, task).env ?? {};
     for (const [k, v] of Object.entries(codexEnv)) expect(claudeEnv[k]).toBe(v);
@@ -50,8 +49,8 @@ describe("claude tool transport", () => {
   });
 
   it("keeps the CLI's per-server cap above the bridge's own deadline", () => {
-    // Both ends now have a bound, unlike the in-process transport where only
-    // the guard does. The guard has to be the one that answers, or the model
+    // Both ends have a bound, unlike the in-process transport where only the
+    // guard does. The guard has to be the one that answers, or the model
     // gets the CLI's cut-off sentence for a call that merely ran long.
     const timeout = calandriaBridgeServer(project, task).timeout;
     expect(timeout).toBeGreaterThan(AGENT_TOOL_TIMEOUT_MS);
@@ -68,8 +67,7 @@ describe("claude tool transport", () => {
     const src = read("lib/agents/claude/driver.ts");
     expect(src).toContain("CLAUDE_TOOL_TRANSPORT === \"stdio\"");
     expect(src).toContain("calandriaBridgeServer(project, task)");
-    // createSdkMcpServer stays the other branch rather than being deleted: the
-    // hatch is a fallback, not a migration.
+    // createSdkMcpServer remains as the fallback branch alongside the hatch.
     expect(src).toContain("createSdkMcpServer");
   });
 });

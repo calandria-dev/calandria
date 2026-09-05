@@ -1,9 +1,9 @@
-// The usage chip used to read "3.8M tok · $4.20" for a session whose actual
-// work was a few hundred thousand tokens on a Max plan that billed nothing —
-// accurate numbers, terrifying presentation. Two things keep it honest, and
-// both are pinned here: the token total is split (cache READS are context
-// re-sent every turn at ~10% of the input rate, not work), and a dollar figure
-// is only presented as money when the agent is signed in with an API key.
+// The usage chip must not read "3.8M tok · $4.20" for a session whose actual
+// work was a few hundred thousand tokens on a Max plan that billed nothing.
+// Two things keep it honest, and both are pinned here: the token total is
+// split (cache READS are context re-sent every turn at ~10% of the input
+// rate, not work), and a dollar figure is only presented as money when the
+// agent is signed in with an API key.
 import { describe, it, expect } from "vitest";
 import { usageSplit, costDisplay, usageTooltip, fmtJobCost } from "@/app/shell/format";
 import type { AgentInfo, TaskRow } from "@/app/shell/types";
@@ -33,7 +33,7 @@ describe("usageSplit", () => {
     expect(s.inOut).toBe(13_000);
     // The headline: everything the model saw for the first time.
     expect(s.fresh).toBe(253_000);
-    // …which is the whole point — a fraction of the raw number.
+    // …a fraction of the raw number.
     expect(s.fresh / s.total).toBeLessThan(0.1);
   });
 
@@ -119,9 +119,9 @@ describe("costDisplay", () => {
 
   // A turn against a provider override carries no price the vendor charged, and
   // the chip shows no figure for either non-cloud kind. What the LEDGER records
-  // does differ between them (0 for local, NULL for custom — see
+  // does differ between them (0 for local, NULL for custom, see
   // providerPricing), but neither reads honestly on screen: "$0.00" reads as a
-  // measured price rather than an inapplicable one, and the API-price
+  // measured price instead of an inapplicable one, and the API-price
   // equivalent would be the list price of a model that didn't run.
   it("shows no figure at all for a task on a local, custom or gateway endpoint", () => {
     const cloudAgent = agent({ account: { email: "a@b.c", plan: "Max", method: "subscription" } });
@@ -130,14 +130,14 @@ describe("costDisplay", () => {
     expect(c.show).toBe(false);
     expect(c.approx).toBe(false);
     expect(c.note).toContain("localhost:11434");
-    // …and the tooltip says so where the dollar line used to be.
+    // …and the tooltip says so instead of showing a dollar line.
     expect(usageTooltip(usageSplit(real), 0, c)).toContain("no cost to report");
-    // A custom base URL is unpriced rather than free, and reads the same here.
+    // A custom base URL is unpriced, not free, and reads the same here.
     const custom = { ...provider, kind: "custom" as const, pricing: providerPricing("custom"), host: "models.example.com" };
     expect(costDisplay(cloudAgent, custom).show).toBe(false);
     expect(costDisplay(cloudAgent, custom).note).toContain("models.example.com");
     // A gateway prices its own turns, but no CLI hands Calandria the figure, so
-    // the chip has nothing to show here either — see ProviderPricing.
+    // the chip has nothing to show here either; see ProviderPricing.
     const gw = { ...provider, kind: "gateway" as const, pricing: providerPricing("gateway"), host: "litellm.example.com", gateway_billing: "key" as const };
     expect(costDisplay(cloudAgent, gw).show).toBe(false);
     expect(costDisplay(cloudAgent, gw).note).toContain("litellm.example.com");
@@ -165,12 +165,12 @@ describe("usageTooltip", () => {
     expect(text).toBe("900 new tokens this task: 900 in/out · 0 written to cache");
   });
 
-  // A turn that fans out to five Explore agents used to read as if this session
-  // had burned the lot: the sidechains' tokens were in the dollar figure and
-  // nowhere in the token figure, so the two described different turns.
+  // A turn that fans out to five Explore agents must not read as if this
+  // session burned the lot: the sidechains' tokens must appear in both the
+  // dollar figure and the token figure, describing the same turn.
   it("names the sidechain share and folds it into the grand total", () => {
     const text = usageTooltip(usageSplit({ ...real, subagent_tokens: 1_200_000 }), 4.2, costDisplay(undefined));
-    // The headline stays this session's own work — subagents have their own windows.
+    // The headline stays this session's own work; subagents have their own windows.
     expect(text).toContain("253,000 new tokens");
     // The total grows by exactly the sidechain share, so "of those" is true.
     expect(text).toContain("4,953,000 tokens total");
@@ -194,7 +194,7 @@ describe("usageTooltip", () => {
   });
 
   // Codex and the mock driver never report the split. Absent means unmeasured,
-  // so the line is omitted rather than claiming a measured zero.
+  // so the line is omitted instead of claiming a measured zero.
   it("says nothing at all when the driver doesn't report a split", () => {
     expect(usageTooltip(usageSplit(real), 4.2, costDisplay(undefined))).not.toContain("subagents");
     expect(usageSplit(real).subagent).toBe(0);

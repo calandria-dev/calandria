@@ -2,14 +2,13 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // One-click "Squash & merge PR" (lib/prMerge.ts + POST /api/tasks/[id]/pr/merge).
 //
-// The feature's promise is that landing a reviewed PR doesn't mean leaving the
-// app, so what's pinned here is the part that makes that safe rather than the
-// part that makes it work: the button is enabled off GitHub's real answer, the
-// route re-screens against a fresh one before it shells out, it refuses a task
-// mid-turn like every other merge route, and a successful merge hands off to
-// the PR-state refresh instead of cleaning up itself.
+// Landing a reviewed PR doesn't mean leaving the app, so what's pinned here is
+// the part that makes that safe: the button is enabled off GitHub's real
+// answer, the route re-screens against a fresh one before it shells out, it
+// refuses a task mid-turn like every other merge route, and a successful
+// merge hands off to the PR-state refresh instead of cleaning up itself.
 //
-// gh is mocked — the real one needs a network, a login and a PR — but the
+// gh is mocked (the real one needs a network, a login and a PR), but the
 // store, the bus and the route's own guards are real.
 const { mergeTaskPrMock, fetchPrStateMock } = vi.hoisted(() => ({
   mergeTaskPrMock: vi.fn(),
@@ -115,7 +114,7 @@ describe("repoSlug", () => {
 describe("autoMergeRefused", () => {
   it("recognises the two ways gh says 'I could not arm auto-merge'", () => {
     expect(autoMergeRefused("failed to enable auto-merge: GraphQL: Auto merge is not allowed for this repository (enablePullRequestAutoMerge)")).toBe(true);
-    // Nothing left to wait for — GitHub refuses to queue a PR that is already
+    // Nothing left to wait for: GitHub refuses to queue a PR that is already
     // clean, which means "just merge it", not "give up".
     expect(autoMergeRefused("GraphQL: Pull request is in clean status (enablePullRequestAutoMerge)")).toBe(true);
   });
@@ -166,7 +165,7 @@ describe("POST /api/tasks/[id]/pr/merge", () => {
     const body = await res.json();
     expect(body.queued).toBe(true);
     expect(body.merged).toBeUndefined();
-    // It hasn't landed, so the row must still say open — the sweep carries it.
+    // It hasn't landed, so the row must still say open; the sweep carries it.
     expect(getTask(id)!.pr_state).toBe("open");
   });
 

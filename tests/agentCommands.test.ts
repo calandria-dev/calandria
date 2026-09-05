@@ -1,10 +1,7 @@
-// What the composer's "/" menu offers, pinned.
-//
-// The bug: the menu was a hardcoded one-element array, so 58 of the 59 commands
-// a Claude session really expands were undiscoverable. The regression risk now
-// runs the OTHER way — a denylist that quietly grows until it's hiding the
-// user's own commands again — so the default-show behavior is what most of
-// these assert.
+// Pins what the composer's "/" menu offers. The default is to show a
+// command; a denylist growing to hide commands it should not is the
+// regression these tests guard against, so most of them assert the
+// default-show behavior.
 
 import { describe, it, expect } from "vitest";
 import { visibleAgentCommands } from "@/lib/agentCommands";
@@ -23,7 +20,7 @@ describe("visibleAgentCommands", () => {
   });
 
   it("keeps unknown commands — the default is show, not hide", () => {
-    // A command nobody anticipated is exactly the case the original bug ate.
+    // An unrecognized command name still passes through unmodified.
     const out = visibleAgentCommands([cmd("some-brand-new-user-command"), cmd("acme:deploy")]);
     expect(out.map((c) => c.name)).toEqual(["some-brand-new-user-command", "acme:deploy"]);
   });
@@ -46,8 +43,8 @@ describe("visibleAgentCommands", () => {
   });
 
   it("keeps commands that merely have no effect here", () => {
-    // Hiding a working command is a far worse failure than listing an inert
-    // one, so /color and friends are deliberately NOT denied.
+    // Hiding a working command is a worse failure than listing an inert one,
+    // so /color and friends are not denied.
     const out = visibleAgentCommands([cmd("color"), cmd("rename")]);
     expect(out.map((c) => c.name)).toEqual(["color", "rename"]);
   });
@@ -84,7 +81,7 @@ describe("visibleAgentCommands", () => {
   });
 
   it("sorts an MCP server's prompts into the same long tail", () => {
-    // mcp__server__prompt is a namespace like plugin: is — a fleet of servers
+    // mcp__server__prompt is a namespace like plugin:. A fleet of servers
     // arrives in bulk under one prefix, and none of it is what a user hunting
     // /verify from memory is scrolling past.
     const out = visibleAgentCommands([

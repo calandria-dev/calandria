@@ -1,15 +1,11 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 
-// lib/agents/claude/commands.ts — the app's ONE slash-command enumeration,
-// shared by the composer's "/" menu and the schedule validator.
-//
-// It was unpinned while it had a single caller whose worst failure was a short
-// menu. It now also decides whether a scheduled run fires, so the two things
-// that were only ever comments — that it sends no model request, and that it
-// isolates everything except the sources that decide the answer — are asserted
-// here. The hooks flag is the load-bearing one: without it a SessionStart hook
-// runs on every "/" keystroke AND, since the consolidation, unattended inside
-// the scheduler's sweep on every save and every fire.
+// lib/agents/claude/commands.ts is the app's single slash-command
+// enumeration, shared by the composer's "/" menu and the schedule validator.
+// This file pins that it sends no model request and that it isolates
+// everything except the sources that decide the answer. The hooks flag
+// matters: without it a SessionStart hook runs on every "/" keystroke and,
+// inside the scheduler's sweep, on every save and every fire.
 
 const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }));
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
@@ -79,7 +75,7 @@ describe("the claude command probe", () => {
     // will actually get.
     expect(options.cwd).toBe(dir);
     expect(options.settingSources).toBe(SETTING_SOURCES);
-    // …and the rest isolated. disableAllHooks is why a SessionStart hook does
+    // And the rest isolated. disableAllHooks is why a SessionStart hook does
     // not run on a keystroke or, unattended, inside the scheduler's sweep.
     expect(options.settings).toEqual({ disableAllHooks: true });
     expect(options.strictMcpConfig).toBe(true);
@@ -128,9 +124,9 @@ describe("the claude command probe", () => {
   });
 
   it("keys the cache on the sources too, not just the cwd", async () => {
-    // Constant today — every caller passes the driver's SETTING_SOURCES — which
-    // is exactly why keying on cwd alone would go wrong silently the first time
-    // they aren't: 'project' decides whether the repo's .claude/commands load.
+    // Constant today: every caller passes the driver's SETTING_SOURCES. That
+    // is exactly why keying on cwd alone would go wrong the first time they
+    // aren't: 'project' decides whether the repo's .claude/commands load.
     answer([{ name: "everything" }], [{ name: "user-only" }]);
     const dir = cwd();
     expect((await listClaudeCommands(dir, SETTING_SOURCES))![0].name).toBe("everything");
@@ -159,14 +155,13 @@ describe("the claude command probe", () => {
     answer([{ name: "simplify" }]);
     expect(await listClaudeCommands(dir, SETTING_SOURCES)).toHaveLength(1);
 
-    // Same cwd, TTL expired: the menu would rather show a minute-old list than
-    // nothing…
+    // Same cwd, TTL expired: the menu prefers a minute-old list over nothing.
     const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 61_000);
     try {
       fail();
       expect(await listClaudeCommands(dir, SETTING_SOURCES)).toHaveLength(1);
-      // …but a caller about to turn absence into a refusal is asking whether
-      // this command exists NOW, and a stale list cannot answer that.
+      // A caller about to turn absence into a refusal is asking whether this
+      // command exists now, and a stale list cannot answer that.
       fail();
       expect(await listClaudeCommands(dir, SETTING_SOURCES, { refresh: true })).toBeNull();
     } finally {
@@ -175,10 +170,10 @@ describe("the claude command probe", () => {
   });
 
   it("drops a `(MCP)` display label, which is not a name any session expands", async () => {
-    // Only reachable if the isolation above stops working — but then it matters:
-    // the CLI reports MCP prompts as `stash:analyze-performer (MCP)` and answers
-    // "Unknown command" to `/stash:analyze-performer` (measured, CLI 2.1.240).
-    // The invocable form comes from recordMcpPrompts instead.
+    // Only reachable if the isolation above stops working, but then it
+    // matters: the CLI reports MCP prompts as `stash:analyze-performer (MCP)`
+    // and answers "Unknown command" to `/stash:analyze-performer`. The
+    // invocable form comes from recordMcpPrompts instead.
     answer([{ name: "simplify" }, { name: "stash:analyze-performer (MCP)" }]);
     const commands = await listClaudeCommands(cwd(), SETTING_SOURCES);
     expect(commands!.map((c) => c.name)).toEqual(["simplify"]);
@@ -227,7 +222,7 @@ describe("MCP prompts observed on real turns", () => {
   // The probe cannot see these at all: they exist only on a session's init
   // message, and reading one means spawning the user's MCP fleet. A turn has
   // already spawned it, so the driver hands its list over and the menu merges
-  // it in — see the header of lib/agents/claude/commands.ts.
+  // it in. See the header of lib/agents/claude/commands.ts.
   const SLASH = ["clear", "mcp__stash__discover-performers", "mcp__ha-mcp__ha_overview"];
 
   it("adds the mcp__ names to the menu, and only those", async () => {
@@ -237,8 +232,9 @@ describe("MCP prompts observed on real turns", () => {
     const commands = await listClaudeCommands(dir, SETTING_SOURCES);
     expect(commands).toEqual([
       { name: "simplify", description: "" },
-      // Named exactly as the CLI expands them, and described by the server they
-      // came from — the init message carries no description of its own.
+      // Named exactly as the CLI expands them, and described by the server
+      // they came from, since the init message carries no description of its
+      // own.
       { name: "mcp__stash__discover-performers", description: "(stash) MCP prompt" },
       { name: "mcp__ha-mcp__ha_overview", description: "(ha-mcp) MCP prompt" },
     ]);
@@ -259,8 +255,8 @@ describe("MCP prompts observed on real turns", () => {
   });
 
   it("keeps the observation keyed to the cwd it was seen in", async () => {
-    // MCP config is per-project as well as per-user, and every task worktree is
-    // its own cwd — one task's servers are not another's.
+    // MCP config is per-project as well as per-user, and every task worktree
+    // is its own cwd: one task's servers are not another's.
     const mine = cwd();
     const theirs = cwd();
     recordMcpPrompts(mine, SETTING_SOURCES, SLASH);

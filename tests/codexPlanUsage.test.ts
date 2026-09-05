@@ -3,14 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// The Codex half of GET /api/plan-usage: the app-server response → windows
+// The Codex half of GET /api/plan-usage: the app-server response to windows
 // mapping, and the fetch discipline that keeps a `codex app-server` spawn from
 // happening at the poll rate (floor between reads, backoff after a failure,
 // never spawning without a ChatGPT login to ask about).
 //
-// The RPC itself lives in lib/agents/codex/appServer.ts precisely so it can be
-// stubbed here — the alternative is spawning a real CLI, which a hermetic suite
-// can't have. Its handshake is documented (and was verified live) there.
+// The RPC itself lives in lib/agents/codex/appServer.ts so it can be stubbed
+// here; the alternative is spawning a real CLI, which a hermetic suite cannot
+// have. Its handshake is documented there.
 
 const readAccountRateLimits = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/agents/codex/appServer", () => ({ readAccountRateLimits }));
@@ -34,10 +34,10 @@ const RESULT = {
 };
 
 // tests/setup.ts gives each run its own tmp HOME-ish dirs, but CODEX_HOME is
-// this module's own concern — point it at a scratch dir so the developer's real
-// ~/.codex login can't make these tests pass or fail.
+// this module's own concern: point it at a scratch dir so the developer's real
+// ~/.codex login cannot make these tests pass or fail.
 let codexHome: string;
-// tests/setup.ts pins CODEX_HOME suite-wide; put it back rather than deleting it.
+// tests/setup.ts pins CODEX_HOME suite-wide; restore it instead of deleting it.
 const suiteCodexHome = process.env.CODEX_HOME;
 const authPath = () => path.join(codexHome, "auth.json");
 
@@ -66,7 +66,7 @@ describe("parseRateLimits", () => {
     expect(parsed.reached).toBe(false);
     expect(parsed.windows).toEqual([
       { id: "primary", label: "Current session (5h)", utilization: 18, resetsAt: RESETS_PRIMARY * 1000 },
-      // A 7-day secondary is just "the week" — no redundant (7d) suffix.
+      // A 7-day secondary is just "the week", no redundant (7d) suffix.
       { id: "secondary", label: "Current week", utilization: 46, resetsAt: RESETS_SECONDARY * 1000 },
     ]);
   });
@@ -169,7 +169,7 @@ describe("getCodexPlanUsage", () => {
     const fresh = (await getCodexPlanUsage())!;
     expect(fresh.stale).toBe(false);
 
-    // Past the floor, so the next call really does try again — and fails.
+    // Past the floor, so the next call tries again and fails.
     vi.spyOn(Date, "now").mockReturnValue(fresh.fetchedAt! + 10 * 60_000);
     readAccountRateLimits.mockResolvedValueOnce({ error: "boom" });
     const stale = (await getCodexPlanUsage())!;

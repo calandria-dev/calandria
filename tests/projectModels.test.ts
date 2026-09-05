@@ -7,21 +7,21 @@ import { clearGatewayModelCache, gatewayModelCatalog } from "@/lib/gatewayModels
 import { clearGatewayRates } from "@/lib/gatewayPricing";
 import { startFakeGateway, type FakeGateway } from "./fakeGateway";
 
-// GET /api/projects/[id]/models — the browser's only route to a local model
-// server, since the endpoint is loopback on the SERVER and generally
-// unreachable from the page. Plus the other half of pointing a project at one:
-// a model the catalog can't size means the context gauge has no window, and
-// says so rather than guessing.
+// GET /api/projects/[id]/models is the browser's only route to a local model
+// server, since the endpoint is loopback on the server and unreachable from
+// the page. It is also the other half of pointing a project at one: a model
+// the catalog can't size leaves the context gauge with no window, and it
+// reports that instead of guessing.
 
 const local = (baseUrl: string, model = "") => serializeAgentEnv(providerPresetEnv({ baseUrl, model, token: "ollama" }));
 const gateway = (baseUrl: string, model = "") => serializeAgentEnv(gatewayPresetEnv({ baseUrl, billing: "key", model }));
 
 // taskProvider()'s gateway classification (lib/agentEnv.ts isGatewayEndpoint)
-// compares a project's ANTHROPIC_BASE_URL against the INSTANCE's own
-// CALANDRIA_LITELLM_BASE_URL, read fresh on every call — so a route-level test
-// has to point the instance at the fake gateway for the call to see it as
-// "gateway" rather than "custom". Restored after, since this env is otherwise
-// unset in a hermetic run (tests/setup.ts).
+// compares a project's ANTHROPIC_BASE_URL against the instance's own
+// CALANDRIA_LITELLM_BASE_URL, read fresh on every call. A route-level test
+// must point the instance at the fake gateway for the call to classify it as
+// "gateway" instead of "custom", and restore the env after, since it is
+// otherwise unset in a hermetic run (tests/setup.ts).
 async function withGatewayEnv<T>(url: string, fn: () => Promise<T>): Promise<T> {
   const prev = process.env.CALANDRIA_LITELLM_BASE_URL;
   process.env.CALANDRIA_LITELLM_BASE_URL = url;
@@ -71,15 +71,15 @@ describe("GET /api/projects/[id]/models", () => {
     expect(String(f.mock.calls[0][0])).toBe("http://localhost:11434/api/tags");
   });
 
-  // The settings dialog has to show suggestions for the URL being TYPED — there
-  // is no saved override to read until the user has already committed to one.
+  // The settings dialog shows suggestions for the URL being typed, before
+  // there is a saved override to read.
   it("probes ?base_url= instead, for a URL that hasn't been saved yet", async () => {
     const p = createProject({ name: "models-typed" });
     const f = server(["gpt-oss:20b"]);
 
     const body = await (await call(p.id, "http://localhost:1234/v1/")).json();
     expect(body.models).toEqual(["gpt-oss:20b"]);
-    // …normalized on the way in, so a pasted /v1 doesn't become /v1/api/tags.
+    // The URL is normalized on the way in, so a pasted /v1 doesn't become /v1/api/tags.
     expect(body.base_url).toBe("http://localhost:1234");
     expect(String(f.mock.calls[0][0])).toBe("http://localhost:1234/api/tags");
   });
@@ -177,8 +177,9 @@ describe("context window under a provider override", () => {
     expect(listTasks(cloud.id).find((r) => r.id === t.id)!.context_window).toBeGreaterThan(0);
 
     // The override rewrites ANTHROPIC_MODEL and the opus/sonnet/haiku aliases,
-    // so this task is NOT running the Opus its row still names — sizing it from
-    // the catalog would draw a 4% gauge on a 32K window about to overflow.
+    // so this task is not running the Opus its row still names. Sizing it
+    // from the catalog would draw a 4% gauge on a 32K window about to
+    // overflow.
     updateProject(cloud.id, { agent_env: local("http://localhost:11434", "qwen3-coder") });
     expect(getTaskContext(t.id).context_window).toBe(0);
     expect(getTaskContext(t.id).context_pct).toBe(0);
@@ -192,7 +193,7 @@ describe("context window under a provider override", () => {
     updateTask(t.id, { agent_env: local("http://localhost:11434", "qwen3-coder") });
     expect(getTaskContext(t.id).context_window).toBe(0);
 
-    // …and a task sent back to the cloud inside a local project is sizable again.
+    // A task sent back to the cloud inside a local project is sizable again.
     updateProject(p.id, { agent_env: local("http://localhost:11434", "qwen3-coder") });
     const back = createTask({ project_id: p.id, title: "u", agent: "claude", model: "claude-opus-4-5" });
     expect(getTaskContext(back.id).context_window).toBe(0);
@@ -215,8 +216,8 @@ describe("context window under a provider override", () => {
         expect(listTasks(p.id).find((r) => r.id === t.id)!.context_window).toBe(1_000_000);
 
         // A model the catalog never reported still reports unknown, same as a
-        // local override — the catalog is an ANSWER, not a blanket "gateway
-        // means sizable".
+        // local override. The catalog answers per model; it does not mean
+        // every gateway model on the same connection is sizable.
         updateTask(t.id, { model: "some-unlisted-model" });
         expect(getTaskContext(t.id).context_window).toBe(0);
       });

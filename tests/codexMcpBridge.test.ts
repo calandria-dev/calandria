@@ -15,16 +15,16 @@ import * as TOOL_DEFS from "@/lib/agentToolDefs.mjs";
 import type { Project, Task } from "@/lib/types";
 
 // Pins the codex-side wiring of Calandria's stdio MCP bridge
-// (scripts/calandria-mcp.mjs), which gives Codex tasks suggest_task /
-// expose_service / ask_user.
+// (scripts/calandria-mcp.mjs), which gives Codex tasks suggest_task,
+// expose_service, and ask_user.
 //
-// The load-bearing field is `default_tools_approval_mode`. Codex gates MCP tool
-// calls behind their own approval decision — `approval_policy = "never"` does
-// NOT cover them. Under the default mode, `codex exec` (what the SDK spawns)
-// has no approver, so every call to this server came back immediately as
-// `error: "user cancelled MCP tool call"` and the tool silently never ran.
-// Verified live on codex-cli 0.142.5: "auto" reproduces the cancellation,
-// "approve" runs the tool. Valid modes are auto | prompt | approve.
+// The critical field is `default_tools_approval_mode`. Codex gates MCP tool
+// calls behind its own approval decision; `approval_policy = "never"` does
+// not cover them. Under the default mode, `codex exec` (what the SDK spawns)
+// has no approver, so every call to this server comes back immediately as
+// `error: "user cancelled MCP tool call"` and the tool never runs. "auto"
+// reproduces the cancellation, "approve" runs the tool. Valid modes are
+// auto | prompt | approve.
 const project = { id: "p1", name: "P", repo_path: "/tmp/repo" } as Project;
 const task = { id: "t1", agent: "codex" } as Task;
 
@@ -52,9 +52,9 @@ describe("codex calandria MCP bridge config", () => {
   });
 
   it("keeps the auto-approval scoped to the bridge, never a global default", () => {
-    // The one thing that must NOT drift into a blanket policy: `approve` is
-    // right for our own first-party loopback proxy and wrong as a top-level
-    // codex setting, which would auto-approve anything else that gets mounted.
+    // `approve` is correct for Calandria's own first-party loopback proxy, and
+    // must not drift into a blanket policy: as a top-level codex setting it
+    // would auto-approve anything else that gets mounted.
     const cfg = calandriaMcpConfig(project, task) as Record<string, unknown>;
     expect(cfg).not.toHaveProperty("default_tools_approval_mode");
     expect(cfg).not.toHaveProperty("tools");
@@ -80,7 +80,7 @@ describe("codex inherits the user's MCP servers unless opted out", () => {
     ) as Record<string, any>;
     expect(cfg.mcp_servers.userthing).toEqual({ enabled: false, command: DISABLED_STDIO_COMMAND });
     expect(cfg.mcp_servers.another).toEqual({ enabled: false, url: DISABLED_HTTP_URL });
-    // …without touching the bridge, which is the whole point of the exercise.
+    // …without touching the bridge.
     expect(cfg.mcp_servers.calandria.command).toBe(process.execPath);
     expect(cfg.mcp_servers.calandria.default_tools_approval_mode).toBe("approve");
   });
@@ -99,24 +99,24 @@ describe("codex inherits the user's MCP servers unless opted out", () => {
     // The SDK builds `mcp_servers.<name>.enabled` by string concatenation with
     // no quoting, so a dotted or spaced name would address the wrong table.
     // Skipping leaves that server mounted (the default) instead of emitting an
-    // override that silently means something else.
+    // override that means something else.
     const servers = ["ok-1", "has.dot", "has space", 'has"quote'].map((name) => ({ name, transport: "stdio" as const }));
     expect(disableInheritedServers(servers)).toEqual({ "ok-1": { enabled: false, command: DISABLED_STDIO_COMMAND } });
   });
 
   it("mounts the user's servers by default: no overrides, no subprocess", async () => {
-    // The default is the flag ON, so inheritedServerOverrides returns before
-    // it would enumerate anything. Pinned because this default was once off,
-    // on the wrong belief that codex exec could never call an inherited tool.
+    // The default is the flag on, so inheritedServerOverrides returns before
+    // it would enumerate anything: codex exec can call an inherited tool, so
+    // the default has to mount them.
     expect(CODEX_INHERIT_MCP).toBe(true);
     expect(await inheritedServerOverrides()).toEqual({});
   });
 
   it("is declared in the capability descriptors, both agents", () => {
-    // app/api/agents hands these to the client, so the answer is data rather
-    // than per-agent knowledge hardcoded in a driver or the UI. Settings →
-    // Agents renders both halves verbatim (McpInheritance in SettingsView.tsx),
-    // so every driver owes the note as well as the verdict.
+    // app/api/agents hands these to the client, so the asymmetry is data, not
+    // per-agent knowledge hardcoded in a driver or the UI. Settings → Agents
+    // renders both halves verbatim (McpInheritance in SettingsView.tsx), so
+    // every driver owes the note as well as the verdict.
     expect(getCapabilities("codex").inheritsUserMcpServers).toBe(true);
     expect(getCapabilities("claude").inheritsUserMcpServers).toBe(true);
     expect(getCapabilities("codex").userMcpServersNote).toContain("CODEX_INHERIT_MCP");
@@ -125,7 +125,7 @@ describe("codex inherits the user's MCP servers unless opted out", () => {
 
   it("states the hosted-gateway mount's own caveat separately from the flag above", () => {
     // A different mount from projects.gateway_mcp, with its own per-driver
-    // note — Claude has nothing special to say, Codex's is the approval gate.
+    // note. Claude has nothing special to say; Codex's is the approval gate.
     expect(getCapabilities("codex").gatewayMcpNote).toContain("plan");
     expect(getCapabilities("codex").gatewayMcpNote).toContain("auto-approved");
     expect(getCapabilities("claude").gatewayMcpNote).toBeNull();
@@ -133,7 +133,7 @@ describe("codex inherits the user's MCP servers unless opted out", () => {
 
   it("tracks CODEX_INHERIT_MCP rather than claiming a flat yes", async () => {
     // With the opt-out set the driver really does unmount the user's servers,
-    // and the Settings line is rendered straight from this flag — so a
+    // and the Settings line is rendered straight from this flag, so a
     // hardcoded true would tell that user the opposite of what their own turns
     // do. Read at import time via lib/config, hence the module reset.
     vi.stubEnv("CODEX_INHERIT_MCP", "0");
@@ -149,9 +149,9 @@ describe("codex inherits the user's MCP servers unless opted out", () => {
   });
 });
 
-// Hosted LiteLLM gateway MCP servers (docs/design/litellm.md, "Mounting, per
+// Hosted LiteLLM gateway MCP servers (docs/AGENTS.md, "Mounting, per
 // driver"): mounted with the whole server pre-approved (codex exec has no
-// approver), and ONLY under the bypass-equivalent permission mode —
+// approver), and only under the bypass-equivalent permission mode.
 // gatewayMcpForPermission is the gate lib/agents/codex/driver.ts's runTurn
 // applies before calandriaMcpConfig ever sees a gateway server.
 describe("codex hosted gateway MCP mount", () => {
@@ -174,9 +174,9 @@ describe("codex hosted gateway MCP mount", () => {
   });
 
   it("mounts nothing under plan even with bypassPermissions written explicitly for a different check", () => {
-    // Every other value falls to the bypass-equivalent branch, "plan" is the
-    // one exception — pin both ends so a future permission mode can't silently
-    // fall the wrong way.
+    // Every other value falls to the bypass-equivalent branch; "plan" is the
+    // exception. Pin both ends so a future permission mode cannot fall the
+    // wrong way.
     expect(gatewayMcpForPermission(gatewayProject, task, "bypassPermissions").demo).toBeTruthy();
   });
 
@@ -188,12 +188,12 @@ describe("codex hosted gateway MCP mount", () => {
   });
 });
 
-// The whole point of lib/agentToolDefs.mjs is that the two servers exposing
-// these tools can't drift: the Claude driver's in-process SDK MCP server and
-// this stdio bridge. A def nobody mounts is a tool the agent can't see; a tool
-// mounted on one side only is exactly the drift the shared file exists to
-// prevent. Source-level on purpose — the bridge is a separate process, and the
-// SDK server can't be introspected without an SDK session.
+// lib/agentToolDefs.mjs exists so the two servers exposing these tools cannot
+// drift: the Claude driver's in-process SDK MCP server and this stdio bridge.
+// A def nobody mounts is a tool the agent cannot see; a tool mounted on one
+// side only is the drift the shared file prevents. This check is source-level
+// because the bridge is a separate process, and the SDK server cannot be
+// introspected without an SDK session.
 const ROOT = path.resolve(__dirname, "..");
 const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 const TOOL_NAMES = Object.values(TOOL_DEFS)
@@ -202,13 +202,14 @@ const TOOL_NAMES = Object.values(TOOL_DEFS)
 
 describe("agent tool defs reach both servers", () => {
   it("mounts every def in the Claude driver's in-process server", () => {
-    // The bridge side is covered live in tests/calandriaMcp.test.ts (listTools over
-    // real stdio). The in-process SDK server has no such handle — building one
-    // needs an SDK session — so this side is pinned at the source level.
+    // The bridge side is covered live in tests/calandriaMcp.test.ts (listTools
+    // over real stdio). The in-process SDK server has no such handle, since
+    // building one needs an SDK session, so this side is pinned at the source
+    // level.
     //
-    // ask_user is the deliberate exception: Claude asks through its own native
+    // ask_user is the exception: Claude asks through its own native
     // AskUserQuestion tool, intercepted by the driver's PreToolUse hook, and the
-    // shared def exists only so the bridge can offer non-Claude agents the same
+    // shared def exists so the bridge can offer non-Claude agents the same
     // thing. Everything else must be mounted on both.
     const src = read("lib/agents/claude/driver.ts");
     for (const name of TOOL_NAMES.filter((n) => n !== "ask_user")) {
@@ -220,8 +221,8 @@ describe("agent tool defs reach both servers", () => {
 
   it("keeps update_task's accepted values identical on both sides", () => {
     // The driver spells these literals out because z.enum needs a literal union
-    // and the defs are plain .mjs (TS widens their arrays to string[]). That's
-    // the one place the shared file can't enforce itself, so pin it here.
+    // and the defs are plain .mjs (TS widens their arrays to string[]). The
+    // shared file cannot enforce this itself, so it is pinned here.
     const src = read("lib/agents/claude/driver.ts");
     expect(src).toContain(`z.enum(${JSON.stringify(TOOL_DEFS.UPDATE_TASK.priorities).replaceAll(",", ", ")})`);
     expect(src).toContain(`z.enum(${JSON.stringify(TOOL_DEFS.UPDATE_TASK.statuses).replaceAll(",", ", ")})`);
@@ -229,9 +230,9 @@ describe("agent tool defs reach both servers", () => {
   });
 
   it("offers update_task's `task` target on both sides", () => {
-    // The param that lets an agent edit a row other than its own. Mounted on one
-    // side only, the cross-task policy is simply unreachable from the other
-    // agent — a capability gap no test of either side alone would notice.
+    // The param that lets an agent edit a row other than its own. Mounted on
+    // one side only, the cross-task policy is unreachable from the other agent,
+    // a capability gap no test of either side alone would notice.
     for (const rel of ["lib/agents/claude/driver.ts", "scripts/calandria-mcp.mjs"]) {
       expect(read(rel), `update_task's \`task\` param is missing from ${rel}`).toContain("UPDATE_TASK.params.task");
     }
@@ -250,21 +251,21 @@ describe("agent tool defs reach both servers", () => {
   it("offers withdraw_suggestion's `task` + `reason` on both sides", () => {
     // The retraction verb, and the explanation that makes it worth having.
     // Mounted on one side only, an agent on the other has nothing but
-    // `status: "done"` for "this suggestion is redundant" — which claims work
-    // nobody started is finished AND fires the auto-start sweep.
+    // `status: "done"` for "this suggestion is redundant", which claims work
+    // nobody started is finished and fires the auto-start sweep.
     for (const rel of ["lib/agents/claude/driver.ts", "scripts/calandria-mcp.mjs"]) {
       const src = read(rel);
       expect(src, `withdraw_suggestion's \`task\` param is missing from ${rel}`).toContain("WITHDRAW_SUGGESTION.params.task");
       expect(src, `withdraw_suggestion's \`reason\` param is missing from ${rel}`).toContain("WITHDRAW_SUGGESTION.params.reason");
-      // Neither is .optional() anywhere — a reason the model can omit is the
-      // one thing this tool must not allow.
+      // Neither is .optional() anywhere; a reason the model can omit is
+      // something this tool must not allow.
       expect(src).not.toMatch(/optional\(\)\.describe\(WITHDRAW_SUGGESTION\.params\./);
     }
   });
 
   it("has an internal endpoint behind every path the bridge proxies to", () => {
     // A bridge tool whose endpoint doesn't exist fails at call time with a bare
-    // 404 — invisible until an agent tries it in anger.
+    // 404, not caught until an agent calls it.
     const src = read("scripts/calandria-mcp.mjs");
     const paths = [...src.matchAll(/callInternal\("([^"]+)"/g)].map((m) => m[1]);
     expect(paths.length).toBeGreaterThan(0);

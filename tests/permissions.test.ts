@@ -1,10 +1,11 @@
-// The tool-permission gate's policy layer (lib/permissions.ts) — what the
-// canUseTool callback consults before it decides to allow silently, prompt, or
-// deny. The rules here are the difference between acceptEdits meaning
-// something and being bypassPermissions with a different label, so they're pinned
-// directly: the allowlist and its blockedPath escape hatch, what a Bash command
-// may be remembered as, what a remembered rule then covers, and every way a
-// prompt can end WITHOUT an answer (all of which must deny).
+// The tool-permission gate's policy layer (lib/permissions.ts): what the
+// canUseTool callback consults before it decides to allow without asking,
+// prompt, or deny. The rules here are the difference between acceptEdits
+// meaning something and being bypassPermissions with a different label, so
+// they are pinned directly: the allowlist and its blockedPath escape hatch,
+// what a Bash command may be remembered as, what a remembered rule then
+// covers, and every way a prompt can end without an answer (all of which must
+// deny).
 
 import { describe, it, expect, vi } from "vitest";
 import {
@@ -68,7 +69,7 @@ describe("the built-in allowlist", () => {
   });
 
   it("prompts even for a read when the CLI flagged a blocked path", () => {
-    // blockedPath is the CLI saying the call reaches outside the worktree —
+    // blockedPath is the CLI saying the call reaches outside the worktree;
     // exactly the case the allowlist must not swallow.
     expect(isAlwaysAllowed("Read", "/etc/shadow")).toBe(false);
   });
@@ -92,7 +93,7 @@ describe("what a Bash command may be remembered as", () => {
   });
 
   it("refuses a prefix when token 2 is a flag or an operand", () => {
-    // The whole point: `rm -rf tmp` must never become "always allow `rm -rf …`".
+    // `rm -rf tmp` must never become "always allow `rm -rf …`".
     expect(bashPrefixOf("rm -rf tmp")).toBeNull();
     expect(bashPrefixOf("cat notes.txt")).toBeNull();
   });
@@ -149,7 +150,7 @@ describe("what a Bash command may be remembered as", () => {
 
 // The same policy reached from Settings, where there is no proposed call to
 // look at. It must not become a wider door than the card: the value stored is
-// the policy's, not the user's, and a refused prefix stops rather than
+// the policy's, not the user's, and a refused prefix stops instead of
 // downgrading itself into an exact rule that was never requested.
 // (The route around it is pinned in tests/settingsPermissions.test.ts.)
 describe("a rule typed in by hand", () => {
@@ -217,17 +218,17 @@ describe("what a remembered rule covers", () => {
   });
 });
 
-// Hosted LiteLLM gateway MCP servers (docs/design/litellm.md, "Hosted MCP
-// servers"): "trust this server" mints a whole-namespace rule from project
-// settings, matched by NAMESPACE rather than by rule.tool — LiteLLM names
-// every tool under an alias `mcp__<alias>__<alias>-<tool>`, and trusting the
-// server means trusting all of them, including ones the catalog never listed.
+// Hosted LiteLLM gateway MCP servers (docs/AGENTS.md, "Hosted MCP servers"):
+// "trust this server" mints a whole-namespace rule from project settings,
+// matched by NAMESPACE, not by rule.tool. LiteLLM names every tool under an
+// alias `mcp__<alias>__<alias>-<tool>`, and trusting the server means
+// trusting all of them, including ones the catalog never listed.
 describe("mcp_server rules — trusting a whole hosted MCP server", () => {
   it("matches every tool call under the alias's namespace", () => {
     const r = rule("mcp_server", "demo", "mcp__demo__*");
     expect(ruleMatches(r, "mcp__demo__demo-lookup_ticket", {})).toBe(true);
     expect(ruleMatches(r, "mcp__demo__demo-close_ticket", {})).toBe(true);
-    // A tool the catalog never listed at mint time — trusting the alias
+    // A tool the catalog never listed at mint time: trusting the alias
     // covers it too, since the rule is the server, not one call.
     expect(ruleMatches(r, "mcp__demo__demo-brand-new-tool", {})).toBe(true);
   });
@@ -320,12 +321,12 @@ describe("parking on a human", () => {
     expect(submitAnswer("t-perm-2", "perm:2", [["allow_once"]])).toBe(false);
   });
 
-  // The presence heuristic behind the two tests above is ONE counter shared by
+  // The presence heuristic behind the two tests above is one counter shared by
   // the whole process, and it counts bus subscribers. A server-side subscriber
-  // that forgets to mark itself internal therefore reads as a connected tab —
-  // permanently, since it subscribes once and never leaves — and every
-  // unattended permission card on the instance quietly starts parking for the
-  // attended cap (hours) instead of auto-denying in seconds, holding its task
+  // that forgets to mark itself internal reads as a connected tab
+  // permanently, since it subscribes once and never leaves, and every
+  // unattended permission card on the instance then parks for the attended
+  // cap (hours) instead of auto-denying in seconds, holding its task
   // `running` and the container awake. The notification dispatcher
   // (lib/notifications/dispatcher.ts) is the first such subscriber; this pins
   // the rule for the next one.
@@ -334,7 +335,7 @@ describe("parking on a human", () => {
     ensureNotifier();
     try {
       expect(watcherCount()).toBe(0);
-      // Not just the number — the behavior it governs, end to end.
+      // Not just the number: the behavior it governs, end to end.
       await expect(waitForPermission({ taskId: "t-perm-6", id: "perm:6", attendedMs: 0, unattendedMs: 60 }))
         .resolves.toEqual({ expired: "unattended" });
       // …while a REAL client still counts, notifier and all.
@@ -356,15 +357,15 @@ describe("parking on a human", () => {
   });
 
   it("upgrades to the attended cap when a tab opens during the grace", async () => {
-    // Same idea as the deadline-bracketing fix below: control the clock
-    // directly rather than trusting a real sleep to have safely outrun the
-    // 80ms unattended grace (and the interval's own 40ms poll of it) under a
-    // slow/loaded CI runner.
+    // Same idea as the deadline bracketing below: control the clock directly
+    // instead of trusting a real sleep to safely outrun the 80ms unattended
+    // grace (and the interval's own 40ms poll of it) under a slow or loaded
+    // CI runner.
     vi.useFakeTimers();
     const p = waitForPermission({ taskId: "t-perm-4", id: "perm:4", attendedMs: 0, unattendedMs: 80 });
     const unsub = subscribeGlobal(() => {});
     try {
-      // Past the unattended grace, but a watcher appeared — with attendedMs 0
+      // Past the unattended grace, but a watcher appeared; with attendedMs 0
       // the prompt now parks indefinitely instead of auto-denying.
       await vi.advanceTimersByTimeAsync(250);
       expect(submitAnswer("t-perm-4", "perm:4", [["allow_always"]])).toBe(true);
@@ -387,9 +388,9 @@ describe("parking on a human", () => {
   it("stamps the short grace deadline only while nobody is watching", () => {
     // Bracketed against the clock either side of the call, not against one
     // reading of it: promptDeadline stamps `Date.now() + grace` internally, so
-    // a single millisecond ticking between `before` and that stamp made
-    // `unwatched - before` 45001 and failed the run (seen in CI). The window is
-    // the assertion — the deadline is 45s from a moment inside this call.
+    // a single millisecond ticking between `before` and that stamp can push
+    // `unwatched - before` past a tighter bound. The window is the assertion:
+    // the deadline is 45s from a moment inside this call.
     const before = Date.now();
     const unwatched = promptDeadline(60 * 60_000, 45_000);
     const after = Date.now();

@@ -4,9 +4,10 @@ import type { Project, Task } from "@/lib/types";
 
 // The delegation directive lives in the session prompt rather than in a
 // CLAUDE.md file, because the CLAUDE.md version was measured firing after the
-// sweep it was meant to replace, or not at all (docs/DELEGATION.md).
-// What this file pins is the three decisions that came out of that measurement:
-// it is there at all, it is LAST, and it is only sent to an agent that has
+// sweep it was meant to replace, or not at all
+// (https://github.com/calandria-dev/calandria-notes/blob/main/measurements/DELEGATION.md).
+// This file pins the three decisions that came out of that measurement: it is
+// there at all, it is last, and it is only sent to an agent that has
 // subagents to dispatch.
 
 const project = { id: "p1", name: "P", repo_path: "/tmp/repo", context: "" } as Project;
@@ -17,22 +18,22 @@ describe("collection-delegation directive", () => {
   it("reaches a Claude session, with the count trigger and the synchronous-dispatch rule", () => {
     const ctx = buildProjectContext(project, taskFor("claude"));
     expect(ctx).toContain("the bulk reads go to a subagent");
-    // The trigger is a COUNT. The CLAUDE.md version qualified it with "against
-    // the same question", which a model can judge false of every command it
-    // runs, so the condition never fired by its own reckoning.
+    // The trigger is a count. The CLAUDE.md version qualified it with "against
+    // the same question", a condition a model can judge false of every command
+    // it runs, so it never fired by its own reckoning.
     expect(ctx).toContain("Once you have run two read-only commands");
     expect(ctx).not.toContain("same question");
     // Backgrounded, the sub-answer never arrives inside the turn and the sweep
-    // is lost while the metric improves — measured, hence "required".
+    // is lost while the metric improves, which is why it is required.
     expect(ctx).toContain("`run_in_background: false` is required and is not the default");
     expect(ctx).toContain('Agent(subagent_type: "Explore", model: "haiku", run_in_background: false)');
   });
 
   it("is the LAST thing in the prompt", () => {
-    // Placement is the whole point of moving it out of CLAUDE.md: the append
-    // lands after the CLI's own instructions ("do your work through the Bash
-    // tool", "do not call the AgentTool unless the user requested it"), and it
-    // is countermanding them.
+    // Placement is why it moved out of CLAUDE.md: the append lands after the
+    // CLI's own instructions ("do your work through the Bash tool", "do not
+    // call the AgentTool unless the user requested it"), and it countermands
+    // them.
     const ctx = buildProjectContext(project, taskFor("claude"));
     expect(ctx.trimEnd().endsWith("run the thing and read the number.")).toBe(true);
   });

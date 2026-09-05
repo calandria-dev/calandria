@@ -21,23 +21,23 @@ import {
 import type { ProviderKind } from "@/lib/agentEnv";
 import type { Project, Task } from "@/lib/types";
 
-// Issue #102: a main-turn agent process must not inherit the server's own
+// Pins that a main-turn agent process does not inherit the server's own
 // NODE_ENV=production (it makes `npm install` in the user's project skip
 // devDependencies and still exit 0) or its PORT (buildProjectContext tells
-// every agent to bind its dev server to $PORT, so an unedited PORT points a
-// task's server at Calandria itself).
+// every agent to bind its dev server to $PORT, so an unedited PORT would
+// point a task's server at Calandria itself). Issue #102.
 //
-// Plus the provider override (local models): projects.agent_env / tasks.agent_env
-// are laid over the copied env through an allowlist, after the copy and before
-// the PORT edit, with the credential rules applyProviderEnv documents.
+// Also pins the provider override: projects.agent_env and tasks.agent_env
+// are layered over the copied env through an allowlist, after the copy and
+// before the PORT edit, per the credential rules applyProviderEnv documents.
 
 const project = (port: number, agent_env = "") => ({ port, agent_env }) as Pick<Project, "port" | "agent_env">;
 const task = (agent_env: string) => ({ agent_env }) as Pick<Task, "agent_env">;
 
-// The gateway address every case below describes an override against. Passed
-// explicitly rather than set in the environment, so these stay pure: the
-// default is the instance's own CALANDRIA_LITELLM_BASE_URL, which a hermetic
-// run does not have.
+// Gateway address every case below describes an override against. Passed
+// explicitly instead of set in the environment, keeping these tests pure:
+// the default is the instance's own CALANDRIA_LITELLM_BASE_URL, which a
+// hermetic run does not have.
 const GW = "http://gw.example.com:4000";
 
 describe("agentTurnEnv", () => {
@@ -257,28 +257,28 @@ describe("describeProvider / taskProvider", () => {
     expect(describeProvider({ OPENAI_BASE_URL: "http://localhost:1234/v1" })).toMatchObject({ kind: "local", host: "localhost:1234", anthropic_base_url: null });
   });
 
-  // `pricing` is what the usage ledger keys off (lib/runner.ts), so it must
-  // never be derived a second time somewhere else: cloud is the driver's own
-  // figure, a local server is genuinely free, and a custom base URL is a price
-  // nobody has stated — which is NOT the same as free, and is the whole reason
-  // this field exists rather than a `kind !== "cloud"` test at the call site.
+  // `pricing` is what the usage ledger keys off (lib/runner.ts) and must
+  // never be derived a second time elsewhere: cloud is the driver's own
+  // figure, a local server is free, and a custom base URL is a price nobody
+  // has stated, which is not the same as free. This field exists so the call
+  // site never needs its own `kind !== "cloud"` test.
   it("prices cloud by the vendor, local as free and custom as unknown", () => {
     expect(describeProvider({}).pricing).toBe("vendor");
     expect(describeProvider({ ANTHROPIC_BASE_URL: "http://localhost:11434" }).pricing).toBe("free");
     expect(describeProvider({ ANTHROPIC_BASE_URL: "https://openrouter.ai/api" }).pricing).toBe("unknown");
-    // Every kind maps, so a fifth one added later can't quietly fall through
-    // to being billed as the vendor's spend.
+    // Every kind maps, so a fifth one added later cannot fall through to
+    // being billed as the vendor's spend.
     const expected: Record<ProviderKind, string> = { cloud: "vendor", local: "free", custom: "unknown", gateway: "gateway" };
     for (const kind of Object.keys(expected) as ProviderKind[]) {
       expect(providerPricing(kind), kind).toBe(expected[kind]);
     }
   });
 
-  // The ledger's whole decision, in one place because the runner writes it from
-  // two paths (the live usage event and the finally-flush) and they must not
-  // drift. A gateway prices its own turns but hands no CLI the figure, so it
-  // records NULL and counts as unpriced — the same row a custom endpoint gets,
-  // for a different reason.
+  // The ledger's cost decision, kept in one place because the runner writes
+  // it from two paths (the live usage event and the finally-flush) that must
+  // not drift. A gateway prices its own turns but hands no CLI the figure, so
+  // it records NULL and counts as unpriced, the same row a custom endpoint
+  // gets for a different reason.
   it("records the vendor's figure, a measured zero, or NULL", () => {
     expect(recordedCostUsd("vendor", 0.42)).toBe(0.42);
     expect(recordedCostUsd("vendor", null)).toBe(null);
@@ -295,12 +295,12 @@ describe("describeProvider / taskProvider", () => {
   });
 });
 
-// ---- the LiteLLM gateway preset (docs/design/litellm.md) ----
+// ---- the LiteLLM gateway preset (docs/AGENTS.md) ----
 //
-// The gateway is the fourth provider kind and the first one whose credential
-// and headers are COMPOSED per turn rather than stored. Two facts carry most of
-// the weight here: a project row must never be able to name a request header,
-// and the key must never be reachable through a project row at all.
+// The gateway is the fourth provider kind, and the first whose credential and
+// headers are composed per turn instead of stored. Two facts matter here: a
+// project row must never be able to name a request header, and the key must
+// never be reachable through a project row at all.
 
 describe("the gateway preset", () => {
   const gwEnv = (billing: "key" | "subscription" = "key", model?: string) =>
@@ -315,8 +315,8 @@ describe("the gateway preset", () => {
     });
     const withModel = gatewayPresetEnv({ baseUrl: GW, billing: "subscription", model: "claude-sonnet-4-5" });
     expect(withModel.CALANDRIA_GATEWAY_BILLING).toBe("subscription");
-    // Claude Code's own /model list can't see a LiteLLM catalog, so the bare
-    // aliases are pinned too — the same rule the local preset follows.
+    // Claude Code's own /model list cannot see a LiteLLM catalog, so the bare
+    // aliases are pinned too, following the same rule as the local preset.
     expect(withModel.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("claude-sonnet-4-5");
     expect(withModel.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe("claude-sonnet-4-5");
     expect(withModel.GEMINI_MODEL).toBe("claude-sonnet-4-5");
@@ -334,7 +334,7 @@ describe("the gateway preset", () => {
     expect(isGatewayEndpoint(`${GW}/v1`, GW)).toBe(true);
     // A different port or host is a different endpoint, not this gateway.
     expect(describeProvider({ ANTHROPIC_BASE_URL: "http://gw.example.com:4001" }, GW).kind).toBe("custom");
-    // With no gateway configured the preset does not exist and nothing is one.
+    // With no gateway configured, the preset does not exist and nothing is one.
     expect(describeProvider({ ANTHROPIC_BASE_URL: GW }, null).kind).toBe("custom");
     expect(isGatewayEndpoint(GW, null)).toBe(false);
   });
@@ -342,15 +342,14 @@ describe("the gateway preset", () => {
   it("outranks local: a LiteLLM proxy on loopback is still a gateway", () => {
     const local = "http://127.0.0.1:4000";
     expect(describeProvider({ ANTHROPIC_BASE_URL: local }, local)).toMatchObject({ kind: "gateway", pricing: "gateway" });
-    // …and without it configured, the same address is an ordinary local one.
+    // Without the gateway configured, the same address is an ordinary local one.
     expect(describeProvider({ ANTHROPIC_BASE_URL: local }, null).kind).toBe("local");
   });
 
   it("reads the billing marker, defaulting an unmarked override to the key", () => {
     expect(describeProvider(parseAgentEnv(gwEnv("subscription")), GW).gateway_billing).toBe("subscription");
     expect(describeProvider(parseAgentEnv(gwEnv("key")), GW).gateway_billing).toBe("key");
-    // The zero-code baseline: a gateway URL typed into the Custom preset before
-    // this existed was billing the token it carried, which is billing "key".
+    // An unmarked gateway base URL defaults to billing "key", the token it carries.
     expect(describeProvider({ ANTHROPIC_BASE_URL: GW }, GW).gateway_billing).toBe("key");
     // Not a gateway, so there is nothing to say.
     expect(describeProvider({ ANTHROPIC_BASE_URL: "http://localhost:11434" }, GW).gateway_billing).toBe(null);
@@ -390,7 +389,7 @@ describe("the gateway preset", () => {
     expect("ANTHROPIC_AUTH_TOKEN" in out).toBe(false);
   });
 
-  // Antigravity carries the credential under its own name rather than a
+  // Antigravity carries the credential under its own name instead of a
   // header: the Go GenAI SDK inside `agy` reads GEMINI_API_KEY directly, and
   // there is no ANTHROPIC_CUSTOM_HEADERS equivalent for it.
   it("sets GEMINI_API_KEY for a gateway turn on the gemini agent, and no attribution header", () => {
@@ -422,10 +421,10 @@ describe("the gateway preset", () => {
     expect("GEMINI_API_KEY" in out).toBe(false);
   });
 
-  // The reason ANTHROPIC_CUSTOM_HEADERS is composed rather than stored: it is
-  // Claude Code's only knob for arbitrary request headers, so a project row
-  // that could set it would be a way to make every turn in that project send
-  // anything at all to whatever endpoint the same row names.
+  // ANTHROPIC_CUSTOM_HEADERS is composed instead of stored because it is
+  // Claude Code's only knob for arbitrary request headers: a project row that
+  // could set it would let every turn in that project send anything to
+  // whatever endpoint the same row names.
   it("cannot be told what headers to send by a project row", () => {
     expect(AGENT_ENV_KEYS).not.toContain("ANTHROPIC_CUSTOM_HEADERS");
     const smuggled = JSON.stringify({ ANTHROPIC_BASE_URL: "http://localhost:11434", ANTHROPIC_CUSTOM_HEADERS: "x-evil: 1" });
@@ -440,9 +439,9 @@ describe("the gateway preset", () => {
       CALANDRIA_LITELLM_KEY: "sk-litellm",
       ANTHROPIC_CUSTOM_HEADERS: "x-instance: 1",
     }, GW);
-    // Composed only for the gateway kind — an instance-wide header survives.
+    // Composed only for the gateway kind; an instance-wide header survives.
     expect(out.ANTHROPIC_CUSTOM_HEADERS).toBe("x-instance: 1");
-    // …but the key is stripped from every turn, gateway or not.
+    // The key is stripped from every turn, gateway or not.
     expect("CALANDRIA_LITELLM_KEY" in out).toBe(false);
   });
 
@@ -494,8 +493,8 @@ describe("planWindowApplies", () => {
 
   it("holds for Claude on a subscription-billed gateway, and never for Codex or Antigravity", () => {
     expect(planWindowApplies(gw("subscription"), "claude")).toBe(true);
-    // `requires_openai_auth` is deliberately unimplemented, so Codex bills the
-    // key here too and its ChatGPT window is untouched.
+    // `requires_openai_auth` is unimplemented, so Codex bills the key here
+    // too and its ChatGPT window is untouched.
     expect(planWindowApplies(gw("subscription"), "codex")).toBe(false);
     // `agy` has no equivalent of Claude Code's own-plan forwarding, so it
     // always bills the gateway's key regardless of the billing marker.
@@ -503,11 +502,11 @@ describe("planWindowApplies", () => {
   });
 });
 
-// Gemini CLI source refuses a plain-http endpoint unless it's loopback, and
-// Antigravity's own docs state the same rule (docs/design/litellm.md,
-// "Antigravity CLI"). A gateway is reachable from anywhere the app runs, so
-// this is narrower than isLocalEndpoint's "on this machine or a private
-// network" — a LAN address is local but not loopback, and `agy` refuses it.
+// Gemini CLI source refuses a plain-http endpoint unless it is loopback, and
+// Antigravity's own docs state the same rule (docs/AGENTS.md, "Antigravity
+// CLI"). A gateway is reachable from anywhere the app runs, so this is
+// narrower than isLocalEndpoint's "on this machine or a private network": a
+// LAN address is local but not loopback, and `agy` refuses it.
 describe("isLoopbackHost", () => {
   it("accepts localhost, 127.x and ::1", () => {
     expect(isLoopbackHost("http://localhost:4000")).toBe(true);

@@ -27,8 +27,8 @@ describe("collapsePolicy — an override is good at the shed set it was granted 
 
   it("leaving the width and coming back forgets the override, even when nothing rendered in between", () => {
     // 1024 → reopen both → 1440 → 1024, applied back to back the way two
-    // matchMedia change events land in one batch. The effect-based version
-    // needed a commit at 1440 to notice the change; this needs nothing.
+    // matchMedia change events land in one batch. No commit at 1440 is needed
+    // to notice the change.
     let p = applyShed(INITIAL_POLICY, AT_1024);
     p = applyOverride(applyOverride(p, "proj", true), "task", true);
     p = applyShed(applyShed(p, AT_1440), AT_1024);

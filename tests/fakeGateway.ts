@@ -7,17 +7,17 @@ import type { AddressInfo } from "node:net";
  * and lib/gatewayMcp.ts's hosted-MCP catalog + mount read. The bodies and
  * status codes are the ones recorded against
  * `ghcr.io/berriai/litellm:main-latest` reporting `x-litellm-version:
- * 1.101.0` — see the appendix of docs/design/litellm.md. A few are
- * load-bearing and easy to get wrong from memory:
+ * 1.101.0`; see the appendix of docs/AGENTS.md. A few are easy to get wrong
+ * from memory:
  *
- * - `/health/readiness` takes NO key. An instance with an address but no key
+ * - `/health/readiness` takes no key. An instance with an address but no key
  *   still gets a reachability answer, and the tests have to be able to prove it.
  * - `/key/info` answers **500** `Database not connected` on a proxy with no
  *   Postgres, not 404 and not an empty 200. That is the sentence the card turns
  *   into "keys, budgets and spend need LiteLLM's database", so a helper that
  *   returned a tidy error would test nothing. `/key/generate` and `/key/delete`
  *   share that: key management needs the same database.
- * - `/key/generate` and `/key/delete` take the ADMIN/master key as
+ * - `/key/generate` and `/key/delete` take the admin/master key as
  *   `Authorization: Bearer …`, a different header and a different credential
  *   from the `x-litellm-api-key` a virtual key presents on every other route.
  *
@@ -25,7 +25,7 @@ import type { AddressInfo } from "node:net";
  * is why the card can show a version without a second call.
  */
 
-/** A model spec richer than a bare name — provider, window and mode, for
+/** A model spec richer than a bare name: provider, window and mode, for
  *  testing the picker's per-driver fit filter (lib/gatewayModels.ts). A plain
  *  string is shorthand for `{ name }` (anthropic, 200k, chat). */
 export interface FakeGatewayModelSpec {
@@ -47,15 +47,15 @@ export interface FakeGatewayKey {
   budget_reset_at: string;
   /** `/key/generate`'s `object_permission` body field, e.g.
    *  `{ mcp_servers: [...] }` for a task scoped to hosted MCP servers
-   *  (docs/design/litellm.md, "Hosted MCP servers"). Undefined when the
+   *  (docs/AGENTS.md, "Hosted MCP servers"). Undefined when the
    *  request carried none. */
   object_permission?: unknown;
 }
 
 /** One hosted MCP server for `/v1/mcp/server` + `/mcp-rest/tools/list`
- *  (docs/design/litellm.md, "Hosted MCP servers"). `tools` defaults to one
- *  tool named `<alias>-lookup`, matching the measured `<alias>-<tool>`
- *  prefix LiteLLM returns. */
+ *  (docs/AGENTS.md, "Hosted MCP servers"). `tools` defaults to one
+ *  tool named `<alias>-lookup`, matching the `<alias>-<tool>` prefix
+ *  LiteLLM returns. */
 export interface FakeGatewayMcpSpec {
   alias: string;
   server_name?: string;
@@ -77,10 +77,10 @@ export interface FakeGatewayOptions {
    *  as `x-litellm-api-key`. */
   requireKey?: string;
   /** When set, `/key/generate` and `/key/delete` 401 unless this key is
-   *  presented as `Authorization: Bearer <adminKey>` — LiteLLM's key-management
+   *  presented as `Authorization: Bearer <adminKey>`. LiteLLM's key-management
    *  surface takes the master/admin key, never a virtual key. */
   adminKey?: string;
-  /** Hosted MCP servers this key may see (docs/design/litellm.md, "Hosted MCP
+  /** Hosted MCP servers this key may see (docs/AGENTS.md, "Hosted MCP
    *  servers"). Also serves JSON-RPC on `/<alias>/mcp`. */
   mcpServers?: FakeGatewayMcpSpec[];
 }
@@ -90,7 +90,7 @@ export interface FakeGateway {
   /** Every request seen, in order: path, the x-litellm-api-key it carried (not
    *  the admin Authorization header), and its HTTP method. */
   calls: { path: string; key: string | null; method: string }[];
-  /** Every key minted so far via `/key/generate`, keyed by the key string —
+  /** Every key minted so far via `/key/generate`, keyed by the key string:
    *  live server-side state, not a snapshot, so a test can assert counts and
    *  contents after acting. */
   mintedKeys: Map<string, FakeGatewayKey>;
@@ -123,7 +123,7 @@ function modelEntry(spec: FakeGatewayModelSpec) {
 }
 
 /** Drain a request body and parse it as JSON, tolerating an empty or
- *  unparseable one (an empty object) rather than throwing — a malformed call
+ *  unparseable one (an empty object) instead of throwing: a malformed call
  *  is a 4xx from the route logic, not a crashed test server. */
 function readJsonBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve) => {
@@ -170,7 +170,7 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
         res.writeHead(status);
         res.end(JSON.stringify(body));
       };
-      // Keyless on purpose — see the note above.
+      // Keyless: see the note above.
       if (path === "/health/readiness" || path === "/health/liveliness") {
         return send(200, { status: "connected", db: opts.database ? "connected" : "Not connected", litellm_version: version });
       }
@@ -208,17 +208,17 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
             object_permission: entry.object_permission,
           });
         }
-        // /key/delete — idempotent, like LiteLLM's own: a key never minted (or
-        // already deleted) is not an error.
+        // /key/delete is idempotent, like LiteLLM's own: a key never minted
+        // (or already deleted) is not an error.
         const toDelete = Array.isArray(body.keys) ? (body.keys as string[]) : [];
         for (const k of toDelete) mintedKeys.delete(k);
         return send(200, { deleted_keys: toDelete });
       }
 
       // The hosted MCP mount itself: JSON-RPC on /<alias>/mcp. A wrong key
-      // answers 400 here, NOT 401 like every other route (measured,
-      // docs/design/litellm.md) — the mount health probe's whole reason to
-      // read the response body instead of trusting the status.
+      // answers 400 here, not 401 like every other route (docs/AGENTS.md),
+      // which is why the mount health probe reads the response body instead
+      // of trusting the status.
       const mcpMatch = /^\/([^/]+)\/mcp$/.exec(path);
       if (mcpMatch) {
         const alias = mcpMatch[1];
@@ -280,17 +280,17 @@ export async function startFakeGateway(opts: FakeGatewayOptions = {}): Promise<F
             },
           });
         }
-        // Fallback: the fixed instance-key readout every pre-existing test
-        // asserts on — reached whenever the presented key (any key, including
-        // none, when requireKey is unset) isn't one this server minted.
+        // Fallback: the fixed instance-key readout every existing test asserts
+        // on, reached whenever the presented key (any key, including none,
+        // when requireKey is unset) isn't one this server minted.
         return send(200, {
           key: "sk-test",
           info: { spend: 1.25, max_budget: 10, budget_reset_at: "2026-10-01T00:00:00Z", models: models.map((m) => m.name) },
         });
       }
-      // Hosted MCP catalog (docs/design/litellm.md, "Hosted MCP servers"),
-      // measured without a database — filtered to the calling key's allowed
-      // servers is a database feature this fake doesn't model.
+      // Hosted MCP catalog (docs/AGENTS.md, "Hosted MCP servers"), served
+      // without a database. Filtering to the calling key's allowed servers is
+      // a database feature this fake doesn't model.
       if (path === "/v1/mcp/server") {
         return send(200, {
           data: mcpServers.map((s) => ({

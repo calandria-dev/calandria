@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { init, migrate } from "../lib/db";
 
 // The migration that seeds sessions.usage_cum for codex threads that already
-// ran. Codex reports a thread's CUMULATIVE token counts on every turn.completed,
-// so pre-upgrade usage rows are cumulative snapshots — the newest one is the
+// ran. Codex reports a thread's cumulative token counts on every turn.completed,
+// so pre-upgrade usage rows are cumulative snapshots; the newest one is the
 // baseline the next turn must subtract. Without it, the first turn after
 // upgrading re-bills the whole thread one last time.
 

@@ -12,8 +12,8 @@ const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.parse("2026-08-27T12:00:00Z");
 const YEAR = 365 * DAY;
 
-// updateTask() always stamps updated_at = Date.now(), which is exactly what the
-// predicate reads — so "cold" has to be written underneath it.
+// updateTask() always stamps updated_at = Date.now(), which is exactly what
+// the predicate reads, so "cold" has to be written underneath it.
 const age = (id: string, ms: number) =>
   getDb().prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").run(NOW - ms, id);
 
@@ -60,8 +60,8 @@ const count = (table: string, taskId: string) =>
 describe("retention predicate", () => {
   let pid: string;
   beforeEach(() => {
-    // The predicate is deliberately global (the sweep scans every project), so
-    // a leftover task from another case would show up in every assertion.
+    // The predicate is global (the sweep scans every project), so a leftover
+    // task from another case would show up in every assertion.
     getDb().prepare("DELETE FROM tasks").run();
     getDb().prepare("DELETE FROM schedules").run();
     getDb().prepare("DELETE FROM internal_usage").run();

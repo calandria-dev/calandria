@@ -1,14 +1,10 @@
-/* Showing what a family alias resolves to, without ever blocking on finding out.
+/* Pins what a family alias resolves to, without blocking on finding out.
  *
- * Three things are under test, and the third is the one that matters most:
- *
- *  1. Reading the resolved id off the CLI's `init` line, including killing a CLI
- *     that will not exit on its own.
- *  2. Overlaying that answer onto the model catalog — the id in the subtitle,
- *     the label left alone, the `[1m]` rows derived rather than probed.
- *  3. That the picker renders EXACTLY as it did before when the probe has said
- *     nothing: no cache, no CLI, a probe that timed out. The feature is allowed
- *     to be absent; it is not allowed to be in the way.
+ * Covers reading the resolved id off the CLI's `init` line, including killing
+ * a CLI that does not exit on its own; overlaying that id onto the model
+ * catalog, with the label left alone and the `[1m]` rows derived instead of
+ * probed; and confirming the picker renders unchanged when the probe reports
+ * nothing: no cache, no CLI, or a timed-out probe.
  */
 import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
@@ -19,8 +15,8 @@ import { CLAUDE_CAPABILITIES, claudeCapabilities, subscriptionModels } from "../
 import { clearResolvedModelIds, resolvedModelIds, setResolvedModelIds } from "../lib/agents/claude/modelIds";
 import { ensureClaudeModelIds, probeModelId, readInit } from "../lib/agents/claude/modelProbe";
 
-// The measured resolution on CLI 2.1.257 — the five values the probe actually
-// spawns. The `[1m]` picker rows are absent on purpose: they are derived.
+// The five values the probe spawns for CLI 2.1.257. The `[1m]` picker rows
+// are absent because they are derived.
 const MEASURED = {
   fable: "claude-fable-5-1",
   opus: "claude-opus-5",
@@ -73,9 +69,9 @@ describe("reading the init line", () => {
 });
 
 describe("probing a fake CLI", () => {
-  // The fixtures are `/bin/sh` scripts, so these run on POSIX only — a fact
-  // about how a fake binary is spelled here, not about the code under test,
-  // which is plain spawn/stdout handling.
+  // The fixtures are `/bin/sh` scripts, so these run on POSIX only. That is a
+  // fact about how the fake binary is spelled here, not about the code under
+  // test, which is plain spawn/stdout handling.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-probe-"));
   const fake = (name: string, body: string) => {
     const p = path.join(dir, name);
@@ -84,9 +80,9 @@ describe("probing a fake CLI", () => {
   };
 
   onPosix("reads the id and kills a CLI that would never exit", async () => {
-    // The real thing does exactly this: with the API unreachable it prints init
-    // and then sits retrying (measured: alive past two minutes). If the probe
-    // waited for exit instead of killing on the line, this case would hang.
+    // With the API unreachable, the real CLI prints init and then sits
+    // retrying without exiting. If the probe waited for exit instead of
+    // killing on the line, this case would hang.
     const bin = fake(
       "hangs",
       `echo '{"type":"system","subtype":"init","model":"claude-fable-5-1","claude_code_version":"2.1.257"}'\nsleep 120`,
@@ -97,7 +93,7 @@ describe("probing a fake CLI", () => {
   });
 
   onPosix("reassembles an init line that arrives split across chunks", async () => {
-    // The line is several KB in production, so it really does come in pieces.
+    // The line is several KB in production, so it does arrive in pieces.
     const bin = fake(
       "chunked",
       `printf '{"type":"system","subtype":"init","model":"claude'\nsleep 0.2\nprintf -- '-opus-5"}\\n'\nsleep 5`,
@@ -154,14 +150,14 @@ describe("the catalog overlay", () => {
   });
 
   it("takes the context window off the resolved id, not off the row", () => {
-    // The Vertex bug, on the subscription path: an alias that starts resolving
-    // to a `[1m]` spelling makes it a 1M session, and a row still claiming 200k
-    // would measure the task's context against a fifth of its real window.
+    // On the subscription path, an alias that resolves to a `[1m]` spelling
+    // makes a 1M session; a row still claiming 200k would measure the task's
+    // context against a fifth of the real window.
     const models = subscriptionModels({ ...MEASURED, opus: "claude-opus-5[1m]" });
     expect(row(CLAUDE_CAPABILITIES.models, "opus").contextWindow).toBe(200_000);
     expect(row(models, "opus").contextWindow).toBe(1_000_000);
     expect(row(models, "opus[1m]").contextWindow).toBe(1_000_000);
-    // Today's actual resolutions change no window at all.
+    // The current resolutions change no window at all.
     const measured = subscriptionModels(MEASURED);
     for (const m of CLAUDE_CAPABILITIES.models) {
       expect(row(measured, m.value).contextWindow).toBe(m.contextWindow);
@@ -186,7 +182,7 @@ describe("the descriptor without a probe", () => {
     setResolvedModelIds({ version: "2.1.257", ids: MEASURED });
     const env = { CLAUDE_CODE_USE_VERTEX: "1", ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5[1m]" };
     expect(row(claudeCapabilities(env).models, "opus").sub).toBe("claude-opus-5[1m]");
-    // …and Vertex still drops Fable, which the overlay must not smuggle back in.
+    // Vertex still drops Fable, and the overlay must not add it back.
     expect(claudeCapabilities(env).models.some((m) => /fable/i.test(m.value))).toBe(false);
   });
 
