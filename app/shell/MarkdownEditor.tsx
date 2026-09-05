@@ -9,14 +9,13 @@ import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import { isMarkdownPath } from "@/lib/collab";
 
-// The edit half of collaboration mode: a SOURCE editor, deliberately not a
-// WYSIWYG one. Every rich markdown editor surveyed (MDXEditor, Milkdown,
-// TipTap, Lexical, Plate, BlockNote) parses to an AST and re-serializes on
-// save, reformatting list markers, table padding and heading styles the user
-// never touched — and what leaves this modal is a DIFF sent to the agent, so
-// untouched lines must come back byte-identical. CodeMirror edits the literal
-// text, which makes that true by construction. The rendered view sits beside
-// it (CollabDoc), so the user still reads the document as a document.
+// The edit half of collaboration mode: a source editor, not a WYSIWYG one. A
+// rich markdown editor that parses to an AST and re-serializes on save would
+// reformat list markers, table padding and heading styles the user never
+// touched. What leaves this modal is a diff sent to the agent, so untouched
+// lines must come back byte-identical. CodeMirror edits the literal text,
+// which makes that true by construction. The rendered view sits beside it
+// (CollabDoc), so the user still reads the document as a document.
 //
 // `filename` picks the syntax: markdown for a document, otherwise whatever
 // @codemirror/language-data matches the extension (loaded on demand, since

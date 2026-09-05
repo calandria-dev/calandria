@@ -8,7 +8,8 @@ import { snoozePresets, relativeUntil, wakeLabel, type SnoozeUnit } from "./snoo
 const UNITS: SnoozeUnit[] = ["minutes", "hours", "days", "weeks"];
 
 // The value a <input type="datetime-local"> wants: local wall-clock, no zone.
-// toISOString() would be UTC, which silently offsets the default the user sees.
+// toISOString() would be UTC, which would offset the default the user sees
+// with no indication why.
 function localInputValue(ts: number): string {
   const d = new Date(ts);
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -19,14 +20,14 @@ function localInputValue(ts: number): string {
  * Picking a snooze deadline: the three ways of saying "later" the feature
  * promises, in the order they're actually reached for.
  *
- *   presets   — one click, covering the common cases
- *   relative  — "in 2 hours", for a duration the presets don't hold
- *   exact     — a date and time, for "the morning of the demo"
+ *   presets   : one click, covering the common cases
+ *   relative  : "in 2 hours", for a duration the presets don't hold
+ *   exact     : a date and time, for "the morning of the demo"
  *
  * Every route resolves to one absolute ms epoch before it leaves here, so the
  * caller (and the column) only ever deals in deadlines. A deadline in the past
- * is refused rather than clamped — a snooze that ends before it starts reads as
- * the button being broken.
+ * is refused, not clamped: a snooze that ends before it starts reads as the
+ * button being broken.
  */
 export function SnoozeMenu({ onPick, onClose }: { onPick: (until: number) => void; onClose: () => void }) {
   // Frozen at open: the menu lives for seconds, and a `now` that drifted
@@ -85,7 +86,7 @@ export function SnoozeMenu({ onPick, onClose }: { onPick: (until: number) => voi
 }
 
 /**
- * The button that opens the menu, with its own open state — every surface that
+ * The button that opens the menu, with its own open state. Every surface that
  * offers snoozing (the session header, a list row, a board card) needs exactly
  * this pairing, and the Popover positions itself against its parent, so the
  * relative wrapper has to travel with the trigger.

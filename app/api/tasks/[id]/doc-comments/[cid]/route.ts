@@ -4,8 +4,9 @@ import { getTask, deleteTaskDocComment } from "@/lib/store";
 export const dynamic = "force-dynamic";
 
 // Remove an unsent document comment (the × on a draft card). A sent comment is
-// the record of what the agent was told and is refused with 409 — the modal
-// renders those read-only, so this is the server-side half of that rule.
+// the record of what the agent was told, so removing it is refused with 409;
+// the modal renders those read-only, so this is the server-side half of that
+// rule.
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string; cid: string }> }) {
   const { id, cid } = await params;
   if (!getTask(id)) return NextResponse.json({ error: "not found" }, { status: 404 });

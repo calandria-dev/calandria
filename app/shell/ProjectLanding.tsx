@@ -15,18 +15,17 @@ import { tagProgress, tagTint } from "./TagChips";
 // brewing; otherwise the plain create-a-task prompt.
 export function ProjectLanding({ project, projects, agents, recap, tags, onSelectTag, onNewTask, onRefreshRecap, onOpenTask, mobile }: {
   project: ProjectRow; projects: ProjectRow[]; agents: AgentsBundle; recap?: RecapInfo;
-  /** This project's tags with their derived counts — the Tags card below. */
+  /** This project's tags with their derived counts, shown in the Tags card below. */
   tags: TagRow[];
   /** Select a tag's chip on the task list/board (null = All). */
   onSelectTag: (tagId: string | null) => void;
   onNewTask: () => void; onRefreshRecap: () => void; onOpenTask: (taskId: string) => void;
   /**
-   * Mounted as the phone's project pane rather than in the session column. The
-   * "no task selected" placeholder below is dropped there: on desktop it
-   * explains an empty half of a split screen, but on a phone this pane was
-   * navigated TO on purpose and the placeholder just costs the first screenful
-   * — which on a 390px phone is the whole of Runbooks. The pane's own header
-   * carries New task, and the task list is one tap back.
+   * True when this is mounted as the phone's project pane instead of the
+   * session column. The "no task selected" placeholder is dropped on mobile:
+   * the pane was navigated to on purpose, and the placeholder would cost the
+   * whole first screenful on a 390px phone. The pane's own header carries New
+   * task, and the task list is one tap back.
    */
   mobile?: boolean;
 }) {
@@ -44,8 +43,8 @@ export function ProjectLanding({ project, projects, agents, recap, tags, onSelec
     );
   }
 
-  // Recap fetch/generation failed and there's nothing older to show — offer a
-  // retry rather than silently falling through to the plain empty state.
+  // Recap fetch or generation failed and there's nothing older to show. Offer
+  // a retry instead of falling through to the plain empty state.
   if (recap?.error && !hasRecap) {
     return (
       <div className="empty" style={{ margin: "auto", maxWidth: 340 }}>
@@ -96,22 +95,17 @@ export function ProjectLanding({ project, projects, agents, recap, tags, onSelec
     );
   }
 
-  // `.empty`'s centering (used above too) is a single-flex-item auto-margin
-  // trick — it only works when its parent both establishes a flex context and
-  // has real height to give away, which is why `.session-body` (flex:1;
-  // display:flex) was doing the centering directly before Schedules needed
-  // somewhere to sit below it. `.transcript`/`.tw` are plain scrolling blocks
-  // (shared with the real chat transcript, so their own CSS can't change), so
-  // that flex context is rebuilt here with inline styles: `.transcript` becomes
-  // the flex column, `.tw` stretches to fill it (`flex: 1`) so there's height
-  // to center within, and `.empty`'s own `margin: auto` centers it in
-  // whatever's left over — the full height for the brief flash before
-  // Schedules' own fetch resolves (it still renders nothing until then), or
-  // the space above the card once the card has loaded (Task 12: the card
-  // itself always renders now, even for a project with zero schedules, so
-  // there's somewhere to click "New schedule" from). With `mobile` there is no
-  // `.empty` to center, and the flex column simply stacks the cards from the
-  // top — which is what a pane navigated to on purpose should do.
+  // `.empty`'s centering (also used above) relies on a single-flex-item
+  // auto-margin trick: it only works when the parent establishes a flex
+  // context and has real height to give away. `.transcript`/`.tw` are plain
+  // scrolling blocks shared with the real chat transcript, so their CSS can't
+  // change; the flex context is rebuilt here with inline styles instead:
+  // `.transcript` becomes the flex column, `.tw` stretches to fill it
+  // (`flex: 1`) so there's height to center within, and `.empty`'s own
+  // `margin: auto` centers it in whatever space is left. The Runbooks and
+  // Schedules cards always render, even with nothing in them, so there's
+  // somewhere to click "New schedule" from. On `mobile` there is no `.empty`
+  // to center, so the flex column just stacks the cards from the top.
   return (
     <div className="transcript" style={{ display: "flex", flexDirection: "column" }}>
       <div className="tw" style={{ maxWidth: 720, flex: 1, display: "flex", flexDirection: "column" }}>
@@ -132,12 +126,12 @@ export function ProjectLanding({ project, projects, agents, recap, tags, onSelec
 }
 
 /**
- * The features in flight in this project — the landing-page half of the chip
- * bar. Only ACTIVE tags: a finished one is history, and the point of this
- * card is "what am I in the middle of". Clicking one lights that tag alone on
- * the task list/board, which is the same selection the chip makes.
+ * The landing-page counterpart to the chip bar: this project's active tags
+ * only, since a finished tag is history and this card shows what's in
+ * progress. Clicking a tag selects it on the task list/board, the same
+ * selection the chip makes.
  *
- * Renders nothing for a project with no tags, like the chip bar itself — the
+ * Renders nothing for a project with no tags, like the chip bar itself: the
  * card costs nothing until the first tag exists.
  */
 function TagsCard({ tags, onSelect }: { tags: TagRow[]; onSelect: (id: string) => void }) {
@@ -155,14 +149,13 @@ function TagsCard({ tags, onSelect }: { tags: TagRow[]; onSelect: (id: string) =
             <div className="tag-head">
               <span className="gc-dot" />
               <strong>{t.name}</strong>
-              {/* tagProgress' own empty label is "no tasks yet", which the
-                  body below already says — don't print it twice. */}
+              {/* tagProgress' own empty label is "no tasks yet", already shown in the body below; don't print it twice. */}
               {t.counts.total > 0 && <span className="tag-frac mono">{p.label}</span>}
               <span className="spacer" />
               {t.counts.running > 0 && <span className="tag-stat run">{t.counts.running} running</span>}
               {t.counts.awaiting > 0 && <span className="tag-stat need">{t.counts.awaiting} need{t.counts.awaiting === 1 ? "s" : ""} you</span>}
             </div>
-            {/* An empty tag is planned, not stalled — say so rather than
+            {/* An empty tag is planned, not stalled. Say so instead of
                 showing a 0% bar that reads like nothing is happening. */}
             {t.counts.total === 0
               ? <div className="tag-desc">No tasks yet</div>

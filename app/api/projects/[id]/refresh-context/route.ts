@@ -12,7 +12,7 @@ const withEstimate = <T extends object>(projectId: string, state: T) => ({
 
 // "Refresh with AI" runs as a DETACHED background job (see lib/contextRefresh.ts):
 // the agent reads the repo and drafts fresh project context, persisting the
-// result so it survives sleep/reconnect/reload. The result is NOT auto-saved —
+// result so it survives sleep/reconnect/reload. The result is NOT auto-saved:
 // the client reviews the draft and decides whether to keep it.
 //
 //   POST   start the job, return its (running) state immediately

@@ -11,16 +11,16 @@ export const dynamic = "force-dynamic";
  * Subscription plan usage per agent (the titlebar session/week meter). Polled
  * by the client while a tab is open; each driver that implements planUsage()
  * answers from an instance-wide cache and decides for itself when a real
- * provider fetch is warranted (see lib/agents/claude/planUsage.ts — the whole
+ * provider fetch is warranted (see lib/agents/claude/planUsage.ts: the whole
  * rate-limit-respecting policy lives behind the driver seam, so this route is
  * just the fan-out). Agents without the hook, or with nothing to show (feature
  * off, API-key auth), are simply absent from the map.
  */
 export async function GET() {
-  // Concurrently, not in sequence: the drivers' sources are unrelated, and they
-  // are not equally fast — Claude answers from a cached HTTP fetch while Codex
-  // spawns a short-lived `codex app-server`. Serially, one slow agent's whole
-  // timeout would be added to every other agent's meter on every poll.
+  // Concurrently, not in sequence: the drivers' sources are unrelated, and
+  // they are not equally fast. Claude answers from a cached HTTP fetch while
+  // Codex spawns a short-lived `codex app-server`. Serially, one slow agent's
+  // whole timeout would be added to every other agent's meter on every poll.
   const settled = await Promise.all(
     listDrivers().map(async (d): Promise<[string, PlanUsageSnapshot] | null> => {
       if (!d.planUsage) return null;
@@ -37,8 +37,8 @@ export async function GET() {
     settled.filter((e): e is [string, PlanUsageSnapshot] => e != null),
   );
   // The gateway key's LiteLLM budget, synthesized into the same snapshot shape
-  // (docs/design/litellm.md, "Attribution, budgets and failures"): no agent
-  // driver reports it, because it isn't per-agent — one instance key's budget
+  // (docs/AGENTS.md, "Attribution, budgets and failures"): no agent driver
+  // reports it, because it isn't per-agent, since one instance key's budget
   // covers every gateway task regardless of which CLI ran it. `gatewayHealth`
   // is already cached (GATEWAY_CACHE_MS), so polling this every minute costs
   // nothing beyond what Settings → Agents already pays. Absent when no

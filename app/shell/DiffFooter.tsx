@@ -5,13 +5,12 @@ import type { TaskRow } from "./types";
 // Board-card / task-row footer: worktree branch, live diff totals, and a
 // sparkline of diff_add+diff_del sampled over the last ~30 task-list updates
 // (see useShell's sparklines map). Renders nothing until the server has
-// attached diff stats — i.e. only for in_progress tasks with a worktree (see
+// attached diff stats, i.e. only for in_progress tasks with a worktree (see
 // withDiffStats in app/api/projects/[id]/route.ts).
 export function DiffFooter({ task, points, projectBranch }: { task: TaskRow; points?: number[]; projectBranch?: string }) {
   if (!task.work_branch || typeof task.diff_add !== "number" || typeof task.diff_del !== "number") return null;
-  // The base only when it ISN'T the project's default (lib/baseBranch.ts). Every
-  // card saying "main" is noise on a row this narrow; the one saying
-  // "feature/auth" is the whole point of the feature.
+  // Show the base only when it isn't the project's default (lib/baseBranch.ts).
+  // On a row this narrow, a card that always said "main" would just be noise.
   const base = task.base_branch && task.base_branch !== projectBranch ? task.base_branch : "";
   return (
     <div className="diff-foot" title={base ? `${task.work_branch} → ${base}` : task.work_branch}>
@@ -25,9 +24,9 @@ export function DiffFooter({ task, points, projectBranch }: { task: TaskRow; poi
   );
 }
 
-// Normalized to the ring buffer's own min/max rather than an absolute scale —
-// a task with a huge diff elsewhere would otherwise flatten a quiet task's
-// wobble to a hairline.
+// Normalized to the ring buffer's own min/max, not an absolute scale, so a
+// task with a huge diff elsewhere does not flatten a quiet task's wobble to
+// a hairline.
 function Sparkline({ points }: { points: number[] }) {
   const w = 60, h = 16, pad = 1;
   const lo = Math.min(...points), hi = Math.max(...points);

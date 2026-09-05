@@ -2,29 +2,29 @@
 
 import { useEffect, useRef, useState } from "react";
 
-// A ```mermaid fence rendered as a diagram. Used by <Markdown diagrams> —
-// today that's the collaboration modal, where an agent's design doc gets a
-// real flowchart instead of a code block.
+// A ```mermaid fence rendered as a diagram. Used by <Markdown diagrams>, the
+// collaboration modal, where an agent's design doc gets a real flowchart
+// instead of a code block.
 //
-// mermaid is ~2MB and DOM-only, so it's loaded on first use with a dynamic
-// import (Turbopack splits it into its own chunk) rather than bundled with
+// mermaid is large and DOM-only, so it loads on first use with a dynamic
+// import (Turbopack splits it into its own chunk) instead of bundled with
 // the transcript; the promise is module-level so every diagram on the page
 // shares one load.
 //
 // The Edit tab re-renders the document on every keystroke, and a diagram
-// being typed is invalid far more often than not. So: source changes after
-// the first render are debounced, and a failed parse keeps the LAST GOOD
-// diagram on screen with the parser's message under it — the picture doesn't
-// blink out mid-edit, and the message says what's still missing.
+// being typed is invalid far more often than not. Source changes after the
+// first render are debounced, and a failed parse keeps the last good
+// diagram on screen with the parser's message under it, so the picture
+// doesn't blink out mid-edit and the message says what's still missing.
 
 type MermaidApi = typeof import("mermaid").default;
 let api: Promise<MermaidApi> | null = null;
 const loadMermaid = () => (api ??= import("mermaid").then((m) => m.default));
 
-// Every render gets a fresh id: mermaid.render() REMOVES any element already
-// carrying its id from the document before drawing, and the previous SVG we
-// injected carries the previous id. Re-using one would have the redraw delete
-// the diagram it's replacing out from under React.
+// Every render gets a fresh id: mermaid.render() removes any element already
+// carrying its id from the document before drawing, and the previously
+// injected SVG carries the previous id. Reusing one would have the redraw
+// delete the diagram it's replacing out from under React.
 let seq = 0;
 
 const DEBOUNCE_MS = 300;
@@ -42,16 +42,16 @@ export function Mermaid({ source }: { source: string }) {
       try {
         const mermaid = await loadMermaid();
         if (mine !== gen.current) return;
-        // Follows the app theme the way CodeMirror in the editor pane does;
-        // `strict` is mermaid's default and keeps the SVG through DOMPurify,
-        // since the source is whatever the agent (or the user) wrote.
+        // Follows the app theme the way CodeMirror in the editor pane does.
+        // `strict` is mermaid's default and runs the SVG through DOMPurify,
+        // since the source is whatever the agent or the user wrote.
         mermaid.initialize({
           startOnLoad: false,
           securityLevel: "strict",
           theme: document.documentElement.dataset.mode === "light" ? "default" : "dark",
         });
         // parse() first: a failed render() can leave its error element in the
-        // document body, a failed parse() leaves nothing.
+        // document body; a failed parse() leaves nothing.
         await mermaid.parse(source);
         const { svg: out } = await mermaid.render(`mmd-${++seq}`, source);
         if (mine !== gen.current) return;
@@ -76,8 +76,8 @@ export function Mermaid({ source }: { source: string }) {
       {svg !== null ? (
         <div className="md-mermaid-svg" dangerouslySetInnerHTML={{ __html: svg }} />
       ) : (
-        // Nothing drawn yet (loading, or never valid): the source still reads
-        // as the code block it would have been.
+        // Nothing drawn yet (loading, or never valid): show the source as the
+        // code block it would have been.
         <pre><code className="language-mermaid">{source}</code></pre>
       )}
       {err && <div className="md-mermaid-err">Diagram didn’t render: {err}</div>}

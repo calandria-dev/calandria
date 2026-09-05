@@ -16,28 +16,27 @@ import { agentLabel } from "./agents";
 import { StatusDot, PriPill, SearchBar, AgentBadge, useCoarsePointer } from "./shared";
 import { DiffFooter } from "./DiffFooter";
 
-// The kanban alternative to the grouped task list (layout from the Claude
-// Design "Calandria — Board View" study, rendered with the app's own tokens).
-// Columns are live views over the same task rows the list renders — cards
-// update as sessions stream — and dragging a card between columns re-statuses
-// it. Order WITHIN a column is recency (listTasks sorts by `updated_at`), not
+// The kanban alternative to the grouped task list.
+// Columns are live views over the same task rows the list renders: cards
+// update as sessions stream, and dragging a card between columns re-statuses
+// it. Order within a column is recency (listTasks sorts by `updated_at`), not
 // something a drag can pin, so there is no drop position to aim at.
 type ColKey = "suggested" | "not_started" | "in_progress" | "awaiting" | "ran" | "snoozed" | "on_hold" | "done" | "cancelled";
 
 const COL_ORDER: ColKey[] = ["suggested", "not_started", "in_progress", "awaiting", "ran", "snoozed", "on_hold", "done", "cancelled"];
 
 // The fields a drop can rewrite. `snoozed_until` is here because dragging a
-// card OUT of Snoozed has to wake it in the same write — see statusPatch.
+// card out of Snoozed has to wake it in the same write; see statusPatch.
 export type TaskMovePatch = Partial<Pick<TaskRow, "status" | "suggested" | "snoozed_until">>;
 // What lands on a task dropped into each column. `null` = the column rejects
 // the drop (Suggested, Needs-input and Snoozed hold derived states you can't
-// drag INTO — they still allow reordering their own cards). `{}` = position-only.
+// drag into, though they still allow reordering their own cards). `{}` = position-only.
 type Patch = TaskMovePatch | null;
 
 const COLS: Record<ColKey, {
   label: string;
   accent?: boolean;   // Needs-input styling (blue header/rule)
-  derived?: boolean;  // holds a derived state — badged, rejects foreign drops
+  derived?: boolean;  // holds a derived state: badged, rejects foreign drops
   mini?: boolean;     // terminal column: compact rows, capped under a veil
   always: boolean;    // On hold / Cancelled hide when empty (drop bays mid-drag)
   member: (t: TaskRow) => boolean;
@@ -66,9 +65,9 @@ const COLS: Record<ColKey, {
   awaiting: {
     // Both arms of ./format.ts's needsYou: a turn parked on a question, and an
     // open PR whose checks are failing. The second has no turn parked on
-    // anything and may sit on a task already marked done — which is exactly the
-    // case that used to go unnoticed — so every status column below excludes
-    // the same predicate rather than only the awaiting half.
+    // anything and may sit on a task already marked done, so every status
+    // column below excludes the same predicate instead of only the awaiting
+    // half.
     label: "Needs input", accent: true, derived: true, always: true,
     member: (t) => inStatusColumn(t) && needsYou(t),
     patchFor: (t) => (inStatusColumn(t) && needsYou(t) ? {} : null),
@@ -77,9 +76,9 @@ const COLS: Record<ColKey, {
   ran: {
     // A scheduled run that finished on its own with nothing to answer. Derived
     // like Needs-input: the state is settled by the runner at the end of an
-    // unattended turn, so there is no such thing as dragging a card INTO it.
-    // Dragging one OUT is an ordinary status write, which is also how the card
-    // is acknowledged — the server clears the mark with the status (issue #28).
+    // unattended turn, so there is no such thing as dragging a card into it.
+    // Dragging one out is an ordinary status write, which is also how the card
+    // is acknowledged: the server clears the mark with the status (issue #28).
     label: RAN_LABEL, derived: true, always: false,
     member: (t) => inStatusColumn(t) && isUnreadRun(t) && !needsYou(t),
     patchFor: (t) => (inStatusColumn(t) && isUnreadRun(t) && !needsYou(t) ? {} : null),
@@ -87,14 +86,13 @@ const COLS: Record<ColKey, {
   },
   snoozed: {
     // Parked work. Derived like Needs-input, but for a different reason: there
-    // is no wake-up time in a drag gesture, so a drop here couldn't say WHEN —
-    // the moon button on the card is the only place that question gets asked.
-    // Dragging OUT is allowed and wakes the card (see statusPatch).
+    // is no wake-up time in a drag gesture, so a drop here couldn't say when.
+    // The moon button on the card is the only place that question gets asked.
+    // Dragging out is allowed and wakes the card (see statusPatch).
     //
-    // Membership is spelled out rather than reusing inStatusColumn(), whose
-    // whole job is to keep parked cards OUT — `inStatusColumn(t) && isSnoozed(t)`
-    // reduces to `!isSnoozed && isSnoozed`, leaving this column permanently
-    // empty. (It did, until e2e/12-snooze caught it.)
+    // Membership is spelled out instead of reusing inStatusColumn(), which
+    // keeps parked cards out: `inStatusColumn(t) && isSnoozed(t)` reduces to
+    // `!isSnoozed && isSnoozed`, leaving this column permanently empty.
     label: SNOOZE_LABEL, derived: true, always: false,
     member: (t) => !t.suggested && isSnoozed(t),
     patchFor: (t) => (!t.suggested && isSnoozed(t) ? {} : null),
@@ -119,7 +117,7 @@ const COLS: Record<ColKey, {
 
 // Does this card belong in one of the plain status columns? A real (not
 // suggested) task that isn't parked. Snoozed is a category over the top of the
-// status ones — a snoozed task keeps the status it will return to — so every
+// status ones: a snoozed task keeps the status it will return to, so every
 // status column has to exclude it or the card would be drawn in two places.
 // (Declared as a function, like statusPatch below, because COLS is evaluated
 // above it and only calls these later.)
@@ -128,9 +126,9 @@ function inStatusColumn(t: TaskRow): boolean {
 }
 
 // Dragging a card out of Snoozed is an explicit "I'll deal with this now", so
-// the drop wakes it in the same write — otherwise the card would bounce
-// straight back into the Snoozed column. A deadline of now (rather than 0) is
-// what leaves the "was snoozed" chip behind on the card it lands as.
+// the drop wakes it in the same write, or the card would bounce straight
+// back into the Snoozed column. A deadline of now, instead of 0, is what
+// leaves the "was snoozed" chip behind on the card it lands as.
 function wake(t: TaskRow): { snoozed_until?: number } {
   return isSnoozed(t) ? { snoozed_until: Date.now() } : {};
 }
@@ -167,21 +165,21 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
   // stop reading as "waiting on you" until it comes back.
   const awaiting = !snoozed && isAwaiting(task);
   // The other arm of needsYou: an open PR gone red. Ranked under awaiting for
-  // the same reason the list ranks it there — a question was asked OF someone,
-  // a red PR is a fact about work that already finished.
+  // the same reason the list ranks it there: a question was asked of someone,
+  // while a red PR is a fact about work that already finished.
   const ciRed = !snoozed && !awaiting && isPrRed(task);
   const blocked = !!blockedBy?.length && !task.started;
   const sessionCount = task.started ? task.generation : Math.max(0, task.generation - 1);
   // A suggestion the filing agent retracted. It reads "withdrawn", not
   // "cancelled": nothing was ever started, so nothing was called off.
   const withdrawn = isWithdrawn(task);
-  // Held open for run_in_background work — live, but the model isn't talking.
+  // Held open for run_in_background work: live, but the model isn't talking.
   const inBackground = !snoozed && !awaiting && !ciRed && running && !!task.background_pending;
   // Queued for the usage-window reset (./queuedStart.ts); moot once a turn is live.
   const queued = isQueuedStart(task) && !running;
-  // Ran unattended, cleanly, and unread — the ran-clean column's state.
+  // Ran unattended, cleanly, and unread: the ran-clean column's state.
   const ranClean = !snoozed && !awaiting && !ciRed && isUnreadRun(task);
-  // Live but silent for a long stretch (./idleTurn.ts) — reported next to the
+  // Live but silent for a long stretch (./idleTurn.ts); reported next to the
   // running state, never in place of it.
   const idle = isIdleTurn(task, running) && !awaiting;
   useIdleClock(idle);
@@ -233,7 +231,7 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
           {Icon.moon()} Was snoozed
         </div>
       )}
-      {/* The one way out of the ran-clean column that doesn't need a drag —
+      {/* The one way out of the ran-clean column that doesn't need a drag,
           and the only affordance that says what the state expects of you. */}
       {ranClean && !mini && (
         <button className="bc-chip ran" title="Mark done: you've read this run"
@@ -246,16 +244,16 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
           same reason Mark done is: they are one line each. Why it confirms, and
           why the session gets nothing, is in ./IdleStop.tsx. */}
       {idle && !mini && <IdleStopChip variant="board" onStop={onStopTurn} />}
-      {/* The reason IS the card's content once it's withdrawn — a struck-through
+      {/* The reason is the card's content once it's withdrawn: a struck-through
           title with no explanation gives the user nothing to judge. */}
       {withdrawn && task.withdrawn_reason && (
         <div className="bc-withdrawn" title={task.withdrawn_reason}>{task.withdrawn_reason}</div>
       )}
       {actions}
       {/* Corner affordance: snoozing fades in on hover so it doesn't compete
-          with the card's content, waking stays put — a parked card exists to
-          offer exactly that. Absent on the compact terminal rows, where there
-          is nothing left to defer. */}
+          with the card's content; waking stays put, since a parked card
+          exists to offer exactly that. Absent on the compact terminal rows,
+          where there is nothing left to defer. */}
       {!mini && !task.suggested && (
         <div className="bc-snz">
           {snoozed ? (
@@ -296,20 +294,20 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
   tasks: TaskRow[]; suggested: TaskRow[]; agents: AgentsBundle; selTaskId: string | null;
   running: Set<string>; blockedBy: Map<string, string[]>; sparklines: Record<string, number[]>;
   tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void;
-  projectBranch: string; // the project's DEFAULT base — cards badge a task's own base only when it differs
+  projectBranch: string; // the project's default base: cards badge a task's own base only when it differs
   onSelect: (id: string) => void; onEditTask: (id: string) => void;
   onMove: (id: string, patch: TaskMovePatch) => void;
   onStartSuggestion: (id: string) => void; onAcceptSuggestion: (id: string) => void; onDismissSuggestion: (id: string) => void;
   onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void;
-  /** Acknowledge a clean unattended run — a status write that files it under Done. */
+  /** Acknowledge a clean unattended run: a status write that files it under Done. */
   onAckRun: (id: string) => void;
   onStopTurn: (id: string) => void;
 }) {
   // Dragging is a pointer gesture, so it's off on a touch device (the card's
   // own controls own those gestures). Nothing else gates it: a drop re-statuses
-  // exactly the card it moved, so a search filter or tag chip hiding OTHER
-  // cards can't corrupt anything — which it could when a drop also submitted
-  // the project's whole manual order.
+  // exactly the card it moved, so a search filter or tag chip hiding other
+  // cards cannot corrupt anything, unlike an operation that submitted the
+  // project's whole manual order.
   const dragEnabled = !useCoarsePointer();
   const [dragId, setDragId] = useState<string | null>(null);
   const [over, setOver] = useState<ColKey | null>(null);
@@ -336,9 +334,9 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
   };
 
   // On hold / Cancelled aren't part of the core flow: at rest they only appear
-  // when something is in them — but while a drag they'd accept is live, they
+  // when something is in them, but while a drag they'd accept is live, they
   // materialise as empty drop bays so every status stays reachable without
-  // permanent column bloat. Bays are APPENDED after the resting columns:
+  // permanent column bloat. Bays are appended after the resting columns:
   // splicing them into their canonical slot would shift the columns to their
   // right mid-drag, moving the drop target out from under the cursor.
   const resting = COL_ORDER.filter((k) => COLS[k].always || cols.get(k)!.length > 0);
@@ -355,7 +353,7 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
         const reject = !!dragTask && !accepts;
         const isOver = over === key;
         const expanded = !!showAll[key];
-        // Terminal columns show a capped slice until expanded — a long Done
+        // Terminal columns show a capped slice until expanded: a long Done
         // list is history, not the working set. Newest first, like everything
         // else, so the cap keeps what you just finished.
         const visible = def.mini && !expanded ? colTasks.slice(0, MINI_CAP) : colTasks;
@@ -415,14 +413,14 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
                       projectBranch={projectBranch}
                       actions={t.suggested ? (
                         <div className="bsug-acts" onClick={(e) => e.stopPropagation()}>
-                          {/* Add accepts, Start accepts AND runs — and a
-                              blocked first turn is what the server 409s
-                              (PR #139), so only the second one is withheld. */}
+                          {/* Add accepts, Start accepts and runs, and a
+                              blocked first turn is what the server 409s,
+                              so only the second one is withheld. */}
                           <button className="go" disabled={!!blockNote} title={blockNote} onClick={() => onStartSuggestion(t.id)}>{Icon.play()} Start</button>
-                          {/* Same button either way — accepting a withdrawn
-                              suggestion IS reviving it (the server clears the
-                              cancel and the reason together) — but the label has
-                              to say which of the two you're doing. */}
+                          {/* Same button either way: accepting a withdrawn
+                              suggestion is reviving it (the server clears the
+                              cancel and the reason together), but the label
+                              has to say which of the two you're doing. */}
                           <button onClick={() => onAcceptSuggestion(t.id)} title={isWithdrawn(t) ? "Disagree: restore it to the list" : "Add to list to start later"}>
                             {Icon.plus()} {isWithdrawn(t) ? "Restore" : "Add"}
                           </button>
@@ -451,8 +449,9 @@ export function TaskBoard({ tasks, suggested, agents, selTaskId, running, blocke
 }
 
 // Full-workspace board shell (desktop): owns everything right of the projects
-// sidebar — header with the List/Board toggle, the board, and (via `children`)
-// the slide-over session panel + drawers the composition root mounts on top.
+// sidebar, the header with the List/Board toggle, the board, and (via
+// `children`) the slide-over session panel and drawers the composition root
+// mounts on top.
 export function BoardWorkspace({ project, agents, tasks, suggested, tags, selTaskId, running, blockedBy, sparklines, loading, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnoozeTask, onUnsnoozeTask, onAckRun, onStopTurn, children }: {
   project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; suggested: TaskRow[]; tags: TagRow[]; selTaskId: string | null;
   running: Set<string>; blockedBy: Map<string, string[]>; sparklines: Record<string, number[]>; loading?: boolean;

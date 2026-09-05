@@ -10,7 +10,7 @@ import { prMergeBlocker, type PrMergeFacts } from "@/lib/prMerge";
 
 /** The PR fields this panel reads: what the merge decision needs, plus what the
  *  status chip in the toolbar draws. Both are satisfied by the client's TaskRow,
- *  which is what every caller passes. */
+ *  the type every caller passes. */
 type PrFacts = PrMergeFacts & PrChipTask;
 
 interface DiffFile {
@@ -28,7 +28,7 @@ interface DiffResp {
   branch?: string;
   baseLabel?: string;
   baseBranch?: string; // the base in force for this task (lib/baseBranch.ts)
-  projectBranch?: string; // the project's default — the badge appears only when they differ
+  projectBranch?: string; // the project's default; the badge appears only when they differ
   merged_at?: number;
   alreadyMerged?: boolean;
   files: DiffFile[];
@@ -37,7 +37,7 @@ interface DiffResp {
   error?: string;
   mergeInProgress?: boolean; // a conflict resolution is staged, awaiting accept/discard
   unresolved?: string[]; // files still flagged unmerged
-  head?: string | null; // worktree HEAD when this diff was computed — stamped onto new comments as anchor_sha
+  head?: string | null; // worktree HEAD when this diff was computed; stamped onto new comments as anchor_sha
 }
 interface DirtyEntry {
   code: string; // raw porcelain XY status ("??" untracked, " M" modified, …)
@@ -45,7 +45,7 @@ interface DirtyEntry {
   untracked: boolean;
 }
 // What POST /api/tasks/[id]/pr/merge answers with. `queued` and `merged` are
-// the two different things a successful click can mean and are never both set:
+// the two different things a successful click can mean, and are never both set:
 // auto-merge armed and waiting on CI, or landed there and then.
 interface PrMergeResp {
   ok?: boolean;
@@ -62,7 +62,7 @@ interface MergeResp {
   alreadyMerged?: boolean;
   conflicts?: string[];
   error?: string;
-  // The merge ran in the project's MAIN checkout and it wasn't clean — these are
+  // The merge ran in the project's MAIN checkout and it wasn't clean: these are
   // the uncommitted files that blocked it (server-side list, so the card never
   // has to string-match the message).
   dirty?: DirtyEntry[];
@@ -75,7 +75,7 @@ interface MergeResp {
 export interface ResolveResult {
   ok: boolean;
   merged?: boolean; // trial merge was clean and landed immediately
-  // A resolution turn was started — the caller may switch to the chat to watch
+  // A resolution turn was started; the caller may switch to the chat to watch
   // it. Absent when there was nothing for the agent to do (the merge is already
   // paused with every text conflict resolved, or only binaries remain), in which
   // case the right place to go is the review state in Changes, not the chat.
@@ -88,14 +88,14 @@ export interface ResolveResult {
 const STATUS_LABEL: Record<string, string> = { A: "added", M: "modified", D: "deleted", R: "renamed", "?": "new" };
 
 // The merge routes always answer JSON, but a layer above them can still hand
-// back HTML (a tunnel 502, a request killed at maxDuration) — parse defensively
+// back HTML (a tunnel 502, a request killed at maxDuration). Parse defensively
 // so the banner shows the HTTP status, not JSON.parse's "Unexpected token '<'".
 const mergeJson = (r: Response): Promise<MergeResp> =>
   r.json().catch(() => ({ ok: false, targetBranch: "", committed: false, error: `merge request failed (HTTP ${r.status})` }));
 
 // Last fetched diff per task, module-level so it survives unmounts. The rail
 // remounts this component on every collapse/expand, DIFF↔CONTEXT tab switch,
-// and chat/changes toggle — without a cache each of those pays a fresh
+// and chat/changes toggle. Without a cache each of those pays a fresh
 // diff-endpoint round trip behind a skeleton. With it, reopening renders the
 // previous diff instantly and revalidates in the background.
 const diffCache = new Map<string, DiffResp>();
@@ -109,7 +109,7 @@ function hunkLines(patch: string): string[] {
 }
 // One rendered diff line plus its old/new line numbers, for the dual gutter
 // (GitHub-style). Tracked by walking the hunk headers (`@@ -a,b +c,d @@`
-// seed the counters) rather than trusting the patch's own numbers past the
+// seed the counters) instead of trusting the patch's own numbers past the
 // first hunk, since a file with multiple hunks resets per @@.
 interface NumberedLine { cls: string; oldNo: number | null; newNo: number | null; text: string }
 function numberedLines(patch: string): NumberedLine[] {
@@ -121,10 +121,10 @@ function numberedLines(patch: string): NumberedLine[] {
       if (m) { oldNo = parseInt(m[1], 10); newNo = parseInt(m[2], 10); }
       out.push({ cls: "hunk", oldNo: null, newNo: null, text });
     } else if (text.startsWith("\\")) {
-      // "\ No newline at end of file" — a patch marker, not a content line.
-      // Drop it entirely: no row, no counter bump (it can sit between a
+      // "\ No newline at end of file" is a patch marker, not a content line.
+      // Drop it entirely: no row, no counter bump. It can sit between a
       // del-run and its paired add-run, so bumping either would misnumber
-      // every line after it).
+      // every line after it.
     } else if (text.startsWith("+") && !text.startsWith("+++")) {
       out.push({ cls: "add", oldNo: null, newNo: newNo++, text });
     } else if (text.startsWith("-") && !text.startsWith("---")) {
@@ -138,7 +138,7 @@ function numberedLines(patch: string): NumberedLine[] {
 
 // A single split-view row: a hunk-header divider (spans both columns), or a
 // left(base)/right(worktree) pair. Consecutive del/add runs within a hunk are
-// paired index-for-index (standard split-diff alignment) — the shorter run's
+// paired index-for-index (standard split-diff alignment). The shorter run's
 // unpaired rows come back as `undefined`, rendered as blank spacer cells so
 // the two columns stay row-aligned. Ctx lines pair with themselves.
 interface SplitCell { no: number; text: string; cls: "ctx" | "add" | "del" }
@@ -159,7 +159,7 @@ function splitLines(patch: string): SplitRow[] {
       if (m) { oldNo = parseInt(m[1], 10); newNo = parseInt(m[2], 10); }
       rows.push({ hunkText: text });
     } else if (text.startsWith("\\")) {
-      // Same marker as in numberedLines: skip without flushing — it can land
+      // Same marker as in numberedLines: skip without flushing. It can land
       // between a del-run and its paired add-run, and flushing early would
       // pair each side against a blank spacer instead of each other.
     } else if (text.startsWith("+") && !text.startsWith("+++")) {
@@ -175,22 +175,22 @@ function splitLines(patch: string): SplitRow[] {
   return rows;
 }
 
-// Persisted across sessions — flipping to Split shouldn't need re-doing per task.
+// Persisted across sessions, so flipping to Split doesn't need re-doing per task.
 const VIEW_MODE_KEY = "calandria:diffViewMode";
 const LEGACY_VIEW_MODE_KEY = "orch:diffViewMode";
 
-// Files past this many hunk lines start collapsed: a diff with many files near
+// Files past this many hunk lines start collapsed. A diff with many files near
 // the per-file patch cap would otherwise mount tens of thousands of line divs
 // in one commit and jank the main thread when the rail opens.
 const COLLAPSE_LINES = 400;
 
 // The line range currently being commented on (textarea open, not yet sent).
-// `side` disambiguates old-file vs new-file line numbers — see TaskComment.
+// `side` disambiguates old-file vs new-file line numbers; see TaskComment.
 interface CommentSel { file: string; side: "old" | "new"; start: number; end: number }
 
 // The review-comment box: label + textarea + Send to agent / Comment only,
 // anchored right under the row it targets. Shared by the composer (draft,
-// editable) and nothing else — posted comments render via CommentThread.
+// editable), not by posted comments, which render via CommentThread.
 function CommentBox({
   file, start, end, draft, busy, onDraftChange, onSend, onCommentOnly, onCancel,
 }: {
@@ -235,10 +235,10 @@ function CommentThread({ c }: { c: TaskComment }) {
 
 // Comment affordances shared by both view modes: existing threads anchored to
 // this row's (side, ending line) plus the open composer, if this exact anchor
-// is where it's composing. `side` + `no` together are the anchor — old/new are
+// is where it's composing. `side` + `no` together are the anchor: old/new are
 // independent line-number namespaces, so a comment on deleted line 3 and one
 // on context line 3 must not both render here. Returns null when there's
-// nothing to show, and — because (file, side, no) is unique across a diff —
+// nothing to show. Since (file, side, no) is unique across a diff, this
 // renders the composer under at most one row, never two.
 function RowComments({
   side, no, comments, sel, draft, busy, onDraftChange, onSend, onCommentOnly, onCancel,
@@ -267,9 +267,9 @@ function RowComments({
   );
 }
 
-// Comments whose anchor_sha doesn't match the currently loaded diff (or has
-// none — pre-fix rows) — collapsed rather than guess-matched to a line, since
-// the diff that numbered them is gone.
+// Comments whose anchor_sha doesn't match the currently loaded diff, or has
+// none (pre-fix rows). These render collapsed instead of guess-matched to a
+// line, since the diff that numbered them is gone.
 function OutdatedComments({ comments }: { comments: TaskComment[] }) {
   const [open, setOpen] = useState(false);
   if (!comments.length) return null;
@@ -296,9 +296,9 @@ function OutdatedComments({ comments }: { comments: TaskComment[] }) {
 
 // One file section. Memoized so the scroll tracker's setActive (which fires on
 // every scroll frame) re-renders only the overview list, not every hunk line
-// of every file (comment composing does re-render every section on keystroke,
-// since the draft lives in the parent — acceptable at the file counts/sizes
-// this view already caps large diffs to).
+// of every file. Comment composing does re-render every section on keystroke,
+// since the draft lives in the parent, which is acceptable at the file
+// counts/sizes this view already caps large diffs to.
 const FileDiff = memo(function FileDiff({
   file: f,
   userToggled,
@@ -323,7 +323,7 @@ const FileDiff = memo(function FileDiff({
   refs: { current: Record<string, HTMLDivElement | null> };
   viewMode: "unified" | "split";
   comments: TaskComment[]; // full task list; filtered to this file below
-  diffHead: string | null; // the loaded diff's HEAD — decides current vs outdated
+  diffHead: string | null; // the loaded diff's HEAD; decides current vs outdated
   sel: CommentSel | null;
   draft: string;
   busy: boolean;
@@ -332,17 +332,17 @@ const FileDiff = memo(function FileDiff({
   onSend: () => void;
   onCommentOnly: () => void;
   onCancel: () => void;
-  onCollaborate?: (path: string) => void; // opens the document collaboration modal (any text file)
+  onCollaborate?: (path: string) => void; // opens the document collaboration modal, for any text file
 }) {
   const lines = useMemo(() => (f.binary ? [] : numberedLines(f.patch)), [f]);
   const rows = useMemo(() => (f.binary || viewMode === "unified" ? [] : splitLines(f.patch)), [f, viewMode]);
   const big = lines.length > COLLAPSE_LINES;
   const isCollapsed = userToggled ? !big : big;
   const fileComments = useMemo(() => comments.filter((c) => c.file === f.path), [comments, f.path]);
-  // Only a comment stamped with THIS diff's head anchors inline — anything
-  // else (including null anchor_sha, pre-fix rows) is outdated. Note this
+  // Only a comment stamped with THIS diff's head anchors inline; anything
+  // else (including null anchor_sha, pre-fix rows) is outdated. This
   // catches a rewritten diff, not a dirty worktree that changed content
-  // without moving HEAD — see the comment on currentHead in the diff route.
+  // without moving HEAD; see the comment on currentHead in the diff route.
   const currentComments = useMemo(
     () => fileComments.filter((c) => diffHead != null && c.anchor_sha === diffHead),
     [fileComments, diffHead]
@@ -353,7 +353,7 @@ const FileDiff = memo(function FileDiff({
   );
   const fileSel = sel && sel.file === f.path ? sel : null;
   // Accurate placeholder height for content-visibility while the section is
-  // offscreen-unrendered (header ≈34px, hunk lines 12px × 1.55 line-height),
+  // offscreen-unrendered (header about 34px, hunk lines 12px x 1.55 line-height),
   // so offsetTop-based jump/scroll-spy stay truthful. `auto` pins the real
   // size once rendered.
   const est = Math.round(34 + (isCollapsed ? 38 : Math.max(1, lines.length) * 18.6));
@@ -364,7 +364,7 @@ const FileDiff = memo(function FileDiff({
     />
   );
   // Unified: one gutter cell per side, but only the row's OWN side is
-  // clickable (del → old, add/ctx → new) — the other cell just displays its
+  // clickable (del -> old, add/ctx -> new). The other cell just displays its
   // number, so a ctx row's old-side number can't open a second, colliding
   // composer for the same content.
   const gutter = (no: number | null, cellSide: "old" | "new", rowSide: "old" | "new") =>
@@ -376,7 +376,7 @@ const FileDiff = memo(function FileDiff({
       <span className="dl-no">{no}</span>
     );
   // Split: each column is its own line, so del (left) and add (right) anchor
-  // independently even when paired on the same visual row. ctx only anchors
+  // independently even when paired on the same visual row. Ctx only anchors
   // on the new (right) side, matching the unified rule above.
   const splitGutter = (cell: SplitCell | undefined, pos: "old" | "new") => {
     if (!cell) return <span className="dl-no" />;
@@ -403,9 +403,9 @@ const FileDiff = memo(function FileDiff({
           </span>
         </button>
         {/* A text file the agent wrote or changed can be reviewed as a document
-            — edited and commented on — rather than hunk by hunk. The transcript's
-            Write/Edit card offers the same for files this list can't see
-            (gitignored ones). */}
+            instead of hunk by hunk, edited and commented on directly. The
+            transcript's Write/Edit card offers the same for files this list
+            can't see (gitignored ones). */}
         {onCollaborate && !f.binary && f.status !== "D" && (
           <button className="tc-fact" title="Open in collaboration mode: edit the file and attach comments" onClick={() => onCollaborate(f.path)}>
             {Icon.edit()} Collaborate
@@ -428,7 +428,7 @@ const FileDiff = memo(function FileDiff({
           ) : viewMode === "unified" ? (
             // One max-content-wide block holds every row, so the longest line
             // sets the width of all of them and the file scrolls as a whole
-            // (see .tc-rows) — rows sized individually would each need their
+            // (see .tc-rows). Rows sized individually would each need their
             // own scrollbar and would stripe short.
             <div className="tc-rows">
               {lines.map((ln, i) => {
@@ -484,8 +484,8 @@ const FileDiff = memo(function FileDiff({
 /**
  * Offered after a merge lands: publish the base branch the merge just advanced.
  *
- * Merging only ever moved the LOCAL base branch, so a team that reviews on
- * GitHub ends up with two diverging integration points — the app's and the
+ * Merging only ever moves the LOCAL base branch, so a team that reviews on
+ * GitHub ends up with two diverging integration points, the app's and the
  * remote's. One click closes that loop. Renders nothing unless there's a remote
  * and something to send, so a purely local project never sees it.
  */
@@ -521,7 +521,7 @@ function PushBaseBranch({ projectId }: { projectId: string }) {
         body: JSON.stringify({ action: "push" }),
       });
       const j = await r.json();
-      // A rejected push leaves the merge intact — it landed locally either way.
+      // A rejected push leaves the merge intact: it landed locally either way.
       if (j?.ok) setState("done");
       else { setErr(j?.error || "push failed"); setDetail(j?.detail); setState(""); }
     } catch (e) {
@@ -562,8 +562,8 @@ export default function TaskChanges({
   projectId: string;
   running?: boolean;
   // The project's landing policy. Under "pr" the base branch only moves through a
-  // pull request, which makes Create PR the way this work lands and a local merge
-  // a dead end — so the two buttons swap emphasis and the merge says what it is.
+  // pull request, so Create PR is the way this work lands and a local merge is
+  // a dead end; the two buttons swap emphasis and the merge says what it is.
   landingMode?: LandingMode;
   // Fired after any merge-state mutation here (land, prepare, accept, discard),
   // successful or not: the session's sync banner reads the same worktree and
@@ -575,9 +575,9 @@ export default function TaskChanges({
   // here is otherwise re-read only on mount, a task switch, or a turn ending.
   refresh?: number;
   // The task's live PR state, straight off the row (lib/prState.ts keeps it
-  // fresh). The whole snapshot rather than just the URL, because "Squash &
-  // merge PR" is enabled off what GitHub actually says — open, not a draft, no
-  // conflicts, checks not failing — rather than off the mere existence of a PR.
+  // fresh). Carries the whole snapshot, not just the URL, because "Squash &
+  // merge PR" is enabled off what GitHub actually says: open, not a draft, no
+  // conflicts, checks not failing.
   pr?: PrFacts | null;
   onMerged?: () => void;
   onPrCreated?: (url: string) => void;
@@ -585,7 +585,7 @@ export default function TaskChanges({
   // Send-to-agent path for review comments: the same handler SessionView wires
   // to runTurn, so a sent comment flips local running state exactly like a
   // normal chat message. Undefined only in contexts that don't offer it
-  // (shouldn't happen in practice) — the comment still posts, just unsent.
+  // (shouldn't happen in practice); the comment still posts, just unsent.
   onSend?: (text: string) => void;
 }) {
   const [data, setData] = useState<DiffResp | null>(() => diffCache.get(taskId) ?? null);
@@ -606,7 +606,7 @@ export default function TaskChanges({
   const [mergeRes, setMergeRes] = useState<MergeResp | null>(null);
   const [active, setActive] = useState<string | null>(null);
   // Paths the user flipped away from their default state (expanded normally,
-  // collapsed for big files) — override semantics so a background revalidate
+  // collapsed for big files). Override semantics so a background revalidate
   // doesn't reset the user's choices.
   const [toggled, setToggled] = useState<Set<string>>(new Set());
   const [viewMode, setViewMode] = useState<"unified" | "split">(() => {
@@ -614,7 +614,7 @@ export default function TaskChanges({
   });
   const [comments, setComments] = useState<TaskComment[]>([]);
   const [sel, setSel] = useState<CommentSel | null>(null); // line range being commented on, if any
-  const [collab, setCollab] = useState<string | null>(null); // file path open in collaboration mode
+  const [collab, setCollab] = useState<string | null>(null); // file path open in collaboration mode, if any
   const [draft, setDraft] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -634,7 +634,7 @@ export default function TaskChanges({
       const r = await fetch(`/api/tasks/${taskId}/comments`, { cache: "no-store" });
       const j: { comments?: TaskComment[] } = await r.json();
       setComments(j.comments ?? []);
-    } catch { /* comments are supplementary — a failed fetch just shows none */ }
+    } catch { /* comments are supplementary; a failed fetch just shows none */ }
   }, [taskId]);
 
   const load = useCallback(async () => {
@@ -661,13 +661,13 @@ export default function TaskChanges({
     setSel(null);
     setDraft("");
     // Task switched without a remount: show the new task's cached diff (or the
-    // skeleton), never the previous task's stale files, while we revalidate.
+    // skeleton), never the previous task's stale files, while it revalidates.
     setData(diffCache.get(taskId) ?? null);
     load();
     loadComments();
   }, [taskId, load, loadComments]);
 
-  // The diff moves while the agent works — refetch when a turn finishes so a
+  // The diff moves while the agent works. Refetch when a turn finishes so a
   // just-written change appears without a manual Refresh (same trigger the
   // SyncBanner uses). Only on the running→idle transition; mount already loads.
   const wasRunning = useRef(running);
@@ -710,7 +710,7 @@ export default function TaskChanges({
     setActive(path);
     // content-visibility placeholders make offsetTop an estimate until the
     // sections near the target actually render, and that rendering lags the
-    // scroll by a frame or two — so instead of one smooth scroll to a
+    // scroll by a frame or two. Instead of one smooth scroll to a
     // coordinate that goes stale mid-flight, jump instantly and keep
     // re-targeting for a few frames while the layout settles.
     let frames = 0;
@@ -768,7 +768,7 @@ export default function TaskChanges({
     }
   };
 
-  // `stashDirty` carries the exact paths shown in the dirty-checkout card — the
+  // `stashDirty` carries the exact paths shown in the dirty-checkout card: the
   // user's by-name consent to have those set aside for the merge and put back
   // after it. An ordinary Merge click sends no body and never stashes anything.
   const doMerge = async (stashDirty?: string[]) => {
@@ -813,13 +813,13 @@ export default function TaskChanges({
       setPrErr(e instanceof Error ? e.message : String(e));
     } finally {
       setPrBusy(false);
-      load(); // the push may have committed dirty work — refresh the diff state
+      load(); // the push may have committed dirty work; refresh the diff state
     }
   };
 
   // Land the PR on GitHub without leaving the app. The server does the
   // screening again against a fresh `gh pr view`, so a 409 here is a real
-  // "no, not any more" rather than a disagreement with the disabled state.
+  // "no, not any more", distinct from the button's disabled state.
   const doMergePr = async () => {
     setPrMerging(true);
     setPrMergeRes(null);
@@ -831,7 +831,7 @@ export default function TaskChanges({
       setPrMergeRes({ ok: false, error: e instanceof Error ? e.message : String(e) });
     } finally {
       setPrMerging(false);
-      // Nothing local changed — the merge happened on github.com — but the row's
+      // Nothing local changed; the merge happened on github.com. But the row's
       // pr_* fields did, and they arrive on their own over /api/events.
       setPrBusy(false);
     }
@@ -852,14 +852,14 @@ export default function TaskChanges({
         setMergeRes({ ok: false, targetBranch: "", committed: false, error: res.error || "AI resolution failed" });
     } finally {
       setResolving(false);
-      load(); // reload → mergeInProgress review state (Accept/Discard) or merged
+      load(); // reload into mergeInProgress review state (Accept/Discard) or merged
       onSyncChanged?.();
     }
   };
 
-  // Accept a resolution: commit + land the (now clean) branch into the base.
-  // Takes the same dirty-checkout acknowledgement as doMerge — this path lands
-  // through the same in-place merge and can be refused by the same dirt.
+  // Accept a resolution: commit and land the (now clean) branch into the base.
+  // Takes the same dirty-checkout acknowledgement as doMerge, since this path
+  // lands through the same in-place merge and can be refused by the same dirt.
   //
   // Under a PR landing policy it stops at the commit instead (`resolveOnly`):
   // the branch now contains the base, which is what makes the PR mergeable, and
@@ -900,7 +900,7 @@ export default function TaskChanges({
   };
 
   if (loading && !data) {
-    // Diffing shells out to git — sketch the toolbar + file list so the tab
+    // Diffing shells out to git. Sketch the toolbar + file list so the tab
     // reads "computing the diff", not "empty".
     return (
       <div className="tc-root" aria-hidden>
@@ -965,11 +965,11 @@ export default function TaskChanges({
         )}
         {data.isDirty && <span className="tc-dirty">● uncommitted</span>}
         {data.ahead > 0 && <span className="tc-ahead">{data.ahead} commit{data.ahead === 1 ? "" : "s"}</span>}
-        {/* Live PR state — number, state, check rollup, review decision, and a
-            Refresh — beside the branch it was opened from and one row above the
+        {/* Live PR state: number, state, check rollup, review decision, and a
+            Refresh, beside the branch it was opened from and one row above the
             buttons that act on it. It reads as the last fact in this bar's
-            status group ("what this branch is, what changed, where it went")
-            rather than as an action, so it sits ahead of the spacer and stays
+            status group ("what this branch is, what changed, where it went"),
+            not as an action, so it sits ahead of the spacer and stays
             put through a conflict review, when the actions to its right are
             replaced by Discard / Accept. */}
         {pr && <PrChip task={pr} />}
@@ -1018,10 +1018,10 @@ export default function TaskChanges({
               </button>
             )}
             {/* Landing the PR from here. Shown whenever one exists, and enabled
-                only when GitHub's own answer says it could be merged — a
+                only when GitHub's own answer says it could be merged: a
                 disabled button that says WHY beats a live one that 409s. Under
-                a PR-required base this is THE landing action, which is why the
-                local merge below loses its primary styling rather than this. */}
+                a PR-required base this is the landing action, so the
+                local merge below loses its primary styling instead. */}
             {prUrl && (
               <button
                 className="tc-btn tc-prmerge"
@@ -1037,8 +1037,8 @@ export default function TaskChanges({
             )}
             {/* PR mode demotes this: the merge still works, but only ever on the
                 LOCAL base branch, which then can't be pushed. So it loses the
-                primary styling and the first click opens the note below rather
-                than merging. It is not removed — the conflict path (Resolve
+                primary styling and the first click opens the note below instead
+                of merging. It stays present because the conflict path (Resolve
                 manually / Fix with AI) hangs off a refused merge, and that is
                 still how a PR-mode branch gets un-conflicted. */}
             {pending && (
@@ -1126,9 +1126,9 @@ export default function TaskChanges({
                 ? `Already up to date with ${mergeRes.targetBranch}.`
                 : `Merged into ${mergeRes.targetBranch}.`
             : `⚠ ${mergeRes.error || "merge failed"}`}
-          {/* Offering a push under a PR policy is the original lie: it would be
-              rejected, leaving a local base branch diverged from origin with no
-              way forward. Say what happened instead. */}
+          {/* A push under a PR policy would be rejected, leaving a local base
+              branch diverged from origin with no way forward. Say what
+              happened instead. */}
           {mergeRes.ok && !mergeRes.alreadyMerged && !mergeRes.resolveOnly && (
             prMode ? (
               <div className="tc-manual">
@@ -1141,8 +1141,8 @@ export default function TaskChanges({
             )
           )}
           {/* The merge had to run in the project's own checkout and found it
-              dirty. Show exactly what is in the way — usually a tool dropping,
-              not the user's work — and offer to set it aside for the merge. */}
+              dirty. Show exactly what is in the way, most often a tool dropping
+              a stray file, and offer to set it aside for the merge. */}
           {!mergeRes.ok && mergeRes.dirty && mergeRes.dirty.length > 0 && (
             <>
               <div className="tc-manual">
@@ -1223,7 +1223,7 @@ export default function TaskChanges({
         <div className="tc-note">No changes on this branch yet.</div>
       ) : (
         <div className="tc-scroll" ref={scrollRef}>
-          {/* overview list — click a file to jump to its diff */}
+          {/* overview list: click a file to jump to its diff */}
           <div className="tc-list">
             <div className="tc-list-h">
               {data.files.length} file{data.files.length === 1 ? "" : "s"} changed

@@ -65,9 +65,9 @@ const QUERY_LIMITS = { project: 6, tag: 6, task: 10 };
 
 // The ⌘K command palette: fuzzy search over projects, sessions (tasks across
 // ALL active projects) and commands, grouped, keyboard-first. The overlay is a
-// centered top sheet over a scrim — Esc or an outside click dismisses, ↑/↓
+// centered top sheet over a scrim. Esc or an outside click dismisses, ↑/↓
 // move, ⏎ runs the active row. Every color comes from theme vars, so it works
-// in both themes for free.
+// in both themes.
 export function CommandPalette({ projects, commands, onPickProject, onPickTask, onClose }: {
   projects: ProjectRow[];
   commands: PaletteCommand[];
@@ -82,7 +82,7 @@ export function CommandPalette({ projects, commands, onPickProject, onPickTask, 
   const listRef = useRef<HTMLDivElement>(null);
 
   // Sessions across every project are server state (the client only holds the
-  // selected project's tasks) — fetched fresh each open, like NeedsYouMenu.
+  // selected project's tasks), fetched fresh each open, like NeedsYouMenu.
   useEffect(() => {
     let alive = true;
     jget<{ tasks: PaletteTaskRow[]; tags: PaletteTagRow[] }>("/api/tasks")
@@ -106,7 +106,7 @@ export function CommandPalette({ projects, commands, onPickProject, onPickTask, 
     const buckets: { title: string; entries: Entry[] }[] = [
       { title: "Projects", entries: rank(projects, (p) => `${p.name} ${p.sub}`, limits.project).map((project) => ({ kind: "project", project })) },
       // "tag" in the searched text so typing the word finds them, the way
-      // the commands' `keywords` work. Finished tags are still matchable —
+      // the commands' `keywords` work. Finished tags are still matchable:
       // "what did the auth migration cost" is a question about a done one.
       { title: "Tags", entries: rank(tags, (t) => `tag ${t.name} ${t.description} ${t.project_name}`, limits.tag).map((tag) => ({ kind: "tag", tag })) },
       { title: "Sessions", entries: rank(tasks, (t) => `${t.title} ${t.project_name} ${t.tags.map((g) => g.name).join(" ")}`, limits.task).map((task) => ({ kind: "task", task })) },
@@ -121,17 +121,17 @@ export function CommandPalette({ projects, commands, onPickProject, onPickTask, 
     return { sections, flat };
   }, [query, projects, tags, tasks, commands]);
 
-  // Typing (or the async session load) reshapes the list — snap the highlight
-  // back to the top / into range rather than leaving it on a stale row.
+  // Typing (or the async session load) reshapes the list. Snap the highlight
+  // back to the top or into range instead of leaving it on a stale row.
   useEffect(() => { setActive(0); }, [query]);
   useEffect(() => { if (active >= flat.length) setActive(0); }, [active, flat.length]);
 
   const run = (e: Entry) => {
     if (e.kind === "project") onPickProject(e.project.id);
-    // A tag has no route of its own — "opening" one IS the project with its
+    // A tag has no route of its own: "opening" one is the project with its
     // chip lit alone, which is what its detail (the strip) hangs off. The chip
     // is set BEFORE the navigation so the list renders narrowed on first paint
-    // rather than flashing every task.
+    // instead of flashing every task.
     else if (e.kind === "tag") { selectOneTag(e.tag.project_id, e.tag.id); onPickProject(e.tag.project_id); }
     else if (e.kind === "task") onPickTask(e.task.project_id, e.task.id);
     else e.command.run();
@@ -197,9 +197,10 @@ export function CommandPalette({ projects, commands, onPickProject, onPickTask, 
           </span>
           <StatusDot status={t.status} running={t.running === 1} awaiting={t.awaiting_input === 1 && t.running !== 1} />
           <span className="pr-title">{t.title}</span>
-          {/* Which feature(s) this session is a step of — the same pills the
-              list row carries, inert here (the row itself is the navigation).
-              A task can carry several, so this can be more than one badge. */}
+          {/* Which feature(s) this session is a step of, the same pills the
+              list row carries, inert here since the row itself is the
+              navigation. A task can carry several, so this can be more than
+              one badge. */}
           {t.tags.slice(0, 3).map((tag, i) => <TagBadge key={i} tag={tag} />)}
           {t.tags.length > 3 && (
             <span className="gbadge more" title={t.tags.slice(3).map((tag) => tag.name).join("\n")}>+{t.tags.length - 3}</span>

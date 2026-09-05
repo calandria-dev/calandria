@@ -9,19 +9,19 @@ import type { ExtraProps } from "react-markdown";
 import { Mermaid } from "./Mermaid";
 import { mermaidSourceOf } from "@/lib/mermaid";
 
-// Renders Claude's markdown output: headings, lists, tables, fenced code blocks
+// Renders an agent's markdown output: headings, lists, tables, fenced code blocks
 // (syntax-highlighted), inline code, links. Used for assistant + user messages.
 //
-// Perf: `detect: false` — only fenced blocks with an explicit language get
-// highlighted; hljs auto-detection ran over every bare code block and was a
-// hot spot during streaming turns. Memoized so messages whose text hasn't
-// changed skip the whole markdown parse + highlight on transcript re-renders.
+// `detect: false`: only fenced blocks with an explicit language get
+// highlighted; hljs auto-detection over every bare code block is expensive
+// during streaming turns. Memoized so messages whose text hasn't changed skip
+// the whole markdown parse and highlight on transcript re-renders.
 //
-// `diagrams` swaps a ```mermaid fence for the rendered diagram. Opt-in rather
-// than default because the transcript renders a message on every streamed
-// token: a half-written diagram would fail to parse on each one, and the
-// mermaid chunk would load for every session that mentions a flowchart. The
-// collaboration modal turns it on — a document is read whole.
+// `diagrams` swaps a ```mermaid fence for the rendered diagram. Opt-in
+// because the transcript renders a message on every streamed token: a
+// half-written diagram would fail to parse on each one, and the mermaid
+// chunk would load for every session that mentions a flowchart. The
+// collaboration modal turns it on, since a document there is read whole.
 const link = (props: ComponentProps<"a">) => <a {...props} target="_blank" rel="noreferrer" />;
 const diagramPre = ({ node, children, ...props }: ComponentProps<"pre"> & ExtraProps) => {
   const source = mermaidSourceOf(node);

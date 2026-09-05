@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 
 // Powers the ⌘K palette's search: every real task across all active projects,
 // labeled with its project and (since tags) the features it's part of, plus
-// the tags themselves — which are jumpable targets in their own right, not
+// the tags themselves, which are jumpable targets in their own right, not
 // just badges. Both fetched fresh each time the palette opens.
 export async function GET() {
   return NextResponse.json({ tasks: listAllTasksLite(), tags: listAllTagsLite() });

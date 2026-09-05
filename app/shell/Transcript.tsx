@@ -20,7 +20,7 @@ import { WORKTREE_REPAIR_NOTICE } from "@/lib/worktreeFailure";
 import type { Msg } from "./types";
 import { Avatar } from "./shared";
 
-// The always-visible "peek" tier — Claude Code's `⎿` line. Counts show no
+// The always-visible "peek" tier: Claude Code's `⎿` line. Counts show no
 // content; diffs/snippets show a capped hunk with a clickable "+N more" that
 // opens the full body. TodoWrite renders its checklist inline.
 function PeekView({ peek, expandable, onExpand }: { peek: ToolPeek; expandable: boolean; onExpand: () => void }) {
@@ -54,7 +54,7 @@ function PeekView({ peek, expandable, onExpand }: { peek: ToolPeek; expandable: 
       </div>
     );
   }
-  // fail: the exit status and the LAST lines — the reason for a non-zero exit
+  // fail: the exit status and the last lines. The reason for a non-zero exit
   // is at the end of the output, so that's what shows without expanding. Only
   // the status is red; the output itself isn't the error.
   if (peek.kind === "fail") {
@@ -78,17 +78,15 @@ function PeekView({ peek, expandable, onExpand }: { peek: ToolPeek; expandable: 
 
 // `onCollaborate` opens a file the call wrote in collaboration mode. The card
 // is the entry point that doesn't go through git: `data.file` is set by the
-// runner from the path the agent WROTE, so a gitignored scratch doc — which
-// the Changes tab never lists — is reachable the moment the Write lands.
+// runner from the path the agent wrote, so a gitignored scratch doc, which
+// the Changes tab never lists, is reachable the moment the Write lands.
 function ToolView({ data, onCollaborate }: { data: ToolData; onCollaborate?: (file: string) => void }) {
   const [open, setOpen] = useState(false);
   const hasDiff = !!data.diff?.length;
   const expandable = !!(data.detail || hasDiff || data.result !== undefined);
   // A failure surfaces its reason without a click. Results persisted with a
   // `fail` peek show it there (status + the tail of the output); older rows
-  // and drivers that peek nothing fall back to opening the whole body, which
-  // is what every failure did before — 6000 red chars with the reason clipped
-  // off the end, i.e. an "error banner" over output that looked fine.
+  // and drivers that peek nothing fall back to opening the whole body.
   const showBody = open || (!!data.isError && data.result !== undefined && !data.peek);
   const file = data.file;
   return (
@@ -149,7 +147,7 @@ function AskView({ data, agentLabel, onAnswer }: { data: ToolData; agentLabel: s
   }
 
   // Never answered, and never will be: the turn was stopped or the app
-  // restarted with the question parked. Renders as a settled card — showing
+  // restarted with the question parked. Renders as a settled card, since
   // live options here would be indistinguishable from a question somebody is
   // actually waiting on, and picking one would resolve nothing.
   if (dismissed) {
@@ -208,10 +206,10 @@ function AskView({ data, agentLabel, onAnswer }: { data: ToolData; agentLabel: s
 
 // Who refused, for a card that arrives already settled because Claude Code
 // blocked the call itself (PermissionOutcome.reason === "blocked"). Keyed by the
-// SDK's decision_reason_type, which is stored raw precisely so this mapping can
-// grow: the CLI mints values the SDK's docs don't list, and an unmapped one is
-// shown verbatim rather than swallowed — "Blocked by Claude Code" alone would
-// hide the only clue about which check fired.
+// SDK's decision_reason_type, which is stored raw so this mapping can grow: the
+// CLI mints values the SDK's docs don't list, and an unmapped one is shown
+// verbatim instead of swallowed. "Blocked by Claude Code" alone would hide the
+// only clue about which check fired.
 const BLOCKED_BY: Record<string, string> = {
   classifier: "Blocked by Claude Code's safety classifier",
   mode: "Blocked by this task's permission mode",
@@ -222,15 +220,15 @@ const BLOCKED_BY: Record<string, string> = {
 const blockedHead = (by?: string): string =>
   (by && BLOCKED_BY[by]) || (by ? `Blocked by Claude Code (${by})` : "Blocked by Claude Code");
 
-// Tool-permission card — the canUseTool gate under acceptEdits and plan
-// mode" (lib/permissions.ts). Unlike a question card this isn't a multiple
-// choice: the user needs the ACTION, so the request's detail (the full Bash
+// Tool-permission card: the canUseTool gate under acceptEdits and plan
+// mode (lib/permissions.ts). Unlike a question card this isn't a multiple
+// choice: the user needs the action, so the request's detail (the full Bash
 // command, the file path, the plan) is shown verbatim, with the diff when the
 // call would write. "Always allow" spells out the exact rule it will store, so
 // nobody grants more than they read.
 //
 // The same card also renders read-only, with no buttons, for a call Claude Code
-// refused on its own (the "auto" classifier, a deny rule) — that decision is
+// refused on its own (the "auto" classifier, a deny rule): that decision is
 // already made, and it arrives settled.
 function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentLabel: string; onDecide: (decision: PermissionDecision, note: string) => void }) {
   const req = data.permission?.request;
@@ -240,11 +238,11 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
   if (!req) return null;
 
   // The pre-turn settings gate (lib/settingsDrift.ts, issue #43): the same card
-  // asking about a different thing — not one tool call, but the configuration
+  // asking about a different thing, not one tool call, but the configuration
   // the whole turn would load. Declining doesn't refuse a call and let the
   // session carry on; it means the turn never runs, so every sentence below
   // that promises otherwise has to change. There is also nobody to write a note
-  // TO — the agent hasn't started — so the note field goes away with it.
+  // to, since the agent hasn't started, so the note field goes away with it.
   const settings = req.kind === "settings";
 
   if (outcome) {
@@ -265,10 +263,10 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
       <div className={`perm settled ${allowed ? "ok" : "no"}`}>
         <div className="perm-head">{allowed ? Icon.check() : Icon.x()} {what}</div>
         <div className="perm-what">{req.title}</div>
-        {/* On a block: this card was never open, so it's the one place the user
+        {/* On a block: this card was never open, so this is where the user
             gets to see what the agent was actually about to run. On a settings
-            change: what changed is the whole point of the record, and unlike a
-            tool call it stays true afterwards — the file is still sitting in
+            change: what changed is the point of the record, and unlike a
+            tool call it stays true afterwards. The file is still sitting in
             the worktree. Every other outcome had its input on screen before it
             settled. */}
         {(blocked || settings) && req.detail && <pre className="perm-pre">{req.detail}</pre>}
@@ -312,13 +310,13 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
 
 /**
  * The three handlers a suggestion card in the transcript needs, and the project
- * it is being read FROM. All three are the tray's own — a suggestion started
+ * it is being read from. All three are the tray's own: a suggestion started
  * here has to be indistinguishable from one started there (same worktree cut,
  * same agent resolution, same auto-start-dependents sweep), which is only true
- * if it goes down the same code path rather than a second copy of it.
+ * if it goes down the same code path instead of a second copy of it.
  */
 export interface SuggestionActions {
-  /** The project whose session the transcript belongs to — see SuggestionView. */
+  /** The project whose session the transcript belongs to. See SuggestionView. */
   projectId: string;
   onStart: (taskId: string) => void | Promise<void>;
   onAccept: (taskId: string) => void | Promise<void>;
@@ -327,7 +325,7 @@ export interface SuggestionActions {
 
 // A suggestion filed by a `suggest_task` call, rendered on the call's own row.
 //
-// State is NEVER held here between renders: the transcript is persisted and a
+// State is never held here between renders: the transcript is persisted and a
 // reload must not resurrect a Start button for a task that has since been
 // started, accepted, withdrawn or hard-deleted. So the card holds two ids and
 // re-reads the task (GET /api/tasks/[id]/suggestion) on mount and after every
@@ -340,9 +338,9 @@ export interface SuggestionActions {
 //                         Restore in place of Add, the rest unchanged
 //   404                 → "No longer exists" (Dismiss is a hard delete)
 //
-// START AND ANOTHER PROJECT. `suggest_task` can file into ANY project, and
-// starting a task mints its session and selects it — which, for a suggestion
-// filed elsewhere, means being pulled out of the session you are reading and
+// Start and another project: `suggest_task` can file into any project, and
+// starting a task mints its session and selects it, which for a suggestion
+// filed elsewhere means being pulled out of the session you are reading and
 // into a project you may not have had on screen. That is a bigger, less
 // recoverable interruption than walking to the other project's tray, and the
 // tray is right there. So Start is offered only for a suggestion filed into the
@@ -398,10 +396,10 @@ function SuggestionView({ data, actions }: { data: ToolData; actions?: Suggestio
   // three so the two surfaces can't disagree about what is still actionable.
   const actionable = card.suggested === 1;
   const elsewhere = card.project_id !== actions?.projectId;
-  // Blockers that have since finished aren't blockers, and the card used to
-  // name them anyway — so the same `isBlocking()` the tray and both dialogs
-  // use decides what the notice lists AND whether Start is on offer. Only a
-  // FIRST turn is gated, matching the server's own `!fresh.started` screen.
+  // Blockers that have since finished aren't blockers, so the same
+  // `isBlocking()` the tray and both dialogs use decides what the notice lists
+  // and whether Start is on offer. Only a first turn is gated, matching the
+  // server's own `!fresh.started` screen.
   const openBlockers = card.blocked_by.filter(isBlocking);
   const blockNote = card.started === 1 ? undefined : blockedNote(openBlockers.map((b) => b.title));
   const what = card.started === 1
@@ -455,8 +453,8 @@ function SuggestionView({ data, actions }: { data: ToolData; actions?: Suggestio
 // Attachment chips parsed out of a user message's markers: image thumbnails
 // (click opens full size) and file chips for every other type (click opens or
 // downloads it, per lib/uploadTypes.ts servedType). Both are served from the
-// task's uploads dir. The chip shows the user's own filename — the staged name
-// minus its unique prefix — since with any type accepted "attached file" no
+// task's uploads dir. The chip shows the user's own filename (the staged name
+// minus its unique prefix), since with any type accepted "attached file" no
 // longer says anything.
 function AttachmentStrip({ items }: { items: MsgAttachment[] }) {
   if (!items.length) return null;
@@ -480,14 +478,14 @@ function AttachmentStrip({ items }: { items: MsgAttachment[] }) {
 
 // Memoized: during a live turn every SSE event re-renders the transcript's
 // parents, but message objects are append-only (replaced only when their content
-// changes), so unchanged messages skip re-rendering — and re-parsing their
-// markdown — entirely. Callers must pass identity-stable handlers or the memo
+// changes), so unchanged messages skip re-rendering, and re-parsing their
+// markdown, entirely. Callers must pass identity-stable handlers or the memo
 // is defeated (SessionView wraps its handlers for exactly this reason).
-// The usage-limit notice's one action, supplied only for the LAST message of
+// The usage-limit notice's one action, supplied only for the last message of
 // the transcript (an old notice from a limit that has since healed must not
 // offer to queue anything): `queuedAt` is the task's start_at (0 = not
 // queued), `resetAt` the reset the plan meter currently reports (null = none
-// known — a Codex task, or no telemetry yet), and the two handlers set/clear
+// known, a Codex task, or no telemetry yet), and the two handlers set/clear
 // the deadline. See app/shell/queuedStart.ts.
 export interface LimitResume {
   queuedAt: number;
@@ -499,7 +497,7 @@ export interface LimitResume {
 /**
  * The "Repair worktree" affordance on a worktree-prep failure. Owns its own
  * busy/error state because its handler does two round trips (repair, then the
- * resend) and the first can fail on its own terms — the other recovery buttons
+ * resend) and the first can fail on its own terms. The other recovery buttons
  * are one fire-and-forget send, and their failure comes back as a fresh
  * transcript line. Not memoized: it's rendered once, on one message.
  */
@@ -550,8 +548,8 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     if (data.permission) {
       return <div className="msg msg-tool"><PermissionView data={data} agentLabel={agentLabel} onDecide={(d, note) => onDecidePermission?.(data.permission?.request.id || m.toolId || "", d, note)} /></div>;
     }
-    // A suggest_task call that actually filed a task carries its card BELOW the
-    // ordinary tool row rather than replacing it: the call, its input and its
+    // A suggest_task call that actually filed a task carries its card below the
+    // ordinary tool row instead of replacing it: the call, its input and its
     // result are still what happened, and the proposal is the artifact it left.
     return (
       <div className="msg msg-tool">
@@ -563,7 +561,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
   if (m.role === "system") {
     // A context-overflow failure: render the warning line plus a one-click path
     // to /clear, which resets the poisoned session and starts a fresh window
-    // (carrying a summary over). The notice string is matched verbatim — it's
+    // (carrying a summary over). The notice string is matched verbatim: it's
     // the durable, reconnect-safe channel written by lib/runner.ts.
     if (m.content.includes(CONTEXT_OVERFLOW_NOTICE)) {
       return (
@@ -581,7 +579,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
         </div>
       );
     }
-    // The agent's login died: same shape as the overflow case — the warning line
+    // The agent's login died: same shape as the overflow case, the warning line
     // plus the one action that fixes it (Settings → Agents, where the connect
     // flow lives). Instance-wide, so the titlebar banner says it too; this is
     // the in-context copy for whoever is reading the failed task.
@@ -602,11 +600,11 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
       );
     }
     // The agent's usage limit is spent: same shape as the two cases above. The
-    // only recovery is waiting for the reset — so the one action is to have
-    // the wait done for you: queue the task to resume on its own once the
-    // reset the plan meter reports has passed (lib/deferredStart.ts). Offered
-    // only on the newest message (see LimitResume) and only when a reset time
-    // is actually known; once queued, the same slot says so and offers Cancel.
+    // only recovery is waiting for the reset, so the one action queues the task
+    // to resume on its own once the reset the plan meter reports has passed
+    // (lib/deferredStart.ts). Offered only on the newest message (see
+    // LimitResume) and only when a reset time is actually known; once queued,
+    // the same slot says so and offers Cancel.
     if (m.content.includes(USAGE_LIMIT_NOTICE)) {
       return (
         <div className="msg system overflow">
@@ -631,7 +629,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
       );
     }
     // The gateway key's LiteLLM budget is spent: same shape as the cases above,
-    // with a Retry button — there is nothing to reconnect, only the budget's
+    // with a Retry button. There is nothing to reconnect, only the budget's
     // own reset (or a raise) to wait for, which the gateway card in Settings →
     // Agents shows (see lib/budgetFailure.ts).
     if (m.content.includes(BUDGET_EXCEEDED_NOTICE)) {
@@ -652,7 +650,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     }
     // The approval policy blocked the turn (enterprise-managed Codex downgraded
     // the driver's "never" to an approval-requiring policy that exec mode can't
-    // service): same shape as the cases above, with a Retry button — the driver
+    // service): same shape as the cases above, with a Retry button. The driver
     // already switched future turns to the compatible "on-request" policy, so
     // resending the failed message is the recovery (see lib/approvalFailure.ts).
     if (m.content.includes(APPROVAL_BLOCKED_NOTICE)) {
@@ -674,9 +672,9 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     // The worktree couldn't be prepared, in one of the two ways stale git
     // bookkeeping causes (a crashed git's lock file, a registration pointing at
     // a directory that's gone): same shape as the cases above, with a "Repair
-    // worktree" button. Unlike them the action isn't a resend — it clears the
+    // worktree" button. Unlike them the action isn't a resend: it clears the
     // lock, prunes and re-cuts first (POST /repair-worktree), then sends the
-    // failed message — so it reports its own failure inline rather than handing
+    // failed message, and reports its own failure inline instead of handing
     // the user a second dead end (see lib/worktreeFailure.ts). The
     // non-recoverable classifications (full disk, detached HEAD) carry their
     // explanation without this notice, and fall through to the plain ⚠ line.
@@ -690,17 +688,13 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
         </div>
       );
     }
-    // The glyph the PRODUCER wrote decides the tone: ✓/ℹ/▶ is good news (the
+    // The glyph the producer wrote decides the tone: ✓/ℹ/▶ is good news (the
     // "caught up to main" sync note, the parked-queue note, a deferred start
     // firing at the usage-window reset), ⚠ is a warning (every runner error
-    // line is minted with one — tests/authFailure.test.ts and e2e/04 count
-    // errors by it) and so is ⏰ (a scheduled wakeup that will NOT fire,
-    // lib/agents/claude/sessionCrons.ts), and anything else is a quiet note —
+    // line is minted with one; tests/authFailure.test.ts and e2e/04 count
+    // errors by it) and so is ⏰ (a scheduled wakeup that will not fire,
+    // lib/agents/claude/sessionCrons.ts), and anything else is a quiet note:
     // a background command settling, a service URL, a lingered wake-up (⏵).
-    // This used to prepend ⚠ to glyph-less content, which turned every quiet
-    // notice into an error banner: `Background command "…" completed (exit
-    // code 0)` and the bare description of a command that ran fine both
-    // rendered red.
     const tone = /^[✓ℹ▶]/.test(m.content) ? "info" : /^[⚠⏰]/.test(m.content) ? "" : "note";
     return <div className={`msg system${tone ? ` ${tone}` : ""}`}><div className="msg-body">{m.content}</div></div>;
   }

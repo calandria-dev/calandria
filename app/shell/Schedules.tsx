@@ -30,14 +30,14 @@ function whenLabel(ms: number, timezone: string): string {
   return `${day} ${time}`;
 }
 
-// Only call out the zone when it isn't the one the browser already assumes —
+// Only call out the zone when it isn't the one the browser already assumes,
 // otherwise every row would carry a redundant "America/Los_Angeles".
 function zoneSuffix(timezone: string): string {
   const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return timezone && timezone !== local ? ` (${timezone})` : "";
 }
 
-/** Today's date, as it reads on the wall clock in `timezone` — the default for a fresh one-time schedule. */
+/** Today's date, as it reads on the wall clock in `timezone`: the default for a fresh one-time schedule. */
 function todayInZone(timezone: string): string {
   try {
     const p = partsIn(Date.now(), timezone);
@@ -61,7 +61,7 @@ const OUTCOME: Record<ScheduleRunRow["status"], { label: string; tone: "muted" |
 
 function RunLine({ run, timezone }: { run: ScheduleRunRow; timezone: string }) {
   const outcome = OUTCOME[run.status];
-  // Show what it was DUE at next to when it actually went, whenever they differ —
+  // Show what it was due at next to when it actually went, whenever they differ,
   // otherwise a catch-up looks like the schedule fires at the wrong time.
   const late = run.fired_at && Math.abs(run.fired_at - run.scheduled_for) > 60_000;
   return (
@@ -82,37 +82,37 @@ function RunLine({ run, timezone }: { run: ScheduleRunRow; timezone: string }) {
 type Check = { ok: boolean; error?: string; suggestions?: string[]; unchecked?: boolean; note?: string };
 
 // Replace the leading slash command in a prompt with a suggested one, keeping
-// whatever follows it — "/jira, triage" + "plugin:jira" -> "/plugin:jira, triage".
+// whatever follows it: "/jira, triage" + "plugin:jira" -> "/plugin:jira, triage".
 function withCommand(prompt: string, command: string): string {
   return prompt.replace(/^(\s*)\/[A-Za-z0-9_:-]+/, `$1/${command}`);
 }
 
-// The permission modes a schedule can meaningfully pick for a given agent —
+// The permission modes a schedule can meaningfully pick for a given agent,
 // sourced from the driver's own capability descriptor (GET /api/agents), the
 // same one app/shell/modals.tsx's NewTaskModal reads via
 // permissionOptions(), so the two pickers can't drift onto different claims
 // about what a mode does. Unlike that picker, "auto"/"default" (Claude's
 // inherit-a-default modes) are dropped: a schedule always runs unattended, so
 // "whatever the default happens to be" is exactly the ambiguity this field
-// exists to rule out — every remaining option must be a concrete, named
+// exists to rule out; every remaining option must be a concrete, named
 // answer. Codex's descriptor has no "acceptEdits" at all (its driver treats
-// anything but "plan" as full workspace-write), so filtering from the REAL
-// per-agent list — rather than a fixed three-item list — is what stops a
-// Codex schedule from offering a mode that quietly behaves like bypassPermissions.
+// anything but "plan" as full workspace-write), so filtering from the real
+// per-agent list, instead of a fixed three-item list, is what stops a
+// Codex schedule from offering a mode that behaves like bypassPermissions.
 function scheduleModesFor(agents: AgentsBundle, agent: string): AgentPickerOption[] {
   return (capsFor(agents, agent)?.permissionModes ?? []).filter((p) => p.value !== "auto" && p.value !== "default");
 }
 
 // The plain-English consequence line. Driven by the SAME filtered list the
 // select renders, so it can only describe a mode that's actually on offer for
-// this agent — never an assumption ("declines automatically") that happens to
+// this agent, never an assumption ("declines automatically") that happens to
 // be true for Claude's acceptEdits but false for Codex's.
 function permissionConsequence(mode: string, modes: AgentPickerOption[], label: string): string {
   if (modes.length === 0) {
     return `${label} doesn't expose a configurable permission mode for a scheduled run. It runs using whatever this agent falls back to with nobody watching.`;
   }
   if (!modes.some((m) => m.value !== "bypassPermissions")) {
-    // Name the mode the way this agent's descriptor does — labels are
+    // Name the mode the way this agent's descriptor does: labels are
     // provider-native now, so "the only choice" must match the word on the
     // select right above this line.
     const only = modes.find((m) => m.value === "bypassPermissions")?.label ?? "bypassPermissions";
@@ -124,27 +124,20 @@ function permissionConsequence(mode: string, modes: AgentPickerOption[], label: 
 }
 
 /**
- * Create/edit form for a schedule. Two behaviours are the point, not the
- * fields: validating a slash prompt against the project's real command
- * registry before saving (an unknown command reports SUCCESS at run time, so
- * this is the only cheap place to catch it), and previewing the next three
+ * Create/edit form for a schedule. Two behaviours matter beyond the fields:
+ * validating a slash prompt against the project's real command registry
+ * before saving (an unknown command reports success at run time, so this is
+ * the only cheap place to catch it), and previewing the next three
  * occurrences so a timezone or day-mask mistake is visible now, not next
  * Monday.
  *
- * Validation never blocks Save — but the reason is narrower than it used to be.
- * The old one was a false positive: `slashCommandOf` read a prompt that merely
- * STARTS with a filesystem path ("/etc/passwd, tell me what's in it") as the
- * command "etc". That is fixed at the root (a token followed by `/` is a path),
- * because the same check runs again at FIRE time, where it settles the run
- * `failed` and mints nothing — non-blocking here and hard-blocking there was
- * two halves of one decision contradicting each other.
- *
- * What's left is a genuine limit of the probe rather than a bug in it: it reads
- * one session's registry, so a command that a plugin registers conditionally,
- * or one added between saving and firing, can read as unknown. The check is a
- * typo catcher, not an authority — a failure is shown prominently, with
- * suggestions one click away and a warning that a run WILL fail on it, but Save
- * stays live.
+ * Validation never blocks Save. It reads one session's command registry, so a
+ * command a plugin registers conditionally, or one added between saving and
+ * firing, can read as unknown. The check is a typo catcher, not an authority:
+ * a failure is shown prominently, with suggestions one click away and a
+ * warning that a run will fail on it, but Save stays live. The same check
+ * runs again at fire time, where it settles the run `failed` and mints
+ * nothing.
  */
 function ScheduleForm({
   projectId, project, agents, initial, onCancel, onSaved,
@@ -181,20 +174,20 @@ function ScheduleForm({
   }, [projectId]);
   const linked = runbooks.find((r) => r.id === runbookId) ?? null;
 
-  // The modes actually on offer for the CURRENTLY selected agent. Recomputed
-  // whenever the agent changes, and the value is clamped to stay inside it —
-  // e.g. switching from Claude (which has acceptEdits) to Codex (which
-  // doesn't) must not leave `acceptEdits` selected-but-invalid, silently
-  // saving a value the target driver would treat as its never-asks mode.
+  // The modes actually on offer for the currently selected agent. Recomputed
+  // whenever the agent changes, and the value is clamped to stay inside it:
+  // switching from Claude (which has acceptEdits) to Codex (which doesn't)
+  // must not leave `acceptEdits` selected-but-invalid, silently saving a
+  // value the target driver would treat as its never-asks mode.
   const modeCaps = useMemo(() => scheduleModesFor(agents, agent), [agents, agent]);
   useEffect(() => {
     if (modeCaps.length && !modeCaps.some((m) => m.value === permissionMode)) setPermissionMode(modeCaps[0].value);
   }, [modeCaps, permissionMode]);
 
-  // Validate a slash prompt BEFORE saving. An unknown command does not fail at
-  // run time — it returns "Unknown command: /x" as a SUCCESS — so catching it
-  // here is the difference between a working schedule and one that reports
-  // green every morning having done nothing.
+  // Validate a slash prompt before saving. An unknown command does not fail at
+  // run time; it returns "Unknown command: /x" as a success. Catching it here
+  // is the difference between a working schedule and one that reports green
+  // every morning having done nothing.
   const [check, setCheck] = useState<Check | null>(null);
   const [checking, setChecking] = useState(false);
   const validate = useCallback(async (p: string, a: string) => {
@@ -227,7 +220,7 @@ function ScheduleForm({
       const out: number[] = [];
       let cursor = Date.now();
       for (let i = 0; i < 3; i++) {
-        // A one-time spec has exactly one slot and returns null once it's spent —
+        // A one-time spec has exactly one slot and returns null once it's spent;
         // an in-progress edit to a past date hits this on the very first pass.
         const next = nextFireAt(spec, cursor);
         if (!next) break;
@@ -242,7 +235,7 @@ function ScheduleForm({
 
   const toggleDay = (i: number) => setMask((m) => (m & (1 << i) ? m & ~(1 << i) : m | (1 << i)));
 
-  // A linked schedule needs no prompt of its own — the runbook supplies it.
+  // A linked schedule needs no prompt of its own; the runbook supplies it.
   // The `prompt` column is still written, as the fallback deleteRunbook
   // refreshes, but it is no longer what the user is filling in.
   const hasPrompt = runbookId ? !!linked : prompt.trim().length > 0;
@@ -262,7 +255,7 @@ function ScheduleForm({
       : { prompt, agent, permission_mode: permissionMode };
     const body = {
       name: name.trim(), days_mask: mask, time_of_day: time, timezone: tz,
-      // days_mask is sent unchanged even in Once mode — the server ignores it,
+      // days_mask is sent unchanged even in Once mode. The server ignores it,
       // but leaving it intact is what keeps the row convertible back to weekly.
       once_date: repeats === "once" ? onceDate : "",
       runbook_id: runbookId || null, ...recipe,
@@ -285,8 +278,8 @@ function ScheduleForm({
           onChange={(e) => setName(e.target.value)} />
       </div>
       {/* A schedule either owns its prompt or fires a runbook. The second is the
-          reason runbooks and schedules aren't one table — one recipe, two
-          triggers — and its cost is stated rather than implied: editing that
+          reason runbooks and schedules aren't one table: one recipe, two
+          triggers. Its cost is stated, not implied: editing that
           runbook changes what fires here, on the mornings nobody is watching. */}
       <div className="field">
         <label className="lab">Prompt source</label>
@@ -391,7 +384,7 @@ function ScheduleForm({
           <input id={`${uid}-time`} type="time" value={time} onChange={(e) => setTime(e.target.value)} />
         </div>
         <div className="field" style={{ flex: 1 }}>
-          {/* Not "Timezone" — Playwright's getByLabel does a substring match,
+          {/* Not "Timezone": Playwright's getByLabel does a substring match,
               and "Time" (the field beside it) would then match both. */}
           <label className="lab" htmlFor={`${uid}-tz`}>Zone</label>
           <input id={`${uid}-tz`} type="text" className="ctx-mono" value={tz} onChange={(e) => setTz(e.target.value)} />
@@ -425,7 +418,7 @@ function ScheduleForm({
           the gate declines and the turn degrades. Saying so beside the picker
           is the difference between a considered choice and a surprise. The
           options themselves come from the SELECTED agent's own capability
-          descriptor (scheduleModesFor, above) rather than a fixed list — a
+          descriptor (scheduleModesFor, above) instead of a fixed list. A
           Codex schedule never even sees "acceptEdits", because Codex's driver
           has no such mode and would otherwise silently run it as full
           auto-run despite the label promising otherwise. */}
@@ -477,14 +470,12 @@ export function Schedules({ project, agents }: { project: ProjectRow; agents: Ag
 
   useEffect(() => { void load(); }, [load]);
 
-  // Re-poll while the card is on screen. Two things here are TIME-dependent
+  // Re-poll while the card is on screen. Two things here are time-dependent
   // rather than action-dependent: a run that finishes after this card loaded,
-  // and — the reason this exists — the wedged-ticker warning, which is derived
-  // from how long ago the last sweep completed. Rendered once at mount, that
-  // warning could only ever appear if the user happened to reload the page,
-  // which is the one thing someone who thinks their schedules are fine will
-  // never do. Cheap: a couple of SQLite reads against a card that's only
-  // mounted on the project landing pane.
+  // and the wedged-ticker warning, which is derived from how long ago the
+  // last sweep completed. Rendered once at mount, that warning would only
+  // appear if the user happened to reload the page. Cheap: a couple of SQLite
+  // reads against a card that's only mounted on the project landing pane.
   useEffect(() => {
     const t = setInterval(() => { void load(); }, 30_000);
     return () => clearInterval(t);
@@ -519,10 +510,10 @@ export function Schedules({ project, agents }: { project: ProjectRow; agents: Ag
           </button>
         )}
       </div>
-      {/* A dead ticker is worse than no schedule, so say so rather than showing
+      {/* A dead ticker is worse than no schedule, so say so instead of showing
           a next-run time that will never arrive. schedulerAlert() ranks the
-          three ways that happens — never started, sweeps no longer completing,
-          one schedule throwing — because they need different actions and only
+          three ways that happens: never started, sweeps no longer completing,
+          or one schedule throwing, because they need different actions and only
           the middle one is invisible without it. */}
       {alert ? <div className="sched-alert">{Icon.cloudOff()} {alert}</div> : null}
       {error ? <div className="sched-alert sched-alert-bad">{error}</div> : null}
@@ -552,13 +543,13 @@ export function Schedules({ project, agents }: { project: ProjectRow; agents: Ag
             />
           );
         }
-        // `runs` is a truncated history window — the run actually blocking
+        // `runs` is a truncated history window. The run actually blocking
         // future occurrences can age out of it after enough skips pile up on
         // top. `active_run` is served explicitly by the API for exactly this.
         const blocking = s.last_run?.status === "skipped_overlap" ? s.active_run : null;
         // A one-time schedule that already fired: the server left it disabled
         // with next_fire_at cleared rather than deleting it, so Resume would be
-        // a dead end here — there's nothing left to resume.
+        // a dead end here: there's nothing left to resume.
         const spent = !!s.once_date && !s.enabled && s.next_fire_at === 0;
         return (
           <div key={s.id} className={`sched-row${s.enabled ? "" : " sched-paused"}`}>
@@ -611,7 +602,7 @@ export function Schedules({ project, agents }: { project: ProjectRow; agents: Ag
             </div>
             {s.last_run ? <RunLine run={s.last_run} timezone={s.timezone} /> : <div className="sched-run sched-note">no runs yet</div>}
             {/* A wedged turn skips every future occurrence, so the blocking run is
-                named and stoppable from here — otherwise the schedule just goes
+                named and stoppable from here, otherwise the schedule just goes
                 quiet and the user has no idea why. */}
             {blocking?.task_id ? (
               <div className="sched-run">

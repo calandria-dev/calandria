@@ -21,18 +21,17 @@ export type PushSupportState = "desktop_shell" | "insecure" | "unsupported" | "n
  * from the main process off the same server-composed payload a push would
  * carry (desktop/main.js, hardenSession()), so subscribing this window would
  * deliver every event twice. The shell also denies the `notifications`
- * permission, so the subscribe path could not succeed anyway — it used to fail
- * with "unblock them in the browser's site settings", a setting that doesn't
- * exist in the shell. The decision here is that push-to-this-desktop is NOT
- * wanted: the native channel is the desktop's, and the phone stays the push
- * channel's reason to exist. Read before the capability checks so Chromium's
- * PushManager being wired or not can't turn the same window into "ready" on one
- * Electron version and "unsupported" on the next.
+ * permission, so the subscribe path could not succeed anyway: a setting for
+ * unblocking notifications doesn't even exist in the shell. Push to this
+ * desktop is not wanted: the native channel is the desktop's, and the phone
+ * stays the push channel's reason to exist. Read before the capability checks
+ * so Chromium's PushManager being wired or not can't turn the same window
+ * into "ready" on one Electron version and "unsupported" on the next.
  *
  * `insecure` next, for the same reason classifyNotificationSupport puts it
  * first: outside a secure context the browser hides the whole API, and
  * "unsupported" would send the user to a different browser when the fix is
- * https. `needs_install` is iOS's rule — Safari exposes PushManager only to an
+ * https. `needs_install` is iOS's rule: Safari exposes PushManager only to an
  * app on the Home Screen, so a phone that is "unsupported" in the browser is
  * one Add-to-Home-Screen away.
  */
@@ -76,7 +75,7 @@ export function pushSupport(): PushSupportState {
   });
 }
 
-/** "iPhone · Safari (app)" — what the device list shows for this browser. */
+/** "iPhone · Safari (app)": what the device list shows for this browser. */
 export function deviceLabel(ua: string = navigator.userAgent, standalone: boolean = isStandalone()): string {
   const os = /iPhone/.test(ua) ? "iPhone"
     : /iPad/.test(ua) || (/Macintosh/.test(ua) && typeof navigator !== "undefined" && navigator.maxTouchPoints > 1) ? "iPad"
@@ -124,7 +123,7 @@ async function subscribeUnder(publicKey: string): Promise<PushSubscription> {
   const reg = await navigator.serviceWorker.ready;
   let sub = await reg.pushManager.getSubscription();
   // A subscription under a different server key can never be pushed to by this
-  // server (the push service rejects the signature) — replace it.
+  // server (the push service rejects the signature), so replace it.
   if (sub && keyOf(sub) !== publicKey) { await sub.unsubscribe(); sub = null; }
   return sub ?? reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(publicKey) });
 }
@@ -174,7 +173,7 @@ export async function disablePush(): Promise<void> {
 }
 
 /**
- * Re-register an existing subscription with the server — once per page load,
+ * Re-register an existing subscription with the server, once per page load,
  * and only for a browser that subscribed at some point (no subscription, no
  * request). This is what keeps a device alive across the cases the worker's
  * pushsubscriptionchange can't reach: its re-post failed (an expired Access

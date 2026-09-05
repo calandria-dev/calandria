@@ -5,26 +5,17 @@ import { jget, jsend } from "./api";
 import type { TaskRow } from "./types";
 
 /**
- * "Reclaim" in the session header: one click that ends a landed task's life on
- * disk — fast-forward the local base branch from origin, remove the worktree,
- * delete the local branch, mark the task done (lib/reclaim.ts).
+ * "Reclaim" in the session header: one click that ends a landed task's life
+ * on disk by fast-forwarding the local base branch from origin, removing the
+ * worktree, deleting the local branch and marking the task done
+ * (lib/reclaim.ts). Shown only once the work has landed (merged PR or local
+ * merge, a definitive disposal signal), and doubles as the only place the
+ * unsafe acknowledgement can be given for projects without `auto_reclaim`.
  *
- * It appears only once the work has LANDED, which is the whole premise: a
- * merged PR (or a local merge) is a definitive disposal signal in a way the
- * scheduled sweep's fourteen-day clock is not. Behind a project's `auto_reclaim`
- * the server does this by itself; this button is both the offer for projects
- * that didn't opt in and the only place the unsafe acknowledgement can be given,
- * since an unattended reclaim never forces past the safety gate.
- *
- * Nothing is fetched when a task is merely selected. The preview costs several
- * git subprocesses, so the FIRST click buys it — and then either finishes the
- * job (the ordinary case: the checkout is clean and the reclaim is genuinely one
- * click) or arms an acknowledgement naming exactly what would be destroyed.
- * That is the same shape the Storage prune uses, and it never destroys work on
- * a click that hadn't yet been told there was any.
- *
- * The row refreshes itself: reclaimTask publishes `task_edited`, so the cleared
- * worktree and the new status arrive over /api/events like every other fact.
+ * The first click fetches a preview (several git subprocesses) and either
+ * finishes the job directly on a clean checkout or arms an acknowledgement
+ * naming what would be destroyed. reclaimTask publishes `task_edited`, so the
+ * row refreshes itself over /api/events.
  */
 
 interface Preview {
@@ -50,8 +41,9 @@ export function ReclaimButton({ task }: { task: TaskRow }) {
   const holds = !!task.worktree_path || !!task.work_branch;
   if (!landed || !holds) return null;
 
-  // A refusal answers 4xx with its reason in `error`, which jsend throws as the
-  // message — including the safety gate's, which names the work it protected.
+  // A refusal answers 4xx with its reason in `error`, which jsend throws as
+  // the message, including the safety gate's, which names the work it
+  // protected.
   const run = async (discardUnsafe: boolean) => {
     setBusy(true);
     setErr(null);

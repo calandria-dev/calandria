@@ -11,10 +11,11 @@ import {
 // Legacy (pre-rebrand) persisted shape: a binary theme instead of palette+mode.
 type LegacyAppearance = { theme?: "light" | "dark" };
 
-// Migrates a persisted `appearance` blob — of any vintage — onto the current
+// Migrates a persisted `appearance` blob of any vintage onto the current
 // Appearance shape. Missing fields fall back to DEFAULT_APPEARANCE; the old
 // `theme: "light"|"dark"` field (no palette concept existed yet) becomes
-// palette "cherenkov" (the only palette that used to exist) + that mode.
+// palette "cherenkov" (the only palette available before this option
+// existed) plus that mode.
 function migrateAppearance(persisted: Partial<Appearance> & LegacyAppearance): Appearance {
   const { theme, ...rest } = persisted;
   const migrated: Appearance = { ...DEFAULT_APPEARANCE, ...rest };
@@ -30,7 +31,7 @@ function resolveMode(mode: Appearance["mode"]): "light" | "dark" {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-// Mirror of Shell's mobile breakpoint — the Back-button trap only arms on
+// Mirror of Shell's mobile breakpoint. The Back-button trap only arms on
 // mobile (single-pane), since on desktop every column is visible and Back should
 // not be hijacked to close a panel.
 const MOBILE_QUERY = "(max-width: 760px)";
@@ -39,18 +40,18 @@ const MOBILE_QUERY = "(max-width: 760px)";
 // active work-area view, plus the hydrate-once + persist/URL-sync effects. The
 // open project/task are passed in so they get mirrored into localStorage + URL
 // alongside the prefs (URL keeps a refresh landing where you were). The setters
-// are passed in so the Back button (popstate) can close one pane level — on
+// are passed in so the Back button (popstate) can close one pane level; on
 // mobile this is the only way to step session → tasks → projects (and project
 // home → tasks, the level the Runbooks/Schedules pane adds).
 export function usePrefs({ selProj, selTask, projectHome, selectionReady, urlSelRef, setSelProj, setSelTask, setProjectHome }: {
   selProj: string | null;
   selTask: string | null;
-  /** The project home pane is showing — its own Back level (see navHistory). */
+  /** The project home pane is showing: its own Back level (see navHistory). */
   projectHome: boolean;
   /**
    * Boot has applied the landing selection, so `selProj`/`selTask` mean something.
    * Until it flips they are null only because the project fetch is still in the
-   * air, and mirroring that out would erase the remembered project — see
+   * air, and mirroring that out would erase the remembered project; see
    * `selectionToPersist`.
    */
   selectionReady: boolean;
@@ -107,8 +108,8 @@ export function usePrefs({ selProj, selTask, projectHome, selectionReady, urlSel
     };
     applyTheme();
 
-    // Prefs always persist — a theme picked on the boot-error screen should still
-    // stick — but the selection only once boot has one to state.
+    // Prefs always persist, since a theme picked on the boot-error screen should
+    // still stick, but the selection only once boot has one to state.
     const sel = selectionToPersist(selectionReady, { selProj, selTask }, storedSelRef.current);
     localStorage.setItem(LS, JSON.stringify({ ...sel, appearance, settings, layout, taskView }));
 
@@ -122,7 +123,7 @@ export function usePrefs({ selProj, selTask, projectHome, selectionReady, urlSel
       reconcileHistory(window.history, window.location.pathname, { proj: selProj, task: selTask, home: projectHome, view }, armTrap);
     }
 
-    // "system" mode tracks the OS live — re-resolve dark/light on every flip
+    // "system" mode tracks the OS live: re-resolve dark/light on every flip
     // without waiting for the user to touch a setting.
     if (appearance.mode !== "system" || typeof window === "undefined" || !window.matchMedia) return;
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -133,7 +134,7 @@ export function usePrefs({ selProj, selTask, projectHome, selectionReady, urlSel
   // Back button: consume the trap and close exactly one pane level. The setState
   // calls re-run the persist effect, which re-arms the trap if a pane is still
   // open (pushState fires no popstate, so no loop). Driving off the live
-  // selection — not the popped URL — makes this immune to the task list churning
+  // selection, not the popped URL, makes this immune to the task list churning
   // selTask, which would otherwise leave stale duplicate history entries.
   const applySel = useCallback((next: NavSel) => {
     setSelProj(next.proj);

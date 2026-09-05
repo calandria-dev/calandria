@@ -16,26 +16,16 @@ import { clientFeatures } from "@/lib/features";
 import { describeProvider, gatewayInsecureForGemini, gatewayPresetEnv, normalizeBaseUrl, parseAgentEnv, providerPresetEnv, serializeAgentEnv, taskProvider, type GatewayBilling, type ProviderKind } from "@/lib/agentEnv";
 import { useEndpointModels } from "./modelEndpoint";
 
-// Segmented agent picker (Claude Code / Codex …). Hidden when there is nothing
-// to choose: one agent registered, OR one agent CONNECTED and it's the one
-// already selected. Every driver is always registered, so "length <= 1" alone
-// never fired on a real instance — a Claude-only user saw a two-button picker
-// whose other button was a dead "Codex · not connected" every time they made a
-// task. The selected-check keeps the picker (and its Connect CTA) visible when
-// the value is an unconnected agent — an old Codex task in Edit, a project
-// default pointing at an agent that was since signed out — because hiding it
-// there would strand the task on an agent it can't run and hide the way out.
-// Nothing connected keeps the picker too, so the connect CTA still renders.
+// Segmented agent picker (Claude Code / Codex, etc). Hidden when there is
+// nothing to choose: one agent registered, or one agent connected and it's the
+// one already selected. The selected-check keeps the picker (and its Connect
+// CTA) visible when the value is an unconnected agent, so a task on a signed-out
+// agent still has a way to reconnect it. Nothing connected keeps the picker too,
+// so the connect CTA still renders.
 //
-// The entries themselves come from pickerAgents(), not from the whole bundle:
-// an agent nobody is signed in to can't run a session, so offering it is a dead
-// end. Hiding the picker was only ever half of that rule and it stopped holding
-// the moment a third driver shipped — a Claude + Antigravity instance has a
-// genuine choice to render, so the picker appeared, and Codex rode along in it
-// as a "· not connected" button. The one unconnected entry still rendered is
-// the SELECTED agent, flagged, with a Connect CTA that jumps to the setup
-// wizard: that is the way off a task whose agent was signed out, so it is the
-// one case where a dead button is the point.
+// The entries come from pickerAgents(), not the whole bundle: an agent nobody
+// is signed in to can't run a session, so it isn't offered, except the selected
+// agent itself, which renders flagged with a Connect CTA to the setup wizard.
 export function AgentPicker({ agents, value, onChange, onConnect, help, label = "Agent" }: {
   agents: AgentsBundle; value: string; onChange: (id: string) => void; onConnect?: () => void; help?: string; label?: string;
 }) {
@@ -65,15 +55,14 @@ export function AgentPicker({ agents, value, onChange, onConnect, help, label = 
   );
 }
 
-// The Tags field — which features this task is a step of, MANY at once (a
-// task can belong to several plans). A checkbox list over the project's tags,
-// styled like DepPicker's Blocked-by list rather than a <select>, since a
-// single-choice control can't express a set — plus an inline "New tag…" (name
-// only; description and color come from the tag strip later). Sits above
-// Blocked by in both task dialogs, since "which feature(s)" is decided before
-// "which step". Without `onCreate` (no project to mint into, or the bulk
-// modal's Remove mode, where minting a tag nobody has yet is meaningless) it
-// only offers the existing tags.
+// The Tags field: which features this task is a step of, several at once since
+// a task can belong to more than one plan. A checkbox list over the project's
+// tags, styled like DepPicker's Blocked-by list since a single-choice control
+// can't express a set, plus an inline "New tag…" (name only; description and
+// color come from the tag strip later). Sits above Blocked by in both task
+// dialogs, since which feature(s) is decided before which step. Without
+// `onCreate` (no project to mint into, or the bulk modal's Remove mode) it only
+// offers the existing tags.
 export function TagsField({ tags, value, onChange, onCreate, label = "Tags", hint = "(which features this is a step of)" }: {
   tags: TagRow[]; value: string[]; onChange: (ids: string[]) => void;
   onCreate?: (name: string) => Promise<TagRow>;
@@ -83,8 +72,8 @@ export function TagsField({ tags, value, onChange, onCreate, label = "Tags", hin
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  // Alphabetical, not the strip's manual order: this is a lookup list, and the
-  // user is scanning it for a tag name they already have in mind.
+  // Alphabetical, not the strip's manual order: the user is scanning for a tag
+  // name they already have in mind.
   const rows = useMemo(() => [...tags].sort((a, b) => alphabetical(a.name, b.name)), [tags]);
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
   const cancel = () => { setCreating(false); setName(""); setErr(null); };
@@ -99,7 +88,7 @@ export function TagsField({ tags, value, onChange, onCreate, label = "Tags", hin
       cancel();
     } catch (e) {
       // 409 on a name collision: the tag exists, so say so and leave the
-      // name in place — ticking it in the list below is one click away.
+      // name in place. Ticking it in the list below is one click away.
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
@@ -151,10 +140,10 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   const [deps, setDeps] = useState<string[]>([]);
   const [autoStart, setAutoStart] = useState(false);
   // null = the picker's "Inherit" head: use the app-level default, then the
-  // driver's. Set here (not just in the session rail) because the auto-start
-  // opt-in below decides this task will run with NOBODY WATCHING, and an
-  // unattended permission prompt declines itself — so the one dialog that
-  // schedules unattended work has to be able to say "don't stop to ask".
+  // driver's. Set here, not just in the session rail, because the auto-start
+  // opt-in below can run this task with nobody watching, and an unattended
+  // permission prompt declines itself: this dialog needs to be able to say
+  // "don't stop to ask".
   const [permission, setPermission] = useState<string | null>(null);
   // Same inherit semantics for the model. Chosen here rather than only in the
   // session rail because "Start session immediately" makes the first turn part
@@ -171,24 +160,24 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   // A task with unfinished blockers can't start now, so the two options are exclusive.
   // One rule, shared with the "Blocked by" chip and with blocks() server-side:
   // terminal doesn't block, and neither does a ref that resolves to nothing
-  // (see isBlocking). An unreviewed suggestion DOES block, and `tasks` carries
+  // (see isBlocking). An unreviewed suggestion does block, and `tasks` carries
   // the suggested rows so the picker above can show and untick it.
   const blocked = deps.some((id) => isBlocking(tasks.find((t) => t.id === id)));
-  // Can't launch a session on an agent that isn't signed in — but the task can
+  // Can't launch a session on an agent that isn't signed in, but the task can
   // still be created (not started) and started once the agent is connected.
   const selAgent = findAgent(agents, agent);
   const agentReady = selAgent ? selAgent.authenticated : true;
-  // Which SHAPE the model field takes. A cloud project picks from the driver's
-  // catalog; a project pointed at a local server types an id, because the ids
-  // on that machine are whatever was pulled and no catalog can know them
+  // Which shape the model field takes. A cloud project picks from the driver's
+  // catalog; a project pointed at a local server types an id, since the ids on
+  // that machine are whatever was pulled and no catalog can know them
   // (lib/agentEnv.ts). The suggestions are what the endpoint reports, asked
-  // server-side — the browser generally can't reach a loopback model server.
+  // server-side, since the browser generally can't reach a loopback model server.
   const provider = useMemo(() => taskProvider(project), [project]);
   const localModel = provider.kind !== "cloud";
   // Gemini CLI source refuses a plain-http endpoint unless it's loopback
-  // (docs/design/litellm.md, "Antigravity CLI"); a gateway is reachable from
-  // anywhere the app is deployed, so this would fail every turn inside `agy`
-  // rather than at launch. Refused here instead.
+  // (docs/AGENTS.md, "Antigravity CLI"). A gateway is reachable from anywhere
+  // the app is deployed, so this would fail every turn inside `agy` instead of
+  // at launch. Refused here instead.
   const gatewayInsecure = agent === "gemini" && gatewayInsecureForGemini(provider);
   const canStart = !blocked && agentReady && !gatewayInsecure;
   const willAutoStart = autoStart && deps.length > 0;
@@ -196,15 +185,15 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   const modelOpts = useMemo(() => modelOptions(selAgent?.capabilities), [selAgent]);
   const endpoint = useEndpointModels(project.id, "", localModel);
   // Permission modes and models are both provider-specific (each driver labels
-  // its own — Claude speaks Anthropic's mode names and model aliases, Codex its
+  // its own: Claude speaks Anthropic's mode names and model aliases, Codex its
   // sandbox modes and GPT ids), so a choice made under one agent may not exist
-  // under the next: switching agents drops it back to Inherit rather than
-  // silently sending a value the new driver would coerce.
+  // under the next. Switching agents drops it back to Inherit instead of
+  // sending a value the new driver would coerce.
   useEffect(() => {
     if (permission && !permissionOpts.some((p) => p.value === permission)) setPermission(null);
   }, [permissionOpts, permission]);
-  // …except under an override, where the catalog isn't the authority on what is
-  // runnable and clearing a typed id would be the bug rather than the fix.
+  // Except under an override, where the catalog isn't the authority on what is
+  // runnable and clearing a typed id would be a bug, not a fix.
   useEffect(() => {
     if (localModel) return;
     if (model && !modelOpts.some((m) => m.value === model)) setModel(null);
@@ -212,8 +201,8 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   // What this agent calls its never-asks mode, for the unattended warning below.
   const bypassLabel = permissionOpts.find((p) => p.value === "bypassPermissions")?.label ?? "bypassPermissions";
   // bypassPermissions is the only mode that never parks on a card. "Inherit"
-  // (null) can resolve to one that does, so it counts as unsafe-for-unattended
-  // too — we deliberately don't guess what it resolves to and claim it's fine.
+  // (null) can resolve to one that does, so it counts as unsafe for unattended
+  // too: what it resolves to isn't guessed at here.
   const unattendedRisk = willAutoStart && permission !== "bypassPermissions";
   const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: willAutoStart, model, permission_mode: permission, tag_ids: tagIds });
   return (
@@ -268,7 +257,7 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
                   {p.label}
                 </button>
                 {/* Rule after the inherit head. Everything past it is the
-                    provider's own mode list — Claude's includes one spelled
+                    provider's own mode list. Claude's includes one spelled
                     "default", which the head must not read as a copy of. */}
                 {p.value === null && <span className="seg-sep" aria-hidden />}
               </Fragment>
@@ -294,7 +283,7 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
 }
 
 // The destination radio list, shared by the single-task field below, the bulk
-// MoveTasksModal, and the Runbooks card's "Copy to…" — one rendering of "which
+// MoveTasksModal, and the Runbooks card's "Copy to…": one rendering of "which
 // project", so those paths can't drift on what a destination looks like.
 export function ProjectTargetList({ targets, value, onChange, name }: {
   targets: ProjectRow[]; value: string; onChange: (id: string) => void; name: string;
@@ -316,8 +305,8 @@ export function ProjectTargetList({ targets, value, onChange, name }: {
 /**
  * Whether a task moving into `dest` would have its inherited settings
  * re-derived, and what to. Mirrors moveTask's rule server-side (lib/store.ts
- * deriveMoved): a value that still matches the CURRENT project's default reads
- * as inherited, so it re-derives in the destination — an explicit choice
+ * deriveMoved): a value that still matches the current project's default reads
+ * as inherited, so it re-derives in the destination; an explicit choice
  * travels with the task. Previewed rather than sprung on the user, since the
  * guess can only ever be a guess.
  */
@@ -331,16 +320,16 @@ function moveDerivation(task: TaskRow, src: ProjectRow | undefined, dest: Projec
 }
 
 /**
- * The branch this task is based on — what its worktree was cut from, what Sync
+ * The branch this task is based on: what its worktree was cut from, what Sync
  * catches it up to, and what Merge lands it into (lib/baseBranch.ts). Empty
  * means "inherit", and the placeholder says what that inherits to, so the field
  * never has to be filled in to be understood.
  *
- * Deliberately NOT part of the dialog's Save: retargeting a started task can
- * create a local ref and re-cut its worktree, and it reports what it did. That
- * is its own endpoint (POST /api/tasks/[id]/base-branch) and its own button,
- * exactly like the move field below — a field whose blast radius is a git
- * operation shouldn't ride along on "Save changes".
+ * Not part of the dialog's Save: retargeting a started task can create a local
+ * ref and re-cut its worktree, and it reports what it did. That is its own
+ * endpoint (POST /api/tasks/[id]/base-branch) and its own button, like the move
+ * field below, since a field whose blast radius is a git operation shouldn't
+ * ride along on "Save changes".
  */
 function BaseBranchField({ task, project }: { task: TaskRow; project?: ProjectRow }) {
   const [value, setValue] = useState(task.base_branch ?? "");
@@ -389,21 +378,20 @@ function BaseBranchField({ task, project }: { task: TaskRow; project?: ProjectRo
   );
 }
 
-// Re-parent a misfiled task. Acts immediately (like Delete below it) rather
-// than riding along with Save: a move isn't a field set — it renumbers the
-// task's order in the destination, re-derives what it inherited from the old
-// project, re-points the sessions and spend recorded against the old one, and
-// drops the blocked-by links that would otherwise span projects.
+// Re-parent a misfiled task. Acts immediately, like Delete below it, instead of
+// riding along with Save: a move renumbers the task's order in the destination,
+// re-derives what it inherited from the old project, re-points the sessions and
+// spend recorded against the old one, and drops the blocked-by links that would
+// otherwise span projects.
 //
-// A STARTED task can move too, but only by throwing away the git worktree it
-// was working in — that checkout was cut from the current project's repo, and
-// no amount of re-parenting makes it belong to another one. So the field turns
-// into the same two-step confirmation Delete uses, and it names the cost first:
-// what's in that worktree is read from the server (uncommitted edits, commits
-// the base branch never took) rather than guessed at, because "merged and
-// clean" and "an afternoon of unsaved work" are the same button otherwise.
+// A started task can move too, but only by throwing away the git worktree it
+// was working in, since that checkout was cut from the current project's repo
+// and can't belong to another one. So the field turns into the same two-step
+// confirmation Delete uses, and it names the cost first: what's in that
+// worktree is read from the server (uncommitted edits, commits the base branch
+// never took) instead of guessed at.
 //
-// (Re-filing SEVERAL tasks is the task list's multi-select + MoveTasksModal —
+// (Re-filing several tasks is the task list's multi-select + MoveTasksModal,
 // which can keep a link whose both ends are moving, as one task alone can't,
 // and which asks this same question once per started row.)
 function MoveProjectField({ task, tasks, tags, projects, agents, onMove }: {
@@ -420,7 +408,7 @@ function MoveProjectField({ task, tasks, tags, projects, agents, onMove }: {
 
   // What the teardown would cost, read once a destination is picked. Cheap for
   // a task with no worktree (the route answers without touching git), so it's
-  // not worth gating on `started` — which is only half the story anyway: a
+  // not worth gating on `started`, which is only half the story anyway: a
   // failed launch can leave a worktree on a task that never opened a session.
   const loadPreview = useCallback(() => {
     jget<DiscardPreview>(`/api/tasks/${task.id}/move`).then(setPreview).catch(() => setPreview(null));
@@ -429,13 +417,12 @@ function MoveProjectField({ task, tasks, tags, projects, agents, onMove }: {
 
   if (targets.length === 0) return null;
   // A tag follows its whole membership or not at all (the both-ends rule the
-  // dependency links get), so a task moving ALONE takes a tag with it exactly
+  // dependency links get), so a task moving alone takes a tag with it exactly
   // when it is that tag's only member. Read off each tag's own derived count,
   // not by filtering `tasks`, which is scoped to whatever the caller passed in,
   // while a sibling sitting in the Suggested tray is a member like any other.
-  // Unlike the old
-  // single group this can split both ways in one move: some of the task's tags
-  // may be solo, others shared.
+  // This can split both ways in one move: some of the task's tags may be solo,
+  // others shared.
   const carriedTags: string[] = [];
   const droppedTags: string[] = [];
   for (const id of task.tag_ids) {
@@ -443,7 +430,7 @@ function MoveProjectField({ task, tasks, tags, projects, agents, onMove }: {
     if (!t) continue;
     (t.counts.total === 1 ? carriedTags : droppedTags).push(t.name);
   }
-  // Every edge touching this task goes — the ones it owns and the ones pointing
+  // Every edge touching this task goes: the ones it owns and the ones pointing
   // at it. Counted from the persisted rows, so unsaved picker edits don't lie.
   const dependents = tasks.filter((t) => t.id !== task.id && (t.depends_on ?? []).includes(task.id)).length;
   const links = (task.depends_on?.length ?? 0) + dependents;
@@ -465,7 +452,7 @@ function MoveProjectField({ task, tasks, tags, projects, agents, onMove }: {
       await onMove(task.id, dest.id, needsAck ? { discardWorktree: true, discardUnsafe: unsafe } : undefined);
     } catch (e) {
       // The one refusal the user can answer: the worktree picked up unsaved work
-      // between the preview and the click (their own editor — no turn can run
+      // between the preview and the click (their own editor; no turn can run
       // while this is held). Re-read it so the warning now names what's there,
       // and disarm, so confirming again is a decision about the real state.
       setErr(e instanceof Error ? e.message : String(e));
@@ -521,32 +508,28 @@ function MoveProjectField({ task, tasks, tags, projects, agents, onMove }: {
 }
 
 /**
- * Re-file a whole selection at once — the answer to a handful of tasks landing
- * in the wrong project, which used to be one open-edit-pick-move round trip
- * each. One request, one transaction, one event for the other tabs.
+ * Re-file a whole selection at once, in one request, one transaction, and one
+ * event for the other tabs.
  *
- * Three things it says that the single-task field can't. Dependencies: a link
- * whose BOTH ends are in the selection SURVIVES the move (it stays inside one
- * project, so nothing is violated) — the count of what's kept is previewed
- * beside the count of what drops, because "select the whole chain" is the
- * difference between the two. Refusals are per task: a task that couldn't move
- * is reported by name afterwards rather than quietly left behind, so the modal
- * stays open on a partial result instead of closing on a half-truth.
+ * Two things it says that the single-task field can't. Dependencies: a link
+ * whose both ends are in the selection survives the move, since it stays
+ * inside one project. The count of what's kept is previewed beside the count
+ * of what drops. Refusals are per task: a task that couldn't move is reported
+ * by name afterwards instead of being silently left behind, so the modal stays
+ * open on a partial result instead of closing on a half-truth.
  *
  * And the started ones. A task that has run holds a worktree cut from the old
- * repo and can only move by having it destroyed, which is a different
- * irreversible answer for every row — so every row gets its OWN checkbox, off
+ * repo and can only move by having it destroyed, which is a separate
+ * irreversible answer for every row. So every row gets its own checkbox, off
  * until ticked, carrying what that particular checkout holds (read for the
- * whole selection in one go by GET /api/tasks/move). One switch over eleven of
- * them would be a shrug; eleven answers is the thing itself. Ticking none is
- * the old behaviour exactly, and a row left unticked is reported in `skipped`
- * with its checkout untouched — three dirty worktrees don't refuse the eight
- * clean ones.
+ * whole selection in one go by GET /api/tasks/move). Ticking none matches the
+ * prior behavior, and a row left unticked is reported in `skipped` with its
+ * checkout untouched: dirty worktrees don't block moving the clean ones.
  */
 export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjectId, onClose, onMove, onMoved }: {
   /** The picked rows, in list order. */
   selected: TaskRow[];
-  /** Every task in the source project — needed to see links pointing INTO the selection. */
+  /** Every task in the source project, needed to see links pointing into the selection. */
   tasks: TaskRow[];
   projects: ProjectRow[]; agents: AgentsBundle; sourceProjectId: string;
   onClose: () => void;
@@ -568,29 +551,29 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
   const dest = targets.find((p) => p.id === target) ?? null;
   const src = projects.find((p) => p.id === sourceProjectId);
 
-  // What each row's checkout holds, for the whole selection in one read — a
-  // checkbox that doesn't say what it destroys is the blanket switch again,
-  // just spelled out N times. Fetched on open rather than when a destination is
-  // picked (unlike the single-task field): here it decides which rows can be
-  // ticked at all, so it's part of the list, not part of the confirmation.
+  // What each row's checkout holds, for the whole selection in one read: a
+  // checkbox that doesn't say what it destroys is a blanket switch spelled out
+  // per row. Fetched on open rather than when a destination is picked, unlike
+  // the single-task field: here it decides which rows can be ticked at all, so
+  // it's part of the list, not part of the confirmation.
   const idKey = selected.map((t) => t.id).join(",");
   useEffect(() => {
     let alive = true;
     if (!idKey) return;
     jget<{ previews: Record<string, DiscardPreview> }>(`/api/tasks/move?${new URLSearchParams({ ids: idKey })}`)
       .then((r) => { if (alive) setPreviews(r.previews); })
-      // Not fatal — the unstarted rows still move — but no row can be ticked
-      // without it, so the failure has to be visible rather than looking like
-      // "these worktrees hold nothing".
+      // Not fatal, since the unstarted rows still move, but no row can be
+      // ticked without it, so the failure has to be visible rather than looking
+      // like "these worktrees hold nothing".
       .catch(() => { if (alive) setPreviewErr(true); });
     return () => { alive = false; };
   }, [idKey]);
 
-  // A live turn can't be moved by any answer — nothing may delete a worktree an
+  // A live turn can't be moved by any answer: nothing may delete a worktree an
   // agent is writing into. Everything else that has run needs one: `started`
   // alone is enough (the server refuses it even with the worktree already
-  // reclaimed), and a worktree on a task that never opened a session — a failed
-  // launch — needs it too, which only the preview can see.
+  // reclaimed), and a worktree on a task that never opened a session, a failed
+  // launch, needs it too, which only the preview can see.
   const pv = previews ?? {};
   const isLive = (t: TaskRow) => t.running === 1;
   const needsAck = (t: TaskRow) => !isLive(t) && (t.started === 1 || !!pv[t.id]?.has_worktree);
@@ -615,12 +598,12 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
   // Every blocked-by link with at least one end in the moving set. Both ends
   // moving means it survives; one end means it would span projects, so it goes.
   let kept = 0;
-  // Tags get the links' both-ends rule: a tag whose EVERY member is in the
+  // Tags get the links' both-ends rule: a tag whose every member is in the
   // selection travels with it (re-keyed to the destination, suffixed there if
-  // the name is taken), and one selected only in part stays behind — with the
-  // rows that go losing that badge. Counted per tag over the whole project
-  // (a task can carry several, so it can appear in more than one tally), since
-  // a member left out of the selection is exactly what decides this.
+  // the name is taken), and one selected only in part stays behind, with the
+  // rows that go losing that badge. Counted per tag over the whole project (a
+  // task can carry several, so it can appear in more than one tally), since a
+  // member left out of the selection is what decides this.
   const tagTally = new Map<string, { total: number; going: number }>();
   for (const t of tasks) {
     for (const tagId of t.tag_ids) {
@@ -657,18 +640,18 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
       // what can move is a snapshot that can be stale by now (a task the user
       // started while this was open, or one whose turn is merely in flight,
       // which the client can't see at all). Sending them all means the server
-      // reports what it refused instead of us quietly dropping it.
+      // reports what it refused instead of it being silently dropped.
       //
       // The acknowledgements are the narrow half: only the rows ticked, and
       // `discardUnsafe` only where the user was actually shown unsaved work.
       // A row that picked one up since is refused by the server's own re-read,
-      // which is what keeps "nothing unsaved dies unnamed" true here too.
+      // which keeps "nothing unsaved dies unnamed" true here too.
       const res = await onMove(selected.map((t) => t.id), dest.id, {
         discard: discarding.map((t) => t.id),
         discardUnsafe: unsafeTicked.map((t) => t.id),
       });
       onMoved(res.moved);
-      // A clean sweep needs no report — anything left behind does.
+      // A clean sweep needs no report; anything left behind does.
       if (res.skipped.length === 0) onClose();
       else setResult(res);
     } catch (e) {
@@ -743,7 +726,7 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
                 const unsafe = unsafeOf(t);
                 const can = moving_.has(t.id);
                 return (
-                  // The row IS the question for a started task: the checkbox
+                  // The row is the question for a started task: the checkbox
                   // beside the cost of that one checkout, off until answered.
                   <label key={t.id} className={`dep-row ${on ? "on" : ""}`} style={{ cursor: ack && canAck ? "pointer" : "default", opacity: can || ack ? 1 : 0.55 }}>
                     {ack && <input type="checkbox" checked={on} disabled={!canAck} onChange={(e) => toggle(t.id, e.target.checked)} />}
@@ -805,18 +788,16 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
 }
 
 /**
- * Add or remove a set of tags across a whole selection — the list's selection
- * bar beside "Move to project…". The cheap path for the case tags were
- * designed around: an agent filed seven suggestions before the tag existed,
- * and tagging them one edit dialog at a time is seven round trips.
+ * Add or remove a set of tags across a whole selection, from the list's
+ * selection bar beside "Move to project…". The cheap path for tagging several
+ * rows at once instead of one edit dialog per task.
  *
- * Add/Remove rather than the old single group's replace-the-set: a mixed
- * selection rarely shares the same tags (many-to-many means each row can
- * already carry a different set), so "these and only these" would silently
- * strip whatever a row had that wasn't picked. Whole-batch, unlike the move
- * beside it: there is nothing per-row to refuse (no worktree, no turn,
- * nothing irreversible), so the route applies all of it or none, and this
- * modal only has to decide which tags and which direction.
+ * Add/Remove rather than replace-the-set: a mixed selection rarely shares the
+ * same tags (many-to-many means each row can already carry a different set),
+ * so "these and only these" would strip whatever a row had that wasn't picked.
+ * Whole-batch, unlike the move beside it: there is nothing per-row to refuse
+ * (no worktree, no turn, nothing irreversible), so the route applies all of it
+ * or none, and this modal only has to decide which tags and which direction.
  */
 export function TagTasksModal({ selected, tags, onClose, onApply, onCreateTag }: {
   /** The picked rows, in list order. */
@@ -910,9 +891,9 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
   const save = (action?: SaveAction) => can && onSave(task.id, { title: title.trim(), description: desc.trim(), priority, agent: canChangeAgent ? agent : undefined, model, depends_on: deps, auto_start: autoStart && deps.length > 0, tag_ids: tagIds }, action);
   // Editing a suggestion is usually the last step before deciding on it, so the
   // tray's two verbs live here too: sharpen the brief and accept it in one
-  // gesture, rather than saving, closing, and hunting for the row again.
-  // (`add` is meaningless once it's out of the tray; `start` still isn't — an
-  // added-but-unstarted task can be launched from here the same way.)
+  // gesture, instead of saving, closing, and hunting for the row again.
+  // (`add` is meaningless once it's out of the tray; `start` still isn't, since
+  // an added-but-unstarted task can be launched from here the same way.)
   const isSuggestion = task.suggested === 1;
   const startable = !task.started;
   // Same two gates the New-task dialog puts on "Start session immediately":
@@ -920,12 +901,12 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
   // disconnected agent has no session to launch.
   // One rule, shared with the "Blocked by" chip and with blocks() server-side:
   // terminal doesn't block, and neither does a ref that resolves to nothing
-  // (see isBlocking). An unreviewed suggestion DOES block, and `tasks` carries
+  // (see isBlocking). An unreviewed suggestion does block, and `tasks` carries
   // the suggested rows so the picker above can show and untick it.
   const blocked = deps.some((id) => isBlocking(tasks.find((t) => t.id === id)));
   const selAgent = findAgent(agents, canChangeAgent ? agent : task.agent);
   const modelOpts = useMemo(() => modelOptions(selAgent?.capabilities), [selAgent]);
-  // Same two shapes as the New-task dialog, over this task's OWN effective
+  // Same two shapes as the New-task dialog, over this task's own effective
   // provider: the project's override with the task's laid over it, since a task
   // can be sent to a local endpoint (or back to the cloud) on its own row.
   const taskProject = projects.find((p) => p.id === task.project_id);
@@ -933,11 +914,11 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
   const localModel = provider.kind !== "cloud";
   const endpoint = useEndpointModels(task.project_id, "", localModel);
   // Switching an unstarted task's agent invalidates a model chosen under the old
-  // one, same as the New-task dialog: drop to Inherit rather than save an id the
-  // new driver would never resolve. Gated on the agent actually having MOVED,
-  // unlike the New dialog's copy — merely being absent from the catalog is also
-  // what a not-yet-loaded bundle and a provider change look like, and rewriting
-  // the row's model just because the dialog was opened is the worse failure.
+  // one, same as the New-task dialog: drop to Inherit instead of saving an id
+  // the new driver would never resolve. Gated on the agent actually having
+  // moved, unlike the New dialog's copy, since being absent from the catalog is
+  // also what a not-yet-loaded bundle and a provider change look like, and
+  // rewriting the row's model just because the dialog was opened is worse.
   useEffect(() => {
     if (!model || agent === task.agent) return;
     if (!modelOpts.some((m) => m.value === model)) setModel(null);
@@ -960,7 +941,7 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
         )}
         <span className="spacer" />
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        {/* Save stays the primary action only when it's the only one — on an
+        {/* Save stays the primary action only when it's the only one: on an
             unstarted task, launching it is what the dialog is usually open for.
             Its label shortens beside the tray verbs so five buttons still fit
             one row of the footer. */}
@@ -990,7 +971,7 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
         <textarea value={desc} placeholder="Describe the feature or task. This is the body of the prompt the agent starts with." onChange={(e) => setDesc(e.target.value)} />
         {/* The description is injected into each SESSION's system prompt at
             session start, so once a task has run this field is no longer the
-            thing steering the agent in front of you — it's the brief the NEXT
+            thing steering the agent in front of you. It's the brief the NEXT
             session gets. Said plainly, because the pre-start wording ("the body
             of the prompt the agent starts with") invites the opposite reading. */}
         {task.started === 1 ? (
@@ -1016,7 +997,7 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
       <TagsField tags={tags} value={tagIds} onChange={setTagIds} onCreate={onCreateTag} />
       <BaseBranchField task={task} project={taskProject} />
       <DepPicker candidates={candidates} value={deps} onChange={setDeps} autoStart={autoStart} onAutoStart={setAutoStart} />
-      {/* Unlike the agent picker above, this is NOT gated on the task being
+      {/* Unlike the agent picker above, this is not gated on the task being
           unstarted: a started one can move by discarding the worktree it cut
           from this project's repo, which the field asks for explicitly. Only a
           live turn is refused outright, and the field surfaces the server's
@@ -1031,7 +1012,7 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
   );
 }
 
-// Mirror of the server's RefreshState (lib/contextRefresh.ts) — the detached
+// Mirror of the server's RefreshState (lib/contextRefresh.ts): the detached
 // "Refresh with AI" job state the modal polls.
 type RefreshState = { status: "idle" | "running" | "done" | "error"; draft: string; error: string; started_at: number; estimate?: InternalUsageEstimate | null };
 
@@ -1074,7 +1055,7 @@ function LandingSeg({ value, onChange, branch }: { value: LandingMode; onChange:
   );
 }
 
-// One row of GET /api/projects/[id]/mcp-servers' catalog — the gateway's
+// One row of GET /api/projects/[id]/mcp-servers' catalog: the gateway's
 // hosted MCP servers, with a tool-name preview and whether this project has
 // already minted a "trust this server" rule for it.
 interface GatewayMcpServerT {
@@ -1089,15 +1070,16 @@ interface GatewayMcpServerT {
 }
 
 // The project settings picker for hosted LiteLLM gateway MCP servers
-// (docs/design/litellm.md, "Hosted MCP servers"): fetched once when the
-// dialog opens (mirroring useEndpointModels' one-probe-per-open shape, but
-// with no per-keystroke re-probe — there's no URL field driving this one),
-// a checkbox per alias for `value` (the project's projects.gateway_mcp
+// (docs/AGENTS.md, "Hosted MCP servers"): fetched once when the dialog opens
+// (mirroring useEndpointModels' one-probe-per-open shape, but with no
+// per-keystroke re-probe, since there's no URL field driving this one), a
+// checkbox per alias for `value` (the project's projects.gateway_mcp
 // selection), and a "Trust" button that mints a remembered permission rule
-// through POST rather than waiting on a live card — there is no per-call MCP
-// prompt to approve one from. Trust is one-way here: revoking a rule already
-// minted is Settings → Run defaults' job, not this dialog's, matching the
-// permission card's own "Always allow" being un-doable only from there.
+// through POST instead of waiting on a live card, since there is no per-call
+// MCP prompt to approve one from. Trust is one-way here: revoking a rule
+// already minted is Settings → Run defaults' job, not this dialog's,
+// matching the permission card's own "Always allow" being un-doable only
+// from there.
 function GatewayMcpField({ projectId, value, onChange }: { projectId: string; value: string[]; onChange: (aliases: string[]) => void }) {
   const [servers, setServers] = useState<GatewayMcpServerT[] | null>(null);
   const [reachable, setReachable] = useState(true);
@@ -1183,17 +1165,17 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   const [repo, setRepo] = useState(project.repo_path);
   const [branch, setBranch] = useState(project.branch);
   // How this project's work lands, plus what GitHub says about it. The probe
-  // runs once when the dialog opens and is REPORTED, never applied: overwriting
+  // runs once when the dialog opens and is reported, never applied: overwriting
   // a saved choice because a repo happens to have a ruleset would take the
-  // decision away from the one person who knows about the exception (a project
+  // decision away from the person who knows about the exception (a project
   // pointed at a staging branch that merges locally under a PR-required repo is
   // a real configuration). Applying it is one click, spelled out below.
   const [landing, setLanding] = useState<LandingMode>(project.landing_mode === "pr" ? "pr" : "merge");
   const [autoReclaim, setAutoReclaim] = useState(project.auto_reclaim === 1);
   // Which endpoint the project's turns run against (lib/agentEnv.ts). The
   // stored form is an env-shaped override; the form edits the three things a
-  // person actually chooses — kind, base URL, model (plus a token for a custom
-  // endpoint) — and writes the override back through providerPresetEnv, so the
+  // person actually chooses (kind, base URL, model, plus a token for a custom
+  // endpoint) and writes the override back through providerPresetEnv, so the
   // form and the presets `suggest_task` writes can't produce different shapes.
   const savedProvider = describeProvider(parseAgentEnv(project.agent_env));
   const [providerKind, setProviderKind] = useState<ProviderKind>(savedProvider.kind);
@@ -1203,14 +1185,14 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   // Who a Gateway-preset project bills. Stored rather than derived because both
   // modes are legitimate against the same address (lib/agentEnv.ts).
   const [providerBilling, setProviderBilling] = useState<GatewayBilling>(savedProvider.gateway_billing ?? "key");
-  // Per-task LiteLLM virtual keys (docs/design/litellm.md) — advanced, opt-in,
+  // Per-task LiteLLM virtual keys (docs/AGENTS.md): advanced, opt-in,
   // and only meaningful when the instance has an admin key configured.
   const [gatewayMaxBudget, setGatewayMaxBudget] = useState(project.gateway_max_budget != null ? String(project.gateway_max_budget) : "");
   const [gatewayKeyDuration, setGatewayKeyDuration] = useState(project.gateway_key_duration || "");
-  // Hosted MCP servers (docs/design/litellm.md, "Hosted MCP servers") —
-  // independent of providerKind above: a Cloud-login task can still reach the
-  // gateway's hosted tools, so this is its own field rather than nested under
-  // the Gateway provider option.
+  // Hosted MCP servers (docs/AGENTS.md, "Hosted MCP servers"), independent
+  // of providerKind above: a Cloud-login task can still reach the gateway's
+  // hosted tools, so this is its own field instead of nested under the
+  // Gateway provider option.
   const [gatewayMcp, setGatewayMcp] = useState<string[]>(() => {
     try {
       const parsed = JSON.parse(project.gateway_mcp || "[]");
@@ -1220,13 +1202,13 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
     }
   });
   const localDefaultUrl = agents.local_base_url || "http://localhost:11434";
-  // The instance's LiteLLM address, or "" — which is what hides the option.
+  // The instance's LiteLLM address, or "", which is what hides the option.
   // The gateway's URL is not typed: it is the one the instance is configured
   // for, and an override naming any other address is a Custom endpoint.
   const gatewayUrl = agents.gateway_base_url || "";
   // What the URL in the box right now actually has. Probed through the server
-  // (the endpoint is loopback THERE, not in this browser) and keyed on the
-  // TYPED url rather than the saved one, so the suggestions and the "reachable,
+  // (the endpoint is loopback there, not in this browser) and keyed on the
+  // typed url rather than the saved one, so the suggestions and the "reachable,
   // 4 models" line follow the field being edited instead of appearing only
   // after a save.
   const probeUrl = providerKind === "gateway" ? gatewayUrl : providerUrl || localDefaultUrl;
@@ -1239,17 +1221,17 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
         : serializeAgentEnv(providerPresetEnv({ baseUrl: providerUrl || localDefaultUrl, model: providerModel, token: providerToken }));
   const [probe, setProbe] = useState<LandingProbeResult | null>(null);
   const [probing, setProbing] = useState(false);
-  const [probeAsked, setProbeAsked] = useState(false); // the user pressed Detect — show failures too
+  const [probeAsked, setProbeAsked] = useState(false); // the user pressed Detect: show failures too
   const [devCmd, setDevCmd] = useState(project.dev_command);
   const [setupCmd, setSetupCmd] = useState(project.setup_command);
   const [testCmd, setTestCmd] = useState(project.test_command);
   const [confirmDel, setConfirmDel] = useState(false);
   const showServices = clientFeatures().services;
   // AI context refresh: let Claude read the repo and draft fresh context. The
-  // draft now runs as a DETACHED server-side job (it can take minutes and must
+  // draft runs as a detached server-side job (it can take minutes and must
   // survive sleep/reload), so the client starts it and polls for the result
-  // rather than holding one long request open. The drafted text replaces the
-  // textarea but isn't saved until Save — we stash the prior text for Undo.
+  // instead of holding one long request open. The drafted text replaces the
+  // textarea but isn't saved until Save; the prior text is stashed for Undo.
   const [refreshing, setRefreshing] = useState(false);
   const [refreshErr, setRefreshErr] = useState<string | null>(null);
   const [prevContext, setPrevContext] = useState<string | null>(null);
@@ -1263,7 +1245,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   // depend on `context` (which would churn the polling effect / stale-close it).
   const contextRef = useRef(context);
   contextRef.current = context;
-  // started_at of the job whose result we've already applied — so a draft is
+  // started_at of the job whose result has already been applied, so a draft is
   // consumed exactly once even if a POST reply and a poll tick race.
   const appliedRef = useRef(0);
 
@@ -1323,7 +1305,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   }, [project.id, handleState]);
 
   // While a job runs, poll for its result. Stops when refreshing flips false
-  // (terminal state) or the modal unmounts — the job keeps running server-side.
+  // (terminal state) or the modal unmounts; the job keeps running server-side.
   useEffect(() => {
     if (!refreshing) return;
     const t = setInterval(() => {
@@ -1340,7 +1322,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
       handleState(await jsend<RefreshState>(`/api/projects/${project.id}/refresh-context`, "POST"));
     } catch (e) {
       let msg = e instanceof Error ? e.message : String(e);
-      try { const j = JSON.parse(msg); if (j?.error) msg = j.error; } catch { /* not JSON — show raw */ }
+      try { const j = JSON.parse(msg); if (j?.error) msg = j.error; } catch { /* not JSON, show raw */ }
       setRefreshErr(msg);
       setRefreshing(false);
     }
@@ -1460,7 +1442,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
       ) : null}
       {/* The tail of landing: what happens to the CHECKOUT once work lands. Off
           by default, and per project, because it deletes a local branch without
-          being asked — see lib/reclaim.ts. The button in the session header
+          being asked, see lib/reclaim.ts. The button in the session header
           does the same thing on demand whether or not this is on. */}
       <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 12, fontSize: 12.5, color: "var(--ink-2)", cursor: "pointer" }}>
         <input type="checkbox" checked={autoReclaim} onChange={(e) => setAutoReclaim(e.target.checked)} />
@@ -1484,7 +1466,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
           other two point BOTH CLIs at an Anthropic-/OpenAI-compatible server
           (Claude Code via ANTHROPIC_BASE_URL, Codex via a config.toml provider
           entry the driver writes) with no new driver. A task can override this
-          on its own row — that is how a session delegates to a local model. */}
+          on its own row; that is how a session delegates to a local model. */}
       <div className="field" style={{ marginTop: 14 }}>
         <div className="lab">{Icon.spark()} Model provider</div>
         <div className="model-field">
@@ -1688,16 +1670,16 @@ export function NewProjectModal({ onClose, onCreate }: { onClose: () => void; on
   const [repo, setRepo] = useState("");
   const colors = ["#C2603C", "#3E7CA8", "#6B6F8C", "#5C8C5A", "#9A6E14", "#9E5BA0"];
   const [color, setColor] = useState(colors[0]);
-  // Where the code comes from: a local folder — existing repo or greenfield —
+  // Where the code comes from: a local folder (existing repo or greenfield)
   // or a clone of one of the user's GitHub repos (the onboarding path).
   const [mode, setMode] = useState<"fresh" | "clone">("fresh");
   const [cloneSpec, setCloneSpec] = useState(""); // owner/repo or pasted URL
   const [cloning, setCloning] = useState(false);
   const [cloneErr, setCloneErr] = useState<string | null>(null);
   // How this project's work will land. Creation is the one moment detection may
-  // PRESELECT outright — there is no choice yet to override — so a repo whose
-  // default branch requires a pull request starts the project honest instead of
-  // telling every session for the next month that Merge lands into main.
+  // preselect outright, since there is no choice yet to override, so a repo
+  // whose default branch requires a pull request starts the project honest
+  // instead of telling every session that Merge lands into main.
   // Touching the control pins it: a later probe result never moves it back.
   const [landing, setLanding] = useState<LandingMode>("merge");
   const [landingProbe, setLandingProbe] = useState<LandingProbeResult | null>(null);

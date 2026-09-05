@@ -19,10 +19,10 @@ export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, s
 }) {
   const [msgsByTask, setMsgsByTask] = useState<Record<string, Msg[]>>({});
 
-  // Everything still parked on the user, per task — AskUserQuestion cards and
+  // Everything still parked on the user, per task: AskUserQuestion cards and
   // tool-permission prompts alike. One assistant message can park several at
   // once, and the "Needs your input" flag must stay up until the last one is
-  // settled — mirrors openAsks in lib/runner.ts.
+  // settled. Mirrors openAsks in lib/runner.ts.
   const openAsksRef = useRef<Record<string, Set<string>>>({});
 
   const appendMsg = (taskId: string, m: Msg) =>
@@ -50,10 +50,10 @@ export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, s
       };
     });
 
-  // Mark an AskUserQuestion message dismissed — the question was torn down
+  // Mark an AskUserQuestion message dismissed: the question was torn down
   // before an answer arrived. Same matching as setAnswerOnMsg, and it writes
-  // `dismissed` rather than `answers` so the card reads "not answered" instead
-  // of attributing a choice to the user.
+  // `dismissed`, not `answers`, so the card reads "not answered" instead of
+  // attributing a choice to the user.
   const setDismissedOnMsg = (taskId: string, askId: string, dismissal: AskDismissal) =>
     setMsgsByTask((prev) => {
       const arr = prev[taskId] ?? [];
@@ -75,7 +75,7 @@ export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, s
     });
 
   // Settle a permission card (matched by tool id, or the id embedded in the
-  // content for reloaded messages) — the same shape of update as an answered
+  // content for reloaded messages), the same shape of update as an answered
   // ask, one card at a time.
   const setOutcomeOnMsg = (taskId: string, permId: string, outcome: PermissionOutcome) =>
     setMsgsByTask((prev) => {
@@ -106,7 +106,7 @@ export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, s
         : { ...prev, [taskId]: [...arr, m] };
     });
 
-  // Drop a message by id — used when a queued follow-up is dequeued (about to
+  // Drop a message by id, used when a queued follow-up is dequeued (about to
   // run, or cancelled). If it's about to run, the matching `user` event re-adds
   // it as a committed message.
   const removeMsg = (taskId: string, msgId: string) =>
@@ -176,8 +176,8 @@ export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, s
         setTasks((prev) => prev.map((x) => (x.id === taskId ? { ...x, awaiting_input: 0 } : x)));
       }
     } else if (ev.type === "ask_dismissed") {
-      // The question died unanswered. Same un-parking as an answer — nobody is
-      // waiting on it any more — but the card must say so rather than keep
+      // The question died unanswered. Same un-parking as an answer, since
+      // nobody is waiting on it any more, but the card must say so instead of
       // offering options that resolve nothing.
       setDismissedOnMsg(taskId, ev.id, ev.dismissal);
       const open = openAsksRef.current[taskId];
@@ -198,9 +198,9 @@ export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, s
         setTasks((prev) => prev.map((x) => (x.id === taskId ? { ...x, awaiting_input: 0 } : x)));
       }
     } else if (ev.type === "permission_denied") {
-      // The CLI refused the call itself — nothing was parked on the user, so
-      // awaiting_input and openAsks stay untouched. Mirrors lib/runner.ts: the
-      // already-settled card goes ONTO the tool message the call created,
+      // The CLI refused the call itself, so nothing was parked on the user,
+      // and awaiting_input and openAsks stay untouched. Mirrors lib/runner.ts:
+      // the already-settled card goes ONTO the tool message the call created,
       // falling back to a card of its own when there is none (a subagent's
       // tool_use blocks never reach this stream).
       const outcome: PermissionOutcome = { decision: "deny", auto: true, reason: "blocked", blockedBy: ev.reasonType, note: ev.reason };
@@ -226,7 +226,7 @@ export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, s
         };
       });
     } else if (ev.type === "context") {
-      // The agent's own report of how full the window is right now — moves
+      // The agent's own report of how full the window is right now. It moves
       // mid-turn, one event per model request whose figure changed. Once a
       // task has one of these it is MEASURED, and the usage-derived estimate
       // below stops touching the gauge.
@@ -245,14 +245,14 @@ export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, s
             cache_read_tokens: (x.cache_read_tokens ?? 0) + u.cache_read_tokens,
             cache_creation_tokens: (x.cache_creation_tokens ?? 0) + u.cache_creation_tokens,
             // An unpriced turn adds 0 to the running total (that is what the
-            // wire carries) — this is what keeps the chip from reading that 0
+            // wire carries), which is what keeps the chip from reading that 0
             // as "free" while the turn is still streaming.
             unpriced_turns: (x.unpriced_turns ?? 0) + (ev.unpriced ? 1 : 0),
             // Only an UNMEASURED task (no `context` event this turn or before:
-            // Codex, or a pre-measurement row — a measured figure is never 0)
-            // derives its gauge from spend — the turn's input side, which
-            // over-reads on tool-heavy turns and is labelled an estimate.
-            // Mirrors the COALESCE in lib/store.ts.
+            // Codex, or a pre-measurement row, since a measured figure is
+            // never 0) derives its gauge from spend: the turn's input side,
+            // which over-reads on tool-heavy turns and is labelled an
+            // estimate. Mirrors the COALESCE in lib/store.ts.
             ...(x.context_estimated || !(x.context_tokens > 0)
               ? { context_tokens: ctxTokens, context_pct: contextPct(ctxTokens, x.context_window), context_estimated: true }
               : {}) }
@@ -260,15 +260,15 @@ export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, s
     } else if (ev.type === "notice") upsertMsg(taskId, { id: ev.msgId ?? `n-${Date.now()}`, role: "system", content: ev.content, generation: gen });
     else if (ev.type === "error") upsertMsg(taskId, { id: ev.msgId ?? `e-${Date.now()}`, role: "system", content: ev.content, generation: gen });
     else if (ev.type === "suggested") {
-      // Two things move on one event. The tray gets its refresh, as it always
-      // has — and the transcript settles a suggestion card onto the
-      // suggest_task tool row the server matched this to (`msgId`), so the
-      // proposal is visible where it was made. Only the pair of ids travels:
-      // the card re-reads the task itself, which is what keeps a reloaded
-      // transcript honest about a suggestion that has since been started,
-      // accepted or dismissed. No msgId means there was no call to settle onto
-      // (a driver that reports no tool name, a suggestion filed out of band) —
-      // the tray refresh is then the whole of the behaviour, exactly as before.
+      // Two things move on one event: the tray gets its refresh, and the
+      // transcript settles a suggestion card onto the suggest_task tool row
+      // the server matched this to (`msgId`), so the proposal is visible
+      // where it was made. Only the pair of ids travels: the card re-reads
+      // the task itself, which is what keeps a reloaded transcript honest
+      // about a suggestion that has since been started, accepted or
+      // dismissed. No msgId means there was no call to settle onto (a driver
+      // that reports no tool name, a suggestion filed out of band), so the
+      // tray refresh is the whole of the behaviour.
       if (selProjRef.current) loadTasks(selProjRef.current, false);
       const msgId = ev.msgId;
       if (msgId && ev.taskId) {
@@ -305,7 +305,7 @@ export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, s
   // One live stream per selected task: the server replays a snapshot of the
   // persisted transcript, then tails live turn events. Opening a task,
   // reloading mid-turn, and waking from laptop sleep all converge on the same
-  // catch-up-then-tail path — EventSource reconnects re-snapshot automatically.
+  // catch-up-then-tail path: EventSource reconnects re-snapshot automatically.
   useEffect(() => {
     if (!selTask) return;
     const id = selTask;

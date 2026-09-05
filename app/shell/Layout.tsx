@@ -72,7 +72,7 @@ export function BootSkeleton({ mobile }: { mobile?: boolean }) {
 
 // Drag-to-resize handle sitting between two columns. By default it measures the
 // column to its left (previousElementSibling) so the new width is independent of
-// whatever sits further left — collapsed rails, varying project widths, etc.
+// whatever sits further left: collapsed rails, varying project widths, etc.
 // With side="right" it instead sizes the column to its right (the rail), pinning
 // to that column's right edge so the width grows as you drag left. Double-click
 // snaps back to the default width.
@@ -124,7 +124,7 @@ export function ColResize({ min, max, onWidth, onReset, side = "left" }: { min: 
   );
 }
 
-// Collapsed sidebar — a slim vertical rail that reclaims a panel's space for the
+// Collapsed sidebar: a slim vertical rail that reclaims a panel's space for the
 // chat while leaving a one-click way to bring it back.
 export function ColRail({ label, task, right, onExpand }: { label: string; task?: boolean; right?: boolean; onExpand: () => void }) {
   return (
@@ -137,11 +137,11 @@ export function ColRail({ label, task, right, onExpand }: { label: string; task?
 
 export function TerminalDrawer({ cwd, port, taskDir, taskTitle, visible, height, onClose, onResize }: { cwd: string; port?: number; taskDir?: string; taskTitle?: string; visible: boolean; height: number; onClose: () => void; onResize: (h: number) => void }) {
   const dragging = useRef(false);
-  // Remount key for the terminal — bumping it kills the current shell and spawns a fresh one.
+  // Remount key for the terminal: bumping it kills the current shell and spawns a fresh one.
   const [epoch, setEpoch] = useState(0);
   // Scope pin: null = project working dir; otherwise the worktree the user
-  // explicitly switched to. Pinned (not derived from the selected task) so
-  // clicking around task cards can't respawn a shell that's running something —
+  // explicitly switched to. Pinned, not derived from the selected task, so
+  // clicking around task cards can't respawn a shell that's running something.
   // TerminalView tears down and restarts the shell whenever its cwd changes.
   const [pinned, setPinned] = useState<{ path: string; title: string } | null>(null);
   const effCwd = pinned ? pinned.path : cwd;

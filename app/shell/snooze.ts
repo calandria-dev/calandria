@@ -1,8 +1,8 @@
 /**
  * Snoozing: park a task out of sight until a deadline, then hand it back.
  *
- * The entire feature is ONE stored number — `tasks.snoozed_until`, a ms epoch —
- * and the deliberate absence of a second one. `status` is never touched by a
+ * The entire feature is ONE stored number, `tasks.snoozed_until` (a ms epoch),
+ * with no second field for a previous category. `status` is never touched by a
  * snooze, so "it goes back to the category it came from" needs no remembered
  * previous category and no restore step that could fail: the task never left
  * its status group, it was only drawn somewhere else while the deadline stood.
@@ -11,10 +11,10 @@
  *   woke     ⟺  0 < snoozed_until <= now  → back in its own, wearing the chip
  *   0        ⟺  never snoozed / chip seen and cleared
  *
- * The consequence worth spelling out: waking requires no server-side sweep, no
+ * A consequence worth spelling out: waking requires no server-side sweep, no
  * ticker and no write. A deadline in the past simply stops matching, so a task
- * snoozed while the app was shut down is already awake when it comes back up —
- * there is no missed-wake case to recover from. The only thing the client owes
+ * snoozed while the app was shut down is already awake when it comes back up.
+ * There is no missed-wake case to recover from. The only thing the client owes
  * the user is a re-render at the deadline, which is what `nextWake` arms.
  */
 
@@ -29,14 +29,14 @@ const MINUTE = 60_000;
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 
-/** Parked right now — draw it in the Snoozed category, not its status group. */
+/** Parked right now: draws in the Snoozed category, not its status group. */
 export const isSnoozed = (t: Snoozable, now: number = Date.now()): boolean =>
   t.snoozed_until > now;
 
 /**
- * Snoozed at some point, and back now — the "was snoozed" indicator. Due
- * EXACTLY on `now` counts as woken rather than still asleep, so a deadline that
- * lands on a render tick moves the card instead of leaving it in limbo (the two
+ * Snoozed at some point, and back now: the "was snoozed" indicator. Due
+ * exactly on `now` counts as woken, not still asleep, so a deadline that lands
+ * on a render tick moves the card instead of leaving it in limbo (the two
  * predicates are exhaustive and mutually exclusive by construction).
  */
 export const wasSnoozed = (t: Snoozable, now: number = Date.now()): boolean =>
@@ -62,10 +62,10 @@ export interface SnoozePreset {
  * wall-clock ones, computed in LOCAL time because "tomorrow" means the user's
  * tomorrow, not UTC's.
  *
- * Any preset already behind us is dropped rather than offered and silently
+ * Any preset already behind us is dropped instead of being offered and
  * clamped: "This evening" at 8pm would otherwise be a snooze that ends before
  * it begins, which reads as the button being broken. The minute of headroom
- * keeps a preset from appearing at the very instant it stops being useful.
+ * keeps a preset from appearing at the instant it stops being useful.
  */
 export function snoozePresets(now: number): SnoozePreset[] {
   const clock = (addDays: number, hour: number): number => {
@@ -74,7 +74,7 @@ export function snoozePresets(now: number): SnoozePreset[] {
     d.setHours(hour, 0, 0, 0);
     return d.getTime();
   };
-  // The Monday strictly after today — on a Monday that's a full week out, not
+  // The Monday strictly after today: on a Monday that's a full week out, not
   // this morning, which would be a no-op the user reads as a failure.
   const daysToMonday = ((8 - new Date(now).getDay()) % 7) || 7;
   return [
@@ -91,8 +91,8 @@ export function snoozePresets(now: number): SnoozePreset[] {
 const timeOf = (ts: number) =>
   new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
-// Whole local days between two instants — midnight to midnight, so 11pm to 1am
-// is one day apart rather than the two hours a raw subtraction would report.
+// Whole local days between two instants: midnight to midnight, so 11pm to 1am
+// is one day apart, not the two hours a raw subtraction would report.
 function daysApart(from: number, to: number): number {
   const midnight = (ts: number) => {
     const d = new Date(ts);
@@ -122,9 +122,9 @@ export function wakeLabel(until: number, now: number = Date.now()): string {
 
 /**
  * The soonest deadline still ahead across a list, or null when nothing is
- * waiting. One timer set to this instant is all the whole board needs to redraw
- * itself on time — polling every task on an interval would be the same answer
- * computed continuously instead of once.
+ * waiting. One timer set to this instant is all the whole board needs to
+ * redraw itself on time: polling every task on an interval would compute the
+ * same answer continuously instead of once.
  */
 export function nextWake(rows: Snoozable[], now: number = Date.now()): number | null {
   let soonest: number | null = null;

@@ -11,34 +11,34 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 180;
 
 /**
- * Squash & merge this task's PR on GitHub — the other end of the loop
- * `POST /api/tasks/[id]/pr` opens. Landing reviewed work used to mean leaving
- * Calandria for github.com; this is the one click that doesn't.
+ * Squash and merges this task's PR on GitHub: the other end of the loop
+ * `POST /api/tasks/[id]/pr` opens. This is the one click that lands
+ * reviewed work without leaving Calandria for github.com.
  *
  * Three things this route is careful about:
  *
- *  1. It re-screens against a FRESH answer. The button is already enabled off
- *     real PR state, but that snapshot can be up to PR_STALE_MS old and a check
- *     can go red while the rail is on screen, so the route forces a refresh and
- *     runs the same `prMergeBlocker()` the button did before it shells out.
- *     One predicate, two callers, no chance of them disagreeing.
- *  2. It refuses while a turn is running, in the same words every merge route
- *     uses. The agent could be pushing more commits into the branch this PR is
- *     built from, and "merge whatever is there right now" is not a question a
- *     mid-turn task can answer.
- *  3. It cleans nothing up. A merged PR means the worktree is reclaimable and
- *     the task is finished, but that policy belongs to the reclaim path, which
- *     keys off `pr_state` becoming "merged". So the last thing this route does
- *     is force the refresh that writes it — the handoff — rather than growing a
- *     second copy of the teardown rules.
+ *  1. It re-screens against a fresh answer. The button is already enabled
+ *     off real PR state, but that snapshot can be up to PR_STALE_MS old and
+ *     a check can go red while the rail is on screen, so the route forces a
+ *     refresh and runs the same `prMergeBlocker()` the button did before it
+ *     shells out. One predicate, two callers, no chance of them disagreeing.
+ *  2. It refuses while a turn is running, in the same words every merge
+ *     route uses. The agent could be pushing more commits into the branch
+ *     this PR is built from, and "merge whatever is there right now" is not
+ *     a question a mid-turn task can answer.
+ *  3. It cleans nothing up. A merged PR means the worktree is reclaimable
+ *     and the task is finished, but that policy belongs to the reclaim
+ *     path, which keys off `pr_state` becoming "merged". So the last thing
+ *     this route does is force the refresh that writes it, the handoff,
+ *     instead of growing a second copy of the teardown rules.
  *
- * WHO may click is settled deliberately and narrowly: a person, in a browser.
- * `.github/CLAUDE.md` holds this repo to a hard rule for release merges — an
- * agent may merge only on an explicit affirmative through its ask tool, never
- * on its own initiative and never in an unattended run — and a POST here that
- * an agent or a schedule could reach would be exactly that gate's back door.
- * There is therefore no agent tool for this and no scheduled caller. A user
- * click needs no ask; nothing else gets to make it.
+ * Who may click is narrow: a person, in a browser. `.github/CLAUDE.md`
+ * holds this repo to a hard rule for release merges: an agent may merge
+ * only on an explicit affirmative through its ask tool, never on its own
+ * initiative and never in an unattended run, and a POST here that an agent
+ * or a schedule could reach would be exactly that gate's back door. There
+ * is therefore no agent tool for this and no scheduled caller. A user click
+ * needs no ask; nothing else gets to make it.
  */
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -59,10 +59,10 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     const cwd = project.repo_path || task.worktree_path;
     if (!cwd) return NextResponse.json({ error: "this project has no working directory" }, { status: 400 });
 
-    // Ask GitHub once more before acting on what we think we know. A failed
-    // refresh is not a refusal on its own — it leaves the last good snapshot in
-    // place and the screen below decides on that, which is still stricter than
-    // merging blind.
+    // Asks GitHub once more before acting on the last known state. A
+    // failed refresh is not a refusal on its own: it leaves the last good
+    // snapshot in place and the screen below decides on that, which is
+    // still stricter than merging blind.
     await refreshPrState(id, { force: true });
     const fresh = getTask(id) ?? task;
     const blocked = prMergeBlocker(fresh);
@@ -71,10 +71,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     const result = await mergeTaskPr({ repoPath: cwd, number: fresh.pr_number });
     if (!result.ok) return NextResponse.json({ ...result, pr: prView(fresh) }, { status: 409 });
 
-    // The handoff. An immediate merge is worth waiting one `gh pr view` for, so
-    // the response and the event both say "merged" and whatever watches for that
-    // can act. A queued merge has nothing new to report yet — GitHub lands it
-    // later — so its refresh is detached and the sweep carries it from here.
+    // The handoff. An immediate merge is worth waiting one `gh pr view` for,
+    // so the response and the event both say "merged" and whatever watches
+    // for that can act. A queued merge has nothing new to report yet, since
+    // GitHub lands it later, so its refresh is detached and the sweep
+    // carries it from here.
     if (result.merged) await refreshPrState(id, { force: true });
     else schedulePrRefresh(id, { force: true });
     startPrPolling();

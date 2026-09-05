@@ -4,27 +4,26 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { tagIsDone, type TagRow, type TaskRow } from "./types";
 
 // Tags on the list and the board. A tag is a FILTER over the status buckets
-// both views are built on, plus a badge on every row and card — it never
-// changes what a bucket is. (Design: docs/superpowers/specs/
-// 2026-08-27-tags-design.md.)
+// both views are built on, plus a badge on every row and card; it never
+// changes what a bucket is. (Design: docs/FEATURES.md.)
 //
 // SEVERAL chips can be lit at once, because a task carries several tags. The
 // default is ANY (union): ticking "auth migration" and "mobile PWA" shows both
-// plans, which is what a chip bar reads like — a set of things to look at, not
+// plans, which is what a chip bar reads like: a set of things to look at, not
 // a query being narrowed. The `ALL` toggle beside them switches to the
 // intersection, which is the other question worth asking ("what is in the auth
 // migration AND touches mobile") and is meaningless with one chip lit, so it
 // only appears once two are.
 
 // The chip/badge tint rides a CSS custom property so one rule set serves every
-// palette entry (and the neutral no-color case) — see .gchip/.gbadge.
+// palette entry, including the neutral no-color case; see .gchip/.gbadge.
 export function tagTint(color: string | null): CSSProperties | undefined {
   return color ? ({ "--gc": color } as CSSProperties) : undefined;
 }
 
 // "4/7": members done over members still counted. Cancelled and withdrawn are
-// taken OUT of the denominator rather than shown as unfinished — a tag on five
-// tasks with two withdrawn is 3/3 when the three land — and the tooltip says
+// taken out of the denominator instead of shown as unfinished, so a tag on
+// five tasks with two withdrawn is 3/3 when the three land. The tooltip says
 // how many were withdrawn so the fraction doesn't read as a lie.
 export function tagProgress(t: Pick<TagRow, "counts">): { done: number; of: number; label: string; detail: string } {
   const { total, done, cancelled, running, awaiting } = t.counts;
@@ -51,8 +50,8 @@ const KEY = (projectId: string) => `calandria_tag_filter_${projectId}`;
 // The single-group selection this replaced, so an upgrade doesn't drop the chip
 // the user had lit. Read once, then written back in the new shape.
 const LEGACY_KEYS = (projectId: string) => [`calandria_group_filter_${projectId}`, `orch_group_filter_${projectId}`];
-// Fired when something OTHER than the chip bar changes the filter — a badge on
-// a card, a landing card, the palette — so every mounted bar follows.
+// Fired when something other than the chip bar changes the filter (a badge on
+// a card, a landing card, the palette), so every mounted bar follows.
 const EVENT = "calandria:tag-filter";
 
 function read(projectId: string): TagFilter {
@@ -83,16 +82,16 @@ export function selectTagFilter(projectId: string, filter: TagFilter) {
   window.dispatchEvent(new CustomEvent(EVENT, { detail: { projectId, filter } }));
 }
 
-/** Light exactly one tag — what a badge click means, from any surface. */
+/** Light exactly one tag: what a badge click means, from any surface. */
 export function selectOneTag(projectId: string, tagId: string | null) {
   selectTagFilter(projectId, tagId ? { ids: [tagId], match: "any" } : EMPTY);
 }
 
 /**
  * Which tags the list/board is narrowed to, per project, persisted the way the
- * collapsed Done/Cancelled sections are (localStorage, not the URL — it's a
+ * collapsed Done/Cancelled sections are (localStorage, not the URL: it's a
  * working preference, not a location). Remembered ids that no longer name a tag
- * in `tags` (deleted, or another project's) are dropped rather than filtering
+ * in `tags` (deleted, or another project's) are dropped instead of filtering
  * everything out; when none survives, the bar reads as All.
  */
 export function useTagFilter(projectId: string, tags: TagRow[]) {
@@ -111,7 +110,7 @@ export function useTagFilter(projectId: string, tags: TagRow[]) {
     return ids.length === raw.ids.length ? raw : { ids, match: raw.match };
   }, [raw, tags]);
   const set = (next: TagFilter) => selectTagFilter(projectId, next);
-  // Ticking a chip on and off, keeping the rest — the bar's own verb.
+  // Ticking a chip on and off, keeping the rest: the bar's own verb.
   const toggle = (id: string) =>
     set({ ids: filter.ids.includes(id) ? filter.ids.filter((x) => x !== id) : [...filter.ids, id], match: filter.match });
   return { filter, set, toggle };
@@ -189,9 +188,9 @@ export function TagChips({ tags, filter, onToggle, onSet }: {
 }
 
 /**
- * The tinted pill a task's row, card or session header carries — one per tag.
- * With `onSelect` it's a button that lights that tag's chip alone — the way
- * into the filter from any surface showing a task — otherwise a plain label.
+ * The tinted pill a task's row, card or session header carries: one per tag.
+ * With `onSelect` it's a button that lights that tag's chip alone, the way
+ * into the filter from any surface showing a task; otherwise a plain label.
  */
 export function TagBadge({ tag, onSelect, className }: {
   // Name and tint are all a badge needs to RENDER; the counts are only for its
@@ -216,7 +215,7 @@ export function TagBadge({ tag, onSelect, className }: {
  * Every badge a row shows, in tag order. Its own component because three
  * surfaces (list row, board card, session header) render the same list from the
  * same two inputs, and a task with five tags must not push its title off the
- * card — `max` caps what's drawn and the rest becomes a "+2" pill that still
+ * card. `max` caps what's drawn and the rest becomes a "+2" pill that still
  * names them on hover.
  */
 export function TagBadges({ tagIds, tagsById, onSelect, max = 3, className }: {

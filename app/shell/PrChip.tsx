@@ -5,7 +5,7 @@ import { jsend, jget } from "./api";
 import { prChecksLabel, prReviewLabel, prStateLabel, prTooltip } from "./format";
 import type { TaskRow } from "./types";
 
-/** The task fields the chip draws. A Pick rather than the whole TaskRow so
+/** The task fields the chip draws. A Pick, not the whole TaskRow, so
  *  TaskChanges can accept it alongside lib/prMerge's PrMergeFacts without
  *  taking a dependency on the shell's task shape. */
 export type PrChipTask = Pick<
@@ -20,9 +20,9 @@ export type PrChipTask = Pick<
  * Fire-and-forget, keyed on the task so switching sessions re-checks the one
  * now on screen.
  *
- * It is a hook rather than an effect inside the chip because the chip now lives
- * in the DIFF, which a collapsed rail or the mobile chat view doesn't render —
- * and "the user opened this task" is still the moment worth asking GitHub. The
+ * It is a hook, not an effect inside the chip, because the chip lives in the
+ * DIFF, which a collapsed rail or the mobile chat view doesn't render, and
+ * "the user opened this task" is still the moment worth asking GitHub. The
  * session header calls it headlessly for exactly that reason, and the duplicate
  * when both are mounted costs nothing: the server's freshness window and its
  * in-flight set collapse the second call to a row read.
@@ -38,22 +38,22 @@ export function usePrOpenRefresh(taskId: string, hasPr: boolean) {
  * The live PR chip in the diff toolbar: number, state, check rollup and
  * review decision, all read off the task row.
  *
- * It sits with the diff rather than up among the session header's chips
- * because that is where the actions it reports on already are — Create PR,
+ * It sits with the diff instead of up among the session header's chips
+ * because that is where the actions it reports on already are: Create PR,
  * Update PR, Squash & merge PR. On a phone the header and the diff are
  * different views, so a chip in the header meant switching back to chat to
- * read what the PR was doing and switching forward again to act on it.
+ * read the PR's status and switching forward again to act on it.
  *
  * Nothing here polls. The row's pr_* columns arrive with the task list and are
- * refreshed by `task_edited` on /api/events whenever the server hears something
- * new from GitHub, exactly like every other lifecycle fact. This component owns
+ * refreshed by `task_edited` on /api/events whenever the server receives new
+ * data from GitHub, exactly like every other lifecycle fact. This component owns
  * two of the four refresh TRIGGERS:
  *
  *   - opening the task (usePrOpenRefresh above); and
  *   - the explicit Refresh button, which forces one.
  *
- * The other two — creating the PR, and the server's bounded sweep over open
- * PRs — are server-side (lib/prState.ts).
+ * The other two, creating the PR and the server's bounded sweep over open
+ * PRs, are server-side (lib/prState.ts).
  */
 export function PrChip({ task }: { task: PrChipTask }) {
   const [pending, setPending] = useState(false);
@@ -68,7 +68,7 @@ export function PrChip({ task }: { task: PrChipTask }) {
       await jsend(`/api/tasks/${taskId}/pr/refresh`, "POST");
     } catch {
       // The button is a nicety; a failed kick shows up as an unchanged chip
-      // rather than an error banner over a session.
+      // instead of an error banner over a session.
     } finally {
       setPending(false);
     }

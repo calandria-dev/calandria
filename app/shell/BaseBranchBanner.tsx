@@ -10,16 +10,12 @@ import { ErrDetail } from "./shared";
  * How the project's local base branch stands against its remote, shown under the
  * project header.
  *
- * This is the surface for a staleness that used to be invisible. Nothing in the
- * app fetched, so once work landed on the remote instead of through the merge
- * button — a PR merged on GitHub, a teammate's push — local `main` fell behind
- * and stayed behind, and the sync panel happily reported "up to date" because it
- * was comparing against that same stale branch. New task worktrees are cut from
- * the fetched remote tip now, but the local branch is still the user's to move,
- * so it gets a one-click action rather than being advanced behind their back.
+ * Work can land on the remote outside the merge button (a PR merged on
+ * GitHub, a teammate's push), leaving local `main` behind. New task
+ * worktrees are cut from the fetched remote tip, but the local branch is
+ * only ever advanced by an explicit action here, never automatically.
  *
- * Renders nothing in the ordinary case (no remote, or in sync) — it's only here
- * when it has something to say.
+ * Renders nothing when there is no remote or the branch is in sync.
  */
 export function BaseBranchBanner({ projectId, refreshKey }: { projectId: string; refreshKey?: number }) {
   const [st, setSt] = useState<BaseBranchResp | null>(null);
@@ -75,14 +71,13 @@ export function BaseBranchBanner({ projectId, refreshKey }: { projectId: string;
   const ahead = st.ahead ?? 0;
   const commits = (n: number) => `${n} commit${n === 1 ? "" : "s"}`;
 
-  // A fetch that failed only matters when we have nothing better to show. Once
-  // a fetch HAS succeeded, the counts below are still meaningful and nagging
-  // about a later blip (offline for the afternoon) is noise, not information.
+  // A fetch that failed only matters when there is nothing better to show.
+  // Once a fetch has succeeded, the counts below stay meaningful, so a later
+  // blip (offline for the afternoon) should not show as an error here.
   if (st.fetchError && !st.fetchedAt)
     return <div className="bb-banner quiet">{Icon.cloudOff()} Couldn&apos;t reach {label}. {base} may be out of date.</div>;
 
-  // No local ref for it at all — a standing misconfiguration, and the case that
-  // used to render nothing because every count came back zero.
+  // No local ref for the base branch at all: a standing misconfiguration.
   if (st.baseMissing)
     return <div className="bb-banner warn">{Icon.cloudOff()} {base} has no branch in this checkout, so it can&apos;t be compared with {label}.</div>;
 

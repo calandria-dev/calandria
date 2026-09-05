@@ -1,23 +1,15 @@
-// The auto-collapse policy's state, kept pure (no React, no window) so the one
-// invariant it has can be unit-tested: a spine's "show it anyway" override is
-// granted AT a shed set, and is void the moment the shed set is anything else.
+// The auto-collapse policy's state, kept pure (no React, no window). The
+// invariant: a spine's "show it anyway" override is granted at a specific
+// shed set, and is void the moment the shed set changes. Both facts live in
+// one value, and the override is dropped in the same update that replaces
+// the shed set, so the rendered result is a function of the current state
+// alone with no transition to track separately.
 //
-// The first version kept the override in its own useState and cleared it from a
-// useEffect keyed on the shed set. That made "the window left this width" a
-// TRANSITION the effect had to witness, one commit after the shed set changed:
-// two shed updates landing in one batch are a transition nobody witnesses, and
-// the override then outlives the width it was granted for — the column stays
-// open at a size the policy should have tucked it away at, and the spine that
-// would restore it never mounts (issue #104). Holding both facts in one value,
-// and dropping the override in the same update that replaces the shed set,
-// makes the rendered result a function of the current state alone; there is no
-// transition to miss.
-//
-// What no state shape can fix is a width the browser never reported: matchMedia
-// fires once per rendered frame, so a resize that is undone before a frame runs
-// is invisible to the app. That is a fact for whoever drives the window (the
-// e2e suite waits on `data-shed`, the label below, before asserting on a
-// return leg), not for this module.
+// A width the browser never reported cannot be fixed by any state shape:
+// matchMedia fires once per rendered frame, so a resize undone before a
+// frame runs is invisible to the app. That is a fact for whoever drives the
+// window (the e2e suite waits on `data-shed`, the label below, before
+// asserting on a return leg), not for this module.
 //
 // Thresholds live in AUTO_COLLAPSE_BELOW (types.ts); reading the window is the
 // hook's job (useAutoCollapse in app/Shell.tsx).
@@ -69,7 +61,7 @@ export function isCollapsed(p: CollapsePolicy, col: Col, userCollapsed: boolean)
 
 /**
  * The shed set as a space-separated list ("proj task", or "" when nothing is
- * shed) — what the shell writes to `data-shed`. It is the policy's one
+ * shed): what the shell writes to `data-shed`. It is the policy's one
  * observable: a reopened column at 1024 and an untouched one at 1440 render
  * the same DOM, so this is how anything outside the app (the e2e suite, a
  * stylesheet) learns which width the app has actually seen.

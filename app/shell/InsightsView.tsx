@@ -1,13 +1,13 @@
 "use client";
 
-// Insights — the usage/analytics dashboard (opened from the top bar; replaces
+// Insights: the usage/analytics dashboard (opened from the top bar; replaces
 // the tasks+session columns like Settings does). One fetch pulls per-day facts
 // grouped by (day, project, agent) for the widest range plus the same width
-// again (GET /api/insights), so every filter change — range, project, agent,
-// cache toggle — recomputes locally without touching the server. Ported from
-// the "Calandria Insights" Claude Design mock; chart styling conventions:
-// thin stacked columns with 2px gaps, a crosshair+tooltip hover layer, fixed
-// per-entity hues that never repaint when filters change series count.
+// again (GET /api/insights), so every filter change, including range, project,
+// agent, and cache toggle, recomputes locally without touching the server.
+// Chart styling conventions: thin stacked columns with 2px gaps, a
+// crosshair+tooltip hover layer, fixed per-entity hues that never repaint when
+// filters change series count.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { agentLabel, capsFor } from "./agents";
 import { modelLabel } from "./format";
@@ -20,15 +20,15 @@ interface Payload {
   tags: { id: string; name: string; color: string | null; project_id: string }[];
   /**
    * `unp` counts turns in the (day, project, agent) bucket that ran against a
-   * custom base URL with no known price — genuinely unknown cost, not a
+   * custom base URL with no known price: genuinely unknown cost, not a
    * measured $0 (that's a local Ollama/LM Studio turn). `cost` sums only the
    * priced turns, so wherever `unp` is nonzero, `cost` is a floor.
    */
   usage: { d: string; p: string; a: string; cost: number; inp: number; out: number; cr: number; cw: number; unp: number }[];
   /**
-   * The same spend attributed to tags — `g` is the tag id, "" for usage by a
+   * The same spend attributed to tags: `g` is the tag id, "" for usage by a
    * task carrying none. A multi-tagged task appears under EACH of its tags, so
-   * this deliberately does not sum to `usage` — see the leaderboard below.
+   * this does not sum to `usage`; see the leaderboard below.
    * `unp` has the same meaning as on `usage` above.
    */
   tagUsage: { d: string; p: string; a: string; g: string; cost: number; inp: number; out: number; cr: number; cw: number; unp: number }[];
@@ -40,7 +40,7 @@ interface Payload {
   shipped: { d: string; p: string; a: string; n: number }[];
   merges: { d: string; p: string; a: string; add: number; del: number }[];
   models: { a: string; m: string }[];
-  /** Cache-read vs. input tokens per agent, for gateway-routed turns only —
+  /** Cache-read vs. input tokens per agent, for gateway-routed turns only,
    *  see the matching field on InsightsData in lib/store.ts. */
   gatewayCache: { a: string; inp: number; cr: number }[];
 }
@@ -50,7 +50,7 @@ interface DayRow {
   key: string;
   date: Date;
   spend: number; inp: number; out: number; cr: number; cw: number; tokens: number;
-  // Turns (not dollars) in this bucket that had no price — see `Payload.usage`.
+  // Turns (not dollars) in this bucket that had no price; see `Payload.usage`.
   unpriced: number;
   overheadSpend: number; overheadFresh: number; overheadTokens: number;
   tasks: number; add: number; del: number;
@@ -66,17 +66,17 @@ const fmtCompact = (n: number) => {
   return String(n);
 };
 const fmtDate = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`;
-// "1 turn" / "4 turns" — the unpriced-turns disclosure below.
+// "1 turn" / "4 turns": the unpriced-turns disclosure below.
 const pluralTurns = (n: number) => `${n} turn${n === 1 ? "" : "s"}`;
 // Why a turn has no price: it ran against a custom base URL nobody has told
-// Calandria the cost of, so it's left OUT of a total rather than counted as
+// Calandria the cost of, so it's left OUT of a total instead of counted as
 // a measured $0 (which is what a local Ollama/LM Studio turn really is).
 const unprTitle = (n: number) => `${pluralTurns(n)} unpriced — ran against a custom endpoint with no price set, so left out of this total rather than counted as $0.`;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const fmtDateLong = (d: Date) => `${WEEKDAYS[d.getDay()]} ${MONTHS[d.getMonth()]} ${d.getDate()}`;
 
-// Local-time YYYY-MM-DD — must match the server's `date(..., 'localtime')`
+// Local-time YYYY-MM-DD: must match the server's `date(..., 'localtime')`
 // bucketing (single-user local-first: the server's clock is the user's clock).
 function dayKey(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -109,7 +109,7 @@ function relDay(key: string): string {
 // state (color follows the entity, never its rank). Known drivers are pinned;
 // any future driver takes the next unused hue in bundle order.
 // Chart series colors MUST come from the --s1..--s5 chart-series primitives
-// (not the status semantics like --blue/--green/--amber/--coral) — those are
+// (not the status semantics like --blue/--green/--amber/--coral): those are
 // reserved for running/success/warn/error signal color, a different meaning
 // than "which agent produced this bar". --calandria (below) stays the one
 // exception: it's the dedicated hue for Calandria's own maintenance sessions.
@@ -401,22 +401,22 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
     for (const r of rows) { cur.spend += r.spend; cur.tokens += r.tokens; cur.unpriced += r.unpriced; cur.overheadSpend += r.overheadSpend; cur.overheadTokens += r.overheadTokens; cur.tasks += r.tasks; cur.add += r.add; cur.del += r.del; }
     const activeDays = rows.filter((r) => r.spend > 0 || r.tokens > 0 || r.overheadSpend > 0 || r.overheadTokens > 0 || r.tasks > 0 || r.add > 0 || r.del > 0).length;
 
-    // Agents that actually have usage in the visible rows — drives the spend
+    // Agents that actually have usage in the visible rows: drives the spend
     // stack + provider panel, so a single-provider user sees a single series.
     const presentAgents = agentIds.filter((a) => rows.some((r) => r.byAgent[a]));
     const chartAgents = presentAgents.length ? presentAgents : agent === "all" ? [] : [agent];
 
-    // Agents whose cost is estimated from token counts rather than billed
-    // (capabilities.costIsEstimated) — their figures render with an ~.
+    // Agents whose cost is estimated from token counts instead of billed
+    // (capabilities.costIsEstimated): their figures render with an ~.
     const estIds = new Set(chartAgents.filter((a) => capsFor(agents, a)?.costIsEstimated));
     const overheadEstimated = data.internal.some((u) => matchP(u.p) && matchA(u.a) && rows.some((r) => r.key === u.d) && capsFor(agents, u.a)?.costIsEstimated);
 
     // ---- provider panel ----
     // Cache-read share for turns run through the gateway specifically, keyed
-    // by agent (lib/store.ts's separate gatewayCache query — a provider-host
+    // by agent (lib/store.ts's separate gatewayCache query: a provider-host
     // dimension the day series above doesn't carry). Absent entirely when no
     // gateway is configured, which is also what makes an agent's presence
-    // here double as "this agent has run gateway turns in range" — the ~ label
+    // here double as "this agent has run gateway turns in range": the ~ label
     // and the cache-hit column both gate on it.
     const gatewayCacheByAgent = new Map(data.gatewayCache.map((g) => [g.a, g]));
     const providers = chartAgents.map((a) => {
@@ -429,16 +429,16 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
         .filter((m) => m.a === a)
         .map((m) => modelLabel(m.m, capsFor(agents, a)) || m.m);
       const gw = gatewayCacheByAgent.get(a);
-      // "cache_read_tokens over input", per docs/design/litellm.md — a rate
-      // near zero despite real input tokens is prompt caching failing
-      // silently in translation, the one thing this column exists to surface.
+      // "cache_read_tokens over input", per docs/AGENTS.md: a rate near zero
+      // despite real input tokens means prompt caching is failing in
+      // translation, which this column exists to surface.
       const cacheHit = gw && gw.inp > 0 ? gw.cr / gw.inp : null;
       return { id: a, spend, tokens, tasks, unpriced, models: [...new Set(models)], gateway: !!gw, cacheHit };
     });
     const provSpendSum = providers.reduce((s, p) => s + p.spend, 0);
     const hasGatewayCache = providers.some((p) => p.cacheHit != null);
 
-    // ---- projects leaderboard (agent filter applies; project filter doesn't —
+    // ---- projects leaderboard (agent filter applies; project filter doesn't:
     // clicking a row IS the project filter) ----
     const dayIndex = new Map(rows.map((r, i) => [r.key, i]));
     const perProject = new Map<string, { spend: number; tokens: number; unpriced: number; tasks: number; add: number; del: number; lastKey: string; spark: number[] }>();
@@ -475,17 +475,17 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
     // ---- tags leaderboard: what a whole feature cost ----
     // Both filters apply here, unlike the projects table: a tag sits INSIDE a
     // project, so the project filter narrowing to one project's features is
-    // exactly what you'd want from it. Usage with no tag ("" — untagged, or
-    // a task since deleted) is dropped rather than pooled into an "Other" row:
+    // exactly what you'd want from it. Usage with no tag ("", untagged, or
+    // a task since deleted) is dropped instead of pooled into an "Other" row:
     // this table answers "what did the migration cost", and an unnamed bucket
     // holding most of a workshop's spend would dominate every ranking.
     //
     // Reads `data.tagUsage`, NOT `data.usage`: many-to-many means a task with
     // three tags has to appear in all three rows, and `usage` is the exact,
-    // non-overlapping series every other chart on this page draws from — this
-    // is the one table that deliberately answers a different, overlapping
-    // question, so it gets its own attribution rather than a finer GROUP BY
-    // on the series everything else shares.
+    // non-overlapping series every other chart on this page draws from. This
+    // table answers a different, overlapping question, so it gets its own
+    // attribution instead of a finer GROUP BY on the series everything else
+    // shares.
     const perTag = new Map<string, { spend: number; tokens: number; unpriced: number; spark: number[] }>();
     for (const u of data.tagUsage) {
       if (!u.g || !matchP(u.p) || !matchA(u.a)) continue;
@@ -938,12 +938,11 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
               </div>
             </section>
 
-            {/* tags leaderboard — "what did the auth migration cost", which
-                until now was a sum you did by hand. Rendered only once a tag
-                has spend: on an instance that doesn't use tags this is an
-                empty table saying nothing, not a feature. A multi-tagged
-                task's spend counts toward each of its tags, so this column
-                deliberately does not sum to the project spend above it. */}
+            {/* Tags leaderboard: "what did the auth migration cost". Rendered
+                only once a tag has spend: on an instance that doesn't use tags
+                this is an empty table saying nothing, not a feature. A
+                multi-tagged task's spend counts toward each of its tags, so
+                this column does not sum to the project spend above it. */}
             {tagRows.length > 0 && (
               <section className="in-card" style={{ padding: 0, overflow: "hidden" }}>
                 <div className="in-card-h" style={{ padding: "17px 20px 14px" }}>

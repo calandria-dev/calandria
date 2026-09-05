@@ -13,10 +13,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   // Lazily start the ticker: a dev boot that missed the self-ping still works.
   const { startScheduler, schedulerHealth } = await import("@/lib/scheduler");
   startScheduler();
-  // `runs` is a 5-row history window (scheduled_for DESC) — after enough skips
+  // `runs` is a 5-row history window (scheduled_for DESC): after enough skips
   // pile up on top of it, the actually-running row that's blocking them falls
   // out of that window entirely. The client's Stop control needs the live run
-  // named explicitly rather than found by scanning a truncated list.
+  // named explicitly instead of found by scanning a truncated list.
   const schedules = listSchedules(id).map((s) => ({ ...s, last_run: lastRun(s.id), runs: listRuns(s.id, 5), active_run: activeRun(s.id) }));
   return NextResponse.json({ schedules, scheduler: schedulerHealth() });
 }
@@ -33,7 +33,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (typeof body?.prompt !== "string" || !body.prompt.trim()) return NextResponse.json({ error: "prompt required" }, { status: 400 });
   // Both objects are project-scoped, so a cross-project link would fire the
   // wrong repo's recipe under this schedule's name. Refused at save time as
-  // well as at fire time (resolveScheduleRecipe) — a 400 now beats a red run
+  // well as at fire time (resolveScheduleRecipe): a 400 now beats a red run
   // tomorrow morning that nobody is awake to read.
   if (body.runbook_id !== undefined && body.runbook_id !== null) {
     if (typeof body.runbook_id !== "string") return NextResponse.json({ error: "runbook_id must be a string or null" }, { status: 400 });
@@ -47,8 +47,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: `priority must be one of: ${PRIORITIES.join(", ")}` }, { status: 400 });
   }
   try {
-    // createSchedule computes next_fire_at and throws on an unusable spec — a
-    // 400 now beats a schedule that silently never fires.
+    // createSchedule computes next_fire_at and throws on an unusable spec, so
+    // a 400 now beats a schedule that never fires.
     const schedule = createSchedule({
       project_id: id,
       name: String(body.name).trim(),

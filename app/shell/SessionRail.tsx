@@ -12,7 +12,7 @@ type Tab = "diff" | "preview" | "context";
 type Session = { n: number; summaryBefore: string | null };
 
 // The live URL a project's dev server is reachable at when no registered
-// service reports one — local dev hits the project's stable port directly.
+// service reports one: local dev hits the project's stable port directly.
 function fallbackUrl(project: ProjectRow): string | null {
   return project.port ? `http://localhost:${project.port}` : null;
 }
@@ -72,16 +72,15 @@ function PreviewPane({ project }: { project: ProjectRow }) {
 
 function ContextPane({ task, sessions, running, onClear, reportsContext }: { task: TaskRow; sessions: Session[]; running: boolean; onClear: () => void; reportsContext: boolean }) {
   const pct = Math.min(100, Math.max(0, Math.round(task.context_pct)));
-  // An estimated figure is the last usage report's input side — which sums
-  // every request of a tool-heavy turn, so it over-reads. Say so rather than
-  // present spend as occupancy; the reason depends on whether this agent CAN
-  // measure (a Claude task from before measurement existed heals on its next
-  // turn; a Codex task never will).
+  // An estimated figure is the last usage report's input side, which sums every
+  // request of a tool-heavy turn, so it over-reads. The label says so instead of
+  // presenting spend as occupancy. A Claude task from before measurement existed
+  // heals on its next turn; a Codex task never will.
   const estimated = task.context_estimated && task.context_tokens > 0;
-  // No window to be a percentage OF. That is what a provider override means
-  // (lib/store.ts taskContextWindow): the catalog sizes the vendor's models and
-  // this task is running someone else's, so the count is reported bare rather
-  // than as a fraction of a number we'd be inventing.
+  // A provider override (lib/store.ts taskContextWindow) means there is no window
+  // to be a percentage of: the catalog sizes the vendor's models, and this task is
+  // running someone else's, so the count is reported bare instead of as a
+  // fraction of an invented number.
   const unknownWindow = !(task.context_window > 0);
   const note = unknownWindow
     ? "This task runs on a model Calandria can't size — a local or custom endpoint names its own models and doesn't publish their context windows. The token count is real; the percentage would not be."
@@ -131,18 +130,18 @@ export function SessionRail({ project, task, sessions, running, reportsContext =
   onResolveWithAI: (taskId: string) => Promise<ResolveResult>;
   onMerged?: () => void;
   onPrCreated?: (url: string) => void;
-  onSyncChanged?: () => void; // Changes mutated the merge state — see TaskChanges
+  onSyncChanged?: () => void; // Changes mutated the merge state, see TaskChanges
   // Bumped by the parent to bring the DIFF tab forward (the sync banner's
   // "Review" for a resolved merge): the tab is this rail's own state, so a
   // counter is the only way in from outside without lifting it.
   focusDiff?: number;
   refreshChanges?: number; // bumped when something outside this rail (the sync banner) changed the merge state
   onClear: () => void; onCollapse: () => void; onSwitchToChat: () => void;
-  onSend: (t: string) => void; // review comments' "Send to agent" — same path chat uses
+  onSend: (t: string) => void; // review comments' "Send to agent", same path chat uses
 }) {
   // PREVIEW (project live-URL view) rides on the remote-execution backend, which
-  // isn't real yet — keep it behind a flag (default off) so it ships only once
-  // the live URL actually works. See lib/features.ts.
+  // isn't real yet, so it stays behind a flag (default off) until the live URL
+  // works. See lib/features.ts.
   const showPreview = clientFeatures().livePreview;
   const [tab, setTab] = useState<Tab>("diff");
   useEffect(() => { if (focusDiff) setTab("diff"); }, [focusDiff]);

@@ -6,13 +6,14 @@ import { safeRedirectPath } from "@/lib/auth/local-origin.mjs";
 
 export const dynamic = "force-dynamic";
 
-// Session → service-host handoff for private (and shared) services. This route
-// lives on the APP hostname, so middleware.ts has already enforced the
-// instance's normal session auth before we get here — reaching this handler IS
-// the proof of identity. We mint a short-lived slug-bound token and bounce the
-// browser to <slug>--<host>/__calandria/auth, where the service router swaps it for
-// a host-scoped gate cookie (lib/service-router.mjs). The token never outlives
-// the hop by much, and only ever admits to the one service.
+// Session to service-host handoff for private (and shared) services. This
+// route lives on the APP hostname, so middleware.ts has already enforced the
+// instance's normal session auth before this handler runs; reaching this
+// handler is proof of identity. It mints a short-lived slug-bound token and
+// bounces the browser to <slug>--<host>/__calandria/auth, where the service
+// router swaps it for a host-scoped gate cookie (lib/service-router.mjs). The
+// token never outlives the hop by much, and only ever admits to the one
+// service.
 const HOP_TTL_MS = 5 * 60 * 1000;
 
 export async function GET(req: Request) {
