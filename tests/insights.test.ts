@@ -104,6 +104,11 @@ describe("merge line stats", () => {
 describe("getInsightsData", () => {
   it("buckets usage by local day and stamps the agent", () => {
     const { project, task } = makeProjectTask();
+    const dayKey = (t: number) => {
+      const d = new Date(t);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    };
+    const before = dayKey(Date.now());
     addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "claude", usage: usage() });
     addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "codex", usage: usage({ cost_usd: 0.5 }) });
     // A third agent id is a third bucket and nothing else: the ledger stores
@@ -120,10 +125,11 @@ describe("getInsightsData", () => {
     expect(claude.inp).toBe(100);
     expect(claude.cr).toBe(1000);
     expect(mine.find((u) => u.a === "codex")!.cost).toBeCloseTo(0.5);
-    // local-day key, not UTC: matches what the client generates from new Date()
-    const today = new Date();
-    const key = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-    expect(claude.d).toBe(key);
+    // local-day key, not UTC: matches what the client generates from new Date().
+    // Bracketed rather than pinned to one instant, because addUsage stamps its
+    // own Date.now() and a run crossing local midnight in between would compare
+    // two different days.
+    expect([before, dayKey(Date.now())]).toContain(claude.d);
   });
 
   it("aggregates merges and shipped tasks, and honors the since cutoff", () => {

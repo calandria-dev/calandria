@@ -30,6 +30,7 @@ import { createProject, createTask, getTask, listMessages } from "@/lib/store";
 import { startResumeTurn } from "@/lib/runner";
 import { subscribe } from "@/lib/events";
 import type { Project, Task, StreamEvent, TaskStreamEvent } from "@/lib/types";
+import { oneShotIn } from "./wakeFixture";
 
 type StopHook = (input: unknown) => Promise<unknown>;
 type QueryArgs = { prompt: AsyncIterable<unknown>; options: { hooks?: { Stop?: { hooks: StopHook[] }[] } } };
@@ -55,12 +56,6 @@ const init = { type: "system", subtype: "init", session_id: "sess-1" };
 const text = (t: string) => ({ type: "assistant", message: { content: [{ type: "text", text: t }] } });
 const result = (cost: number) => ({ type: "result", subtype: "success", result: "ok", total_cost_usd: cost, usage: { input_tokens: 1, output_tokens: 2 } });
 const BG = [{ id: "bg1", type: "shell", status: "running", description: "sleep 5", command: "sleep 5" }];
-// One-shot as the Stop hook reports it: wall-clock minute only, local time.
-function oneShotIn(minutes: number, id = "w1") {
-  const d = new Date(Date.now() + minutes * 60_000);
-  const hhmm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  return { cron: { id, schedule: `${d.getMinutes()} ${d.getHours()} * * *`, recurring: false, prompt: "WAKE: check the build" }, hhmm };
-}
 const LOOP = { id: "l1", schedule: "* * * * *", recurring: true, prompt: "TICK: poll CI" };
 
 const project = { id: "p1", name: "P", repo_path: "/tmp/repo", context: "" } as Project;
@@ -81,7 +76,7 @@ beforeEach(() => {
 
 describe("one-shot wakeup (unbounded linger)", () => {
   it("lingers on the wakeup and treats the bare wake init as the resume signal", async () => {
-    const { cron, hhmm } = oneShotIn(2);
+    const { cron, when } = oneShotIn(2);
     let inputClosedEarly = false;
     let lingerOver = false;
     mockCli(async function* ({ stop, nextInput }) {
@@ -106,9 +101,9 @@ describe("one-shot wakeup (unbounded linger)", () => {
 
     const [pending] = pendings(events);
     expect(pending.tasks).toEqual([{ id: "w1", kind: "wakeup", description: "WAKE: check the build", wakeAt: expect.any(Number) }]);
-    expect(pending.note).toBe(`waiting to wake at ${hhmm}`);
+    expect(pending.note).toBe(`waiting to wake at ${when}`);
     const [resumed] = resumes(events);
-    expect(resumed).toEqual({ type: "background_resumed", status: "woke", summary: `Scheduled wakeup fired (${hhmm}): WAKE: check the build` });
+    expect(resumed).toEqual({ type: "background_resumed", status: "woke", summary: `Scheduled wakeup fired (${when}): WAKE: check the build` });
     // Wake precedes the continuation's text; nothing was cancelled.
     const kinds = events.map((e) => e.type);
     expect(kinds.indexOf("background_resumed")).toBeLessThan(kinds.lastIndexOf("assistant"));
@@ -117,7 +112,7 @@ describe("one-shot wakeup (unbounded linger)", () => {
   });
 
   it("names the wakeup when the session dies under it (transport error → close)", async () => {
-    const { cron, hhmm } = oneShotIn(3);
+    const { cron, when } = oneShotIn(3);
     mockCli(async function* ({ stop, nextInput }) {
       await nextInput();
       yield init;
@@ -130,7 +125,7 @@ describe("one-shot wakeup (unbounded linger)", () => {
     expect(pendings(events)).toHaveLength(1);
     expect(events.some((e) => e.type === "error")).toBe(true);
     expect(notices(events)).toEqual([
-      `⏰ Scheduled wakeup cancelled (the session closed before it fired): at ${hhmm}, "WAKE: check the build". It will not fire; nothing re-invokes this session on its own.`,
+      `⏰ Scheduled wakeup cancelled (the session closed before it fired): at ${when}, "WAKE: check the build". It will not fire; nothing re-invokes this session on its own.`,
     ]);
   });
 
@@ -182,7 +177,7 @@ describe("recurring cron (/loop shape)", () => {
     expect(pendings(events)).toHaveLength(3);
     for (const p of pendings(events)) {
       expect(p.tasks[0]).toMatchObject({ id: "l1", kind: "cron", description: "TICK: poll CI" });
-      expect(p.note).toMatch(/^wakes on `\* \* \* \* \*`, next \d\d:\d\d$/);
+      expect(p.note).toMatch(/^wakes on `\* \* \* \* \*`, next (?:\w{3} )?\d\d:\d\d$/);
     }
     expect(resumes(events).map((r) => r.status)).toEqual(["woke", "woke", "woke"]);
     expect(resumes(events)[0].summary).toBe("Scheduled wakeup fired (`* * * * *`): TICK: poll CI");
@@ -206,7 +201,7 @@ describe("runner + driver cron linger (persisted state)", () => {
   it("persists the wake note on the row, clears it on wake, and records the wake as a system line", async () => {
     const proj = createProject({ name: "Cron" });
     const row = createTask({ project_id: proj.id, title: "T", description: "" });
-    const { cron, hhmm } = oneShotIn(2);
+    const { cron, when } = oneShotIn(2);
 
     mockCli(async function* ({ stop, nextInput }) {
       await nextInput();
@@ -237,7 +232,7 @@ describe("runner + driver cron linger (persisted state)", () => {
     await done;
     unsub();
 
-    expect(seen.pending).toEqual({ background_pending: 1, background_note: `waiting to wake at ${hhmm}`, running: 1, awaiting_input: 0 });
+    expect(seen.pending).toEqual({ background_pending: 1, background_note: `waiting to wake at ${when}`, running: 1, awaiting_input: 0 });
     expect(seen.resumed).toEqual({ background_pending: 0, background_note: "", running: 1, awaiting_input: 0 });
     const after = getTask(row.id)!;
     expect(after.background_pending).toBe(0);
@@ -245,7 +240,7 @@ describe("runner + driver cron linger (persisted state)", () => {
     expect(after.running).toBe(0);
 
     const messages = listMessages(row.id);
-    expect(messages.some((m) => m.role === "system" && m.content.includes(`Scheduled wakeup fired (${hhmm}): WAKE: check the build`))).toBe(true);
+    expect(messages.some((m) => m.role === "system" && m.content.includes(`Scheduled wakeup fired (${when}): WAKE: check the build`))).toBe(true);
     expect(messages.filter((m) => m.role === "assistant").map((m) => m.content)).toEqual(["SCHEDULED", "DONE"]);
   });
 });
