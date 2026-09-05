@@ -50,7 +50,10 @@ afterEach(() => {
   offWatcher = null;
   delete process.env.FAKE_CODEX_LOG;
   delete process.env.FAKE_CODEX_SCENARIO;
-  for (const d of tmp.splice(0)) fs.rmSync(d, { recursive: true, force: true });
+  // Retried: on Windows the fake's node process, whose cwd is the worktree,
+  // exits a few ms after the turn's process teardown, and a directory that is
+  // some process's cwd can't be removed until then (EBUSY).
+  for (const d of tmp.splice(0)) fs.rmSync(d, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
 });
 
 function worktree(): { repo: string; wt: string } {
