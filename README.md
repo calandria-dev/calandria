@@ -238,7 +238,10 @@ except in a container, where Antigravity needs one, since its CLI stores its
 token in the OS keyring. The same five permission modes apply to every agent:
 a Codex task maps them onto Codex's sandbox and approval policy, its approval
 requests land on the same permission card a Claude prompt does, and a
-sandboxed Codex turn can still commit from its worktree.
+sandboxed Codex turn can still commit from its worktree. On a Linux host that
+blocks the user namespaces Codex's sandbox needs, Settings → Agents says so on
+the Codex card with the fix, and the sandboxed modes are refused rather than run
+as turns whose every command fails.
 
 [Agent support, permissions, and usage details](docs/AGENTS.md)
 

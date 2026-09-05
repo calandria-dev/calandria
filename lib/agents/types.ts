@@ -424,4 +424,23 @@ export interface AgentDriver {
   verify(): Promise<AgentVerifyResult>;
   /** The per-token API-key path, if this agent supports one (else undefined). */
   apiKey?: AgentApiKeyAuth;
+  /**
+   * Whether the agent's own sandbox can actually be created on this host.
+   * A working login and a working sandbox are separate facts and fail
+   * separately: Codex on a kernel that denies unprivileged user namespaces
+   * signs in fine and then fails every command of every sandboxed turn
+   * (lib/agents/codex/sandbox.ts). Optional, because an agent that runs
+   * unsandboxed has nothing to report; the implementer records its own verdict
+   * as a side effect, so the caller only decides WHEN to ask.
+   */
+  sandboxHealth?(): Promise<AgentSandboxHealth>;
+}
+
+export interface AgentSandboxHealth {
+  /** False only when a sandboxed turn is known to be unable to run a command. */
+  ok: boolean;
+  /** The agent's own words for what failed, when it isn't ok. */
+  reason: string | null;
+  /** The check couldn't run at all — neither healthy nor broken. */
+  error: string | null;
 }

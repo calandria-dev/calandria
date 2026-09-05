@@ -223,3 +223,53 @@ export function clearAgentAuthBroken(agentId: string): boolean {
   setSetting(brokenKey(agentId), null);
   return true;
 }
+
+// ---------- broken-sandbox flag (the login works, the sandbox doesn't) ----------
+// Same shape and the same reasoning as the broken-connection flag above, for a
+// different failure: the credentials are fine and the agent starts, but its
+// host-level sandbox cannot be created, so every command inside a sandboxed
+// turn fails. On Linux that is Codex's bubblewrap needing unprivileged user
+// namespaces, which Ubuntu 24.04 denies by default
+// (kernel.apparmor_restrict_unprivileged_userns=1); the only signal is a
+// `configWarning` the app-server pushes at startup.
+//
+// A SEPARATE key rather than a reuse of agent_auth_broken_<id>, because the two
+// send the user to different fixes. Reconnecting a perfectly good login does
+// nothing here, and the titlebar's "sign in again" banner would be a wrong
+// instruction shown instance-wide. Stored the same way ("<epoch ms>|<reason>")
+// so the card can say how long it has been like this.
+
+export interface AgentSandboxBroken {
+  /** When the broken sandbox was first seen (epoch ms). */
+  at: number;
+  /** The agent's own warning text, so the card shows what actually failed. */
+  reason: string;
+}
+
+const sandboxKey = (agentId: string) => `agent_sandbox_broken_${agentId}`;
+
+export function getAgentSandboxBroken(agentId: string): AgentSandboxBroken | null {
+  const raw = getSetting(sandboxKey(agentId));
+  if (!raw) return null;
+  const sep = raw.indexOf("|");
+  const at = Number(sep === -1 ? raw : raw.slice(0, sep));
+  return { at: Number.isFinite(at) ? at : 0, reason: sep === -1 ? "" : raw.slice(sep + 1) };
+}
+
+/**
+ * Record that this agent's sandbox can't start. Returns true only the FIRST
+ * time, matching markAgentAuthBroken() so a caller that announces does it once
+ * per outage; the `at` timestamp survives repeats.
+ */
+export function markAgentSandboxBroken(agentId: string, reason: string, at: number): boolean {
+  const prev = getAgentSandboxBroken(agentId);
+  setSetting(sandboxKey(agentId), `${prev?.at ?? at}|${reason}`);
+  return !prev;
+}
+
+/** Clear the flag. Returns true if it was actually set (i.e. this healed it). */
+export function clearAgentSandboxBroken(agentId: string): boolean {
+  if (!getSetting(sandboxKey(agentId))) return false;
+  setSetting(sandboxKey(agentId), null);
+  return true;
+}

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { listDrivers, DEFAULT_AGENT } from "@/lib/agents/registry";
 import { getSetting } from "@/lib/store";
-import { getAgentConnection, getAgentAuthBroken } from "@/lib/agents/connections";
+import { getAgentConnection, getAgentAuthBroken, getAgentSandboxBroken } from "@/lib/agents/connections";
 import { resolveUtilityAgent } from "@/lib/agents/oneshots";
 import { LITELLM_ADMIN_KEY_SET, LITELLM_BASE_URL, LITELLM_MCP, LOCAL_MODEL_BASE_URL } from "@/lib/config";
 import { endpointModels, summarizeEndpoint } from "@/lib/modelEndpoint";
@@ -109,6 +109,13 @@ export async function GET() {
         // reconnect. Drives the titlebar reconnect banner; a tab that missed the
         // live event picks it up here on load / SSE reconnect.
         authBroken: getAgentAuthBroken(d.id),
+        // The login is fine and the agent's own SANDBOX is not, so every
+        // sandboxed turn would fail every command it ran. Recorded at connect
+        // time and from a turn's own startup warnings, never probed here: this
+        // route runs on every page load and the check is a process spawn
+        // (lib/agents/codex/sandbox.ts). Drives the card's warning, and the
+        // driver refuses the affected modes rather than running them.
+        sandboxBroken: getAgentSandboxBroken(d.id),
       };
     }),
   });

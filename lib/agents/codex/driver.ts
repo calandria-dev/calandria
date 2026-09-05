@@ -38,6 +38,7 @@ import { codexStatus, verifyCodexTurn, startCodexLogin, getCodexLogin, submitCod
 import { agentTurnEnv } from "../../agentEnv";
 import { codexProviderConfig } from "./provider";
 import { verifyCodexProvider } from "./providerCheck";
+import { sandboxRefusal, noteCodexSandboxWarning, noteCodexSandboxHealthy, probeCodexSandbox } from "./sandbox";
 import { getCodexPlanUsage } from "./planUsage";
 import { codexRunPolicy, neverAskPolicy, resolveCodexMode, type CodexRunPolicy } from "./policy";
 import { runAppServerTurn } from "./appServerTurn";
@@ -239,6 +240,17 @@ async function* runTurn(
   // Prefer the task's isolated worktree; fall back to the shared repo path.
   const cwd = task.worktree_path || project.repo_path || process.cwd();
   const policy = codexRunPolicy(permission, cwd, { downgraded: approvalDowngraded() });
+
+  // The host has already told us its sandbox can't be created, and this mode
+  // needs one. Refuse before spending a turn: it would start, look normal, and
+  // fail every command it ran (lib/agents/codex/sandbox.ts). The message names
+  // the fixes, bypassPermissions among them, since that mode uses no sandbox.
+  const refusal = sandboxRefusal(policy.sandbox);
+  if (refusal) {
+    yield { type: "error", content: refusal };
+    return;
+  }
+
   const gatewayServers = gatewayMcpForPermission(project, task, permission);
 
   // …and before spending anything on it, make the CLI confirm the mapping took.
@@ -284,6 +296,18 @@ async function* runTurn(
   };
 
   if (CODEX_TRANSPORT === "app-server") {
+    // Every configWarning the server pushes goes to both classifiers: one
+    // decides whether the CLI downgraded our approval policy, the other
+    // whether its sandbox is dead. A turn that ends without the second one
+    // having fired is proof from a freshly spawned server that the sandbox
+    // works, so it clears the flag — a user who has just fixed their sysctl
+    // doesn't have to find a button.
+    let sandboxWarned = false;
+    let sawSession = false;
+    const onWarning = (text: string) => {
+      noteApprovalDowngrade(text);
+      if (noteCodexSandboxWarning(text)) sandboxWarned = true;
+    };
     for await (const out of runAppServerTurn({
       task,
       project,
@@ -297,14 +321,22 @@ async function* runTurn(
       policy,
       state,
       abort: abortController,
-      onWarning: noteApprovalDowngrade,
+      onWarning,
       bin: CODEX_CLI_PATH || undefined,
     })) {
-      if (out.type === "session") sessionId = out.sessionId;
+      if (out.type === "session") {
+        sessionId = out.sessionId;
+        sawSession = true;
+      }
       if (out.type === "error") noteApprovalDowngrade(out.content);
       yield out;
       persistBaseline();
     }
+    // A session id means the server handshook and opened a thread, which is
+    // past the point its startup warnings arrive. Without that proof the turn
+    // may have died before the server said anything, and silence from a server
+    // that never spoke must not retract a warning that is still true.
+    if (sawSession && !sandboxWarned) noteCodexSandboxHealthy();
     yield { type: "done", sessionId };
     return;
   }
@@ -548,5 +580,9 @@ export const codexDriver: AgentDriver = {
   submitLoginCode: submitCodexCode,
   cancelLogin: cancelCodexLogin,
   verify: verifyCodexTurn,
+  // Codex is the one shipped agent with a host-level sandbox of its own, so it
+  // is the one that can have a working login and a dead sandbox at the same
+  // time (lib/agents/codex/sandbox.ts).
+  sandboxHealth: probeCodexSandbox,
   apiKey: codexApiKey,
 };

@@ -354,10 +354,15 @@ export type AgentInfoT = {
   connected: boolean;
   account: { email: string | null; plan: string | null; method: "subscription" | "api_key" } | null;
   authBroken?: AgentAuthBrokenT | null;
+  sandboxBroken?: AgentSandboxBrokenT | null;
 };
 // Connected, but its login stopped working mid-flight (see lib/authFailure.ts).
 // `reason` is the provider's own error text; `at` is when it was first seen.
 export type AgentAuthBrokenT = { at: number; reason: string };
+// The agent's own sandbox can't be created on this host, so its sandboxed
+// permission modes would fail every command (lib/agents/codex/sandbox.ts).
+// Separate from authBroken because the fix is a host change, not a sign-in.
+export type AgentSandboxBrokenT = { at: number; reason: string };
 export type AgentsResponseT = { default: string; agents: AgentInfoT[]; utility?: UtilityAgentT; local_base_url?: string; local_endpoint?: EndpointStatusT; gateway_base_url?: string | null; gateway_keys_enabled?: boolean; gateway_mcp_enabled?: boolean; gateway?: GatewayHealthT | null };
 // Which agent actually runs the app's project-scoped internal jobs (recaps,
 // context drafts), resolved connected-first on the server (lib/agents/oneshots).
@@ -410,7 +415,7 @@ export interface AgentCapabilities {
 // API-PRICE EQUIVALENT rather than a charge; "api_key" means it really is billed.
 // Mirrors lib/agents/connections.ts AgentConnection; null when not connected.
 export interface AgentAccount { email: string | null; plan: string | null; method: "subscription" | "api_key" }
-export interface AgentInfo { id: string; label: string; capabilities: AgentCapabilities; authenticated: boolean; account?: AgentAccount | null; authBroken?: AgentAuthBrokenT | null }
+export interface AgentInfo { id: string; label: string; capabilities: AgentCapabilities; authenticated: boolean; account?: AgentAccount | null; authBroken?: AgentAuthBrokenT | null; sandboxBroken?: AgentSandboxBrokenT | null }
 // `local_base_url` is where the project settings' "Local model" preset points
 // by default — the instance's CALANDRIA_LOCAL_MODEL_BASE_URL, served here so
 // the form writes the instance's answer rather than a guess.
