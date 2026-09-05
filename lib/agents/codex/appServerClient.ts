@@ -28,6 +28,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { resolveCodexBin } from "./bin";
 import { spawnSpec } from "../../binPath";
+import { hasProcessGroups, killTree } from "../../processTree";
 
 // Only echoed back inside the server's `userAgent` string.
 const CLIENT_INFO = { name: "calandria", title: "Calandria", version: "1" };
@@ -162,8 +163,14 @@ export class AppServerClient {
   }
 
   /**
-   * Stop the process. SIGTERM first so the CLI can flush its rollout, then
-   * SIGKILL if it lingers. Idempotent.
+   * Stop the process. POSIX: SIGTERM first so the CLI can flush its rollout,
+   * then SIGKILL if it lingers. win32: the whole tree at once, forced —
+   * the direct child is cmd.exe wrapping a `.cmd` shim, and killing it alone
+   * leaves the CLI behind it running (measured on the Windows CI runner: the
+   * fake's node process kept the worktree as its cwd until the suite gave up
+   * removing it). `taskkill /T` walks the parent chain, so it has to run
+   * while the parent is still alive, which is why it isn't an escalation.
+   * Idempotent.
    */
   close(graceMs = 1500): void {
     if (this.closed) return;
@@ -172,6 +179,20 @@ export class AppServerClient {
     if (!child || child.exitCode !== null || child.signalCode !== null) return;
     try {
       child.stdin?.end();
+    } catch {
+      /* already gone */
+    }
+    if (!hasProcessGroups()) {
+      if (!killTree(child.pid ?? 0, "SIGKILL")) {
+        try {
+          child.kill();
+        } catch {
+          /* already gone */
+        }
+      }
+      return;
+    }
+    try {
       child.kill("SIGTERM");
     } catch {
       /* already gone */
