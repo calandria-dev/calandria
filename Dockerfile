@@ -180,9 +180,21 @@ RUN set -eu; \
       arm64) manifest=linux_arm64; sha="${AGY_SHA512_ARM64}" ;; \
       *) echo "unsupported architecture for the agy CLI: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
+    # Fetched and checked on its OWN, because a network failure here must not be
+    # reported as a stale pin. Written as `url="$(curl … | sed …)"` the status is
+    # the PIPELINE's, which is sed's, and sed exits 0 on empty input — so `set -e`
+    # never saw a dead curl, the empty url fell through to the version guard
+    # below, and the build failed with "manifest no longer serves AGY_VERSION"
+    # and `(got )`, sending the next reader to bump a pin that was fine. Observed
+    # 2026-09-05: curl (35), connection reset, on the amd64 builder while arm64
+    # built the same commit against the same manifest. Retried for the same
+    # reason — it is the one network read in an otherwise hermetic step.
+    manifest_json="$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 --max-time 60 \
+                       "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/${manifest}.json")" \
+      || { echo "could not fetch the agy ${manifest} manifest: NETWORK failure, not a stale AGY_VERSION" >&2; exit 1; }; \
     # The download URL carries an opaque build id after the version, so it is
     # read from the manifest rather than templated from AGY_VERSION alone.
-    url="$(curl -fsSL "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/${manifest}.json" \
+    url="$(printf '%s' "$manifest_json" \
             | sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"; \
     # The manifest always serves the LATEST build, so a stale pin has to fail the
     # build loudly rather than install a version whose checksum we never reviewed.
@@ -190,7 +202,7 @@ RUN set -eu; \
       *) echo "manifest no longer serves AGY_VERSION=${AGY_VERSION} (got ${url}); bump the ARG and both SHA-512s" >&2; exit 1 ;; \
     esac; \
     workdir="$(mktemp -d)"; \
-    curl -fsSL -o "${workdir}/agy.tar.gz" "$url"; \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "${workdir}/agy.tar.gz" "$url"; \
     echo "${sha}  ${workdir}/agy.tar.gz" | sha512sum -c -; \
     tar -xzf "${workdir}/agy.tar.gz" -C "${workdir}"; \
     install -m 0755 "$(find "${workdir}" -type f -name antigravity | head -1)" /usr/local/bin/agy; \
