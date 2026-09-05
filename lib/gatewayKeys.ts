@@ -1,42 +1,15 @@
-// Per-task LiteLLM virtual keys and exact spend reconciliation
-// (docs/design/litellm.md, "Per-task virtual keys"). Opt-in behind
-// CALANDRIA_LITELLM_ADMIN_KEY: unset, this whole module is inert and every
-// gateway turn keeps running on the shared instance key.
+// Per-task LiteLLM virtual keys and spend reconciliation (docs/AGENTS.md).
+// Opt-in behind CALANDRIA_LITELLM_ADMIN_KEY: unset, this module is inert and
+// every gateway turn runs on the shared instance key.
 //
-// SDK-free and Node-free beyond fetch (lib/store.ts for the task's key column,
-// lib/retention.ts for the terminal/idle predicate, lib/agentEnv.ts for the
-// provider description) — mirrors lib/gatewayHealth.ts and lib/gatewayModels.ts,
-// so it can sit beside them in tests/importGraph.test.ts's SDK-free PINNED set.
-// Must never import lib/runner.ts or lib/agents/registry.ts: lib/runner.ts
-// imports THIS module (to mint a key before a turn and reconcile spend after
-// one), and the opposite edge would be the exact cycle CLAUDE.md's "nothing
-// behind registry.ts may import a launcher back" warns about.
+// SDK-free and Node-free beyond fetch (tests/importGraph.test.ts pins the
+// set). Must never import lib/runner.ts or lib/agents/registry.ts, since
+// lib/runner.ts imports this module and the reverse edge would cycle.
 //
-// Three operations, each best-effort and never blocking the turn it's part of:
-//
-//  - mint (ensureTaskGatewayKey): POST /key/generate on a task's first gateway
-//    turn, called from lib/runner.ts before the driver runs. Idempotent — a
-//    task that already has a key just reuses it — and silent on failure: no
-//    admin key, no gateway, a non-gateway task, or an unreachable/DB-less
-//    proxy all fall back to the instance key exactly as if this module didn't
-//    exist. The one thing it does on failure is log ONCE, instance-wide,
-//    since a live turn is the wrong place to surface a config problem loudly
-//    (the gateway health card already says "Database not connected" for the
-//    same underlying condition).
-//  - delete (deleteTaskGatewayKey): POST /key/delete when a task reaches a
-//    terminal status (called from lib/autoStart.ts's maybeAutoStartDependents,
-//    the one place every terminal-transition call site already converges —
-//    see its own comment) and again from sweepPrunableGatewayKeys(), the
-//    backstop lib/scheduler.ts's ticker runs alongside the retention sweep,
-//    for any task that went terminal without that call ever firing (a crash,
-//    a bug, a direct DB edit).
-//  - reconcile (reconcileTaskGatewaySpend): GET /key/info after a turn ends,
-//    fired-and-forgotten from lib/runner.ts's finally so it can never delay
-//    turn_end or interleave with that block's synchronous settle. Writes a
-//    CORRECTING task_usage row — the delta between LiteLLM's cumulative spend
-//    and the baseline this module last recorded — rather than a second
-//    estimate, so a task's total ends up EXACTLY what LiteLLM's own ledger
-//    says regardless of what the live per-turn estimate guessed.
+// Three best-effort, non-blocking operations: mint (ensureTaskGatewayKey) on
+// a task's first gateway turn, delete (deleteTaskGatewayKey) when a task
+// goes terminal, and reconcile (reconcileTaskGatewaySpend) after a turn ends
+// to correct spend against LiteLLM's own ledger.
 
 import { LITELLM_ADMIN_KEY, LITELLM_KEY_TIMEOUT_MS } from "./config";
 import { gatewayBaseUrl, taskProvider } from "./agentEnv";
@@ -59,11 +32,11 @@ function reason(e: unknown): string {
   return /timed? ?out|abort/i.test(m) ? "timed out" : m.replace(/^TypeError: /, "");
 }
 
-// Logged once, instance-wide, per kind of failure — a live turn is the wrong
-// place for a config problem to shout, and the gateway health card (Settings
+// Logged once, instance-wide, per kind of failure: a live turn is the wrong
+// place to surface a config problem, and the gateway health card (Settings
 // -> Agents) already states the "Database not connected" case for /key/info.
-// Reset on the next SUCCESS of the same kind, so a fixed instance logs again
-// if it breaks a second time rather than staying silent forever.
+// Reset on the next success of the same kind, so a fixed instance logs again
+// if it breaks a second time instead of staying silent forever.
 const store = globalThis as { __calandriaGatewayKeyWarned?: Set<string> };
 const warned = (store.__calandriaGatewayKeyWarned ??= new Set());
 function warnOnce(kind: string, detail: string): void {
@@ -95,9 +68,9 @@ async function adminCall(path: string, body: unknown): Promise<{ ok: true; body:
     });
     const text = await r.text().catch(() => "");
     if (!r.ok) {
-      // The documented no-database answer (measured: 500 "Database not
-      // connected"), not a transient outage — distinguished so the one log
-      // line names the actual cause rather than a bare status code.
+      // The documented no-database response (500 "Database not connected"),
+      // distinguished from a transient outage so the log line names the
+      // actual cause instead of a bare status code.
       const detail = /database not connected|db not connected/i.test(text)
         ? "LiteLLM has no database (key management needs one)"
         : `${r.status} ${r.statusText || "error"}${text ? `: ${text.slice(0, 200)}` : ""}`;
@@ -121,16 +94,14 @@ async function adminCall(path: string, body: unknown): Promise<{ ok: true; body:
 
 /**
  * Mint (or reuse) `task`'s LiteLLM virtual key and set it on the in-memory
- * `task` object — the same self-heal-in-place pattern lib/runner.ts already
- * uses for `worktree_path` (see lib/runner.ts's startResumeTurn). Called from
- * `run()` before the driver runs, so `lib/agentEnv.ts`'s `agentTurnEnv()`
- * sees the real key on `task.gateway_key` when it builds the turn's env.
+ * `task` object, the same pattern lib/runner.ts uses for `worktree_path`.
+ * Called from `run()` before the driver runs, so `agentTurnEnv()`
+ * (lib/agentEnv.ts) sees the real key on `task.gateway_key`.
  *
- * A no-op (leaves `task.gateway_key` at "") when: per-task keys are off, the
- * task isn't running against the gateway at all, or the task already has a
- * key from an earlier turn — minting is a one-time event per task, not a
- * per-turn one. `project` is the task's own project row, read fresh by the
- * caller (not derived here) since lib/runner.ts already has it in scope.
+ * A no-op (leaves `task.gateway_key` at "") when per-task keys are off, the
+ * task isn't running against the gateway, or the task already has a key from
+ * an earlier turn: minting happens once per task, not once per turn.
+ * `project` comes from the caller, which already has it in scope.
  */
 export async function ensureTaskGatewayKey(task: Task, project: Project): Promise<void> {
   task.gateway_key = "";
@@ -144,25 +115,23 @@ export async function ensureTaskGatewayKey(task: Task, project: Project): Promis
   }
   const body: Record<string, unknown> = {
     key_alias: `calandria-task-${task.id}`,
-    // Naming the project and task on both metadata (LiteLLM's own UI reads
-    // this) and tags (what its spend views group and filter by) — the same
-    // pair of facts lib/agentEnv.ts's applyGatewayEnv() puts in x-litellm-tags
-    // for the instance-key path, so a per-task key's own ledger entries read
-    // the same way LiteLLM's UI already shows tagged instance-key spend.
+    // Names the project and task on both metadata (LiteLLM's UI reads this)
+    // and tags (what its spend views group and filter by), matching what
+    // applyGatewayEnv() (lib/agentEnv.ts) puts in x-litellm-tags for the
+    // instance-key path, so ledger entries read consistently either way.
     metadata: { calandria_project: project.id, calandria_project_name: project.name, calandria_task: task.id, calandria_task_title: task.title },
     tags: ["calandria", `project:${project.id}`, `task:${task.id}`],
   };
-  // The project's picker choice, if one is pinned — omitted (LiteLLM allows
-  // every model the admin key can see) rather than sent empty, since an empty
-  // `models: []` on /key/generate means "no models allowed", the opposite of
-  // "unrestricted".
+  // The project's picker choice, if pinned. An omitted `models` means
+  // "unrestricted" (LiteLLM allows every model the admin key can see); an
+  // empty `models: []` means "no models allowed", so it stays omitted when
+  // there's no pinned choice.
   if (provider.model) body.models = [provider.model];
   if (project.gateway_max_budget != null) body.max_budget = project.gateway_max_budget;
   if (project.gateway_key_duration) body.duration = project.gateway_key_duration;
-  // Hosted MCP servers (docs/design/litellm.md, "Hosted MCP servers"): the
-  // task's resolved selection scopes the minted key itself, so a per-task key
-  // can only reach the servers this task was actually given — omitted rather
-  // than sent empty for the same reason `models` is above.
+  // Hosted MCP servers (docs/AGENTS.md): the task's resolved selection scopes
+  // the minted key itself, so a per-task key can only reach the servers this
+  // task was actually given. Left omitted when empty, same as `models` above.
   const mcp = resolveGatewayMcp(project, task);
   if (mcp.length) body.object_permission = { mcp_servers: mcp };
 
@@ -188,13 +157,12 @@ export async function ensureTaskGatewayKey(task: Task, project: Project): Promis
 /**
  * Best-effort POST /key/delete for `taskId`'s minted key, if it has one. Safe
  * to call on a task with no key (a no-op) or repeatedly (idempotent: the
- * column is cleared only once a delete is believed to have taken).
+ * column clears only once a delete is believed to have taken).
  *
- * On a network/5xx failure the column is LEFT SET rather than cleared, so
- * sweepPrunableGatewayKeys() can retry a transient failure later instead of
- * silently orphaning a live key on LiteLLM's side with no local record of it.
- * A 404-shaped "key not found" is treated as success — LiteLLM already agrees
- * there's nothing left to delete.
+ * On a network/5xx failure the column stays set, so sweepPrunableGatewayKeys()
+ * can retry later instead of orphaning a live key on LiteLLM's side with no
+ * local record of it. A 404-shaped "key not found" counts as success, since
+ * LiteLLM already agrees there's nothing left to delete.
  */
 export async function deleteTaskGatewayKey(taskId: string): Promise<void> {
   if (!gatewayKeysEnabled()) return;
@@ -210,19 +178,18 @@ export async function deleteTaskGatewayKey(taskId: string): Promise<void> {
 }
 
 /**
- * The retention backstop (docs/design/litellm.md: "again from
- * lib/retention.ts prunableTaskIds()"): any task that is terminal, idle and
- * has no pending follow-up — prunableTaskIds()'s own predicate, reused
- * verbatim rather than a second one — but still carries a live key, because
- * the real-time delete in lib/autoStart.ts's maybeAutoStartDependents()
- * didn't run for it (the process was down, a bug, a row edited directly).
+ * The retention backstop (docs/AGENTS.md): finds any task that is terminal,
+ * idle and has no pending follow-up (prunableTaskIds()'s own predicate,
+ * reused verbatim) but still carries a live key, because the real-time
+ * delete in lib/autoStart.ts's maybeAutoStartDependents() didn't run for it
+ * (a process crash, a bug, a row edited directly).
  *
- * `cutoff = now` deliberately makes prunableTaskIds() ignore its own age
- * window: a forgotten KEY is a live credential sitting on LiteLLM's proxy
- * whether the task went terminal a minute ago or six months ago, unlike the
- * transcript/usage rows retention otherwise ages out on a clock measured in
- * months. Called from lib/scheduler.ts's ticker alongside maybeSweepRetention
- * and maybeSweepWorktrees, on the same cadence, and only when keys are on.
+ * `cutoff = now` makes prunableTaskIds() ignore its own age window: a
+ * forgotten key is a live credential on LiteLLM's proxy regardless of how
+ * long ago the task went terminal, unlike transcript/usage rows, which
+ * retention ages out on a clock measured in months. Called from
+ * lib/scheduler.ts's ticker alongside maybeSweepRetention and
+ * maybeSweepWorktrees, on the same cadence, only when keys are on.
  */
 export async function sweepPrunableGatewayKeys(now = Date.now()): Promise<number> {
   if (!gatewayKeysEnabled()) return 0;
@@ -241,21 +208,20 @@ export async function sweepPrunableGatewayKeys(now = Date.now()): Promise<number
 // ---------------------------------------------------------------------------
 
 /**
- * Exact spend reconciliation (docs/design/litellm.md: "the only exact
- * per-task path" — no CLI exposes `x-litellm-response-cost` and `/spend/logs`
- * has no tag filter or pagination, BerriAI/litellm#14218). GET /key/info on
- * the task's OWN key — a key may read its own info, no admin key needed —
- * and record the delta between its cumulative `spend` and the baseline this
- * module last saw as a task_usage CORRECTION row, so the task's running total
- * ends up exactly what LiteLLM's ledger says instead of Calandria's own
- * per-token estimate (lib/gatewayPricing.ts), which still runs live during
- * the turn for the on-screen ledger to have SOMETHING to show as it streams.
+ * Exact spend reconciliation (docs/AGENTS.md): no CLI exposes
+ * `x-litellm-response-cost`, so this reads GET /key/info on the task's own
+ * key (a key may read its own info, no admin key needed) and records the
+ * delta between its cumulative `spend` and the baseline this module last
+ * saw, as a task_usage correction row. That makes the task's running total
+ * match LiteLLM's ledger exactly, replacing Calandria's own per-token
+ * estimate (lib/gatewayPricing.ts), which still runs live during the turn so
+ * the on-screen ledger has something to show as it streams.
  *
- * Called fire-and-forget from lib/runner.ts's finally — never awaited there,
- * so it cannot delay turn_end or interleave with that block's synchronous
- * settle. Guards its own staleness: if the task's key changed (rotated,
- * cleared) since the turn that's reconciling started, this is a no-op rather
- * than crediting spend to a key that's no longer the task's.
+ * Called fire-and-forget from lib/runner.ts's finally, never awaited, so it
+ * cannot delay turn_end or interleave with that block's synchronous settle.
+ * Guards its own staleness: if the task's key changed (rotated, cleared)
+ * since the turn that's reconciling started, this is a no-op instead of
+ * crediting spend to a key that's no longer the task's.
  */
 export async function reconcileTaskGatewaySpend(input: {
   taskId: string;
@@ -290,9 +256,9 @@ export async function reconcileTaskGatewaySpend(input: {
     return;
   }
   clearWarned("reconcile");
-  // Guard against a spend figure that went BACKWARDS (a key rotated/reset
-  // server-side between reads) — clamp rather than record a negative delta
-  // that would silently subtract from the task's total for no real reason.
+  // Guards against a spend figure that went backwards (a key rotated or
+  // reset server-side between reads): clamps instead of recording a negative
+  // delta that would subtract from the task's total for no real reason.
   const delta = Math.max(0, spend - state.spend);
   setTaskGatewayKeySpend(input.taskId, spend);
   if (delta < 0.000001) return;

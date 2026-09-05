@@ -1,25 +1,25 @@
-// Wall-clock scheduling math. Intl only — no deps, no DB, no SDK (pinned by
+// Wall-clock scheduling math. Intl only: no deps, no DB, no SDK (pinned by
 // tests/importGraph.test.ts).
 //
-// The whole job: given "08:30 on weekdays, America/Los_Angeles", find the next
-// UTC instant that RENDERS as that wall time in that zone. The server may be a
-// container on UTC while the user is on Pacific, and the correct instant moves
-// by an hour twice a year while the wall time does not.
+// Given "08:30 on weekdays, America/Los_Angeles", finds the next UTC instant
+// that renders as that wall time in that zone. The server may be a container
+// on UTC while the user is on Pacific, and the correct instant moves by an
+// hour twice a year while the wall time does not.
 
 export interface ScheduleSpec {
   /** Bitmask of allowed weekdays: Sun=1, Mon=2, … Sat=64. Weekdays = 62. */
   daysMask: number;
   /** 'HH:MM', 24-hour, local to `timezone`. */
   timeOfDay: string;
-  /** IANA zone name. Never an offset — offsets don't survive DST. */
+  /** IANA zone name. Never an offset: offsets don't survive DST. */
   timezone: string;
   /**
-   * 'YYYY-MM-DD' for a ONE-TIME schedule — "check in on the release at 04:00
-   * tomorrow" — or '' / undefined for the ordinary weekly one. When set,
+   * 'YYYY-MM-DD' for a one-time schedule, e.g. "check in on the release at
+   * 04:00 tomorrow", or '' / undefined for the ordinary weekly one. When set,
    * `daysMask` is ignored and there is exactly one occurrence, after which
    * `nextFireAt` returns null forever.
    *
-   * A calendar date rather than a stored instant, so the one-time job keeps the
+   * Stored as a calendar date, not an instant, so the one-time job keeps the
    * same wall-clock promise as every other: 02:30 on a spring-forward night
    * lands where `resolveWall` puts it, not an hour out.
    */
@@ -35,7 +35,7 @@ const formatters = new Map<string, Intl.DateTimeFormat>();
 function formatter(timezone: string): Intl.DateTimeFormat {
   let f = formatters.get(timezone);
   if (!f) {
-    // Throws RangeError on an unknown zone — that's the validation.
+    // Throws RangeError on an unknown zone; that's the validation.
     f = new Intl.DateTimeFormat("en-US", {
       timeZone: timezone,
       hourCycle: "h23",
@@ -69,7 +69,7 @@ function offsetAt(ms: number, timezone: string): number {
 }
 
 /**
- * The first minute at or after `lo` carrying a different offset than `lo` —
+ * The first minute at or after `lo` carrying a different offset than `lo`,
  * i.e. the instant a DST transition completes. `lo` and `hi` must straddle it.
  * Only ever called on a spring-forward gap, so the binary search is free.
  */
@@ -118,7 +118,7 @@ function parseOnceDate(onceDate: string): { year: number; month: number; day: nu
   const month = Number(m[2]);
   const day = Number(m[3]);
   // Round-trip through UTC to reject 2026-02-30 and friends, which Date would
-  // otherwise silently roll forward into March.
+  // otherwise roll forward into March with no error.
   const probe = new Date(Date.UTC(year, month - 1, day));
   if (probe.getUTCFullYear() !== year || probe.getUTCMonth() + 1 !== month || probe.getUTCDate() !== day) {
     throw new Error(`invalid once_date (no such calendar date): ${onceDate}`);
@@ -127,14 +127,14 @@ function parseOnceDate(onceDate: string): { year: number; month: number; day: nu
 }
 
 /**
- * The next firing strictly after `afterMs`. Strictly, so re-adjudicating a slot
- * we just fired can never fire it again.
+ * The next firing strictly after `afterMs`, so re-adjudicating a slot that
+ * just fired can never fire it again.
  *
  * Returns **null** when the spec has no further occurrence, which only a
  * one-time schedule (`onceDate`) can ever be: its single slot is behind
- * `afterMs`. A recurring spec always resolves or throws. Callers must land that
- * null somewhere visible — `advanceNextFire` spends the schedule rather than
- * leaving it enabled and pointed at nothing.
+ * `afterMs`. A recurring spec always resolves or throws. Callers must land
+ * that null somewhere visible: `advanceNextFire` spends the schedule instead
+ * of leaving it enabled and pointed at nothing.
  */
 export function nextFireAt(spec: ScheduleSpec, afterMs: number): { ms: number; dstAdjusted: DstAdjustment } | null {
   const { daysMask, timeOfDay, timezone, onceDate } = spec;
@@ -143,9 +143,10 @@ export function nextFireAt(spec: ScheduleSpec, afterMs: number): { ms: number; d
   const hour = Number(parsed[1]);
   const minute = Number(parsed[2]);
   if (hour > 23 || minute > 59) throw new Error(`invalid time_of_day (out of range): ${timeOfDay}`);
-  // The mask is dead weight on a one-time schedule, so it isn't validated there:
-  // the editor keeps whatever weekly selection was on screen when the user
-  // switched to Once, and a switch back must not have to survive a throw.
+  // The mask is dead weight on a one-time schedule, so it isn't validated
+  // here: the editor keeps whatever weekly selection was on screen when the
+  // user switched to Once, and a switch back must not have to survive a
+  // throw.
   if (!onceDate && (!Number.isInteger(daysMask) || daysMask <= 0 || daysMask > 127)) {
     throw new Error(`invalid days_mask (want 1–127): ${daysMask}`);
   }
@@ -161,8 +162,8 @@ export function nextFireAt(spec: ScheduleSpec, afterMs: number): { ms: number; d
     return resolved.ms > afterMs ? resolved : null;
   }
 
-  // Walk local CALENDAR dates, never epoch + 24h — the latter is wrong on a DST
-  // day by exactly the amount that matters here.
+  // Walk local calendar dates, never epoch + 24h: the latter is wrong on a
+  // DST day by exactly the amount that matters here.
   const start = partsIn(afterMs, timezone);
   for (let i = 0; i < 400; i++) {
     const nominal = new Date(Date.UTC(start.year, start.month - 1, start.day + i));
@@ -179,12 +180,10 @@ export function nextFireAt(spec: ScheduleSpec, afterMs: number): { ms: number; d
 /**
  * An instant as it reads on the schedule's own wall clock: "2026-08-14 08:30".
  *
- * Used for the minted task's title. `toISOString()` was wrong here in the one
- * way this feature cannot afford: a job the user set for 08:30 Pacific produced
- * a task titled "15:30", so the single most visible artifact of the whole
- * feature contradicted the wall-clock promise everything else is built around.
- * Falls back to UTC only if the stored zone has become unusable (a tzdata
- * removal), because a title is never worth throwing over.
+ * Used for the minted task's title, which must show the zone's local time: a
+ * job set for 08:30 Pacific needs a title that says "08:30". Falls back to
+ * UTC only if the stored zone has become unusable (a tzdata removal),
+ * because a title is never worth throwing over.
  */
 export function formatWallClock(ms: number, timezone: string): string {
   try {

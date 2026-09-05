@@ -13,9 +13,8 @@ export interface InternalJobUsage30d {
 }
 
 export function internalUsageLast30Days(): InternalJobUsage30d[] {
-  // Grouped one dimension finer than it's reported: the caller wants a job's
-  // total plus the models behind it, and folding the models in here keeps that
-  // a single read rather than a second query per row.
+  // Groups by job and model, then folds each job's models into one list so
+  // the caller gets totals plus models in a single read.
   const rows = getDb().prepare(
     `SELECT job, model, COUNT(*) AS runs, COALESCE(SUM(cost_usd), 0) AS cost_usd
        FROM internal_usage
@@ -29,8 +28,7 @@ export function internalUsageLast30Days(): InternalJobUsage30d[] {
     const entry = byJob.get(row.job) ?? { job: row.job, runs: 0, cost_usd: 0, models: [] };
     entry.runs += row.runs;
     entry.cost_usd += row.cost_usd;
-    // A run whose driver reported no model is counted, not named: it happened,
-    // we just don't know on what.
+    // A run with no reported model is still counted but left off the models list.
     if (row.model && !entry.models.includes(row.model)) entry.models.push(row.model);
     byJob.set(row.job, entry);
   }
@@ -115,7 +113,7 @@ export function addInternalUsage(input: {
   agent: string;
   requested_agent: string;
   fallback?: boolean;
-  /** What actually ran, not what was asked for. Null when the driver can't say. */
+  /** The model that actually ran. Null when the driver can't report it. */
   model?: string | null;
   project_id?: string | null;
   task_id?: string | null;

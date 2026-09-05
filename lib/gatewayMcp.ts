@@ -1,21 +1,19 @@
-// Hosted MCP servers from the LiteLLM gateway (docs/design/litellm.md,
-// "Hosted MCP servers"): the catalog probe (GET <gateway>/v1/mcp/server, GET
-// <gateway>/mcp-rest/tools/list), the per-project/per-task selection stored
-// as a JSON array of aliases, and the mount shape a driver hands to its
-// client for those aliases.
+// Hosted MCP servers from the LiteLLM gateway (docs/AGENTS.md): the catalog
+// probe (GET <gateway>/v1/mcp/server, GET <gateway>/mcp-rest/tools/list),
+// the per-project/per-task selection stored as a JSON array of aliases, and
+// the mount shape a driver hands to its client for those aliases.
 //
 // SDK-free and Node-free beyond fetch, mirroring lib/gatewayModels.ts and
-// lib/gatewayHealth.ts — so a driver (itself SDK-free) can build a turn's
+// lib/gatewayHealth.ts, so a driver (itself SDK-free) can build a turn's
 // mcpServers entry with no SDK in the graph. tests/importGraph.test.ts pins
 // the SDK-free set this belongs to.
 //
-// LiteLLM's exact JSON envelope for these two routes wasn't captured verbatim
-// in the spike's appendix beyond the field names measured (docs/design/litellm.md,
-// "LiteLLM surface": server_name, alias, description, transport, auth_type,
-// mcp_access_groups, allowed_tools; tool entries carry mcp_info.server_name).
-// Parsed tolerantly — a bare array or a `{data: [...]}` envelope, the shape
-// /model/info was measured using — so an envelope this wasn't tested against
-// degrades to an empty catalog instead of throwing.
+// LiteLLM's exact JSON envelope for these two routes isn't fully documented
+// (docs/AGENTS.md lists the known fields: server_name, alias, description,
+// transport, auth_type, mcp_access_groups, allowed_tools; tool entries carry
+// mcp_info.server_name). Parsed tolerantly, as a bare array or a `{data:
+// [...]}` envelope, so an unexpected shape degrades to an empty catalog
+// instead of throwing.
 
 import { MODEL_PROBE_MS, LITELLM_MCP } from "./config";
 import { gatewayBaseUrl, normalizeBaseUrl } from "./agentEnv";
@@ -24,9 +22,9 @@ import type { Project, Task } from "./types";
 
 // ---------- selection: projects.gateway_mcp / tasks.gateway_mcp ----------
 
-/** A JSON array of aliases, tolerant of a JSON string, an array, or garbage
- *  (which reads as "nothing selected" rather than throwing). Deduplicated and
- *  trimmed, so a stray blank entry from a form can't mount as an alias. */
+/** A JSON array of aliases, tolerant of a JSON string, an array, or garbage,
+ *  which all read as "nothing selected" instead of throwing. Deduplicated
+ *  and trimmed, so a stray blank entry from a form can't mount as an alias. */
 export function parseGatewayMcp(input: unknown): string[] {
   let raw: unknown = input;
   if (typeof raw === "string") {
@@ -51,7 +49,7 @@ export function parseGatewayMcp(input: unknown): string[] {
   return out;
 }
 
-/** The stored form of a selection — always a valid JSON array string, never
+/** The stored form of a selection: always a valid JSON array string, never
  *  what was typed. Mirrors serializeAgentEnv's contract in lib/agentEnv.ts. */
 export function serializeGatewayMcp(input: unknown): string {
   return JSON.stringify(parseGatewayMcp(input));
@@ -60,7 +58,7 @@ export function serializeGatewayMcp(input: unknown): string {
 /**
  * The effective selection for a task's turn: its own override when one is
  * SET (including an explicit "mount nothing", `[]`), else the project's.
- * `null`/`undefined` on the task is "inherit" — the same null-means-inherit
+ * `null`/`undefined` on the task is "inherit", the same null-means-inherit
  * contract `tasks.gateway_mcp`'s column comment states.
  */
 export function resolveGatewayMcp(
@@ -74,7 +72,7 @@ export function resolveGatewayMcp(
 // ---------- catalog: GET /v1/mcp/server + GET /mcp-rest/tools/list ----------
 
 export interface GatewayMcpServerInfo {
-  /** `alias || server_name` — what a turn mounts under and what canUseTool
+  /** `alias || server_name`: what a turn mounts under and what canUseTool
    *  namespaces the tools by (`mcp__<alias>__…`). */
   alias: string;
   server_name: string;
@@ -82,9 +80,9 @@ export interface GatewayMcpServerInfo {
   transport: string;
   auth_type: string;
   mcp_access_groups: string[];
-  /** oauth2 + authorization_code needs a browser sign-in a detached turn can't
-   *  perform (docs/design/litellm.md, "Auth types") — the picker marks it, but
-   *  mounts it anyway, since LiteLLM holds the token once authorised there. */
+  /** oauth2 + authorization_code needs a browser sign-in a detached turn
+   *  can't perform (docs/AGENTS.md). The picker marks it but mounts it
+   *  anyway, since LiteLLM holds the token once authorized there. */
   needs_browser_signin: boolean;
   /** Tool names from /mcp-rest/tools/list, for the picker's preview. */
   tools: string[];
@@ -102,8 +100,8 @@ function reason(e: unknown): string {
   return /timed? ?out|abort/i.test(m) ? "timed out" : m.replace(/^TypeError: /, "");
 }
 
-/** `{data: [...]}` (measured for /model/info) or a bare array — whichever
- *  this instance's LiteLLM answers with. */
+/** `{data: [...]}` (the /model/info shape) or a bare array, whichever this
+ *  instance's LiteLLM answers with. */
 function arrayify(body: unknown): unknown[] {
   if (Array.isArray(body)) return body;
   const data = body && typeof body === "object" ? (body as Record<string, unknown>).data : undefined;
@@ -114,13 +112,12 @@ function str(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
-// oauth2's browser-required grant, named literally in docs/design/litellm.md's
-// "Auth types": everything else in that list (none, api_key, bearer_token,
-// basic, oauth2 client_credentials, oauth2_token_exchange, aws_sigv4) works
-// headless. Matched loosely against whatever string shape auth_type turns out
-// to be, since the exact spelling wasn't captured — "oauth2" alone, without an
-// authorization_code marker, is assumed headless (client_credentials is the
-// other oauth2 grant this list names, and it needs no browser).
+// oauth2's browser-required grant (docs/AGENTS.md lists the auth types):
+// everything else (none, api_key, bearer_token, basic, oauth2
+// client_credentials, oauth2_token_exchange, aws_sigv4) works headless.
+// Matched loosely against whatever string shape auth_type turns out to be:
+// "oauth2" alone, with no authorization_code marker, is assumed headless,
+// since client_credentials is the other oauth2 grant and needs no browser.
 function needsBrowserSignin(authType: string): boolean {
   return /oauth ?2/i.test(authType) && /authorization[_ -]?code/i.test(authType);
 }
@@ -202,7 +199,7 @@ export async function gatewayMcpCatalog(
       for (const s of servers) s.tools = byServer.get(s.server_name) ?? byServer.get(s.alias) ?? [];
     }
   } catch {
-    /* preview only — the server list above already answered */
+    /* preview only: the server list above already answered */
   }
 
   return { base_url: base, reachable: true, servers, error: null };
@@ -216,11 +213,11 @@ export interface GatewayMcpProbe {
 }
 
 /**
- * A live JSON-RPC `tools/list` against `<gateway>/<alias>/mcp` — what a
- * project settings picker can offer as "test this server" before a turn ever
- * mounts it. A wrong key answers HTTP 400, not 401 (measured,
- * docs/design/litellm.md), so this reads the response BODY for a JSON-RPC or
- * LiteLLM error rather than trusting the status code alone.
+ * A live JSON-RPC `tools/list` against `<gateway>/<alias>/mcp`: what a
+ * project settings picker can offer as "test this server" before a turn
+ * ever mounts it. A wrong key answers HTTP 400, not 401 (docs/AGENTS.md), so
+ * this reads the response body for a JSON-RPC or LiteLLM error instead of
+ * trusting the status code alone.
  */
 export async function probeGatewayMcpMount(
   baseUrl: string | null | undefined,
@@ -248,7 +245,7 @@ export async function probeGatewayMcpMount(
   try {
     body = text ? JSON.parse(text) : null;
   } catch {
-    /* not JSON — fall through to the status-based answer below */
+    /* not JSON: fall through to the status-based answer below */
   }
   const rpcError = body && typeof body === "object" ? (body as Record<string, unknown>).error : null;
   if (rpcError) {
@@ -271,12 +268,12 @@ type GatewayMount = { alias: string; url: string; key: string };
 
 /**
  * The task's resolved hosted-MCP selection, filtered to what's actually
- * mountable — the shared gate behind every driver's mount function below.
+ * mountable: the shared gate behind every driver's mount function below.
  * `calandria` is reserved for the in-process/bridge Calandria server and is
  * dropped here even if picked, so a badly-named alias can't shadow it on any
- * driver. Independent of the task's model-provider kind: a Cloud-login Claude
- * task can still reach the gateway's hosted tools, so this only gates on
- * CALANDRIA_LITELLM_MCP, a configured gateway, and a non-empty selection —
+ * driver. Independent of the task's model-provider kind: a Cloud-login
+ * Claude task can still reach the gateway's hosted tools, so this only gates
+ * on CALANDRIA_LITELLM_MCP, a configured gateway, and a non-empty selection,
  * not on `describeProvider(...).kind === "gateway"`. No network call and no
  * catalog lookup: mounting is blind to whether the alias still exists, the
  * same way a driver doesn't re-verify a Bash binary exists before running it.
@@ -295,10 +292,10 @@ function resolvedGatewayMounts(
 
 /**
  * The `mcpServers` entries a Claude turn mounts for its resolved hosted-MCP
- * selection (docs/design/litellm.md: `mcpServers[alias] = { type: "http",
- * url: <gateway>/<alias>/mcp, headers: { "x-litellm-api-key": "Bearer …" } }`).
- * Never `Authorization` — LiteLLM reserves that header for the upstream
- * server's own OAuth (the documented collision).
+ * selection (docs/AGENTS.md): `mcpServers[alias] = { type: "http", url:
+ * <gateway>/<alias>/mcp, headers: { "x-litellm-api-key": "Bearer …" } }`.
+ * Never `Authorization`: LiteLLM reserves that header for the upstream
+ * server's own OAuth.
  */
 export function gatewayMcpServersFor(
   project: Pick<Project, "gateway_mcp"> | null | undefined,
@@ -320,12 +317,12 @@ export interface GatewayMcpCodexServer {
 
 /**
  * The `mcp_servers.<alias>` entries a Codex turn mounts for its resolved
- * hosted-MCP selection (docs/design/litellm.md, "Mounting, per driver").
- * `codex exec` has no approver, so every entry here also carries
- * `default_tools_approval_mode: "approve"` — this function is only ever
- * called by the driver under the task's bypass-equivalent permission mode
- * (see lib/agents/codex/driver.ts), so that auto-approval is scoped to a
- * task that already runs with no approvals asked of it.
+ * hosted-MCP selection (docs/AGENTS.md). `codex exec` has no approver, so
+ * every entry here also carries `default_tools_approval_mode: "approve"`.
+ * This function is only ever called by the driver under the task's
+ * bypass-equivalent permission mode (see lib/agents/codex/driver.ts), so
+ * that auto-approval is scoped to a task that already runs with no
+ * approvals asked of it.
  */
 export function gatewayMcpServersForCodex(
   project: Pick<Project, "gateway_mcp"> | null | undefined,
@@ -351,11 +348,11 @@ export interface GatewayMcpGeminiServer {
 /**
  * Gemini CLI's policy engine splits an MCP tool name on the first underscore
  * after `mcp_`, so an alias with an underscore breaks a wildcard policy rule
- * for it (docs/design/litellm.md, "Mounting, per driver"). Slugified to
- * hyphens for this driver's mount keys only — the URL still addresses the
- * real alias LiteLLM hosts. Two aliases that only differ by underscore vs.
- * hyphen collide here (last one mounted wins), which is an acceptable trade
- * against every alias otherwise breaking Gemini's own policy rules.
+ * for it (docs/AGENTS.md). Slugified to hyphens for this driver's mount keys
+ * only; the URL still addresses the real alias LiteLLM hosts. Two aliases
+ * that only differ by underscore vs. hyphen collide here (last one mounted
+ * wins), an acceptable trade against every alias otherwise breaking
+ * Gemini's own policy rules.
  */
 export function slugifyGatewayAliasForGemini(alias: string): string {
   return alias.replace(/_/g, "-");

@@ -6,21 +6,22 @@ import { writeSecretFile } from "./secretFile";
 /**
  * "I have an API key instead" path of the onboarding wizard. Most instances
  * authenticate as the user's own Claude Max/Pro subscription (lib/claude-auth.ts,
- * `claude auth login`), but a user can choose to bill per-token with an Anthropic
- * API key instead. We persist it to an owner-only file on the volume — NOT the
- * settings table, which is read wholesale by the client `/api/settings` endpoint
- * — and mirror it into process.env so the SDK's `claude` children and every pty shell
- * spawned afterward inherit it. loadPersistedApiKey() re-applies it on boot
- * (production entrypoints strip ANTHROPIC_API_KEY from the container env as a
- * hardening backstop, so the running process is the only place it lives).
+ * `claude auth login`), but a user can choose to bill per-token with an
+ * Anthropic API key instead. The key is stored in an owner-only file on the
+ * volume, not the settings table, which the client `/api/settings` endpoint
+ * reads wholesale, and mirrored into process.env so the SDK's `claude`
+ * children and every pty shell spawned afterward inherit it.
+ * loadPersistedApiKey() re-applies it on boot: production entrypoints strip
+ * ANTHROPIC_API_KEY from the container env, so the running process is the
+ * only place it lives.
  */
 const KEY_PATH = path.join(DB_DIR, "anthropic-api-key");
 
 export function hasApiKey(): boolean {
-  // Env first: after the boot strip (lib/env-keys.mjs), a key in process.env is
-  // always deliberate — persisted here, or kept via CALANDRIA_ALLOW_API_KEY_ENV —
-  // and it is what the SDK's claude children actually bill, so status surfaces
-  // must count it even when no key file exists.
+  // After the boot strip (lib/env-keys.mjs), a key in process.env is either
+  // persisted here or kept via CALANDRIA_ALLOW_API_KEY_ENV, and it is what the
+  // SDK's claude children actually bill, so status surfaces must count it even
+  // when no key file exists.
   if (process.env.ANTHROPIC_API_KEY) return true;
   try {
     return fs.statSync(KEY_PATH).size > 0;
@@ -29,14 +30,14 @@ export function hasApiKey(): boolean {
   }
 }
 
-/** Loose shape check — real validation is the verify turn actually working. */
+/** Loose shape check; real validation happens when the verify turn runs. */
 export function looksLikeApiKey(key: string): boolean {
   return /^sk-ant-[\w-]{20,}$/.test(key.trim());
 }
 
 /**
- * Throws rather than storing the key if the file could not be made owner-only —
- * on win32 that is an ACL, since a POSIX mode is a no-op there (lib/secretFile.ts).
+ * Throws instead of storing the key if the file could not be made owner-only.
+ * On win32 that means an ACL, since a POSIX mode is a no-op there (lib/secretFile.ts).
  */
 export function setApiKey(key: string): void {
   const k = key.trim();
@@ -57,6 +58,6 @@ export function loadPersistedApiKey(): void {
     const k = fs.readFileSync(KEY_PATH, "utf8").trim();
     if (k) process.env.ANTHROPIC_API_KEY = k;
   } catch {
-    /* no persisted key — subscription login (or nothing yet) */
+    /* no persisted key: subscription login, or nothing yet */
   }
 }

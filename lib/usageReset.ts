@@ -1,32 +1,31 @@
-// When does the subscription's usage window reset — the instant "start at the
+// When the subscription's usage window resets: the instant "start at the
 // usage-window reset" (tasks.start_at, lib/deferredStart.ts) is pointed at.
 //
 // Read off the plan-usage snapshot the titlebar meter already polls (lib/types
 // PlanUsageSnapshot), so the answer is the provider's own reset time, not a
-// guess from "five hours after something". Dependency-free on purpose: the
-// client derives the deadline it offers in a button, and a test pins the rule,
-// same as lib/usageLimit.ts.
+// guess from "five hours after something". Dependency-free so the client can
+// derive the deadline it offers in a button, and a test pins the rule, same as
+// lib/usageLimit.ts.
 
 import type { PlanUsageSnapshot } from "@/lib/types";
 
 /**
  * Head-room past the provider's reset before a queued start fires. The reset
  * is exact, but a turn launched at the very instant it lands can still be
- * refused by an edge that hasn't rolled its counters — and a failed launch
- * here would park the task again with nobody watching, which is the failure
- * this feature exists to remove. A minute is invisible next to the hours of
- * waiting it follows.
+ * refused by an edge that hasn't rolled its counters, and a failed launch
+ * here would park the task again with nobody watching. A minute is invisible
+ * next to the hours of waiting it follows.
  */
 export const USAGE_RESET_MARGIN_MS = 60_000;
 
 /**
  * The instant the BINDING limit resets, or null when no reset is known. Which
  * window binds, in order:
- *   1. the window the passive signal says rejected the last turn — the
+ *   1. the window the passive signal says rejected the last turn, the
  *      freshest fact there is, straight from the turn that hit the wall;
  *   2. any window the usage API reports as spent (≥ 100%);
- *   3. otherwise the session (5-hour) window's reset — the boundary you pace
- *      work against, so "start at the next window" is a sensible ask even
+ *   3. otherwise the session (5-hour) window's reset, the boundary work is
+ *      paced against, so "start at the next window" is a sensible ask even
  *      while the current one still has room.
  * A reset already behind `now` is stale data (the window rolled over) and is
  * never offered: the earliest reset still ahead wins within each rule.
@@ -41,7 +40,7 @@ export function usageResetAt(snap: PlanUsageSnapshot | null | undefined, now: nu
   // (Claude "five_hour", Antigravity "gemini-5h"). The id stays as the fallback
   // for a snapshot written before drivers declared a kind. A gateway budget
   // snapshot has exactly one window and no session/week split at all, so its
-  // `gateway_budget` kind is read the same way: the one boundary this task's
+  // `gateway_budget` kind is read the same way, as the boundary this task's
   // queue-at-reset offer can pace against.
   const session =
     snap.windows.find((w) => w.kind === "session" || w.kind === "gateway_budget") ?? snap.windows.find((w) => w.id === "five_hour");

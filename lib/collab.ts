@@ -1,21 +1,21 @@
-// Document collaboration mode — the pure half.
+// Document collaboration mode: the pure half.
 //
 // A markdown file the agent touched can be opened from the Changes tab in a
 // Word-style review: the user edits the text directly and/or attaches
 // comments to passages they selected in the rendered view, then sends the
 // whole thing back to the agent as ONE message. This module builds that
-// message (`buildCollabPacket`). Pure — no fs, no DB, no SDK — because the
+// message (`buildCollabPacket`). Pure, with no fs, DB or SDK, because the
 // CLIENT builds the packet (the modal sends it through the same runTurn path
 // chat uses, so local running state stays in sync); the worktree read guard
 // that needs fs lives in lib/worktreeFile.ts.
 
 import { createTwoFilesPatch } from "diff";
 
-// A passage comment as the client submits it. `quote` is the rendered text the
-// user selected — rendered, not source, because the selection happens in the
-// react-markdown view, so it carries no `**`/`#`/link syntax. `heading` is the
-// nearest heading above the selection in the rendered DOM, a coarse anchor
-// that survives when the quote can't be found in the source at all.
+// A passage comment as the client submits it. `quote` is the rendered text
+// the user selected in the react-markdown view, so it carries no
+// `**`/`#`/link syntax. `heading` is the nearest heading above the selection
+// in the rendered DOM, a coarse anchor that survives when the quote can't be
+// found in the source at all.
 export interface PassageComment {
   quote: string;
   comment: string;
@@ -25,7 +25,7 @@ export interface PassageComment {
 // How the user's edits reach the file. "direct": the modal has already
 // written `edited` into the worktree (POST /api/tasks/[id]/file) and the diff
 // in the packet is context only. "patch": the agent is asked to apply the
-// diff itself, which keeps its session the only writer of the worktree — at
+// diff itself, which keeps its session the only writer of the worktree, at
 // the cost of trusting a model to apply a patch verbatim.
 export type CollabEditMode = "direct" | "patch";
 export const DEFAULT_COLLAB_EDIT_MODE: CollabEditMode = "direct";
@@ -36,7 +36,7 @@ export interface CollabSubmission {
   edited: string; //   the file after the user's edits (=== original when untouched)
   comments: PassageComment[];
   general: string; // the free-form box under the comment list
-  mode?: CollabEditMode; // defaults to "patch" — the packet is only ever told "direct" by a caller that has written the file
+  mode?: CollabEditMode; // defaults to "patch"; the packet is only ever told "direct" by a caller that has written the file
 }
 
 /** A drive-letter path (`C:/...` once norm() has rewritten the separators).
@@ -45,21 +45,21 @@ export interface CollabSubmission {
  * it starts with a slash, so the POSIX test below already calls it absolute. */
 const windowsPath = (s: string) => /^[A-Za-z]:\//.test(s);
 
-/** Absolute in either dialect. `/...` was the whole test until Windows; a
- * drive-letter path read as RELATIVE is wrong twice over, and the Windows CI
- * lane caught both. `C:/wt/a/docs/x.md` — the spelling an agent's Write call
- * actually reports on Windows — was looked up as a chain of directories named
- * `C:`, `Users`, ... INSIDE the worktree, so a file that was plainly there
- * 404'd. And the containment check the callers rely on never ran at all: it is
- * only harmless while every caller joins the result, and stops being harmless
- * the moment one reaches for `path.resolve`, where a drive-letter path discards
- * the prefix it was resolved against. */
+/** Absolute in either dialect. `/...` was the whole test until Windows: a
+ * drive-letter path read as RELATIVE is wrong twice over. `C:/wt/a/docs/x.md`
+ * (the spelling an agent's Write call reports on Windows) would otherwise be
+ * looked up as a chain of directories named `C:`, `Users`, ... INSIDE the
+ * worktree, so a file that is plainly there 404s. And the containment check
+ * callers rely on would never run at all: it is only harmless while every
+ * caller joins the result, and stops being harmless the moment one reaches
+ * for `path.resolve`, where a drive-letter path discards the prefix it was
+ * resolved against. */
 const absolutePath = (s: string) => s.startsWith("/") || windowsPath(s);
 
 // The worktree-relative form of a path an agent's tool call named, or null
 // when it isn't inside the worktree. Absolute paths are what Write/Edit carry;
 // a relative one is taken as relative to the worktree (the driver's cwd), and
-// any `..` segment refuses it — the file route would refuse it too, so the
+// any `..` segment refuses it: the file route would refuse it too, so the
 // button must not be offered. String-only (no node:path): this module is
 // bundled for the client, and both sides need the same answer.
 export function worktreeRelative(worktree: string, p: string): string | null {
@@ -71,7 +71,7 @@ export function worktreeRelative(worktree: string, p: string): string | null {
   let rel: string;
   if (absolutePath(target)) {
     // NTFS is case-insensitive, so on a Windows worktree the containment test
-    // has to be too — `C:/wt/a` and `c:/wt/a` are one directory. Decided from
+    // has to be too: `C:/wt/a` and `c:/wt/a` are one directory. Decided from
     // the SHAPE of the root, not from `process.platform`: this module is
     // bundled for the client, where `platform` isn't a meaningful answer, and
     // the question is about the path syntax anyway.
@@ -112,7 +112,7 @@ function plain(s: string): string {
 // Find the 1-based source line range containing a rendered quote. Exact
 // substring match on the raw source first (cheap, precise for code and plain
 // prose); then a sliding window over plain-ified lines for text the renderer
-// reshaped. Null when neither finds it — the packet then falls back to the
+// reshaped. Null when neither finds it; the packet then falls back to the
 // heading the client recorded.
 export function locateQuote(source: string, quote: string): { lineStart: number; lineEnd: number } | null {
   const lines = source.split("\n");

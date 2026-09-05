@@ -2,54 +2,61 @@
 //
 // The detached turn runner (lib/runner.ts) publishes every event it persists;
 // any number of GET /messages SSE streams subscribe by task id and relay them
-// to connected clients. Single Node process, so an in-memory map is enough —
-// kept on globalThis so it survives dev HMR module reloads (same pattern as
-// lib/abort.ts / lib/asks.ts).
+// to connected clients. A single Node process makes an in-memory map enough;
+// it is kept on globalThis so it survives dev HMR module reloads, the same
+// pattern as lib/abort.ts and lib/asks.ts.
 
 import type { AgentAuthEvent, GlobalTaskEvent, TaskStreamEvent } from "./types";
 import type { NotificationPayload } from "./notifications/types";
 
-// Lifecycle facts published by mutation ROUTES rather than the runner — a
+// Lifecycle facts published by mutation routes instead of the runner: a
 // manual status PATCH or /clear settling the task row (task_updated), a task
 // hard-delete (task_deleted), or a task re-parented to another project
-// (task_moved). Without them those mutations are silent on the bus, so every
+// (tasks_moved). Without them those mutations are silent on the bus, so every
 // other tab's "needs you" badges keep counting a task the server already
-// settled (or deleted). They're not transcript detail, so they go to GLOBAL
-// listeners only (publishGlobal) — per-task /messages streams never see them.
-// task_deleted carries its project id + freshly recomputed awaiting count
-// itself: by the time a listener sees it the row is gone, so the usual
-// re-read-the-task enrichment (GET /api/events) is impossible. tasks_moved
-// carries BOTH ends because the rows only remember where they landed, and the
-// trays they left have to lose them. It is plural even for one task: moving a
-// selection is one event, so eleven misfiled tasks cost every other tab one
-// re-sync instead of eleven, and there's one shape to handle either way.
-// task_edited is the wider cousin of task_updated: the row's user-visible
-// fields (title, description, priority, dependency edges, …) changed, not just
-// the status/awaiting pair the coarse wire payload carries. Listeners can't
-// patch what isn't on the wire, so it tells them to refetch the row instead.
-// Both writers publish it — the user editing a task (PATCH /api/tasks/[id]) and
-// the `update_task` agent tool (lib/agentTools.ts updateTaskForAgent, which may
-// be announcing a row other than the calling task's) — and it
-// SUPERSEDES task_updated when one write is both (a refetch settles the status
-// too, so the pair would be a duplicate).
-// runbooks_changed is task_edited's project-keyed cousin: a project's saved
-// runbooks were created, edited, copied into or deleted from. No task row is
-// involved AT ALL — not even an arbitrary one to key the bus by, so its
-// publishers pass "" — and the card refetches wholesale, so like task_deleted
-// it carries its own project id, BYPASSES the relay's re-read-the-task
+// settled or deleted. They are not transcript detail, so they go to global
+// listeners only (publishGlobal); per-task /messages streams never see them.
+//
+// task_deleted carries its project id and a freshly recomputed awaiting count
+// itself, because by the time a listener sees it the row is gone, so the
+// usual re-read-the-task enrichment (GET /api/events) is impossible.
+//
+// tasks_moved carries both ends, because the rows only remember where they
+// landed and the trays they left have to drop them. It is plural even for
+// one task: moving a selection is one event, so eleven misfiled tasks cost
+// every other tab one re-sync instead of eleven, with one shape to handle
+// either way.
+//
+// task_edited is the wider counterpart of task_updated: the row's
+// user-visible fields (title, description, priority, dependency edges, ...)
+// changed, not just the status/awaiting pair the coarse wire payload
+// carries. Listeners can't patch what isn't on the wire, so it tells them to
+// refetch the row instead. Both the user editing a task (PATCH
+// /api/tasks/[id]) and the `update_task` agent tool (lib/agentTools.ts
+// updateTaskForAgent, which may target a row other than the calling task's)
+// publish it, and it supersedes task_updated when one write is both, since a
+// refetch settles the status too and the pair would be a duplicate.
+//
+// runbooks_changed is task_edited's project-keyed counterpart: a project's
+// saved runbooks were created, edited, copied into or deleted from. No task
+// row is involved, not even an arbitrary one to key the bus by, so its
+// publishers pass "". The card refetches wholesale: like task_deleted it
+// carries its own project id, bypasses the relay's re-read-the-task
 // enrichment, and says only "go again".
-// notification is the odd one out and knows it: not a fact about a row that
-// listeners should re-read, but a message COMPOSED for a human — the payload is
-// already final by the time it is published (lib/notifications/notify.ts), and
-// its taskId is empty on a test send. Like runbooks_changed it therefore
-// bypasses the relay's re-read-the-task enrichment entirely.
-// turn_idle is the odd sibling: not a mutation of the ROW at all, but a change
-// in how a live turn should be DRAWN — it went quiet, or it started talking
-// again (lib/turnActivity.ts). It carries nothing, because the relay's
-// re-read-the-task enrichment is where the age comes from, and it goes to
-// global listeners only for the usual reason plus one of its own: a turn that
-// has stopped producing transcript detail is by definition publishing nothing
-// on its own stream, so this is the only channel that can say so.
+//
+// notification is not a fact about a row for listeners to re-read, but a
+// message composed for a human: the payload is already final by the time it
+// is published (lib/notifications/notify.ts), and its taskId is empty on a
+// test send. Like runbooks_changed it bypasses the relay's re-read-the-task
+// enrichment entirely.
+//
+// turn_idle is not a mutation of the row at all, but a change in how a live
+// turn should be drawn: it went quiet, or it started talking again
+// (lib/turnActivity.ts). It carries nothing, because the relay's
+// re-read-the-task enrichment is where the age comes from. It goes to global
+// listeners for the usual reason plus one of its own: a turn that has
+// stopped producing transcript detail is publishing nothing on its own
+// stream, so this is the only channel that can say so.
 export type TaskMutationEvent =
   | { type: "task_updated" }
   | { type: "turn_idle" }
@@ -65,8 +72,8 @@ export type BusEvent = TaskStreamEvent | TaskMutationEvent;
 
 // What GET /api/events sends over the wire: lib/types' GlobalEvent members,
 // the task payload widened with the "task_updated" boundary, and the row-less
-// deletion event. Defined here — beside the bus events that produce them —
-// rather than in lib/types.ts.
+// deletion event. Defined here, beside the bus events that produce them,
+// instead of in lib/types.ts.
 export type GlobalTaskWireEvent = Omit<GlobalTaskEvent, "event"> & {
   event: GlobalTaskEvent["event"] | "task_updated" | "task_edited" | "turn_idle";
 };
@@ -74,14 +81,14 @@ export type TaskDeletedWireEvent = {
   type: "task_deleted";
   taskId: string;
   projectId: string;
-  /** The project's awaiting count recomputed AFTER the row was deleted. */
+  /** The project's awaiting count, recomputed after the row was deleted. */
   awaiting_count: number;
 };
-// Tasks changed projects. Deliberately count-free, unlike task_deleted: a move
-// also changes both projects' task_count, which no event carries, so clients
-// refetch the project list once — cheap for a rare, hand-driven mutation.
-// `fromProjectIds` is the DISTINCT set of trays that lost rows (a selection can
-// span projects), not one entry per moved task — nothing needs the pairing.
+// Tasks changed projects. Count-free unlike task_deleted: a move also changes
+// both projects' task_count, which no event carries, so clients refetch the
+// project list once, cheap for a rare, hand-driven mutation. `fromProjectIds`
+// is the distinct set of trays that lost rows (a selection can span
+// projects), not one entry per moved task; nothing needs the pairing.
 export type TasksMovedWireEvent = {
   type: "tasks_moved";
   taskIds: string[];
@@ -89,21 +96,20 @@ export type TasksMovedWireEvent = {
   toProjectId: string;
 };
 /**
- * A project's saved runbooks changed. Deliberately payload-free beyond the
- * project — it says "refetch the card", exactly like task_edited says "refetch
- * the row".
+ * A project's saved runbooks changed. Payload-free beyond the project: it
+ * says "refetch the card", exactly like task_edited says "refetch the row".
  */
 export type RunbooksChangedWireEvent = {
   type: "runbooks_changed";
   projectId: string;
 };
 /**
- * A project's tags changed — created, renamed, recolored, described, deleted,
+ * A project's tags changed: created, renamed, recolored, described, deleted,
  * or applied to a selection of tasks. Modelled on runbooks_changed exactly: no
  * task row is involved, the publishers key the bus with "", and the client
- * refetches the project. Membership changes ride this too rather than N
- * task_edited events, because a tag write is the one edit whose blast radius is
- * the whole chip bar (every count moves) as well as the rows.
+ * refetches the project. Membership changes ride this too instead of N
+ * task_edited events, because a tag write's blast radius is the whole chip
+ * bar (every count moves) as well as the rows.
  */
 export type TagsChangedWireEvent = {
   type: "tags_changed";
@@ -142,9 +148,9 @@ function globalRegistry(): Set<GlobalListener> {
   return global.__calandriaEventsGlobal;
 }
 
-// A MARKER subset of globalRegistry(), not a second delivery list: fan-out still
-// walks one set in one order, and this only records which of those listeners are
-// server-side consumers rather than client streams. See watcherCount().
+// A marker subset of globalRegistry(), not a second delivery list: fan-out still
+// walks one set in one order, and this only records which of those listeners
+// are server-side consumers instead of client streams. See watcherCount().
 function internalRegistry(): Set<GlobalListener> {
   if (!global.__calandriaEventsGlobalInternal) global.__calandriaEventsGlobalInternal = new Set();
   return global.__calandriaEventsGlobalInternal;
@@ -153,7 +159,7 @@ function internalRegistry(): Set<GlobalListener> {
 /** Options for subscribeGlobal. */
 export interface SubscribeGlobalOptions {
   /**
-   * This subscriber is part of the SERVER, not a connected client — the
+   * This subscriber is part of the server, not a connected client: the
    * notification dispatcher, and whatever else later reads the bus in-process.
    * It lives for the process's lifetime, so counting it as a watcher would
    * permanently defeat the presence heuristic below.
@@ -177,7 +183,7 @@ export function subscribe(taskId: string, fn: Listener): () => void {
 }
 
 /**
- * Subscribe to EVERY task's events (the wildcard channel behind the global
+ * Subscribe to every task's events (the wildcard channel behind the global
  * GET /api/events lifecycle stream). Listeners get the task id alongside each
  * event, since the per-task keying is lost. Returns an unsubscribe function.
  *
@@ -195,24 +201,24 @@ export function subscribeGlobal(fn: GlobalListener, opts?: SubscribeGlobalOption
 }
 
 /**
- * How many CLIENTS are watching the app right now — one global listener per
- * open GET /api/events stream, i.e. roughly one per browser tab. Zero means
- * nobody can SEE anything the server surfaces, let alone answer it, which is
- * how the permission gate tells an unattended turn (an auto-started task at
- * 3am) from one a human is sitting in front of. See lib/permissions.ts.
+ * How many clients are watching the app right now: one global listener per
+ * open GET /api/events stream, roughly one per browser tab. Zero means nobody
+ * can see anything the server surfaces, let alone answer it, which is how the
+ * permission gate tells an unattended turn (an auto-started task at 3am) from
+ * one a human is sitting in front of. See lib/permissions.ts.
  *
- * Subscribers marked `internal` are deliberately EXCLUDED, because that gate is
- * the whole reason this number exists. A server-side bus consumer (the
- * notification dispatcher) subscribes once and never unsubscribes, so counting
- * it would pin this above zero for the life of the process — and an
- * auto-started task hitting a permission card at 3am with every tab shut would
- * park for the attended cap (hours) instead of auto-denying in seconds, holding
- * the task `running` and the container awake with it. Presence means a human,
+ * Subscribers marked `internal` are excluded, because that gate is the whole
+ * reason this number exists. A server-side bus consumer (the notification
+ * dispatcher) subscribes once and never unsubscribes, so counting it would
+ * pin this above zero for the life of the process, and an auto-started task
+ * hitting a permission card at 3am with every tab shut would then park for
+ * the attended cap (hours) instead of auto-denying in seconds, holding the
+ * task `running` and the container awake with it. Presence means a human,
  * not a listener.
  */
 export function watcherCount(): number {
   // Clamped because the wrong answer here is unsafe in one direction only:
-  // under-counting merely auto-denies an unattended-looking turn, while a
+  // under-counting merely auto-denies an unattended-looking turn, and a
   // negative read would be indistinguishable from zero anyway.
   return Math.max(0, globalRegistry().size - internalRegistry().size);
 }
@@ -240,9 +246,9 @@ export function publish(taskId: string, ev: TaskStreamEvent): void {
 }
 
 /**
- * Fan a route-published mutation fact out to GLOBAL listeners only. Mutation
+ * Fan a route-published mutation fact out to global listeners only. Mutation
  * events aren't transcript detail, so per-task /messages viewers never see
- * them — the global /api/events stream is their sole consumer.
+ * them; the global /api/events stream is their sole consumer.
  */
 export function publishGlobal(taskId: string, ev: TaskMutationEvent): void {
   for (const fn of globalRegistry()) {
