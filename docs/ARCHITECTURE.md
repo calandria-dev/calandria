@@ -224,9 +224,9 @@ the codex thread id emitted as the `session` event so lineage and resume work un
 `web_search`, `todo_list`, and `reasoning` become `tool` and `tool_result`; and
 `turn.completed` usage becomes tokens plus an estimated `cost_usd`.
 
-Run controls map our permission modes to codex's sandbox/approval policy
-(`bypassPermissions` to workspace-write with approvals-never, `plan` to read-only); reasoning
-presets map to `model_reasoning_effort`. The capability descriptor declares
+`policy.ts` maps the five permission modes to codex's sandbox, approval policy, reviewer and
+writable roots (docs/AGENTS.md has the table); reasoning presets map to
+`model_reasoning_effort`. The capability descriptor declares
 `supportsMcpTools: true`: Calandria's tools reach codex through the portable stdio MCP
 bridge described below, registered per turn with a roughly one-day `tool_timeout_sec` so a
 parked ask survives. It declares `supportsAsks: true` because codex has no native
@@ -236,10 +236,14 @@ blocks until the user answers. It declares `reportsCostUsd: false` and
 estimates the dollar cost per turn from tokens times published API prices for the resolved
 model, and the UI renders those figures with a `~`.
 
-One upstream limitation: the non-interactive CLI cannot pause a turn for command approval,
-so on-request approval modes aren't offered. The only permission modes are workspace-write
-(approvals never) and read-only (plan), labeled with codex's own sandbox-mode names. Auth
-(`auth.ts`) drives `codex login --device-auth` and `codex login status`. The one-shot
+Turns run on `codex app-server` by default (`appServerClient.ts` is the JSON-RPC transport,
+`appServerTurn.ts` the turn, `appServerEvents.ts` the adapter that respells v2 items as the
+exec protocol's so `events.ts` maps both transports). The server's approval requests
+(`item/commandExecution/requestApproval`, `item/fileChange/requestApproval`,
+`item/permissions/requestApproval`) are answered through `permissionPrompt.ts`, the same
+rules, card and `/answer` registry as the Claude gate, and its `item/tool/requestUserInput`
+through the ask card. `CODEX_TRANSPORT=exec` keeps the SDK's `codex exec` path, which
+auto-rejects approvals inside the CLI. Auth (`auth.ts`) drives `codex login --device-auth` and `codex login status`. The one-shot
 helpers run as `codex exec` one-shots in a read-only sandbox (no writes, no approvals, no
 network), bounded by an item cap, codex's analog of the Claude helpers' `maxTurns`, so a
 runaway helper turn is cut off instead of looping unbounded. The binary path comes from

@@ -235,7 +235,10 @@ Calandria supports **Claude Code**, **OpenAI Codex** and Google's **Antigravity*
 (the CLI behind Gemini) end to end. Choose an agent per task, or connect only the
 one you use. All three work with subscription login; API keys stay optional —
 except in a container, where Antigravity needs one, since its CLI stores its
-token in the OS keyring.
+token in the OS keyring. The same five permission modes apply to every agent:
+a Codex task maps them onto Codex's sandbox and approval policy, its approval
+requests land on the same permission card a Claude prompt does, and a
+sandboxed Codex turn can still commit from its worktree.
 
 [Agent support, permissions, and usage details](docs/AGENTS.md)
 

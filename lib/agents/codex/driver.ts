@@ -1,19 +1,22 @@
 // The OpenAI Codex driver — the `codex` CLI behind the AgentDriver seam
 // (lib/agents/types.ts), the counterpart to lib/agents/claude/driver.ts.
 //
-// @openai/codex-sdk spawns the codex CLI and speaks JSONL over stdio (the same
-// architecture as our Claude driver): startThread() for a fresh session,
-// resumeThread(id) to continue one. The thread id is emitted as the `session`
-// StreamEvent, so the existing lineage/resume machinery (sessions table,
-// /clear generations) works unchanged — a codex thread id is just another
-// opaque id in tasks.session_id. runTurn() normalizes codex's ThreadEvent
-// stream into the StreamEvent contract via lib/agents/codex/events.ts.
+// A task turn runs on `codex app-server`, the CLI's JSON-RPC protocol
+// (./appServerTurn.ts), whose approval requests come back to us and park on
+// the permission card; CODEX_TRANSPORT=exec keeps the previous path, where
+// @openai/codex-sdk spawns `codex exec` and speaks JSONL over stdio and every
+// approval is rejected inside the CLI. Either way the thread id is emitted as
+// the `session` StreamEvent, so the existing lineage/resume machinery
+// (sessions table, /clear generations) works unchanged — a codex thread id is
+// just another opaque id in tasks.session_id — and both transports normalize
+// codex's items into the StreamEvent contract via lib/agents/codex/events.ts.
+// What a permission mode means here is ./policy.ts.
 //
-// Codex non-interactive mode can't ask the user natively, but the stdio MCP
-// bridge (scripts/calandria-mcp.mjs) mounts the Calandria tools — so
-// supportsMcpTools=true, and its ask_user tool restores interactive asks: the
-// tool call parks server-side until the user answers the card (see
-// lib/agentTools.startAskUser), so supportsAsks=true. ChatGPT-plan auth
+// The stdio MCP bridge (scripts/calandria-mcp.mjs) mounts the Calandria tools
+// — so supportsMcpTools=true, and its ask_user tool gives the model an
+// interactive question: the tool call parks server-side until the user
+// answers the card (see lib/agentTools.startAskUser), so supportsAsks=true
+// (app-server's own request_user_input lands on the same card). ChatGPT-plan auth
 // reports token counts only (no dollar figure), so reportsCostUsd=false —
 // instead usage carries an ESTIMATED cost (tokens × published API prices,
 // see ./pricing.ts) and costIsEstimated=true tells the UI to label it ~.
@@ -24,7 +27,7 @@ import type { Project, Task, StreamEvent, TurnUsage } from "../../types";
 import type { AgentDriver, OneShotOptions, OneShotResult } from "../types";
 import { codexCapabilities } from "./capabilities";
 import { getSetting, setSetting, getThreadUsageCum, setThreadUsageCum } from "../../store";
-import { AGENT_TOOL_TIMEOUT_MS, CODEX_APPROVAL_POLICY, CODEX_CLI_PATH, INTERNAL_BASE_URL, CALANDRIA_MCP_SCRIPT } from "../../config";
+import { AGENT_TOOL_TIMEOUT_MS, CODEX_CLI_PATH, CODEX_TRANSPORT, INTERNAL_BASE_URL, CALANDRIA_MCP_SCRIPT } from "../../config";
 import { isApprovalDowngrade } from "../../approvalFailure";
 import { buildProjectContext, buildTagRefreshPrompt } from "../shared";
 import { mapThreadEvent, newState, ZERO_CUM, type CodexCum } from "./events";
@@ -36,6 +39,9 @@ import { agentTurnEnv } from "../../agentEnv";
 import { codexProviderConfig } from "./provider";
 import { verifyCodexProvider } from "./providerCheck";
 import { getCodexPlanUsage } from "./planUsage";
+import { codexRunPolicy, neverAskPolicy, resolveCodexMode, type CodexRunPolicy } from "./policy";
+import { runAppServerTurn } from "./appServerTurn";
+import type { ConfigObject } from "./appServerClient";
 
 // Register Calandria's stdio MCP bridge as a Codex mcp_server for this
 // turn. The bridge is a thin proxy: the CLI spawns `node scripts/calandria-mcp.mjs`
@@ -125,25 +131,16 @@ function reasoningEffort(level: string | null): { modelReasoningEffort?: ModelRe
   return e ? { modelReasoningEffort: e } : {};
 }
 
-type RunControls = { sandboxMode: SandboxMode; networkAccessEnabled: boolean };
-
-// The task's run permission → codex sandbox. Default (null / unknown /
-// "bypassPermissions") is the auto-run analog of Claude's bypassPermissions:
-// write within the workspace, run commands and reach the network without
-// approvals — safe because tasks run in isolated worktrees / a hardened
-// container. "plan" runs read-only so codex proposes without editing.
-function runControls(mode: string | null): RunControls {
-  if (mode === "plan") return { sandboxMode: "read-only", networkAccessEnabled: false };
-  return { sandboxMode: "workspace-write", networkAccessEnabled: true };
-}
+// What a permission mode means to Codex — sandbox, approval policy, reviewer,
+// writable roots — is resolved in ./policy.ts, shared by both transports.
 
 // Hosted gateway MCP servers (lib/gatewayMcp.ts) get every one of their tools
 // auto-approved the instant they mount (calandriaMcpConfig's
-// default_tools_approval_mode: "approve"), because codex exec has no approver
-// to ask instead. That's only safe to offer under the same bypass-equivalent
-// mode runControls above treats as workspace-write — "plan" runs read-only,
-// and dangling a set of pre-approved write/network-capable tools there would
-// contradict it. Exported for tests
+// default_tools_approval_mode: "approve"): MCP calls are gated by Codex's own
+// per-server approval mode, which approval_policy doesn't reach. Every mode
+// but "plan" mounts them — plan runs read-only, and dangling a set of
+// pre-approved write/network-capable tools there would contradict it.
+// Exported for tests
 // (tests/codexMcpBridge.test.ts). BerriAI/litellm#14846 recorded silent empty
 // completions for gpt-5-codex plus a mounted MCP server — verify against the
 // pinned LiteLLM and codex versions before relying on this in production.
@@ -152,7 +149,7 @@ export function gatewayMcpForPermission(
   task: Task,
   permission: string | null
 ): Record<string, GatewayMcpCodexServer> {
-  return permission === "plan" ? {} : gatewayMcpServersForCodex(project, task);
+  return resolveCodexMode(permission) === "plan" ? {} : gatewayMcpServersForCodex(project, task);
 }
 
 // ---------- approval-policy negotiation ----------
@@ -183,10 +180,12 @@ export function noteApprovalDowngrade(errText: string): void {
 // don't override", so the downgrade flag does not apply there either.
 // See CODEX_APPROVAL_POLICY in lib/config.ts. Exported for tests.
 export function approvalOverride(): { approvalPolicy?: ApprovalMode } {
-  if (CODEX_APPROVAL_POLICY === "inherit") return {};
-  if (getSetting(APPROVAL_DOWNGRADE_KEY)) return { approvalPolicy: "on-request" };
-  return { approvalPolicy: CODEX_APPROVAL_POLICY as ApprovalMode };
+  const p = neverAskPolicy(!!getSetting(APPROVAL_DOWNGRADE_KEY));
+  return p ? { approvalPolicy: p as ApprovalMode } : {};
 }
+
+/** Whether the CLI has downgraded "never" on this instance (see above). */
+const approvalDowngraded = (): boolean => !!getSetting(APPROVAL_DOWNGRADE_KEY);
 
 /**
  * Run one user turn against Codex and yield stream events. Resumes the task's
@@ -233,22 +232,14 @@ async function* runTurn(
   // Fallback (task choice → agent-scoped app default → legacy default → codex
   // built-in), matching the Claude driver.
   const reasoning = task.reasoning ?? getSetting(`default_reasoning:${task.agent}`) ?? getSetting("default_reasoning");
-  const permission = task.permission_mode ?? getSetting(`default_permission_mode:${task.agent}`) ?? getSetting("default_permission_mode");
-  const controls = runControls(permission);
+  // The task's own choice, else this agent's Settings default. The unscoped
+  // legacy default is NOT consulted: it was written when only Claude existed,
+  // and a Claude "bypassPermissions" there would now read as full access here.
+  const permission = task.permission_mode ?? getSetting(`default_permission_mode:${task.agent}`);
+  // Prefer the task's isolated worktree; fall back to the shared repo path.
+  const cwd = task.worktree_path || project.repo_path || process.cwd();
+  const policy = codexRunPolicy(permission, cwd, { downgraded: approvalDowngraded() });
   const gatewayServers = gatewayMcpForPermission(project, task, permission);
-
-  const threadOptions: ThreadOptions = {
-    // Prefer the task's isolated worktree; fall back to the shared repo path.
-    workingDirectory: task.worktree_path || project.repo_path || process.cwd(),
-    // Worktrees are git repos, but non-git projects and the cwd fallback may not
-    // be — skip the check so codex never hard-errors on a missing repo.
-    skipGitRepoCheck: true,
-    sandboxMode: controls.sandboxMode,
-    ...approvalOverride(),
-    networkAccessEnabled: controls.networkAccessEnabled,
-    ...(chosen ? { model: chosen } : {}),
-    ...reasoningEffort(reasoning),
-  };
 
   // …and before spending anything on it, make the CLI confirm the mapping took.
   // An unknown `-c` override is inert to codex, so a release that moves the
@@ -256,51 +247,121 @@ async function* runTurn(
   // provider — the user's paid ChatGPT login — while the header still shows the
   // `local` chip. Refuse instead (lib/agents/codex/providerCheck.ts). No-ops on
   // the cloud path, which has no mapping to prove.
-  // `bin` mirrors what the SDK below is given: with CODEX_CLI_PATH set both
-  // halves drive the same file, and with it empty both fall back — the SDK to
-  // the binary vendored in @openai/codex, the probe to `codex` on PATH. Those
-  // are the same install in every shipped configuration (the image installs the
-  // package globally, and node_modules/.bin/codex is a shim onto that same
-  // vendored binary), and the same equivalence auth.ts and mcp.ts already rely
-  // on. Pinning CODEX_CLI_PATH removes the "in every shipped configuration".
-  const verdict = await verifyCodexProvider(local, {
-    cwd: threadOptions.workingDirectory,
-    env,
-    bin: CODEX_CLI_PATH || undefined,
-  });
+  // `bin` mirrors what the transports below are given: with CODEX_CLI_PATH set
+  // every half drives the same file, and with it empty they fall back — the SDK
+  // to the binary vendored in @openai/codex, the probe and the app-server spawn
+  // to `codex` on PATH. Those are the same install in every shipped
+  // configuration (the image installs the package globally, and
+  // node_modules/.bin/codex is a shim onto that same vendored binary), and the
+  // same equivalence auth.ts and mcp.ts already rely on. Pinning CODEX_CLI_PATH
+  // removes the "in every shipped configuration".
+  const verdict = await verifyCodexProvider(local, { cwd, env, bin: CODEX_CLI_PATH || undefined });
   if (!verdict.ok) {
     yield { type: "error", content: verdict.message };
     return;
   }
 
-  const codex = new Codex({
-    codexPathOverride: CODEX_CLI_PATH || undefined,
-    // The provider entry goes in as config rather than env: codex reads
-    // `model_provider` from config.toml, never from the environment, and with
-    // a ChatGPT login ignores OPENAI_BASE_URL outright (lib/agents/codex/provider.ts).
-    config: { ...calandriaMcpConfig(project, task, await inheritedServerOverrides(), gatewayServers), ...local.config },
-    env,
-  });
-  const thread = task.session_id ? codex.resumeThread(task.session_id, threadOptions) : codex.startThread(threadOptions);
+  // The provider entry goes in as config rather than env: codex reads
+  // `model_provider` from config.toml, never from the environment, and with
+  // a ChatGPT login ignores OPENAI_BASE_URL outright (lib/agents/codex/provider.ts).
+  const config = { ...calandriaMcpConfig(project, task, await inheritedServerOverrides(), gatewayServers), ...local.config };
 
   // Fresh session: seed the opening prompt with the project context (project
   // description, task framing, and carried summaries from prior generations).
-  const prompt = task.session_id ? userText : `${buildProjectContext(project, task)}\n\n---\n\n${userText}`;
+  const prompt = (fresh: boolean) => (fresh ? `${buildProjectContext(project, task)}\n\n---\n\n${userText}` : userText);
 
   yield { type: "model", model };
 
+  // Advance the thread's cumulative baseline the moment a turn's usage is
+  // mapped, not at the end of the run: a crash (or a Stop) between here and
+  // turn end would otherwise make the NEXT turn re-count everything this one
+  // already billed. The session row exists by now — the runner persists it
+  // when it consumes the `session` event yielded first.
+  const persistBaseline = () => {
+    if (!state.cumDirty) return;
+    state.cumDirty = false;
+    if (sessionId) setThreadUsageCum(sessionId, state.cum);
+  };
+
+  if (CODEX_TRANSPORT === "app-server") {
+    for await (const out of runAppServerTurn({
+      task,
+      project,
+      cwd,
+      env,
+      config: config as ConfigObject,
+      threadId: task.session_id,
+      prompt,
+      model: chosen,
+      effort: reasoningEffort(reasoning).modelReasoningEffort,
+      policy,
+      state,
+      abort: abortController,
+      onWarning: noteApprovalDowngrade,
+      bin: CODEX_CLI_PATH || undefined,
+    })) {
+      if (out.type === "session") sessionId = out.sessionId;
+      if (out.type === "error") noteApprovalDowngrade(out.content);
+      yield out;
+      persistBaseline();
+    }
+    yield { type: "done", sessionId };
+    return;
+  }
+
+  yield* runExecTurn({ task, project, cwd, env, config, chosen, reasoning, policy, prompt, state, abortController, sessionId });
+}
+
+// The exec transport: `codex exec --experimental-json` through
+// @openai/codex-sdk. Approval requests never reach the host — the CLI rejects
+// them itself — so the asking modes are sent the never-asking policy here and
+// behave like acceptEdits; ./policy.ts's writable roots still apply via
+// `--add-dir`, so commits work from a worktree under the sandbox.
+async function* runExecTurn(a: {
+  task: Task;
+  project: Project;
+  cwd: string;
+  env: Record<string, string>;
+  config: CodexOptions["config"];
+  chosen: string | null;
+  reasoning: string | null;
+  policy: CodexRunPolicy;
+  prompt: (fresh: boolean) => string;
+  state: ReturnType<typeof newState>;
+  abortController?: AbortController;
+  sessionId: string | null;
+}): AsyncGenerator<StreamEvent> {
+  const { task, policy, state, abortController } = a;
+  let sessionId = a.sessionId;
+  const asking = policy.mode === "auto" || policy.mode === "default";
+  const approval = asking ? neverAskPolicy(approvalDowngraded()) : policy.approval;
+  const threadOptions: ThreadOptions = {
+    workingDirectory: a.cwd,
+    // Worktrees are git repos, but non-git projects and the cwd fallback may not
+    // be — skip the check so codex never hard-errors on a missing repo.
+    skipGitRepoCheck: true,
+    sandboxMode: policy.sandbox as SandboxMode,
+    ...(approval ? { approvalPolicy: approval as ApprovalMode } : {}),
+    networkAccessEnabled: policy.network,
+    ...(policy.writableRoots.length ? { additionalDirectories: policy.writableRoots } : {}),
+    ...(a.chosen ? { model: a.chosen } : {}),
+    ...reasoningEffort(a.reasoning),
+  };
+
+  const codex = new Codex({
+    codexPathOverride: CODEX_CLI_PATH || undefined,
+    config: a.config,
+    env: a.env,
+  });
+  const thread = task.session_id ? codex.resumeThread(task.session_id, threadOptions) : codex.startThread(threadOptions);
+
   try {
-    const { events } = await thread.runStreamed(prompt, { signal: abortController?.signal });
+    const { events } = await thread.runStreamed(a.prompt(!task.session_id), { signal: abortController?.signal });
     for await (const ev of events) {
       for (const out of mapThreadEvent(ev, state)) {
         if (out.type === "error") noteApprovalDowngrade(out.content);
         yield out;
       }
-      // Advance the thread's cumulative baseline the moment a turn's usage is
-      // mapped, not at the end of the run: a crash (or a Stop) between here and
-      // turn end would otherwise make the NEXT turn re-count everything this
-      // one already billed. The session row exists by now — the runner persists
-      // it when it consumes the `session` event yielded above.
       if (state.cumDirty) {
         state.cumDirty = false;
         const id = thread.id ?? task.session_id;

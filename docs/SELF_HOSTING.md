@@ -886,8 +886,8 @@ waits on that walk once, right after a restart.
   classifier approves calls it judges safe and escalates the rest. Switch a
   task, or the app default in Settings → Run defaults, to bypassPermissions
   for work that must never block on a prompt, or down to acceptEdits,
-  default, or plan (a Codex task offers its own workspace-write / read-only
-  sandboxes instead). Anything the agent isn't pre-approved for parks on a
+  default, or plan (a Codex task maps the same five modes onto its sandbox
+  and approval policy; docs/AGENTS.md has the table). Anything the agent isn't pre-approved for parks on a
   permission card in the transcript, with Allow once / Always allow /
   Decline. Read-only tools pass silently; "Always allow" remembers a command
   for that project and is revocable in Settings → Run defaults → Remembered

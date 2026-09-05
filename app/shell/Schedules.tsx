@@ -95,12 +95,12 @@ function withCommand(prompt: string, command: string): string {
 // inherit-a-default modes) are dropped: a schedule always runs unattended, so
 // "whatever the default happens to be" is exactly the ambiguity this field
 // exists to rule out — every remaining option must be a concrete, named
-// answer. Codex's descriptor has no "acceptEdits" at all (its driver treats
-// anything but "plan" as full workspace-write), so filtering from the REAL
-// per-agent list — rather than a fixed three-item list — is what stops a
-// Codex schedule from offering a mode that quietly behaves like bypassPermissions.
+// answer. Each agent's descriptor spells its own modes (Codex's "auto" is its
+// reviewer-decided mode, not an inherit), so filtering from the REAL per-agent
+// list — rather than a fixed three-item list — is what keeps a schedule from
+// offering a mode the agent doesn't have.
 function scheduleModesFor(agents: AgentsBundle, agent: string): AgentPickerOption[] {
-  return (capsFor(agents, agent)?.permissionModes ?? []).filter((p) => p.value !== "auto" && p.value !== "default");
+  return (capsFor(agents, agent)?.permissionModes ?? []).filter((p) => p.unattended || (p.value !== "auto" && p.value !== "default"));
 }
 
 // The plain-English consequence line. Driven by the SAME filtered list the

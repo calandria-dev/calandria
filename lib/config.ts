@@ -321,29 +321,53 @@ export const TURN_IDLE_NUDGE_ENABLED = ["1", "on", "true", "yes"].includes(
 export const SHUTDOWN_GRACE_MS = ms(readEnv("CALANDRIA_SHUTDOWN_GRACE_MS"), 5000);
 
 /**
- * The `approval_policy` the Codex driver passes to the CLI for turns and
- * one-shot helpers. Default "never" is the auto-run analog of Claude's
- * bypassPermissions — turns run unattended in isolated worktrees, with nobody
- * in the loop to answer approval prompts. Enterprise-managed Codex deployments
- * can disallow "never"; the CLI then warns and downgrades, and the driver
- * detects that warning and self-heals to "on-request" from the next turn on
- * (see lib/approvalFailure.ts). Set this to "on-request" or "on-failure" to
- * pick an approval-capable policy up front, or to "inherit" to omit the
- * override entirely so ~/.codex/config.toml and the enterprise requirements
- * decide.
+ * The `approval_policy` the Codex driver sends for the permission modes that
+ * NEVER ask (acceptEdits, bypassPermissions, plan) and for the one-shot
+ * helpers. Default "never": the sandbox refuses what it refuses and the model
+ * works around it. Enterprise-managed Codex deployments can disallow "never";
+ * the CLI then warns and downgrades, and the driver detects that warning and
+ * self-heals to "on-request" from the next turn on (see
+ * lib/approvalFailure.ts) — which, on the app-server transport, means the
+ * escalation parks on a permission card instead of failing. Set this to
+ * "on-request" or "on-failure" to pick an approval-capable policy up front,
+ * or to "inherit" to omit the override entirely so ~/.codex/config.toml and
+ * the enterprise requirements decide. The asking modes (auto, default) carry
+ * their own policy and ignore this.
  *
- * "untrusted" (codex's UnlessTrusted) is deliberately NOT accepted: it is the
- * one value that managed requirements allow but that is fatal under the exec
- * transport — non-interactive runs cannot service approvals, so every
- * non-allowlisted command is rejected ("approval request failed") and the task
- * flails. It maps to "on-request", the closest policy that actually works.
- * Unknown values fall back to "never".
+ * "untrusted" (codex's UnlessTrusted) maps to "on-request": it asks for every
+ * command that isn't on an explicit exec-policy allowlist, which for a task
+ * session is a prompt per command. Unknown values fall back to "never".
  */
 export const CODEX_APPROVAL_POLICY = (() => {
   const v = String(process.env.CODEX_APPROVAL_POLICY || "never").toLowerCase();
   if (v === "untrusted") return "on-request";
   return ["never", "on-request", "on-failure", "inherit"].includes(v) ? v : "never";
 })();
+
+/**
+ * Which codex protocol a task turn runs on. "app-server" (default) drives
+ * `codex app-server`, the CLI's IDE protocol: the server's approval requests
+ * (a command the sandbox refused, a write outside the worktree, a network
+ * grant) come back to Calandria as JSON-RPC requests and park on the same
+ * permission card the Claude driver uses, so the asking modes actually ask.
+ * "exec" is the previous transport, `codex exec --experimental-json` through
+ * @openai/codex-sdk, kept as the escape hatch: it auto-rejects every approval
+ * request inside the CLI (codex-rs exec/src/lib.rs), so under it the asking
+ * modes behave like acceptEdits. Unknown values fall back to "app-server".
+ */
+export const CODEX_TRANSPORT = ((): "app-server" | "exec" => {
+  const v = String(process.env.CODEX_TRANSPORT || "").toLowerCase();
+  return v === "exec" ? "exec" : "app-server";
+})();
+
+/**
+ * Extra directories a workspace-write Codex turn may write to, beyond the
+ * task's worktree and the git paths lib/agents/codex/policy.ts grants so a
+ * commit works from a linked worktree. Absolute paths, separated by the
+ * platform's PATH delimiter (":" on POSIX, ";" on Windows); relative entries
+ * are ignored. Empty by default. Full-access and read-only modes ignore it.
+ */
+export const CODEX_WRITABLE_ROOTS = String(process.env.CODEX_WRITABLE_ROOTS || "");
 
 /**
  * Whether Codex tasks inherit the MCP servers configured in the user's

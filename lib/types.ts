@@ -80,7 +80,7 @@ export interface Task {
   model: string | null; // chosen model alias ("fable"|"opus"|"sonnet"|"haiku"); null = inherit default
   resolved_model: string | null; // model the SDK actually ran last turn (for the badge)
   reasoning: string | null; // thinking preset ("off"|"think"|"think_hard"|"ultrathink"); null = inherit default
-  permission_mode: string | null; // run permission ("acceptEdits"|"plan"); null = bypassPermissions (default)
+  permission_mode: string | null; // run permission ("auto"|"default"|"acceptEdits"|"bypassPermissions"|"plan"); null = the agent's default
   session_id: string | null; // the agent's opaque session/thread id for the current generation
   worktree_path: string; // isolated git worktree this task runs in ("" = runs in repo_path)
   work_branch: string; // the worktree's branch (e.g. "calandria/<id>")

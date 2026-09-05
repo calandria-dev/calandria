@@ -368,9 +368,66 @@ CLI's own `codex app-server generate-json-schema` and are camelCase (`usedPercen
 `windowDurationMins`, `resetsAt` in seconds) with windows named by RANK — `primary` /
 `secondary`, not by duration — which is why `PlanUsagePill` matches two id vocabularies.
 
-Enterprise-managed approval requirements can disallow the driver's `approval_policy=never`,
-which the exec transport can't survive. The driver spots the CLI's downgrade warning and
-self-heals to `on-request`, recording the `codex_approval_downgraded` setting.
+### Transport, permission modes and writable roots
+
+A task turn runs on `codex app-server`, the CLI's IDE protocol, not on `codex exec`
+(`CODEX_TRANSPORT`, default `app-server`; `exec` keeps the SDK path). The reason is one line
+in codex-rs `exec/src/lib.rs`: exec mode answers every `ServerRequest` approval with a
+rejection before the host sees it, so under it no permission mode can ask anyone anything,
+and the old picker honestly offered only "workspace-write, never asks" and "read-only".
+On app-server the approval arrives as a JSON-RPC request the turn cannot finish without our
+answer — `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`,
+`item/permissions/requestApproval` — and `codex/permissionPrompt.ts` answers it through the
+same rules, card and `/answer` registry the Claude gate uses (`lib/permissions.ts`), so the
+Bash-only `permission_rules`, the attended/unattended deadlines and the scheduled-run
+`interactionPolicy: "deny"` all apply unchanged. `item/tool/requestUserInput`, Codex's native
+question tool, lands on the ask card. The protocol has no approval timeout of its own
+(verified against the 0.153.0 schema), so `waitForPermission`'s deadlines are the only ones.
+
+Three files carry it. `codex/appServerClient.ts` is the transport: framing, id correlation,
+the three kinds of traffic on one pipe (our requests, their notifications, THEIR requests,
+told apart by `method` and `id`), and the SDK's own `--config` flattening so `mcp_servers`
+and `model_providers` overrides mean exactly what they mean on exec. `codex/appServerTurn.ts`
+is one turn: handshake, `thread/start` or `thread/resume` (falling back to a fresh,
+context-seeded thread when the CLI no longer has the old one), `turn/start`, the request
+handlers, `turn/interrupt` on Stop. `codex/appServerEvents.ts` respells v2 items as the exec
+protocol's so `codex/events.ts` maps both transports and the transcript is identical either
+way; it also reads `thread/tokenUsage/updated`, whose `last` is the request's prompt size —
+the context gauge, real on this transport (`reportsContext`) — and whose `total` is the same
+cumulative counter exec reports on `turn.completed`, so `sessions.usage_cum` carries across
+transports. A process per turn, like exec: the CLI persists the thread under `~/.codex`.
+`tests/codexAppServer.test.ts` drives all of it against a fake binary
+(`tests/fixtures/codex/fake-app-server.mjs`) that speaks the protocol.
+
+`codex/policy.ts` is what a permission mode MEANS here, shared by both transports and pinned
+by `tests/codexPolicy.test.ts`: `auto` (the default) is workspace-write with `on-request`
+approvals decided by Codex's own reviewer (`approvals_reviewer: "auto_review"`, accepted by
+`thread/start` on 0.153.0 — the "approve for me" the Claude picker's auto is); `default` is
+the same sandbox with escalations on the card; `acceptEdits` is the sandbox that never asks,
+which is what the old "workspace-write" entry was; `bypassPermissions` is
+`danger-full-access`; `plan` is read-only. A migration in `lib/db.ts` moved every Codex row
+that had chosen the old `bypassPermissions` onto `acceptEdits`, since a stored "sandboxed"
+silently becoming "no sandbox" is not an upgrade anyone asked for. Two things only
+`turn/start` can carry, verified live: the FULL `SandboxPolicy` object with `writableRoots`
+(`thread/start` takes a mode string only), and per-turn `approvalPolicy`.
+
+The writable roots are the bug the user hit first. Under workspace-write the CLI marks the
+cwd's `.git` read-only and, for a linked worktree, resolves the `gitdir:` pointer and protects
+the real gitdir too (codex-rs `protocol/src/permissions.rs`,
+`default_read_only_subpaths_for_writable_root`), while the repo's common `.git` is outside
+every root — so `git add` and `git commit` fail in every sandboxed mode from a Calandria
+worktree. `gitWritableRoots()` grants what a commit writes and nothing more: the task's
+private gitdir and the common dir's `objects/`, `refs/` and `logs/`. Not the common dir
+itself, because a writable `config` lets a sandboxed turn plant a `core.fsmonitor` or
+`hooksPath` that the user's next `git status` in their real checkout runs unsandboxed.
+`CODEX_WRITABLE_ROOTS` adds more. This host's bubblewrap is blocked by Ubuntu's
+unprivileged-userns AppArmor policy, so the roots were verified by reading the CLI's source
+and its own `runtimeWorkspaceRoots` echo rather than by running a sandboxed commit here.
+
+Enterprise-managed approval requirements can disallow `approval_policy=never`. The driver
+spots the CLI's downgrade warning and sends `on-request` for the never-asking modes from then
+on, recording the `codex_approval_downgraded` setting; on app-server that means a card
+rather than a failed turn.
 
 A provider override (`lib/agentEnv.ts`, docs/AGENTS.md "Local models") reaches Codex as
 config, not env: `codex/provider.ts` maps the merged turn env's `OPENAI_BASE_URL` onto a
