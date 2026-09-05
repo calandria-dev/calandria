@@ -28,6 +28,7 @@ import { submitAnswer } from "@/lib/asks";
 import { subscribeGlobal, subscribe } from "@/lib/events";
 import { setRunContext, clearRunContext, SCHEDULED_RUN_CONTEXT } from "@/lib/runContext";
 import { startResumeTurn } from "@/lib/runner";
+import { getCodexPlanUsage, resetCodexPlanUsageStateForTests } from "@/lib/agents/codex/planUsage";
 import type { Project, Task, StreamEvent, TaskStreamEvent, ToolData } from "@/lib/types";
 
 type Ev<T extends StreamEvent["type"]> = Extract<StreamEvent, { type: T }>;
@@ -162,6 +163,37 @@ describe("codex app-server transport", () => {
     expect((evs.find((e) => e.type === "context") as Ev<"context">).tokens).toBe(1000);
     // The CLI's config warning surfaces once as a notice.
     expect(evs.filter((e) => e.type === "notice" && e.content.includes("fake warning"))).toHaveLength(1);
+  });
+
+  it("feeds the plan-usage meter from the turn's rate-limit notification, without spawning", async () => {
+    const { project, task } = fixture("default");
+    // A scratch CODEX_HOME holding a login, so the meter has an account to
+    // meter and the only thing that can stop it spawning its own app-server is
+    // the snapshot the turn pushed.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "codex-home-"));
+    tmp.push(home);
+    fs.writeFileSync(path.join(home, "auth.json"), JSON.stringify({ tokens: { access_token: "t", account_id: "a" } }));
+    const priorHome = process.env.CODEX_HOME;
+    const priorKey = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    resetCodexPlanUsageStateForTests();
+    try {
+      await turn(task, project, { answer: ["allow_once"] });
+      // Every launch of the fake logs its argv, so this counts processes.
+      const spawns = readLog().filter((l) => l.argv).length;
+
+      process.env.CODEX_HOME = home;
+      const usage = (await getCodexPlanUsage())!;
+      expect(usage.available).toBe(true);
+      expect(usage.plan).toBe("pro");
+      expect(usage.windows.map((w) => w.utilization)).toEqual([23, 61]);
+      expect(usage.windows[0].resetsAt).toBe(Date.parse("2026-09-02T21:00:00Z"));
+      expect(readLog().filter((l) => l.argv)).toHaveLength(spawns);
+    } finally {
+      resetCodexPlanUsageStateForTests();
+      process.env.CODEX_HOME = priorHome;
+      if (priorKey !== undefined) process.env.OPENAI_API_KEY = priorKey;
+    }
   });
 
   it("parks a command approval on a permission card and answers accept / acceptForSession / decline", async () => {

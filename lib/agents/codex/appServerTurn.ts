@@ -20,6 +20,7 @@ import { mapThreadEvent, type CodexMapState } from "./events";
 import { makeQueue } from "../shared";
 import { describePermission } from "../../permissions";
 import { promptPermission, type PromptDecision } from "./permissionPrompt";
+import { ingestRateLimits } from "./planUsage";
 import { sandboxPolicyObject, type CodexRunPolicy } from "./policy";
 import { interactionDenied, recordUnattendedDenial, UNATTENDED_ASK_DENIAL, UNATTENDED_ASK_NOTE } from "../../runContext";
 import { waitForAnswer, ASK_INTERRUPTED_NOTE } from "../../asks";
@@ -78,6 +79,11 @@ export async function* runAppServerTurn(args: AppServerTurnArgs): AsyncGenerator
       const it = p.item as V2Item;
       items.set(it.id, it);
     }
+    // The account's rate limits, pushed for free while the turn runs. Feeding
+    // the meter's cache here is what keeps ./planUsage.ts from spawning a
+    // throwaway `codex app-server` to read the same numbers; it produces no
+    // stream event, so it stays out of the mapper (which returns NONE for it).
+    if (method === "account/rateLimits/updated") ingestRateLimits(params);
     const mapped = mapNotification(method, params, tstate);
     for (const ev of mapped.events) for (const out of mapThreadEvent(ev, state)) push(out);
     if (mapped.contextTokens != null) push({ type: "context", tokens: mapped.contextTokens });
