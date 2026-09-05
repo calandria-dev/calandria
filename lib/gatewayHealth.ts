@@ -2,28 +2,26 @@ import { MODEL_PROBE_MS } from "./config";
 import { normalizeBaseUrl } from "./agentEnv";
 
 /**
- * What Settings → Agents can say about the instance's LiteLLM gateway, and how
- * it finds out. Three calls, measured against LiteLLM 1.101.0
- * (docs/design/litellm.md, "LiteLLM surface"):
+ * What Settings -> Agents can say about the instance's LiteLLM gateway, and how
+ * it finds out (docs/AGENTS.md, "LiteLLM surface"). Three calls:
  *
  * - `GET /health/readiness` needs no key, so an instance with the address but
- *   no key still gets a reachability answer rather than a blank card.
- * - `x-litellm-version` comes back on ANY response, the readiness probe
- *   included, so the version is free and does not need a second call.
+ *   no key still gets a reachability answer instead of a blank card.
+ * - `x-litellm-version` comes back on any response, the readiness probe
+ *   included, so the version is free and needs no second call.
  * - `GET /model/info` is the catalog, filtered to the calling key's allowed
  *   models. Counting it is the honest form of "what can this instance run".
  * - `GET /key/info` answers 500 `Database not connected` on a proxy with no
- *   Postgres behind it. That is not a failure to report as one: it is the
- *   whole answer to "why are there no budgets here", and the card says so
- *   instead of showing blanks where spend would go. When it DOES answer, its
- *   body is the budget readout (docs/design/litellm.md, "Attribution, budgets
- *   and failures") — spend, max_budget and budget_reset_at for the instance
- *   key, read here rather than a second call.
+ *   Postgres behind it. That is the whole answer to "why are there no budgets
+ *   here", and the card says so instead of showing blanks where spend would
+ *   go. When it does answer, its body is the budget readout (docs/AGENTS.md,
+ *   "Attribution, budgets and failures"): spend, max_budget and
+ *   budget_reset_at for the instance key, read here instead of a second call.
  *
- * Never throws. Every caller exists to SHOW the unreachable state, the same
- * contract lib/modelEndpoint.ts keeps for a local model server, and the two are
- * separate cards for the same reason an agent's `connected` is separate from
- * either: a Claude login says nothing about whether the gateway is up.
+ * Never throws. Every caller exists to show the unreachable state, the same
+ * contract lib/modelEndpoint.ts keeps for a local model server; they are
+ * separate cards because a Claude login says nothing about whether the
+ * gateway is up.
  */
 export interface GatewayHealth {
   base_url: string;
@@ -32,7 +30,7 @@ export interface GatewayHealth {
   /** `x-litellm-version` off whichever response carried one. */
   version: string | null;
   /** Entries in /model/info; null when it could not be read (no key, or the
-   *  key may not see the catalog) — distinct from a gateway serving none. */
+   *  key may not see the catalog), distinct from a gateway serving none. */
   model_count: number | null;
   /** False when /key/info reported the no-database 500. Null when nothing was
    *  learned either way, which is what no key looks like. */
@@ -40,7 +38,7 @@ export interface GatewayHealth {
   /** Whether this instance has a key to send at all. */
   has_key: boolean;
   error: string | null;
-  /** The instance key's budget readout — all four null together whenever
+  /** The instance key's budget readout: all four null together whenever
    *  `database` isn't `true` (no Postgres, no key, or the read failed), never
    *  a mix, so the card can gate on one field. `max_budget` is null for a key
    *  with no budget set at all (unlimited), which is distinct from a spent
@@ -48,11 +46,11 @@ export interface GatewayHealth {
   spend: number | null;
   max_budget: number | null;
   budget_reset_at: string | null;
-  /** The key's own model allowlist, for the same readout — null alongside the
-   *  three above, `[]` for a key allowed every model LiteLLM knows about. */
+  /** The key's own model allowlist, for the same readout: null alongside the
+   *  three above, `[]` for a key allowed every model in LiteLLM's catalog. */
   key_models: string[] | null;
-  /** `agy models` diffed against this catalog (lib/agents/gemini/gatewayCheck.ts)
-   *  — the models the CLI needs that this gateway doesn't serve. Null when
+  /** `agy models` diffed against this catalog (lib/agents/gemini/gatewayCheck.ts):
+   *  the models the CLI needs that this gateway doesn't serve. Null when
    *  nothing has been checked yet or agy isn't signed in; not set by
    *  probeGateway itself, since that stays agy-unaware, but filled in by
    *  GET /api/agents before this reaches the client. */
@@ -75,13 +73,13 @@ async function call(url: string, key: string, timeoutMs: number): Promise<Respon
   return fetch(url, {
     signal: AbortSignal.timeout(timeoutMs),
     // LiteLLM accepts the virtual key either way; `x-litellm-api-key` is the
-    // one the proxy layer reads without also being forwarded upstream.
+    // one the proxy layer reads without forwarding it upstream too.
     headers: { accept: "application/json", ...(key ? { "x-litellm-api-key": `Bearer ${key}` } : {}) },
     cache: "no-store",
   });
 }
 
-/** Probe the gateway once. `key` may be empty — readiness still answers. */
+/** Probe the gateway once. `key` may be empty; readiness still answers. */
 export async function probeGateway(
   baseUrl: string | null | undefined,
   key = "",
@@ -100,8 +98,8 @@ export async function probeGateway(
     base_url: base, reachable: false, version: null, model_count: null, database: null, has_key: !!key, error: null,
     spend: null, max_budget: null, budget_reset_at: null, key_models: null,
   };
-  // One round trip each, in parallel: three serial probes would multiply the
-  // budget by three inside a route every tab loads.
+  // One round trip each, in parallel: serial probes would triple the budget
+  // inside a route every tab loads.
   const [ready, models, keyInfo] = await Promise.allSettled([
     call(`${base}/health/readiness`, "", timeoutMs),
     call(`${base}/model/info`, key, timeoutMs),
@@ -129,14 +127,14 @@ export async function probeGateway(
 
   // A 500 here is the documented no-database answer, not an outage; anything
   // else (401, 400) means the key is wrong or absent and says nothing about
-  // the database, so it stays null rather than claiming one way or the other.
+  // the database, so it stays null instead of claiming one way or the other.
   if (keyInfo.status === "fulfilled") {
     if (keyInfo.value.ok) {
       out.database = true;
       // The budget readout rides the same call: {key, info: {spend, max_budget,
-      // budget_reset_at, models}} (docs/design/litellm.md's appendix). An
-      // unrecognised shape leaves the four fields null rather than throwing —
-      // this is still a reachable, database-backed gateway either way.
+      // budget_reset_at, models}} (docs/AGENTS.md's appendix). An unrecognized
+      // shape leaves the four fields null instead of throwing; this is still
+      // a reachable, database-backed gateway either way.
       try {
         const body = (await keyInfo.value.json()) as {
           info?: { spend?: unknown; max_budget?: unknown; budget_reset_at?: unknown; models?: unknown };
@@ -164,7 +162,7 @@ export async function probeGateway(
 /** Same window and the same reason as ENDPOINT_CACHE_MS in lib/modelEndpoint.ts. */
 export const GATEWAY_CACHE_MS = 10_000;
 
-// On globalThis so an HMR reload doesn't reset it — see lib/modelEndpoint.ts.
+// On globalThis so an HMR reload doesn't reset it; see lib/modelEndpoint.ts.
 const store = globalThis as { __calandriaGatewayProbes?: Map<string, { at: number; value: GatewayHealth }> };
 const probes = (store.__calandriaGatewayProbes ??= new Map());
 
@@ -178,7 +176,7 @@ export async function gatewayHealth(baseUrl: string | null | undefined, key = ""
   return value;
 }
 
-/** Drop every cached probe — the suite's between-tests reset, and what Settings
+/** Drop every cached probe: the suite's between-tests reset, and what Settings
  *  needs after saving a key so the card re-reads with it. */
 export function clearGatewayProbeCache(): void {
   probes.clear();

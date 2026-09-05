@@ -1,19 +1,18 @@
 // Per-task exclusive async lock coupling "a turn is launching" to "a git
 // operation is rewriting the worktree".
 //
-// Why: the merge/sync/complete routes used to check task.running once and then
-// run multi-second git operations (git add -A + commit over the whole
-// worktree). A POST /messages landing in that window could flip running=1 and
-// launch the SDK agent, which writes into the SAME worktree while the merge is
-// staging — committing (and potentially landing into the base branch)
-// half-written files. The check and the git op were not atomic.
+// A merge/sync/complete route checking task.running and then running a
+// multi-second git operation (git add -A + commit over the whole worktree) is
+// not atomic: a POST /messages landing in that window could flip running=1
+// and launch the agent, which writes into the same worktree while the merge
+// is staging, committing half-written files into the base branch.
 //
-// The fix: both sides run under this lock. A merge/sync holds it for the whole
+// Both sides run under this lock instead. A merge/sync holds it for the whole
 // git operation and re-checks hasTurn() once inside; a turn launch holds it
-// through registerTurn() (so by the time it releases, hasTurn() is true and a
-// waiting merge will 409). The lock is NOT held while a turn streams — a live
-// turn is excluded by the hasTurn() re-check, not by lock tenure, so merges
-// fail fast with 409 instead of queueing for minutes behind an agent.
+// through registerTurn(), so by the time it releases, hasTurn() is true and a
+// waiting merge gets a 409. The lock is not held while a turn streams: a live
+// turn is excluded by the hasTurn() re-check, not by lock tenure, so a merge
+// fails fast with 409 instead of queueing for minutes behind an agent.
 //
 // Kept on globalThis so dev HMR module reloads don't fork the lock table
 // (same pattern as lib/events.ts / lib/abort.ts). Single Node process; no
@@ -52,16 +51,15 @@ export async function withTaskLock<T>(taskId: string, fn: () => Promise<T> | T):
 }
 
 /**
- * Run `fn` holding the locks of EVERY task in `ids` at once — what a batch
- * mutation needs, since its state check has to be atomic with a write that
- * spans all of them.
+ * Run `fn` holding the locks of every task in `ids` at once, for a batch
+ * mutation whose state check has to be atomic with a write spanning all of
+ * them.
  *
- * Acquired in sorted id order, deduplicated: two batches with overlapping
- * selections can then only ever wait on each other in one direction, so they
- * can't deadlock. (A single-task holder is just the one-element case of the
- * same ordering.) Nested rather than parallel — withTaskLock is not reentrant,
- * so each lock is taken inside the previous one's tenure and released by
- * unwinding.
+ * Acquired in sorted id order, deduplicated, so two batches with overlapping
+ * selections can only ever wait on each other in one direction and can't
+ * deadlock (a single-task holder is the one-element case of the same
+ * ordering). Locks nest: withTaskLock is not reentrant, so each lock is
+ * taken inside the previous one's tenure and released by unwinding.
  */
 export async function withTaskLocks<T>(ids: string[], fn: () => Promise<T> | T): Promise<T> {
   const sorted = [...new Set(ids)].sort();

@@ -13,13 +13,14 @@ import { recentCommits } from "./git";
 import type { Project } from "./types";
 import { automaticRecapsEnabled } from "./backgroundJobs";
 
-// How long a project must sit idle before a recap is considered worthwhile —
-// "it's been a while since I worked on this". Tunable; kept modest so the
-// feature is easy to exercise. (8 hours.)
+// How long a project must sit idle before a recap is worth generating: "it's
+// been a while since I worked on this". Kept modest (8 hours) so the feature
+// is easy to exercise.
 export const RECAP_STALE_MS = 8 * 60 * 60 * 1000;
 
 // Projects currently mid-generation, so the sweep and on-open paths don't
-// kick off a second recap turn for the same project. Module-level = per server.
+// kick off a second recap turn for the same project. Module-level, so this is
+// per server process.
 const inFlight = new Set<string>();
 
 export interface RecapStatus {
@@ -27,7 +28,7 @@ export interface RecapStatus {
   recap_at: number;
   hasHistory: boolean;
   stale: boolean;
-  needsRecap: boolean; // stale + has new activity since the last recap + has history
+  needsRecap: boolean; // stale, has new activity since the last recap, and has history
   generating: boolean;
   lastActivity: number;
 }
@@ -48,9 +49,9 @@ export function recapStatus(project: Project): RecapStatus {
   };
 }
 
-// Assemble the recent-activity digest fed to the utility agent: one block per started task
-// (most-recently-touched first), preferring its latest /clear summary, else the
-// tail of its last assistant message.
+// Assemble the recent-activity digest fed to the utility agent: one block per
+// started task (most-recently-touched first), using its latest /clear summary
+// when there is one, else the tail of its last assistant message.
 function buildDigest(project: Project): { digest: string; coversAt: number } | null {
   const tasks = listTasks(project.id)
     .filter((t) => !t.suggested && t.started)
@@ -79,8 +80,8 @@ function buildDigest(project: Project): { digest: string; coversAt: number } | n
   return { digest: parts.join("\n\n"), coversAt: projectLastActivity(project.id) };
 }
 
-// Generate + persist a recap for one project. Returns the recap text, or null
-// if there's nothing to recap or a generation is already in flight.
+// Generate and persist a recap for one project. Returns the recap text, or
+// null if there's nothing to recap or a generation is already in flight.
 export async function generateRecap(projectId: string, options: { unattended?: boolean } = {}): Promise<string | null> {
   if (inFlight.has(projectId)) return null;
   const project = getProject(projectId);
@@ -102,7 +103,7 @@ export async function generateRecap(projectId: string, options: { unattended?: b
 }
 
 // Generate recaps for every project that's gone stale with new activity.
-// Sequential, best-effort — one bad project never blocks the rest.
+// Sequential and best-effort: one bad project never blocks the rest.
 export async function sweepRecaps(): Promise<number> {
   if (!automaticRecapsEnabled()) return 0;
   let generated = 0;
@@ -113,7 +114,7 @@ export async function sweepRecaps(): Promise<number> {
         await generateRecap(p.id, { unattended: true });
         generated++;
       } catch {
-        // skip — a single failed recap shouldn't abort the sweep
+        // A single failed recap doesn't abort the sweep.
       }
     }
   }

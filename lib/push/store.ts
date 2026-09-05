@@ -1,4 +1,4 @@
-// push_subscriptions CRUD. DB only — pinned SDK-free by tests/importGraph.test.ts.
+// push_subscriptions CRUD. DB only, pinned SDK-free by tests/importGraph.test.ts.
 
 import { nanoid } from "nanoid";
 import { getDb } from "@/lib/db";
@@ -21,10 +21,10 @@ export interface PushSubscriptionRow {
 const LABEL_MAX = 80;
 
 /**
- * Register a browser's subscription, or refresh one already known. Keyed on
- * the endpoint: the same browser re-posting (every page load re-syncs, and the
- * worker re-posts after a pushsubscriptionchange) refreshes last_seen_at and
- * the keys rather than minting a second row that would deliver twice.
+ * Register a browser's subscription, or refresh one already known, keyed by
+ * endpoint. A re-post from the same browser (page reload, or the worker after
+ * a pushsubscriptionchange) updates the existing row's last_seen_at and keys,
+ * so no duplicate row gets created and delivery never doubles.
  */
 export function upsertPushSubscription(sub: PushSubscriptionJson, label: string): PushSubscriptionRow {
   const now = Date.now();
@@ -75,7 +75,7 @@ function serviceOf(endpoint: string): string {
   try { return new URL(endpoint).host; } catch { return ""; }
 }
 
-/** The device list, with the endpoint and keys deliberately left off the wire. */
+/** The device list, with the endpoint and keys left off the wire. */
 export function toPushDevice(row: PushSubscriptionRow): PushDevice {
   return {
     id: row.id,

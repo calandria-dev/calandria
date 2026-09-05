@@ -2,17 +2,17 @@
 // does not need a browser.
 //
 // (The recap "sweep" that looks like a scheduler is driven by a setInterval in
-// app/shell/useRecaps.ts, so it does nothing when no tab is open. This
-// has to run at 08:30 with nobody logged in, so it lives here, in the server
-// process, started from a boot self-ping — see app/api/instance/scheduler.)
+// app/shell/useRecaps.ts, so it does nothing when no tab is open. This has to
+// run at 08:30 with nobody logged in, so it lives here, in the server process,
+// started from a boot self-ping; see app/api/instance/scheduler.)
 //
 // Reaches lib/runner.ts (through lib/dispatch.ts) to launch turns, exactly as
-// lib/autoStart.ts does, and is therefore NOT in tests/importGraph.test.ts's
+// lib/autoStart.ts does, and is therefore not in tests/importGraph.test.ts's
 // SDK-free PINNED set. The decision logic lives in lib/schedule/due.ts, which
-// IS pinned.
+// is pinned.
 //
 // The mint-a-task-and-launch-its-first-turn half of fireSchedule() lives in
-// lib/dispatch.ts, shared with runbooks — a runbook is this feature with the
+// lib/dispatch.ts, shared with runbooks: a runbook is this feature with the
 // clock taken off, and two copies of that sequence would have drifted.
 
 import {
@@ -55,44 +55,44 @@ const state = (): SchedulerState =>
  * What the card needs to tell the truth about the ticker. `tickMs` travels with
  * it so the client can age `lastTickAt` against the real interval instead of
  * guessing one, and `startedAt` covers the case `lastTickAt` cannot: a ticker
- * that started and whose very FIRST sweep never came back.
+ * that started and whose very first sweep never came back.
  */
 export const schedulerHealth = () => {
   const s = state();
   return {
-    // "the schedule half is running", not "a timer exists" — the timer also
+    // "the schedule half is running", not "a timer exists": the timer also
     // ticks for retention alone, and the card ages this into a "looks stuck"
-    // banner about SCHEDULES.
+    // banner about schedules.
     started: !!s.timer && SCHEDULER_ENABLED,
     startedAt: s.startedAt,
     lastTickAt: s.lastTickAt,
     lastError: s.lastError,
     tickMs: SCHEDULE_TICK_MS,
     // Retention rides this ticker (lib/retention.ts) and has no card of its
-    // own, so its cadence is reported here — otherwise "did the prune run?" has
+    // own, so its cadence is reported here; otherwise "did the prune run?" has
     // no answer short of reading the log.
     retention: retentionHealth(),
     // Same deal for the worktree half (lib/worktreeSweep.ts), which also
-    // carries the disk-usage reading behind the log warning — "how big is the
+    // carries the disk-usage reading behind the log warning; "how big is the
     // worktrees dir" otherwise has no answer short of ssh and `du`.
     worktrees: worktreeSweepHealth(),
   };
 };
 
 /**
- * Start the ticker. Idempotent — the boot ping and a lazy call from the
+ * Start the ticker. Idempotent: the boot ping and a lazy call from the
  * schedules API can both reach it, and only the first wins.
  */
 export function startScheduler(): void {
   const s = state();
   // The ticker is also retention's clock (lib/retention.ts), so it starts for
-  // EITHER job. An instance that turned scheduled work off — a shared box, a
-  // second container on a copy of the DB — is exactly the one that still wants
+  // either job. An instance that turned scheduled work off (a shared box, a
+  // second container on a copy of the DB) is exactly the one that still wants
   // its disk swept, and coupling the two would have made CALANDRIA_SCHEDULER=off
-  // silently disable a policy nobody set.
+  // disable a policy nobody set, with no trace of it happening.
   // The worktree sweep and the disk-usage warning ride it too, and the warning
-  // is deliberately not conditional on the sweep: an instance with everything
-  // else switched off still wants to be told its worktrees dir is 40 GB. Set
+  // is not conditional on the sweep: an instance with everything else switched
+  // off still wants to be told its worktrees dir is 40 GB. Set
   // CALANDRIA_WORKTREES_DISK_WARN_GB=0 to stop even that.
   if (s.timer || (!SCHEDULER_ENABLED && !RETENTION_ENABLED && !WORKTREE_SWEEP_ENABLED && WORKTREES_DISK_WARN_BYTES <= 0))
     return;
@@ -131,15 +131,15 @@ export async function tickSchedules(now = Date.now()): Promise<number> {
   if (s.ticking) return 0;
   s.ticking = true;
   let launched = 0;
-  // Rebuilt every sweep rather than accumulated: this is the state of the world
-  // NOW, so a clean sweep clears it. Left sticky (as it was), one transient
-  // failure showed the banner forever, while everything else fired correctly —
-  // an alarm that never goes off is one the user learns to scroll past, which
-  // is the same disease as a schedule that cries wolf every morning.
+  // Rebuilt every sweep instead of accumulated: this is the state of the world
+  // now, so a clean sweep clears it. Left sticky, one transient failure would
+  // show the banner forever while everything else fired correctly: an alarm
+  // that never goes off is one the user learns to scroll past, which is the
+  // same disease as a schedule that cries wolf every morning.
   let failure = "";
   try {
-    // Empty when scheduled work is switched off — the sweep below still runs,
-    // which is the whole reason the ticker starts for retention alone.
+    // Empty when scheduled work is switched off; the sweep below still runs,
+    // which is why the ticker starts for retention alone.
     for (const schedule of SCHEDULER_ENABLED ? listEnabledSchedules() : []) {
       try {
         const verdict = adjudicate(schedule, now, isScheduleBusy);
@@ -157,7 +157,7 @@ export async function tickSchedules(now = Date.now()): Promise<number> {
       }
     }
     s.lastError = failure;
-    // Retention piggybacks on this ticker rather than starting a second one:
+    // Retention piggybacks on this ticker instead of starting a second one:
     // this process owns the database (lib/db-lock.mjs), so a prune belongs in
     // the one loop that already runs here. It keeps its own much longer clock
     // and returns immediately when it isn't due, and it is wrapped because a
@@ -167,21 +167,21 @@ export async function tickSchedules(now = Date.now()): Promise<number> {
     } catch (err) {
       console.error("[retention] sweep failed:", err);
     }
-    // The worktree half (issue #15 item 2), on the same clock and wrapped for
-    // the same reason. Awaited rather than fired off: it holds task and repo
-    // locks and spawns git, and a sweep still running when the next one starts
-    // would be two passes racing for the same checkouts.
+    // The worktree half, on the same clock and wrapped for the same reason.
+    // Awaited instead of fired off: it holds task and repo locks and spawns
+    // git, and a sweep still running when the next one starts would be two
+    // passes racing for the same checkouts.
     try {
       await maybeSweepWorktrees(Date.now());
     } catch (err) {
       console.error("[worktrees] sweep failed:", err);
     }
-    // The retention backstop for per-task LiteLLM keys (docs/design/litellm.md,
+    // The retention backstop for per-task LiteLLM keys (docs/AGENTS.md,
     // "Per-task virtual keys"): lib/autoStart.ts's maybeAutoStartDependents()
     // deletes a task's key the instant it goes terminal, but that call can
-    // miss (a crash, a bug, a row edited directly) — this sweeps every
+    // miss (a crash, a bug, a row edited directly), so this sweeps every
     // terminal+idle task for a key still left on it. Gated on the feature
-    // itself rather than RETENTION_ENABLED: a forgotten live key is a security
+    // itself instead of RETENTION_ENABLED: a forgotten live key is a security
     // question, not a disk one, so it isn't tied to whether the operator also
     // wants their transcript tables pruned.
     if (gatewayKeysEnabled()) {
@@ -200,7 +200,7 @@ export async function tickSchedules(now = Date.now()): Promise<number> {
 
 /**
  * Is this schedule's previous run still live? Turn liveness comes from the
- * abort registry, not from the task row — the row's resting state after a turn
+ * abort registry, not from the task row: the row's resting state after a turn
  * says nothing about whether anything is running: a task stays "in progress"
  * long after its turn ends, a finished turn either sets awaiting_input or (on a
  * clean scheduled run) the unread_run_at mark, and both outlive the turn.
@@ -231,14 +231,14 @@ export type ScheduleRecipe = Pick<Schedule, "prompt" | "agent" | "permission_mod
 /**
  * A schedule may point at a runbook so "the morning sweep" is one recipe edited
  * in one place. The schedule's own columns stay populated as the fallback and
- * are refreshed FROM the runbook if it is ever deleted (deleteRunbook copies
- * them back), so a missing link degrades to yesterday's behavior rather than to
- * an empty prompt firing every morning.
+ * are refreshed from the runbook if it is ever deleted (deleteRunbook copies
+ * them back), so a missing link degrades to yesterday's behavior instead of an
+ * empty prompt firing every morning.
  *
- * A cross-project link is refused rather than resolved: both objects are
+ * A cross-project link is refused instead of resolved: both objects are
  * project-scoped, the runbook was written against a different repo's commands,
  * and firing it here would run the wrong recipe under a name promising
- * otherwise. Refused at save time too — this is the backstop for a row that got
+ * otherwise. Refused at save time too, as the backstop for a row that got
  * linked some other way, or whose project changed underneath it.
  */
 export function resolveScheduleRecipe(schedule: Schedule): { recipe: ScheduleRecipe } | { error: string } {
@@ -254,10 +254,10 @@ export function resolveScheduleRecipe(schedule: Schedule): { recipe: ScheduleRec
 }
 
 /**
- * Preflight, mint, launch. The mint-and-launch half now lives in
- * lib/dispatch.ts, shared with runbooks — everything left here is the part
- * that makes a firing a FIRING: the ledger link, the wall-clock stamp, and the
- * unattended RunContext.
+ * Preflight, mint, launch. The mint-and-launch half lives in lib/dispatch.ts,
+ * shared with runbooks; everything left here is the part that makes a firing
+ * a firing: the ledger link, the wall-clock stamp, and the unattended
+ * RunContext.
  */
 export async function fireSchedule(schedule: Schedule, run: ScheduleRun): Promise<void> {
   const resolved = resolveScheduleRecipe(schedule);
@@ -266,9 +266,9 @@ export async function fireSchedule(schedule: Schedule, run: ScheduleRun): Promis
     return;
   }
   const recipe = resolved.recipe;
-  // In the SCHEDULE's zone, not UTC: an 08:30 America/Los_Angeles job titled
-  // "15:30" is the feature contradicting, on its most visible artifact, the one
-  // thing it is fastidious about.
+  // In the schedule's own timezone, not UTC: an 08:30 America/Los_Angeles job
+  // titled "15:30" would get wrong, on its most visible artifact, the exact
+  // detail this feature is careful to get right.
   const stamp = formatWallClock(run.scheduled_for, schedule.timezone);
   const late = run.trigger === "catch_up" ? " (catching up: the app was not running at the scheduled time)" : "";
 
@@ -288,7 +288,7 @@ export async function fireSchedule(schedule: Schedule, run: ScheduleRun): Promis
     // produced it and not just to the schedule that timed it.
     runbook_id: schedule.runbook_id,
     // The turn actually launched: link the task and mark the run live. Done
-    // inside the dispatch rather than after it, so a launch that dies half-way
+    // inside the dispatch instead of after it, so a launch that dies half-way
     // is still attributable to this run.
     onTaskCreated: (taskId) => startRun(run.id, taskId),
   });

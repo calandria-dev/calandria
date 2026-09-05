@@ -1,22 +1,13 @@
-// Tool-permission policy: the decision logic behind the Claude driver's
-// canUseTool gate (lib/agents/claude/driver.ts).
+// Tool-permission policy behind the Claude driver's canUseTool gate
+// (lib/agents/claude/driver.ts). Under bypassPermissions the SDK never calls
+// this. Otherwise a call is allowed without a prompt only by the built-in
+// read-only allowlist or a remembered project rule (permission_rules,
+// revocable in Settings); everything else raises a card, like an
+// AskUserQuestion. A stopped turn, an unwatched turn, an expired prompt, and
+// an unparseable answer all deny.
 //
-// Under bypassPermissions nothing here runs — the SDK never
-// consults the callback. Under acceptEdits / plan every tool call the
-// SDK doesn't auto-approve lands here, and the gate answers in three steps:
-//
-//   1. a built-in read-only allowlist  → allow silently (otherwise a prompted
-//      session would ask before every Read/Grep and be unusable);
-//   2. a remembered project-scoped rule → allow silently (the "always allow"
-//      button; rules live in permission_rules and are revocable in Settings);
-//   3. otherwise → prompt the human, exactly like an AskUserQuestion.
-//
-// The gate FAILS CLOSED everywhere: a stopped turn, an unwatched turn, an
-// expired prompt, and an unparseable answer all deny.
-//
-// Everything here is pure/DB-free on purpose: no agent SDK, no store. The
-// driver owns the parking, the runner owns persistence — the same split the
-// ask flow uses. (Pinned SDK-free by tests/importGraph.test.ts.)
+// Pure and DB-free: no agent SDK, no store (pinned by tests/importGraph.test.ts).
+// The driver parks the turn; the runner persists.
 
 import type {
   DiffLine,
@@ -32,10 +23,10 @@ import { interactionDenied } from "./runContext";
 
 // ---------- step 1: the built-in allowlist ----------
 
-// Tools that only READ (or only touch the agent's own scratch state), so
-// prompting for them buys no safety and costs the user a click per call.
-// Deliberately conservative: WebFetch/WebSearch send data out and are NOT here,
-// and nothing that writes to the filesystem or shells out is here either.
+// Tools that only read, or only touch the agent's own scratch state, so a
+// prompt for them buys no safety and costs a click per call. WebFetch and
+// WebSearch send data out and are excluded, as is anything that writes to
+// the filesystem or shells out.
 const READ_ONLY_TOOLS = new Set([
   "Read",
   "Glob",
@@ -44,31 +35,31 @@ const READ_ONLY_TOOLS = new Set([
   "NotebookRead",
   "TodoWrite",
   "TodoRead",
-  // Answered by the driver's PreToolUse hook before permissions are consulted;
-  // listed so a future SDK ordering change can't turn an ask into a prompt.
+  // The driver's PreToolUse hook answers this before permissions are
+  // consulted; listed here so a future SDK ordering change can't turn it
+  // into a live prompt.
   "AskUserQuestion",
 ]);
 
-// Calandria's own MCP tools, spelled out rather than matched by server
-// prefix: these three can't touch the user's code (they file a suggestion,
-// register a URL, ask a question), but a future tool on the same server must
-// not inherit that trust just because its name starts the same way.
+// Calandria's own MCP tools, matched by exact name so a future tool on the
+// same server can't inherit this trust from a shared name prefix. These
+// three can't touch the user's code: they file a suggestion, register a URL,
+// or ask a question.
 const CALANDRIA_TOOLS = new Set([
   "mcp__calandria__suggest_task",
   "mcp__calandria__expose_service",
   "mcp__calandria__ask_user",
 ]);
 
-// Tools that must be decided EVERY time, no rule and no allowlist.
-// ExitPlanMode is the "approve this plan" gate — auto-approving or remembering
-// it would defeat plan mode, which is the one thing that mode exists to do.
+// Tools that must be decided every time: no rule, no allowlist. ExitPlanMode
+// is the plan-approval gate; remembering it would defeat plan mode.
 const NEVER_REMEMBER = new Set(["ExitPlanMode"]);
 
 /**
- * True when the call needs no human judgement. `blockedPath` is the SDK
- * telling us the call reaches somewhere it isn't allowed (outside the
- * worktree, typically) — that is EXACTLY the case the allowlist must not
- * swallow, so its presence forces a prompt even for a read.
+ * True when the call needs no human judgement. `blockedPath` is set when the
+ * SDK has already blocked the call (typically outside the worktree); its
+ * presence always forces a prompt, even for a read, since the allowlist must
+ * not swallow that case.
  */
 export function isAlwaysAllowed(tool: string, blockedPath?: string): boolean {
   if (blockedPath) return false;
@@ -77,28 +68,27 @@ export function isAlwaysAllowed(tool: string, blockedPath?: string): boolean {
 
 // ---------- step 2: remembered rules ----------
 //
-// Durable rules are Bash-only, and deliberately so. "Always allow WebFetch in
-// this project" would grant every URL; "always allow Write" every path. A
-// command line is the one input a user can read in full and generalize
-// honestly, and it's the one that actually recurs (`npm test`, `git status`).
+// Durable rules are Bash-only: "always allow WebFetch" would grant every URL,
+// "always allow Write" every path, but a command line is the one input a
+// user can read in full and generalize honestly (`npm test`, `git status`).
 // Everything else gets allow-once, plus the CLI's own don't-ask-again-this-
 // session suggestion, which expires with the session.
 //
-// Caveat worth knowing: a remembered command names a script, not a behaviour.
-// `npm test` is whatever package.json says today, and an agent running under
-// acceptEdits can rewrite that. Rules are a convenience against prompt
-// fatigue, not a sandbox — that's what the worktree is for.
+// A remembered command names a script, not a behavior: `npm test` is
+// whatever package.json says today, and an agent running under acceptEdits
+// can rewrite that. Rules guard against prompt fatigue, not a sandbox; the
+// worktree is the sandbox.
 
-// A Bash command is only ever generalized into a prefix rule when it is a
-// "plain" command line: an ALLOWLIST of characters, not a denylist of
-// metacharacters. Anything outside this set — quotes, $, backticks, (), {},
-// [], ;, |, &, redirects, backslashes, globs, newlines — means the shell could
-// do something the prefix doesn't describe, so the rule is refused (and, at
-// match time, so is the candidate command).
+// A Bash command generalizes into a prefix rule only when it is a "plain"
+// command line: an allowlist of characters, not a denylist of
+// metacharacters. Anything outside this set (quotes, $, backticks, (), {},
+// [], ;, |, &, redirects, backslashes, globs, newlines) means the shell
+// could do something the prefix doesn't describe, so both rule creation and
+// match time refuse it.
 const PLAIN_COMMAND_RE = /^[A-Za-z0-9 _\-./=:@+,^%]+$/;
 
-// Commands whose ARGUMENTS are themselves a command to run, or which take a
-// "run this" flag. A prefix rule on one of these silently generalizes to "run
+// Commands whose arguments are themselves a command to run, or that take a
+// "run this" flag. A prefix rule on one of these would generalize to "run
 // anything", so they only ever get an exact-match rule.
 const WRAPPER_COMMANDS = new Set([
   "sudo", "doas", "su", "env", "xargs", "nohup", "time", "timeout", "nice", "ionice",
@@ -116,10 +106,10 @@ export function bashCommandOf(tool: string, input: Record<string, unknown>): str
 const tokens = (cmd: string): string[] => cmd.trim().split(/\s+/).filter(Boolean);
 
 /**
- * The prefix decision, with the REASON when the answer is no. One
- * implementation, two callers: the card only needs the yes/no (bashPrefixOf
- * below), while a rule typed into Settings has no proposed command in front of
- * the user to explain itself, so a refusal there has to say what it objected to.
+ * The prefix decision, with the reason when the answer is no. Shared by two
+ * callers: the card only needs yes/no (bashPrefixOf below); a rule typed
+ * into Settings has no proposed command on screen to explain itself, so its
+ * refusal states what it objected to.
  */
 type PrefixVerdict = { prefix: string } | { refused: string };
 
@@ -133,13 +123,13 @@ function prefixVerdict(command: string): PrefixVerdict {
   const parts = tokens(command);
   const head = parts[0];
   if (!head || head.startsWith("-")) return { refused: "it doesn't start with a command" };
-  // `FOO=bar cmd` — the real command is further along, so the prefix would lie.
+  // `FOO=bar cmd`: the real command is further along, so the prefix would lie.
   if (head.includes("=")) return { refused: "it starts with an environment assignment, so the command being run is further along the line" };
   const name = head.split("/").pop() ?? head;
   if (WRAPPER_COMMANDS.has(name)) return { refused: `\`${name}\` runs whatever its arguments say, so allowing it by prefix would mean allowing anything` };
-  // Only widen to two tokens for a subcommand-shaped word (`push`, `run`,
-  // `test:unit`). A flag or a path as token 2 means the rest of the line is
-  // operands — `rm -rf x` must never become "always allow `rm -rf …`".
+  // Widen to two tokens only for a subcommand-shaped word (`push`, `run`,
+  // `test:unit`). A flag or path as token 2 means the rest of the line is
+  // operands: `rm -rf x` must never become "always allow `rm -rf …`".
   const second = parts[1];
   if (second && /^[a-z][a-z0-9:_-]*$/.test(second)) return { prefix: `${head} ${second}` };
   if (parts.length === 1) return { prefix: head };
@@ -147,10 +137,10 @@ function prefixVerdict(command: string): PrefixVerdict {
 }
 
 /**
- * The prefix a Bash command may be remembered under — its command word plus,
- * when the next token reads as a subcommand (`git status`, `npm test`), that
- * too. Returns null when the command isn't plain, starts with an env
- * assignment, or leads with a wrapper that would execute its own arguments.
+ * The prefix a Bash command may be remembered under: its command word, plus
+ * the next token when it reads as a subcommand (`git status`, `npm test`).
+ * Returns null when the command isn't plain, starts with an env assignment,
+ * or leads with a wrapper that executes its own arguments.
  */
 export function bashPrefixOf(command: string): string | null {
   const verdict = prefixVerdict(command);
@@ -159,9 +149,8 @@ export function bashPrefixOf(command: string): string | null {
 
 /**
  * What "always allow" would remember for this call, rendered on the card so
- * the user approves the exact rule they're about to create rather than an
- * implied one. Null for anything but Bash — see the note above; the driver
- * offers a session-only grant there instead.
+ * the user approves the exact rule about to be created. Null for anything
+ * but Bash; the driver offers a session-only grant there instead.
  */
 export function scopeOfferFor(tool: string, input: Record<string, unknown>): PermissionScopeOffer | null {
   if (NEVER_REMEMBER.has(tool)) return null;
@@ -175,24 +164,20 @@ export function scopeOfferFor(tool: string, input: Record<string, unknown>): Per
 
 // ---------- step 2b: a rule written by hand, with no call to look at ----------
 //
-// Settings can mint the same rule without waiting for a prompt to happen ("I
-// already know I want `npm test` allowed here"), which matters most for the
-// unattended turns whose card would auto-deny before anyone saw it. The grant
-// must be no wider than the card's, so it goes through the SAME prefix policy —
-// and the two ways it must NOT differ:
+// Settings can mint the same rule without a prompt ("I already know I want
+// `npm test` allowed here"), which matters for unattended turns whose card
+// would auto-deny before anyone saw it. The grant must go through the same
+// prefix policy as the card, and must not diverge from it in two ways:
 //
-//   - The value stored is what bashPrefixOf() returns, never what was typed.
-//     Otherwise this becomes the way to mint `bash_prefix: "sudo"`.
-//   - A refused prefix is an ERROR, not a quiet downgrade to bash_exact. The
-//     card can fall back because it shows the user the exact rule it's about to
-//     create; a form that silently narrows "allow npm test and its arguments"
-//     into one literal line stores a rule nobody asked for, which the user then
-//     believes covers calls it doesn't.
+//   - The stored value is what bashPrefixOf() returns, never the raw typed
+//     text, or this becomes a way to mint `bash_prefix: "sudo"`.
+//   - A refused prefix is an error, not a downgrade to bash_exact: narrowing
+//     "allow npm test and its arguments" into one literal line would store a
+//     rule the user didn't ask for and believes covers more than it does.
 //
-// Bash-only, and not a choice worth re-opening here: ruleMatches() consults
-// bashCommandOf(), so a rule naming any other tool can never match anything.
-// Accepting one would store a row that reads like a grant and does nothing —
-// and if it ever DID work, "always allow WebFetch here" is every URL.
+// Bash-only: ruleMatches() consults bashCommandOf(), so a rule naming any
+// other tool can never match a call. "Always allow WebFetch here" would be
+// every URL if it ever did match.
 
 /** How long a hand-typed command may be. Past this it's a script, not a rule. */
 const TYPED_COMMAND_CAP = 2_000;
@@ -218,19 +203,18 @@ export function ruleFromTypedCommand(rawCommand: string, matchKind: PermissionMa
 
 // ---------- step 2c: a whole hosted MCP server, trusted from project settings ----------
 //
-// Hosted gateway MCP servers (docs/design/litellm.md, "Hosted MCP servers")
-// break the "Bash-only" reasoning above without breaking its REASON: LiteLLM
-// returns tools as `<alias>-<tool>`, so Claude sees `mcp__<alias>__<alias>-<tool>`,
+// Hosted gateway MCP servers (docs/AGENTS.md, "Hosted MCP servers") break
+// the Bash-only rule above without breaking its rationale: LiteLLM returns
+// tools as `<alias>-<tool>`, so Claude sees `mcp__<alias>__<alias>-<tool>`,
 // and the alias is a server the user picked by name in the project's MCP
-// picker — not a wildcard invented at approval time the way "always allow
-// WebFetch" would be. So "trust this server" mints a rule that matches every
-// tool call under one alias's namespace, through the same permission_rules
-// table and canUseTool gate a Bash prefix uses, minted from project settings
-// rather than a live card (there is no per-call MCP prompt to approve one
-// from — LiteLLM tools land wholesale when the alias is mounted).
+// picker, not a wildcard invented at approval time. "Trust this server"
+// mints a rule matching every tool call under one alias's namespace, through
+// the same permission_rules table and canUseTool gate a Bash prefix uses,
+// minted from project settings since there is no per-call MCP prompt:
+// LiteLLM tools land wholesale when the alias is mounted.
 
-/** How long an alias may be before it's refused as a rule — generous, since a
- *  LiteLLM alias is normally a short slug and this only guards against abuse. */
+/** How long an alias may be before it's refused as a rule. Generous: a
+ *  LiteLLM alias is normally a short slug; this only guards against abuse. */
 const MCP_ALIAS_CAP = 200;
 
 export type McpServerRule = { ok: true; tool: string; match_kind: "mcp_server"; value: string } | { ok: false; error: string };
@@ -251,18 +235,18 @@ export function ruleForGatewayMcpServer(alias: string): McpServerRule {
 /** Does a remembered rule cover this call? */
 export function ruleMatches(rule: { tool: string; match_kind: PermissionMatchKind; value: string }, tool: string, input: Record<string, unknown>): boolean {
   if (NEVER_REMEMBER.has(tool)) return false;
-  // mcp_server matches by NAMESPACE, not by the exact tool the card would have
-  // shown: LiteLLM names every tool under an alias `mcp__<alias>__<alias>-<tool>`,
-  // and trusting the server is trusting all of them, present and future.
+  // mcp_server matches by namespace, not the exact tool the card showed:
+  // LiteLLM names every tool under an alias `mcp__<alias>__<alias>-<tool>`,
+  // and trusting the server means trusting all of them, present and future.
   if (rule.match_kind === "mcp_server") return tool.startsWith(`mcp__${rule.value}__`);
   if (rule.tool !== tool) return false;
   const command = bashCommandOf(tool, input);
   if (!command) return false;
   if (rule.match_kind === "bash_exact") return command === rule.value;
-  // bash_prefix: the candidate must be plain too (a rule minted from
+  // bash_prefix: the candidate must also be plain (a rule minted from
   // `npm test` can never cover `npm test && curl …`), and must match the
-  // remembered tokens whole — not as a string prefix, which would let
-  // `npm testfoo` through.
+  // remembered tokens as whole tokens, not a string prefix, so `npm testfoo`
+  // doesn't match.
   if (!PLAIN_COMMAND_RE.test(command)) return false;
   const want = tokens(rule.value);
   const got = tokens(command);
@@ -276,18 +260,18 @@ export function allowedByRules(rules: PermissionRule[], tool: string, input: Rec
 
 // ---------- step 3: the card ----------
 
-// What a permission card will show of the tool input. Much larger than the
-// transcript's clip: the user is AUTHORIZING this text, so a suffix hidden by
-// truncation is a suffix nobody approved. Anything past the cap is called out
-// in the card itself rather than silently dropped.
+// What a permission card shows of the tool input. Much larger than the
+// transcript's clip: the user is authorizing this text, so a suffix hidden
+// by truncation is a suffix nobody approved. Anything past the cap is
+// called out in the card, not dropped.
 const DETAIL_CAP = 20_000;
 
 /**
- * What the permission card shows. A permission prompt isn't a multiple-choice
- * question — the user needs the tool, and enough of its INPUT to judge it — so
- * this reuses the same describeToolUse() normalizer the transcript renders tool
- * calls with, except that Bash gets its command verbatim (describeToolUse clips
- * at 4k, which is fine for reading a transcript and not fine for approving one).
+ * What the permission card shows. The user needs the tool name and enough
+ * of its input to judge it, so this reuses the describeToolUse() normalizer
+ * the transcript uses for tool calls, except Bash gets its command verbatim:
+ * describeToolUse clips at 4k, which is fine for reading a transcript but
+ * not for approving one.
  */
 export function describePermission(tool: string, input: Record<string, unknown>): { title: string; detail: string; diff?: DiffLine[] } {
   const { title, detail, diff } = describeToolUse(tool, input);
@@ -306,8 +290,8 @@ function capDetail(text: string): string {
 }
 
 // The decision travels back through the ask registry, whose payload is
-// AskAnswers (string[][]) — answers[0][0] is the decision, answers[0][1] an
-// optional note the user typed. Anything unrecognized fails CLOSED, so a
+// AskAnswers (string[][]): answers[0][0] is the decision, answers[0][1] an
+// optional note the user typed. Anything unrecognized fails closed, so a
 // malformed, replayed, or stale client can never widen a permission.
 const DECISIONS: PermissionDecision[] = ["allow_once", "allow_always", "deny"];
 const NOTE_CAP = 2_000;
@@ -330,21 +314,15 @@ export function denyMessage(title: string, reason: string): string {
 
 // ---------- refusals the CLI makes on its own ----------
 
-// A `system`/`permission_denied` message is the CLI saying it refused a call
-// before canUseTool was ever consulted. Nothing here decides anything — this is
-// only about which of the message's two text fields a HUMAN should be shown.
+// A `system`/`permission_denied` message is the CLI reporting a call it
+// refused before canUseTool was ever consulted. This only decides which of
+// the message's two text fields a human should see.
 //
-// The SDK documents `decision_reason` as "human-readable reason from the
-// deciding component" and `message` as "the rejection message returned to the
-// model". Live CLI 2.1.x leaves `decision_reason` unset on the denials we could
-// actually provoke and fills only `message` — which really is written for the
-// model: the `mode` denial is ~700 characters of "IMPORTANT: You *may* attempt
-// to accomplish this action using other tools…". Recorded verbatim in
-// tests/claudePermissionMode.test.ts.
-//
-// So: prefer decision_reason, else take `message` up to the model-directed
-// tail, and cap whatever survives. Pasting the raw `message` into the UI is
-// what this exists to prevent.
+// The SDK documents `decision_reason` as the human-readable reason and
+// `message` as the rejection text returned to the model, which can include
+// instructions aimed at the model, not the user (see
+// tests/claudePermissionMode.test.ts). Prefer decision_reason; otherwise
+// take `message` up to its model-directed tail, and cap whatever survives.
 const BLOCK_REASON_CAP = 400;
 
 export function blockedReason(decisionReason?: string, message?: string): string | undefined {
@@ -367,30 +345,27 @@ export const DENIED_INTERRUPTED = "The turn ended before this was answered.";
 
 // ---------- parking the turn on a human ----------
 //
-// A prompt reuses the ask registry wholesale — same waitForAnswer/submitAnswer,
-// same POST /api/tasks/[id]/answer route — with one addition an ordinary
-// question doesn't need: a DEADLINE. A question card can sit forever because
-// the user asked for the turn; a permission prompt can be raised by a turn
-// nobody launched (an auto-started task at 3am), and a turn parked with nobody
-// watching holds its abort slot and keeps the instance marked busy indefinitely.
+// A prompt reuses the ask registry (same waitForAnswer/submitAnswer, same
+// POST /api/tasks/[id]/answer route), plus a deadline an ordinary question
+// doesn't need: a permission prompt can be raised by a turn nobody launched
+// (an auto-started task at 3am), and a turn parked with nobody watching
+// holds its abort slot and keeps the instance marked busy indefinitely.
 //
-// So the gate distinguishes the two cases by whether any client is connected:
-//   - watchers now      → the attended cap (hours; a human is around)
-//   - no watchers       → a short grace, re-checked, then deny
-// The grace is re-checked rather than fired blindly so opening the app a few
-// seconds later still lets you decide; once a watcher shows up the prompt is
-// upgraded to the attended cap and behaves like any other card.
+// The gate distinguishes by whether any client is connected: watchers now
+// use the attended cap (hours), no watchers get a short grace that is
+// re-checked and then denies. The recheck lets opening the app a few
+// seconds later still catch the decision; a watcher
+// appearing upgrades the prompt to the attended cap.
 //
-// Connection count is PRESENCE, not intent — a tab left open on a sleeping
-// laptop reads as attended. It's a heuristic that only ever SHORTENS the wait,
-// never lengthens it past the attended cap, so the worst case is the same
-// bounded park a watched prompt gets.
+// Connection count is presence, not intent: a tab left open on a sleeping
+// laptop reads as attended. The heuristic only ever shortens the wait, never
+// lengthens it past the attended cap.
 
 export type PermissionWait =
   | { answers: string[][] }
-  /** Nobody decided: "unattended" = no client ever appeared, "timeout" = the attended cap ran out. */
+  /** Nobody decided: "unattended" means no client ever appeared, "timeout" means the attended cap ran out. */
   | { expired: "unattended" | "timeout" }
-  /** The turn (or this specific request) was torn down before anyone decided. */
+  /** The turn, or this specific request, was torn down before anyone decided. */
   | { aborted: true };
 
 export async function waitForPermission(opts: {
@@ -403,14 +378,14 @@ export async function waitForPermission(opts: {
   unattendedMs: number;
 }): Promise<PermissionWait> {
   const { taskId, id, signal, attendedMs, unattendedMs } = opts;
-  // Register the waiter FIRST, so an answer arriving in the same tick as the
+  // Register the waiter first, so an answer arriving in the same tick as the
   // published card can't miss it. The registry keys on the id, not questions.
   const answer = waitForAnswer(taskId, id, [], signal);
 
-  // A scheduled turn is unattended BY DECLARATION, whatever watcherCount()
-  // says: the user didn't launch it, so an open tab is not consent to be
-  // interrupted by it. Settle at once rather than parking — there is no answer
-  // coming, and the runner already knows what to do with an unattended deny.
+  // A scheduled turn is unattended regardless of watcherCount(): the user
+  // didn't launch it, so an open tab isn't consent to be interrupted by it.
+  // Settle at once instead of parking; the runner already handles an
+  // unattended deny.
   const denied = interactionDenied(taskId);
   if (denied) {
     cancelAsk(taskId, id, "unattended: scheduled run");
@@ -422,7 +397,7 @@ export async function waitForPermission(opts: {
   let expired: "unattended" | "timeout" | null = null;
   const every = Math.max(25, Math.min(3_000, Math.floor((unattendedMs || 6_000) / 2)));
   const timer = setInterval(() => {
-    // A tab opened during the grace — this is a watched session after all.
+    // A tab opened during the grace: this is a watched session after all.
     if (!attended && watcherCount() > 0) {
       attended = true;
       deadline = deadlineFrom(attendedMs);
@@ -431,8 +406,9 @@ export async function waitForPermission(opts: {
     if (deadline && Date.now() >= deadline) {
       expired = attended ? "timeout" : "unattended";
       clearInterval(timer);
-      // Settles the waiter below and removes the registry entry, so a late
-      // answer reports "nothing waiting" instead of resolving a dead turn.
+      // Settles the waiter and removes the registry entry, so a late answer
+      // reports "nothing waiting" instead of resolving a dead turn.
+
       cancelAsk(taskId, id, "permission expired");
     }
   }, every);

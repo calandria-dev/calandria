@@ -13,16 +13,15 @@ const run = promisify(execFile);
 
 // ---------- binary resolution ----------
 
-// Where package managers that DON'T land in a minimal system PATH put gh.
+// Where package managers that don't land in a minimal system PATH put gh.
 // The server process never reads a shell profile (systemd unit, container,
 // `npm start` from a non-login context), so linuxbrew/Homebrew/snap installs
 // that work fine in the user's terminal ENOENT here without this probe.
 //
 // The Windows entries are the same story with different package managers:
-// winget links and the MSI's Program Files dir are on the PATH of a fresh
-// interactive shell but not necessarily of a service, and scoop's shims dir is
-// only ever on the user's own PATH. All three ship `gh.exe`, so the PATHEXT
-// expansion in lib/binPath.ts is what actually finds them.
+// winget, the MSI installer and scoop each land gh.exe somewhere that isn't
+// always on a service's PATH. lib/binPath.ts's PATHEXT expansion is what
+// actually finds them.
 const GH_PROBE_DIRS =
   process.platform === "win32"
     ? [
@@ -39,20 +38,19 @@ const GH_PROBE_DIRS =
       ];
 
 /**
- * The gh binary to spawn: CALANDRIA_GH_BIN if set (taken verbatim — a wrong path
- * should fail loudly, not be silently papered over by the probe), else bare
+ * The gh binary to spawn: CALANDRIA_GH_BIN if set (taken verbatim, so a wrong
+ * path fails loudly instead of being papered over by the probe), else bare
  * "gh" when the server's PATH can resolve it, else the first hit in the
- * well-known install dirs. Falls back to "gh" so the ENOENT lands in the
- * callers' existing not-installed handling. Re-resolved per call on purpose
- * (a handful of stat()s): installing gh mid-session works on the next click.
+ * well-known install dirs, else "gh" so the ENOENT lands in the callers'
+ * existing not-installed handling. Re-resolved per call (a handful of
+ * stat()s), so installing gh mid-session works on the next click.
  *
- * Bare "gh" stays the answer for a PATH hit on Windows too — CreateProcess
- * repeats the PATH+PATHEXT search itself and finds the same `gh.exe`. What the
- * PATHEXT-aware lookup buys is the probe-dir half: without it every Windows
- * candidate missed (the file is `gh.exe`, never `gh`) and the fallback happened
- * to work only because gh is on PATH. gh ships as a real executable from every
- * Windows package manager, so the `.cmd`-shim problem the codex/claude paths
- * have doesn't arise here.
+ * Bare "gh" also answers a PATH hit on Windows: CreateProcess repeats the
+ * PATH+PATHEXT search and finds the same `gh.exe`. The PATHEXT-aware lookup
+ * only matters for the probe-dir half, since the candidate files there are
+ * `gh.exe`, never `gh`. gh ships as a real executable from every Windows
+ * package manager, so the `.cmd`-shim problem the codex/claude paths have
+ * doesn't arise here.
  */
 export function resolveGhBin(
   configured: string = GH_BIN,
@@ -66,10 +64,9 @@ export function resolveGhBin(
 }
 
 /**
- * What to tell a human when spawning gh ENOENT'd. "Not installed" was the old
- * message and it sent people the wrong way: the common case is gh IS installed
- * but only the user's shell profile puts it on PATH, which the server process
- * never reads.
+ * What to tell a human when spawning gh ENOENT'd. The common case is gh IS
+ * installed but only the user's shell profile puts it on PATH, which the
+ * server process never reads.
  */
 export function ghMissingMessage(configured: string = GH_BIN): string {
   if (configured)
@@ -80,17 +77,17 @@ export function ghMissingMessage(configured: string = GH_BIN): string {
 }
 
 // GitHub onboarding, built on the `gh` CLI (bundled in the container image).
-// All state gh writes — the OAuth token (~/.config/gh/hosts.yml) and the git
-// credential-helper config (~/.gitconfig) — lives under $HOME, which is the
+// All state gh writes (the OAuth token in ~/.config/gh/hosts.yml, and the
+// git credential-helper config in ~/.gitconfig) lives under $HOME, the
 // user's persistent volume in production, so a login survives container
 // stop/start and sleep/wake with no extra plumbing.
 //
-// The login itself drives `gh auth login` (device flow) under a pseudo-tty:
-// gh insists on a terminal for interactive auth, and the device flow is the
-// only one that needs zero local browser. We parse the one-time code + URL
-// out of its output so the UI can show them instead of burying them in
-// terminal scrollback, auto-answer its yes/no prompts, and let gh do the
-// polling until the user authorizes on github.com.
+// The login drives `gh auth login` (device flow) under a pseudo-tty: gh
+// insists on a terminal for interactive auth, and the device flow is the
+// only one that needs no local browser. The one-time code and URL are
+// parsed out of its output so the UI can show them instead of leaving them
+// in terminal scrollback; its yes/no prompts are auto-answered, and gh does
+// the polling until the user authorizes on github.com.
 
 // ---------- status ----------
 
@@ -140,7 +137,7 @@ interface LoginState extends LoginSession {
 const g = globalThis as unknown as { __calandriaGhLogin?: LoginState };
 
 // CSI sequences (colors, cursor moves), OSC sequences (titles), save/restore
-// cursor (ESC 7 / ESC 8 — strip the digit too, or it leaks into the text),
+// cursor (ESC 7 / ESC 8; strip the digit too, or it leaks into the text),
 // then any stray ESCs.
 const stripAnsi = (s: string) =>
   s
@@ -149,12 +146,13 @@ const stripAnsi = (s: string) =>
     .replace(/\u001b[78]/g, "")
     .replace(/\u001b/g, "");
 
-// gh's prompt library probes the terminal before rendering anything — OSC 11
-// (background color, for its light/dark scheme) and CSI 6n (cursor position,
-// also used as a bottom-right probe to measure the screen) — and BLOCKS until
-// each query is answered. We are the terminal here, so answer every query in
-// the order it appears: a color for OSC 11, and a cursor report for CSI 6n
-// (the full claimed size when it follows a move-to-999;999 size probe).
+// gh's prompt library probes the terminal before rendering anything, with
+// OSC 11 (background color, for its light/dark scheme) and CSI 6n (cursor
+// position, also used as a bottom-right probe to measure the screen), and
+// blocks until each query is answered. This process is the terminal here,
+// so it answers every query in the order it appears: a color for OSC 11,
+// and a cursor report for CSI 6n (the full claimed size when it follows a
+// move-to-999;999 size probe).
 const TERM_QUERY = /\u001b(\]11;\?|\[6n|\[999;999f)/g;
 function answerTermQueries(proc: IPty, chunk: string, size: { rows: number; cols: number }) {
   let sizeProbe = false;
@@ -192,7 +190,7 @@ export function cancelLogin(): void {
 
 /**
  * Start (or return the already-running) device-flow login. Resolves once the
- * one-time code has been parsed from gh's output — or earlier on error — so
+ * one-time code has been parsed from gh's output, or earlier on error, so
  * the UI can render the code immediately; the session keeps running in the
  * background until the user authorizes on github.com (poll with getLogin).
  */
@@ -216,7 +214,7 @@ export async function startLogin(): Promise<LoginSession> {
 
   try {
     // BROWSER=true: gh "opens" the verification URL with /bin/true instead of
-    // erroring on a headless box — the user opens the link we show in the UI.
+    // erroring on a headless box; the user opens the link the UI shows instead.
     st.proc = ptySpawn(resolveGhBin(), ["auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web"], {
       name: "xterm-256color",
       cols: 200,
@@ -272,7 +270,7 @@ export async function startLogin(): Promise<LoginSession> {
       st.status = "success";
       st.user = ok[1];
       if (st.timer) clearTimeout(st.timer);
-      // gh already configured the credential helper (we answered Yes above);
+      // gh already configured the credential helper (Yes was answered above);
       // run setup-git anyway so a quirky version still leaves git working.
       run(resolveGhBin(), ["auth", "setup-git", "--hostname", "github.com"], { timeout: 15_000 }).catch(() => {});
     }
@@ -295,7 +293,7 @@ export async function startLogin(): Promise<LoginSession> {
 }
 
 // Resolve once the session leaves "starting" (code parsed, success, or error);
-// give up after 15s and return whatever state we have.
+// give up after 15s and return whatever state exists.
 async function awaitCode(): Promise<LoginSession> {
   const deadline = Date.now() + 15_000;
   for (;;) {
@@ -337,8 +335,8 @@ export const validRepoSpec = (spec: string): boolean =>
 /**
  * Clone `spec` (owner/repo or a full URL) into PROJECTS_DIR and report where
  * it landed plus its default branch. Uses gh (authenticated → private repos
- * work) when available, plain git otherwise; never prompts — a private repo
- * without credentials fails fast instead of hanging.
+ * work) when available, plain git otherwise; never prompts, so a private
+ * repo without credentials fails fast instead of hanging.
  */
 export async function cloneRepo(spec: string): Promise<{ path: string; branch: string }> {
   spec = spec.trim().replace(/\/+$/, "");
@@ -377,7 +375,7 @@ export async function cloneRepo(spec: string): Promise<{ path: string; branch: s
 }
 
 // Distill git/gh's stderr wall into the line that says what actually failed.
-/** Everything a failed subprocess wrote to stderr, for matching on rather than showing. */
+/** Everything a failed subprocess wrote to stderr, used only for matching, never shown directly. */
 function rawStderr(e: unknown): string {
   return e && typeof e === "object" && "stderr" in e ? String((e as { stderr: unknown }).stderr ?? "") : "";
 }
@@ -394,11 +392,11 @@ function cliErrorMessage(e: unknown, fallback: string): string {
 // ---------- landing-mode detection ----------
 
 export interface LandingProbe {
-  /** What the repo says. null = we could not tell (no gh, no auth, no remote, API error). */
+  /** What the repo says. null when it couldn't be determined (no gh, no auth, no remote, API error). */
   mode: LandingMode | null;
   /** One line for a human: why this is the answer. Always set. */
   reason: string;
-  /** Which probe answered — "rules" (a ruleset), "protection" (classic branch protection), "none" (neither). */
+  /** Which probe answered: "rules" (a ruleset), "protection" (classic branch protection), "none" (neither). */
   source?: "rules" | "protection" | "none";
 }
 
@@ -420,36 +418,34 @@ async function ghApi(repoPath: string, apiPath: string): Promise<unknown | null>
 }
 
 /**
- * Does this repo's base branch require a pull request? The answer preselects a
- * project's `landing_mode`; it never writes one (see the route and the settings
- * form — detection proposes, a human saves).
+ * Does this repo's base branch require a pull request? The answer preselects
+ * a project's `landing_mode`; it never writes one (detection proposes, a
+ * human saves).
  *
- * Two probes, because GitHub has two independent mechanisms and neither one
+ * Two probes, since GitHub has two independent mechanisms and neither
  * reports the other:
  *
- *  1. `repos/{owner}/{repo}/rules/branches/{base}` — the EFFECTIVE rules for one
- *     branch. This is the right call rather than listing `rulesets` and matching
- *     their ref patterns client-side: GitHub already does that matching, across
- *     org-level parent rulesets too, and a hand-rolled `~ALL`/`refs/heads/*`
- *     glob matcher would be a second, worse implementation of it. A rule of type
- *     `pull_request` is the requirement we are looking for.
- *  2. `repos/{owner}/{repo}/branches/{base}/protection` — classic branch
- *     protection, which predates rulesets and does NOT appear in (1). Its
+ *  1. `repos/{owner}/{repo}/rules/branches/{base}`: the effective rules for
+ *     one branch, matched server-side across org-level parent rulesets too,
+ *     instead of listing `rulesets` and matching ref patterns client-side.
+ *     A rule of type `pull_request` is the requirement being checked for.
+ *  2. `repos/{owner}/{repo}/branches/{base}/protection`: classic branch
+ *     protection, which predates rulesets and doesn't appear in (1). Its
  *     `required_pull_request_reviews` says the same thing. 404 here is the
- *     ordinary "not protected" answer, which is why a failed call is not an
- *     error on its own.
+ *     ordinary "not protected" answer, so a failed call is not an error on
+ *     its own.
  *
- * `{owner}/{repo}` are gh's own placeholders, resolved from the repo in `cwd`,
- * so this needs no remote parsing. Never throws: everything that can go wrong
- * (gh missing, logged out, private repo, no network, a branch name the API
- * rejects) comes back as `mode: null` with a reason, and null means "leave the
- * project's current setting alone".
+ * `{owner}/{repo}` are gh's own placeholders, resolved from the repo in
+ * `cwd`, so this needs no remote parsing. Never throws: everything that can
+ * go wrong (gh missing, logged out, private repo, no network, a branch name
+ * the API rejects) comes back as `mode: null` with a reason, and null means
+ * "leave the project's current setting alone".
  */
 export async function detectLandingMode(repoPath: string, baseBranch: string): Promise<LandingProbe> {
   const repo = repoPath.trim();
   if (!repo) return { mode: null, reason: "There is no working directory, so there is no repository to check." };
 
-  // An unnamed branch means "whatever this checkout is on" — the New project
+  // An unnamed branch means "whatever this checkout is on": the New project
   // dialog has a folder but no branch field yet, and the branch the person is
   // standing on is the one they are about to work against.
   const base =
@@ -487,10 +483,10 @@ export async function detectLandingMode(repoPath: string, baseBranch: string): P
   if (protection && typeof protection === "object" && "required_pull_request_reviews" in protection)
     return { mode: "pr", reason: `Branch protection on ${base} requires a pull request.`, source: "protection" };
 
-  // Only claim "merge" when a probe actually answered. Both failing means we
-  // learned nothing — a private repo the token can't read looks exactly like an
-  // unprotected one from here, and reporting "merge" would be a guess dressed
-  // as a finding.
+  // Only claim "merge" when a probe actually answered. Both failing means
+  // nothing was learned: a private repo the token can't read looks exactly
+  // like an unprotected one from here, and reporting "merge" would be a
+  // guess dressed as a finding.
   if (Array.isArray(rules))
     return { mode: "merge", reason: `Nothing on ${base} requires a pull request, so work can land by merge.`, source: "none" };
   return { mode: null, reason: `GitHub did not answer for ${base}. It may be private to this login, or the branch may not exist on the remote.` };
@@ -501,7 +497,7 @@ export async function detectLandingMode(repoPath: string, baseBranch: string): P
 export interface CreatePrResult {
   ok: boolean;
   url?: string;
-  existing?: boolean; // an open PR for this branch already existed — the push updated it
+  existing?: boolean; // an open PR for this branch already existed; the push updated it
   error?: string;
   detail?: string; // hook/rejection output beyond the one-line push error, if any
 }
@@ -509,7 +505,7 @@ export interface CreatePrResult {
 /**
  * Compose the PR body from what the task knows about itself: the description,
  * the latest session summary (the condensed "what happened" from /clear, when
- * one exists), and an attribution footer. Pure — exported for tests.
+ * one exists), and an attribution footer. Pure, exported for tests.
  */
 export function buildPrBody(input: { description?: string; summary?: string; taskId: string }): string {
   const parts: string[] = [];
@@ -523,7 +519,7 @@ export function buildPrBody(input: { description?: string; summary?: string; tas
  * Push a task's work branch to origin and open a GitHub PR against the base
  * branch via `gh pr create`. Idempotent: if an open PR for the branch already
  * exists, the push just updated it and its URL is returned (`existing: true`).
- * Never throws — every failure mode (no gh, not logged in, no remote, push
+ * Never throws: every failure mode (no gh, not logged in, no remote, push
  * rejected, gh error) comes back as `{ ok: false, error }` with a message that
  * says what to do about it.
  */
@@ -545,7 +541,7 @@ export async function createTaskPr(input: {
     cwd: worktreePath,
     timeout: 120_000,
     maxBuffer: 10 * 1024 * 1024,
-    // Never hang on a credential or confirmation prompt — fail with gh/git's message instead.
+    // Never hang on a credential or confirmation prompt: fail with gh/git's message instead.
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1" },
   };
 
@@ -568,7 +564,7 @@ export async function createTaskPr(input: {
     const found = JSON.parse(stdout || "[]") as { url?: string }[];
     if (found[0]?.url) return { ok: true, url: found[0].url, existing: true };
   } catch {
-    // listing failed — fall through and let `pr create` speak for itself
+    // listing failed: fall through and let `pr create` speak for itself
   }
 
   try {
@@ -587,21 +583,21 @@ export async function createTaskPr(input: {
 }
 
 /**
- * The open PR whose head branch is EXACTLY `branch`, or null.
+ * The open PR whose head branch is exactly `branch`, or null.
  *
- * This is the read half of createTaskPr's "already an open PR?" probe, split out
- * for the case where Calandria did not open the PR at all: a session that fell
- * back to `git push` + `gh pr create` by hand leaves a real PR with nothing in
- * tasks.pr_url (lib/prTools.ts's adoptExistingPr).
+ * The read half of createTaskPr's "already an open PR?" probe, split out for
+ * the case where Calandria did not open the PR at all: a session that fell
+ * back to `git push` + `gh pr create` by hand leaves a real PR with nothing
+ * in tasks.pr_url (lib/prTools.ts's adoptExistingPr).
  *
- * `--head` is a filter, not a guarantee — a PR from a fork reports
- * `owner:branch` — so the exact `headRefName` match is re-checked here. Adopting
- * a PR whose head is some other branch would point the task at somebody else's
- * work, so a near miss is treated as no answer at all.
+ * `--head` is a filter, not a guarantee: a PR from a fork reports
+ * `owner:branch`, so the exact `headRefName` match is re-checked here.
+ * Adopting a PR whose head is some other branch would point the task at
+ * somebody else's work, so a near miss is treated as no answer at all.
  *
- * Never throws and never prompts: gh missing, logged out, no network, no remote
- * or unparseable output all come back as null, which reads as "no PR" — the
- * state the caller was already in.
+ * Never throws and never prompts: gh missing, logged out, no network, no
+ * remote or unparseable output all come back as null, the state the caller
+ * was already in.
  */
 export async function findOpenPrForBranch(cwd: string, branch: string): Promise<{ url: string; number: number } | null> {
   if (!cwd || !branch) return null;
@@ -628,8 +624,7 @@ export async function findOpenPrForBranch(cwd: string, branch: string): Promise<
 
 /**
  * The PR number in a GitHub PR URL (…/pull/42), or 0 when there isn't one.
- * Parsed ONCE, at create time, into tasks.pr_number — the UI used to re-derive
- * it from the URL on every render.
+ * Parsed once, at create time, into tasks.pr_number.
  */
 export function parsePrNumber(url: string): number {
   const m = /\/pull\/(\d+)/.exec(url || "");
@@ -645,10 +640,10 @@ export type PrState = "open" | "merged" | "closed";
 export type PrChecks = "pending" | "passing" | "failing" | "none";
 
 /**
- * One red check, named and linkable. "checks failing" is a verdict nobody can
- * act on: the whole point of surfacing a red PR is to say WHICH job broke and
- * where its log is, so the answer is one click away rather than a trip to the
- * Actions tab to find out.
+ * One red check, named and linkable. "checks failing" is a verdict nobody
+ * can act on; surfacing a red PR should say which job broke and where its
+ * log is, so the answer is one click away instead of a trip to the Actions
+ * tab.
  */
 export interface PrFailingCheck {
   /** The job/context name, as GitHub shows it ("test (20.x)", "typecheck"). */
@@ -673,7 +668,7 @@ export interface PrSnapshot {
   mergeState: string;
   /** Is the PR still a draft? A draft cannot be merged, by anyone. */
   draft: boolean;
-  /** The red entries behind `checks: "failing"` — empty for every other rollup. */
+  /** The red entries behind `checks: "failing"`, empty for every other rollup. */
   failing: PrFailingCheck[];
 }
 
@@ -696,8 +691,8 @@ interface RollupEntry {
 }
 
 // The one verdict an entry carries, whichever shape it is.
-//   CheckRun: `conclusion`, and only once `status` is COMPLETED — an
-//     in-flight run's conclusion is null, not a pass.
+//   CheckRun: `conclusion`, and only once `status` is COMPLETED (an
+//     in-flight run's conclusion is null, not a pass).
 //   StatusContext: `state` is the verdict outright.
 // "" means "nothing decided yet".
 function verdictOf(e: RollupEntry): string {
@@ -713,26 +708,24 @@ function startedMs(e: RollupEntry): number {
 }
 
 /**
- * Keep only the LATEST entry per check, dropping superseded ones. Pure —
+ * Keep only the latest entry per check, dropping superseded ones. Pure,
  * exported for tests.
  *
- * statusCheckRollup is every check run recorded against the head commit, not
- * the current verdict per job. A `gh run rerun --failed` and a run cancelled by
- * a concurrency group both leave their dead entries in the array, on a head SHA
- * that never changes — so without this a PR that has gone green keeps reporting
- * the old FAILURE or CANCELLED, and no amount of re-reading clears it, because
- * there is nothing newer to read. That is the whole bug: the poller was working
- * and the collapse was wrong. `gh pr checks` shows such a PR green because it
- * dedupes first; this is the same rule, so the chip and the CLI cannot disagree
- * about the same PR.
+ * statusCheckRollup lists every check run recorded against the head commit,
+ * not the current verdict per job: a `gh run rerun --failed` or a run
+ * cancelled by a concurrency group leaves a dead entry in the array on a
+ * head SHA that never changes. Without this, a PR that has gone green keeps
+ * reporting the old FAILURE or CANCELLED. `gh pr checks` dedupes the same
+ * way, so the chip and the CLI agree.
  *
- * The key is gh's too: a legacy status context by its `context`, a check run by
- * name AND workflow, since a reusable workflow re-reports the same job names
- * under its caller ("Audit (npm)" and "test / Audit (npm)" are two real checks,
- * not one repeated). An entry with NO identity is passed through rather than
- * collapsed — it cannot be shown to be a duplicate of anything.
+ * The key matches gh's own identity: a legacy status context by its
+ * `context`, a check run by name and workflow, since a reusable workflow
+ * re-reports the same job names under its caller ("Audit (npm)" and "test /
+ * Audit (npm)" are two real checks, not one repeated). An entry with no
+ * identity is passed through instead of collapsed, since it can't be shown
+ * to duplicate anything.
  *
- * Order is first appearance in gh's array, and a tie or a missing stamp keeps
+ * Order is first appearance in gh's array; a tie or a missing stamp keeps
  * the earlier entry, so an unchanged rollup serializes identically into
  * tasks.pr_failing and `changed()` in lib/prState.ts stays quiet.
  */
@@ -756,19 +749,20 @@ export function dedupeRollup<T extends RollupEntry>(entries: T[]): T[] {
   return out;
 }
 
-// A check run only has a verdict once it has COMPLETED; anything else (QUEUED,
-// IN_PROGRESS, WAITING, PENDING, REQUESTED) is still in flight. SKIPPED and
-// NEUTRAL are deliberately "passing" — GitHub itself counts them as green, and
-// a path-filtered workflow that skipped must not read as a stalled PR.
+// A check run only has a verdict once it has COMPLETED; anything else
+// (QUEUED, IN_PROGRESS, WAITING, PENDING, REQUESTED) is still in flight.
+// SKIPPED and NEUTRAL count as "passing": GitHub itself treats them as
+// green, and a path-filtered workflow that skipped must not read as a
+// stalled PR.
 const CHECK_PASS = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
 const CHECK_FAIL = new Set(["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE", "ERROR"]);
 
 /**
- * Collapse gh's per-check array into one answer. Pure — exported for tests.
+ * Collapse gh's per-check array into one answer. Pure, exported for tests.
  *
- * Precedence is failing > pending > passing, which is the order a human cares
- * about: one red check makes the PR red however many green ones surround it,
- * and a still-running check can't be called green yet.
+ * Precedence is failing > pending > passing, the order a human cares about:
+ * one red check makes the PR red however many green ones surround it, and a
+ * still-running check can't be called green yet.
  */
 export function rollupChecks(entries: RollupEntry[] | null | undefined): PrChecks {
   if (!entries || entries.length === 0) return "none";
@@ -787,15 +781,15 @@ export function rollupChecks(entries: RollupEntry[] | null | undefined): PrCheck
 
 // How many red checks are worth keeping. A workflow that fans out over a
 // fifteen-entry matrix goes red fifteen times for one bug, and the row this
-// lands in is read on every task list — the cap is what stops a JSON column and
-// a chip from growing with the matrix.
+// lands in is read on every task list; the cap keeps a JSON column and a
+// chip from growing with the matrix.
 const MAX_FAILING = 8;
 
 /**
- * The red entries behind a "failing" rollup, in gh's order. Pure — exported for
- * tests, and shares both verdictOf() and dedupeRollup() with rollupChecks() so
- * the two can never disagree about which entries are the red ones, or about
- * which of a repeated check's entries is the live one.
+ * The red entries behind a "failing" rollup, in gh's order. Pure, exported
+ * for tests, and shares both verdictOf() and dedupeRollup() with
+ * rollupChecks() so the two can never disagree about which entries are the
+ * red ones, or which of a repeated check's entries is the live one.
  */
 export function failingChecks(entries: RollupEntry[] | null | undefined): PrFailingCheck[] {
   if (!entries) return [];
@@ -819,13 +813,13 @@ export type PrStateResult = { ok: true; snapshot: PrSnapshot } | { ok: false; er
 
 /**
  * Read a PR's current state from GitHub via `gh pr view`. One subprocess, no
- * writes, never throws — the caller is a background job and a dead network, a
- * logged-out gh or a deleted PR must all come back as a reported failure rather
- * than an unhandled rejection in a detached task.
+ * writes, never throws: the caller is a background job, so a dead network, a
+ * logged-out gh or a deleted PR must all come back as a reported failure
+ * instead of an unhandled rejection in a detached task.
  *
- * `cwd` should be the PROJECT's repo, not the task's worktree: gh resolves the
- * repo from the origin remote, and a task's checkout is reclaimable while its
- * PR is still worth tracking.
+ * `cwd` should be the project's repo, not the task's worktree: gh resolves
+ * the repo from the origin remote, and a task's checkout is reclaimable
+ * while its PR is still worth tracking.
  */
 export async function fetchPrState(cwd: string, number: number): Promise<PrStateResult> {
   if (!number) return { ok: false, error: "no PR number" };
@@ -848,7 +842,7 @@ export async function fetchPrState(cwd: string, number: number): Promise<PrState
   } catch (e) {
     const msg = cliErrorMessage(e, "gh pr view errored");
     // A PR that no longer resolves (deleted repo, wrong remote) is reported
-    // separately so the caller can stop asking rather than retry forever.
+    // separately so the caller can stop asking instead of retrying forever.
     const gone = /could not resolve|no pull requests found|not found/i.test(msg);
     return { ok: false, error: msg, ...(gone ? { gone: true } : {}) };
   }
@@ -900,15 +894,15 @@ function actionsIds(url: string): { runId: string; jobId: string } | null {
 export type CheckLogResult = { ok: true; log: string } | { ok: false; error: string };
 
 /**
- * The tail of the FAILED steps of one check run's log (`gh run view
- * --log-failed`), which is the part that says what actually broke — a full job
- * log is megabytes of setup and green steps.
+ * The tail of the failed steps of one check run's log (`gh run view
+ * --log-failed`), the part that says what actually broke; a full job log is
+ * megabytes of setup and green steps.
  *
- * Best-effort by contract, like every other network call in this file: a legacy
- * status context with no Actions URL, a log GitHub has already expired, a
- * logged-out gh and a dead network all come back as a reported failure. The
- * caller (the "Fix CI" prompt) is still useful with the job NAME alone, so a
- * missing log must degrade rather than fail the click.
+ * Best-effort by contract, like every other network call in this file: a
+ * legacy status context with no Actions URL, a log GitHub has already
+ * expired, a logged-out gh and a dead network all come back as a reported
+ * failure. The caller (the "Fix CI" prompt) is still useful with the job
+ * name alone, so a missing log degrades instead of failing the click.
  */
 export async function fetchCheckLog(cwd: string, url: string, tailLines: number): Promise<CheckLogResult> {
   const ids = actionsIds(url);
@@ -949,11 +943,11 @@ export async function fetchCheckLog(cwd: string, url: string, tailLines: number)
 // ---------- landing a pull request ----------
 
 /**
- * `owner/repo` from a GitHub remote URL, or "" when it isn't one we recognise.
- * Handles the spellings git hands out — `git@github.com:o/r.git`,
- * `https://github.com/o/r[.git]`, `ssh://git@github.com/o/r` — and gives up on
- * anything else, which just leaves gh to infer the repo from the checkout the
- * way it already does everywhere else. Pure: no subprocess, no network.
+ * `owner/repo` from a GitHub remote URL, or "" when it isn't a recognized
+ * one. Handles the spellings git hands out (`git@github.com:o/r.git`,
+ * `https://github.com/o/r[.git]`, `ssh://git@github.com/o/r`) and gives up
+ * on anything else, leaving gh to infer the repo from the checkout the way
+ * it already does elsewhere. Pure: no subprocess, no network.
  */
 export function repoSlug(remoteUrl: string): string {
   const m = /github\.com[:/]+([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i.exec((remoteUrl || "").trim());
@@ -966,7 +960,7 @@ export interface MergePrResult {
   queued?: boolean;
   /** It merged there and then. */
   merged?: boolean;
-  /** Set when --auto was refused and we fell back to a plain squash — the reason gh gave. */
+  /** Set when --auto was refused and the merge fell back to a plain squash: the reason gh gave. */
   fellBack?: string;
   error?: string;
 }
@@ -979,9 +973,9 @@ export interface MergePrResult {
 const AUTO_MERGE_REFUSED = /failed to enable auto[- ]?merge|enablePullRequestAutoMerge|auto[- ]?merge is not allowed|clean status/i;
 
 /**
- * Was THIS the thing that failed — arming auto-merge — rather than the merge
- * itself? Only then is retrying as a plain squash the right move; a PR that is
- * genuinely unmergeable must report that, not merge by a second route. Pure,
+ * Did arming auto-merge fail, as opposed to the merge itself? Only then is
+ * retrying as a plain squash the right move; a PR that is genuinely
+ * unmergeable must report that instead of merging by a second route. Pure,
  * exported for tests.
  */
 export function autoMergeRefused(stderr: string): boolean {
@@ -989,24 +983,23 @@ export function autoMergeRefused(stderr: string): boolean {
 }
 
 /**
- * Squash-merge a task's PR on GitHub — the one click that closes the loop the
- * app opened with `createTaskPr`, so landing reviewed work doesn't mean leaving
- * Calandria for github.com.
+ * Squash-merge a task's PR on GitHub, closing the loop `createTaskPr` opened
+ * so landing reviewed work doesn't mean leaving Calandria for github.com.
  *
- * `--auto` is the point. With auto-merge enabled on the repo and required
- * checks configured, the click QUEUES the merge and GitHub lands it the moment
- * CI goes green, instead of the user sitting on the tab waiting for a tick. A
- * repo with auto-merge disabled refuses that mutation, and so does a PR that is
- * already clean — both fall back to a plain `--squash`, and the result says
- * which of the two happened rather than letting the caller assume.
+ * `--auto` matters: with auto-merge enabled on the repo and required checks
+ * configured, the click queues the merge and GitHub lands it the moment CI
+ * goes green, instead of the user sitting on the tab waiting for a tick. A
+ * repo with auto-merge disabled refuses that mutation, and so does a PR
+ * that is already clean; both fall back to a plain `--squash`, and the
+ * result says which of the two happened instead of leaving the caller to
+ * assume.
  *
- * `--repo` is passed whenever the origin remote parses, and does double duty:
- * it names the repo without gh having to infer it, and it puts gh in a
- * non-local context, so `--delete-branch` deletes the REMOTE branch only. That
- * is deliberate. The task's local branch IS the task's diff (the same rule
- * lib/worktreeSweep.ts keeps: a checkout is regenerable, a branch is not), and
- * it is checked out by the task's worktree, so a local delete would fail and
- * report a merge that actually succeeded as an error.
+ * `--repo` is passed whenever the origin remote parses. It names the repo
+ * without gh having to infer it, and it puts gh in a non-local context, so
+ * `--delete-branch` deletes the remote branch only, on purpose: the task's
+ * local branch is the task's diff (the same rule lib/worktreeSweep.ts
+ * keeps), and it is checked out by the task's worktree, so a local delete
+ * would fail and report a successful merge as an error.
  *
  * Never throws: every failure comes back as `{ ok: false, error }`.
  */
@@ -1054,9 +1047,9 @@ export async function mergeTaskPr(input: { repoPath: string; number: number }): 
     return { ok: true, queued: true };
   } catch (e) {
     const msg = cliErrorMessage(e, "gh pr merge failed");
-    // Tested against the WHOLE stderr, not the one distilled line: gh writes
-    // "failed to enable auto-merge:" above the GraphQL detail, and which of the
-    // two cliErrorMessage picks is not something to hang the fallback on.
+    // Tested against the whole stderr: gh writes "failed to enable
+    // auto-merge:" above the GraphQL detail, and the one line cliErrorMessage
+    // distills isn't reliable enough to hang the fallback on.
     if (autoMergeRefused(rawStderr(e) || msg)) return squashNow(msg);
     return { ok: false, error: msg };
   }

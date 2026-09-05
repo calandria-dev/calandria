@@ -1,50 +1,13 @@
-// The pre-turn settings gate: does this task's agent configuration still say
-// what it said the last time a turn was allowed to run under it? (issue #43)
-//
-// The Claude CLI loads `<worktree>/.claude/settings.json` on EVERY turn, from
-// disk, and none of what that file can carry is inert: `hooks` are literal
-// shell commands run on tool and session events with no canUseTool call at all,
-// `permissions.allow` auto-approves tool calls before the gate is consulted,
-// and `env` reaches every subprocess a tool spawns. The file also sits inside
-// the worktree, which is exactly where the agent's own writes land.
-//
-// So the escalation path is: turn N writes `.claude/settings.json` (trivial
-// under an auto-accept edit policy, or under bypassPermissions where the gate
-// is skipped outright), turn N+1 loads it and the hook runs. Nothing in between
-// asks anybody. The same door opens without an agent at all — a base-branch
-// commit the worktree fast-forwards onto before a turn (lib/runner.ts's
-// catch-up) can plant the same file.
-//
-// The defense that was claimed for keeping 'project' in SETTING_SOURCES is that
-// the file is TRACKED, so a human reviewing the diff before the merge would see
-// it. True, and it doesn't help: nothing forces that review to happen before
-// the NEXT TURN, which is where the hook runs.
-//
-// The fix is drift detection rather than dropping the source, because a repo
-// shipping its own settings is a legitimate thing to do. Hash each watched file
-// before the turn starts, compare against the copy this task last ran under,
-// and hold the turn on an ordinary permission card when it moved. Approving
-// adopts the new version as the baseline (so a repo that legitimately changes
-// its settings asks once, not every turn); declining ends the turn before the
-// agent ever loads it.
-//
-// Two shapes of "nobody said yes" and one of them is not a card:
-//
-//   - the FIRST time a file is seen, there is no older version a turn ran
-//     under, so there is nothing to have drifted from. Recorded silently. A
-//     task inherits its repo's settings the way it inherits its repo's code.
-//   - an unattended or scheduled run REFUSES. Adopting new agent settings is
-//     not a decision the absence of a human can make, and lib/permissions.ts's
-//     waitForPermission already encodes both halves of that (a declared-
-//     unattended run settles at once; an unwatched one gets the short grace),
-//     so this reuses it rather than inventing a second policy.
-//
-// Which files count is the DRIVER's answer (AgentDriver.watchedSettingsFiles),
-// never a list here: this module must not know that Claude reads
-// `.claude/settings.json` and Codex reads nothing from the worktree, or the two
-// facts drift apart the first time a driver changes what it loads.
-//
-// No agent SDK — pinned by tests/importGraph.test.ts.
+// The pre-turn settings gate: checks whether a task's agent configuration
+// still matches what it ran under last turn, since `.claude/settings.json`
+// (hooks, permissions.allow, env) is read fresh from the worktree on every
+// turn with no permission check of its own. Hashes each watched file, holds
+// the turn on a permission card when it moved, and adopts the new version as
+// the baseline once approved. A file seen for the first time has no prior
+// baseline, so it is just recorded; an unattended run refuses the change
+// outright. Which files count is the driver's answer
+// (AgentDriver.watchedSettingsFiles). No agent SDK, pinned by
+// tests/importGraph.test.ts.
 
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -55,10 +18,9 @@ import { getSettingsSnapshot, recordSettingsSnapshot } from "./store";
 import type { DiffLine, PermissionRequest } from "./types";
 
 /**
- * How much of a watched file is kept as the acknowledged copy. The HASH is
- * always over the whole file, so comparison is exact regardless; this cap only
- * governs whether we can still show a diff. A settings file past 200k is not a
- * settings file, and storing one per task would put it in every snapshot.
+ * How much of a watched file is kept as the acknowledged copy. The hash is
+ * always over the whole file, so comparison stays exact regardless; this cap
+ * only governs whether a diff can still be shown.
  */
 const CONTENT_CAP = 200_000;
 
@@ -82,8 +44,7 @@ export interface SettingsChange {
   before: string;
   /**
    * True when the acknowledged copy was itself oversize, so `before` is ""
-   * because we never kept it rather than because the file was empty — the
-   * difference between "the whole file is new" and "we can't show you a diff".
+   * because no copy was kept, not because the file was empty.
    */
   beforeOversize: boolean;
 }
@@ -97,10 +58,9 @@ interface OnDisk {
 
 /**
  * Read one watched file. An unreadable file (a directory in its place, a
- * permission error) is reported as ABSENT rather than thrown: the gate must
- * never be the reason a turn can't start, and "we couldn't read the file the
- * CLI is about to read" resolves to a card either way — which is the outcome
- * that asks a human, not the one that assumes.
+ * permission error) is reported as absent, never thrown, so the gate is
+ * never the reason a turn can't start; either way it resolves to a card that
+ * asks a human.
  */
 function readWatched(root: string, file: string): OnDisk {
   let buf: Buffer;
@@ -115,14 +75,13 @@ function readWatched(root: string, file: string): OnDisk {
 }
 
 /**
- * Compare every watched file against what this task last ran under, and return
- * only the ones that moved.
+ * Compare every watched file against what this task last ran under, and
+ * return only the ones that moved.
  *
- * SIDE EFFECT, deliberately: a file with no recorded baseline is recorded here
- * and never reported. That is the first-turn case, and it has to be written
- * before the turn runs — recording it afterwards would mean a turn that
- * crashed, or was stopped, left the task with no baseline and the agent's own
- * write from that turn would become one.
+ * Side effect: a file with no recorded baseline is recorded here and never
+ * reported (the first-turn case). It must be written before the turn runs,
+ * or a turn that crashed or was stopped would leave the task with no
+ * baseline, and the agent's own write from that turn would become one.
  */
 export function checkSettingsDrift(taskId: string, root: string, files: string[]): SettingsChange[] {
   const changes: SettingsChange[] = [];
@@ -149,10 +108,10 @@ export function checkSettingsDrift(taskId: string, root: string, files: string[]
 }
 
 /**
- * Adopt what is on disk now as what this task runs under — the approval half.
- * Only ever called after somebody said yes: a declined change keeps the old
- * baseline, so the next turn asks again instead of quietly inheriting the
- * version that was just refused.
+ * Adopt what is on disk now as what this task runs under: the approval half.
+ * Only called after somebody said yes; a declined change keeps the old
+ * baseline, so the next turn asks again instead of inheriting the version
+ * that was just refused.
  */
 export function acceptSettingsChanges(taskId: string, changes: SettingsChange[]): void {
   for (const c of changes) recordSettingsSnapshot(taskId, c.file, c.hash, c.content);
@@ -178,11 +137,11 @@ export function settingsDriftNotice(changes: SettingsChange[]): string {
 
 /**
  * The diff the card shows: the acknowledged copy against what is on disk now,
- * per file, with a header line when there is more than one so the hunks can't
- * be read as one file's. Diffed from the change itself rather than by re-reading
- * the snapshot row, so it can't depend on being called before the approval
+ * per file, with a header line when there is more than one so the hunks
+ * aren't read as one file's. Diffed from the change itself, not by re-reading
+ * the snapshot row, so it doesn't depend on being called before the approval
  * writes the new baseline over it. Empty when nothing can be diffed (either
- * side oversize), which is what the detail line below is for.
+ * side oversize); the detail line below covers that case.
  */
 function driftDiff(changes: SettingsChange[]): DiffLine[] {
   const lines: DiffLine[] = [];
@@ -197,13 +156,13 @@ function driftDiff(changes: SettingsChange[]): DiffLine[] {
 }
 
 /**
- * The card. Deliberately an ordinary PermissionRequest: it parks in the same
- * ask registry, is answered by the same POST /answer route with the same
- * decisions, and settles onto the same transcript row a tool prompt does. Only
- * `kind` differs, and only so the UI can say what declining actually does here.
+ * The card. An ordinary PermissionRequest: it parks in the same ask
+ * registry, is answered by the same POST /answer route with the same
+ * decisions, and settles onto the same transcript row a tool prompt does.
+ * Only `kind` differs, so the UI can say what declining does here.
  *
- * No `scope` offer: "always allow" for this would be a standing grant to
- * whatever the file says next, which is the exact thing being gated.
+ * No `scope` offer: "always allow" here would be a standing grant to
+ * whatever the file says next, which is what is being gated.
  */
 export function settingsDriftRequest(
   id: string,
@@ -224,7 +183,7 @@ export function settingsDriftRequest(
     description:
       "The agent loads this at the start of every turn: hooks run shell commands with no permission " +
       "check, permissions.allow approves tool calls without one, and env reaches every subprocess.",
-    // Only ever non-empty when a diff could not be produced: everything else the
+    // Non-empty only when a diff could not be produced; everything else the
     // card needs to say is in the diff itself.
     detail: oversize
       .map((c) =>
@@ -259,10 +218,10 @@ export function settingsBlockedError(
 }
 
 /**
- * The settled card's note when nobody was there. Not lib/permissions.ts's
- * DENIED_UNATTENDED, which is written FOR THE MODEL ("stop here and summarize
- * what you were about to do") and would be addressed to an agent that never
- * started.
+ * The settled card's note when nobody was there. Distinct from
+ * lib/permissions.ts's DENIED_UNATTENDED, which is written for the model
+ * ("stop here and summarize what you were about to do") and would be
+ * addressed to an agent that never started.
  */
 export const SETTINGS_DENIED_UNATTENDED =
   "Nobody was watching this run, so the change was declined automatically and the turn did not run.";

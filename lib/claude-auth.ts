@@ -10,15 +10,15 @@ import type { TurnUsage } from "./types";
 const run = promisify(execFile);
 
 // The wizard's "Connect Claude" step, built on the `claude` CLI's headless
-// OAuth (the documented per-user login — see docs/DEPLOY.md → "Per-user claude
-// login"). `claude auth login` falls back to OAuth's manual paste-code flow
-// when it can't open a browser: it prints an authorize URL and waits on
-// `Paste code here if prompted >`. We drive it under a pseudo-tty (the CLI
-// insists on a terminal), parse the URL so the UI can show it instead of
-// burying it in scrollback, take the code the user pastes back, and confirm
-// with `claude auth status`. All credential state the CLI writes lives under
-// $HOME (~/.claude/.credentials.json), which is the user's persistent volume,
-// so the login survives restarts with no extra plumbing.
+// OAuth (the documented per-user login, see docs/DEPLOY.md -> "Per-user
+// claude login"). `claude auth login` falls back to OAuth's manual
+// paste-code flow when it can't open a browser: it prints an authorize URL
+// and waits on `Paste code here if prompted >`. This drives it under a
+// pseudo-tty (the CLI insists on a terminal), parses the URL so the UI can
+// show it instead of burying it in scrollback, takes the pasted code, and
+// confirms with `claude auth status`. Credential state lives under $HOME
+// (~/.claude/.credentials.json), the user's persistent volume, so login
+// survives restarts with no extra plumbing.
 
 // ---------- terminal-probe answering (shared shape with lib/github.ts) ----------
 // Strip ANSI so our regexes see plain text; answer the cursor/colour probes the
@@ -94,7 +94,7 @@ export function cancelClaudeLogin(): void {
 
 /**
  * Start (or rejoin) the device-style login. Resolves once the authorize URL
- * has been parsed — or earlier on error — so the UI can render it immediately;
+ * has been parsed, or earlier on error, so the UI can render it immediately;
  * the CLI keeps running, parked on its paste-code prompt, until submitClaudeCode().
  */
 export async function startClaudeLogin(): Promise<ClaudeLoginSession> {
@@ -119,19 +119,18 @@ export async function startClaudeLogin(): Promise<ClaudeLoginSession> {
   g.__calandriaClaudeLogin = st;
 
   try {
-    // BROWSER=true: the CLI execs $BROWSER with the URL as its only argument
-    // (falling back to the platform opener), so on a headless box it runs
-    // /bin/true instead of erroring — the user opens the link we surface.
+    // BROWSER=true: the CLI execs $BROWSER with the URL as its only argument,
+    // falling back to the platform opener, so on a headless box it runs
+    // /bin/true instead of erroring; the user opens the link this surfaces.
     //
-    // Windows has no `true`, which looked like it needed a different no-op, but
-    // reading the shipped CLI (2.1.240) says otherwise on both counts: a
-    // missing opener is classified `opener_missing` and RETURNED, never thrown,
-    // and the CLI sets `BROWSER: "true"` itself in the environment it gives its
-    // own background sessions — in the same object literal that carries its
-    // `platform === "windows"` special-case — while a separate check treats
-    // `BROWSER === "true"` as "not a real browser". So the value is a sentinel
-    // the CLI already expects, and the worst case on Windows is the benign
-    // no-browser path we're asking for anyway. Left platform-independent.
+    // Windows has no `true`, but a missing opener is classified
+    // `opener_missing` and returned, never thrown, and the CLI itself sets
+    // `BROWSER: "true"` in the environment it gives its own background
+    // sessions, in the same object literal as its `platform === "windows"`
+    // special-case, while a separate check treats `BROWSER === "true"` as
+    // "not a real browser". The value is a sentinel the CLI already expects,
+    // so the worst case on Windows is the same benign no-browser path.
+    // Left platform-independent.
     st.proc = ptySpawn(CLAUDE, ["auth", "login"], {
       name: "xterm-256color",
       cols: SIZE.cols,
@@ -156,7 +155,7 @@ export async function startClaudeLogin(): Promise<ClaudeLoginSession> {
     }
   }, 15 * 60_000);
 
-  // Reply to a prompt the first time it appears (defensive — the documented
+  // Reply to a prompt the first time it appears (defensive: the documented
   // flow goes straight to the URL, but some CLI versions ask first).
   const answer = (key: string, when: RegExp, reply: string) => {
     if (!st.answered.has(key) && when.test(st.buf)) {
@@ -299,7 +298,7 @@ export async function claudeStatus(): Promise<ClaudeStatus> {
 
 /**
  * One-shot test turn through the same `claude` binary the SDK drives, proving
- * the connection actually produces output (not just that credentials exist).
+ * the connection actually produces output, beyond confirming credentials exist.
  */
 export async function verifyTurn(): Promise<{ ok: boolean; output: string; error: string | null }> {
   const started = Date.now();
@@ -314,7 +313,7 @@ export async function verifyTurn(): Promise<{ ok: boolean; output: string; error
     const ok = out.length > 0;
     addInternalUsage({
       job: "verify", agent: "claude", requested_agent: "claude", ok,
-      // No --model is passed, so this is the CLI's own default resolving —
+      // No --model is passed, so this is the CLI's own default resolving,
       // exactly the case a setting could never report. `--output-format json`
       // prints the result payload, which carries the per-model rollup.
       model: claudeMessageModel({ ...parsed, type: "result" }),

@@ -3,13 +3,13 @@ import { draftProjectContext } from "./agents/oneshots";
 import { recentCommits, isGitRepo } from "./git";
 import type { Project } from "./types";
 
-// Projects whose draft is genuinely executing in THIS process. The DB
-// refresh_status is the durable source of truth a client polls; this in-memory
-// set is the liveness truth used to (a) ignore a double-click and (b) detect a
-// "running" row left orphaned by a server restart. Module-level = per server.
+// Projects whose draft is actually executing in this process. The DB
+// refresh_status is the durable state a client polls; this in-memory set
+// tracks liveness, used to ignore a double-click and to detect a "running"
+// row left orphaned by a server restart. Module-level, so it's per server.
 const inFlight = new Set<string>();
 
-// A DB row stuck at "running" with no live job (e.g. the process was killed
+// A DB row stuck at "running" with no live job (the process was killed
 // mid-draft) is treated as restartable after this long.
 const STALE_MS = 10 * 60 * 1000;
 
@@ -26,8 +26,8 @@ export function isRefreshing(projectId: string): boolean {
 
 function stateOf(p: Project): RefreshState {
   // A "running" row with no live in-process job and an old start time was
-  // orphaned by a server restart — report it as a settled error so a polling
-  // client unsticks (and can retry) instead of waiting forever.
+  // orphaned by a server restart. Report it as a settled error so a polling
+  // client unsticks and can retry instead of waiting forever.
   if (
     p.refresh_status === "running" &&
     !inFlight.has(p.id) &&
@@ -59,8 +59,8 @@ export function clearRefresh(projectId: string): RefreshState | null {
   return p ? stateOf(p) : null;
 }
 
-// Assemble the seed digest handed to the drafting agent: recent git activity so
-// the model knows what's changed lately. The agent reads the code itself; this
+// Assemble the seed digest handed to the drafting agent: recent git activity,
+// for context on what changed lately. The agent reads the code itself; this
 // is just orientation.
 async function buildDigest(repoPath: string): Promise<string> {
   if (!repoPath || !(await isGitRepo(repoPath).catch(() => false))) return "";
@@ -86,17 +86,18 @@ async function runDraft(project: Project): Promise<void> {
 }
 
 /**
- * Kick off a refreshed project-context draft in the BACKGROUND and return the
- * resulting state immediately — the agent exploration (which can take minutes)
- * no longer runs inside the HTTP request. The client polls getRefreshState()
- * until the status leaves "running", then reviews/saves the draft. Idempotent
- * on a double-click: a live job is left running and its state returned.
+ * Kick off a refreshed project-context draft in the background and return the
+ * resulting state immediately; the agent exploration, which can take minutes,
+ * does not run inside the HTTP request. The client polls getRefreshState()
+ * until the status leaves "running", then reviews and saves the draft.
+ * Idempotent on a double-click: a live job is left running and its state
+ * returned.
  */
 export function startRefreshJob(projectId: string): RefreshState {
   const project = getProject(projectId);
   if (!project) throw new Error("project not found");
 
-  // A genuinely live job (or a recent, not-yet-stale "running" row) wins — don't
+  // A genuinely live job, or a recent not-yet-stale "running" row, wins: don't
   // start a parallel exploration for the same project.
   const liveOrFresh =
     inFlight.has(projectId) ||
@@ -118,7 +119,7 @@ export function startRefreshJob(projectId: string): RefreshState {
     refresh_error: "",
     refresh_started_at: Date.now(),
   });
-  // Fire-and-forget: the request returns now; runDraft persists the outcome.
+  // Fire and forget: the request returns now, and runDraft persists the outcome.
   void runDraft(p ?? project);
   return stateOf(p ?? project);
 }

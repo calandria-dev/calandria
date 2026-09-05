@@ -1,17 +1,14 @@
-// VAPID (RFC 8292): the keypair that identifies THIS instance to the browsers'
+// VAPID (RFC 8292): the keypair that identifies this instance to the browsers'
 // push services, and the signed JWT each request carries.
 //
-// Hand-rolled on node:crypto rather than the `web-push` package: the whole
-// protocol is one ECDSA signature here and one ECDH + HKDF + AES-GCM pass in
-// encrypt.ts, both pinned by tests (the RFC's own vector for the latter), and
-// that is smaller than the dependency tree it would replace.
+// Hand-rolled on node:crypto instead of the `web-push` package: the whole
+// protocol is one ECDSA signature plus ECDH + HKDF + AES-GCM in encrypt.ts,
+// both pinned by tests and smaller than the dependency tree a library adds.
 //
-// Key storage: VAPID_PRIVATE_KEY (env) wins; otherwise `<CALANDRIA_DB_DIR>/vapid.json`,
-// minted on first use. It sits beside the database on purpose — a subscription
-// is bound to the key it was created under (the push service rejects a push
-// signed by any other), so the key must travel with the subscriptions or every
-// phone goes quiet with nothing in the UI to say why. The file is written
-// owner-only through lib/secretFile.ts, best-effort — see vapidKeys() below.
+// Key storage: VAPID_PRIVATE_KEY (env) wins, else `<CALANDRIA_DB_DIR>/vapid.json`,
+// minted on first use and kept beside the database since a subscription is
+// bound to the key it was created under and must travel with it. Written
+// owner-only via lib/secretFile.ts, best-effort; see vapidKeys() below.
 
 import { createECDH, createPrivateKey, sign, type KeyObject } from "node:crypto";
 import fs from "node:fs";
@@ -25,7 +22,7 @@ export const b64url = {
 };
 
 export interface VapidKeys {
-  /** Uncompressed P-256 point (65 bytes), base64url — what the browser's
+  /** Uncompressed P-256 point (65 bytes), base64url: what the browser's
    *  `applicationServerKey` wants and what `k=` carries. */
   publicKey: string;
   /** Raw 32-byte scalar, base64url. */
@@ -41,12 +38,12 @@ export function publicKeyFor(privateKey: string): string {
   return b64url.encode(ecdh.getPublicKey());
 }
 
-/** Left-pad a raw scalar to the 32 bytes P-256 coordinates are, or null if it
- *  can't be one. `ecdh.getPrivateKey()` hands back OpenSSL's *minimal* big-endian
- *  bignum, so a scalar whose top byte is zero comes back 31 bytes (measured: 798
- *  of 200,000 keys, ~1 in 250). It is the same scalar — `setPrivateKey` accepts
- *  either — and RFC 7518 §6.2.2.1 wants `d` zero-padded to the coordinate size,
- *  so the short form is a mis-encoding to fix rather than a key to reject. */
+/** Left-pad a raw scalar to the 32 bytes P-256 coordinates use, or null if it
+ *  can't be one. `ecdh.getPrivateKey()` returns OpenSSL's minimal big-endian
+ *  bignum, so a scalar with a zero top byte comes back one byte short. It is
+ *  the same scalar (`setPrivateKey` accepts either), and RFC 7518 §6.2.2.1
+ *  wants `d` zero-padded to the coordinate size, so the short form gets fixed
+ *  here instead of rejected. */
 function padScalar(raw: Buffer): Buffer | null {
   if (raw.length === 0 || raw.length > 32) return null;
   return raw.length === 32 ? raw : Buffer.concat([Buffer.alloc(32 - raw.length), raw]);
@@ -57,8 +54,8 @@ export function generateVapidKeys(): VapidKeys {
   ecdh.generateKeys();
   const d = padScalar(ecdh.getPrivateKey());
   // Unreachable: the curve fixes the width, so the only variable is how many
-  // leading zeros OpenSSL trimmed. Assert rather than coerce — a scalar this
-  // isn't would be a key we can't sign with.
+  // leading zeros OpenSSL trimmed. Asserts instead of coercing, since a
+  // scalar this isn't would be a key that can't sign.
   if (!d) throw new Error("generated VAPID scalar is not a P-256 private key");
   return { publicKey: b64url.encode(ecdh.getPublicKey()), privateKey: b64url.encode(d) };
 }
@@ -100,9 +97,10 @@ export function vapidKeys(): VapidKeys {
     const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as Partial<VapidKeys>;
     const stored = typeof parsed.privateKey === "string" ? normalizeScalar(parsed.privateKey) : null;
     if (stored) {
-      // The public half is re-derived rather than trusted: a hand-edited file
-      // with a mismatched pair would sign with one key and advertise another,
-      // and every subscription made under the advertised one would be rejected.
+      // The public half is always re-derived from the private key: a hand-edited
+      // file with a mismatched pair would otherwise sign with one key while
+      // advertising another, and every subscription made under the advertised
+      // key would be rejected.
       const keys = { privateKey: stored, publicKey: publicKeyFor(stored) };
       global.__calandriaVapid = { keys, source: "file" };
       return keys;
@@ -115,8 +113,9 @@ export function vapidKeys(): VapidKeys {
   // Owner-only, and on Windows that means an ACL: `mode: 0o600` there only
   // toggles the read-only attribute, leaving the signing key readable by every
   // other local account (docs/WINDOWS.md §3). Non-fatal, unlike a pasted API
-  // key — nobody is in the loop when this is minted, so failing closed on a
-  // filesystem with no ACLs would silently turn off push for the whole instance.
+  // key: nobody is in the loop when this is minted, so failing closed on a
+  // filesystem with no ACLs would turn off push for the whole instance with no
+  // one to notice.
   writeSecretFile(file, JSON.stringify({ ...keys, createdAt: new Date().toISOString() }, null, 2) + "\n", {
     fatal: false,
     advice: "Set VAPID_PRIVATE_KEY in the environment to keep the signing key off disk.",
@@ -144,7 +143,7 @@ function privateKeyObject(keys: VapidKeys): KeyObject {
   });
 }
 
-/** The push service's origin — the JWT audience RFC 8292 requires. */
+/** The push service's origin: the JWT audience RFC 8292 requires. */
 export function pushAudience(endpoint: string): string {
   return new URL(endpoint).origin;
 }
@@ -158,7 +157,7 @@ const tokens = new Map<string, { jwt: string; exp: number }>();
 
 /**
  * Sign a VAPID JWT for `audience` (ES256 over header.claims, signature as the
- * raw r||s the JWS spec wants — hence ieee-p1363, not DER).
+ * raw r||s the JWS spec wants, hence ieee-p1363, not DER).
  */
 export function signVapidJwt(audience: string, keys: VapidKeys, nowS = Math.floor(Date.now() / 1000)): { jwt: string; exp: number } {
   const exp = nowS + TOKEN_TTL_S;

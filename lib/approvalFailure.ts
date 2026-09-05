@@ -1,34 +1,19 @@
-// Detection + recovery constants for the "Codex's approval policy blocked the
-// turn" failure mode.
-//
-// Calandria runs Codex through `codex exec` (via @openai/codex-sdk), which is
-// non-interactive: nobody can answer a command-approval prompt mid-turn. So the
-// driver asks for `approval_policy=never` (the auto-run analog of Claude's
-// bypassPermissions). Two configurations defeat that and produce the same
-// baffling failure:
-//
-//   1. Enterprise-managed Codex requirements disallow `never`. The CLI warns
-//      ("Configured value for `approval_policy` is disallowed by requirements;
-//      falling back to required value UnlessTrusted") and silently downgrades.
-//      Under UnlessTrusted every non-allowlisted command needs an approval that
-//      exec mode cannot service — codex_core rejects each one ("approval
-//      request failed"), and the agent flails through its tools with no
-//      explanation.
-//   2. The user's own ~/.codex/config.toml sets an approval-requiring policy
-//      and Calandria runs with CODEX_APPROVAL_POLICY=inherit.
-//
-// The downgrade warning arrives as an error item on the very first affected
-// turn (lib/agents/codex/events.ts maps it to a StreamEvent error), so the
-// Codex driver matches it there and flips an instance-wide flag that makes it
-// request the exec-compatible "on-request" policy from the next turn on
-// (self-healing, no user action). This module classifies the failure for
-// lib/runner.ts — same pattern as lib/promptLimits.ts / lib/authFailure.ts —
-// which appends APPROVAL_BLOCKED_NOTICE so the UI can render a one-click Retry.
-// Kept dependency-free so both server and client bundles can import it.
+// Detection and recovery constants for the "Codex's approval policy blocked
+// the turn" failure mode. Calandria runs Codex non-interactively via `codex
+// exec`, requesting `approval_policy=never`. Enterprise-managed requirements,
+// or a user's ~/.codex/config.toml with CODEX_APPROVAL_POLICY=inherit, can
+// force an approval-requiring policy instead, and exec mode then has no way
+// to service the resulting approval prompts (every non-allowlisted command
+// fails with "approval request failed"). The Codex driver matches the
+// downgrade warning as a StreamEvent error and switches future turns to the
+// exec-compatible "on-request" policy. This module classifies the failure
+// for lib/runner.ts, which appends APPROVAL_BLOCKED_NOTICE so the UI can
+// render a Retry button. Kept dependency-free so both server and client
+// bundles can import it.
 
-/** The CLI's managed-requirements downgrade warning — the signal that the
- *  approval policy Calandria asked for was rejected and a stricter one applies.
- *  Matched by the Codex driver to trigger auto-negotiation. */
+/** The CLI's managed-requirements downgrade warning: the approval policy
+ *  Calandria asked for was rejected and a stricter one applies. Matched by
+ *  the Codex driver to trigger auto-negotiation. */
 const APPROVAL_DOWNGRADE_RES = [
   /approval_policy[^\n]{0,80}disallowed by requirements/i,
   /disallowed by requirements[^\n]{0,120}approval_policy/i,
@@ -41,11 +26,11 @@ export function isApprovalDowngrade(msg: string | null | undefined): boolean {
   return !!msg && APPROVAL_DOWNGRADE_RES.some((re) => re.test(msg));
 }
 
-// The rejections codex_core emits when an approval-requiring policy meets exec
-// mode's inability to ask anyone:
+// The rejections codex_core emits when an approval-requiring policy meets
+// exec mode, which cannot ask anyone to approve a command mid-turn:
 //   - "command execution approval is not supported in exec mode for thread …"
 //   - "exec_command failed …: Rejected(\"approval request failed\")"
-//   - "approval policy is UnlessTrusted; reject command — you cannot ask for
+//   - "approval policy is UnlessTrusted; reject command: you cannot ask for
 //     escalated permissions if the approval policy is UnlessTrusted"
 const APPROVAL_BLOCKED_RES = [
   ...APPROVAL_DOWNGRADE_RES,
@@ -56,7 +41,7 @@ const APPROVAL_BLOCKED_RES = [
 ];
 
 /** True when a turn's error text is an approval-policy rejection (the managed
- *  downgrade warning, or exec mode failing to service an approval) rather than
+ *  downgrade warning, or exec mode failing to service an approval) and not
  *  a work failure. */
 export function isApprovalBlocked(msg: string | null | undefined): boolean {
   return !!msg && APPROVAL_BLOCKED_RES.some((re) => re.test(msg));
@@ -64,10 +49,10 @@ export function isApprovalBlocked(msg: string | null | undefined): boolean {
 
 /** Appended to the persisted error line when a turn is blocked by the approval
  *  policy. The UI (app/shell/Transcript.tsx) matches this exact string
- *  to render the "Retry" button — the driver has already switched future turns
+ *  to render the "Retry" button: the driver has already switched future turns
  *  to the exec-compatible "on-request" policy by the time anyone reads this, so
  *  resending the same message is the recovery. Persisted message content is the
- *  durable channel — it survives SSE reconnects because the snapshot replays
+ *  durable channel, since it survives SSE reconnects by replaying the snapshot
  *  from SQLite. */
 export const APPROVAL_BLOCKED_NOTICE =
   "The agent's approval policy blocked this turn: it requires interactive command approval, which " +

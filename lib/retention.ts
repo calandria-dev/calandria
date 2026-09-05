@@ -1,45 +1,41 @@
-// Scheduled retention: the sweep that keeps the unbounded tables from being
-// unbounded.
-//
-// Before this, `schedule_runs` was the only table with automatic retention
-// (pruneRuns() in lib/schedule/store.ts, a hard cap per schedule). Everything
-// else grew forever and was only ever emptied by the FK cascade behind a manual
-// task/project delete — so an instance six months in carries every event of
-// every turn it has ever run (issue #15).
+// Scheduled retention: the sweep that keeps the unbounded tables from growing
+// forever. Everything but `schedule_runs` (which has its own hard cap per
+// schedule, pruneRuns() in lib/schedule/store.ts) was previously only emptied
+// by the FK cascade behind a manual task/project delete.
 //
 // DB + fs only: no runner, no SDK, no bus (pinned by tests/importGraph.test.ts),
 // so the predicate below can be tested without launching anything. The sweep
-// itself is driven from lib/scheduler.ts's existing ticker — one server-owned
+// itself is driven from lib/scheduler.ts's existing ticker: one server-owned
 // periodic worker, never a second process (see CLAUDE.md).
 //
-// WHAT "COMPLETED" MEANS, per table, is the whole design:
+// What "completed" means, per table:
 //
 //   messages / task_comments / task_doc_comments / uploads
-//       Deleted for a task that is TERMINAL (done or cancelled), idle, and
+//       Deleted for a task that is terminal (done or cancelled), idle, and
 //       untouched for CALANDRIA_RETENTION_DAYS. These are the user's record of
 //       a finished piece of work; they feed no aggregate, so age is the only
 //       question.
 //   sessions
-//       Same tasks, minus the ONE row that is still live: the session
+//       Same tasks, minus the one row that is still live: the session
 //       `tasks.session_id` names is the task's resume key, and its `usage_cum`
-//       is the Codex driver's per-thread cumulative baseline. Prune that and a
-//       resumed task re-bills its whole thread on the next turn, so it stays
-//       until the task itself is deleted. The older generations — everything
-//       a `/clear` left behind — go.
+//       is the Codex driver's per-thread cumulative baseline. Pruning that
+//       makes a resumed task re-bill its whole thread on the next turn, so it
+//       stays until the task itself is deleted. The older generations,
+//       everything a `/clear` left behind, go.
 //   task_usage / task_merges
-//       Same predicate but a SEPARATE, longer window
-//       (CALANDRIA_USAGE_RETENTION_DAYS), because these are not the task's
-//       record, they are the Insights dashboard's: /api/insights reads 180 days
-//       back and the default window is deliberately wider than that, so a
-//       sweep can never carve a hole in a chart the user is looking at. They
-//       also back the all-time cost totals on the project and task cards, which
-//       do fall when a row ages out — an old task reads $0.00 rather than
-//       lying about a smaller number.
+//       Same predicate but a separate, longer window
+//       (CALANDRIA_USAGE_RETENTION_DAYS), because these back the Insights
+//       dashboard, not just the task's own record: /api/insights reads 180
+//       days back and the default window is wider than that, so a sweep never
+//       carves a hole in a chart the user is looking at. They also back the
+//       all-time cost totals on the project and task cards, which do fall
+//       when a row ages out: an old task reads $0.00 instead of a smaller
+//       number.
 //   internal_usage
-//       Has no foreign keys at all (deliberately: deleting a project must not
-//       erase historical overhead spend), so there is no task lifecycle to
-//       hang it on. Pruned by ROW age against the usage window, which is what
-//       its idx_internal_usage_created index is for.
+//       Has no foreign keys at all, since deleting a project must not erase
+//       historical overhead spend, so there is no task lifecycle to hang it
+//       on. Pruned by row age against the usage window, which is what its
+//       idx_internal_usage_created index is for.
 //
 // Nothing here touches `summaries`: they are the seed a new generation starts
 // from, they are one short paragraph each, and a task whose messages have aged
@@ -55,7 +51,7 @@ import {
 } from "@/lib/config";
 import { removeTaskUploads } from "@/lib/uploads";
 
-/** Task statuses that mean "this is over" — the only ones a sweep may touch. */
+/** Task statuses that mean "this is over": the only ones a sweep may touch. */
 const TERMINAL_STATUSES = "'done','cancelled'";
 
 /** Per-table row counts a sweep removed, for the log line and the tests. */
@@ -72,7 +68,7 @@ export interface RetentionCounts {
 }
 
 export interface RetentionResult extends RetentionCounts {
-  /** Total rows deleted — 0 means nothing was reclaimed and nothing ran after. */
+  /** Total rows deleted; 0 means nothing was reclaimed and nothing ran after. */
   rows: number;
   /** Whether the WAL was truncated afterwards. */
   checkpointed: boolean;
@@ -86,25 +82,25 @@ const EMPTY: RetentionCounts = {
 };
 
 /**
- * THE PREDICATE. Which tasks may a sweep touch, given a cutoff?
+ * The predicate: which tasks may a sweep touch, given a cutoff?
  *
- * Terminal, idle, and cold — every clause is a way a task can still be somebody's
- * live concern despite reading `done`:
+ * Terminal, idle, and cold: every clause is a way a task can still be
+ * somebody's live concern despite reading `done`:
  *
  *  - `running` / `awaiting_input`: a turn is in flight, or a permission card or
  *    ask is parked on the user. Both are reset by crash recovery at boot, so a
  *    dead predecessor's flags can't freeze a task out of retention forever.
  *  - `unread_run_at`: a scheduled run finished clean and nobody has looked yet.
- *    That mark sits OVER the status, so it is invisible to the status clause.
- *  - `snoozed_until` in the future: the user deferred this ON PURPOSE and it is
- *    coming back to the inbox.
+ *    That mark sits over the status, so it is invisible to the status clause.
+ *  - `snoozed_until` in the future: the user deferred this intentionally and
+ *    it is coming back to the inbox.
  *  - a parked follow-up in `pending_messages`: the queue is waiting to run, so
  *    the task is about to be live again.
  *  - a `claimed`/`running` schedule run pointing at it: the ledger still thinks
- *    the launch is in flight (the same exclusion pruneRuns() makes, for the same
- *    reason — retention must never delete the state something else is reading).
+ *    the launch is in flight, the same exclusion pruneRuns() makes, since
+ *    retention must never delete the state something else is reading.
  *
- * `updated_at` is the clock rather than `created_at`: a long-lived task that was
+ * `updated_at` is the clock, not `created_at`: a long-lived task that was
  * finished yesterday is not six months old just because it was filed then, and
  * every write path in lib/store.ts stamps it.
  */
@@ -146,7 +142,7 @@ function deleteByTask(table: string, column: string, ids: string[]): number {
 
 /**
  * The one row per pruned task that must survive: the session the task would
- * resume into. Expressed as a join rather than a second query so the delete
+ * resume into. Expressed as a join instead of a second query so the delete
  * stays a single statement per chunk.
  */
 function deleteStaleSessions(ids: string[]): number {
@@ -181,10 +177,10 @@ export interface SweepOptions {
 /**
  * One retention pass. Synchronous and transactional per half, because
  * better-sqlite3 is synchronous and the four deletes for one task describe a
- * single decision — a half-pruned task would leave comments anchored to a
+ * single decision: a half-pruned task would leave comments anchored to a
  * transcript that no longer exists.
  *
- * The file-system half (uploads) runs OUTSIDE the transaction: `fs.rmSync` can't
+ * The file-system half (uploads) runs outside the transaction: `fs.rmSync` can't
  * be rolled back, and a directory that survives a failed sweep is retried next
  * time, whereas a directory deleted under a rolled-back transaction is gone with
  * its messages still pointing at it.
@@ -203,10 +199,9 @@ export function sweepRetention(now = Date.now(), opts: SweepOptions = {}): Reten
       counts.task_doc_comments = deleteByTask("task_doc_comments", "task_id", transcriptIds);
       counts.sessions = deleteStaleSessions(transcriptIds);
     })();
-    // Item 3 of the issue: removeTaskUploads() used to fire only on hard delete,
-    // so an abandoned task kept its attachment dir forever. Same window, same
-    // sweep — the marker lines that pointed at these files were in the messages
-    // just deleted.
+    // removeTaskUploads() fires on the same window, same sweep, as the rest of
+    // this pass: the marker lines that pointed at these files were in the
+    // messages just deleted.
     for (const id of transcriptIds) {
       counts.uploads += removeTaskUploads(id) ? 1 : 0;
     }
@@ -231,15 +226,15 @@ export function sweepRetention(now = Date.now(), opts: SweepOptions = {}): Reten
 
   // Logically freeing rows is not reclaiming disk. In WAL mode the deletes land
   // in calandria.db-wal, which grows to hold them and is only reset at a
-  // checkpoint — so a big sweep can make the on-disk footprint go UP until one
+  // checkpoint, so a big sweep can make the on-disk footprint go up until one
   // happens. TRUNCATE checkpoints everything back into the main file and then
-  // truncates the WAL to zero, which is the reclaim the issue asks for.
+  // truncates the WAL to zero, reclaiming that space.
   //
   // It cannot reclaim pages inside calandria.db itself: freed pages go on the
-  // freelist and are reused by later writes rather than returned to the
+  // freelist and are reused by later writes instead of being returned to the
   // filesystem. Only VACUUM shrinks the file, and VACUUM rewrites the whole
-  // database while holding a write lock — fine on a 50 MB DB, a stall on a
-  // large one — so it is opt-in rather than the default, and never runs when
+  // database while holding a write lock (fine on a 50 MB DB, a stall on a
+  // large one), so it is opt-in instead of the default, and never runs when
   // nothing was deleted.
   let checkpointed = false;
   let vacuumed = false;
@@ -249,7 +244,7 @@ export function sweepRetention(now = Date.now(), opts: SweepOptions = {}): Reten
       checkpointed = true;
     } catch (err) {
       // A reader holding the DB open can block a truncating checkpoint. Not a
-      // failure of the sweep — the rows are gone and the next pass retries.
+      // failure of the sweep: the rows are gone and the next pass retries.
       console.warn("[retention] wal_checkpoint(TRUNCATE) failed:", err);
     }
     if (opts.vacuum ?? RETENTION_VACUUM) {
@@ -292,9 +287,9 @@ export const retentionHealth = () => ({
  * business running that often, so it keeps its own clock and returns null when
  * it isn't due.
  *
- * `lastSweepAt` starts at 0, so the first tick after boot sweeps — which is the
- * behavior an instance that is only ever up for an hour a day needs, and the
- * reason this is not a `setInterval` of its own.
+ * `lastSweepAt` starts at 0, so the first tick after boot sweeps: the behavior
+ * an instance that is only ever up for an hour a day needs, and the reason
+ * this is not a `setInterval` of its own.
  */
 export function maybeSweepRetention(now = Date.now()): RetentionResult | null {
   if (!RETENTION_ENABLED) return null;
@@ -303,8 +298,8 @@ export function maybeSweepRetention(now = Date.now()): RetentionResult | null {
   s.lastSweepAt = now;
   const result = sweepRetention(now);
   if (result.rows > 0) {
-    // Deleting a user's data silently is how retention becomes a support
-    // ticket. One line, only when something actually went.
+    // Deleting a user's data without a trace is how retention becomes a
+    // support ticket. One line, only when something actually went.
     const detail = (Object.entries(result) as [string, number | boolean][])
       .filter(([k, v]) => typeof v === "number" && v > 0 && k !== "rows")
       .map(([k, v]) => `${k}=${v}`)
