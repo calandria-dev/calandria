@@ -20,6 +20,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 import { claudeDriver } from "@/lib/agents/claude/driver";
 import { buildProjectContext } from "@/lib/agents/shared";
 import type { Project, Task, StreamEvent } from "@/lib/types";
+import { oneShotIn } from "./wakeFixture";
 
 const project = { id: "p1", name: "P", repo_path: "/tmp/repo", context: "" } as Project;
 const task = { id: "t1", agent: "claude", title: "T", description: "", session_id: null, worktree_path: "", generation: 1 } as unknown as Task;
@@ -59,8 +60,7 @@ describe("CALANDRIA_BACKGROUND_LINGER=off", () => {
     // A session cron only fires while the CLI lives (measured), and with the
     // switch off the CLI exits at result time — so the wakeup the model was
     // promised has to be reported dead, not left for the user to wait on.
-    const d = new Date(Date.now() + 5 * 60_000);
-    const cron = { id: "w1", schedule: `${d.getMinutes()} ${d.getHours()} * * *`, recurring: false, prompt: "WAKE: re-check" };
+    const { cron, when } = oneShotIn(5, { prompt: "WAKE: re-check" });
     queryMock.mockImplementation((args: { prompt: AsyncIterable<unknown>; options: { hooks?: { Stop?: { hooks: ((i: unknown) => Promise<unknown>)[] }[] } } }) => {
       const it2 = args.prompt[Symbol.asyncIterator]();
       return (async function* () {
@@ -76,8 +76,8 @@ describe("CALANDRIA_BACKGROUND_LINGER=off", () => {
     for await (const ev of claudeDriver.runTurn(task, project, "go")) events.push(ev);
     expect(events.some((e) => e.type === "background_pending")).toBe(false);
     const notice = events.find((e) => e.type === "notice");
-    expect(notice && "content" in notice ? notice.content : "").toMatch(
-      /^⏰ Scheduled wakeup cancelled \(lingering is off on this instance \(CALANDRIA_BACKGROUND_LINGER\), so the session closed at the end of the turn\): at \d\d:\d\d, "WAKE: re-check"\. It will not fire/,
+    expect(notice && "content" in notice ? notice.content : "").toContain(
+      `⏰ Scheduled wakeup cancelled (lingering is off on this instance (CALANDRIA_BACKGROUND_LINGER), so the session closed at the end of the turn): at ${when}, "WAKE: re-check". It will not fire`,
     );
   });
 });

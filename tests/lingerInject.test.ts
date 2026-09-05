@@ -50,6 +50,7 @@ import { startResumeTurn, sendToLingeringTurn } from "@/lib/runner";
 import { sendTurnInput } from "@/lib/turnInput";
 import { subscribe, publish } from "@/lib/events";
 import type { Project, Task, StreamEvent, TaskStreamEvent } from "@/lib/types";
+import { oneShotIn } from "./wakeFixture";
 
 type StopHook = (input: unknown) => Promise<unknown>;
 type QueryArgs = { prompt: AsyncIterable<unknown>; options: { hooks?: { Stop?: { hooks: StopHook[] }[] } } };
@@ -76,10 +77,6 @@ const text = (t: string) => ({ type: "assistant", message: { content: [{ type: "
 const result = (cost: number) => ({ type: "result", subtype: "success", result: "ok", total_cost_usd: cost, usage: { input_tokens: 1, output_tokens: 2 } });
 const notification = (status: string, summary: string) => ({ type: "system", subtype: "task_notification", task_id: "bg1", status, summary, output_file: "/x" });
 const BG = [{ id: "bg1", type: "shell", status: "running", description: "sleep 600", command: "sleep 600" }];
-function oneShotIn(minutes: number) {
-  const d = new Date(Date.now() + minutes * 60_000);
-  return { id: "w1", schedule: `${d.getMinutes()} ${d.getHours()} * * *`, recurring: false, prompt: "WAKE: check the build" };
-}
 
 // What the CLI read off the wire, as text — the injected message must arrive
 // in exactly the shape the opening prompt does.
@@ -175,13 +172,13 @@ describe("the driver's mid-turn input channel", () => {
       await nextInput();
       yield init;
       yield text("scheduled a wakeup");
-      await stop([], [oneShotIn(30)]);
+      await stop([], [oneShotIn(30).cron]);
       yield result(0.01);
       expect(sendTurnInput("t1", "actually, do it now")).toBe(true);
       expect(sent(await nextInput())).toBe("actually, do it now");
       yield init;
       yield text("doing it now");
-      await stop([], [oneShotIn(30)]); // the wakeup is still registered
+      await stop([], [oneShotIn(30).cron]); // the wakeup is still registered
       yield result(0.02);
       // ...and the session goes back to waiting for it, so the wake still
       // arrives — on the fresh wait the injected turn re-entered.

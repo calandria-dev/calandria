@@ -25,12 +25,15 @@ function pinNextFire(id: string, ms: number) {
 
 describe("adjudicate, one-time schedules", () => {
   const dayOffset = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+  // Evaluated ONCE: called twice it can straddle UTC midnight and compare
+  // tomorrow's date against the day after.
+  const TOMORROW = dayOffset(1);
 
   function makeOnce() {
     const pid = createProject({ name: `once-${Math.random().toString(36).slice(2)}` }).id;
     return createSchedule({
       project_id: pid, name: "Check the overnight release", prompt: "How did the release go?",
-      days_mask: 62, time_of_day: "04:00", timezone: LA, once_date: dayOffset(1),
+      days_mask: 62, time_of_day: "04:00", timezone: LA, once_date: TOMORROW,
     });
   }
 
@@ -45,7 +48,7 @@ describe("adjudicate, one-time schedules", () => {
     const after = getSchedule(s.id)!;
     expect(after.enabled).toBe(0);
     expect(after.next_fire_at).toBe(0);
-    expect(after.once_date).toBe(dayOffset(1));
+    expect(after.once_date).toBe(TOMORROW);
   });
 
   it("never fires twice, even if the ticker comes round again", () => {

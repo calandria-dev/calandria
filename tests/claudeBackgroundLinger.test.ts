@@ -35,6 +35,7 @@ import { createProject, createTask, getTask, listMessages, getTaskUsage } from "
 import { startResumeTurn } from "@/lib/runner";
 import { subscribe } from "@/lib/events";
 import type { Project, Task, StreamEvent, TaskStreamEvent } from "@/lib/types";
+import { oneShotIn } from "./wakeFixture";
 
 // --- the scripted CLI ---
 
@@ -63,16 +64,6 @@ function mockCli(run: (io: CliIo) => AsyncGenerator<unknown>): void {
       nextInput: () => it.next(),
     });
   });
-}
-
-// A one-shot ScheduleWakeup as the Stop hook reports it (measured): only the
-// wall-clock minute is encoded, local time, so it fires at a minute boundary
-// — which on this file's 500ms-bounded instance is ALWAYS beyond the window.
-// That makes this suite the "won't be honored" half of the cron policy; the
-// wake path needs the unbounded default and lives in claudeCronLinger.test.ts.
-function oneShotIn(minutes: number) {
-  const d = new Date(Date.now() + minutes * 60_000);
-  return { id: "w1", schedule: `${d.getMinutes()} ${d.getHours()} * * *`, recurring: false, prompt: "WAKE: check the build" };
 }
 
 const BG = [{ id: "bg1", type: "shell", status: "running", description: "sleep 5", command: "sleep 5" }];
@@ -236,11 +227,12 @@ describe("session crons on a bounded instance (won't be honored)", () => {
   // won't wait for must be NAMED when the input closes, or the model's next
   // turn and the user both sit waiting on a wake that died with the process.
   it("closes at result time and appends a notice naming the cancelled wakeup", async () => {
+    const wake = oneShotIn(2);
     mockCli(async function* ({ stop, nextInput }) {
       await nextInput();
       yield init;
       yield text("SCHEDULED");
-      await stop([], [oneShotIn(2)]); // nothing in flight, one wakeup two minutes out
+      await stop([], [wake.cron]); // nothing in flight, one wakeup two minutes out
       yield result(0.01, { input_tokens: 1, output_tokens: 2 });
       const end = await nextInput();
       expect(end.done).toBe(true);
@@ -249,7 +241,7 @@ describe("session crons on a bounded instance (won't be honored)", () => {
     expect(events.some((e) => e.type === "background_pending")).toBe(false);
     const notice = events.find((e) => e.type === "notice");
     const content = notice && "content" in notice ? notice.content : "";
-    expect(content).toMatch(/^⏰ Scheduled wakeup cancelled \(beyond this instance's 0-minute linger window\): at \d\d:\d\d, "WAKE: check the build"\. It will not fire/);
+    expect(content).toContain(`⏰ Scheduled wakeup cancelled (beyond this instance's 0-minute linger window): at ${wake.when}, "WAKE: check the build". It will not fire`);
     expect(events[events.length - 1]?.type).toBe("done");
   });
 
@@ -258,12 +250,12 @@ describe("session crons on a bounded instance (won't be honored)", () => {
       await nextInput();
       yield init;
       yield text("started");
-      await stop(BG, [oneShotIn(2)]);
+      await stop(BG, [oneShotIn(2).cron]);
       yield result(0.05, { input_tokens: 4, output_tokens: 9 });
       yield notification("completed", "Background command completed (exit code 0)");
       yield init;
       yield text("bg done");
-      await stop([], [oneShotIn(2)]); // the wake is still registered on the wake turn
+      await stop([], [oneShotIn(2).cron]); // the wake is still registered on the wake turn
       yield result(0.06, { input_tokens: 2, output_tokens: 11 });
       const end = await nextInput();
       expect(end.done).toBe(true);
