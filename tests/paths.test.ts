@@ -2,16 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-// Regression: `isLinkedWorktree` (lib/git.ts) and `pathIdentity` (lib/repoLock.ts)
-// each compared `fs.realpathSync` output with `===`. NTFS is case-INSENSITIVE
-// but `realpathSync` is only case-PRESERVING, so `C:\Users\Foo` and
-// `c:\users\foo` — one directory — compared unequal as strings. The two
-// consequences are asymmetric and the first is destructive: a false "not
-// linked" is precisely what authorizes `rmSync(wtPath, { recursive, force })`
-// on a live checkout, while in the repo lock it only means two spellings of one
-// repo take two locks and run the merges this exists to serialize concurrently.
-//
-// Both now go through one helper, so the two can't drift.
+// `isLinkedWorktree` (lib/git.ts) and `pathIdentity` (lib/repoLock.ts) each
+// compare `fs.realpathSync` output with `===`. NTFS is case-insensitive but
+// `realpathSync` is only case-preserving, so `C:\Users\Foo` and `c:\users\foo`
+// (one directory) would compare unequal as strings. A false "not linked" is
+// what authorizes `rmSync(wtPath, { recursive, force })` on a live checkout;
+// in the repo lock it means two spellings of one repo take two locks and run
+// merges concurrently that this is meant to serialize. Both go through one
+// helper, so the two can't drift.
 import { canonicalPath, heldHandleHint, samePath } from "../lib/paths";
 import { repoLockKey } from "../lib/repoLock";
 import { tmpDir } from "./helpers";
@@ -29,9 +27,9 @@ afterEach(() => {
   global.__calandriaRepoLockKeys?.clear();
 });
 
-/** An existing directory plus an all-caps spelling of it that doesn't resolve —
- *  the shape of the bug: one side comes back from `realpathSync`, the other
- *  falls through to `path.resolve`, and only case-folding reconciles them. */
+/** An existing directory plus an all-caps spelling of it that doesn't resolve.
+ *  One side comes back from `realpathSync`, the other falls through to
+ *  `path.resolve`, and only case-folding reconciles them. */
 function caseVariant(): { dir: string; shouted: string } {
   const dir = fs.realpathSync(tmpDir("case-"));
   return { dir, shouted: dir.toUpperCase() };
@@ -75,8 +73,8 @@ describe("samePath folds case on win32 only", () => {
 
 describe("the repo lock keys two case spellings of one repo together on win32", () => {
   // A directory with no git repo in it, which is what makes `repoLockKey` fall
-  // through to the path identity — the greenfield-project case, and the only
-  // one where the comparison is ours rather than git's.
+  // through to the path identity: the greenfield-project case, and the only
+  // one where the comparison is ours instead of git's.
   it("hands both spellings the same lock key", async () => {
     const { dir, shouted } = caseVariant();
     mockPlatform("win32");

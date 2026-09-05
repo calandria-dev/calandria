@@ -137,9 +137,9 @@ describe("taskDiff", () => {
 
   // The exec bit is its own case because it is the one assertion here that
   // cannot hold on Windows: NTFS has no executable bit, `chmod` is a no-op, and
-  // git therefore records the file 100644. Skipped rather than ported —
-  // synthesizing a mode git itself wouldn't record proves nothing
-  // (docs/WINDOWS.md §7). The rest of the untracked-patch synthesis below is
+  // git therefore records the file 100644. It is skipped there instead of
+  // ported, since synthesizing a mode git itself would not record proves
+  // nothing. The rest of the untracked-patch synthesis below is
   // platform-independent and still runs everywhere.
   onPosix("synthesizes an untracked patch with the executable bit git records", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
@@ -186,8 +186,8 @@ describe("taskDiff", () => {
     const diff = await taskDiff(repo, wt.path, wt.baseSha, "main");
     expect(diff.alreadyMerged).toBe(true);
     // The live merge-base advanced to the merged tip, so landed work no longer
-    // reads as residual task changes — same as the app's managed merge, which
-    // moves base_sha forward.
+    // reads as residual task changes, the same as the app's managed merge,
+    // which moves base_sha forward.
     expect(diff.ahead).toBe(0);
     expect(diff.files).toEqual([]);
   });
@@ -240,13 +240,13 @@ describe("taskDiff", () => {
   });
 });
 
-// A base that is a FEATURE branch is routinely known only by its remote copy:
-// the local branch is deleted once the integration PR lands, or it sits days
+// A base that is a feature branch is often known only by its remote copy: the
+// local branch is deleted once the integration PR lands, or it sits days
 // behind because the user only ever pulls main. A worktree that merged
-// origin/<base> in the terminal then shares history the local branch knows
-// nothing about, and a resolver that asked only the local branch kept diffing
-// from the cut-point snapshot, reporting every commit the base gained as the
-// task's own work (five tasks on this instance: 43-64 files instead of 2-14).
+// origin/<base> in the terminal then shares history the local branch has no
+// record of, so a resolver that asks only the local branch keeps diffing from
+// the cut-point snapshot and reports every commit the base gained as the
+// task's own work.
 describe("taskDiff against a base branch known through its remote-tracking ref", () => {
   async function featureFixture() {
     const { repo, colleague } = await makeRepoWithOrigin();

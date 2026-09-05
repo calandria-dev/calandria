@@ -1,17 +1,17 @@
-// Filing a suggested task into a project OTHER than the one the session runs in.
+// Filing a suggested task into a project other than the one the session runs in.
 //
 // The agent discovers targets with `list_projects` and names one via
-// suggest_task's optional `project` param. Everything here pins the rules that
-// make a cross-project suggestion safe rather than merely possible:
-//   - resolution is STRICT (id, else case-insensitive name, else refuse) — a
-//     silently misfiled task is worse than a refusal, so there is no fallback
-//     to the calling project;
-//   - every default (agent, send_context, board position) comes from the TARGET
-//     project, or the task lands unrunnable;
-//   - `blocked_by` is project-scoped in setTaskDeps, so refs must resolve inside
-//     the target — and refs that don't are REPORTED, not dropped in silence;
-//   - the live-UI fan-out names the target project, or the receiving tray never
-//     refreshes.
+// suggest_task's optional `project` param. This pins the rules that make a
+// cross-project suggestion safe, not just possible:
+//   - resolution is strict (id, else case-insensitive name, else refuse): a
+//     misfiled task is worse than a refusal, so there is no fallback to the
+//     calling project;
+//   - every default (agent, send_context, board position) comes from the
+//     target project, or the task lands unrunnable;
+//   - `blocked_by` is project-scoped in setTaskDeps, so refs must resolve
+//     inside the target; refs that don't are reported, not dropped;
+//   - the live-UI fan-out names the target project, or the receiving tray
+//     never refreshes.
 import { describe, it, expect } from "vitest";
 import { NextRequest } from "next/server";
 import { createProject, updateProject, deleteProject, createTask, getTask, getTaskDeps, getProject, listProjects, countAwaiting } from "@/lib/store";
@@ -78,7 +78,7 @@ describe("resolveTargetProject", () => {
     expect(err).toContain("not-a-project");
     // The names it COULD have meant, so the agent can retry without guessing.
     expect(err).toContain("RTP-Strict");
-    // Never a quiet fallback to the calling project.
+    // Never a fallback to the calling project.
     expect(err.toLowerCase()).not.toContain("using the current project");
   });
 
@@ -90,7 +90,7 @@ describe("resolveTargetProject", () => {
     expect("project" in got).toBe(false);
     const err = (got as { error: string }).error;
     expect(err).toMatch(/ambiguous/i);
-    // Repeating the name would just fail again — the ids are what let the
+    // Repeating the name would just fail again; the ids are what let the
     // agent retry successfully.
     expect(err).toContain(a.id);
     expect(err).toContain(b.id);
@@ -140,7 +140,7 @@ describe("suggest_task into another project", () => {
     const json = (await res.json()) as { id: string; projectId: string; text: string };
     expect(getTask(json.id)!.project_id).toBe(there.id);
     expect(json.projectId).toBe(there.id);
-    // The confirmation names where it actually landed — the agent reports this
+    // The confirmation names where it actually landed; the agent reports this
     // back to the user verbatim.
     expect(json.text).toContain("XP-Target");
   });
@@ -189,7 +189,7 @@ describe("blocked_by resolves inside the target project", () => {
     });
     expect(getTaskDeps(task!.id)).toEqual([inTarget.id]);
     expect(text).toContain("Blocked by 1 task(s).");
-    // The two unusable refs are named, not silently swallowed.
+    // The two unusable refs are named, not swallowed.
     expect(text).toContain(inCaller.id);
     expect(text).toContain("ghost");
     expect(text).toContain("XPD-Target");
@@ -210,12 +210,12 @@ describe("per-session blocked_by title refs are scoped to their target project",
       [titleKey("proj-a", "Shared title"), "task-in-a"],
       [titleKey("proj-b", "Shared title"), "task-in-b"],
     ]);
-    // The same title in two projects is no longer ambiguous: each resolves
-    // within its own project, which is the only scope setTaskDeps accepts.
+    // The same title in two projects is not ambiguous: each resolves within
+    // its own project, which is the only scope setTaskDeps accepts.
     expect(resolveTitleRefs(["Shared title"], map, "proj-a")).toEqual(["task-in-a"]);
     expect(resolveTitleRefs(["Shared title"], map, "proj-b")).toEqual(["task-in-b"]);
     // A title suggested into a DIFFERENT project passes through unresolved, so
-    // createSuggestedTask reports it rather than wiring a foreign dependency.
+    // createSuggestedTask reports it instead of wiring a foreign dependency.
     expect(resolveTitleRefs(["Shared title"], map, "proj-c")).toEqual(["Shared title"]);
     // Ids still pass straight through, and no refs is still no refs.
     expect(resolveTitleRefs(["task-in-a"], map, "proj-b")).toEqual(["task-in-a"]);
@@ -240,8 +240,8 @@ describe("per-session blocked_by title refs are scoped to their target project",
 describe("badges and the needs-you pill on a cross-project suggestion", () => {
   it("moves neither count — a suggestion is not work waiting on the user", () => {
     // The fan-out only has to refresh the receiving TRAY. Both project-rail
-    // counts deliberately exclude suggested rows (the NEEDS_YOU predicate and
-    // task_count's `suggested = 0`), so there is nothing else to update — this
+    // counts exclude suggested rows (the NEEDS_YOU predicate and
+    // task_count's `suggested = 0`), so there is nothing else to update: this
     // pins that, so the absence of a badge update is a decision, not a bug.
     const here = createProject({ name: "Badge-Caller" });
     const there = createProject({ name: "Badge-Target" });
@@ -258,7 +258,7 @@ describe("badges and the needs-you pill on a cross-project suggestion", () => {
 
 describe("cross-project suggestion fan-out", () => {
   it("the internal endpoint publishes the suggestion on the calling task's channel, naming the target", async () => {
-    // Without this the Codex/bridge path is silent on the bus entirely — no
+    // Without this the Codex/bridge path publishes nothing on the bus, and no
     // tray anywhere refreshes until the user reloads.
     const here = createProject({ name: "FanOut-Caller" });
     const there = createProject({ name: "FanOut-Target" });

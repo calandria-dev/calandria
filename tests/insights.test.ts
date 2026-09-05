@@ -16,8 +16,8 @@ import { addInternalUsage } from "../lib/internalUsage";
 import type { TurnUsage } from "../lib/types";
 
 const DAY = 24 * 60 * 60 * 1000;
-// Pinned to TurnUsage rather than derived from addUsage's param: the ledger
-// accepts a null cost (an unpriced endpoint — see LedgerUsage) and internal
+// Pinned to TurnUsage instead of derived from addUsage's param: the ledger
+// accepts a null cost (an unpriced endpoint, see LedgerUsage) and internal
 // usage does not, so deriving would make every one of these rows nullable for
 // no reason. Everything here is ordinary priced cloud spend.
 const usage = (over: Partial<TurnUsage> = {}): TurnUsage => ({
@@ -31,10 +31,10 @@ function makeProjectTask(agent = "claude") {
   return { project, task };
 }
 
-// The dashboard reads `cost` as the period's spend, so a bucket that quietly
-// omitted an unpriced turn would be the same under-report this feature exists
-// to end — just one layer further out. `unp` is what lets the KPI and the
-// leaderboards mark the figure as a floor.
+// The dashboard reads `cost` as the period's spend, so a bucket that omitted
+// an unpriced turn without saying so would be the same under-report this
+// feature exists to end, just one layer further out. `unp` is what lets the
+// KPI and the leaderboards mark the figure as a floor.
 describe("unpriced turns in the insights aggregates", () => {
   it("counts a null-cost turn without letting it touch the spend or the tokens", () => {
     const { project } = makeProjectTask();
@@ -44,8 +44,8 @@ describe("unpriced turns in the insights aggregates", () => {
     addUsage({
       project_id: project.id, task_id: task.id, generation: 1, agent: "claude",
       provider: "openrouter.ai",
-      // What lib/runner.ts writes for a custom base URL: tokens measured, price
-      // unknown. NOT 0 — that would assert the turn was free.
+      // What lib/runner.ts writes for a custom base URL: tokens measured,
+      // price unknown. Not 0; that would assert the turn was free.
       usage: { ...usage({ input_tokens: 7 }), cost_usd: null },
     });
 
@@ -53,7 +53,7 @@ describe("unpriced turns in the insights aggregates", () => {
     const mine = data.usage.filter((r) => r.p === project.id);
     expect(mine).toHaveLength(1);
     // Two turns, one price. The dollar figure is the priced turn alone, and the
-    // tokens are both — an unpriced turn still filled a context window.
+    // tokens are both, since an unpriced turn still filled a context window.
     expect(mine[0].cost).toBe(2);
     expect(mine[0].unp).toBe(1);
     expect(mine[0].inp).toBe(107);
@@ -77,7 +77,7 @@ describe("merge line stats", () => {
   it("mergeTask reports the additions/deletions the merge landed", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
     await commitFile(wt.path, "a.txt", "one\ntwo\nthree\n", "add a");
-    writeFile(wt.path, "b.txt", "x\n"); // uncommitted — committed by mergeTask
+    writeFile(wt.path, "b.txt", "x\n"); // uncommitted, committed by mergeTask
 
     const res = await mergeTask({
       repoPath: repo, worktreePath: wt.path, workBranch: wt.branch,
@@ -108,7 +108,7 @@ describe("getInsightsData", () => {
     addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "codex", usage: usage({ cost_usd: 0.5 }) });
     // A third agent id is a third bucket and nothing else: the ledger stores
     // whatever the driver is called, and the view reads the ids back off the
-    // rows rather than from a fixed pair (app/shell/InsightsView.tsx).
+    // rows instead of from a fixed pair (app/shell/InsightsView.tsx).
     addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "gemini", usage: usage({ cost_usd: 0.25 }) });
 
     const data = getInsightsData(Date.now() - DAY);
@@ -194,7 +194,7 @@ describe("getInsightsData", () => {
   });
 
   // The Tags leaderboard ("what did the auth migration cost") reads a SEPARATE
-  // cube (tagUsage), one dimension finer than `usage` — folding it into `usage`
+  // cube (tagUsage), one dimension finer than `usage`. Folding it into `usage`
   // would double-count a task carrying more than one tag.
   it("attributes spend to tags in a separate cube, leaving `usage` untouched and unsummed", () => {
     const { project, task } = makeProjectTask();
@@ -205,12 +205,12 @@ describe("getInsightsData", () => {
     addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "claude", usage: usage({ cost_usd: 2 }) });
     addUsage({ project_id: project.id, task_id: doomed.id, generation: 1, agent: "claude", usage: usage({ cost_usd: 4 }) });
     // A deleted task takes its usage with it (ON DELETE CASCADE), so this row
-    // is gone from both buckets — what matters is that the JOIN doesn't drop
+    // is gone from both buckets. What matters is that the JOIN doesn't drop
     // spend that IS still there.
     deleteTask(doomed.id);
 
     const data = getInsightsData(Date.now() - DAY);
-    // `usage` (the existing task-turn cube) has no `g` field at all any more —
+    // `usage` (the existing task-turn cube) has no `g` field at all any more;
     // it must not change shape just because tags exist.
     expect((data.usage[0] as unknown as { g?: unknown }).g).toBeUndefined();
     const usageRows = data.usage.filter((r) => r.p === project.id);
@@ -218,7 +218,7 @@ describe("getInsightsData", () => {
 
     const tagRows = data.tagUsage.filter((r) => r.p === project.id);
     expect(tagRows.find((r) => r.g === tag.id)!.cost).toBeCloseTo(1.5);
-    // Untagged spend keys on "" rather than vanishing — the day/project/agent
+    // Untagged spend keys on "" instead of vanishing. The day/project/agent
     // totals every chart above the leaderboard is built on must not change.
     expect(tagRows.find((r) => r.g === "")!.cost).toBeCloseTo(2);
     expect(tagRows.reduce((n, r) => n + r.cost, 0)).toBeCloseTo(3.5);
@@ -238,7 +238,7 @@ describe("getInsightsData", () => {
     expect(usageRows.reduce((n, r) => n + r.cost, 0)).toBeCloseTo(3);
 
     const tagRows = data.tagUsage.filter((r) => r.p === project.id);
-    // Both tags get the full $3 — the row genuinely belongs to both plans.
+    // Both tags get the full $3; the row genuinely belongs to both plans.
     expect(tagRows.find((r) => r.g === first.id)!.cost).toBeCloseTo(3);
     expect(tagRows.find((r) => r.g === second.id)!.cost).toBeCloseTo(3);
     // So the tag cube's total (6) does NOT equal the task cube's total (3).
@@ -246,8 +246,8 @@ describe("getInsightsData", () => {
   });
 
   // gatewayCache is a SEPARATE cube keyed on task_usage.provider, read only
-  // when a gateway host is passed — the same field ordinary cloud-billed rows
-  // leave "" on, so an unguarded query would double-count cloud spend as
+  // when a gateway host is passed. It is the same field ordinary cloud-billed
+  // rows leave "" on, so an unguarded query would double-count cloud spend as
   // gateway cache reads.
   describe("gatewayCache", () => {
     it("sums input/cache-read tokens for the given gateway host, excluding ordinary cloud-billed rows", () => {
@@ -261,7 +261,7 @@ describe("getInsightsData", () => {
         project_id: project.id, task_id: task.id, generation: 1, agent: "claude", provider: host,
         usage: usage({ input_tokens: 500, cache_read_tokens: 100 }),
       });
-      // An ordinary cloud-billed turn — provider "" — must not be counted.
+      // An ordinary cloud-billed turn, provider "", must not be counted.
       addUsage({
         project_id: project.id, task_id: task.id, generation: 1, agent: "claude",
         usage: usage({ input_tokens: 9999, cache_read_tokens: 9999 }),

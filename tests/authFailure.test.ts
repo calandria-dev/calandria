@@ -1,10 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { vi } from "vitest";
 
-// Same seam as tests/promptTooLong.test.ts: the Claude driver module is mocked so
-// the runner's real error/queue/flag handling runs without the SDK (or a real
-// login) anywhere near it. The registry maps "claude" to this module, so
-// getDriver(task.agent) resolves the mock.
+// Mocks the Claude driver module so the runner's error, queue and flag
+// handling runs without the SDK or a real login. The registry maps "claude"
+// to this module, so getDriver(task.agent) resolves the mock.
 const { runTurnMock } = vi.hoisted(() => ({ runTurnMock: vi.fn() }));
 
 vi.mock("@/lib/agents/claude/driver", () => ({
@@ -25,9 +24,9 @@ import type { TaskStreamEvent } from "@/lib/types";
 
 const OAUTH_DEAD = "Failed to authenticate: OAuth session expired and could not be refreshed";
 
-// Resolve once the runner publishes an event of the given type for this task,
-// collecting every event seen along the way (so a test can assert on both the
-// terminal boundary and what preceded it).
+// Resolves once the runner publishes an event of the given type for this
+// task, collecting every event seen along the way so a test can assert on
+// both the terminal event and what preceded it.
 function watch(taskId: string, until: TaskStreamEvent["type"]): { events: TaskStreamEvent[]; done: Promise<void> } {
   const events: TaskStreamEvent[] = [];
   const done = new Promise<void>((resolve) => {
@@ -48,13 +47,13 @@ describe("dead-login recovery", () => {
   it("flags the agent instance-wide, offers a reconnect, and parks the queue instead of burning it", async () => {
     const project = createProject({ name: "P", repo_path: "" });
     const task = createTask({ project_id: project.id, title: "T", description: "d" });
-    // Two follow-ups the user typed while the turn was live (what POST /messages
-    // parks in pending_messages). They must survive the auth failure.
+    // Follow-ups queued in pending_messages while the turn was live must
+    // survive the auth failure.
     addPendingMessage(task.id, task.generation, "and then deploy it");
     addPendingMessage(task.id, task.generation, "and write a test");
 
-    // The session opens, then the credential turns out to be dead — the real
-    // shape of an expired OAuth session (it fails at the API, not at spawn).
+    // An expired OAuth session fails at the API after the session opens, not
+    // at spawn.
     runTurnMock.mockImplementation(async function* () {
       yield { type: "session", sessionId: "sess-1" };
       throw new Error(OAUTH_DEAD);
@@ -64,28 +63,29 @@ describe("dead-login recovery", () => {
     startTurn(task, project, "hi", "");
     await w.done;
 
-    // The transcript carries the provider's own words AND the durable recovery
-    // notice the UI turns into a "Reconnect Claude Code" button.
+    // The transcript carries the provider's error text plus the durable
+    // recovery notice the UI renders as a "Reconnect Claude Code" button.
     const errMsg = listMessages(task.id).find((m) => m.role === "system" && m.content.includes(AUTH_EXPIRED_NOTICE));
     expect(errMsg).toBeTruthy();
     expect(errMsg!.content).toContain("OAuth session expired");
-    // One ⚠ — the runner prefixes it, so the renderer must not add a second.
+    // The runner prefixes a single ⚠; the renderer must not add a second.
     expect(errMsg!.content.startsWith("⚠ ")).toBe(true);
     expect(errMsg!.content).not.toContain("⚠ ⚠");
 
-    // The agent is flagged app-wide (one login, every task) and announced once,
-    // which is what raises the titlebar banner in every open tab.
+    // The agent is flagged app-wide and announced once, raising the titlebar
+    // banner in every open tab.
     const broken = getAgentAuthBroken("claude");
     expect(broken?.reason).toContain("OAuth session expired");
     const announced = w.events.filter((e) => e.type === "agent_auth");
     expect(announced).toHaveLength(1);
     expect(announced[0]).toMatchObject({ agent: "claude", broken: true });
 
-    // The queue is untouched — no dequeue, no second (identically failing) turn.
+    // The queue is untouched: no dequeue, no second turn that would fail the
+    // same way.
     expect(listPendingMessages(task.id)).toHaveLength(2);
     expect(w.events.some((e) => e.type === "dequeued")).toBe(false);
     expect(runTurnMock).toHaveBeenCalledTimes(1);
-    // …and the transcript says so, so the parked bubbles aren't a mystery.
+    // The transcript states that the messages were kept in the queue.
     expect(listMessages(task.id).some((m) => m.content.includes("kept in the queue"))).toBe(true);
 
     // The turn still settles: nothing is left spinning.
@@ -95,7 +95,8 @@ describe("dead-login recovery", () => {
   it("clears the flag once a turn runs again, and tells every tab", async () => {
     const project = createProject({ name: "P2", repo_path: "" });
     const task = createTask({ project_id: project.id, title: "T2", description: "d" });
-    // Broken by an earlier turn (or a previous app run — the flag is persisted).
+    // The flag is persisted, so this simulates a turn broken by an earlier
+    // turn or a previous app run.
     markAgentAuthBroken("claude", OAUTH_DEAD, 1);
 
     runTurnMock.mockImplementation(async function* () {
@@ -107,8 +108,8 @@ describe("dead-login recovery", () => {
     startTurn(task, project, "hi", "");
     await w.done;
 
-    // A completed turn is stronger proof than `claude auth status` — it used the
-    // same path a real turn takes.
+    // A completed turn is stronger proof than `claude auth status`, since it
+    // exercises the same path a real turn takes.
     expect(getAgentAuthBroken("claude")).toBeNull();
     expect(w.events.filter((e) => e.type === "agent_auth")).toEqual([
       { type: "agent_auth", agent: "claude", broken: false, reason: null },

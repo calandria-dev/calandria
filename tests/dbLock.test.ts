@@ -1,15 +1,11 @@
-// The boot lock: one app process per database, enforced.
-//
-// Two processes against one database quietly corrupt each other — init()'s
-// crash-recovery resets (running flags, the pending-message queue, open
-// permission cards) belong to whichever process OWNS the database, and running
-// them from a second boot wipes the first's live state. So the lock is the
-// gate, and the resets sit behind it.
-//
-// Correctness rests on a kernel file lock (SQLite's locking_mode = EXCLUSIVE on
-// a dedicated lock database), not on a heartbeat or a pid heuristic. That's the
-// property worth testing across REAL processes: a holder killed with SIGKILL
-// releases immediately, because the OS closes its descriptors.
+// Pins the boot lock: one app process per database, enforced by a kernel file
+// lock (SQLite's locking_mode = EXCLUSIVE on a dedicated lock database) instead
+// of a heartbeat or pid heuristic. Two processes against one database corrupt
+// each other's state, since init()'s crash-recovery resets (running flags, the
+// pending-message queue, open permission cards) belong to whichever process
+// owns the database, and running them from a second boot wipes the first
+// process's live state. A holder killed with SIGKILL releases the lock
+// immediately, since the OS closes its descriptors.
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -85,8 +81,8 @@ describe("db boot lock", () => {
 
     expect(result.ok).toBe(false);
     expect(result.holder).toMatchObject({ pid: process.pid });
-    // Actionable: a human reading this must be able to find the other process
-    // and the database they are fighting over.
+    // The message must let a human find the other process and the database
+    // they are fighting over.
     expect(result.message).toContain(String(process.pid));
     expect(result.message).toContain(dir);
   });
@@ -97,10 +93,10 @@ describe("db boot lock", () => {
     spawned.push(child);
     expect((await first).ok).toBe(true);
 
-    // While it lives, we are locked out.
+    // While it lives, this process is locked out.
     await expect(acquireDbLock({ dir, waitMs: 0 })).rejects.toThrow(/already running/i);
 
-    // A hard kill leaves no chance to clean up — the kernel drops the lock.
+    // A hard kill leaves no chance to clean up; the kernel drops the lock.
     const died = new Promise((r) => child.on("exit", r));
     child.kill("SIGKILL");
     await died;
@@ -173,10 +169,10 @@ describe("crash-recovery authorization", () => {
 
   it("crosses module instances, because in production it has to", async () => {
     // server.js dynamic-imports this module through Node's ESM loader; lib/db.ts
-    // imports it through Turbopack's bundle. Two instances, one process — so the
+    // imports it through Turbopack's bundle. Two instances, one process, so the
     // ownership server.js established has to be visible to the copy lib/db.ts
-    // holds, or crash recovery would silently never run in production and
-    // nothing here would notice. The query string gives us a second instance.
+    // holds, or crash recovery would never run in production and nothing here
+    // would notice. The query string gives a second instance.
     // @ts-expect-error the cache-busting query is an ESM/Vite idiom, not a path TS can resolve
     const other: typeof import("../lib/db-lock.mjs") = await import("../lib/db-lock.mjs?instance=2");
     const dir = freshDir();
@@ -185,7 +181,7 @@ describe("crash-recovery authorization", () => {
 
     expect(other.dbLockMode(dir)).toBe("owner");
     expect(other.consumeDbRecoveryAuthorization(dir)).toBe(true);
-    // And it is one-shot ACROSS instances, not once per copy of the module.
+    // It is one-shot across instances, not once per copy of the module.
     expect(consumeDbRecoveryAuthorization(dir)).toBe(false);
   });
 });
@@ -228,7 +224,7 @@ describe("init() crash recovery", () => {
 
     init(db);
 
-    // Every one of these belongs to the process that IS running the turn.
+    // Every one of these belongs to the process that is running the turn.
     expect(state(db)).toEqual({ running: 1, pending: 1, openCards: 1 });
   });
 

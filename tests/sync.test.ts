@@ -22,12 +22,9 @@ describe("worktreeSyncStatus", () => {
   });
 
   // A landed task must not be reported as still needing the base. mergeTask
-  // lands with --no-ff, so the base gets a merge commit the task branch itself
-  // doesn't carry: `behind` is 1 forever after a successful Accept & merge. What
-  // says "nothing is waiting to land" is ahead === 0 — the banner's hide rule.
-  // Without it the banner reappeared over a just-merged task as "1 commit to
-  // pick up / Sync" whenever the worktree was dirty (a clean one was hidden by
-  // canFastForward), and that Sync just re-merged the task's own merge commit.
+  // lands with --no-ff, so the base carries a merge commit the task branch
+  // never gets, and `behind` stays 1 after a successful merge. The banner's
+  // hide rule is ahead === 0: that is what says nothing is waiting to land.
   it("reports a landed task as having nothing of its own left, not as needing a sync", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
     await commitFile(wt.path, "file.txt", "task version\n", "task edit");
@@ -39,22 +36,22 @@ describe("worktreeSyncStatus", () => {
     const landed = await completeWorktreeMerge({ ...args, message: "land it" });
     expect(landed).toMatchObject({ ok: true });
 
-    // Clean tree: hidden the old way too (a plain fast-forward of the merge commit).
+    // Clean tree: hidden by a plain fast-forward of the merge commit.
     let s = await worktreeSyncStatus(args);
     expect(s).toMatchObject({ ahead: 0, behind: 1, canFastForward: true, mergeInProgress: false });
 
-    // Dirty tree: canFastForward goes false and only `ahead: 0` still says the
-    // task has nothing outstanding — this is the case that showed the banner.
+    // Dirty tree: canFastForward goes false, so ahead: 0 is what still says the
+    // task has nothing outstanding.
     writeFile(wt.path, "scratch.txt", "uncommitted\n");
     s = await worktreeSyncStatus(args);
     expect(s).toMatchObject({ ahead: 0, behind: 1, isDirty: true, canFastForward: false, mergeInProgress: false, conflicts: [] });
   });
 
   // The "main moved on / Fix with AI" banner reads this. A resolution turn edits
-  // the markers out WITHOUT committing (the prompt forbids it), so the branch
+  // the markers out without committing (the prompt forbids it), so the branch
   // tips never move: `behind` stays put and merge-tree re-predicts the same
-  // conflicts forever. The banner kept re-offering "Fix with AI" over a finished
-  // resolution because of exactly that — while paused, the worktree is the truth.
+  // conflicts. While paused, the worktree's live state is the source of truth,
+  // not the branch prediction.
   it("reports a paused merge by the worktree's live state, not the branch prediction", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
     await commitFile(wt.path, "file.txt", "task version\n", "task edit");
@@ -64,14 +61,14 @@ describe("worktreeSyncStatus", () => {
     const prep = await prepareWorktreeMerge({ repoPath: repo, worktreePath: wt.path, baseBranch: "main", message: "sync" });
     expect(prep).toMatchObject({ ok: true, clean: false, conflicts: ["file.txt"] });
 
-    // Markers still in place: conflicted, and named — never a fast-forward.
+    // Markers still in place: conflicted, and named, never a fast-forward.
     let s = await worktreeSyncStatus(args);
     expect(s).toMatchObject({ behind: 1, ahead: 1, canFastForward: false, clean: false, conflicts: ["file.txt"], mergeInProgress: true, unresolved: ["file.txt"] });
 
     // What a resolution turn does: rewrite the file marker-free, no `git add`.
     writeFile(wt.path, "file.txt", "merged version\n");
     s = await worktreeSyncStatus(args);
-    expect(s.behind).toBe(1); // nothing committed yet — still behind, still paused
+    expect(s.behind).toBe(1); // nothing committed yet: still behind, still paused
     expect(s).toMatchObject({ mergeInProgress: true, unresolved: [], conflicts: [], clean: true, canFastForward: false });
 
     // Discarding the resolution returns to the prediction: main still moved on.
@@ -134,8 +131,8 @@ describe("worktreeSyncStatus", () => {
     expect(await git(wt.path, "rev-parse", "HEAD")).toBe(wtTip);
   });
 
-  // Inert, but no longer indistinguishable from "in sync": the zeros are all
-  // "couldn't compare", and `baseMissing` is what says so to the banner.
+  // Inert, but distinguishable from "in sync": the zeros mean "couldn't
+  // compare", and `baseMissing` is what marks that for the banner.
   it("flags the base branch when it was deleted, instead of an all-zero in-sync", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
     await git(repo, "checkout", "-b", "scratch");
@@ -189,10 +186,10 @@ describe("fastForwardWorktree", () => {
   });
 });
 
-// A task with a base of its own (lib/baseBranch.ts) follows THAT branch, not the
-// project's default. The git layer already takes the base as a parameter, so
-// what these pin is that a non-default base behaves identically — and, more to
-// the point, that main moving is not something such a task ever picks up.
+// A task with a base of its own (lib/baseBranch.ts) tracks that branch as its
+// base. The git layer takes the base as a parameter, so these tests confirm a
+// non-default base behaves identically, and that a task cut from a
+// non-default base does not pick up changes to main.
 describe("sync against a non-default base branch", () => {
   it("catches up to the task's own base and ignores the project default", async () => {
     const repo = await makeRepo();
@@ -213,16 +210,16 @@ describe("sync against a non-default base branch", () => {
 
     expect(await fastForwardWorktree(wt.path, "feature/x")).toBe(true);
     expect(await git(wt.path, "rev-parse", "HEAD")).toBe(featureTip);
-    // main's commit is nowhere near this worktree — that is the whole point.
+    // main's commit never reaches this worktree.
     expect(fs.existsSync(path.join(wt.path, "feature.txt"))).toBe(true);
     expect(fs.existsSync(path.join(wt.path, "main.txt"))).toBe(false);
   });
 });
 
 // A project whose base branch only takes pull requests can still hit conflicts,
-// and resolving them is the same work: merge the base INTO the task branch so
-// the PR becomes mergeable. What it must not do is the second half — landing
-// that branch on the local base, which is the merge that can never be pushed.
+// and resolving them is the same work: merge the base into the task branch so
+// the PR becomes mergeable. It must not do the second half: land that branch
+// on the local base, since that merge can never be pushed.
 describe("completeWorktreeMerge — resolveOnly (PR landing policy)", () => {
   it("commits the resolution to the work branch and leaves the base branch where it was", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
@@ -238,8 +235,8 @@ describe("completeWorktreeMerge — resolveOnly (PR landing policy)", () => {
     expect(res).toMatchObject({ ok: true, resolveOnly: true, targetBranch: wt.branch });
     expect(await git(repo, "rev-parse", "main")).toBe(baseBefore);
 
-    // The branch now contains the base — which is the whole point — and the
-    // paused merge is gone, so the banner has nothing left to ask about.
+    // The branch now contains the base, and the paused merge is gone, so the
+    // banner has nothing left to ask about.
     const s = await worktreeSyncStatus(args);
     expect(s).toMatchObject({ behind: 0, mergeInProgress: false, conflicts: [] });
   });

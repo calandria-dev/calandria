@@ -3,9 +3,9 @@ import { fuzzyScore } from "@/app/shell/CommandPalette";
 
 // The palette is the accelerator that decides whether runbooks get used daily:
 // ⌘K, three letters, Enter. These pin that a runbook row wins on the letters
-// somebody would actually type for it — and, since the label shape is a design
-// choice ("Run: X" rather than "Runbook — X"), that changing it is a decision
-// rather than an accident.
+// somebody would actually type for it, and, since the label shape is a design
+// choice ("Run: X" instead of "Runbook: X"), that changing it is a decision
+// instead of an accident.
 describe("runbook palette rows", () => {
   const label = (name: string) => `Run: ${name}`;
 

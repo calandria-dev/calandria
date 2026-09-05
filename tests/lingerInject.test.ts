@@ -1,37 +1,23 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// Sending into a LINGERING session — the follow-up to linger-until-quiet.
+// Sending a message into a LINGERING session: the follow-up to
+// linger-until-quiet. A message sent while the turn is lingering is
+// injected directly into the driver's still-open prompt iterable instead of
+// being parked in pending_messages, since nothing is in flight and the
+// linger may have no deadline.
 //
-// v1 parked every mid-turn message in pending_messages, which is right while
-// the model is thinking and wrong once the turn is lingering: nothing is in
-// flight then, and by default the linger has no deadline at all, so a user
-// watching a `sleep 600` or a `/loop` was told "queued" and heard nothing for
-// as long as the work ran. The driver already holds the prompt iterable open
-// for that whole window, so the message can just go in.
+// The injected turn announces itself as a bare second `init` with no user
+// echo on the wire, identical in shape to a scheduled wakeup's init, which
+// is the hazard the third test in this file pins: an injected turn must
+// never be read as a wakeup firing. The injected turn's own Stop hook still
+// reports whatever work the session was lingering on, so the driver
+// re-enters the linger instead of closing the input while that work is
+// still running, and a pending wakeup is not consumed by the injected turn,
+// so it still fires afterward.
 //
-// Measured on claude CLI 2.1.240 / SDK 0.3.159, live, in two rounds (the first
-// is recorded in this feature's commit; the second closed the gap that commit
-// declared, and is why the scripts below are a transcript rather than a guess):
-//
-// - A second SDKUserMessage pushed into the held-open iterable after a result
-//   IS accepted and starts a fresh turn on the same session, announced by a
-//   bare second `init`, with no user echo on the wire. That init is the same
-//   shape a cron wake takes — which is the one hazard this feature creates, and
-//   what the third test pins.
-// - The injected turn's OWN Stop hook still reports whatever the session was
-//   lingering on: a `sleep 25` started with run_in_background came back as
-//   `[{id, status:"running"}]` on the Stop before the injected turn's result,
-//   its task_notification arrived on schedule ~18s later, and the file it wrote
-//   existed. So the driver re-enters the linger rather than closing the input
-//   under work it is still holding open — the exact failure linger-until-quiet
-//   exists to prevent, checked rather than assumed.
-// - Same for a wakeup: a ScheduleWakeup one-shot was reported again on the
-//   injected turn's Stop, was NOT consumed by it, and fired ~100s later as its
-//   own bare init on the same session. Speaking to a lingering session does not
-//   cost you the wake you were waiting for.
-//
-// Unbounded linger (the default), so this file deletes the bounded override
-// claudeBackgroundLinger.test.ts sets — env leaks across files in a worker.
+// This file uses an unbounded linger (the default), so it deletes the
+// bounded override that claudeBackgroundLinger.test.ts sets, since env
+// leaks across files sharing a worker.
 const { queryMock } = vi.hoisted(() => {
   delete process.env.CALANDRIA_BACKGROUND_LINGER_MS;
   delete process.env.CALANDRIA_BACKGROUND_LINGER;
@@ -81,7 +67,7 @@ function oneShotIn(minutes: number) {
   return { id: "w1", schedule: `${d.getMinutes()} ${d.getHours()} * * *`, recurring: false, prompt: "WAKE: check the build" };
 }
 
-// What the CLI read off the wire, as text — the injected message must arrive
+// What the CLI read off the wire, as text. The injected message must arrive
 // in exactly the shape the opening prompt does.
 const sent = (r: IteratorResult<unknown>): string =>
   (r.value as { message?: { content?: string } } | undefined)?.message?.content ?? "";
@@ -115,7 +101,7 @@ describe("the driver's mid-turn input channel", () => {
       const injected = await nextInput();
       expect(injected.done).toBe(false);
       expect(sent(injected)).toBe("while that runs, check the logs too");
-      // Measured: the injected turn announces itself as a bare second init.
+      // The injected turn announces itself as a bare second init.
       yield init;
       yield text("on it");
       await stop(BG); // the background task is still running
@@ -152,7 +138,7 @@ describe("the driver's mid-turn input channel", () => {
       yield init;
       yield text("thinking");
       // Mid-thought: the message must go to the queue, not into the middle of
-      // the model's reasoning — that's what pending_messages is for.
+      // the model's reasoning. That is what pending_messages is for.
       midTurn = sendTurnInput("t1", "nope");
       await stop([]);
       yield result(0.01);
@@ -161,16 +147,15 @@ describe("the driver's mid-turn input channel", () => {
     await drain();
     expect(midTurn).toBe(false);
     // The handle is off the registry once the turn ends, so a late send is
-    // refused rather than pushed into a session that is gone.
+    // refused instead of reaching a session that is gone.
     expect(sendTurnInput("t1", "too late")).toBe(false);
   });
 
   it("does not read the injected turn's init as a scheduled wakeup firing", async () => {
-    // The regression this feature could have introduced: a session lingering on
-    // a wakeup takes a bare init as "the wakeup fired". An injected message
-    // produces an identical init (measured), so the transcript would claim a
-    // wakeup fired that is still hours out — and the wakeup itself is still
-    // pending, which the re-linger below is what actually honors.
+    // A session lingering on a wakeup reads a bare init as "the wakeup
+    // fired". An injected message produces an identical init, so the
+    // transcript must not claim a wakeup fired while it is still pending;
+    // the re-linger below is what keeps the real wakeup honored.
     mockCli(async function* ({ stop, nextInput }) {
       await nextInput();
       yield init;
@@ -183,8 +168,8 @@ describe("the driver's mid-turn input channel", () => {
       yield text("doing it now");
       await stop([], [oneShotIn(30)]); // the wakeup is still registered
       yield result(0.02);
-      // ...and the session goes back to waiting for it, so the wake still
-      // arrives — on the fresh wait the injected turn re-entered.
+      // ...and the session goes back to waiting for it, on the fresh wait
+      // the injected turn re-entered, so the wake still arrives.
       yield init;
       yield text("woke up");
       await stop([], []); // a one-shot is consumed by its wake
@@ -193,13 +178,13 @@ describe("the driver's mid-turn input channel", () => {
     });
     const events = await drain();
     // Exactly one resume: the wakeup's. The injected turn's identical init
-    // produced none, which is the whole point — otherwise the transcript would
-    // announce a wakeup that is still half an hour out.
+    // produces none; otherwise the transcript would announce a wakeup that
+    // is still pending.
     expect(resumes(events)).toHaveLength(1);
     expect(resumes(events)[0].status).toBe("woke");
     expect(resumes(events)[0].summary).toMatch(/^Scheduled wakeup fired/);
-    // Both lingers name the wakeup — the second is the fresh wait the injected
-    // turn re-entered, not a leftover.
+    // Both lingers name the wakeup. The second is the fresh wait the
+    // injected turn re-entered, not a leftover.
     expect(pendings(events).map((p) => p.tasks.map((t) => t.kind))).toEqual([["wakeup"], ["wakeup"]]);
   });
 });
@@ -253,16 +238,17 @@ describe("runner: a message sent into a lingering turn", () => {
 
     expect(getTask(row.id)!.background_pending).toBe(1);
     expect(sendToLingeringTurn(row.id, "check the logs too")).toBe(true);
-    // Read INSIDE the same tick as the send: the row must already say "not
-    // lingering", because every surface that shows it re-reads the row rather
-    // than holding the event. `running` stays 1 — the turn never stopped.
+    // Read inside the same tick as the send: the row must already say "not
+    // lingering", because every surface that shows it re-reads the row
+    // instead of holding the event. `running` stays 1 since the turn never
+    // stopped.
     const atSend = getTask(row.id)!;
     expect({ background_pending: atSend.background_pending, background_note: atSend.background_note, running: atSend.running })
       .toEqual({ background_pending: 0, background_note: "", running: 1 });
 
     await done;
 
-    // On the durable transcript it is exactly a user message — no "queued"
+    // On the durable transcript it is exactly a user message: no "queued"
     // bubble, nothing to dequeue, and nothing left parked.
     const messages = listMessages(row.id);
     expect(messages.filter((m) => m.role === "user").map((m) => m.content)).toEqual(["go", "check the logs too"]);
@@ -278,9 +264,9 @@ describe("runner: a message sent into a lingering turn", () => {
 
   it("drains a follow-up parked mid-thought as soon as the turn starts lingering", async () => {
     // The other half of the order rule: a message queued while the model was
-    // thinking was promised "sent at turn end", and a linger IS the end
-    // of the model's turn. Left parked it would wait out an unbounded linger
-    // for no reason — and a message sent mid-linger would then arrive first.
+    // thinking is promised delivery at turn end, and a linger is the end of
+    // the model's turn. Left parked, it would wait out an unbounded linger
+    // for no reason, and a message sent mid-linger would then arrive first.
     const proj = createProject({ name: "Drain" });
     const row = createTask({ project_id: proj.id, title: "T", description: "" });
 
@@ -306,16 +292,16 @@ describe("runner: a message sent into a lingering turn", () => {
     publish(row.id, { type: "queued", msgId: parked.id, content: parked.content, generation: parked.generation, ts: parked.created_at });
     await done;
 
-    // It ran inside the lingering session rather than as a fresh turn after it:
-    // the queue is empty, its bubble was dequeued, and it reads as a plain user
-    // message in the order it was typed.
+    // It ran inside the lingering session instead of as a fresh turn after
+    // it: the queue is empty, its bubble was dequeued, and it reads as a
+    // plain user message in the order it was typed.
     expect(listPendingMessages(row.id)).toEqual([]);
     expect(events.some((e) => e.type === "dequeued" && e.msgId === parked.id)).toBe(true);
     expect(listMessages(row.id).filter((m) => m.role === "user").map((m) => m.content)).toEqual(["go", "also fix the tests"]);
     // And with something already parked, a message sent now waits its turn
-    // rather than jumping ahead of it — checked while the queue was non-empty
-    // is impossible after the fact, so the rule is pinned on the empty queue's
-    // inverse: nothing is left behind.
+    // instead of jumping ahead of it. Checking while the queue is non-empty
+    // is impossible after the fact, so the rule is pinned on the empty
+    // queue's inverse: nothing is left behind.
     expect(getTask(row.id)!.background_pending).toBe(0);
   });
 
@@ -349,7 +335,7 @@ describe("runner: a message sent into a lingering turn", () => {
 
     expect(refused).toBe(false);
     // "second" never became a user message out of order; it is still queued
-    // (the caller — POST /messages — parks it when this returns false).
+    // (the caller, POST /messages, parks it when this returns false).
     expect(listMessages(row.id).filter((m) => m.role === "user").map((m) => m.content)).toEqual(["go", "first"]);
   });
 

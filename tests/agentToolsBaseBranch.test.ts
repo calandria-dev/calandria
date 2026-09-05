@@ -1,9 +1,8 @@
-// The two agent verbs phase 3 adds: `set_base_branch` (retarget a task's base)
-// and `update_tag` (edit the tag itself — the plan's own brief, colour and
-// default base). Policy only; the same two are driven end to end over the real
-// stdio bridge in tests/codexUpdateTaskPolicy.test.ts, which is the path where
-// the MODEL names the target.
-// Design: docs/superpowers/specs/2026-08-27-per-task-base-branch-design.md.
+// Pins policy for the two agent verbs `set_base_branch` (retarget a task's
+// base) and `update_tag` (edit the tag itself: name, description, colour and
+// default base). The same two verbs are driven end to end over the real stdio
+// bridge in tests/codexUpdateTaskPolicy.test.ts, the path where the model
+// names the target. See docs/FEATURES.md.
 
 import { describe, expect, it } from "vitest";
 import { POST as revertEp } from "../app/api/tasks/[id]/agent-edits/route";
@@ -38,9 +37,9 @@ describe("set_base_branch", () => {
   it("retargets the caller's OWN row mid-turn — the case the tool exists for", async () => {
     const { repo, project, caller } = await board();
     await cut(repo, caller.id, "main");
-    // A live turn in the caller's own session: `running` is set AND the turn is
-    // registered, so both halves of the liveness check see it. Retargeting
-    // yourself while you work is the tool's main use, so neither may refuse it.
+    // A live turn in the caller's own session has `running` set and the turn
+    // registered, so both halves of the liveness check see it; retargeting the
+    // caller's own task must not be refused.
     updateTask(caller.id, { running: 1 });
     const ctl = new AbortController();
     registerTurn(caller.id, ctl);
@@ -49,7 +48,7 @@ describe("set_base_branch", () => {
       expect(res.task, res.text).toBeTruthy();
       expect(res.text).toContain("Now based on release");
       expect(getTask(caller.id)!.base_branch).toBe("release");
-      // Its own row, so nothing is recorded — there is no user to surprise.
+      // No edit is recorded for the caller's own row.
       expect(listAgentEdits(caller.id)).toEqual([]);
       expect(getTask(caller.id)!.agent_edited_at).toBe(0);
     } finally {
@@ -87,24 +86,24 @@ describe("set_base_branch", () => {
     const { repo, project, caller } = await board();
     const task = await cut(repo, caller.id, "main");
 
-    // An unusable name, refused before any git runs.
+    // An unusable name is refused before any git runs.
     const unsafe = await setBaseBranchForAgent(caller, undefined, "--upload-pack=evil");
     expect(unsafe.task).toBeNull();
     expect(unsafe.text).toContain("isn't a usable git branch name");
 
-    // A branch that is nowhere — the refusal names where it looked.
+    // A missing branch is refused, and the message names where it looked.
     const missing = await setBaseBranchForAgent(caller, undefined, "does-not-exist");
     expect(missing.task).toBeNull();
     expect(missing.text).toContain("does-not-exist");
 
-    // The task's own work branch: the diff and the merge would be against itself.
+    // The task's own work branch is refused: the diff and the merge would be
+    // against itself.
     const self = await setBaseBranchForAgent(caller, undefined, task.work_branch);
     expect(self.task).toBeNull();
     expect(self.text).toContain("own work branch");
 
-    // A branch another task's worktree has checked out. Merging moves that ref,
-    // which would strand the session working in there — this is what stops one
-    // task basing on another's calandria/… branch, and it says so.
+    // A branch checked out in another task's worktree is refused, since
+    // merging would move that ref out from under the other session.
     const neighbour = createTask({ project_id: project.id, title: "Neighbour", description: "" });
     const n = await cut(repo, neighbour.id, "main");
     const occupied = await setBaseBranchForAgent(caller, undefined, n.work_branch);
@@ -135,8 +134,8 @@ describe("set_base_branch", () => {
     expect((await setBaseBranchForAgent(caller, member.id, "hotfix")).task).toBeTruthy();
     expect(getTask(member.id)!.base_branch).toBe("hotfix");
 
-    // ...and back. The column is cleared to "" rather than written with the
-    // inherited name, so a later edit to the tag still reaches this uncut task.
+    // Back to inheriting: the column is cleared to "" instead of written with
+    // the inherited name, so a later edit to the tag still reaches this task.
     const back = await setBaseBranchForAgent(caller, member.id, "");
     expect(back.task, back.text).toBeTruthy();
     expect(getTask(member.id)!.base_branch).toBe("");
@@ -147,8 +146,8 @@ describe("set_base_branch", () => {
     const { repo, project, caller } = await board();
     const other = createTask({ project_id: project.id, title: "Theirs", description: "" });
     await cut(repo, other.id, "main");
-    // A commit of its own, so the retarget takes the reconcile path rather than
-    // the re-cut one — the case where a revert has real git work to undo.
+    // A commit of its own sends the retarget through the reconcile path
+    // instead of the re-cut path, giving the revert real git work to undo.
     await commitFile(getTask(other.id)!.worktree_path, "task.txt", "task\n", "task work");
 
     const res = await setBaseBranchForAgent(caller, other.id, "release");
@@ -174,8 +173,8 @@ describe("set_base_branch", () => {
       { params: Promise.resolve({ id: other.id }) }
     );
     expect(res2.status).toBe(200);
-    // Back on main, and through the retarget rather than a column write: the
-    // diff snapshot follows the branch instead of being left on the other one.
+    // The retarget moves the branch itself, so the diff snapshot follows
+    // main.
     const after = getTask(other.id)!;
     expect(after.base_branch).toBe("main");
     expect(after.base_sha).toBe(await git(repo, "merge-base", "main", after.work_branch));
@@ -205,7 +204,7 @@ describe("set_base_branch", () => {
     );
     expect(res.status).toBe(409);
     expect((await res.json()).error).toContain("could not put the base branch back");
-    // Nothing moved, and the edit is still outstanding rather than marked done.
+    // Nothing moved, and the edit remains outstanding, not marked done.
     expect(getTask(other.id)!.base_branch).toBe("release");
     expect(listAgentEdits(other.id)[0].reverted_at).toBe(0);
     expect(project.branch).toBe("main");

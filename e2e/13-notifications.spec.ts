@@ -1,7 +1,7 @@
 // Notifications end to end: the server composes one, the SSE stream carries it,
 // and the browser channel decides whether to show it. window.Notification is
-// stubbed via addInitScript — Playwright cannot observe a real system toast, and
-// the interesting logic is which payloads reach the constructor anyway.
+// stubbed via addInitScript, since Playwright cannot observe a real system
+// toast, and the interesting logic is which payloads reach the constructor.
 //
 // Everything below the stub is the production path: the real emitter, the real
 // dispatcher on the real bus, the real relay.
@@ -86,7 +86,7 @@ test("no notification when you are already looking at the task that parked", asy
   await expect
     .poll(async () => (await getTask(request, task.id)).awaiting_input, { timeout: 20_000 })
     .toBe(1);
-  // The card is on screen — a system toast about it would be noise.
+  // The card is on screen already; a system toast about it would be noise.
   await expect(page.getByText("npm run build").first()).toBeVisible({ timeout: 15_000 });
   expect(await notes(page)).toEqual([]);
 });

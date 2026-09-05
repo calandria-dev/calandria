@@ -1,20 +1,19 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// Background linger: each turn is one SDK query whose CLI process owns both
-// the run_in_background children and the in-memory registry that promises
-// "you'll be notified when it completes" — so ending the query at result time
-// kills the work silently (measured on CLI 2.1.240: the CLI gives tasks a ~5s
-// grace after the result, then kills them). The driver therefore runs every
-// turn in streaming-input mode, holds the prompt iterable open, and decides at
-// each result — from the Stop hook's `background_tasks` payload, the
-// SDK-documented "session is paused waiting for background work" signal —
-// whether to close the input or linger for the task_notification wake.
+// Background linger: each turn is one SDK query, and its CLI process owns
+// both the run_in_background children and the in-memory registry that
+// promises notification on completion. Closing the query at result time kills
+// that work before the notification arrives. The driver runs every turn in
+// streaming-input mode, holds the prompt iterable open, and decides at each
+// result, from the Stop hook's `background_tasks` payload (the SDK's "session
+// is paused waiting for background work" signal), whether to close the input
+// or linger for the task_notification wake.
 //
-// The SDK is mocked at its module boundary, so the REAL driver runs the real
-// state machine and the mock plays the CLI's measured behavior back at it:
-// Stop hook before every result, notification → wake turn with no user
-// message, input close → exit. The runner half of the file feeds the same mock
-// through lib/runner.ts and asserts the persisted background_pending state.
+// The SDK is mocked at its module boundary, so the real driver runs its state
+// machine and the mock plays the CLI's behavior back at it: Stop hook before
+// every result, notification triggers a wake turn with no user message, input
+// close causes exit. The runner half of the file feeds the same mock through
+// lib/runner.ts and asserts the persisted background_pending state.
 
 // Shrink the linger window BEFORE the module graph loads (lib/config.ts reads
 // env at import): the expiry test waits this long for real.
@@ -44,11 +43,12 @@ type QueryArgs = {
   options: { hooks?: { Stop?: { hooks: StopHook[] }[] } };
 };
 type CliIo = {
-  /** Fire the driver's Stop hook — the CLI does this before every result,
+  /** Fire the driver's Stop hook. The CLI does this before every result,
    *  carrying both the in-flight background tasks and the session crons. */
   stop: (tasks?: unknown[], crons?: unknown[]) => Promise<void>;
   /** Read the streaming prompt. The second read resolves `{done: true}` only
-   *  when the driver releases the held-open iterable — the close signal. */
+   *  when the driver releases the held-open iterable; that resolution is the
+   *  close signal. */
   nextInput: () => Promise<IteratorResult<unknown>>;
 };
 
@@ -65,11 +65,11 @@ function mockCli(run: (io: CliIo) => AsyncGenerator<unknown>): void {
   });
 }
 
-// A one-shot ScheduleWakeup as the Stop hook reports it (measured): only the
-// wall-clock minute is encoded, local time, so it fires at a minute boundary
-// — which on this file's 500ms-bounded instance is ALWAYS beyond the window.
-// That makes this suite the "won't be honored" half of the cron policy; the
-// wake path needs the unbounded default and lives in claudeCronLinger.test.ts.
+// A one-shot ScheduleWakeup as the Stop hook reports it: only the wall-clock
+// minute is encoded, local time, so it fires at a minute boundary, which on
+// this file's 500ms-bounded instance is always beyond the window. That makes
+// this suite the "won't be honored" half of the cron policy; the wake path
+// needs the unbounded default and lives in claudeCronLinger.test.ts.
 function oneShotIn(minutes: number) {
   const d = new Date(Date.now() + minutes * 60_000);
   return { id: "w1", schedule: `${d.getMinutes()} ${d.getHours()} * * *`, recurring: false, prompt: "WAKE: check the build" };
@@ -106,15 +106,15 @@ describe("claude driver background linger", () => {
       yield text("started");
       await stop(BG); // turn ends with a background task running
       yield result(0.05, { input_tokens: 4, output_tokens: 120 });
-      // The driver is now lingering: this read must stay parked until the
+      // The driver is lingering: this read must stay parked until the
       // legitimate close at the end (async generators queue next() calls, so
-      // the final read below still resolves too). Settling before the
-      // notification is the bug this feature exists to fix.
+      // the final read below still resolves too). It must not settle before
+      // the notification arrives.
       void nextInput().then(() => { if (!lingerOver) inputClosedEarly = true; });
       await Promise.resolve(); // give a wrongly-closed input a chance to settle
       lingerOver = true;
       yield notification("completed", "Background command completed (exit code 0)");
-      yield init; // the wake re-inits the same session (measured)
+      yield init; // the wake re-inits the same session
       yield text("bg done");
       await stop([]); // wake turn ends with nothing pending
       yield result(0.06, { input_tokens: 2, output_tokens: 11 });
@@ -144,9 +144,9 @@ describe("claude driver background linger", () => {
     expect(kinds.indexOf("background_resumed")).toBeLessThan(kinds.lastIndexOf("assistant"));
     expect(kinds[kinds.length - 1]).toBe("done");
 
-    // Cost is a cumulative session total on the wire (measured), per-segment
-    // tokens — the driver must report the DELTA or wake turns re-bill the
-    // whole session.
+    // Cost on the wire is a cumulative session total, while usage arrives as
+    // per-segment tokens. The driver must report the delta, or wake turns
+    // would re-bill the whole session.
     const usages = events.filter((e): e is Extract<StreamEvent, { type: "usage" }> => e.type === "usage");
     expect(usages).toHaveLength(2);
     expect(usages[0].usage.cost_usd).toBeCloseTo(0.05);
@@ -181,8 +181,8 @@ describe("claude driver background linger", () => {
       // deadline (500ms here) by closing the input...
       const end = await nextInput();
       expect(end.done).toBe(true);
-      // ...upon which the real CLI kills the task and reports it — noise the
-      // driver must not re-surface as a wake.
+      // ...upon which the real CLI kills the task and reports it; that report
+      // is noise the driver must not re-surface as a wake.
       yield notification("stopped", "Background command killed");
     });
     const events = await drain();
@@ -194,11 +194,9 @@ describe("claude driver background linger", () => {
   }, 10_000);
 
   it("restarts the deadline when the user speaks mid-linger", async () => {
-    // The deadline is fixed from the FIRST linger entry on purpose (a wake
-    // turn must not let a task chain sleeps forever) — but a message from the
-    // user is not the session extending itself, it's a human sitting there
-    // watching. Cutting their reply off 300ms into it, because a clock started
-    // before they spoke, is the auto-cut destroying work nobody asked it to.
+    // The deadline anchors from the first linger entry, so a wake turn cannot
+    // chain sleeps indefinitely. It resets when the user sends a message
+    // mid-linger, since a live reply is not the session extending itself.
     let firstLingerAt = 0;
     let closedAt = 0;
     mockCli(async function* ({ stop, nextInput }) {
@@ -224,17 +222,17 @@ describe("claude driver background linger", () => {
     const events = await drain();
     // A window anchored at the first entry would have closed at +500ms.
     expect(closedAt - firstLingerAt).toBeGreaterThan(620);
-    // Still bounded, just from the new anchor — the work is cut and named.
+    // Still bounded, just from the new anchor: the work is cut and named.
     const notice = events.find((e) => e.type === "notice");
     expect(notice && "content" in notice ? notice.content : "").toMatch(/exceeded the linger window/);
   }, 10_000);
 });
 
 describe("session crons on a bounded instance (won't be honored)", () => {
-  // Measured: a cron fires only while the CLI is alive, and closing the input
-  // exits it within ~300ms with the wake simply gone. So a wakeup the driver
-  // won't wait for must be NAMED when the input closes, or the model's next
-  // turn and the user both sit waiting on a wake that died with the process.
+  // A cron fires only while the CLI stays alive, and closing the input exits
+  // it with the wake gone. A wakeup the driver won't wait for must be named
+  // when the input closes, or the model's next turn and the user both wait on
+  // a wake that died with the process.
   it("closes at result time and appends a notice naming the cancelled wakeup", async () => {
     mockCli(async function* ({ stop, nextInput }) {
       await nextInput();
@@ -270,12 +268,12 @@ describe("session crons on a bounded instance (won't be honored)", () => {
     });
     const events = await drain();
     const pending = events.find((e): e is Extract<StreamEvent, { type: "background_pending" }> => e.type === "background_pending");
-    // The wait is for the shell task only — the cron isn't in the pending set.
+    // The wait is for the shell task only; the cron is not in the pending set.
     expect(pending?.tasks.map((t) => t.kind)).toEqual(["shell"]);
     expect(pending?.note).toBe("working in background");
-    // Named ONCE, at linger entry (nothing later re-plans it) — the wake turn's
-    // Stop reports the same doomed cron again and its close must not repeat
-    // the notice.
+    // Named once, at linger entry (nothing later re-plans it). The wake
+    // turn's Stop reports the same doomed cron again, and its close must not
+    // repeat the notice.
     const notices = events.filter((e) => e.type === "notice").map((e) => ("content" in e ? e.content : ""));
     expect(notices.filter((n) => n.includes("Scheduled wakeup cancelled"))).toHaveLength(1);
     expect(events.find((e) => e.type === "background_resumed")).toMatchObject({ status: "completed" });
@@ -283,9 +281,9 @@ describe("session crons on a bounded instance (won't be honored)", () => {
 });
 
 describe("runner + driver background linger (persisted state)", () => {
-  // The same scripted CLI, now reached through the REAL runner via the real
-  // registry — asserting what a reload or another tab would actually see:
-  // the tasks row, the transcript, the usage ledger.
+  // The same scripted CLI, reached through the real runner via the real
+  // registry, asserting what a reload or another tab would actually see: the
+  // tasks row, the transcript, the usage ledger.
   function collect(taskId: string): { events: TaskStreamEvent[]; done: Promise<void> } {
     const events: TaskStreamEvent[] = [];
     let resolve!: () => void;
@@ -334,10 +332,10 @@ describe("runner + driver background linger (persisted state)", () => {
     await done;
     unsub();
 
-    // Mid-linger: a distinct "working in background" state — live (running
-    // stays 1, so Stop and the SIGTERM drain still own it) but explicitly NOT
-    // waiting on the user (awaiting_input 0 keeps it out of the "N need you"
-    // pill).
+    // Mid-linger: a distinct "working in background" state. It stays live
+    // (running remains 1, so Stop and the SIGTERM drain still own it) but is
+    // not waiting on the user (awaiting_input 0 keeps it out of the "N need
+    // you" pill).
     expect(seen.pending).toEqual({ background_pending: 1, running: 1, awaiting_input: 0 });
     // The wake clears the indicator before the continuation streams.
     expect(seen.resumed).toEqual({ background_pending: 0, running: 1, awaiting_input: 0 });

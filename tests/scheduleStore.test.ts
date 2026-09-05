@@ -30,9 +30,9 @@ function schedule(projectId: string, over: Partial<Parameters<typeof createSched
 describe("schedule store", () => {
   let pid: string;
   beforeEach(() => {
-    // listEnabledSchedules() is deliberately global (the ticker scans every
-    // project), so an enabled schedule left behind by a previous test in this
-    // file would otherwise leak into it. schedule_runs cascades with its schedule.
+    // listEnabledSchedules() is global (the ticker scans every project), so an
+    // enabled schedule left behind by a previous test in this file would
+    // otherwise leak into it. schedule_runs cascades with its schedule.
     getDb().prepare("DELETE FROM schedules").run();
     pid = project();
   });
@@ -57,8 +57,9 @@ describe("schedule store", () => {
   });
 
   it("refuses a one-time date that has already passed", () => {
-    // The mistake this catches is "set it for 04:00" typed at 05:00. Silently
-    // accepting it would create a schedule that can never fire and says nothing.
+    // The mistake this catches is "set it for 04:00" typed at 05:00. Accepting
+    // it without refusal would create a schedule that can never fire and says
+    // nothing.
     expect(() => schedule(pid, { once_date: dayOffset(-1) })).toThrow(/already passed/);
     expect(listSchedules(pid)).toHaveLength(0);
   });
@@ -84,7 +85,7 @@ describe("schedule store", () => {
     expect(getSchedule(s.id)!.enabled).toBe(0);
     const rearmed = updateSchedule(s.id, { once_date: dayOffset(60) })!;
     // Without this the edit would report success, show the new time, and never
-    // run — spendSchedule left enabled at 0 and a date edit doesn't touch it.
+    // run: spendSchedule left enabled at 0 and a date edit doesn't touch it.
     expect(rearmed.enabled).toBe(1);
     expect(rearmed.next_fire_at).toBeGreaterThan(Date.now());
   });
@@ -140,12 +141,11 @@ describe("schedule store", () => {
   });
 
   it("reports a claim failure that ISN'T the durable claim, instead of eating it", () => {
-    // A bare `catch { return null }` read EVERY insert failure as "somebody
-    // else owns this slot": SQLITE_BUSY, a full disk, a foreign key pointing at
-    // a schedule that was just deleted. A lost race is silent by design — no
-    // row, no log, nothing in the ledger — so this was the one place in the
-    // feature where a skip left no trace at all. Only the unique index gets to
-    // mean that; anything else comes out.
+    // claimRun distinguishes a real insert failure (SQLITE_BUSY, a full disk, a
+    // foreign key pointing at a schedule that was just deleted) from the
+    // durable claim: only the unique index violation means "somebody else owns
+    // this slot"; every other failure must propagate instead of being read as
+    // a lost race with no trace in row, log or ledger.
     expect(() => claimRun("no-such-schedule", at("2026-08-12T15:30:00Z"), "scheduled")).toThrow(/FOREIGN KEY/i);
   });
 
@@ -179,7 +179,7 @@ describe("schedule store", () => {
   it("prunes run history beyond the retention cap", () => {
     const s = schedule(pid);
     const base = at("2026-08-12T15:30:00Z");
-    // Settled, like real history — an unsettled ("claimed") row is exactly the
+    // Settled, like real history. An unsettled ("claimed") row is exactly the
     // case the next test covers, and pruning must never touch it.
     for (let i = 0; i < 55; i++) {
       const run = claimRun(s.id, base + i * 86_400_000, "scheduled")!;
@@ -191,8 +191,8 @@ describe("schedule store", () => {
   it("never prunes a claimed/running row, however far retention pushes past it", () => {
     // Oldest row stays claimed (e.g. a wedged "Run now") while enough newer,
     // settled rows accumulate to push it out of the top-RUN_RETENTION window.
-    // Before the fix, pruneRuns deleted it purely by rank — activeRun() then
-    // stopped seeing anything busy and a second run could overlap it.
+    // pruneRuns must not delete it purely by rank, or activeRun() would stop
+    // reporting anything busy and a second run could overlap it.
     const s = schedule(pid);
     const base = at("2026-08-12T15:30:00Z");
     const stuck = claimRun(s.id, base, "scheduled")!;
@@ -211,8 +211,7 @@ describe("schedule store", () => {
     // a process that died between claimRun and startRun leaves the schedule
     // permanently busy: every later occurrence records `skipped_overlap`, and
     // the card's Stop control is gated on the blocking run having a task_id,
-    // which this one never got. Nothing recovered it until retention pruned the
-    // row ~50 occurrences later.
+    // which this one never got. Only the reaper below recovers it.
     const s = schedule(pid);
     const stuckClaim = claimRun(s.id, at("2026-08-12T15:30:00Z"), "scheduled")!;
     const stuckRunning = claimRun(s.id, at("2026-08-13T15:30:00Z"), "scheduled")!;
@@ -222,7 +221,7 @@ describe("schedule store", () => {
 
     expect(activeRun(s.id)).not.toBeNull();
     // >= 2: earlier cases in this file leave claimed rows of their own behind,
-    // and the reaper is deliberately instance-wide.
+    // and the reaper is instance-wide.
     expect(reapInFlightScheduleRuns(getDb())).toBeGreaterThanOrEqual(2);
 
     for (const id of [stuckClaim.id, stuckRunning.id]) {
@@ -231,7 +230,7 @@ describe("schedule store", () => {
       expect(row.detail).toMatch(/restarted/i);
       expect(row.finished_at).toBeGreaterThan(0);
     }
-    // The whole point: the schedule is free to fire again.
+    // The schedule is free to fire again.
     expect(activeRun(s.id)).toBeNull();
     // An already-settled row is left exactly as it was.
     expect(listRuns(s.id, 10).find((r) => r.id === finished.id)!.status).toBe("succeeded");

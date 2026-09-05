@@ -14,7 +14,7 @@ import {
 // between fetches, 429 backoff, never fetching without a live token).
 //
 // tests/setup.ts points CLAUDE_CONFIG_DIR at an empty tmp dir, so by default
-// there are no credentials — each test that needs a login writes its own
+// there are no credentials: each test that needs a login writes its own
 // .credentials.json there.
 
 const credsPath = () => path.join(process.env.CLAUDE_CONFIG_DIR!, ".credentials.json");
@@ -40,20 +40,19 @@ function usageResponse(body: unknown, init: { status?: number; headers?: Record<
   });
 }
 
-// A realistic /api/oauth/usage payload (shape verified against the CLI's own
-// /usage panel on claude-cli 2.1.240): top-level windows carry utilization as
-// PERCENT 0–100 with ISO reset stamps, plus a `limits` list whose
+// A realistic /api/oauth/usage payload: top-level windows carry utilization
+// as PERCENT 0-100 with ISO reset stamps, plus a `limits` list whose
 // weekly_scoped entries carry per-model weeks as `percent`.
 const PAYLOAD = {
   five_hour: { utilization: 12, resets_at: "2026-08-23T22:00:00Z" },
   seven_day: { utilization: 37.5, resets_at: "2026-08-26T07:00:00Z" },
   seven_day_sonnet: { utilization: 4, resets_at: "2026-08-26T07:00:00Z" },
   limits: [
-    // Duplicate of the top-level sonnet window — must not render twice.
+    // Duplicate of the top-level sonnet window: must not render twice.
     { kind: "weekly_scoped", percent: 4, resets_at: "2026-08-26T07:00:00Z", scope: { model: { display_name: "Sonnet" } } },
     { kind: "weekly_scoped", percent: 61, resets_at: "2026-08-26T07:00:00Z", scope: { model: { display_name: "Fable" } } },
-    { kind: "monthly", percent: 9 }, // not weekly_scoped — ignored
-    { kind: "weekly_scoped", percent: "high" }, // malformed — ignored
+    { kind: "monthly", percent: 9 }, // not weekly_scoped, ignored
+    { kind: "weekly_scoped", percent: "high" }, // malformed, ignored
   ],
   extra_usage: { balance: 0 },
 };
@@ -172,9 +171,9 @@ describe("passive rate_limit_event overlay", () => {
       status: "allowed_warning",
       rateLimitType: "seven_day",
       utilization: 0.82,
-      // An hour out, computed rather than hardcoded: a passive event whose
-      // reset has already passed is deliberately dropped (`passiveCurrent`),
-      // so a fixed date makes this test start failing on the day it arrives.
+      // An hour out and computed, not hardcoded: a passive event whose
+      // reset has already passed is dropped (`passiveCurrent`), so a fixed
+      // date would make this test start failing on the day it arrives.
       resetsAt: Math.floor((Date.now() + 3_600_000) / 1000),
     });
     const snap = await getClaudePlanUsage();
@@ -189,8 +188,8 @@ describe("passive rate_limit_event overlay", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(usageResponse(PAYLOAD)));
     await getClaudePlanUsage();
 
-    // What a real turn emits at low usage (measured on claude-cli 2.1.240):
-    // status + binding window + reset, and no percentage at all.
+    // What a real turn emits at low usage: status + binding window + reset,
+    // and no percentage at all.
     recordClaudeRateLimit({ status: "allowed", rateLimitType: "five_hour", resetsAt: 1787534400 });
     const snap = await getClaudePlanUsage();
     expect(snap?.windows.find((w) => w.id === "five_hour")?.utilization).toBe(12);
@@ -198,7 +197,7 @@ describe("passive rate_limit_event overlay", () => {
   });
 
   it("shows a passive-only window when no fetch has ever succeeded", async () => {
-    // No credentials at all — but a turn ran and reported a warning.
+    // No credentials at all, but a turn ran and reported a warning.
     recordClaudeRateLimit({ status: "allowed_warning", rateLimitType: "five_hour", utilization: 0.9, resetsAt: Date.now() / 1000 + 3600 });
     const snap = await getClaudePlanUsage();
     expect(snap?.available).toBe(true);

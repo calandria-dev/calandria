@@ -1,20 +1,18 @@
-// Snoozing a task parks it out of sight until a deadline, then hands it back to
-// the category it came from.
+// Snoozing a task parks it out of sight until a deadline, then hands it back
+// to the category it came from.
 //
-// The whole feature rests on ONE stored fact — `tasks.snoozed_until`, a ms
-// epoch — and the fact that `status` is never touched. That's what makes "goes
-// back to its previous category" trivially correct: there is no previous
-// category to remember, because it never left. It also means the wake needs no
-// server-side sweep — a deadline in the past simply stops matching the
-// predicate — so these tests are all about the two derivations that fall out of
-// that single column:
+// The feature rests on one stored fact, `tasks.snoozed_until` (a ms epoch);
+// `status` is never touched, so there is no previous category to restore,
+// only the one that never left. The wake needs no server-side sweep: a
+// deadline in the past stops matching the predicate. These tests cover the
+// two derivations that fall out of that single column:
 //
 //   snoozed  ⟺  snoozed_until >  now
 //   woke     ⟺  0 < snoozed_until <= now
 //
-// The second half is the "was snoozed" indicator: the same timestamp, read
-// after it has passed, IS the record that this card was parked and has just
-// come back. Zero means never snoozed / indicator dismissed.
+// The second is the "was snoozed" indicator: the same timestamp, read after
+// it has passed, is the record that this card was parked and has just come
+// back. Zero means never snoozed, or the indicator was dismissed.
 import { describe, it, expect } from "vitest";
 import {
   isSnoozed, wasSnoozed, snoozePresets, relativeUntil, wakeLabel, nextWake,
@@ -29,7 +27,7 @@ import { subscribeGlobal, type BusEvent } from "@/lib/events";
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 const HOUR = 3_600_000;
 
-// A local wall-clock instant relative to `base` — built with the same Date API
+// A local wall-clock instant relative to `base`, built with the same Date API
 // the code under test uses, so these assertions hold in any timezone.
 function at(base: number, addDays: number, hour: number, minute = 0): number {
   const d = new Date(base);
@@ -51,8 +49,8 @@ describe("the snooze derivation", () => {
   it("is snoozed only while the deadline is still ahead", () => {
     expect(isSnoozed({ snoozed_until: now + HOUR }, now)).toBe(true);
     expect(isSnoozed({ snoozed_until: now - HOUR }, now)).toBe(false);
-    // The instant it comes due it is awake, not snoozed — otherwise a deadline
-    // reached exactly on a render tick would leave the card in limbo.
+    // It is awake as soon as the deadline is reached, so a deadline hit
+    // exactly on a render tick never leaves the card in limbo.
     expect(isSnoozed({ snoozed_until: now }, now)).toBe(false);
     expect(isSnoozed({ snoozed_until: 0 }, now)).toBe(false);
   });
@@ -62,7 +60,7 @@ describe("the snooze derivation", () => {
     // Due exactly now: it has woken, so the indicator is what it should show.
     expect(wasSnoozed({ snoozed_until: now }, now)).toBe(true);
     expect(wasSnoozed({ snoozed_until: now + HOUR }, now)).toBe(false);
-    // Zero is the cleared state — a task that was never snoozed and one whose
+    // Zero is the cleared state: a task that was never snoozed and one whose
     // indicator the user has already seen are the same row.
     expect(wasSnoozed({ snoozed_until: 0 }, now)).toBe(false);
   });
@@ -92,7 +90,7 @@ describe("snooze durations", () => {
     expect(by["3h"]).toBe(now + 3 * HOUR);
     expect(by.evening).toBe(at(now, 0, 18));
     expect(by.tomorrow).toBe(at(now, 1, 9));
-    // "Next week" is the Monday AFTER this one — Tue Mar 3 → Mon Mar 9.
+    // "Next week" is the Monday after this one: Tue Mar 3 to Mon Mar 9.
     expect(by.week).toBe(at(now, 6, 9));
   });
 
@@ -109,8 +107,8 @@ describe("snooze durations", () => {
     const monday = new Date(2026, 2, 2, 9, 0).getTime();
     expect(new Date(monday).getDay()).toBe(1);
     const by = Object.fromEntries(snoozePresets(monday).map((p) => [p.key, p.until]));
-    // Never "later today" — a Monday 9am snooze that woke at Monday 9am is a
-    // no-op the user would read as broken.
+    // Never "later today": a Monday 9am snooze that woke at Monday 9am would
+    // be a no-op the user reads as broken.
     expect(by.week).toBe(at(monday, 7, 9));
   });
 });
@@ -120,7 +118,7 @@ describe("the wake label", () => {
     const now = new Date(2026, 2, 3, 9, 0).getTime();
     expect(wakeLabel(now + 42 * 60_000, now)).toBe("in 42m");
     expect(wakeLabel(now + 30_000, now)).toBe("in under a minute");
-    // Later today reads as a clock time — "in 9h" makes you do the arithmetic.
+    // Later today reads as a clock time; "in 9h" makes you do the arithmetic.
     expect(wakeLabel(at(now, 0, 18), now)).toMatch(/^at /);
     expect(wakeLabel(at(now, 1, 9), now)).toMatch(/^tomorrow at /);
     // Inside the week, the weekday is the useful handle.
@@ -156,11 +154,11 @@ describe("nextWake", () => {
 });
 
 describe("a snoozed task and the attention surfaces", () => {
-  // The point of snoozing something that is asking you a question is that it
-  // stops asking. All three surfaces share lib/store.ts' NEEDS_YOU predicate,
-  // so the deadline has to be part of THAT rather than filtered per caller —
-  // otherwise the pill, its dropdown and the project badge disagree, which is
-  // the exact bug tests/needsYou.test.ts exists to prevent.
+  // Snoozing something that is asking you a question stops it from asking.
+  // All three surfaces share lib/store.ts's NEEDS_YOU predicate, so the
+  // deadline is part of that predicate instead of filtered per caller: the
+  // pill, its dropdown and the project badge must otherwise agree, which is
+  // what tests/needsYou.test.ts checks.
   function awaitingTask(projectId: string, snoozedUntil: number) {
     const t = createTask({ project_id: projectId, title: "asked you something" });
     updateTask(t.id, { status: "in_progress", awaiting_input: 1, snoozed_until: snoozedUntil });
@@ -176,7 +174,7 @@ describe("a snoozed task and the attention surfaces", () => {
     const dropdown = listNeedsYou().filter((r) => r.project_id === project.id);
     expect(dropdown.map((r) => r.id)).toEqual([awake.id]);
     expect(listProjects().find((p) => p.id === project.id)!.awaiting_count).toBe(1);
-    // Still awaiting — snooze hides it, it does not answer it.
+    // Still awaiting: snoozing hides it, it does not answer it.
     expect(snoozed.id).toBeTruthy();
   });
 
@@ -211,16 +209,16 @@ describe("PATCH /api/tasks/[id] snoozing", () => {
     const project = createProject({ name: "SnoozeEvents" });
     const t = createTask({ project_id: project.id, title: "later" });
     // task_edited, not task_updated: the /api/events payload carries only
-    // running/awaiting_input/status, so a listener can't learn a deadline from
-    // it — the whole point of that flavour is "refetch the row".
+    // running/awaiting_input/status, so a listener cannot learn a deadline
+    // from it. This event flavor means "refetch the row".
     const events = await busEventsFor(t.id, () => patch(t.id, { snoozed_until: Date.now() + HOUR }));
     expect(events.map((e) => e.type)).toContain("task_edited");
   });
 
-  // Waking a task by hand resolves against the SERVER's clock, not the
-  // browser's. A client sending its own Date.now() would, on a machine running
-  // minutes fast, write a deadline still in the future — leaving a task the
-  // user just un-snoozed hidden from the pill until the skew elapsed.
+  // Waking a task by hand resolves against the server's clock. A client
+  // sending its own Date.now() would, on a machine running minutes fast,
+  // write a deadline still in the future, leaving a task the user just
+  // un-snoozed hidden from the pill until the skew elapsed.
   it("unsnoozes to a deadline of now, so the card comes back wearing the indicator", async () => {
     const project = createProject({ name: "SnoozeUn" });
     const t = createTask({ project_id: project.id, title: "later" });

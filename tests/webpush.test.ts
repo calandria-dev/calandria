@@ -1,8 +1,8 @@
-// The Web Push channel. The protocol half is pinned against the RFC's own
+// The Web Push channel: the protocol half is pinned against the RFC's own
 // numbers (a hand-rolled RFC 8291 has exactly one way to be wrong that a
 // round-trip test can't see: agreeing with itself and nobody else), the
-// delivery half against a fake push service, and the policy half — prune on
-// 410, record everything else, one row per browser — against the DB.
+// delivery half against a fake push service, and the policy half (prune on
+// 410, record everything else, one row per browser) against the DB.
 import { createDecipheriv, createECDH, createPublicKey, hkdfSync, randomBytes, verify } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -25,7 +25,7 @@ import { DELETE as unsubscribeRoute, GET as listRoute, POST as subscribeRoute } 
 import { DELETE as removeRoute } from "@/app/api/notifications/push/[id]/route";
 import { classifyPushSupport, deviceLabel, pushSupport } from "@/app/shell/usePush";
 
-// RFC 8291 Appendix A — every intermediate value the spec publishes.
+// RFC 8291 Appendix A: every intermediate value the spec publishes.
 const RFC = {
   plaintext: "V2hlbiBJIGdyb3cgdXAsIEkgd2FudCB0byBiZSBhIHdhdGVybWVsb24",
   asPublic: "BP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A8",
@@ -111,7 +111,7 @@ describe("RFC 8291 encryption", () => {
     const b = encryptPushPayload(text, r.keys);
     expect(r.decrypt(a).toString()).toBe(text.toString());
     expect(r.decrypt(b).toString()).toBe(text.toString());
-    // Fresh salt and ephemeral key per message — two encryptions never match.
+    // Fresh salt and ephemeral key per message: two encryptions never match.
     expect(a.equals(b)).toBe(false);
   });
 
@@ -136,8 +136,8 @@ describe("VAPID", () => {
     const pub = b64url.decode(keys.publicKey);
     const key = createPublicKey({ format: "jwk", key: { kty: "EC", crv: "P-256", x: b64url.encode(pub.subarray(1, 33)), y: b64url.encode(pub.subarray(33)) } });
     expect(verify("sha256", Buffer.from(`${h}.${c}`), { key, dsaEncoding: "ieee-p1363" }, b64url.decode(s))).toBe(true);
-    // 64 raw bytes (r||s), not DER — a DER signature is what a hand-rolled
-    // ES256 gets wrong first.
+    // 64 raw bytes (r||s), the IEEE P1363 format a hand-rolled ES256
+    // implementation is most likely to get wrong first.
     expect(b64url.decode(s).length).toBe(64);
   });
 
@@ -148,34 +148,33 @@ describe("VAPID", () => {
     const first = vapidKeys();
     expect(fs.existsSync(file)).toBe(true);
     // POSIX-only: lib/push/vapid.ts writes the private key with a plain
-    // `mode: 0o600`, and on NTFS that maps onto the read-only attribute rather
-    // than a DACL — there is no 0o600 to read back (docs/WINDOWS.md §3).
+    // `mode: 0o600`. On NTFS that maps onto the read-only attribute instead
+    // of a DACL, so there is no 0o600 value to read back.
     if (!IS_WIN) expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     resetVapidCache();
     expect(vapidKeys()).toEqual(first);
-    // The public half is re-derived from the private one on read, so a file
-    // that lies about it can't advertise a key it can't sign for.
+    // The public half is re-derived from the private one on read, so a
+    // stored public key that doesn't match the private key is discarded.
     fs.writeFileSync(file, JSON.stringify({ privateKey: first.privateKey, publicKey: "BOGUS" }));
     resetVapidCache();
     expect(vapidKeys().publicKey).toBe(first.publicKey);
   });
 
-  // `ecdh.getPrivateKey()` returns OpenSSL's minimal bignum, so a scalar with a
-  // zero top byte came back 31 bytes and the 32-byte read-back check then threw
-  // the key away and re-minted — losing every subscription made under it, and
-  // failing this suite roughly one run in 250.
+  // `ecdh.getPrivateKey()` returns OpenSSL's minimal bignum representation,
+  // so a scalar with a zero top byte comes back short unless it is padded to
+  // 32 bytes.
   it("mints the private scalar zero-padded to 32 bytes, never OpenSSL's short form", () => {
-    // ~1 in 250 keys is short, so this is all but certain to catch a regression
-    // and can never fail against a correct implementation.
+    // A short scalar is rare, so many iterations are needed to reliably
+    // exercise the padding path; a correct implementation never fails this.
     for (let i = 0; i < 2000; i++) {
       expect(b64url.decode(generateVapidKeys().privateKey)).toHaveLength(32);
     }
   });
 
   it("adopts a short scalar left by an older build instead of re-minting over it", () => {
-    // A leading zero byte makes this both a valid scalar and one OpenSSL would
-    // have trimmed; the 31-byte form is the same key, so the subscriptions
-    // signed under it must survive the upgrade.
+    // A leading zero byte makes this both a valid scalar and one OpenSSL
+    // would trim; the 31-byte form is the same key, so subscriptions signed
+    // under it must keep working when the file is read back.
     const padded = Buffer.concat([Buffer.alloc(1), randomBytes(31)]);
     const file = path.join(DB_DIR, "vapid.json");
     fs.writeFileSync(file, JSON.stringify({ privateKey: b64url.encode(padded.subarray(1)), publicKey: "BOGUS" }));
@@ -183,7 +182,7 @@ describe("VAPID", () => {
     const keys = vapidKeys();
     expect(keys.privateKey).toBe(b64url.encode(padded));
     expect(keys.publicKey).toBe(publicKeyFor(b64url.encode(padded)));
-    // Same key, so the file is left alone rather than replaced.
+    // Same key, so the file is left alone instead of replaced.
     expect(JSON.parse(fs.readFileSync(file, "utf8")).publicKey).toBe("BOGUS");
   });
 
@@ -247,8 +246,8 @@ describe("delivery", () => {
     expect(getPushSubscription(flaky.id)!.last_error).toBe("503: nope");
     expect(getPushSubscription(badKeys.id)!.last_error).toMatch(/^encrypt: /);
 
-    // A dead network is a status-0 result on every row, not a rejection (the
-    // bad-keys row still fails before it reaches the network).
+    // A dead network yields a status-0 result on every row without throwing
+    // (the bad-keys row already fails before it reaches the network).
     const again = await pushNotification(payload, down);
     expect(again.every((r) => r.status === 0 && !r.gone)).toBe(true);
     expect(again.filter((r) => /ECONNRESET/.test(r.error))).toHaveLength(2);
@@ -396,11 +395,10 @@ describe("the browser half", () => {
   });
 
   it("stands the desktop shell down before any capability check", () => {
-    // The verdict is about the renderer, not what Chromium exposes: the shell
-    // raises native toasts off the same payload and denies the page's
+    // The verdict is about the renderer instead of what Chromium exposes: the
+    // shell raises native toasts off the same payload and denies the page's
     // notification permission, so a PushManager being present must not turn
-    // the window "ready", and its absence must not report "unsupported" — both
-    // used to send the user to a browser site setting the shell has no page for.
+    // the window "ready", and its absence must not report "unsupported".
     const base = { desktopShell: true, secureContext: true, hasServiceWorker: true, hasPushManager: true, ios: false, standalone: false };
     expect(classifyPushSupport(base)).toBe("desktop_shell");
     expect(classifyPushSupport({ ...base, hasPushManager: false, hasServiceWorker: false })).toBe("desktop_shell");
@@ -408,9 +406,9 @@ describe("the browser half", () => {
   });
 
   it("pushSupport() reads the desktop shell off the user agent", () => {
-    // A window that would be "ready" in every other respect — secure context,
-    // service worker, PushManager — so the desktop verdict is provably the
-    // user-agent token's doing and nothing else's.
+    // A window that would be "ready" in every other respect (secure context,
+    // service worker, PushManager), so the desktop verdict depends only on
+    // the user-agent token.
     const chrome = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
     const env = (userAgent: string) => {
       vi.stubGlobal("window", { isSecureContext: true, PushManager: class {}, matchMedia: undefined });
@@ -422,7 +420,7 @@ describe("the browser half", () => {
       // desktop/main.js appends the token to Chromium's own string.
       env(`${chrome} Electron/33.0.0 Calandria-Desktop/0.6.2`);
       expect(pushSupport()).toBe("desktop_shell");
-      // A packaged build that predates the token still carries Electron's.
+      // A packaged build without the Calandria token still carries Electron's own token.
       env(`${chrome} Electron/33.0.0`);
       expect(pushSupport()).toBe("desktop_shell");
     } finally {

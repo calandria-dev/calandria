@@ -76,9 +76,9 @@ describe("runbook store", () => {
     expect(schedulesUsing(rb.id)).toEqual([{ id: s.id, name: "Morning sweep" }]);
   });
 
-  // The heart of the delete policy. ON DELETE SET NULL alone would leave a
-  // schedule with no prompt firing nothing every morning — the exact silent
-  // failure the schedules design exists to rule out.
+  // ON DELETE SET NULL alone would leave a schedule with no prompt, firing
+  // nothing every morning with no warning, which is the failure the
+  // schedules design exists to rule out.
   it("deleting DETACHES linked schedules with the recipe intact", () => {
     const rb = runbook(pid, { prompt: "/sweep", agent: "claude", permission_mode: "plan", priority: "hi" });
     const s = createSchedule({

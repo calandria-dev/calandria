@@ -1,20 +1,18 @@
-/* The dock badge counts every instance, not just the one on screen.
+/* Asserts that the dock badge counts every instance, not just the one on screen.
  *
- * This is phase 3's whole cross-instance surface, and it is the one claim in
- * the remote-instances work that nothing else can make. `desktop/test-supervisor.js`
- * pins the policy — the badge is a sum over live subscribers, a toast names the
- * instance that raised it — but the policy is only interesting if the shell
- * really does hold two `/api/events` streams open against two servers at once.
- * A shell that quietly kept one subscriber would pass every headless test and
- * look completely normal in use: the badge would simply never mention the other
- * machine.
+ * `desktop/test-supervisor.js` pins the policy: the badge is a sum over live
+ * subscribers, and a toast names the instance that raised it. That policy only
+ * holds if the shell really does hold two `/api/events` streams open against
+ * two servers at once. A shell that kept only one subscriber would pass every
+ * headless test and look normal in use, with the badge never mentioning the
+ * other machine.
  *
- * So: two real production servers, each with its own database and its own
+ * Two real production servers, each with its own database and its own
  * hermetic instance, one task parked on a permission card on each, and the
  * number Electron is holding for the dock read back out of the main process.
  *
- * The window never leaves the local instance until the last test. That is the
- * point: the count for the remote arrives while nothing is looking at it.
+ * The window never leaves the local instance until the last test, so the
+ * count for the remote arrives while nothing is looking at it.
  */
 
 import { expect, test, type Page } from "@playwright/test";
@@ -36,7 +34,7 @@ import {
 
 test.describe.configure({ mode: "serial" });
 
-// Windows has no numeric badge — `applyBadge` paints a pre-rendered overlay
+// Windows has no numeric badge: `applyBadge` paints a pre-rendered overlay
 // PNG there instead (notifier.js `overlayIconName`, covered by
 // test-supervisor.js), and `app.getBadgeCount()` stays 0 however many tasks are
 // waiting. The sum being asserted here is platform-independent; only its
@@ -59,7 +57,7 @@ async function badge(): Promise<number> {
 
 /**
  * A turn parks on a permission card, which is one of the sites
- * `lib/notifications/dispatcher.ts` turns into `awaiting_input` — and
+ * `lib/notifications/dispatcher.ts` turns into `awaiting_input`, and
  * `awaiting_input` is what the project's `awaiting_count` counts, which is what
  * the badge sums. The mock agent raises the card from the description
  * (`e2e/README.md`).
@@ -84,13 +82,13 @@ test.beforeAll(async () => {
 
   const configRoot = instanceRoot("badge-shell-config");
   const instancesFile = writeInstancesFile(configRoot, {
-    // ACTIVE IS LOCAL. The remote is a saved instance nobody is looking at,
-    // which is the case this file exists for.
+    // Active is local. The remote is a saved instance nobody is looking at,
+    // which is what this file tests.
     active: "local",
     instances: [
       { id: "local", kind: "local", name: "This computer" },
       // Named as `addUrlInstance` would name it with the dialog's name field
-      // left blank — the host, i.e. the address again — so the adoption in the
+      // left blank: the host, i.e. the address again, so the adoption in the
       // last test has something to replace.
       { id: REMOTE_ID, kind: "url", name: new URL(remote.origin).host, url: remote.origin },
     ],
@@ -113,10 +111,10 @@ test.afterAll(async () => {
 
 test("a task waiting on the instance nobody is looking at still badges the dock", async () => {
   // The window is on the local instance and has never loaded a page from the
-  // remote — so anything the badge picks up below came from a subscriber the
+  // remote, so anything the badge picks up below came from a subscriber the
   // shell is holding open against a server nobody is looking at.
   //
-  // Asserted through the badge rather than through the `[shell] watching …`
+  // Asserted through the badge instead of through the `[shell] watching …`
   // log line, which is real but useless here: the first reconcile runs inside
   // `attach()`, before the supervisor has started, and Playwright only begins
   // capturing stdout once `electron.launch()` has resolved. That line is

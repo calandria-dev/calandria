@@ -49,7 +49,7 @@ describe("a schedule that fires a runbook", () => {
     expect(task.priority).toBe("hi");
     expect(task.permission_mode).toBe("plan");
     expect(task.runbook_id).toBe(rb.id);
-    // The title still comes from the SCHEDULE — that's what the user named the
+    // The title still comes from the schedule: that's what the user named the
     // occurrence, and it's what the run ledger reads by.
     expect(task.title).toContain("Morning");
   });
@@ -67,9 +67,9 @@ describe("a schedule that fires a runbook", () => {
     due(s.id);
     await tickSchedules(Date.now());
 
-    // Not "/stale-fallback": deleteRunbook copied the live recipe back, so the
-    // schedule keeps firing what it fired yesterday rather than something stale
-    // from before the link was made.
+    // deleteRunbook copies the live recipe back, so the schedule keeps firing
+    // what it fired yesterday instead of something stale from before the link
+    // was made.
     expect(started[0].text).toBe("/from-runbook");
     expect(getSchedule(s.id)!.runbook_id).toBeNull();
   });

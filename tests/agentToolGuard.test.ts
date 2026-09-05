@@ -1,13 +1,11 @@
-/* The guard that makes an agent tool's failure LOUD (lib/agentToolGuard.mjs).
+/* Pins guardToolHandler (lib/agentToolGuard.mjs): nothing reaches the model
+ * as a "fine" result unless the call actually answered. An empty or missing
+ * result cannot be told apart from a real success, so the guard rewrites it
+ * into a loud failure.
  *
- * The bug it exists for: mid-turn, every Calandria tool call started returning
- * no content and no error, and the sessions could not tell that apart from a
- * quiet success — they reported a withdrawal, a runbook and a pull request that
- * were never written. So the property under test is one sentence: NOTHING gets
- * back to the model that reads as "fine" unless the call actually answered.
- *
- * Everything here is the pure module, which both ends of the seam share. That it
- * survives a real MCP round trip is pinned separately, in tests/calandriaMcp.test.ts.
+ * This covers the pure module, which both ends of the seam share. That it
+ * survives a real MCP round trip is pinned separately, in
+ * tests/calandriaMcp.test.ts.
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -28,8 +26,8 @@ function expectLoudFailure(res: unknown, tool: string) {
   expect(r.isError).toBe(true);
   expect(r.content?.length).toBeGreaterThan(0);
   const text = r.content![0].text;
-  // Non-empty, names the tool, and is prose rather than a bare token — the model
-  // has to be able to relay it to the user without knowing this module exists.
+  // Non-empty, names the tool, and is prose instead of a bare token: the model
+  // relays it to the user without needing to know this module exists.
   expect(text.trim().length).toBeGreaterThan(20);
   expect(text).toContain(tool);
   return text;
@@ -51,8 +49,8 @@ describe("guardToolHandler", () => {
   });
 
   it("forwards every argument the MCP server passes", async () => {
-    // Signature-transparent by contract: it is dropped over handlers whose
-    // arguments it knows nothing about.
+    // Signature-transparent by contract: it wraps handlers regardless of
+    // their argument shape.
     const seen: unknown[] = [];
     const guarded = guardToolHandler("get_task", async (...args: unknown[]) => {
       seen.push(...args);
@@ -68,8 +66,8 @@ describe("guardToolHandler", () => {
     });
     const text = expectLoudFailure(await guarded({}, {}), "create_pr");
     expect(text).toContain("No commits between main");
-    // The instruction matters as much as the message: the failure mode being
-    // fixed is a session REPORTING work it never did.
+    // The instruction matters as much as the message: the risk is a session
+    // reporting work it never did.
     expect(text).toMatch(/do not report this as done/i);
   });
 
@@ -82,8 +80,8 @@ describe("guardToolHandler", () => {
 
   it("stays loud when what was thrown is not an Error, or carries no message", async () => {
     // `String(e)` on a bare object is "[object Object]" and an Error can be
-    // constructed with "" — either would collapse the message to nothing, which
-    // is the exact failure this file is about.
+    // constructed with "", either of which would collapse the message to
+    // nothing.
     for (const thrown of ["just a string", { code: 500 }, new Error(""), new Error("   "), null, undefined]) {
       const guarded = guardToolHandler("list_tasks", async () => {
         throw thrown;
@@ -93,8 +91,8 @@ describe("guardToolHandler", () => {
   });
 
   it("rewrites an empty result as a failure — the bug this module is named for", async () => {
-    // Every shape the wild occurrences could have produced. None of them may
-    // reach the model looking like a success.
+    // Every shape an empty result can take. None of them may reach the model
+    // looking like a success.
     const empties: unknown[] = [
       undefined,
       null,
@@ -129,14 +127,14 @@ describe("guardToolHandler", () => {
   });
 
   it("abandons a handler that never answers, and says so without claiming nothing happened", async () => {
-    // The bound is the whole reason this is not just a try/catch: the CLI's own
-    // per-call MCP timeout defaults to ~27.7 hours and the SDK host awaits an
-    // in-process handler forever, so nothing below would ever end this wait.
+    // The bound is why this needs more than a try/catch: the CLI's own
+    // per-call MCP timeout defaults to ~27.7 hours, and the SDK host awaits an
+    // in-process handler indefinitely, so nothing below would end this wait.
     const guarded = guardToolHandler("create_pr", () => new Promise(() => {}), { timeoutMs: 20 });
     const text = expectLoudFailure(await guarded({}, {}), "create_pr");
     expect(text).toMatch(/did not answer within/i);
-    // The work may still be in flight — a push that lands after we gave up is
-    // real. "Nothing was done" here would be a lie, so it must say verify.
+    // The work may still be in flight: a push that lands after the timeout is
+    // real. "Nothing was done" here would be false, so the message says verify.
     expect(text).toMatch(/verify/i);
     expect(text).not.toMatch(/nothing was done/i);
   });
@@ -184,10 +182,10 @@ describe("isBlankToolResult", () => {
   });
 });
 
-/* The failure ABOVE the seam: the CLI answers a Calandria tool call itself and
- * no handler ever runs, so nothing the guard wraps can see it. Measured
- * 2026-09-02 on task CrDHcuyuDt1PmLu0PDd1K; the Claude driver's stream pump
- * classifies the CLI's sentence with these helpers. */
+/* The failure above the seam: the CLI answers a Calandria tool call itself
+ * and no handler ever runs, so nothing the guard wraps can see it. The
+ * Claude driver's stream pump classifies the CLI's sentence with these
+ * helpers. */
 describe("the CLI's own interrupted tool result", () => {
   const CLI_TEXT =
     "The tool call was interrupted before a result was received. It may or may not have " +
@@ -214,8 +212,8 @@ describe("the CLI's own interrupted tool result", () => {
   it("names the tool and refuses to promise the call did nothing", () => {
     const msg = toolInterruptedMessage("mcp__calandria__create_pr");
     expect(msg).toContain("mcp__calandria__create_pr");
-    // The abort can land after the request went out, so "nothing happened" is
-    // not ours to say — the instruction is to go and look.
+    // The abort can land after the request went out, so the message avoids
+    // claiming nothing happened and instead instructs to verify.
     expect(msg).toMatch(/may or may not/);
     expect(msg).not.toMatch(/nothing was done/);
   });
@@ -257,8 +255,8 @@ describe("guardToolHandler's onStart / onSettle hooks", () => {
     for (const s of seen) expect(s.ms).toBeGreaterThanOrEqual(0);
     // The timeout branch reports how long it waited, not zero. One millisecond
     // of slack: a Node timer fires on the event loop's millisecond clock while
-    // the guard measures with Date.now(), and the two can disagree by a tick,
-    // so an exact `>= 20` read 19 on CI three times in one night (issue #209).
+    // the guard measures with Date.now(), so the two can disagree by a tick
+    // (issue #209).
     expect(seen[3].ms).toBeGreaterThanOrEqual(19);
   });
 

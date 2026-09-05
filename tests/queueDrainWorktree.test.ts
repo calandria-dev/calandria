@@ -4,9 +4,9 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Same seam as tests/authFailure.test.ts: the Claude driver module is mocked so
 // the real runner (including its queue drain) runs with no SDK anywhere near it.
-// The mock records the cwd the driver WOULD have run in — the same
+// The mock records the cwd the driver would have run in, using the same
 // `task.worktree_path || project.repo_path` fallback lib/agents/claude/driver.ts
-// applies — because that fallback is exactly what this file is about.
+// applies, since that fallback is what this file pins.
 const { runTurnMock, cwds } = vi.hoisted(() => ({ runTurnMock: vi.fn(), cwds: [] as string[] }));
 
 vi.mock("@/lib/agents/claude/driver", () => ({
@@ -49,14 +49,14 @@ beforeEach(() => {
   clearAgentAuthBroken("claude");
 });
 
-// A turn reaching the runner through the QUEUE DRAIN — run()'s finally popping
-// pending_messages — never passed through the two launch paths that create a
+// A turn reaching the runner through the queue drain (run()'s finally popping
+// pending_messages) never passes through the two launch paths that create a
 // worktree (POST /api/tasks/[id]/messages and lib/autoStart.ts). It inherits
 // whatever the task row says, so with worktree_path empty the driver's
 // `task.worktree_path || project.repo_path` fallback would point the agent at
 // the user's actual project checkout. startResumeTurn runs the same self-heal
-// those paths do, so isolation is a property of the code rather than of three
-// call sites happening to agree.
+// those paths do, so isolation is guaranteed by the code that runs on every
+// call site.
 describe("queue drain isolation", () => {
   it("cuts a worktree for a dequeued follow-up whose task lost one", async () => {
     const repo = await makeRepo();
@@ -72,8 +72,8 @@ describe("queue drain isolation", () => {
       base_sha: wt.baseSha,
     });
 
-    // Turn 1 dies on a dead login, which parks the queue instead of draining it
-    // — the state in which a follow-up outlives the turn that was running.
+    // Turn 1 dies on a dead login, which parks the queue instead of draining
+    // it: the state in which a follow-up outlives the turn that was running.
     addPendingMessage(task.id, task.generation, "and now the follow-up");
     runTurnMock.mockImplementationOnce(async function* () {
       yield { type: "session", sessionId: "sess-1" };
@@ -91,7 +91,7 @@ describe("queue drain isolation", () => {
     updateTask(task.id, { worktree_path: "" });
     expect(fs.existsSync(wt.path)).toBe(false);
 
-    // Turn 2 succeeds, so its finally drains the parked follow-up into turn 3 —
+    // Turn 2 succeeds, so its finally drains the parked follow-up into turn 3,
     // the path that creates no worktree of its own.
     clearAgentAuthBroken("claude");
     runTurnMock.mockImplementation(async function* () {
@@ -105,11 +105,11 @@ describe("queue drain isolation", () => {
     await settled;
 
     // Three turns ran; the dequeued one is the last. (Turn 2 went straight
-    // through startTurn, which is the route's job to prepare — this test drives
+    // through startTurn, which is the route's job to prepare. This test drives
     // the runner directly, so only the drain's own guarantee is asserted.)
     expect(cwds).toHaveLength(3);
     const followUp = cwds[2];
-    // NOT the user's project checkout — the whole point.
+    // Not the user's project checkout.
     expect(real(followUp)).not.toBe(real(repo));
     // A real worktree of this repo, at the task's own path, and on disk.
     expect(real(followUp)).toBe(real(path.join(WORKTREES_DIR, task.id)));
@@ -118,10 +118,10 @@ describe("queue drain isolation", () => {
     expect(outputLines(listed).filter((l) => l.startsWith("worktree ")).map((l) => real(l.slice(9).trim())))
       .toContain(real(followUp));
     // ensureWorktree reattached to the surviving branch, so the earlier work
-    // came back rather than being restarted from base.
+    // came back instead of being restarted from base.
     expect(await git(followUp, "rev-parse", "--abbrev-ref", "HEAD")).toBe(wt.branch);
 
-    // …and it's persisted, so the next turn and the diff/merge routes agree.
+    // It's persisted, so the next turn and the diff/merge routes agree.
     const fresh = getTask(task.id)!;
     expect(real(fresh.worktree_path)).toBe(real(followUp));
     expect(fresh.work_branch).toBe(wt.branch);

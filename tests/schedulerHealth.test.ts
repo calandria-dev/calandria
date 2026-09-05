@@ -1,17 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { schedulerAlert } from "@/app/shell/format";
 
-// The Schedules card's warning banner. A schedule's whole promise is work at
-// 08:30 with nobody logged in, so the one thing the card must never do is show
-// a confident "next run tomorrow 08:30" when nothing is actually watching for
-// it. Three failure shapes, and the middle one had no surface at all: the API
-// served `lastTickAt` for exactly this and the card never read it.
+// The Schedules card's warning banner. A schedule promises work at 08:30 with
+// nobody logged in, so the card must never show a confident "next run
+// tomorrow 08:30" when nothing is watching for it. Covers three failure
+// shapes, keyed off the API's `lastTickAt`.
 const OK = { started: true, startedAt: 1_000, lastTickAt: 1_000_000, lastError: "", tickMs: 30_000 };
 
 describe("schedulerAlert", () => {
   it("says nothing when the ticker is sweeping cleanly", () => {
     expect(schedulerAlert(OK, OK.lastTickAt + 10_000)).toBeNull();
-    // A sweep can legitimately outlast one interval — it fires schedules
+    // A sweep can legitimately outlast one interval: it fires schedules
     // serially, and a firing sets up a worktree. No banner on the second tick.
     expect(schedulerAlert(OK, OK.lastTickAt + 60_000)).toBeNull();
   });
@@ -23,9 +22,9 @@ describe("schedulerAlert", () => {
   it("reports a ticker whose sweeps have stopped coming back", () => {
     // tickSchedules() is single-flight. One call that never returns (a stalled
     // agent CLI in the fire-time probe, a hung git op) leaves `ticking` true
-    // forever and EVERY schedule on the instance stops — with nothing thrown,
-    // so `lastError` stays empty and `started` stays true. A stale lastTickAt
-    // is the only symptom this failure has.
+    // forever, so EVERY schedule on the instance stops with nothing thrown:
+    // `lastError` stays empty and `started` stays true. A stale lastTickAt
+    // is the only symptom of this failure.
     const alert = schedulerAlert(OK, OK.lastTickAt + 10 * 60_000);
     expect(alert).toMatch(/hasn't completed a check/i);
     expect(alert).toMatch(/nothing is firing/i);
@@ -33,8 +32,8 @@ describe("schedulerAlert", () => {
 
   it("ages a very first sweep that never returned, from when the ticker started", () => {
     // lastTickAt is 0 until a sweep FINISHES, so a boot-time wedge has no tick
-    // to age at all. startedAt is the fallback, and this is the worst case of
-    // the lot: nothing has ever fired.
+    // to age at all. startedAt is the fallback, covering the case where
+    // nothing has ever fired.
     const booting = { ...OK, lastTickAt: 0, startedAt: 5_000_000 };
     expect(schedulerAlert(booting, 5_030_000)).toBeNull();
     expect(schedulerAlert(booting, 5_000_000 + 10 * 60_000)).toMatch(/hasn't completed a check/i);
@@ -47,10 +46,10 @@ describe("schedulerAlert", () => {
   });
 
   it("names the schedule that failed, and doesn't blame the tick", () => {
-    // The old copy read "The last scheduler tick failed", which sent the user
-    // looking at the ticker when the fault was in one schedule they could go
-    // and fix — and it never cleared, so it said that forever after one
-    // transient error while everything else fired correctly.
+    // The banner must name the failing schedule and not blame the ticker: a
+    // schedule-level fault should not read as "the last scheduler tick
+    // failed," which would send the user to the ticker instead of the
+    // schedule, and should clear once that schedule fires cleanly.
     const alert = schedulerAlert({ ...OK, lastError: '"Morning triage": invalid timezone' }, OK.lastTickAt + 10_000);
     expect(alert).toContain("Morning triage");
     expect(alert).toMatch(/The others still ran/i);

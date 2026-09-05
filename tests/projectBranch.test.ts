@@ -1,11 +1,7 @@
-// projects.branch: the project's DEFAULT base branch (resolveBaseBranch's last
-// leg). It has no CHECK constraint, and PATCH /api/projects/[id] used to pass
-// the body straight through updateProject, so a Settings edit that cleared the
-// field saved branch: "". resolveBaseBranch then resolved to "", branchExists
-// returned false before running any git command, and every task in the
-// project showed the sync banner's "isn't a branch in this repository" with a
-// blank name. updateProject now normalizes branch the same way it already
-// normalizes landing_mode: keep the current value rather than saving a blank.
+// projects.branch is the project's default base branch (resolveBaseBranch's
+// last leg). It has no CHECK constraint, so updateProject normalizes it the
+// same way it normalizes landing_mode: a blank or whitespace value keeps the
+// current value instead of being saved.
 import { describe, expect, it } from "vitest";
 import { createProject, getProject, updateProject } from "@/lib/store";
 import { PATCH } from "@/app/api/projects/[id]/route";
@@ -26,11 +22,9 @@ describe("projects.branch", () => {
   });
 
   it("defaults a blank branch at CREATE too, where ?? let one through", () => {
-    // The update path is guarded twice over now, but the insert defaulted with
-    // `??`, which catches null and undefined and nothing else. POST /api/projects
-    // passes body.branch straight to createProject, so a caller spelling the
-    // field out as "" wrote the same blank the PATCH route refuses. Cloning a
-    // repository with no HEAD is the same shape from inside the app.
+    // createProject normalizes a blank branch too, since `??` only catches
+    // null and undefined. A repository cloned with no HEAD hits this same
+    // path via POST /api/projects.
     expect(createProject({ name: "Born blank", branch: "" }).branch).toBe("main");
     expect(createProject({ name: "Born whitespace", branch: "   " }).branch).toBe("main");
     expect(createProject({ name: "Born padded", branch: " main " }).branch).toBe("main");

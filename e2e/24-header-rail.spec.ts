@@ -1,15 +1,15 @@
 // The session header's control rail (app/shell/useOverflowRail.ts).
 //
-// This can only be tested here. The rail decides what to show by MEASURING
-// itself — scrollWidth against clientWidth, in a real layout, against real
-// fonts — so there is nothing a unit test could assert that wouldn't just be
-// asserting the arithmetic back at itself. The bug it exists to prevent is
-// equally invisible to one: the chips didn't misbehave, they were simply
-// painted past the edge of a pane that had stopped being wide enough.
+// This can only be tested here. The rail decides what to show by measuring
+// itself (scrollWidth against clientWidth, in a real layout, against real
+// fonts), so there is nothing a unit test could assert that wouldn't just be
+// asserting the arithmetic back at itself. A unit test also can't see the
+// case this guards against: a chip painted past the edge of a pane that
+// stopped being wide enough.
 //
-// Hence the shape of every case below: the invariant is always "nothing on the
-// rail is out of reach", checked at several widths, plus the promise that what
-// left it is still one click away.
+// Every case below checks the same invariant, "nothing on the rail is out of
+// reach", at several widths, plus that what left the rail is still one click
+// away.
 
 import { expect, test, type Page } from "@playwright/test";
 import { createProject, createTask, ensureOnboarded, gotoApp, makeFixtureRepo, sendMessage, uid, waitForIdle } from "./helpers";
@@ -42,10 +42,10 @@ const openTask = async (page: Page) => {
 };
 
 /**
- * The whole invariant: nothing on the rail is painted somewhere unreachable.
- * Overflowing is only a bug where it is also CLIPPED — on a pane too narrow for
- * even the pinned controls the rail becomes a scroller instead, which is the
- * floor the collapse rests on rather than a failure of it.
+ * The invariant: nothing on the rail is painted somewhere unreachable.
+ * Overflowing is only a bug when it is also clipped: on a pane too narrow for
+ * even the pinned controls the rail becomes a scroller instead, and that
+ * scrolling floor is not itself a failure.
  */
 const clipped = (page: Page) =>
   page.locator(".sh-tools").evaluate((el) => {
@@ -65,18 +65,18 @@ test("the rail fits at every pane width, collapsing into More rather than overfl
   await expect.poll(() => clipped(page)).toBe(false);
   await expect(rail(page).getByRole("button", { name: "/clear" })).toBeVisible();
 
-  // Narrow the window in steps. At each one the rail must still fit — the
+  // Narrow the window in steps. At each one the rail must still fit: the
   // failure this guards is a chip painted past the pane's edge.
   for (const width of [1400, 1150, 950, 800]) {
     await page.setViewportSize({ width, height: 900 });
     await expect.poll(() => clipped(page), { message: `rail is clipped at ${width}px` }).toBe(false);
   }
 
-  // Something had to give at 800px, and it is offered rather than lost. Which
-  // items went is deliberately not asserted: that falls out of the measurement,
-  // so it moves with the fonts, the chips this task happens to carry and the
-  // width of the columns beside it. The promise is that the rail SAYS it is
-  // holding something back, and that pressing More produces all of it.
+  // Something had to give at 800px, and it is offered instead of lost. Which
+  // items went is not asserted: that falls out of the measurement, so it moves
+  // with the fonts, the chips this task happens to carry, and the width of
+  // the columns beside it. The rail must say it is holding something back,
+  // and pressing More must produce all of it.
   const more = rail(page).getByRole("button", { name: "More" });
   await expect(more).toBeVisible();
   const collapsed = await items(page).count();
@@ -84,8 +84,8 @@ test("the rail fits at every pane width, collapsing into More rather than overfl
   await expect(rail(page).getByRole("button", { name: "/clear" })).toBeVisible();
   expect(await items(page).count()).toBeGreaterThan(collapsed);
 
-  // Collapsing again puts the rail back exactly as it was, so the toggle is a
-  // view of one rail rather than a second one.
+  // Collapsing again puts the rail back exactly as it was: the toggle is a
+  // view of one rail, not a second one.
   await rail(page).getByRole("button", { name: "Less" }).click();
   await expect.poll(() => items(page).count()).toBe(collapsed);
   await expect.poll(() => clipped(page)).toBe(false);
@@ -105,13 +105,14 @@ test("the status is the one control the rail never drops", async ({ page }) => {
 
 test("tags sit on the breadcrumb and the agent on the title, neither on the rail", async ({ page }) => {
   await openTask(page);
-  // Both are identity rather than controls, and both used to be chips on the
-  // rail — where they were among the first things a narrow pane pushed off.
+  // Both are identity, not controls, so neither belongs on the rail, where a
+  // narrow pane would push them off with everything else.
   await expect(page.locator(".sess-head .crumb .gbadge")).toHaveCount(1);
   await expect(page.locator(".sh-tools .gbadge")).toHaveCount(0);
   await expect(page.locator(".sh-tools .agent-badge")).toHaveCount(0);
-  // The agent left the crumb too: as a mark it costs the title a glyph rather
-  // than a word, so it qualifies the title instead of clipping beside the tags.
+  // The agent badge sits on the title too, not the crumb: as a mark it costs
+  // the title a glyph instead of a word, so it qualifies the title instead of
+  // clipping beside the tags.
   await expect(page.locator(".sess-head .crumb .agent-badge")).toHaveCount(0);
   await expect(page.locator(".sess-head .sh-title .agent-badge")).toHaveCount(1);
 });

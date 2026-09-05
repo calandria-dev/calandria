@@ -3,11 +3,11 @@ import { GET, POST } from "@/app/api/projects/[id]/mcp-servers/route";
 import { createProject, listPermissionRules } from "@/lib/store";
 import { startFakeGateway, type FakeGateway } from "./fakeGateway";
 
-// GET/POST /api/projects/[id]/mcp-servers — the project-scoped route behind
-// the settings picker (docs/design/litellm.md, "Hosted MCP servers"):
-// GET <gateway>/v1/mcp/server + GET <gateway>/mcp-rest/tools/list merged with
-// which aliases this project already trusts, and POST minting a "trust this
-// server" permission_rules row.
+// GET/POST /api/projects/[id]/mcp-servers is the project-scoped route behind
+// the settings picker (docs/AGENTS.md, "Hosted MCP servers"). GET merges
+// <gateway>/v1/mcp/server and <gateway>/mcp-rest/tools/list with which
+// aliases this project already trusts; POST mints a "trust this server"
+// permission_rules row.
 
 let gw: FakeGateway | null = null;
 let savedBase: string | undefined;

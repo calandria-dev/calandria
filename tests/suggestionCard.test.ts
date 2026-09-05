@@ -1,12 +1,12 @@
-// A suggestion, rendered where it was made: the tool row a `suggest_task` call
+// A suggestion renders where it was made: the tool row a `suggest_task` call
 // leaves behind carries the id of the task it filed, and the card reads that
-// task's LIVE state rather than a snapshot frozen into the transcript.
+// task's live state instead of a snapshot frozen into the transcript.
 //
-// Two halves are pinned here, and they're the two that can silently rot:
-//   - the settle (lib/suggestionCard.ts) — which row a suggestion lands on when
+// Two halves are pinned here:
+//   - the settle (lib/suggestionCard.ts): which row a suggestion lands on when
 //     the caller has no tool_use id to correlate with, i.e. the stdio bridge;
-//   - the read (GET /api/tasks/[id]/suggestion) — everything the card renders,
-//     including the states where it must NOT still be offering Start.
+//   - the read (GET /api/tasks/[id]/suggestion): everything the card renders,
+//     including the states where it must not still be offering Start.
 import { describe, it, expect } from "vitest";
 import { NextRequest } from "next/server";
 import { addMessage, createProject, createTask, deleteTask, listMessages, setTaskDeps, updateTask } from "@/lib/store";
@@ -51,8 +51,9 @@ describe("isSuggestTaskTool", () => {
     expect(isSuggestTaskTool("suggest_task")).toBe(true);
     expect(isSuggestTaskTool("mcp__calandria__list_tasks")).toBe(false);
     expect(isSuggestTaskTool("Bash")).toBe(false);
-    // Every row written before the field existed, and every driver that reports
-    // no name: no card, rather than a card on the wrong row.
+    // A row with no name, whether from a driver that never reports one or a
+    // schema written prior to the field, gets no card instead of one landing
+    // on the wrong row.
     expect(isSuggestTaskTool(undefined)).toBe(false);
   });
 });
@@ -72,7 +73,7 @@ describe("attachSuggestionToCall", () => {
     expect(readData(session.id, bash.id).suggestion).toBeUndefined();
 
     // A second suggestion skips the row already claimed and takes the next one
-    // back — a parallel batch gets one card each rather than stacking.
+    // back: a parallel batch gets one card each instead of stacking.
     expect(attachSuggestionToCall(session.id, { taskId: "task-b", projectId: project.id })).toBe(older.id);
     expect(readData(session.id, older.id).suggestion).toEqual({ taskId: "task-b", projectId: project.id });
   });
@@ -81,7 +82,7 @@ describe("attachSuggestionToCall", () => {
     const project = createProject({ name: "Settle-Miss" });
     const session = createTask({ project_id: project.id, title: "Session", description: "" });
     toolRow(session.id, { name: "Bash", title: "❯ ls" });
-    // A row from before the name was persisted must not be adopted by title.
+    // A row lacking a persisted name must not be adopted by title.
     toolRow(session.id, { title: "✦ Suggested a task" });
     expect(attachSuggestionToCall(session.id, { taskId: "task-a", projectId: project.id })).toBeNull();
   });
@@ -118,8 +119,8 @@ describe("the stdio bridge settles its suggestion onto the call in flight", () =
       description: "",
     });
     const created = (await res.json()) as { id: string };
-    // The project it was FILED INTO, not the session's own — that difference is
-    // what the card has to say out loud, and what decides whether Start shows.
+    // The project it was filed into, not the session's own: that difference is
+    // what the card reports, and what decides whether Start shows.
     expect(readData(session.id, call.id).suggestion).toEqual({ taskId: created.id, projectId: other.id });
   });
 });
@@ -172,7 +173,7 @@ describe("GET /api/tasks/[id]/suggestion", () => {
   it("404s once the task is dismissed, so the card renders as gone rather than a button that fails", async () => {
     const project = createProject({ name: "Card-Gone" });
     const { task } = createSuggestedTask(project, { title: "Dismiss me", description: "" });
-    // Dismiss is a hard delete — the transcript row pointing at it outlives it.
+    // Dismiss is a hard delete: the transcript row pointing at it outlives it.
     deleteTask(task!.id);
     const res = await getCard(task!.id);
     expect(res.status).toBe(404);

@@ -1,12 +1,12 @@
 // Per-task base branches, end to end: a task pointed at a second branch through
-// the edit dialog, merged, and the file landing on THAT branch — while the
+// the edit dialog, merged, and the file landing on that branch, while the
 // user's own checkout stays exactly where it was, on `main`, untouched.
 //
 // This is the case unit tests can't prove. `mergeIntoTargetWorktree` lands a
 // merge whose target isn't the repo's current branch at the object level, with
 // no working tree materialized; only the built server, a real worktree and a
 // real repo on disk show that the user's checkout really is left alone.
-// Design: docs/superpowers/specs/2026-08-27-per-task-base-branch-design.md.
+// Design: docs/FEATURES.md.
 
 import { expect, test } from "@playwright/test";
 import { createProject, createTask, ensureOnboarded, git, gotoApp, makeFixtureRepo, sendMessage, uid, waitForIdle } from "./helpers";
@@ -32,9 +32,9 @@ test.beforeAll(async ({ request }) => {
     description: "Write the greeting. e2e:write=greeting.txt:hello from the feature branch",
   });
   taskId = task.id;
-  // Cut the worktree and do the work FIRST, from main — so the retarget below
-  // is the interesting case (a worktree that already exists) rather than a row
-  // edit before anything has happened.
+  // Cut the worktree and do the work first, from main, so the retarget below
+  // covers the interesting case: a worktree that already exists, instead of a
+  // row edit before anything has happened.
   await sendMessage(request, taskId);
   await waitForIdle(request, taskId);
 });
@@ -54,7 +54,7 @@ test("retargets a started task to another branch from the edit dialog", async ({
   await field.locator("input").fill("feature/auth");
   await field.getByRole("button", { name: "Retarget" }).click();
 
-  // Reported, not silent — the tool and the field both say what happened.
+  // The tool and the field both say what happened.
   await expect(field.getByText(/Now based on feature\/auth/)).toBeVisible({ timeout: 15_000 });
   const task = await (await request.get(`/api/tasks/${taskId}`)).json();
   expect(task.base_branch).toBe("feature/auth");
@@ -71,9 +71,8 @@ test("merges into that branch, leaving the user's checkout on main", async ({ pa
     .poll(async () => (await (await request.get(`/api/tasks/${taskId}`)).json()).merged_at, { timeout: 20_000 })
     .toBeGreaterThan(0);
 
-  // The work is on feature/auth…
+  // The work is on feature/auth and nowhere near main.
   expect(git(repoPath, "show", "feature/auth:greeting.txt")).toBe("hello from the feature branch");
-  // …and nowhere near main, which is the whole point of a per-task base.
   expect(() => git(repoPath, "show", "main:greeting.txt")).toThrow();
 
   // The user's checkout never moved: same branch, same commit, clean tree. A

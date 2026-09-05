@@ -1,17 +1,12 @@
 // The idle-turn mark: lib/turnActivity.ts, the backstop for a turn that stays
-// `running` while waiting on something that already finished.
+// `running` while waiting on something that already finished. A watcher loop
+// that matches its own command line can wait forever with the session left
+// live and silent, indistinguishable on screen from a session doing work.
 //
-// The case it exists for was real (2026-08-27): two `while pgrep …; do sleep;
-// done` watcher loops matched their own `zsh -c` command line, so they never
-// exited, and the session sat live and silent for half an hour after the test
-// runs they were waiting on had passed. Nothing on screen distinguished it from
-// a session doing work.
-//
-// The mark is deliberately not a deadline — nothing here stops or kills a turn —
-// so the only thing that can go wrong is what it says. Two ways it could be
-// WORSE than not existing, both pinned below: marking a turn that is legitimately
-// parked on a human (a question card, a permission prompt), and failing to
-// unmark one that started talking again.
+// The mark is not a deadline: nothing here stops or kills a turn, so the only
+// thing that can go wrong is what it says. Two failure modes are pinned
+// below: marking a turn that is parked on a human (a question card, a
+// permission prompt), and failing to unmark one that started talking again.
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
 
 import { createProject, createTask, listMessages, updateTask } from "@/lib/store";
@@ -28,7 +23,7 @@ import {
 } from "@/lib/turnActivity";
 import { tmpDir } from "./helpers";
 
-// A plain (non-git) working dir — nothing here launches a turn, so no worktree
+// A plain (non-git) working dir: nothing here launches a turn, so no worktree
 // is ever cut.
 const makeTask = () => {
   const project = createProject({ name: "Idle", repo_path: tmpDir("idle-") });
@@ -97,11 +92,10 @@ describe("idle turn mark", () => {
   });
 
   it("does not mark a turn parked on a permission card", () => {
-    // The false positive that would make this feature worse than nothing. A
-    // turn waiting on the user is silent for exactly the same reason an idle
-    // one is — but that wait is legitimate, open-ended by design, and already
-    // surfaced as "needs you". awaiting_input is how the runner records it
-    // (lib/runner.ts persists it before publishing either card).
+    // A turn waiting on the user is silent for the same reason an idle one
+    // is, but that wait is legitimate, open-ended, and already surfaced as
+    // "needs you". awaiting_input is how the runner records it (lib/runner.ts
+    // persists it before publishing either card).
     const task = makeTask();
     liveTurn(task.id);
     markTurnActivity(task.id);
@@ -145,7 +139,7 @@ describe("idle turn mark", () => {
     markTurnActivity(task.id);
 
     expect(turnIdleSince(task.id)).toBe(0);
-    // A second event, because the client cannot learn it any other way — the
+    // A second event, because the client cannot learn it any other way: the
     // transcript detail that proves the turn is alive never reaches the global
     // stream.
     expect(idleEvents()).toHaveLength(2);
@@ -166,9 +160,9 @@ describe("idle turn mark", () => {
 
   it("says nothing to the session itself unless the instance asked for it", () => {
     // The mark is the whole feature on a default instance. Telling the MODEL
-    // costs a turn's tokens on a wait that may be perfectly legitimate, so it
-    // is opt-in (CALANDRIA_TURN_IDLE_NUDGE, off) — tests/idleNudge.test.ts
-    // pins what happens when an instance does opt in.
+    // costs a turn's tokens on a wait that may be legitimate, so it is opt-in
+    // (CALANDRIA_TURN_IDLE_NUDGE, off); tests/idleNudge.test.ts pins what
+    // happens when an instance opts in.
     const task = makeTask();
     liveTurn(task.id);
     const sent: string[] = [];
@@ -189,7 +183,7 @@ describe("idle turn mark", () => {
   it("never marks a task with no live turn, and forgets it", () => {
     // `tasks.running` can be stale after a crash mid-turn; the abort registry
     // cannot. A record whose turn ended down a path that skipped the runner's
-    // cleanup must age out rather than describe a task that finished.
+    // cleanup must age out instead of describing a task that finished.
     const task = makeTask();
     const ac = liveTurn(task.id);
     markTurnActivity(task.id);

@@ -1,8 +1,8 @@
 /* The bind-address rule.
  *
- * Every case passes env EXPLICITLY. That is the point: the bug being pinned is
- * ambient environment deciding the bind address, so a test that read
- * process.env would be able to reproduce the bug and still pass.
+ * Every case passes env explicitly. The invariant is that ambient environment
+ * must not decide the bind address, so a test that read process.env instead
+ * would mask a violation and still pass.
  */
 import { describe, expect, it } from "vitest";
 // eslint-disable-next-line @typescript-eslint/no-var-requires

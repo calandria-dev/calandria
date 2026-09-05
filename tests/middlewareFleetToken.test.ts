@@ -4,11 +4,12 @@ import { middleware } from "@/middleware";
 
 // The fleet-token invariant (cf-access.mjs: "Read-only paths only") is enforced
 // in middleware.ts, which routes /api/instance/scheduler and
-// /api/instance/services-restore through isInstanceOnlyServiceTokenPath rather
-// than the broader isReadOnlyServiceTokenPath used for health/version/usage.
-// These tests exercise the actual middleware() function rather than the
-// underlying token helpers (already covered in tests/agentTools.test.ts), so a
-// future change that reintroduces the fleet token on a mutating path fails here.
+// /api/instance/services-restore through isInstanceOnlyServiceTokenPath, a
+// narrower check than the isReadOnlyServiceTokenPath used for
+// health/version/usage. These tests exercise the actual middleware() function
+// instead of the underlying token helpers (already covered in
+// tests/agentTools.test.ts), so a future change that reintroduces the fleet
+// token on a mutating path fails here.
 describe("middleware: fleet token stays read-only", () => {
   const prevEnv = {
     CF_ACCESS_TEAM_DOMAIN: process.env.CF_ACCESS_TEAM_DOMAIN,
@@ -19,7 +20,7 @@ describe("middleware: fleet token stays read-only", () => {
 
   beforeEach(() => {
     // Enables Access mode (originAuthEnabled()) so middleware reaches the
-    // service-token branches at all — in local mode it never does.
+    // service-token branches at all; local mode never reaches them.
     process.env.CF_ACCESS_TEAM_DOMAIN = "test-team.cloudflareaccess.com";
     process.env.CF_ACCESS_AUD = "test-aud";
     process.env.SERVICE_TOKEN = "instance-secret";
@@ -64,13 +65,13 @@ describe("middleware: fleet token stays read-only", () => {
   });
 
   it("still accepts the fleet token on read-only paths", async () => {
-    // /api/instance/metrics is here for the fleet token's whole reason to
-    // exist: one secret a dashboard can scrape every box with.
+    // /api/instance/metrics is the fleet token's purpose: one secret a
+    // dashboard can scrape every box with.
     for (const path of ["/api/version", "/api/instance/usage", "/api/instance/metrics"]) {
       const res = await middleware(req(path, "GET", "fleet-secret"));
       expect(res.status).toBe(200);
     }
-    // GET scheduler only reads schedulerHealth() — the fleet-wide poller's use case.
+    // GET scheduler only reads schedulerHealth(), the fleet-wide poller's use case.
     const schedulerGet = await middleware(req("/api/instance/scheduler", "GET", "fleet-secret"));
     expect(schedulerGet.status).toBe(200);
   });

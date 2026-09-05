@@ -1,11 +1,11 @@
 // The window and the default model a Codex turn actually gets, read off the
 // CLI's own state in ~/.codex instead of hardcoded.
 //
-// Fixture-driven on purpose. There is no models_cache.json and no auth.json on
-// the machine this was written against (`codex login status`: "Not logged in"),
-// so the absent-file branch is the one a developer exercises for real and the
-// populated ones can only be reached by writing the file. The catalog rows here
-// are the shape measured against a codex-cli 0.153.0 account catalog.
+// Fixture-driven: without a login there is no models_cache.json or
+// auth.json, so the absent-file branch is the one exercised without writing
+// anything, and the populated branches are only reachable by writing the
+// file. The catalog rows here match the shape of a codex-cli 0.153.0 account
+// catalog.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
@@ -16,8 +16,8 @@ import { codexCapabilities } from "@/lib/agents/codex/capabilities";
 import { DEFAULT_CODEX_MODEL, resolveCodexModel, estimateCostUsd } from "@/lib/agents/codex/pricing";
 
 // tests/setup.ts gives the run its own tmp dirs, but CODEX_HOME is this
-// module's own concern — point it at a scratch dir so a developer's real
-// ~/.codex can't make these pass or fail.
+// module's own concern: point it at a scratch dir so a developer's real
+// ~/.codex cannot make these pass or fail.
 let codexHome: string;
 const suiteCodexHome = process.env.CODEX_HOME;
 
@@ -57,16 +57,16 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(codexHome, { recursive: true, force: true });
-  // Restore rather than delete: tests/setup.ts pins this for the whole suite.
+  // Restore the suite's CODEX_HOME; tests/setup.ts pins this for the whole suite.
   process.env.CODEX_HOME = suiteCodexHome;
   resetCodexCatalogStateForTests();
 });
 
 describe("codex catalog: fail-soft reads", () => {
   it("falls back to the hardcoded window and model when ~/.codex has nothing in it", () => {
-    // The branch every install without a login takes, and the one this machine
-    // takes. A wrong gauge is worse than a static one, so absent means "keep
-    // the constant", never zero or undefined.
+    // The branch every install without a login takes. A wrong gauge is worse
+    // than a static one, so absent means keep the constant, never zero or
+    // undefined.
     expect(codexLocalCatalog()).toEqual({ entries: [], model: null, windowOverride: null });
     expect(codexContextWindow("gpt-5.6-sol", 272_000)).toBe(272_000);
     expect(codexDefaultModel(DEFAULT_CODEX_MODEL)).toBe(DEFAULT_CODEX_MODEL);
@@ -83,8 +83,8 @@ describe("codex catalog: fail-soft reads", () => {
   });
 
   it("falls back on a shape a future client_version might write", () => {
-    // Valid JSON, no `models` array — indistinguishable from a file we can't
-    // read, and must be treated as one.
+    // Valid JSON with no `models` array is indistinguishable from a file that
+    // cannot be read, and must be treated as one.
     writeCache([], { models: { "gpt-9": { context_window: 5 } } });
     expect(codexLocalCatalog().entries).toEqual([]);
     expect(codexContextWindow("gpt-5.6-sol", 272_000)).toBe(272_000);
@@ -99,10 +99,9 @@ describe("codex catalog: fail-soft reads", () => {
 
 describe("codex catalog: the context window", () => {
   it("reads context_window per slug, not the max_context_window ceiling", () => {
-    // The whole reason the file alone changes no number: context_window is
-    // 272000 for every 0.153.0 entry while max_context_window varies, and
-    // reporting the ceiling would over-report every task that never raised the
-    // override.
+    // context_window is 272000 for every 0.153.0 entry while max_context_window
+    // varies; reporting the ceiling would over-report every task that never
+    // raised the override.
     writeCache([
       entry("gpt-6-astra", { max_context_window: 872000, effective_context_window_percent: null }),
       entry("gpt-5.4", { max_context_window: 1000000, effective_context_window_percent: null }),
@@ -120,8 +119,8 @@ describe("codex catalog: the context window", () => {
   });
 
   it("clamps the override to the model's ceiling", () => {
-    // max_context_window is the most the account may raise it to, so an
-    // override past it is the user's number, not the turn's.
+    // max_context_window is the most the account allows; the clamp keeps a
+    // config override above it from becoming the turn's actual window.
     writeCache([entry("gpt-5.5", { max_context_window: 272000, effective_context_window_percent: null })]);
     writeConfig("model_context_window = 872000\n");
     expect(codexContextWindow("gpt-5.5", 1)).toBe(272_000);
@@ -152,10 +151,9 @@ describe("codex catalog: the context window", () => {
 
 describe("codex catalog: the default model", () => {
   it("resolves the lowest-priority listed entry — the Astra case, where the constant is wrong", () => {
-    // Measured against a 0.153.0 ACCOUNT catalog: gpt-6-astra at priority 1,
-    // gpt-5.6-sol at 6. Astra bills $10/$50 against Sol's $5/$30, so getting
-    // this wrong is a live 2x mispricing of every default turn, not a skewed
-    // gauge.
+    // In a 0.153.0 account catalog, gpt-6-astra ranks priority 1 and
+    // gpt-5.6-sol priority 6. Astra bills $10/$50 against Sol's $5/$30, so
+    // resolving the wrong one is a 2x mispricing of every default turn.
     writeCache([entry("gpt-5.6-sol", { priority: 6 }), entry("gpt-6-astra", { priority: 1 })]);
     expect(codexDefaultModel(DEFAULT_CODEX_MODEL)).toBe("gpt-6-astra");
     expect(resolveCodexModel(null)).toBe("gpt-6-astra");
@@ -165,7 +163,7 @@ describe("codex catalog: the default model", () => {
   it("prices an unknown model off the resolved default, not the constant", () => {
     writeCache([entry("gpt-6-astra", { priority: 1 })]);
     const usage = { input_tokens: 1_000_000, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 };
-    // $10/1M input on Astra's row; the old constant fallback would say Sol's $5.
+    // $10 per 1M input tokens, Astra's price row.
     expect(estimateCostUsd("gpt-unheard-of", usage)).toBeCloseTo(10, 6);
   });
 
@@ -190,9 +188,9 @@ describe("codex catalog: the default model", () => {
   });
 
   it("reads only top-level config keys, never a profile's", () => {
-    // A [profiles.x] block applies when that profile is selected, and we don't
-    // model selection. Reading one would apply somebody's occasional profile to
-    // every turn; not reading it just leaves the fallback in place.
+    // A [profiles.x] block applies only when that profile is selected, which
+    // isn't modeled here. Reading one would apply an occasional profile to
+    // every turn; skipping it leaves the fallback in place.
     writeConfig(['# a comment', 'model = "gpt-5.6-terra"', "", "[profiles.big]", 'model = "gpt-6-astra"', "model_context_window = 872000", ""].join("\n"));
     const cat = codexLocalCatalog();
     expect(cat.model).toBe("gpt-5.6-terra");
@@ -201,9 +199,8 @@ describe("codex catalog: the default model", () => {
 });
 
 describe("codex capabilities: the picker's default marker", () => {
-  // The word used to be typed into gpt-5.6-sol's `sub`, so an account whose
-  // catalog ranks something else first was told Sol was the default while every
-  // model-less turn ran the other model, at a different price.
+  // The default marker must match the catalog's actual ranking so the shown
+  // default never disagrees with which model a model-less turn runs.
   const marked = () =>
     codexCapabilities()
       .models.filter((m) => m.sub.includes("(default)"))
@@ -222,7 +219,7 @@ describe("codex capabilities: the picker's default marker", () => {
 
   it("marks nothing when the resolved default isn't a model this picker offers", () => {
     // config.toml can name anything, and a catalog can rank a model that isn't
-    // in the list. Marking a listed entry anyway is the bug this replaced.
+    // in the picker's list; nothing should be marked in that case.
     writeConfig('model = "gpt-6-astra-preview-internal"\n');
     expect(marked()).toEqual([]);
   });

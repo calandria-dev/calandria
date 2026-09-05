@@ -4,7 +4,7 @@ import { hasApiKey } from "../lib/anthropic-key";
 import { hasOpenAiKey } from "../lib/openai-key";
 
 // Issue #4: an ANTHROPIC_API_KEY inherited from the launch environment must
-// not silently bill turns while the UI reports the subscription login. The
+// not bill turns while the UI reports the subscription login. The
 // entrypoints strip inherited keys at boot; after that, status surfaces treat
 // any env key as the effective billing credential.
 

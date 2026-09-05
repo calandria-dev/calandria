@@ -47,7 +47,7 @@ export async function makeRepo(): Promise<string> {
 
 /**
  * A bare `origin` on `main`, a "colleague" clone that pushes to it, and the
- * project clone under test — the minimum shape for exercising anything that
+ * project clone under test: the minimum shape for exercising anything that
  * reads or writes a remote. Advance the remote with `pushFromColleague`, then
  * the project clone is stale exactly the way a PR merged on GitHub leaves it.
  */

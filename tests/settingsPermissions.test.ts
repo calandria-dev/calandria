@@ -1,10 +1,9 @@
-// Adding a remembered approval from Settings, which is the one place a rule can
-// be minted with no tool call in front of the user to judge. The gate itself is
-// pinned in tests/permissions.test.ts; what matters HERE is that the typed-in
-// path can't grant more than the "Always allow" button on a permission card:
-// the value stored is what the prefix policy returns rather than what was
-// typed, a prefix it refuses comes back as an error instead of a quietly
-// narrowed exact-match rule, and nothing but Bash gets a row at all.
+// Adding a remembered approval from Settings mints a rule with no permission card in
+// front of the user to judge it. The gate itself is pinned in tests/permissions.test.ts;
+// this pins that the typed-in path can't grant more than the "Always allow" button on a
+// permission card: the stored value is what the prefix policy returns, not what was
+// typed; a refused prefix comes back as an error instead of a narrowed exact-match rule;
+// and nothing but Bash gets a row at all.
 
 import { describe, expect, it } from "vitest";
 import { GET, POST } from "@/app/api/settings/permissions/route";
@@ -32,9 +31,9 @@ describe("adding a remembered approval by hand", () => {
   it("refuses a prefix the card would refuse — with an error, not an exact rule nobody asked for", async () => {
     const p = project("Refused");
 
-    // Every shape bashPrefixOf() declines. The failure this pins is the quiet
-    // one: storing `bash_exact: "sudo npm test"` for someone who asked to allow
-    // sudo and its arguments would look like it worked and cover nothing.
+    // Each of these is a shape bashPrefixOf() declines. This pins that the refusal
+    // surfaces as an error instead of storing `bash_exact: "sudo npm test"` for
+    // someone who asked to allow sudo and its arguments, which would cover nothing.
     for (const command of [
       "sudo npm test",
       "env npm test",
@@ -67,7 +66,7 @@ describe("adding a remembered approval by hand", () => {
 
     expect(res.status).toBe(200);
     expect((await bodyOf(res)).rule).toMatchObject({ match_kind: "bash_exact", value: "rm -rf build && npm test" });
-    // And it covers exactly that line — the narrow grant the user chose.
+    // It covers exactly that line, the narrow grant the user chose.
     const rules = listPermissionRules(p.id);
     expect(allowedByRules(rules, "Bash", { command: "rm -rf build && npm test" })).toBe(true);
     expect(allowedByRules(rules, "Bash", { command: "rm -rf build && npm test --watch" })).toBe(false);

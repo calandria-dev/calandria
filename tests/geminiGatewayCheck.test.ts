@@ -2,14 +2,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { startFakeGateway, type FakeGateway } from "./fakeGateway";
 import { clearGatewayModelCache } from "@/lib/gatewayModels";
 
-// What the gateway health card checks for Antigravity (docs/design/litellm.md,
+// What the gateway health card checks for Antigravity (docs/AGENTS.md,
 // "Antigravity driver"): `agy models` diffed against the gateway's own
 // /model/info catalog, so a model the CLI needs (the flash-lite side call
 // included) but the gateway doesn't serve shows up before a task hits the
 // opaque "Agent execution terminated due to error" failure. `agyModelSlugs`
-// is mocked rather than spawning a real CLI — it's a thin wrapper over
+// is mocked instead of spawning a real CLI; it is a thin wrapper over
 // `agy models`, already covered by tests/geminiDriver.test.ts's argv/parsing
-// coverage — so this exercises the diff logic and the null-propagation rules
+// coverage. This exercises the diff logic and the null-propagation rules
 // against a real (fake) gateway server.
 
 const agyModelSlugsMock = vi.hoisted(() => vi.fn());

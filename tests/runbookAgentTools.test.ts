@@ -28,7 +28,7 @@ describe("runbook agent tools", () => {
     const ok = createRunbookForAgent(here, { name: "S", description: "", prompt: "/s", project: other.name }, "claude");
     expect(ok.runbook!.project_id).toBe(other.id);
 
-    // Strict in both directions — never a silent fallback to the caller's project.
+    // Strict in both directions: no fallback to the caller's project.
     const bad = createRunbookForAgent(here, { name: "S", description: "", prompt: "/s", project: "nope" }, "claude");
     expect(bad.runbook).toBeNull();
     expect(bad.text).toContain("No project matches");
@@ -63,8 +63,7 @@ describe("runbook agent tools", () => {
     expect(text).toContain("A");
   });
 
-  // The whole point of the screen: a model must not silently change what runs
-  // unattended at 08:30.
+  // A model must not change what runs unattended at 08:30 with no warning.
   it("REFUSES to update a runbook a schedule fires, and names the schedule", () => {
     const rb = createRunbook({ project_id: here.id, name: "A", prompt: "/a" });
     const s = createSchedule({
@@ -91,7 +90,7 @@ describe("runbook agent tools", () => {
   });
 
   // bypassPermissions (the never-asks mode) skips every permission card, and the ⌘K
-  // palette dispatches a runbook with no preview — so this is the one field an
+  // palette dispatches a runbook with no preview, so this is the one field an
   // agent (steered by injected instructions in anything it read) must never be
   // able to write. Only a human, from the UI, may set it.
   it("refuses to create with permission_mode bypassPermissions, and creates nothing", () => {
@@ -144,7 +143,7 @@ describe("runbook agent tools", () => {
 
   // The schema only types permission_mode optional(), so a model meaning
   // "leave the default" has no way to say so besides omitting the key or
-  // sending "" — that has to read as inherit, not as a refused unknown mode.
+  // sending "". Both must read as inherit, instead of a refused unknown mode.
   it("treats an empty or whitespace permission_mode as omitted (inherit) on create", () => {
     const empty = createRunbookForAgent(here, { name: "S1", description: "", prompt: "/s", permission_mode: "" }, "claude");
     expect(empty.runbook).not.toBeNull();

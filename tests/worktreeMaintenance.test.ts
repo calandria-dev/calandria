@@ -28,12 +28,12 @@ const post = (body: object) =>
     body: JSON.stringify(body),
   }));
 
-// The sweep is the one caller with no Task in hand, so it resolves the base in
-// SQL (listReclaimableWorktrees). The chain has three legs and this asserts the
-// PRECEDENCE among them through the route: worktreePruneSafety names the branch
-// it judged "unmerged" against, so the reason string is the resolved base said
-// out loud. Getting it wrong means the Storage sweep offers to delete a worktree
-// whose work is unmerged, or refuses one whose work has landed.
+// The sweep has no Task in hand, so it resolves the base in SQL
+// (listReclaimableWorktrees). This pins the precedence of the three legs
+// through the route: worktreePruneSafety names the branch it judged
+// "unmerged" against, so the reason string states the resolved base. A wrong
+// precedence would offer to delete a worktree whose work is unmerged, or
+// refuse one whose work has landed.
 describe("the reclaim sweep resolves each task's base: its own, then its tag's, then the project's", () => {
   it("picks the task's base over the tag's over the project's", async () => {
     const repo = await makeRepo();

@@ -1,22 +1,16 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 
-// The fire-time slash-command probe, executed FOR REAL.
+// The fire-time slash-command probe, executed for real: the SDK is mocked at
+// its module boundary (the real commands.ts, the real composer probe
+// underneath it, the real scheduler), scripted to answer normally, fail, and
+// never answer at all.
 //
-// tests/scheduler.test.ts and tests/scheduleApi.test.ts both mock
-// @/lib/schedule/commands wholesale, so until this file existed the probe —
-// which spawns the agent CLI from inside the ticker's single-flight sweep — had
-// never actually run in a test. What it hides when it misbehaves is the worst
-// failure this feature has: tickSchedules() is single-flight, so one probe that
-// never returns leaves `ticking` true forever and EVERY schedule on the instance
-// stops firing, with nothing thrown, nothing logged, and nothing in the run
-// ledger to say why.
-//
-// So the SDK is mocked at its module boundary (the real commands.ts, the real
-// composer probe underneath it, the real scheduler) and scripted to do the
-// things that matter: answer normally, fail, and never answer at all.
+// tickSchedules() is single-flight, so a probe that never returns leaves
+// `ticking` true forever and every schedule on the instance stops firing, with
+// nothing thrown, nothing logged, and nothing in the run ledger to say why.
 
 // Read at import time by lib/config, so it has to be set before the static
-// imports below are evaluated — vi.hoisted is the only thing that runs earlier.
+// imports below are evaluated. vi.hoisted is the only thing that runs earlier.
 vi.hoisted(() => {
   process.env.CALANDRIA_SCHEDULE_PROBE_MS = "150";
 });
@@ -56,7 +50,7 @@ const scriptRegistry = (...rounds: Cmd[][]) => {
   }
 };
 
-/** A session that can't be enumerated at all — no CLI, dead login, bad spawn. */
+/** A session that can't be enumerated at all: no CLI, dead login, bad spawn. */
 const scriptFailure = () =>
   queryMock.mockImplementation(() => ({
     supportedCommands: async () => { throw new Error("no CLI on PATH"); },
@@ -64,9 +58,9 @@ const scriptFailure = () =>
   }));
 
 /**
- * A session that opens and then never answers — the wedge case. Modeled as the
- * SDK honoring its abort signal, which is what the real one does; the point of
- * the test is that the caller doesn't WAIT for that to happen.
+ * A session that opens and then never answers: the wedge case. Modeled as the
+ * SDK honoring its abort signal, which is what the real one does. The caller
+ * must not wait for that to happen.
  */
 const scriptStall = () =>
   queryMock.mockImplementation((args: { options: { abortController: AbortController } }) => ({
@@ -78,7 +72,7 @@ const scriptStall = () =>
   }));
 
 // The probe caches per cwd, so tests that script different answers must not
-// share one. (The cache itself is asserted on deliberately, further down.)
+// share one. (The cache itself is asserted on further down.)
 const project = (): Project => ({ id: `p-${uid()}`, name: "Probe", repo_path: `/tmp/probe-${uid()}` }) as Project;
 
 const optionsOf = (n: number) =>
@@ -115,7 +109,7 @@ describe("the fire-time command probe", () => {
 
   it("counts an alias as a registration", async () => {
     // The CLI resolves /writing-plans to superpowers:writing-plans, so refusing
-    // it would fail a working job every morning. Aliases only reach us at all
+    // it would fail a working job every morning. Aliases are visible here only
     // because the shared probe carries them; the init message never did.
     scriptRegistry([{ name: "superpowers:writing-plans", aliases: ["writing-plans"] }]);
     expect(await validatePrompt("/writing-plans", project(), "claude")).toEqual({ ok: true });
@@ -130,30 +124,30 @@ describe("the fire-time command probe", () => {
   it("reads a failed probe as 'couldn't check', never as 'no such command'", async () => {
     // The contract that makes sharing the composer's probe safe. Its menu
     // degrades to an empty list on a dead login, and an empty list here would
-    // mean every scheduled command is unknown — settling the run `failed` and
-    // minting nothing, every morning, for a command that exists.
+    // mean every scheduled command is unknown, settling the run `failed` and
+    // minting nothing every morning for a command that exists.
     scriptFailure();
     expect(await listSlashCommands(project(), "claude")).toBeNull();
     expect(await validatePrompt("/jira-tasks", project(), "claude")).toEqual({ ok: true, unchecked: true });
   });
 
   it("treats an MCP prompt the probe cannot see as unchecked, not unknown", async () => {
-    // Measured on CLI 2.1.228: /mcp__<server>__<prompt> names appear only on a
-    // session's init message, never in supportedCommands() — not a timing
-    // artifact (re-asked at 3s/8s/15s) and not strictMcpConfig (identical with
-    // and without). A scheduled turn inherits the user's MCP servers and would
-    // expand them, so absence here proves nothing and must not refuse.
+    // /mcp__<server>__<prompt> names appear only on a session's init message,
+    // never in supportedCommands(); it is not a timing artifact (re-asked at
+    // 3s/8s/15s) and not strictMcpConfig (identical with and without). A
+    // scheduled turn inherits the user's MCP servers and would expand them, so
+    // absence here proves nothing and must not refuse.
     scriptRegistry([{ name: "jira-tasks" }]);
     const check = await validatePrompt("/mcp__aura__daily-review", project(), "claude");
     expect(check).toMatchObject({ ok: true, unchecked: true });
     expect(check.note).toContain("MCP prompt");
-    // And it doesn't pay a second spawn to confirm what it can't see anyway.
+    // It also avoids a second spawn to confirm what it can't see anyway.
     expect(queryMock).toHaveBeenCalledTimes(1);
   });
 
   it("confirms an absence against a fresh read before refusing on it", async () => {
     // The registry is cached for a minute. A command installed inside that
-    // minute would otherwise be refused for existing too recently — at fire
+    // minute would otherwise be refused for existing too recently; at fire
     // time that's a `failed` run and no task.
     const p = project();
     scriptRegistry([{ name: "jira-tasks" }], [{ name: "jira-tasks" }, { name: "just-installed" }]);
@@ -180,9 +174,9 @@ describe("the fire-time command probe", () => {
       scriptStall();
       const listPending = listSlashCommands(project(), "claude", 100);
       await vi.advanceTimersByTimeAsync(100);
-      // `null` is "couldn't check", which validatePrompt degrades to `unchecked` —
-      // best-effort by design: a probe we can't complete must not block the
-      // morning's work either way.
+      // `null` is "couldn't check", which validatePrompt degrades to
+      // `unchecked`: a probe that can't complete must not block the morning's
+      // work either way.
       expect(await listPending).toBeNull();
 
       const validatePending = validatePrompt("/anything", project(), "claude", 100);
@@ -194,10 +188,10 @@ describe("the fire-time command probe", () => {
   });
 
   it("bounds the sweep on its own clock and leaves the child to the probe's", async () => {
-    // The two deadlines COMPOSE. This caller's is what frees the sweep; the
-    // probe's own is what kills the process — and it is deliberately not this
-    // caller's, because several schedules share one in-flight probe and one
-    // impatient caller must not tear it down for the rest.
+    // The two deadlines compose. This caller's deadline frees the sweep; the
+    // probe's own deadline kills the process, and the two are separate because
+    // several schedules share one in-flight probe, so one impatient caller must
+    // not tear it down for the rest.
     vi.useFakeTimers();
     try {
       scriptStall();
@@ -214,9 +208,9 @@ describe("the fire-time command probe", () => {
   });
 
   it("a stalled probe cannot wedge the sweep — the next tick still fires", async () => {
-    // The actual harm, end to end. Before the timeout, the read below never
-    // returned, so tickSchedules() never cleared `ticking` and every schedule on
-    // the instance was silently dead until the process restarted.
+    // End to end: if the read below never returns, tickSchedules() never
+    // clears `ticking` and every schedule on the instance stops firing until
+    // the process restarts.
     const p = await projectWithRepo();
     const stalls = createSchedule({
       project_id: p.id, name: "stalls", prompt: "/needs-a-registry",
@@ -226,8 +220,8 @@ describe("the fire-time command probe", () => {
     scriptStall();
 
     // The probe's own giveUp fires at SCHEDULE_PROBE_MS (150ms, set via env at
-    // the top of this file) — advance the fake clock past it instead of
-    // trusting a real wall-clock bound to prove the sweep didn't hang.
+    // the top of this file). Advance the fake clock past it instead of trusting
+    // a real wall-clock bound to prove the sweep didn't hang.
     vi.useFakeTimers();
     try {
       const pending = tickSchedules(Date.now());
@@ -236,8 +230,8 @@ describe("the fire-time command probe", () => {
     } finally {
       vi.useRealTimers();
     }
-    // Unchecked, not failed: we could not reach the registry, so the run went
-    // ahead rather than being refused on a probe that never answered.
+    // Unchecked, not failed: the registry could not be reached, so the run
+    // went ahead instead of being refused for a probe that never answered.
     expect(lastRun(stalls.id)!.status).toBe("running");
     expect(listTasks(p.id).filter((t) => t.schedule_id === stalls.id)).toHaveLength(1);
 

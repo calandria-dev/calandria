@@ -1,10 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// Regression coverage for the manual-start dependency gate: POST /messages
-// used to be the one launcher that never checked blockers (the deferred-start
-// sweep and the auto-start dependent sweep both did), so a stale tab, a
-// second tab, or a scripted call could start a task whose blockers were still
-// open. The route now runs the same `blocks()` predicate, first-turn only.
+// Pins the manual-start dependency gate: POST /messages runs the same
+// `blocks()` predicate as the deferred-start and auto-start sweeps, and only
+// on the first turn.
 // Same scripted-driver seam as tests/turnRace.test.ts and tests/taskLock.test.ts.
 const { runTurnMock } = vi.hoisted(() => ({ runTurnMock: vi.fn() }));
 
@@ -29,7 +27,7 @@ function post(taskId: string, text?: string) {
 }
 
 // A plain (non-git) working dir keeps ensureWorktree's git side out of these
-// tests (same trick as tests/deferredStart.test.ts / tests/turnRace.test.ts).
+// tests (same approach as tests/deferredStart.test.ts / tests/turnRace.test.ts).
 const makeProject = () => createProject({ name: "BlockedStart", repo_path: tmpDir("blocked-") });
 
 beforeEach(() => {
@@ -70,9 +68,8 @@ describe("POST /messages — blocked-by gate on manual start", () => {
 
     const res = await post(task.id, "");
     expect(res.status).toBe(409);
-    // The claim taken at the top of the route (before the lock body runs the
-    // dependency check) must be freed by the finally, or every later POST
-    // queues into the void instead of ever launching.
+    // The claim taken at the top of the route, before the dependency check
+    // runs, is freed by the finally so a later POST can still launch.
     expect(hasTurn(task.id)).toBe(false);
   });
 

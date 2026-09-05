@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-// The driver contract test: feed a SCRIPTED fake driver through lib/runner.ts
-// and assert the persistence + publish behavior downstream of the seam is
-// unchanged — the runner must treat any driver that speaks the StreamEvent
-// contract identically to the Claude driver. The fake replaces the Claude
-// driver module, so the registry's getDriver("claude") resolution is exercised
-// for real; only the SDK-driving module is swapped out.
+// Pins the driver contract: a scripted fake driver run through lib/runner.ts
+// must produce the same persistence and publish behavior as any real driver.
+// The fake replaces the Claude driver module, so the registry's
+// getDriver("claude") resolution runs for real; only the SDK-driving module
+// is swapped out.
 const { runTurnMock } = vi.hoisted(() => ({ runTurnMock: vi.fn() }));
 
 vi.mock("@/lib/agents/claude/driver", () => ({
@@ -17,12 +16,12 @@ vi.mock("@/lib/agents/claude/driver", () => ({
   },
 }));
 
-// The Codex CLI is mocked at the SDK boundary (@openai/codex-sdk) rather than at
-// the driver module: the REAL lib/agents/codex/driver.ts runs — startThread,
-// prompt seeding, and lib/agents/codex/events.ts normalization — while the
-// spawned `codex` process is replaced by a fake thread that replays recorded
-// JSONL ThreadEvents. That pins BOTH drivers to the same StreamEvent → runner
-// contract from opposite ends of the seam.
+// The Codex CLI is mocked at the SDK boundary (@openai/codex-sdk). The real
+// lib/agents/codex/driver.ts runs: startThread, prompt seeding, and
+// lib/agents/codex/events.ts normalization. The spawned `codex` process is
+// replaced by a fake thread that replays recorded JSONL ThreadEvents. This
+// pins both drivers to the same StreamEvent-to-runner contract from opposite
+// ends of the seam.
 const { codexRun } = vi.hoisted(() => ({ codexRun: { events: [] as unknown[] } }));
 
 vi.mock("@openai/codex-sdk", () => {
@@ -141,10 +140,10 @@ describe("agent registry", () => {
 
 describe("driver contract through the runner", () => {
   it("any launched turn consumes a queued start (tasks.start_at) and announces the edit", async () => {
-    // "Start at the usage-window reset" (lib/deferredStart.ts) is one deadline
-    // on the row; a turn is what it was waiting for, so a turn the user sends
-    // BEFORE the reset must clear it — or the sweep would resume the session
-    // again when the reset passed, with a "continue" it didn't need.
+    // tasks.start_at (lib/deferredStart.ts) is the usage-window-reset deadline
+    // a turn is waiting for. A turn the user sends before the reset must
+    // clear the deadline, or the sweep resumes the session again once the
+    // reset passes with a continue it does not need.
     const project = createProject({ name: "Queued" });
     const task = createTask({ project_id: project.id, title: "T", description: "" });
     updateTask(task.id, { start_at: Date.now() + 3_600_000 });
@@ -211,13 +210,13 @@ describe("driver contract through the runner", () => {
 
     // Usage persisted from the usage event.
     expect(getTaskUsage(task.id)).toMatchObject({ cost_usd: 0.5, total_tokens: 100, turns: 1 });
-    // Occupancy persisted from the context event — measured, so it beats the
+    // Occupancy persisted from the context event: measured, so it beats the
     // usage-derived estimate (which would have read 80 here).
     expect(after.context_measured).toBe(95);
     expect(getTaskContext(task.id)).toMatchObject({ context_tokens: 95, context_estimated: false });
 
     // Transcript: user echo, assistant text, the tool call merged with its
-    // result, the answered ask, and the notice — all persisted rows.
+    // result, the answered ask, and the notice, all persisted rows.
     const msgs = listMessages(task.id);
     expect(msgs.map((m) => m.role)).toEqual(["user", "assistant", "tool", "tool", "system"]);
     expect(msgs[0].content).toBe("go");
@@ -293,9 +292,9 @@ describe("driver contract through the runner", () => {
     ]);
 
     // The global /api/events route builds each payload by re-reading the task
-    // row when an event lands on the wildcard channel — so the runner MUST
+    // row when an event lands on the wildcard channel, so the runner must
     // persist before it publishes. Snapshot the row inside the listener, at
-    // exactly the moment the route would read it.
+    // the moment the route would read it.
     const seen: { taskId: string; type: string; running: number; awaiting: number }[] = [];
     let resolve!: () => void;
     const done = new Promise<void>((r) => (resolve = r));
@@ -315,22 +314,21 @@ describe("driver contract through the runner", () => {
     expect(at("ask")).toMatchObject({ running: 1, awaiting: 1 });
     // …and cleared the moment the last ask is answered.
     expect(at("ask_answered")).toMatchObject({ running: 1, awaiting: 0 });
-    // Turn over: the row settled (running off, awaiting the user) BEFORE turn_end.
+    // Turn over: the row settled (running off, awaiting the user) before turn_end.
     expect(at("turn_end")).toMatchObject({ running: 0, awaiting: 1 });
   });
 });
 
 describe("the launcher's TurnHooks reach the driver", () => {
-  // The driver's tool callbacks can only fire the auto-start sweep because the
-  // LAUNCHER hands it down (lib/agents/types.ts's TurnHooks) — the driver must
-  // not import lib/autoStart.ts, which is what closed the cycle that broke
-  // every auto-start in production. That makes this plumbing load-bearing and
-  // silent when it breaks: a dropped `hooks` argument runs the turn perfectly
-  // and just never starts anything waiting on what the agent marked done.
+  // The driver's tool callbacks can fire the auto-start sweep only because the
+  // launcher hands it down (lib/agents/types.ts's TurnHooks); the driver must
+  // not import lib/autoStart.ts directly. A dropped `hooks` argument runs the
+  // turn normally and never starts anything waiting on what the agent marked
+  // done.
   it("passes them to the first turn AND to a drained follow-up", async () => {
     const project = createProject({ name: "Hooks" });
     const task = createTask({ project_id: project.id, title: "T", description: "" });
-    // Parked before the turn starts, so run()'s finally drains it as turn two —
+    // Parked before the turn starts, so run()'s finally drains it as turn two,
     // the re-entry that has no caller left to re-supply the hooks.
     addPendingMessage(task.id, task.generation, "follow-up");
 
@@ -361,7 +359,8 @@ describe("queue drain re-reads the project (no stale snapshot)", () => {
     const projectsSeen: { context: string; branch: string }[] = [];
     runTurnMock.mockImplementation(async function* (_task: unknown, proj: { context: string; branch: string }) {
       projectsSeen.push({ context: proj.context, branch: proj.branch });
-      // Mid-first-turn, the project's base branch + context change under us.
+      // The project's base branch and context change mid-turn, before the
+      // first turn finishes.
       if (projectsSeen.length === 1) {
         updateProject(project.id, { branch: "release", context: "new context" });
       }
@@ -369,9 +368,9 @@ describe("queue drain re-reads the project (no stale snapshot)", () => {
       yield { type: "done", sessionId: `s-${projectsSeen.length}` } as StreamEvent;
     });
 
-    // collectEvents resolves on the FIRST turn_end it sees. The first turn hands
+    // collectEvents resolves on the first turn_end it sees. The first turn hands
     // off to the drained follow-up (running stays on, no turn_end), so this
-    // resolves only once the SECOND turn ends.
+    // resolves only once the second turn ends.
     const { done } = collectEvents(task.id);
     await startResumeTurn(task, project, "go");
     await done;
@@ -415,7 +414,7 @@ describe("codex driver contract through the runner", () => {
     const project = createProject({ name: "CodexContract" });
     updateProject(project.id, { default_agent: "codex" });
     const task = createTask({ project_id: project.id, title: "T", description: "" });
-    // The task runs the real codex driver — not the fallback.
+    // The task runs the real codex driver, not the fallback.
     expect(task.agent).toBe("codex");
     expect(getDriver(task.agent).id).toBe("codex");
 
@@ -442,13 +441,13 @@ describe("codex driver contract through the runner", () => {
     expect(sessions[0].claude_session_id).toBe("019f3ecf-fed2-7ba3-b46e-dc6097412033");
     expect(sessions[0].ended_at).not.toBeNull();
 
-    // Token usage persisted from turn.completed, with cost_usd ESTIMATED from
+    // Token usage persisted from turn.completed, with cost_usd estimated from
     // the fixture's token counts at the default model's published API prices
-    // (8764 fresh×$5.00 + 30848 cached×$0.50 + 119×$30, per 1M) — this is what
+    // (8764 fresh×$5.00 + 30848 cached×$0.50 + 119×$30, per 1M). This
     // populates the task cost chip and Insights for Codex tasks.
     const taskUsage = getTaskUsage(task.id)!;
     expect(taskUsage).toMatchObject({ turns: 1 });
-    // The fixture's 39612 input_tokens INCLUDE its 30848 cached reads; the
+    // The fixture's 39612 input_tokens include its 30848 cached reads; the
     // buckets are disjoint here, so the prompt is counted once (8764 + 30848).
     expect(taskUsage.total_tokens).toBe(8764 + 30848 + 119);
     expect(taskUsage.cost_usd).toBeCloseTo(0.062814, 6);
@@ -458,7 +457,7 @@ describe("codex driver contract through the runner", () => {
     expect(after.resolved_model).toBe(DEFAULT_CODEX_MODEL);
 
     // Transcript: user echo, the two agent messages, and the command tool call
-    // merged with its result — all persisted rows, agent-agnostic.
+    // merged with its result, all persisted rows, agent-agnostic.
     const msgs = listMessages(task.id);
     expect(msgs[0].content).toBe("go");
     expect(msgs.some((m) => m.role === "assistant" && m.content.includes("echo hi"))).toBe(true);
@@ -470,8 +469,8 @@ describe("codex driver contract through the runner", () => {
     // Publish contract closes with done + turn_end, same as the Claude path.
     expect(events.map((e) => e.type).slice(-2)).toEqual(["done", "turn_end"]);
     expect(events.some((e) => e.type === "session")).toBe(true);
-    // …including the usage event, published live so the cost chip updates the
-    // moment the turn ends rather than on the next page load.
+    // The usage event is published live, so the cost chip updates the moment
+    // the turn ends instead of on the next page load.
     const live = events.find((e) => e.type === "usage") as { usage?: { cost_usd: number } } | undefined;
     expect(live?.usage?.cost_usd).toBeCloseTo(0.062814, 6);
   });
@@ -488,7 +487,7 @@ describe("codex driver contract through the runner", () => {
     await first.done;
     const afterFirst = getTaskUsage(task.id)!;
 
-    // Turn 2 resumes the same thread, so codex re-reports the thread's TOTALS
+    // Turn 2 resumes the same thread, so codex re-reports the thread's totals
     // (turn 1's numbers plus this turn's 1000 fresh / 200 cached / 50 output).
     // Only that growth may be added to the task's spend.
     codexRun.events = [
@@ -506,7 +505,7 @@ describe("codex driver contract through the runner", () => {
 
     const afterSecond = getTaskUsage(task.id)!;
     expect(afterSecond.turns).toBe(2);
-    // 1000 fresh + 200 cached + 50 output — not another 39612/30848/119.
+    // 1000 fresh + 200 cached + 50 output, not another 39612/30848/119.
     expect(afterSecond.total_tokens - afterFirst.total_tokens).toBe(1_250);
     const secondUsage = second.events.find((e) => e.type === "usage") as { usage?: { input_tokens: number; cache_read_tokens: number; output_tokens: number } } | undefined;
     expect(secondUsage?.usage).toMatchObject({ input_tokens: 1_000, cache_read_tokens: 200, output_tokens: 50 });
@@ -514,14 +513,13 @@ describe("codex driver contract through the runner", () => {
 });
 
 // A turn against a provider override (lib/agentEnv.ts) is not the vendor's
-// spend, whatever the driver reports as cost — but "not vendor spend" is two
-// different facts and the ledger has to keep them apart. A LOCAL model server
-// bills nothing, so 0 is a measurement. A CUSTOM base URL may be OpenRouter or
-// a Bedrock proxy, so its price is UNKNOWN and the row is NULL, which every
-// total leaves out rather than folding in as a fake zero. Both are tagged with
-// the endpoint's host, both keep their tokens (an unpriced turn still filled a
-// context window), and the published usage event agrees with the row so the
-// live chip and Insights can't disagree.
+// spend, whatever the driver reports as cost. That covers two different
+// facts the ledger keeps apart. A local model server bills nothing, so 0 is
+// a measurement. A custom base URL may be OpenRouter or a Bedrock proxy, so
+// its price is unknown and the row is NULL instead of a fake zero. Both are
+// tagged with the endpoint's host, both keep their tokens (an unpriced turn
+// still filled a context window), and the published usage event agrees with
+// the row so the live chip and Insights stay consistent.
 describe("provider override usage accounting", () => {
   it("records a measured zero and tags the row with the endpoint for a local-model project", async () => {
     const project = createProject({ name: "Local" });
@@ -541,16 +539,15 @@ describe("provider override usage accounting", () => {
     expect(usageEv.usage.input_tokens).toBe(10);
     const { getDb } = await import("@/lib/db");
     const row = getDb().prepare("SELECT provider, cost_usd FROM task_usage WHERE task_id = ?").get(task.id) as { provider: string; cost_usd: number | null };
-    // 0, not NULL: a model served off this machine really is free, and saying
-    // so is a claim we can stand behind.
+    // 0, not NULL: a model served on this machine is actually free.
     expect(row).toEqual({ provider: "localhost:11434", cost_usd: 0 });
     expect(getTaskUsage(task.id).unpriced_turns).toBe(0);
   });
 
-  // The regression this whole distinction exists for: the "Custom base URL"
-  // preset pointed at a paid third party used to be billed at $0 alongside
-  // Ollama, so Insights, the running total and the live chip all under-reported
-  // real money with nothing on screen admitting the number was a placeholder.
+  // A "Custom base URL" preset pointing at a paid third party must not be
+  // billed at $0 like a local model: that would under-report real money in
+  // Insights, the running total and the live chip with no on-screen signal
+  // that the number is a placeholder.
   it("records a custom endpoint's cost as unknown rather than zero", async () => {
     const project = createProject({ name: "Custom" });
     updateProject(project.id, { agent_env: JSON.stringify({ ANTHROPIC_BASE_URL: "https://openrouter.ai/api", ANTHROPIC_MODEL: "some/model" }) });
@@ -568,11 +565,11 @@ describe("provider override usage accounting", () => {
     // NULL, not 0 and not the driver's 0.5: the driver priced a model id it was
     // merely told, against a catalog this endpoint doesn't bill from.
     expect(row).toEqual({ provider: "openrouter.ai", cost_usd: null });
-    // The total leaves it out and says how many turns it left out, so the
-    // dollar figure the UI renders is a floor it can mark rather than a lie.
+    // The total leaves it out and reports how many turns it left out, so the
+    // dollar figure the UI renders is a marked floor instead of a lie.
     const totals = getTaskUsage(task.id);
     expect(totals).toMatchObject({ cost_usd: 0, total_tokens: 100, turns: 1, unpriced_turns: 1 });
-    // Tokens survive intact; the wire carries 0 (the client ADDS it to the
+    // Tokens survive intact; the wire carries 0 (the client adds it to the
     // running total) plus the flag that stops that 0 reading as "free".
     const usageEv = events.find((e) => e.type === "usage") as Extract<TaskStreamEvent, { type: "usage" }>;
     expect(usageEv.usage.cost_usd).toBe(0);
@@ -598,10 +595,10 @@ describe("provider override usage accounting", () => {
   });
 });
 
-// The gateway is the one override kind that gets a REAL computed figure
-// instead of a measured zero or an unpriced NULL (docs/design/litellm.md,
-// "Model catalog, context windows and prices"): lib/gatewayPricing.ts prices
-// the turn's own token counts against the resolved model's rate from the last
+// The gateway is the one override kind that gets a real computed figure
+// instead of a measured zero or an unpriced NULL (docs/AGENTS.md, "Model
+// catalog, context windows and prices"): lib/gatewayPricing.ts prices the
+// turn's own token counts against the resolved model's rate from the last
 // catalog probe.
 describe("gateway provider usage accounting", () => {
   let gw: FakeGateway;
@@ -634,8 +631,8 @@ describe("gateway provider usage accounting", () => {
         { type: "session", sessionId: "gw-1" },
         { type: "model", model: "claude-sonnet-4-5" },
         // The driver's own cost_usd (Claude Code prices per api.anthropic.com's
-        // list price, invisible to a gateway redirect) must NOT be what lands —
-        // the gateway's own rate does instead.
+        // list price, invisible to a gateway redirect) must not be what lands.
+        // The gateway's own rate does instead.
         { type: "usage", usage: { cost_usd: 999, input_tokens: 1000, output_tokens: 500, cache_read_tokens: 0, cache_creation_tokens: 0 } },
         { type: "done", sessionId: "gw-1" },
       ]);

@@ -1,13 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// Regression: pressing "Start fresh context" (/clear) while a turn is still
-// streaming must actually clear the session lineage. The old bug had /clear bump
-// the generation + null the session while the live turn kept running, then the
-// runner's finally wrote the OLD session id back — resurrecting the session
-// /clear had just nulled, so the next send resumed stale context. These tests
-// drive a SCRIPTED fake driver through the real runner (the same seam the
-// contract test uses) so we can park a turn mid-stream, fire /clear, then let the
-// old turn's finally run and assert it can't resurrect anything.
+// Pressing "Start fresh context" (/clear) while a turn is still streaming must
+// clear the session lineage: the generation advances and the session is
+// nulled, and the still-running turn's own finally block must not write the
+// old session id back afterward. These tests drive a scripted fake driver
+// through the real runner, the same seam the contract test uses, to park a
+// turn mid-stream, fire /clear, then let the old turn's finally run and assert
+// it cannot resurrect anything.
 const { runTurnMock, summarizeMock } = vi.hoisted(() => ({ runTurnMock: vi.fn(), summarizeMock: vi.fn() }));
 
 vi.mock("@/lib/agents/claude/driver", () => ({
@@ -60,8 +59,8 @@ describe("/clear during a live turn", () => {
     const project = createProject({ name: "ClearMid" });
     const task = createTask({ project_id: project.id, title: "T", description: "" });
 
-    // A turn that opens a session, does a little work, then parks mid-stream on a
-    // gate we control — standing in for a turn still streaming when /clear fires.
+    // A turn that opens a session, does some work, then parks mid-stream on a
+    // controlled gate, standing in for a turn still streaming when /clear fires.
     const opened = deferred();
     const gate = deferred();
     runTurnMock.mockImplementation(async function* () {
@@ -90,7 +89,7 @@ describe("/clear during a live turn", () => {
     expect(t.session_id).toBeNull();
     expect(t.started).toBe(0);
 
-    // Now let the OLD turn run to completion — its finally must NOT write the old
+    // Now let the old turn run to completion; its finally must not write the old
     // session id back or re-arm running/awaiting_input against the new generation.
     gate.resolve();
     await ended;
@@ -153,7 +152,7 @@ describe("/clear during a live turn", () => {
     await ended;
     expect(getTask(task.id)!.session_id).toBe("s1");
 
-    // Clear it (no live turn now — the normal post-turn /clear).
+    // Clear it (no live turn now; this is the normal post-turn /clear).
     const res = await clear(task.id);
     expect((await res.json()).generation).toBe(2);
     expect(getTask(task.id)!.session_id).toBeNull();
@@ -173,9 +172,9 @@ describe("/clear during a live turn", () => {
 
     expect(seenTask?.session_id).toBeNull(); // fresh session, not a resume of s1
 
-    // The prior-session summary is carried into the new context exactly once —
-    // not doubled (the old bug injected it via both the resumed session and the
-    // rebuilt project context).
+    // The prior-session summary must appear in the new context exactly once,
+    // since it can be injected via both the resumed session and the rebuilt
+    // project context.
     const ctx = buildProjectContext(getProject(project.id)!, getTask(task.id)!);
     expect(ctx.split("HANDOFF SUMMARY").length - 1).toBe(1);
   });

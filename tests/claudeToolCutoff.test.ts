@@ -1,29 +1,28 @@
-// A Calandria tool call the Claude CLI answers ITSELF ("The tool call was
+// A Calandria tool call the Claude CLI answers itself ("The tool call was
 // interrupted before a result was received"): the call never reached
 // lib/agentToolGuard.mjs, so the driver's stream pump is the only place that
-// can see it. Measured 2026-08-20..2026-09-03 (CLI 2.1.257): 1 of 363 such
-// calls failed in a task's first session, 31 of 123 in resumed ones, and once
-// one fails the rest of that session's Calandria calls fail while Bash, Read
-// and Edit keep working. This pins what the driver does about it:
+// can see it. Once one fails, the rest of that session's Calandria calls fail
+// while Bash, Read and Edit keep working. This pins what the driver does
+// about it:
 //
 //   - the persisted result is rewritten to say whose sentence it is
-//     (toolInterruptedMessage) and the event carries `cutOff: true`, which the
-//     runner counts onto the `turn ok` line as `tool_cutoffs`;
-//   - the user is told ONCE per turn, as a transcript notice, that /clear
-//     starts the fresh session measured to work;
-//   - only Calandria's own tools are claimed — a Bash result carrying the same
-//     sentence is the CLI's business, not ours;
+//     (toolInterruptedMessage), and the event carries `cutOff: true`, which
+//     the runner counts onto the `turn ok` line as `tool_cutoffs`;
+//   - the user is told once per turn, as a transcript notice, that /clear
+//     starts a fresh session;
+//   - only Calandria's own tools are claimed; a Bash result carrying the same
+//     sentence is the CLI's own business;
 //   - the CLI's stderr is captured with the task on it, and with
-//     CALANDRIA_CLAUDE_DEBUG_DIR set the CLI writes a per-turn debug log there,
-//     the one record of what it did with a call Calandria never received.
+//     CALANDRIA_CLAUDE_DEBUG_DIR set the CLI writes a per-turn debug log,
+//     recording what it did with a call Calandria never received.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
 const { queryMock, DEBUG_DIR } = vi.hoisted(() => {
-  // lib/config.ts reads this at import time; the suite's tmp DB dir is the
-  // one place every platform agrees is writable and disposable.
+  // lib/config.ts reads this at import time; the suite's tmp DB dir is
+  // writable and disposable on every platform.
   const dir = `${process.env.CALANDRIA_DB_DIR}/cli-debug-${process.pid}`;
   process.env.CALANDRIA_CLAUDE_DEBUG_DIR = dir;
   return { queryMock: vi.fn(), DEBUG_DIR: dir };

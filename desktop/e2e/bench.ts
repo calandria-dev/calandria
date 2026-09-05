@@ -1,32 +1,23 @@
-/* The half of the desktop lane a bare Xvfb server cannot honestly cover.
+/**
+ * Session-level assertions for the desktop bench specs: notifications, tray
+ * status and window-manager state, none of which the Electron process itself
+ * can confirm (a notification call succeeds whether or not a daemon received
+ * it, and `win.minimize()` is a no-op with no window manager but still
+ * reports `isMinimized()` as true). Every helper here reads the answer from
+ * outside the app: the session D-Bus (`dbus-monitor`, `gdbus`) and the X
+ * server's EWMH properties (`xprop`).
  *
- * WHAT THIS FILE IS FOR. `fixtures.ts` launches the shell; this one lets a spec
- * ask the SESSION what it did. Three of the four things the desktop shell does
- * natively — raise a notification, sit in a status area, be minimised and
- * restored by a window manager — have no Electron-side assertion worth making:
- * `new Notification().show()` returns whether or not anything received it, and
- * `win.minimize()` on a display with no window manager is a no-op that still
- * leaves `isMinimized()` telling you what you asked for rather than what
- * happened. So every helper here reads the answer from OUTSIDE the app: the
- * session bus (`dbus-monitor`, `gdbus`) and the X server's EWMH properties
- * (`xprop`). That is the whole reason these specs live on the bench VM and not
- * on the `ubuntu-24.04` runner — docs/DESKTOP_E2E.md §4/§5.
+ * These specs are ordinary members of `playwright.desktop.config.ts`, gated
+ * by `CALANDRIA_DESKTOP_BENCH=1` rather than a separate config, and they
+ * launch the shell through the same `launchShell()` as every other spec.
  *
- * NOT A SECOND HARNESS. The bench specs are ordinary members of
- * `playwright.desktop.config.ts`'s suite, launched through `launchShell()` like
- * every other spec, and gated by `CALANDRIA_DESKTOP_BENCH=1` rather than by a
- * config of their own. On any other runner they skip; on the bench they run
- * alongside the eight files the CI lane already runs, against the same binary.
- *
- * THE SESSION BUS IS NOT THE SYSTEMD USER BUS, and this is the gotcha that
- * costs an afternoon (docs/DESKTOP_E2E.md §5). A job on this VM arrives over
- * SSH, where `pam_systemd` has ALREADY exported a `DBUS_SESSION_BUS_ADDRESS`
- * pointing at `$XDG_RUNTIME_DIR/bus` — a real bus, with none of the desktop
- * session's daemons on it. The address the graphical session actually owns is
- * published to `~/.vnc/session-bus` by its xstartup. Everything here reads that
- * file and OVERRIDES the inherited value, and `benchEnv()` hands the same
- * override to the shell being launched, so the app and the assertions are
- * talking about one bus.
+ * The session bus is not the systemd user bus: over SSH, `pam_systemd`
+ * exports a `DBUS_SESSION_BUS_ADDRESS` for a bus with none of the desktop
+ * session's daemons on it. The graphical session's own bus address is
+ * published to `~/.vnc/session-bus` by its xstartup; every helper here reads
+ * that file and overrides the inherited value, and `benchEnv()` passes the
+ * same override to the launched shell so the app and the assertions share
+ * one bus.
  */
 
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
@@ -35,11 +26,10 @@ import os from "node:os";
 import path from "node:path";
 
 /**
- * The switch that turns these specs on. Deliberately opt-IN rather than
- * probed: a runner where the session happens to be half-present would
- * otherwise run them and fail on the parts it cannot do, and a lane that
- * silently self-disables when the tray is missing is the one shape of this
- * suite that could never catch a missing tray.
+ * Enables these specs. Opt-in rather than auto-detected: a runner with a
+ * partially present session would otherwise run them and fail on the parts
+ * it cannot support, and a lane that disables itself whenever the tray is
+ * missing could never catch a missing tray.
  */
 export const BENCH = process.env.CALANDRIA_DESKTOP_BENCH === "1";
 
@@ -58,8 +48,8 @@ const BENCH_CHECK = process.env.CALANDRIA_BENCH_CHECK || "desktop-bench-check";
 let cachedBusAddress: string | null = null;
 
 /**
- * The session bus's address, read from the session rather than the environment
- * — see the header. Cached: the file is written once per session start.
+ * The session bus's address, read from the session rather than the
+ * environment. Cached because the file is written once per session start.
  */
 export function sessionBusAddress(): string {
   if (cachedBusAddress) return cachedBusAddress;
@@ -76,34 +66,34 @@ export function sessionBusAddress(): string {
 }
 
 /**
- * What to add to a `launchShell()` call so the shell joins the real session.
+ * Environment to merge into a `launchShell()` call so the shell joins the
+ * real session.
  *
- * `DBUS_SESSION_BUS_ADDRESS` here is undoing `fixtures.ts`'s
- * `NO_NOTIFICATION_BUS`, which points every other Linux run at a socket that
- * does not exist so libnotify fails instantly instead of blocking the main
- * process for GDBus's 25 s timeout. That default is right everywhere a daemon
- * is absent and exactly wrong here, where a daemon is the subject.
+ * `DBUS_SESSION_BUS_ADDRESS` here overrides `fixtures.ts`'s
+ * `NO_NOTIFICATION_BUS`, which points other Linux runs at a socket that does
+ * not exist so libnotify fails immediately instead of blocking the main
+ * process on GDBus's 25 s timeout. That default holds when no daemon is
+ * present; these specs need the daemon reachable.
  */
 export function benchEnv(): Record<string, string> {
   return { DISPLAY: BENCH_DISPLAY, DBUS_SESSION_BUS_ADDRESS: sessionBusAddress() };
 }
 
 /**
- * Refuse to run against a session that is not one.
+ * Refuses to run against a session that is not a real one.
  *
- * `desktop-bench-check` is the bench's own precondition script (installed by
- * the `desktop_bench` Ansible role, and reproduced in docs/DESKTOP_E2E.md §5):
- * it prints one `ok`/`FAIL` line per thing Xvfb cannot provide. Called from
- * every bench spec's `beforeAll` because a session that lost its panel would
- * otherwise fail these specs as if the SHELL had regressed.
+ * `desktop-bench-check` is the bench's precondition script, installed by the
+ * `desktop_bench` Ansible role: it prints one `ok`/`FAIL` line per capability
+ * Xvfb cannot provide on its own. Called from every bench spec's `beforeAll`,
+ * because a session that lost its panel would otherwise fail these specs as
+ * if the shell had regressed.
  *
- * EACH FILE ASKS FOR WHAT IT USES, rather than for a green run overall, and
- * that distinction is load-bearing on this bench in particular: the status area
- * dies the moment any spec in the suite launches the shell (§4 — xfce4-panel's
- * systray plugin crashes on Electron's status icon), so an all-or-nothing check
- * would take the notification and window-manager files down with the tray one,
- * for a capability neither of them touches. A precondition that fails specs
- * over an unrelated daemon is a precondition people start deleting.
+ * Each file asks only for the capabilities it uses rather than requiring a
+ * clean report overall. On this bench, the status area dies as soon as any
+ * spec in the suite launches the shell, because xfce4-panel's systray plugin
+ * crashes on Electron's status icon. An all-or-nothing check would fail the
+ * notification and window-manager files along with the tray one, over a
+ * capability neither of them uses.
  */
 export const BENCH_CHECKS = {
   x: "X server reachable",
@@ -132,8 +122,8 @@ export function assertBenchSession(requires: BenchCapability[]): void {
           `playbook in ansible-orion, or set CALANDRIA_BENCH_CHECK.`
       );
     }
-    // A non-zero exit means SOMETHING failed, not necessarily something this
-    // file needs — the report is on stdout either way, so read it rather than
+    // A non-zero exit means something failed, not necessarily something this
+    // file needs. The report is on stdout either way, so read it instead of
     // trusting the status.
     out = e.stdout ?? "";
     if (!out) throw new Error(`${BENCH_CHECK} produced no report: ${e.stderr ?? String(err)}`);
@@ -155,15 +145,15 @@ export function assertBenchSession(requires: BenchCapability[]): void {
 }
 
 /**
- * Poll `read()` until `ok()` accepts it.
+ * Polls `read()` until `ok()` accepts it.
  *
- * A THROW FROM `read()` IS A RETRY, not a failure, and that is not defensive
- * padding: the things these helpers read are owned by other processes that come
- * and go. A panel plugin restarting takes `org.kde.StatusNotifierWatcher` off
- * the bus for a second or two, and a window that has just been withdrawn makes
- * `xprop -id` fail outright. Both are states to wait through, not verdicts. The
- * last error is kept and reported if the wait does time out, so a genuinely
- * absent daemon still names itself instead of hiding behind "never settled".
+ * A throw from `read()` counts as a retry, not a failure: the things these
+ * helpers read are owned by other processes that come and go. A panel plugin
+ * restarting takes `org.kde.StatusNotifierWatcher` off the bus for a second
+ * or two, and a window that was just withdrawn makes `xprop -id` fail
+ * outright. Both are transient states, not verdicts. The last error is kept
+ * and reported on timeout, so an absent daemon is named instead of reported
+ * only as "never settled".
  */
 export async function poll<T>(
   read: () => T | Promise<T>,
@@ -209,24 +199,24 @@ function gdbus(args: string[]): string {
 }
 
 /**
- * One captured `org.freedesktop.Notifications.Notify` — the call the shell
- * makes, plus the answer the daemon gave it.
+ * One captured `org.freedesktop.Notifications.Notify` call, plus the answer
+ * the daemon gave it.
  */
 export type NotifyCall = {
   /** D-Bus serial of the method call; what a reply names in `reply_serial`. */
   serial: number;
   /** `app_name`, arg 0. Electron sends `app.getName()`. */
   appName: string;
-  /** `summary`, arg 3 — the notification's title. */
+  /** `summary`, arg 3, the notification's title. */
   summary: string;
   /** `body`, arg 4. Multi-line bodies arrive verbatim. */
   body: string;
   /** libnotify's `sender-pid` hint, when the sender set one. */
   senderPid: number | null;
   /**
-   * The id the notification daemon replied with, or null if no reply has been
-   * seen yet. Non-null is the difference between "the app called Notify" and
-   * "a daemon accepted it" — the second is what this lane exists to assert.
+   * The id the notification daemon replied with, or null if no reply has
+   * been seen yet. Non-null distinguishes "the app called Notify" from "a
+   * daemon accepted it", which is what this lane asserts.
    */
   daemonId: number | null;
 };
@@ -234,20 +224,19 @@ export type NotifyCall = {
 type Record_ = { header: string; body: string };
 
 /**
- * A running `dbus-monitor` over the session bus, watching notification traffic.
+ * A running `dbus-monitor` over the session bus, watching notification
+ * traffic.
  *
- * TWO MATCH RULES, and the second is not padding. `member=Notify` catches what
- * the shell sent; `type=method_return` catches the daemon's answer, which
- * carries the notification id it minted. Correlating them by
- * serial/reply_serial is what turns "the app made a D-Bus call into the void"
- * into "a notification daemon received this and gave it an id" — the claim a
- * human squinting at the corner of a screen was previously the only way to
- * make. On an otherwise idle session the extra rule costs a handful of lines.
+ * Two match rules matter: `member=Notify` catches what the shell sent, and
+ * `type=method_return` catches the daemon's reply, which carries the
+ * notification id it assigned. Correlating them by serial/reply_serial turns
+ * "the app made a D-Bus call" into "a notification daemon received it and
+ * assigned an id".
  *
- * Deliberately daemon-agnostic: the bench runs dunst today and `dunstctl
- * history` would be a shorter read, but the assertion would then be about
- * dunst rather than about the session, and would go red the day the bench's
- * Xfce session is left with `xfce4-notifyd` instead.
+ * Daemon-agnostic on purpose: the bench runs dunst, and `dunstctl history`
+ * would be a shorter read, but that would assert something about dunst
+ * instead of the session, and would fail if the Xfce session ran
+ * `xfce4-notifyd` instead.
  */
 export class NotifyWatch {
   private buf = "";
@@ -274,10 +263,10 @@ export class NotifyWatch {
       stderr += String(d);
     });
 
-    // dbus-monitor announces its OWN connection (NameAcquired/NameLost) the
-    // moment it is on the bus, so the first byte of output is a real readiness
-    // signal rather than a sleep — and a monitor started after the shell would
-    // miss the notification it exists to catch.
+    // dbus-monitor announces its own connection (NameAcquired/NameLost) as
+    // soon as it is on the bus, so the first byte of output is a readiness
+    // signal. A monitor started after the shell would miss the notification
+    // it is meant to observe.
     await new Promise<void>((resolve, reject) => {
       const deadline = setTimeout(() => reject(new Error(`dbus-monitor did not start within 10 s: ${stderr}`)), 10_000);
       const tick = setInterval(() => {
@@ -313,13 +302,13 @@ export class NotifyWatch {
 
   /**
    * Every Notify call captured, newest last, each carrying the daemon's reply
-   * if one has arrived. Re-parsed on each call so a caller can simply poll.
+   * if one has arrived. Re-parsed on each call so a caller can poll it.
    *
    * `dbus-monitor`'s argument dump is positional: `app_name`, `replaces_id`,
-   * `app_icon`, `summary`, `body`, then the actions and hints arrays. Only the
-   * strings BEFORE the first array are the scalar arguments — the hints array
-   * is full of `string "urgency"`-shaped entries that would otherwise be read
-   * as a sixth and seventh argument.
+   * `app_icon`, `summary`, `body`, then the actions and hints arrays. Only
+   * the strings before the first array are scalar arguments; the hints array
+   * contains `string "urgency"`-shaped entries that would otherwise read as
+   * a sixth and seventh argument.
    */
   calls(): NotifyCall[] {
     const records = this.records();
@@ -336,9 +325,9 @@ export class NotifyWatch {
       if (!r.header.startsWith("method call") || !/member=Notify\b/.test(r.header)) continue;
       const serial = Number(r.header.match(/ serial=(\d+)/)?.[1] ?? 0);
       const scalars = r.body.split(/^\s*array \[/m)[0];
-      // Lazy up to a closing quote at end of line: a notification body really
-      // does contain newlines (turn_failed appends the error under the task
-      // title) and dbus-monitor prints them raw.
+      // Lazy up to a closing quote at end of line: a notification body can
+      // contain newlines (turn_failed appends the error under the task
+      // title), and dbus-monitor prints them raw.
       const strings = [...scalars.matchAll(/^[ \t]*string "([\s\S]*?)"[ \t]*$/gm)].map((m) => m[1]);
       const senderPid = r.body.match(/string "sender-pid"[\s\S]*?int64 (\d+)/)?.[1];
       calls.push({
@@ -353,7 +342,7 @@ export class NotifyWatch {
     return calls;
   }
 
-  /** Wait for a captured Notify matching `match`, or fail naming what WAS seen. */
+  /** Waits for a captured Notify matching `match`, or fails naming what was seen. */
   async waitFor(match: (call: NotifyCall) => boolean, opts: { timeoutMs?: number; what?: string } = {}): Promise<NotifyCall> {
     const timeout = opts.timeoutMs ?? 60_000;
     const deadline = Date.now() + timeout;
@@ -371,7 +360,7 @@ export class NotifyWatch {
     }
   }
 
-  /** How many captured calls match — the "exactly once" half of an assertion. */
+  /** How many captured calls match: the "exactly once" half of an assertion. */
   count(match: (call: NotifyCall) => boolean): number {
     return this.calls().filter(match).length;
   }
@@ -391,9 +380,9 @@ export type TrayMenuItem = { id: number; label: string; enabled: boolean };
 
 /**
  * Every tray icon currently registered with the session's status-notifier
- * host, as `(':1.25/org/ayatana/NotificationItem/foo',)` — a bus name with the
- * item's object path glued onto it. An entry with no path uses the spec's
- * default of `/StatusNotifierItem`.
+ * host, as `(':1.25/org/ayatana/NotificationItem/foo',)`: a bus name with the
+ * item's object path attached. An entry with no path uses the spec's default
+ * of `/StatusNotifierItem`.
  */
 export function registeredTrayItems(): TrayItem[] {
   let raw: string;
@@ -409,11 +398,10 @@ export function registeredTrayItems(): TrayItem[] {
       "RegisteredStatusNotifierItems",
     ]);
   } catch (err) {
-    // `ServiceUnknown` here means nobody owns the watcher name. Since
-    // `assertBenchSession()` proved somebody did a moment ago, the host has
-    // gone away since — and the way that happens on this bench is worth
-    // spelling out rather than leaving as a raw gdbus error, because it looks
-    // exactly like "our tray never registered".
+    // `ServiceUnknown` means nobody owns the watcher name. `assertBenchSession()`
+    // confirmed the host a moment before, so this means it went away since;
+    // the reason is worth naming here instead of surfacing as a raw gdbus
+    // error, since it looks identical to "the tray never registered".
     if (/ServiceUnknown/.test(String((err as Error).message ?? err))) {
       throw new Error(
         `org.kde.StatusNotifierWatcher has no owner: the session's status-notifier host went away ` +
@@ -439,12 +427,12 @@ export function registeredTrayItems(): TrayItem[] {
 /**
  * The registered tray item owned by `pid`, or null.
  *
- * Matched by the OWNER of the D-Bus connection rather than by the icon's name
- * or title: Electron's item is named `org.kde.StatusNotifierItem-<pid>-<n>` on
- * some hosts and a bare unique name on others, and its `Id` is Chromium's
- * internal `chrome_status_icon_N` — none of which identifies OUR shell on a
- * session that also has NetworkManager, a clipboard manager and whatever else
- * in the tray. The connection's pid does, exactly.
+ * Matched by the owner of the D-Bus connection rather than by the icon's
+ * name or title: Electron's item is named `org.kde.StatusNotifierItem-<pid>-<n>`
+ * on some hosts and a bare unique name on others, and its `Id` is Chromium's
+ * internal `chrome_status_icon_N`, none of which identifies this shell on a
+ * session that also has NetworkManager, a clipboard manager and whatever
+ * else is in the tray. The connection's pid does.
  */
 export function trayItemForPid(pid: number): TrayItem | null {
   for (const item of registeredTrayItems()) {
@@ -489,14 +477,13 @@ function trayMenuPath(item: TrayItem): string {
 }
 
 /**
- * The tray menu's items, read over `com.canonical.dbusmenu` — i.e. the menu the
- * PANEL would draw, not the `Menu` object our own main process built. There is
- * no Electron-side read of a tray menu at all (`Tray` has no getter), so this
- * is both the only way to assert it and the more honest one: it goes red if the
- * menu never reached the host.
+ * The tray menu's items, read over `com.canonical.dbusmenu`: the menu the
+ * panel would draw, not the `Menu` object the main process built. Electron's
+ * `Tray` has no getter for a menu, so this is the only way to assert it, and
+ * it fails if the menu never reached the host.
  *
  * Separators carry no `label` and drop out; `enabled` is omitted by dbusmenu
- * when it is true, which is why absence means enabled here.
+ * when it is true, so absence means enabled here.
  */
 export function trayMenuItems(item: TrayItem): TrayMenuItem[] {
   const raw = gdbus([
@@ -507,9 +494,10 @@ export function trayMenuItems(item: TrayItem): TrayMenuItem[] {
     "-m",
     "com.canonical.dbusmenu.GetLayout",
     "0",
-    // Depth 2, not the spec's -1 ("everything"): gdbus's own option parser eats
-    // a bare `-1` as a flag and prints its usage. Two levels covers this menu
-    // (a flat list under the root) with a submenu's worth of room to spare.
+    // Depth 2, not the spec's -1 ("everything"): gdbus's option parser reads
+    // a bare `-1` as a flag and prints its usage instead. Two levels covers
+    // this menu (a flat list under the root) with a submenu's worth of room
+    // to spare.
     "2",
     "['label', 'enabled']",
   ]);
@@ -530,7 +518,7 @@ function xprop(args: string[]): string {
     return benchExec("xprop", args);
   } catch {
     // A window that went away between listing and reading is not an error
-    // here — every caller polls.
+    // here; every caller polls.
     return "";
   }
 }
@@ -549,19 +537,19 @@ export function managedWindowIds(): string[] {
 /**
  * The managed windows belonging to `pid`.
  *
- * EMPTY IS A RESULT, NOT AN ERROR: a hidden window is withdrawn from
- * `_NET_CLIENT_LIST` entirely, which is how a spec tells "Electron says it
- * hid" apart from "the window manager agrees it is gone".
+ * An empty result is not an error: a hidden window is withdrawn from
+ * `_NET_CLIENT_LIST` entirely, which is how a spec distinguishes "Electron
+ * says it hid" from "the window manager agrees it is gone".
  */
 export function managedWindowIdsForPid(pid: number): string[] {
   return managedWindowIds().filter((id) => Number(xprop(["-id", id, "_NET_WM_PID"]).match(/= (\d+)/)?.[1] ?? 0) === pid);
 }
 
 /**
- * The `_NET_WM_STATE` atoms the window manager has on a window —
- * `_NET_WM_STATE_HIDDEN` is what a minimised window carries, and it is set by
- * the WM rather than by the app, so it is the WM's own account of the
- * minimise rather than Electron's.
+ * The `_NET_WM_STATE` atoms the window manager has set on a window:
+ * `_NET_WM_STATE_HIDDEN` is present on a minimised window. Since the WM sets
+ * this rather than the app, it reflects the WM's view of the minimise
+ * state, not Electron's.
  */
 export function windowStates(id: string): string[] {
   const raw = xprop(["-id", id, "_NET_WM_STATE"]);

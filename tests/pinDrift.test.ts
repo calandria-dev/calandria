@@ -13,11 +13,11 @@ const DOCKERFILE = path.join(__dirname, "..", "Dockerfile");
 /**
  * scripts/check-pin-drift.mjs reads the Dockerfile with regexes, and the only
  * other place those regexes run is a cron. Renaming an ARG or reflowing the
- * apt-get line would leave the check exiting 2 at 08:11 UTC, which nobody is
- * watching for. These cases fail here instead, on the PR that does it.
+ * apt-get line would leave the check exiting 2 at 08:11 UTC, with nobody
+ * watching for it. These cases fail here instead, on the PR that does it.
  *
- * Hermetic on purpose: everything below is the pure extraction half. The
- * network half is exercised by running the script.
+ * This is the pure extraction half, hermetic and independent of network
+ * access. The network half is exercised by running the script.
  */
 describe("pin drift extraction", () => {
   const source = readFileSync(DOCKERFILE, "utf8");
@@ -59,7 +59,7 @@ describe("pin drift extraction", () => {
 
   it("fails loudly when a pin it watches has been renamed away", () => {
     const renamed = source.replace("ARG AGY_VERSION=", "ARG AGY_CLI_VERSION=");
-    // Guard against the replace silently doing nothing.
+    // Guard against the replace matching nothing and leaving the source unchanged.
     expect(renamed).not.toBe(source);
     expect(() => extractPins(renamed, "Dockerfile")).toThrow(/AGY_VERSION/);
   });
@@ -84,11 +84,11 @@ describe("byUpstreamValue", () => {
 });
 
 /**
- * The npm pins are reported on STALENESS, not on difference, and the thresholds
- * are the whole design: too tight and this files a notice every morning (which
- * is why the first version of the check skipped npm entirely), too loose and it
- * misses the case it was built for. Both directions are pinned here, since the
- * live behaviour only shows up against a registry nobody can replay.
+ * The npm pins are reported on STALENESS, not on difference, and the
+ * thresholds matter: too tight and this files a notice every morning, too
+ * loose and it misses the case it exists for. Both directions are pinned
+ * here, since the live behaviour only shows up against a registry nobody can
+ * replay.
  */
 describe("npmStaleness", () => {
   const NOW = Date.parse("2026-09-03T00:00:00Z");
@@ -152,9 +152,8 @@ describe("npmStaleness", () => {
   });
 
   it("would have caught the pin GPT-6 Astra could not run on", () => {
-    // The real numbers: 0.146.0 published 2026-07-29, upstream at 0.153.1 on
-    // 2026-09-03, and the CLI answered Astra with "model requires a newer
-    // version of codex". Both triggers fire, weeks before the model shipped.
+    // Both triggers fire well before a newly released model would outpace
+    // the pinned CLI.
     const verdict = npmStaleness({
       pinned: "0.146.0",
       latest: "0.153.1",
@@ -176,7 +175,7 @@ describe("npmStaleness", () => {
 
   it("counts neither prereleases nor the pin's own minor as newer minors", () => {
     // 0.146.1 is not a newer minor line, and an alpha is never what the
-    // Dockerfile installs — both would otherwise inflate the count past the
+    // Dockerfile installs; both would otherwise inflate the count past the
     // threshold on their own.
     const verdict = npmStaleness({
       pinned: "0.146.0",

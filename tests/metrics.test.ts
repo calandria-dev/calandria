@@ -1,12 +1,12 @@
 // The Prometheus scrape endpoint (issue #16 item 3).
 //
-// Three things are pinned here, because all three are ways a metrics endpoint
-// fails silently — it keeps returning 200 and the graph is just wrong:
+// Three things are pinned here, because each is a way a metrics endpoint can
+// fail without an error: it keeps returning 200 while the graph is wrong.
 //
-//   1. The exposition is well-formed and ZERO-FILLED. Every outcome and every
+//   1. The exposition is well-formed and zero-filled. Every outcome and every
 //      schedule status is a series on every scrape, so an alert written against
 //      `{outcome="failed"}` has data to be false about before the first failure.
-//   2. The counters are driven by the REAL runner, through the same scripted
+//   2. The counters are driven by the real runner, through the same scripted
 //      driver seam tests/turnLogging.test.ts uses. A counter asserted against a
 //      hand-called incrementer would prove only that addition works.
 //   3. The worktrees measurement is cached, so a tight scrape interval doesn't
@@ -49,8 +49,8 @@ function script(events: StreamEvent[]) {
   });
 }
 
-/** Resolves when the runner publishes turn_end — the point the finished-turn
- *  counter has been incremented. */
+/** Resolves when the runner publishes turn_end, the point at which the
+ *  finished-turn counter has been incremented. */
 function turnEnded(taskId: string): Promise<void> {
   return new Promise((resolve) => {
     const unsub = subscribe(taskId, (ev) => {
@@ -63,8 +63,8 @@ function turnEnded(taskId: string): Promise<void> {
 }
 
 /** One sample's value out of the exposition text, by its full series name
- *  (labels included). Returns undefined when the series isn't there at all —
- *  which several assertions below care about distinguishing from 0. */
+ *  (labels included). Returns undefined when the series isn't there at all,
+ *  which several assertions below distinguish from 0. */
 function sample(text: string, series: string): number | undefined {
   const line = text.split("\n").find((l) => l.startsWith(`${series} `));
   return line === undefined ? undefined : Number(line.slice(series.length + 1));
@@ -94,13 +94,13 @@ describe("exposition format", () => {
     for (const name of names) {
       expect(text).toContain(`# HELP ${name} `);
       // Every sample line belongs to a declared metric, and every declared
-      // metric has at least one sample — an orphan TYPE block is a series a
-      // dashboard would query forever and never get.
+      // metric has at least one sample; an orphan TYPE block would be a
+      // series a dashboard queries forever and never gets.
       expect(text.split("\n").some((l) => l.startsWith(name) && !l.startsWith("#"))).toBe(true);
     }
     for (const line of text.split("\n").filter((l) => l && !l.startsWith("#"))) {
-      // name{labels} value — the value must parse as a number, or Prometheus
-      // drops the whole scrape rather than the one bad line.
+      // name{labels} value: the value must parse as a number, or Prometheus
+      // drops the whole scrape instead of just the one bad line.
       expect(line).toMatch(/^[a-z_]+(\{[^}]*\})? -?[0-9.e+-]+$/);
     }
     expect(text.endsWith("\n")).toBe(true);
@@ -119,8 +119,8 @@ describe("exposition format", () => {
   });
 
   it("reports the live turn count from the abort registry, not from task.running", async () => {
-    // The registry is the source of truth for liveness — a row left running=1
-    // by a crash is exactly what this gauge must not believe.
+    // The registry is the source of truth for liveness. A row left running=1
+    // by a crash must not be counted here.
     expect(sample(await renderMetrics(), "calandria_turns_active")).toBe(0);
     const controller = new AbortController();
     registerTurn("task-live", controller);
@@ -219,8 +219,8 @@ describe("size gauges", () => {
 
     diskUsageMock.mockResolvedValue(999999);
     const second = await renderMetrics();
-    // Still the cached value, and no second `du`: this is the whole reason a
-    // 15s scrape interval is safe on an instance with big checkouts.
+    // Still the cached value, and no second `du`, which is why a 15s scrape
+    // interval stays safe on an instance with big checkouts.
     expect(sample(second, "calandria_worktrees_size_bytes")).toBe(4096);
     expect(diskUsageMock).toHaveBeenCalledTimes(1);
   });

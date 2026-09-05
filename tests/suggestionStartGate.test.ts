@@ -1,17 +1,13 @@
 /**
  * The Start gate the three suggestion Start buttons share.
  *
- * Since PR #139 (issue #46) `POST /api/tasks/[id]/messages` answers a blocked
- * FIRST turn with a 409. The three suggestion Starts — the tray's
- * (TasksColumn.tsx), the board's (TaskBoard.tsx) and the transcript card's
- * (Transcript.tsx) — never consulted the block, and `startSuggestion` in
- * useShell.ts patches `suggested: 0` BEFORE it asks for the turn. So a click
- * accepted the task onto the board and was then refused the run: half a Start,
- * with nothing rolled back.
+ * `POST /api/tasks/[id]/messages` answers a blocked first turn with a 409
+ * (issue #46). The three suggestion Starts, the tray's (TasksColumn.tsx), the
+ * board's (TaskBoard.tsx) and the transcript card's (Transcript.tsx), gate the
+ * way the session header's Start already does, on `blockedNote()` over
+ * `isBlocking()`: one predicate and one sentence for all four, so the disabled
+ * button and the 409 a stale tab gets say the same thing.
  *
- * They now gate the way the session header's Start already did, on
- * `blockedNote()` over `isBlocking()` — one predicate and one sentence for all
- * four, so the disabled button and the 409 a stale tab gets say the same thing.
  * There is no component-render harness in this suite (vitest runs in `node`,
  * with no jsdom or testing-library), so what is pinned here is the shared
  * decision the buttons take; `e2e/11-suggestions.spec.ts` pins the button.

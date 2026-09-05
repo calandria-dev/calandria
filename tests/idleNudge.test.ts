@@ -1,13 +1,13 @@
-// Telling the MODEL its turn went quiet: lib/idleNudge.ts, the opt-in other
+// Telling the model its turn went quiet: lib/idleNudge.ts, the opt-in other
 // half of the idle mark (tests/turnIdle.test.ts pins the mark itself).
 //
-// This is the one thing in the idle feature that SPENDS something — a real turn
-// on a session that may be waiting for a perfectly good reason — so the cases
+// This is the one thing in the idle feature that spends something: a real turn
+// on a session that may be waiting for a perfectly good reason. The cases
 // worth pinning are all about restraint: it lands at most once, never on a run
 // nobody is reading, never ahead of a message the user already queued, and
-// never at all on a session the driver won't take one from.
+// never at all on a session the driver will not take one from.
 //
-// The flag is forced on here rather than in tests/setup.ts, because the suite's
+// The flag is forced on here instead of in tests/setup.ts, because the suite's
 // default has to stay the shipped default (off): turnIdle.test.ts asserts that
 // an ordinary instance's idle turn is marked and told nothing.
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
@@ -46,8 +46,8 @@ function liveTurn(taskId: string): void {
 
 // Stand in for the Claude driver's input channel. `accepting` is the whole of
 // what the driver decides for us: true is a LINGERING session (the model's
-// output is done, nothing in flight), false is every other state — mid-thought,
-// closing, closed — which the real sendMidTurn refuses outright.
+// output is done, nothing in flight), false is every other state (mid-thought,
+// closing, closed), which the real sendMidTurn refuses outright.
 const handles: { id: string; handle: TurnInputHandle }[] = [];
 function lingeringSession(taskId: string, accepting = true): string[] {
   const received: string[] = [];
@@ -125,9 +125,9 @@ describe("idle nudge", () => {
     goIdle(task.id);
     expect(received).toHaveLength(1);
 
-    // The model answered and went back to waiting — which clears the mark —
-    // and then went quiet again. It has already considered the question once;
-    // asking again is a loop that bills the user for itself.
+    // The model answered and went back to waiting, which clears the mark, and
+    // then went quiet again. It already answered the question once; asking
+    // again is a loop that bills the user for itself.
     markTurnActivity(task.id);
     expect(turnIdleSince(task.id)).toBe(0);
     sweepIdleTurns(Date.now() + TURN_IDLE_MS + 60_000);
@@ -141,15 +141,15 @@ describe("idle nudge", () => {
     const task = makeTask();
     liveTurn(task.id);
     // Mid-thought: a long build, a slow tool call, a model still reasoning.
-    // The driver refuses, which is what makes the dangerous case structurally
-    // unreachable rather than guarded by a heuristic here.
+    // The driver refuses, which makes the dangerous case structurally
+    // unreachable instead of guarded by a heuristic here.
     const received = lingeringSession(task.id, false);
 
     goIdle(task.id);
 
     expect(received).toHaveLength(0);
     expect(listMessages(task.id)).toHaveLength(0);
-    // The mark itself is unaffected — it never depended on this.
+    // The mark itself is unaffected; it never depended on this.
     expect(turnIdleSince(task.id)).toBeGreaterThan(0);
     // And the linger flags are untouched, since no turn started.
     expect(getTask(task.id)?.background_pending).toBe(1);

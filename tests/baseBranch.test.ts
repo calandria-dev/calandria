@@ -1,6 +1,6 @@
 // Per-task base branches: the resolver, its SQL twin, the pin at the cut, the
 // refusals, and what a retarget does to a worktree that already exists.
-// Design: docs/superpowers/specs/2026-08-27-per-task-base-branch-design.md.
+// See docs/FEATURES.md.
 
 import { describe, expect, it } from "vitest";
 import { POST as baseBranchRoute } from "../app/api/tasks/[id]/base-branch/route";
@@ -39,22 +39,20 @@ describe("resolveBaseBranch", () => {
   it("reports a base of its own only when it actually differs from the default", () => {
     const project = { branch: "main" };
     expect(hasOwnBase({ id: "", base_branch: "" }, project)).toBe(false);
-    // Pinned at the cut, so a task following the default carries the name too —
-    // the badge that reads "own base" must not fire on that.
+    // Pinned at the cut, so a task following the default still carries the
+    // name; the badge that reads "own base" must not fire on that.
     expect(hasOwnBase({ id: "", base_branch: "main" }, project)).toBe(false);
     expect(hasOwnBase({ id: "", base_branch: "release" }, project)).toBe(true);
   });
 
   // The resolution order is expressed twice: once in TS above, once as SQL in
-  // listReclaimableWorktrees, which has no Task in hand. They must agree, or the
-  // Settings → Storage sweep would judge "is this worktree safe to delete"
-  // against a branch the task was never on.
+  // listReclaimableWorktrees, which has no Task in hand. The two must agree,
+  // or the Settings → Storage sweep would judge whether a worktree is safe to
+  // delete against a branch the task was never on.
   //
-  // ALL THREE legs are covered on purpose. A two-leg version of this case keeps
-  // passing while the tag leg — the one that isn't a plain COALESCE column but a
-  // lookup through task_tags ordered by position — drifts away from the TS, and
-  // that leg is the one where the two languages can disagree about the ORDER as
-  // well as about the value.
+  // All three legs matter: the tag leg is a lookup through task_tags ordered
+  // by position, unlike the other two plain COALESCE columns, so it can drift
+  // from the TS version in both the value it picks and the order it considers.
   it("agrees with the COALESCE in listReclaimableWorktrees", async () => {
     const repo = await makeRepo();
     await git(repo, "branch", "release");
@@ -63,9 +61,9 @@ describe("resolveBaseBranch", () => {
     const own = await fixture({ repo, cut: true });
     await retarget(own, "release");
 
-    // A worktree carrying no base of its own — cut before the column existed —
-    // takes the middle leg. Three tags, two of which name a branch: the FIRST in
-    // tag order wins, and the SQL has to express that tie-break too.
+    // A worktree carrying no base of its own takes the middle leg. Of the
+    // three tags, two name a branch; the first in tag order wins, and the
+    // SQL has to express that tie-break too.
     const tagged = await fixture({ repo, cut: true });
     const untargeted = createTag({ project_id: tagged.project.id, name: `plain-${uid()}` });
     const auth = createTag({ project_id: tagged.project.id, name: `auth-${uid()}`, base_branch: "feature/auth" });
@@ -84,9 +82,9 @@ describe("resolveBaseBranch", () => {
     expect(sqlBase(tagged.task.id)).toBe(resolveBaseBranch(tagged.reload(), tagged.project));
     expect(sqlBase(tagged.task.id)).toBe("feature/auth");
 
-    // Re-order the tags and BOTH must follow — this is the assertion that the
-    // two implementations share one ordering rather than two that happen to
-    // agree on the fixture as first written.
+    // Re-ordering the tags must move both: the assertion is that the two
+    // implementations share one ordering, not two that happen to agree on
+    // this particular fixture.
     setTaskTags([tagged.task.id], [rel.id, auth.id]);
     const reordered = listReclaimableWorktrees().find((r) => r.id === tagged.task.id)!.base_branch;
     expect(reordered).toBe(resolveBaseBranch(tagged.reload(), tagged.project));
@@ -178,8 +176,8 @@ describe("retargetTaskBase — refusals", () => {
     const r = await retarget(fx, "release");
     expect(r.ok).toBe(false);
     expect(r.error).toContain("turn running");
-    // ...unless it is the caller's own row: a session retargeting ITSELF mid-turn
-    // is the whole point of the agent tool that lands in phase 3.
+    // ...unless it is the caller's own row: a session can retarget itself
+    // mid-turn.
     const own = await retargetTaskBase(fx.reload(), fx.project, "release", { callerTaskId: fx.task.id });
     expect(own.ok).toBe(true);
   });
@@ -194,8 +192,8 @@ describe("retargetTaskBase — reconciliation", () => {
     expect(fx.reload()).toMatchObject({ base_branch: "release", worktree_path: "", base_sha: "" });
   });
 
-  // Nothing of the task's own exists, so a re-cut loses nothing and leaves it UP
-  // TO DATE with the new base rather than merely pointed at it.
+  // Nothing of the task's own exists, so a re-cut loses nothing and leaves it
+  // up to date with the new base, not merely pointed at it.
   it("re-cuts a clean worktree with no commits of its own", async () => {
     const fx = await fixture({ cut: true });
     await git(fx.repo, "checkout", "-b", "release");
@@ -224,9 +222,9 @@ describe("retargetTaskBase — reconciliation", () => {
     expect(await git(fx.reload().worktree_path, "status", "--porcelain")).toContain("scratch.txt");
   });
 
-  // The Changes tab is a merge preview — "what would arrive in the base if I
-  // merged now" — so base_sha becomes the merge-base and the behind-count is
-  // reported rather than swallowed. Nothing is rewritten.
+  // The Changes tab is a merge preview ("what would arrive in the base if I
+  // merged now"), so base_sha becomes the merge-base and the behind-count is
+  // reported, not swallowed. Nothing is rewritten.
   it("keeps a committed task's work, re-bases the diff snapshot, and reports the behind-count", async () => {
     const fx = await fixture({ cut: true });
     const cutFrom = fx.reload().base_sha;
@@ -289,7 +287,7 @@ describe("POST /api/tasks/[id]/base-branch", () => {
     expect(fx.reload().base_branch).toBe("release");
   });
 
-  // Clearing the field means "follow the project again" — stored as "", so a
+  // Clearing the field means "follow the project again", stored as "" so a
   // later change to the project's default still reaches an uncut task.
   it("clears the pin back to inherit on an empty branch", async () => {
     const fx = await fixture({ cut: true });

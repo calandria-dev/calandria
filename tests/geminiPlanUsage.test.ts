@@ -3,15 +3,15 @@ import { describe, expect, it, beforeEach, vi } from "vitest";
 // Antigravity's half of the titlebar plan meter, plus the two capability facts
 // the generic connect card branches on for this agent.
 //
-// The payload below is a real `agy -p "/usage" --output-format json` capture
-// (2026-09-02), trimmed only of prose fields the parser ignores. It is the
-// evidence for the two claims the driver makes about this command: it reports
-// REMAINING fraction (the snapshot wants percent SPENT), and it spends nothing
-// doing it — `num_turns: 0` with an all-zero usage block, which is why polling
-// it from the UI is acceptable at all.
+// The payload below is a real `agy -p "/usage" --output-format json` capture,
+// trimmed only of prose fields the parser ignores. It is the evidence for the
+// two claims the driver makes about this command: it reports REMAINING
+// fraction (the snapshot wants percent SPENT), and it spends nothing doing so,
+// `num_turns: 0` with an all-zero usage block, which is why polling it from
+// the UI is acceptable at all.
 
 // `promisify(execFile)` is bound at module load, so the seam has to be the
-// module itself — the same `vi.mock("node:child_process")` shape the driver
+// module itself, the same `vi.mock("node:child_process")` shape the driver
 // tests use for `spawn`.
 const execFileMock = vi.hoisted(() => {
   const fn = vi.fn();
@@ -156,8 +156,8 @@ describe("what the connect card needs from this driver", () => {
   });
 
   it("recognizes the failure the CLI prints without exiting", () => {
-    // Measured wording; the login flips to `error` on it so the card offers
-    // Start again instead of a paste box that can never work.
+    // Exact wording the CLI prints; the login flips to `error` on it so the
+    // card offers Start again instead of a paste box that can never work.
     expect(isAuthFailure("Error: authentication failed or timed out")).toBe(true);
     expect(isAuthFailure("Error: authentication timed out")).toBe(true);
     expect(isAuthFailure("Paste the authorization code here:")).toBe(false);

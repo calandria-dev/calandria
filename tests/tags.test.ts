@@ -1,6 +1,5 @@
-// Tags — the store half of docs/superpowers/specs/2026-08-27-tags-design.md
-// (many-to-many; the one-tag-per-task ancestor is the 2026-08-24 grouping spike).
-// DB only: nothing here launches a turn.
+// Tags: the store half of docs/FEATURES.md (many-to-many). DB only: nothing
+// here launches a turn.
 import { describe, expect, it, beforeEach } from "vitest";
 import { getDb } from "@/lib/db";
 import {
@@ -76,7 +75,7 @@ describe("tags store", () => {
     expect(resolveTag(pid, "Auth Migration")).toBeNull();
     expect(resolveTag(pid, "")).toBeNull();
     expect(listTags(pid)).toHaveLength(1);
-    // A tag's id from ANOTHER project does not resolve here — scope is the project.
+    // A tag's id from ANOTHER project does not resolve here: scope is the project.
     const elsewhere = createTag({ project_id: project(), name: "Elsewhere" });
     expect(resolveTag(pid, elsewhere.id)).toBeNull();
     // Planning verb: create on miss, tagged with the session that filed it.
@@ -86,7 +85,7 @@ describe("tags store", () => {
     expect(made.tag.name).toBe("Mobile PWA");
     expect(made.tag.origin_task_id).toBe(planner.id);
     expect(made.tag.project_id).toBe(pid);
-    // Second resolve of the same ref finds it rather than minting a duplicate.
+    // Second resolve of the same ref finds the existing tag; no duplicate is minted.
     expect(resolveTag(pid, "Mobile PWA", { create: true })).toEqual({ tag: getTag(made.tag.id), created: false });
     // Deleting the planning task keeps the tag; provenance goes SET NULL.
     deleteTask(planner.id);
@@ -102,7 +101,7 @@ describe("tags store", () => {
     expect(getTag(g.id)!.counts.total).toBe(2);
     // Already carrying exactly this set: not rewritten, not reported.
     expect(setTaskTags([a.id], [g.id])).toEqual([]);
-    // One stray refuses the whole batch — nothing half-applied.
+    // One stray refuses the whole batch: nothing half-applied.
     expect(() => setTaskTags([b.id, stray.id], [g.id])).toThrow(/another project/);
     expect(getTag(g.id)!.counts.total).toBe(2);
     expect(() => setTaskTags([a.id], ["nope"])).toThrow(/no such tag/);
@@ -132,7 +131,7 @@ describe("tags store", () => {
     const t = createTask({ project_id: pid, title: "t", tag_ids: [g.id] });
     expect(addTaskTags([t.id], [h.id])).toEqual([t.id]);
     expect(getTaskTagIds(t.id)).toEqual([g.id, h.id]);
-    // Adding a tag already carried is a no-op — nothing changed, nothing reported.
+    // Adding a tag already carried is a no-op: nothing changed, nothing reported.
     expect(addTaskTags([t.id], [h.id])).toEqual([]);
     expect(removeTaskTags([t.id], [g.id])).toEqual([t.id]);
     expect(getTaskTagIds(t.id)).toEqual([h.id]);
@@ -179,7 +178,7 @@ describe("tags store", () => {
     let counts = getTag(g.id)!.counts;
     expect(counts).toEqual({ total: 5, done: 1, cancelled: 2, running: 1, awaiting: 1 });
     expect(tagIsDone(getTag(g.id)!)).toBe(false);
-    // A snoozed awaiting task is not "needs you" — same predicate as the project badge.
+    // A snoozed awaiting task is not "needs you": same predicate as the project badge.
     updateTask(c.id, { snoozed_until: Date.now() + 60_000 });
     expect(getTag(g.id)!.counts.awaiting).toBe(0);
     // Finish the live ones: 3 done + 2 cancelled = every member terminal → done.
@@ -191,7 +190,7 @@ describe("tags store", () => {
     // Nothing cached: deleting a done member changes the answer on the next read.
     deleteTask(a.id);
     expect(getTag(g.id)!.counts.done).toBe(2);
-    // An empty tag is never "done" — there's nothing it finished.
+    // An empty tag is never "done": there's nothing it finished.
     expect(tagIsDone({ counts: { total: 0, done: 0, cancelled: 0, running: 0, awaiting: 0 } })).toBe(false);
     // Suggestions in the tray are members too: the chip appears as the plan lands.
     createTask({ project_id: pid, title: "planned", suggested: true, tag_ids: [g.id] });
@@ -199,7 +198,7 @@ describe("tags store", () => {
     expect(tagIsDone(getTag(g.id)!)).toBe(false);
   });
 
-  // ---- moveTasks: a tag follows its whole contents, or not at all — decided
+  // ---- moveTasks: a tag follows its whole contents, or not at all, decided
   // PER TAG, since a task can carry several. ----
 
   it("a partly-selected tag stays put, and the rows that left report it in `untagged`", () => {
@@ -209,7 +208,7 @@ describe("tags store", () => {
     const dest = project();
     const res = moveTasks([a.id], dest, { resetCheckout: new Set() });
     expect(res.moved.map((m) => m.id)).toEqual([a.id]);
-    // Reported beside the dropped edges — the name, so the caller can say WHICH
+    // Reported beside the dropped edges: the name, so the caller can say WHICH
     // label the task just lost.
     expect(res.untagged).toEqual([{ id: a.id, tag_id: g.id, tag_name: "G" }]);
     expect(res.carried).toEqual([]);
@@ -248,8 +247,8 @@ describe("tags store", () => {
     const g = createTag({ project_id: pid, name: "G" });
     const t = createTask({ project_id: pid, title: "t", tag_ids: [g.id] });
     const res = moveTasks([t.id], dest, { resetCheckout: new Set() });
-    // Suffixed rather than merged — two same-named tags are two features —
-    // and the report names both spellings so the caller can say what happened.
+    // Suffixed, not merged: two same-named tags are two features. The report
+    // names both spellings so the caller can say what happened.
     expect(res.carried).toEqual([{ id: g.id, name: "G (moved 2)", renamed_from: "G" }]);
     expect(getTag(g.id)!.name).toBe("G (moved 2)");
     expect(listTags(dest).map((x) => x.name)).toEqual(["G", "G (moved)", "G (moved 2)"]);
@@ -262,9 +261,9 @@ describe("tags store", () => {
     const g = createTag({ project_id: pid, name: "G", origin_task_id: planner.id });
     const a = createTask({ project_id: pid, title: "a", tag_ids: [g.id] });
     const dest = project();
-    // `a` is the tag's only member, so the tag travels — but the planning task
-    // stays behind, and a link across projects is exactly what the rest of this
-    // rule exists to prevent, so the provenance goes.
+    // `a` is the tag's only member, so the tag travels. The planning task stays
+    // behind, and a link across projects is what the rest of this rule prevents,
+    // so the provenance goes.
     moveTasks([a.id], dest, { resetCheckout: new Set() });
     expect(getTag(g.id)!.project_id).toBe(dest);
     expect(getTag(g.id)!.origin_task_id).toBeNull();
@@ -281,7 +280,7 @@ describe("tags store", () => {
     const a = createTask({ project_id: pid, title: "a", tag_ids: [g.id] });
     const b = createTask({ project_id: pid, title: "b", tag_ids: [g.id] });
     // A started task can't move without the checkout acknowledgement, so it
-    // isn't in the moving set — which makes this a partial selection.
+    // isn't in the moving set, which makes this a partial selection.
     updateTask(b.id, { started: 1, worktree_path: "/tmp/nope" });
     const dest = project();
     const res = moveTasks([a.id, b.id], dest, { resetCheckout: new Set() });
@@ -322,8 +321,7 @@ describe("tags store", () => {
   });
 
   // ---- base_branch: a whole plan's base configured once instead of N times
-  // (phase 2 of docs/superpowers/specs/2026-08-27-per-task-base-branch-design.md,
-  // and the tie-break in its 2026-08-27 addendum). ----
+  // (docs/FEATURES.md). ----
 
   it("a tag's base branch defaults to inherit, round-trips, and clears on empty", () => {
     const g = createTag({ project_id: pid, name: "Auth" });
@@ -361,9 +359,9 @@ describe("tags store", () => {
     const rel = createTag({ project_id: project.id, name: "Release", base_branch: "release" });
     const t = createTask({ project_id: project.id, title: "two plans" });
 
-    // A tag with no opinion is skipped rather than counting as a vote for the
-    // project's default — otherwise adding "flaky-tests" to a task would silently
-    // take it off its feature branch.
+    // A tag with no opinion is skipped instead of counting as a vote for the
+    // project's default, so adding "flaky-tests" to a task does not take it off
+    // its feature branch.
     setTaskTags([t.id], [none.id, auth.id, rel.id]);
     expect(getTaskTagIds(t.id)).toEqual([none.id, auth.id, rel.id]);
     expect(resolveBaseBranch(getTask(t.id)!, project)).toBe("feature/auth");
@@ -384,7 +382,7 @@ describe("tags store", () => {
     const dest = createProject({ name: `dest-${Math.random()}`, branch: "trunk" });
     const res = moveTasks([a.id], dest.id, { resetCheckout: new Set() });
 
-    // The whole membership moved, so the tag came too — but a branch name means
+    // The whole membership moved, so the tag came too. A branch name means
     // nothing in another repository, the same reason tasks.base_branch is cleared.
     expect(res.carried.map((c) => c.id)).toEqual([g.id]);
     expect(getTag(g.id)!.project_id).toBe(dest.id);

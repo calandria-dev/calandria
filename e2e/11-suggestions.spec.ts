@@ -1,8 +1,8 @@
 // The Suggested-by-agents tray in list view, and the Edit-task dialog it opens:
 // expanding a clamped brief, and accepting (or accepting AND starting) a
 // suggestion from inside the dialog. Suggestions are seeded through the same
-// POST /api/tasks the agent tool uses — 04-turn-behaviors covers a real turn
-// filing one; this spec is about what the user can then DO with the row.
+// POST /api/tasks the agent tool uses; 04-turn-behaviors covers a real turn
+// filing one, and this spec covers what the user can then do with the row.
 
 import { expect, test } from "@playwright/test";
 import { createProject, createTask, ensureOnboarded, getTask, gotoApp, makeFixtureRepo, uid, waitForIdle } from "./helpers";
@@ -10,8 +10,8 @@ import { createProject, createTask, ensureOnboarded, getTask, gotoApp, makeFixtu
 const PROJECT = `Suggestions ${uid()}`;
 let projectId: string;
 
-// Long enough that one clamped line can't hold it — the whole point of the
-// disclosure triangle.
+// Long enough that one clamped line can't hold it, so the disclosure triangle
+// is needed.
 const BRIEF =
   "The widget factory allocates a fresh pool per request, which shows up as a " +
   "sawtooth in the heap graph under load. Hoist the pool to module scope, gate " +
@@ -41,15 +41,15 @@ test("a suggestion's brief expands and collapses from the tray", async ({ page, 
   const row = trayRow(page, title);
   await expect(row).toBeVisible();
 
-  // The brief itself is a second toggle with the same label, so target the
-  // triangle by class rather than by accessible name.
+  // The brief itself is a second toggle with the same label; target the
+  // triangle by class instead of accessible name.
   const chevron = row.locator("button.sug-chev");
   await expect(chevron).toHaveAttribute("aria-expanded", "false");
   const clamped = (await row.boundingBox())!.height;
 
   await chevron.click();
   await expect(chevron).toHaveAttribute("aria-expanded", "true");
-  // The clamp really came off — not just a class flip.
+  // Confirms the clamp came off by checking the row's height grew.
   expect((await row.boundingBox())!.height).toBeGreaterThan(clamped);
   await expect(row.locator(".sg-why")).toContainText("regression test");
 
@@ -81,7 +81,7 @@ test("the edit dialog saves an edited suggestion into the task list", async ({ p
   await dialog.locator("input[type=text]").first().fill(edited);
   await dialog.getByRole("button", { name: "Add", exact: true }).click();
 
-  // Out of the tray, into the list, under the new title — and still unstarted.
+  // Moves from the tray into the list under the new title, still unstarted.
   await expect(page.locator(".ttitle").filter({ hasText: edited })).toBeVisible();
   await expect(page.locator(".sg-name").filter({ hasText: title })).toHaveCount(0);
   const after = await getTask(request, task.id);
@@ -110,7 +110,7 @@ test("an added but unstarted task can be started from the edit dialog", async ({
   const task = await createTask(request, { projectId, title, description: "plain task" });
 
   await openProject(page);
-  // A plain card opens the session pane, not the dialog — an unstarted task's
+  // A plain card opens the session pane, not the dialog. An unstarted task's
   // hero is where its Edit button lives.
   await page.locator(".ttitle").filter({ hasText: title }).click();
   await page.getByTitle("Edit title & description before starting").click();
@@ -122,10 +122,10 @@ test("an added but unstarted task can be started from the edit dialog", async ({
 
 // A BLOCKED suggestion. `POST /api/tasks/[id]/messages` 409s a first turn whose
 // blockers are still open, and the tray/board Start accepts the task before it
-// asks for the turn — so an offered Start would put the row on the board and
-// then be refused the run. The button is withheld instead. Add is not: accepting
-// a suggestion isn't starting it, and it's how the user gets the row onto the
-// board to wait its turn.
+// asks for the turn, so an offered Start would put the row on the board and
+// then be refused the run. The button is withheld instead. Add is not:
+// accepting a suggestion isn't starting it, and it's how the user gets the row
+// onto the board to wait its turn.
 test("a blocked suggestion offers Add but not Start", async ({ page, request }) => {
   const blockerTitle = `Land the rename ${uid()}`;
   const blocker = await createTask(request, { projectId, title: blockerTitle, description: "must finish first" });

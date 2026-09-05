@@ -1,14 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// Mid-turn task notifications. The CLI registers EVERY Bash/Agent call as a
-// task and announces it (measured on 2.1.240): a foreground call gets
-// task_started + task_notification — summary = the call's own description,
-// no output_file — an instant BEFORE its tool_result; a backgrounded call
-// returns a "running in the background" tool_result first and is notified
-// when it settles. The driver used to forward every summary as a notice, so
-// each long foreground command left a floating line reading like an error
-// ("⚠ Install devDeps in the worktree and typecheck"). Only the background
-// settle is news: the foreground card is about to carry its own result.
+// Mid-turn task notifications. The CLI registers every Bash/Agent call as a
+// task and announces it: a foreground call gets task_started and
+// task_notification (summary is the call's own description, no output_file)
+// an instant before its tool_result; a backgrounded call returns a
+// "running in the background" tool_result first and is notified when it
+// settles. Only the background settle is surfaced as a notice, since the
+// foreground card carries its own result.
 //
 // Same SDK-boundary mock as tests/claudeBackgroundLinger.test.ts, without
 // the linger: the Stop hook reports nothing pending, so the turn closes at
@@ -68,7 +66,7 @@ describe("claude driver mid-turn task notifications", () => {
       await nextInput();
       yield init;
       yield toolUse("tu-fg", "npm run typecheck", "Install devDeps in the worktree and typecheck");
-      // Measured order: the notification lands BEFORE the tool_result.
+      // The notification lands before the tool_result.
       yield notification({ tool_use_id: "tu-fg", summary: "Install devDeps in the worktree and typecheck" });
       yield toolResult("tu-fg", "ok");
       await stop();
@@ -86,7 +84,7 @@ describe("claude driver mid-turn task notifications", () => {
       await nextInput();
       yield init;
       yield toolUse("tu-bg", "npm test", "Run the suite");
-      // A backgrounded call returns its placeholder FIRST, then settles later.
+      // A backgrounded call returns its placeholder first, then settles later.
       yield toolResult("tu-bg", "Command running in background with ID: b1. You will be notified when it completes.");
       yield notification({ tool_use_id: "tu-bg", output_file: "/tmp/b1.output", summary: 'Background command "Run the suite" completed (exit code 0)' });
       yield toolUse("tu-bg2", "npm run build", "Build");

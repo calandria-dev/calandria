@@ -1,8 +1,8 @@
-// Tags (docs/superpowers/specs/2026-08-27-tags-design.md): the chip bar over the
-// list and board, the badges on rows/cards/tray/header, the any/all toggle two
-// lit chips get, and the Tags field in the edit dialog. Tags are seeded through
-// the same REST routes the dialog uses; the agent tools that file tagged plans
-// have their own coverage in tests/agentTools.test.ts.
+// Tags (docs/FEATURES.md): the chip bar over the list and board, the badges
+// on rows/cards/tray/header, the any/all toggle two lit chips get, and the
+// Tags field in the edit dialog. Tags are seeded through the same REST routes
+// the dialog uses; the agent tools that file tagged plans have their own
+// coverage in tests/agentTools.test.ts.
 
 import { expect, test, type Page } from "@playwright/test";
 import { createProject, createTask, ensureOnboarded, getTask, gotoApp, makeFixtureRepo, uid } from "./helpers";
@@ -30,8 +30,8 @@ test.beforeAll(async ({ request }) => {
   projectId = project.id;
   tagId = await makeTag(request, TAG, "#3E7CA8");
   secondTagId = await makeTag(request, SECOND, "#5C8C5A");
-  // One task in BOTH tags (the whole point of the conversion), one tray
-  // suggestion in the first, one in the second only, and one untagged.
+  // One task carries both tags, one tray suggestion carries the first, one
+  // carries the second only, and one is untagged.
   for (const [title, tags, suggested] of [
     [bothTitle, [tagId, secondTagId], false],
     [suggestedTitle, [tagId], true],
@@ -159,7 +159,8 @@ test("the edit dialog adds and removes tags, and mints a new one inline", async 
   await expect(page.locator(".sess-head .gbadge")).toHaveText([TAG]);
   await expect(chip(page, TAG).locator(".gc-frac")).toHaveText("0/3");
 
-  // New tag… by name, picked on creation, saved alongside the one already on.
+  // A new tag can be typed by name, picked at creation, and saved alongside
+  // the one already on the task.
   const fresh = `Flaky tests ${uid()}`;
   await page.getByTitle("Edit title & description before starting").click();
   await field.getByRole("button", { name: /New tag/ }).click();
@@ -173,7 +174,7 @@ test("the edit dialog adds and removes tags, and mints a new one inline", async 
   expect(made.counts.total).toBe(1);
   await expect(page.locator(".gchip .gc-name", { hasText: fresh })).toBeVisible();
 
-  // Taking one off leaves the other alone — the difference from the group era.
+  // Taking one off leaves the other alone.
   await page.getByTitle("Edit title & description before starting").click();
   await tick(TAG).uncheck();
   await dialog.getByRole("button", { name: "Save changes" }).click();

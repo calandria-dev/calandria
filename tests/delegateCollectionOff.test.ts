@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
-// The kill switch. Its own file for the same reason
-// tests/claudeBackgroundLingerOff.test.ts is: the env is read at module load
-// (lib/config.ts), so the suite that asserts the block IS sent can't flip it.
+// The kill switch. It has its own file for the same reason
+// tests/claudeBackgroundLingerOff.test.ts does: the env is read at module load
+// (lib/config.ts), so the suite that asserts the block is sent can't flip it.
 vi.hoisted(() => {
   process.env.CALANDRIA_DELEGATE_COLLECTION = "off";
 });
@@ -17,7 +17,7 @@ describe("CALANDRIA_DELEGATE_COLLECTION=off", () => {
   it("leaves the session on the CLI's own defaults", () => {
     const ctx = buildProjectContext(project, task);
     expect(ctx).not.toContain("the bulk reads go to a subagent");
-    // Only that block goes: the rest of the session prompt is unrelated.
+    // Only that block goes; the rest of the session prompt is unrelated.
     expect(ctx).toContain("Background shell tasks");
     expect(ctx).toContain("suggest_task");
   });

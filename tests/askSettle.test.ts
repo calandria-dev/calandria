@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// A question card is settled on every non-answer path, the way a permission
-// card already is (tests/permissionGate.test.ts): a turn dying under a live
-// ask, the driver's own dismissal, and a process restart with one parked. In
-// every case the row gets a DISMISSAL, never a fabricated answer — the
-// transcript must not claim the user picked something they never picked.
+// A question card is settled on every non-answer path, the same as a
+// permission card (tests/permissionGate.test.ts): a turn dying under a live
+// ask, the driver's own dismissal, and a process restart with one parked.
+// Every case settles the row with a DISMISSAL, never a fabricated answer, so
+// the transcript never claims the user picked something they never picked.
 const { runTurnMock } = vi.hoisted(() => ({ runTurnMock: vi.fn() }));
 
 vi.mock("@/lib/agents/claude/driver", () => ({
@@ -72,10 +72,10 @@ beforeEach(() => runTurnMock.mockReset());
 describe("ask cards through the runner", () => {
   it("settles a question the turn died on, so it never renders live options forever", async () => {
     const { project, task } = fixture();
-    // Parks and never decides. The Stop below tears the turn down under it,
-    // exactly like the permission card's equivalent case: the driver's own
-    // event queue closes with the SDK stream, so nothing settles the card
-    // unless the runner's finally backstop does.
+    // Parks and never decides; the Stop below tears the turn down under it,
+    // the same as the permission card's equivalent case. The driver's event
+    // queue closes with the SDK stream, so nothing settles the card unless
+    // the runner's finally backstop does.
     runTurnMock.mockImplementation(async function* (_t: unknown, _p: unknown, _u: string, ac?: AbortController) {
       yield { type: "session", sessionId: "s1" } as StreamEvent;
       yield { type: "ask", id: "ask_1", questions: QUESTIONS } as StreamEvent;
@@ -101,9 +101,9 @@ describe("ask cards through the runner", () => {
     const { project, task } = fixture();
     // Checked mid-turn, right after the dismissal lands: awaiting_input drops
     // to 0 the moment nothing is left parked (lib/runner.ts's ask_dismissed
-    // branch), same as ask_answered's. It is NOT re-checked after `done` —
-    // turn-end unconditionally re-flags an opened, non-scheduled turn's
-    // awaiting_input to 1 (the generic "your turn to reply" signal), which is
+    // branch), the same as ask_answered's. It is not re-checked after `done`,
+    // because turn-end unconditionally re-flags an opened, non-scheduled
+    // turn's awaiting_input to 1 (the generic "your turn to reply" signal),
     // unrelated to whether a question was ever asked.
     let release!: (evs: StreamEvent[]) => void;
     const gate = new Promise<StreamEvent[]>((r) => (release = r));
@@ -119,9 +119,9 @@ describe("ask cards through the runner", () => {
 
     const { done } = collect(task.id);
     startTurn(task, project, "go", "");
-    // awaiting_input starts at 0 too (never yet flagged), so wait on the
-    // dismissed row itself rather than the flag, or the check would pass
-    // before the ask (let alone its dismissal) was ever written.
+    // awaiting_input starts at 0 too (never yet flagged). Waiting on the
+    // dismissed row itself avoids a check that passes before the ask, or its
+    // dismissal, was ever written.
     await vi.waitFor(() => expect(toolRows(task.id).find((d) => d.ask)?.ask?.dismissed).toBeTruthy());
 
     const row = toolRows(task.id).find((d) => d.ask)!;
@@ -136,8 +136,8 @@ describe("ask cards through the runner", () => {
   it("leaves an answered question alone when the turn is later torn down", async () => {
     const { project, task } = fixture();
     // Answered, then the connection dies under it anyway (a Stop racing an
-    // answer that already landed). The finally backstop's guard — dismissed
-    // only when `!t.data.ask.answers` — must not overwrite a real answer.
+    // answer that already landed). The finally backstop's guard, dismissed
+    // only when `!t.data.ask.answers`, must not overwrite a real answer.
     runTurnMock.mockImplementation(async function* (_t: unknown, _p: unknown, _u: string, ac?: AbortController) {
       yield { type: "session", sessionId: "s1" } as StreamEvent;
       yield { type: "ask", id: "ask_1", questions: QUESTIONS } as StreamEvent;
@@ -161,7 +161,7 @@ describe("ask cards through the runner", () => {
 
 // The crash-recovery pass: nothing in memory (the waiter registry, the
 // runner's turn state) survives a restart, so an ask a live turn left parked
-// is settled straight from the DB — same policy as the permission card's.
+// is settled from the DB, the same policy as the permission card's.
 describe("settleOpenCards", () => {
   it("dismisses an unanswered ask, leaves an answered one alone, and settles a permission card too — idempotently", async () => {
     const project = createProject({ name: "RestartProj", repo_path: "" });
