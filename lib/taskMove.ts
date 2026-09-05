@@ -1,14 +1,14 @@
-// Re-parenting tasks, as an operation rather than an endpoint.
+// Re-parenting tasks as a shared operation, not just an endpoint handler.
 //
-// Both move routes — POST /api/tasks/[id]/move for one task and
-// POST /api/tasks/move for a selection — are the same operation with different
+// Both move routes (POST /api/tasks/[id]/move for one task and
+// POST /api/tasks/move for a selection) are the same operation with different
 // error manners, so the rules live here once: which tasks are eligible, what
 // has to be held while that's decided, and the single event the change
 // announces. The routes only translate the result into HTTP.
 //
 // The store half (lib/store.ts moveTasks) is the DB write and knows nothing
 // about turns or git; this half owns the liveness screen, the locks that make
-// it mean something, and the worktree teardown that lets a STARTED task move
+// it mean something, and the worktree teardown that lets a started task move
 // at all.
 
 import fs from "node:fs";
@@ -29,9 +29,9 @@ export interface WorktreeDiscard {
   /** Uncommitted edits were present and are now gone. */
   dirty: boolean;
   /**
-   * Commits on the work branch the base branch never absorbed, now orphaned, or
-   * null when the base branch had no ref to compare against — an unknown number
-   * of them, which is why the discard needed the stronger acknowledgement.
+   * Commits on the work branch the base branch never absorbed, now orphaned,
+   * or null when the base branch had no ref to compare against, an unknown
+   * count that is why the discard needed the stronger acknowledgement.
    */
   ahead: number | null;
 }
@@ -44,19 +44,20 @@ export interface TaskMoveOutcome extends TaskMoveBatch {
 export interface MoveOptions {
   /**
    * The ids whose worktree + branch may be torn down so a started task can
-   * move — the caller's acknowledgement that those checkouts are being thrown
-   * away. A list rather than a flag over the batch: each worktree is a separate
-   * irreversible answer, and one switch over eleven of them isn't consent. A
-   * started task not named here is refused and reported like any other.
+   * move, the caller's acknowledgement that those checkouts are being thrown
+   * away. Given as a list over the batch, not one flag: each worktree is a
+   * separate irreversible answer, and one switch over eleven of them isn't
+   * consent. A started task not named here is refused and reported like any
+   * other.
    */
   discardWorktree?: readonly string[];
   /**
    * The second acknowledgement, required only for a task whose worktree turns
-   * out to hold work that removing it would lose (uncommitted edits, or commits
-   * the base branch never absorbed). Per id for the same reason as above, and
-   * on the same footing: naming one task's unsaved work says nothing about its
-   * neighbour's. Without it such a task is refused rather than quietly
-   * shredded — see the comment on the check below.
+   * out to hold work that removing it would lose (uncommitted edits, or
+   * commits the base branch never absorbed). Per id for the same reason as
+   * above: naming one task's unsaved work says nothing about its neighbour's.
+   * Without it such a task is refused instead of being discarded; see the
+   * check below.
    */
   discardUnsafe?: readonly string[];
 }
@@ -68,33 +69,32 @@ export const UNSAFE_DISCARD_REASON = "the worktree has unsaved work";
  * Move every movable task in `ids` into `projectId`, then announce it once.
  *
  * Runs under the per-task locks the turn-launch path takes, so no task in the
- * selection can start (and cut a worktree from the OLD repo) between the
+ * selection can start (and cut a worktree from the old repo) between the
  * eligibility check and the write. The abort registry is checked inside them
  * for the same reason the single-task route always has: POST /messages claims
- * the turn slot BEFORE it takes the lock, so a launch can be in flight with the
- * row still reading running=0. Those tasks are screened out here rather than in
- * the store, whose view is limited to the rows.
+ * the turn slot before it takes the lock, so a launch can be in flight with
+ * the row still reading running=0. Those tasks are screened out here rather
+ * than in the store, whose view is limited to the rows.
  *
- * A launch that claims the slot AFTER that screen is harmless, and that's not
- * an accident: it will block on the task lock we hold, then re-read the row and
- * its project (POST /messages does this explicitly) and cut its worktree from
- * whichever repo the task belongs to by then. Which is the point of clearing
- * the checkout columns.
+ * A launch that claims the slot after that screen is harmless: it blocks on
+ * the task lock held here, then re-reads the row and its project (POST
+ * /messages does this explicitly) and cuts its worktree from whichever repo
+ * the task belongs to by then, which is why clearing the checkout columns
+ * matters.
  *
- * With `discardWorktree` the critical section is no longer synchronous — the
- * teardown is git — but the locks are what made it safe, not its shortness.
- * The order is deliberate: check the destination, screen for liveness, remove
- * the worktrees named in it, and only then write. Teardown before the write
- * means a crash between the two leaves a row pointing at a directory that
- * isn't there, which both launch paths already self-heal (they treat a missing
+ * With `discardWorktree` the critical section is no longer synchronous, since
+ * the teardown is git, but the locks are what make it safe, not its shortness.
+ * The order is: check the destination, screen for liveness, remove the
+ * worktrees named in it, and only then write. Teardown before the write means
+ * a crash between the two leaves a row pointing at a directory that isn't
+ * there, which both launch paths already self-heal (they treat a missing
  * worktree_path as "cut a new one"); the other order would strand a worktree
- * and branch in the old repo with nothing left pointing at them, which nothing
- * cleans up.
+ * and branch in the old repo with nothing left pointing at them.
  *
- * Returns null when the destination doesn't exist. Callers check the project up
- * front too (so a bad id fails without queueing behind anyone's lock), but it
- * can be deleted while this request waits its turn — and the answer to that is
- * still 404, not a crash. Anything about an INDIVIDUAL task comes back in
+ * Returns null when the destination doesn't exist. Callers check the project
+ * up front too, so a bad id fails without queueing behind anyone's lock, but
+ * it can be deleted while this request waits its turn, and the answer to that
+ * is still 404, not a crash. Anything about an individual task comes back in
  * `skipped` instead; only the destination is fatal to the whole request.
  */
 export async function moveTasksToProject(
@@ -104,15 +104,15 @@ export async function moveTasksToProject(
 ): Promise<TaskMoveOutcome | null> {
   return withTaskLocks(ids, async () => {
     if (!getProject(projectId)) return null;
-    // Only tasks that would actually CHANGE project are screened for liveness.
-    // Re-filing a task under the project it already sits in has always been an
-    // unconditional no-op — there is nothing to refuse — so a live turn on one
-    // of those must not be turned into a refusal here.
+    // Only tasks that would actually change project are screened for liveness.
+    // Re-filing a task under the project it already sits in is an
+    // unconditional no-op with nothing to refuse, so a live turn on one of
+    // those must not be turned into a refusal here.
     const live = new Set(ids.filter((id) => hasTurn(id) && getTask(id)?.project_id !== projectId));
     let candidates = ids.filter((id) => !live.has(id));
 
     // Only the tasks the caller answered for. Everything else keeps the plain
-    // rules — a started one among them is still refused, with its checkout
+    // rules: a started one among them is still refused, with its checkout
     // untouched, which is what makes a partly-acknowledged selection safe to
     // send whole.
     const discardIds = new Set(opts.discardWorktree ?? []);
@@ -129,12 +129,12 @@ export async function moveTasksToProject(
     const stuck = new Set(refused.map((r) => r.id));
     candidates = candidates.filter((id) => !stuck.has(id));
 
-    // Asked again after the teardowns, which is the only part of this that
-    // awaits: the destination was checked above while nothing had happened yet,
-    // and a project deleted during a git subprocess would reach moveTasks as a
-    // throw — a 500 where the contract, and the caller, expect 404. The
-    // checkouts are gone either way; nothing can undo that. What this avoids is
-    // answering with a crash.
+    // Asked again after the teardowns, the only part of this that awaits: the
+    // destination was checked above while nothing had happened yet, and a
+    // project deleted during a git subprocess would reach moveTasks as a
+    // throw, a 500 where the contract expects 404. The checkouts are gone
+    // either way; nothing can undo that. This only avoids answering with a
+    // crash.
     if (discarded.length > 0 && !getProject(projectId)) return null;
 
     const result = moveTasks(candidates, projectId, { resetCheckout: discardIds });
@@ -146,15 +146,15 @@ export async function moveTasksToProject(
     // Nothing changed hands: no event, so a selection of started tasks doesn't
     // make every other tab reload its lists for nothing.
     if (result.moved.length > 0) {
-      // Task-keyed on the bus like everything else, but the id is arbitrary —
-      // the payload carries the whole set, which is the point: eleven tasks
-      // re-parented is ONE re-sync in the other tabs, not eleven.
+      // Task-keyed on the bus like everything else, but the id is arbitrary:
+      // the payload carries the whole set, so eleven tasks re-parented is one
+      // re-sync in the other tabs, not eleven.
       publishGlobal(result.moved[0].id, {
         type: "tasks_moved",
         taskIds: result.moved.map((t) => t.id),
-        // The distinct projects that LOST rows, not one per task: the moved rows
-        // only remember where they landed, and a tray that lost a task has to
-        // drop it. The store captures them before the write.
+        // The distinct projects that lost rows, not one per task: the moved
+        // rows only remember where they landed, and a tray that lost a task
+        // has to drop it. The store captures them before the write.
         fromProjectIds: result.from_project_ids,
         toProjectId: projectId,
       });
@@ -165,9 +165,9 @@ export async function moveTasksToProject(
 
 /**
  * Remove one task's worktree and branch so it can be re-parented. Returns what
- * was destroyed, a refusal, or null when there is nothing to tear down (which
- * includes every task the store is going to refuse or ignore anyway — those are
- * left for moveTasks to report, so the two halves can't disagree about why).
+ * was destroyed, a refusal, or null when there is nothing to tear down, which
+ * includes every task the store would refuse or ignore anyway; those are left
+ * for moveTasks to report, so the two halves can't disagree about why.
  *
  * Called only with the task's lock held.
  */
@@ -178,8 +178,8 @@ async function discardCheckout(
 ): Promise<WorktreeDiscard | { reason: string } | null> {
   const task = getTask(id);
   if (!task || task.project_id === projectId) return null;
-  // A LIVE turn still refuses — nothing may delete a worktree an agent is
-  // writing into — and the store reports it, so bail before touching git.
+  // A live turn still refuses, since nothing may delete a worktree an agent is
+  // writing into, and the store reports it, so bail before touching git.
   if (moveTaskBlockedReason(task, { resetCheckout: true })) return null;
   if (!task.worktree_path && !task.work_branch) return null;
   const project = getProject(task.project_id);
@@ -189,32 +189,32 @@ async function discardCheckout(
   if (!project?.repo_path) return null;
 
   return withRepoLock(project.repo_path, async () => {
-    // The same read the "prune merged worktrees" cleanup gates on: merged is the
-    // safe case, and merged_at only says a task was merged AT LEAST ONCE — work
-    // added since is not in the base branch and dies with the branch.
+    // The same read the "prune merged worktrees" cleanup gates on: merged is
+    // the safe case, and merged_at only says a task was merged at least once;
+    // work added since is not in the base branch and dies with the branch.
     const safety = await worktreePruneSafety({
       repoPath: project.repo_path,
       worktreePath: task.worktree_path,
       workBranch: task.work_branch,
       baseBranch: resolveBaseBranch(task, project),
     });
-    // Re-read here rather than trusting the caller's preview: between the modal
+    // Re-read here instead of trusting the caller's preview: between the modal
     // rendering "this worktree is clean" and the user confirming, the tree can
     // have been edited (no turn can run, but the user's own editor is right
-    // there). The stronger acknowledgement is about work we can SEE, so it's
-    // demanded from the state at teardown time, not from the state the user was
-    // shown — which is the whole guarantee: nothing uncommitted is ever
-    // discarded without having been named first.
+    // there). The stronger acknowledgement is about work that is visible now,
+    // so it's demanded from the state at teardown time, not the state the user
+    // was shown, so nothing uncommitted is ever discarded without having been
+    // named first.
     if (!safety.safe && !opts.discardUnsafe) return { reason: `${UNSAFE_DISCARD_REASON}: ${safety.reason}` };
 
     await removeWorktree(project.repo_path, task.worktree_path, task.work_branch);
     // removeWorktree is best-effort and never throws, and a surviving directory
-    // is the one failure that must not be papered over: worktree paths are keyed
-    // by TASK id, so the next launch would find the old repo's checkout sitting
-    // at exactly the path it wants and reuse it — running the agent against the
-    // project it just left. Refuse the move instead and leave the row intact.
-    // (A branch that outlives its worktree is only a stale ref in a repo this
-    // task no longer belongs to, so it doesn't block anything.)
+    // is the one failure that must not be papered over: worktree paths are
+    // keyed by task id, so the next launch would find the old repo's checkout
+    // sitting at exactly the path it wants and reuse it, running the agent
+    // against the project it just left. Refuse the move instead and leave the
+    // row intact. (A branch that outlives its worktree is only a stale ref in
+    // a repo this task no longer belongs to, so it doesn't block anything.)
     if (task.worktree_path && fs.existsSync(task.worktree_path))
       return { reason: `couldn't remove the task's worktree at ${task.worktree_path}${heldHandleHint()}` };
 
@@ -223,17 +223,17 @@ async function discardCheckout(
 }
 
 /**
- * What a discard-move WOULD destroy, for the confirmation the user is about to
+ * What a discard-move would destroy, for the confirmation the user is about to
  * give. Read-only; safe to call on any task.
  *
- * Separate from the move itself because the answer costs git subprocesses —
- * this is why it doesn't ride along on GET /api/tasks/[id], which every task
- * selection hits.
+ * Separate from the move itself because the answer costs git subprocesses, so
+ * it doesn't ride along on GET /api/tasks/[id], which every task selection
+ * hits.
  */
 export interface DiscardPreview {
   /** There's a checkout to tear down; false means the move needs no discard. */
   has_worktree: boolean;
-  /** Removing it would lose nothing — a merged, clean worktree. */
+  /** Removing it would lose nothing: a merged, clean worktree. */
   safe: boolean;
   dirty: boolean;
   /** Unlanded commits, or null when the base branch has no ref to compare against. */
@@ -245,13 +245,13 @@ export interface DiscardPreview {
 }
 
 /**
- * The same read for a whole selection, keyed by id — what the bulk modal needs
- * to put a cost beside each started row before any box is ticked. Unknown ids
- * are simply absent: a stale selection shouldn't cost the other ten their
+ * The same read for a whole selection, keyed by id, for the bulk modal to put
+ * a cost beside each started row before any box is ticked. Unknown ids are
+ * simply absent: a stale selection shouldn't cost the other ten their
  * preview, and the move itself reports them anyway.
  *
- * Sequential on purpose. Every started task costs a pair of git subprocesses,
- * and running a whole tray of them at once would fork a small army for a read
+ * Sequential: every started task costs a pair of git subprocesses, and
+ * running a whole tray of them at once would fork a small army for a read
  * nobody is waiting on with their finger on a button; tasks with no checkout
  * (the common case in a selection) answer without touching git at all.
  */

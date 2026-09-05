@@ -3,7 +3,7 @@
 // When Claude calls AskUserQuestion, a PreToolUse hook (lib/agents/claude/driver.ts) parks
 // here awaiting the user's answer; the /answer route resolves it and the
 // held-open turn continues with the answer as the tool result. Single Node
-// process, so an in-memory map is enough — kept on globalThis so it survives
+// process makes an in-memory map enough, kept on globalThis so it survives
 // dev HMR module reloads (same pattern as lib/abort.ts).
 
 import type { AskQuestion, AskAnswers } from "./types";
@@ -23,7 +23,7 @@ declare global {
 // taskId → (askId → pending). A task can have several asks parked at once:
 // one assistant message may carry multiple AskUserQuestion tool_uses, and the
 // SDK fires the PreToolUse hook for each. Keying by ask id keeps every hook's
-// promise resolvable — a flat one-per-task entry would orphan all but the
+// promise resolvable; a flat one-per-task entry would orphan all but the
 // latest, deadlocking the turn until the hook timeout.
 function registry(): Map<string, Map<string, PendingAsk>> {
   if (!global.__calandriaAsks) global.__calandriaAsks = new Map();
@@ -40,7 +40,7 @@ function remove(taskId: string, askId: string): PendingAsk | undefined {
 }
 
 /**
- * Park until the user answers this question (or `signal` aborts — the explicit
+ * Park until the user answers this question, or `signal` aborts (the explicit
  * Stop button; turns are detached from connections, so a page reload or dropped
  * stream leaves the ask parked and answerable). Resolves with the chosen
  * answers; rejects if the turn is torn down while waiting.
@@ -77,7 +77,7 @@ export function waitForAnswer(
 
 /**
  * Resolve a parked ask with the user's answers. Returns false when nothing is
- * waiting under that id (e.g. the turn was torn down by a page reload) — the
+ * waiting under that id (e.g. the turn was torn down by a page reload); the
  * caller then falls back to resuming the session with the answer as a normal
  * reply.
  */
@@ -89,20 +89,20 @@ export function submitAnswer(taskId: string, id: string, answers: AskAnswers): b
 }
 
 /**
- * Whether anything is parked on the user for this task right now — a question
+ * Whether anything is parked on the user for this task right now: a question
  * card or a tool-permission prompt, both of which park here. `awaiting_input`
- * on the task row says the same thing and is what every UI reads, but this is
- * the registry the waiter actually lives in, so it is true for the instant
- * between a gate parking and the runner persisting the flag. The idle sweep
- * (lib/turnActivity.ts) checks both, because a waiting-on-you turn produces no
- * transcript activity either and must never be marked idle for it.
+ * on the task row says the same thing and is what every UI reads, but this
+ * registry is true for the instant between a gate parking and the runner
+ * persisting the flag. The idle sweep (lib/turnActivity.ts) checks both,
+ * since a waiting-on-you turn produces no transcript activity and must never
+ * be marked idle.
  */
 export function hasOpenAsk(taskId: string): boolean {
   return (registry().get(taskId)?.size ?? 0) > 0;
 }
 
 /**
- * Settle a parked ask WITHOUT an answer — the waiter's promise rejects with
+ * Settle a parked ask without an answer: the waiter's promise rejects with
  * `reason` and the entry is removed, so a late submitAnswer reports nothing
  * waiting. Used by the permission gate to expire a prompt nobody answered
  * (lib/permissions.ts); an ordinary question has no deadline and never needs it.
@@ -152,11 +152,11 @@ export function takeAskOutcome(taskId: string, id: string): string | null {
 // settle paths writes. An ask row is the twin of a permission row: `answers` is
 // its `outcome`, and until something writes one of them the card renders live
 // option buttons. So the ask needs the same three backstops the permission card
-// has — the waiter's own catch, the runner's turn-end finally, and the crash
-// recovery pass — or a question torn down mid-turn stays answerable forever.
+// has: the waiter's own catch, the runner's turn-end finally, and the crash
+// recovery pass, or a question torn down mid-turn stays answerable forever.
 //
-// The marker is deliberately NOT an answer: the transcript must not claim the
-// user picked something they never picked.
+// The marker is not an answer: the transcript must not claim the user picked
+// something they never picked.
 export const ASK_INTERRUPTED_NOTE = "Not answered — the turn was stopped before an answer arrived.";
 export const ASK_RESTARTED_NOTE = "Not answered — the app restarted before an answer arrived.";
 /** What the MODEL is told when its question was torn down (a tool result, not a card). */

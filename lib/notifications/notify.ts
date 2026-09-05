@@ -1,12 +1,12 @@
-// Where a notification is MINTED. Every channel — today the browser
-// (app/shell/useNotifications.ts), next a webhook — receives what this
-// file composed, so the policy lives here exactly once: which switches apply,
-// which rows stay quiet, how a repeat is collapsed, and how the text reads.
+// Where a notification is composed. Every channel (today the browser,
+// app/shell/useNotifications.ts; next a webhook) receives what this file
+// built, so the policy lives here once: which switches apply, which rows are
+// skipped, how a repeat is collapsed, and how the text reads.
 //
 // Published onto the same in-process bus the transcript uses
-// (publishGlobal → GET /api/events → every open tab) and, from the same exit,
-// pushed to every subscribed browser (lib/push). SDK-free: store + bus + fetch
-// only, pinned by tests/importGraph.test.ts.
+// (publishGlobal, GET /api/events, every open tab) and, from the same exit,
+// pushed to every subscribed browser (lib/push). SDK-free: store, bus and
+// fetch only, pinned by tests/importGraph.test.ts.
 
 import { publishGlobal } from "@/lib/events";
 import { pushNotificationDetached } from "@/lib/push/send";
@@ -14,8 +14,8 @@ import { interactionDenied } from "@/lib/runContext";
 import { getProject, getSetting, getTask, taskAwaitingInput } from "@/lib/store";
 import type { NotificationKind, NotificationPayload } from "./types";
 
-// Per-kind opt-outs. All default ON — a notification feature that ships off is
-// one nobody discovers, and every kind here is a task that has STOPPED.
+// Per-kind opt-outs. All default on: a notification feature that ships off
+// is one nobody discovers, and every kind here is a task that has stopped.
 const KIND_SETTING: Record<Exclude<NotificationKind, "test">, string> = {
   awaiting_input: "notify_awaiting_input",
   turn_failed: "notify_turn_failed",
@@ -31,10 +31,11 @@ function kindEnabled(kind: Exclude<NotificationKind, "test">): boolean {
   return getSetting(KIND_SETTING[kind]) !== "off";
 }
 
-// One assistant message can open an AskUserQuestion card AND a permission card
-// — two events describing one moment. The browser's `tag` hides the duplicate
-// toast, but a webhook would deliver both, so the collapse belongs here rather
-// than in the channel. Keyed by the payload id, i.e. (kind, taskId).
+// One assistant message can open an AskUserQuestion card and a permission
+// card: two events describing one moment. The browser's `tag` hides the
+// duplicate toast, but a webhook would deliver both, so the collapse
+// happens here instead of per channel. Keyed by the payload id, i.e.
+// (kind, taskId).
 const DEDUPE_MS = 10_000;
 
 declare global {
@@ -57,7 +58,7 @@ function deduped(id: string, now: number): boolean {
   const m = seen();
   if (recentlyDelivered(id, now)) return true;
   m.set(id, now);
-  // Keys are per task and tasks are hard-deleted, so without a sweep a
+  // Keys are per task, and tasks are hard-deleted, so without a sweep a
   // long-lived server keeps one entry per task it ever notified about.
   if (m.size > 500) for (const [k, t] of m) if (now - t >= DEDUPE_MS) m.delete(k);
   return false;
@@ -82,17 +83,18 @@ function deliver(payload: NotificationPayload, dedupe = true): NotificationPaylo
   try {
     publishGlobal(payload.taskId, { type: "notification", payload });
   } catch (err) {
-    // In-process pub/sub. A dead subscriber must never take down the turn that
-    // triggered this.
+    // In-process pub/sub. A dead subscriber must never take down the turn
+    // that triggered this.
     console.error("[notifications] publish failed:", err);
     return null;
   }
-  // The second channel: Web Push to every subscribed browser (lib/push/send.ts),
-  // the SAME payload the tabs just received. Detached — this runs inside the
-  // turn that stopped, and the push services are on the far side of the
-  // internet. A device that also has a tab open gets the toast twice on paper
-  // and once on screen: the worker uses the payload id as the notification
-  // tag, exactly as useNotifications.ts does, so the two collapse.
+  // The second channel: Web Push to every subscribed browser
+  // (lib/push/send.ts), the same payload the tabs just received. Detached,
+  // since this runs inside the turn that stopped and the push services are
+  // on the far side of the internet. A device with a tab open gets the toast
+  // twice on paper and once on screen: the worker uses the payload id as the
+  // notification tag, exactly as useNotifications.ts does, so the two
+  // collapse.
   pushNotificationDetached(payload);
   return payload;
 }
@@ -107,35 +109,32 @@ function projectSuffix(projectId: string): string {
 export function emitAwaitingInput(taskId: string): NotificationPayload | null {
   if (!kindEnabled("awaiting_input")) return null;
   // A declared-unattended turn (a scheduled run) never waits for anyone: the
-  // driver publishes the card BEFORE waitForPermission() runs, and the deny
-  // policy settles it inside that call — so the row really does hold
-  // awaiting_input = 1 for the instant this subscriber reads it. Notifying
-  // would tell the user a task is waiting on them that by design never will,
-  // the same false item the scheduler keeps out of the "N need you" pill by
-  // leaving awaiting_input at 0 on success.
+  // driver publishes the card before waitForPermission() runs, and the deny
+  // policy settles it inside that call, so the row briefly holds
+  // awaiting_input = 1 while this subscriber reads it. The scheduler keeps
+  // that same false item out of the "N need you" pill by leaving
+  // awaiting_input at 0 on success; this screen matches that.
   if (interactionDenied(taskId)) return null;
-  // A turn that just DIED has already told the user, with the error text. The
-  // runner's finally then sets awaiting_input = 1 on any turn that opened a
-  // session and ended mid-task and publishes turn_end milliseconds later, so
-  // every failed turn reaches here right behind its own `error` event. The two
-  // ids differ, so neither the dedupe window nor the browser tag (which IS the
-  // id) collapses them: the user would get "Turn failed · X" and, stacked
-  // beside it, "Waiting for input · X" — which adds nothing and contradicts
-  // the first, since the session isn't waiting, it's dead. Same stand-down
-  // emitScheduleFailed makes, for the same reason, and it is what keeps a
-  // failed SCHEDULED run at one toast now that turn_end is mapped
-  // (clearRunContext has already run by then, so the guard above can't).
+  // A turn that just died already told the user, with the error text. The
+  // runner's finally sets awaiting_input = 1 on any turn that opened a
+  // session and ended mid-task, and publishes turn_end shortly after, so
+  // every failed turn reaches here right behind its own `error` event. The
+  // two ids differ, so neither the dedupe window nor the browser tag (which
+  // is the id) collapses them on their own, so this guard stops "Turn
+  // failed" from stacking with "Waiting for input" for a session that is
+  // dead, not waiting. emitScheduleFailed makes the same stand-down, keeping
+  // a failed scheduled run at one toast (clearRunContext has already run by
+  // then, so the interactionDenied guard above can't catch it).
   //
-  // Bounded by the same 10s window, which is why it can't swallow a real later
-  // question: reaching here again needs a NEW turn to start AND park, and the
-  // turn that failed settled the task first. The only route that fast is the
-  // user clicking Retry — in which case they are at the keyboard, and the
-  // browser channel is already silent for the task you are looking at. Even
-  // then the card, the transcript and the "N need you" pill are unaffected;
-  // only the toast is skipped.
+  // Bounded by the same 10s window: reaching here again needs a new turn to
+  // start and park, and the turn that failed settled the task first. The
+  // only route that fast is the user clicking Retry, who is at the keyboard
+  // with the browser channel already silent for the task on screen. The
+  // card, the transcript and the "N need you" pill are unaffected; only the
+  // toast is skipped.
   if (recentlyDelivered(`turn_failed:${taskId}`, Date.now())) return null;
   const task = getTask(taskId);
-  // The ROW decides, not the event: see taskAwaitingInput in lib/store.ts.
+  // The row decides, not the event: see taskAwaitingInput in lib/store.ts.
   if (!task || !taskAwaitingInput(taskId)) return null;
   return deliver({
     id: `awaiting_input:${taskId}`,
@@ -149,22 +148,21 @@ export function emitAwaitingInput(taskId: string): NotificationPayload | null {
 }
 
 /**
- * A turn died. Deliberately ANY error, not just the four classified-recoverable
+ * A turn died. Covers any error, not just the four classified-recoverable
  * ones (dead login, context overflow, approval block, spent quota): an
- * unclassified crash parks the task just as hard and has no recovery button to
- * make itself noticeable, so restricting this would leave the worst failures
- * as the only silent ones.
+ * unclassified crash parks the task just as hard and has no recovery button
+ * to make itself noticeable, so restricting this kind would leave the worst
+ * failures unreported.
  *
- * Screens `suggested` (an inert tray row nobody committed to) and NOT
- * taskAwaitingInput(), so a snooze does not silence it. That asymmetry with
- * emitAwaitingInput is deliberate: snoozing a question means "remind me later
- * about this decision", never "hide it from me if the session then crashes". A
- * crash is new information, not the thing that was put off. Same for the
- * archived-project screen inside taskAwaitingInput — an archived project shouldn't
- * be nagging about a pending decision, but if its work is still running and
- * falls over, that is worth knowing. emitScheduleFailed goes further and
- * screens nothing at all, because the run it reports may have failed before it
- * minted any task to be snoozed.
+ * Screens `suggested` (an inert tray row nobody committed to) but not
+ * taskAwaitingInput(), so a snooze does not silence it: snoozing a question
+ * means "remind me later about this decision", never "hide it from me if the
+ * session then crashes". A crash is new information, not the thing that was
+ * put off. Same reasoning applies to the archived-project screen inside
+ * taskAwaitingInput: an archived project shouldn't nag about a pending
+ * decision, but if its work is still running and falls over, that is worth
+ * knowing. emitScheduleFailed screens nothing at all, because the run it
+ * reports may have failed before it minted any task to be snoozed.
  */
 export function emitTurnFailed(taskId: string, content: string): NotificationPayload | null {
   if (!kindEnabled("turn_failed")) return null;
@@ -183,10 +181,10 @@ export function emitTurnFailed(taskId: string, content: string): NotificationPay
 }
 
 /**
- * A scheduled run settled `failed`. The app's only genuinely unattended work,
- * and the only kind here that can name no task at all — a run that failed its
- * preflight never minted one, which is precisely the failure nobody would
- * otherwise see.
+ * A scheduled run settled `failed`. The app's only genuinely unattended
+ * work, and the only kind here that can name no task at all: a run that
+ * failed its preflight never minted one, which is exactly the failure
+ * nobody would otherwise see.
  */
 export function emitScheduleFailed(a: {
   scheduleName: string;
@@ -195,15 +193,15 @@ export function emitScheduleFailed(a: {
   detail: string;
 }): NotificationPayload | null {
   if (!kindEnabled("schedule_failed")) return null;
-  // A scheduled turn that ERRORS reports twice: the runner publishes `error`
-  // during the turn ("Turn failed · <task> · <err>") and then settles the run
-  // from its finally with the same error text. Different ids, so the dedupe
-  // window and the browser's tag both let the pair through as two near-identical
-  // toasts. The user has already been told, with the same words, so this one
-  // stands down — but ONLY for that case: a run that failed with no turn error
-  // at all (preflight, unknown command, a turn cut short by an unattended deny)
-  // left no `turn_failed` behind and is exactly the silent failure this kind
-  // exists for.
+  // A scheduled turn that errors reports twice: the runner publishes `error`
+  // during the turn ("Turn failed · <task> · <err>") and then settles the
+  // run from its finally with the same error text. Different ids, so the
+  // dedupe window and the browser's tag both let the pair through as two
+  // near-identical toasts. The user has already been told, with the same
+  // words, so this one stands down, but only for that case: a run that
+  // failed with no turn error at all (preflight, unknown command, a turn cut
+  // short by an unattended deny) left no `turn_failed` behind and is exactly
+  // the failure this kind exists to report.
   if (a.taskId && recentlyDelivered(`turn_failed:${a.taskId}`, Date.now())) return null;
   const detail = firstLine(a.detail);
   return deliver({
@@ -219,9 +217,9 @@ export function emitScheduleFailed(a: {
 
 /**
  * Settings' "Send test notification". Skips the per-kind switches and the
- * dedupe window — a diagnostic that silently suppresses itself teaches the user
- * the wrong thing — but honors the master switch, which is a real answer the
- * button should report.
+ * dedupe window, since a diagnostic that suppresses itself with no visible
+ * reason teaches the user the wrong thing. Honors the master switch, which
+ * is a real answer the button should report.
  */
 export function emitTestNotification(): NotificationPayload | null {
   return deliver({

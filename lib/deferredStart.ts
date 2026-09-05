@@ -1,36 +1,36 @@
-// "Start at the usage-window reset" — the sweep behind tasks.start_at.
+// "Start at the usage-window reset": the sweep behind tasks.start_at.
 //
 // A spent subscription limit (Claude's 5-hour window, the weekly cap) stops
-// every turn on the instance until it resets, and the reset lands at an hour
-// nobody wants to babysit. The user can already see WHEN (the titlebar plan
-// meter, lib/agents/claude/planUsage.ts) and the runner already parks a dead
-// task's queue rather than burning it (lib/usageLimit.ts) — what was missing
-// is the hand-off: "when that passes, go". So a task carries ONE stored
-// deadline, `start_at`, and this module is the ticker that honours it:
+// every turn on the instance until it resets. The user can see when that is
+// (the titlebar plan meter, lib/agents/claude/planUsage.ts) and the runner
+// already parks a dead task's queue instead of burning it
+// (lib/usageLimit.ts); this module is the hand-off that fires the task once
+// the limit clears. A task carries one stored deadline, `start_at`, and this
+// module is the ticker that honors it:
 //
-//   never started  → its first turn launches, exactly as "Start session" or a
+//   never started  -> its first turn launches, exactly as "Start session" or a
 //                    dependency auto-start would (lib/autoStart.ts);
-//   started        → the session resumes with the oldest queued follow-up if
-//                    one is parked, else a generic "continue" — the message
+//   started        -> the session resumes with the oldest queued follow-up if
+//                    one is parked, else a generic "continue" message, the one
 //                    the user would have typed at the reset themselves.
 //
-// The deadline is a plain epoch rather than "the reset" because the reset the
+// The deadline is a plain epoch instead of "the reset" because the reset the
 // user queued against is a fact at click time (the client reads it off the
 // meter, lib/usageReset.ts, and adds a minute of head-room); re-deriving it at
 // fire time from a snapshot that has since healed would find no reset at all.
-// It is consumed by ANY turn launch (lib/runner.ts startTurn), not only this
+// It is consumed by any turn launch (lib/runner.ts startTurn), not only this
 // sweep, so a task the user started by hand in the meantime never fires twice.
 //
-// Unlike snoozing (app/shell/snooze.ts), which is pure derivation and
-// needs no ticker, a launch is a side effect — so this is server-owned periodic
-// work like lib/scheduler.ts, started from the same boot ping and idempotent
-// on globalThis. It is deliberately NOT folded into that ticker: it is not a
-// schedule, and `CALANDRIA_SCHEDULER=off` must not silently disable a button the
-// task hero offers. Boot catch-up is free: a deadline that passed while the
-// server was down is simply due on the first sweep.
+// Unlike snoozing (app/shell/snooze.ts), which is pure derivation and needs no
+// ticker, a launch is a side effect, so this is server-owned periodic work
+// like lib/scheduler.ts, started from the same boot ping and idempotent on
+// globalThis. It stays out of that ticker because it is not a schedule, and
+// `CALANDRIA_SCHEDULER=off` must not disable a button the task hero
+// offers. Boot catch-up is free: a deadline that passed while the server was
+// down is simply due on the first sweep.
 //
 // lib/runner.ts is reached through `await import()` for the reason spelled out
-// in lib/autoStart.ts — this module shares that file's position beside the
+// in lib/autoStart.ts: this module shares that file's position beside the
 // driver's cycle, and is pinned DYNAMIC_ONLY in tests/importGraph.test.ts.
 
 import { SCHEDULE_TICK_MS } from "@/lib/config";
@@ -75,7 +75,7 @@ const state = (): TickerState => (global.__calandriaDeferredStart ??= { timer: n
 
 const isTerminal = (t: Task) => t.status === "done" || t.status === "cancelled";
 
-/** Start the ticker. Idempotent — the boot ping and a lazy call from the task route both reach it. */
+/** Start the ticker. Idempotent: the boot ping and a lazy call from the task route both reach it. */
 export function startDeferredStartTicker(): void {
   const s = state();
   if (s.timer) return;
@@ -107,7 +107,7 @@ export async function sweepDeferredStarts(now: number = Date.now()): Promise<num
       try {
         if (await fire(task)) launched++;
       } catch (err) {
-        // One task's failed launch must never abort the sweep — and must never
+        // One task's failed launch must never abort the sweep, and must never
         // leave the deadline set, or the same failure repeats every tick. The
         // launch paths have already put the failure on the task's transcript.
         console.error(`[deferredStart] could not start task ${task.id}:`, err);

@@ -1,38 +1,35 @@
-// Telling a session, at the top of its opening turn, that its worktree was cut
-// from somewhere stale.
+// Tells a session, at the top of its opening turn, that its worktree was cut
+// from a stale branch.
 //
-// A task under a tag with a `base_branch` has its worktree cut from that branch
-// (resolveBaseBranch, lib/baseBranch.ts → ensureWorktree, lib/git.ts). When that
-// branch has fallen behind the project default, the checkout is missing
-// everything that landed in between, and the session finds out only when the PR
-// it opens reads as reverting that work — DIRTY, zero checks, diagnosed by hand
-// afterwards. Nothing in its context ever said which branch it was cut from or
-// how far back that branch is.
+// A task under a tag with a `base_branch` has its worktree cut from that
+// branch (resolveBaseBranch, lib/baseBranch.ts -> ensureWorktree, lib/git.ts).
+// When that branch has fallen behind the project default, the checkout is
+// missing everything that landed in between, and nothing in the session's
+// context says so, so a PR it opens can read as reverting that work. The cut
+// records a note and the opening turn's context states it
+// (buildProjectContext, lib/agents/shared.ts):
 //
-// So the cut records a note and the opening turn's context states it
-// (buildProjectContext, lib/agents/shared.ts). Three rules the launch path
-// imposes, all of them "a launch must not pay for this":
-//
-//   - The drift number comes from `branchDriftStatus` — the SAME function the
+//   - The drift number comes from `branchDriftStatus`, the same function the
 //     tag UI reports from, so the two numbers can't disagree.
-//   - No network. `ensureWorktree` already does a best-effort `fetchBase` with a
-//     hard timeout and a per-repo cooldown just before the cut; this rides it and
-//     reads local refs only.
-//   - An answer that can't be established is silence. Unknown, missing counts and
-//     any throw all produce no note, because slowing down or failing a launch over
-//     an advisory line is strictly worse than the line being absent.
+//   - No network: `ensureWorktree` already does a best-effort `fetchBase`
+//     with a hard timeout and a per-repo cooldown just before the cut; this
+//     rides it and reads local refs only.
+//   - An answer that can't be established produces no note: unknown, missing
+//     counts and any throw all produce nothing, since slowing down or
+//     failing a launch over an advisory line is worse than the line being
+//     absent.
 //
-// It never blocks or refuses the launch: being deliberately stacked on another
-// branch is a legitimate reason to be behind the default. The point is that the
-// session knows.
+// It never blocks or refuses the launch: being stacked on another branch is
+// a legitimate reason to be behind the default. The point is that the
+// session finds out.
 
 import { branchDriftStatus } from "./git";
 
 // Notes live in memory, keyed by task id, on globalThis so HMR doesn't drop them
 // between the cut and the turn (the same reason lib/events.ts and lib/asks.ts do).
-// Deliberately NOT persisted: the note describes one cut, the numbers in it go
-// stale the moment anyone syncs, and a durable copy would keep re-asserting a
-// drift that has since been fixed. It dies with the process, exactly like the cut
+// Not persisted: the note describes one cut, the numbers in it go stale the
+// moment anyone syncs, and a durable copy would keep re-asserting a drift
+// that has since been fixed. It dies with the process, exactly like the cut
 // it reports on.
 interface DriftRegistry {
   notes: Map<string, string>;
@@ -44,7 +41,7 @@ function registry(): DriftRegistry {
   return g.__calandriaBaseCutNotes;
 }
 
-/** The requested base branch does not exist, so the cut silently fell back to
+/** The requested base branch does not exist, so the cut fell back to
  *  whatever HEAD was. Said outright: a tag pinned to a deleted branch otherwise
  *  gives the task the wrong base with no error and no log line. */
 export function missingBaseLine(requested: string, projectDefault: string): string {
@@ -78,8 +75,8 @@ export function staleBaseLine(base: string, projectDefault: string, behind: numb
  * carries the base it USED (`baseBranch`, "" when the requested one didn't exist),
  * so the resolved-vs-requested mismatch needs no re-deriving here.
  *
- * Resolves to nothing at all in the overwhelmingly common case — a task on the
- * project default has no second branch to be behind — so the two local git reads
+ * Resolves to nothing at all in the overwhelmingly common case: a task on the
+ * project default has no second branch to be behind, so the two local git reads
  * are only ever paid by a task that really is on a branch of its own.
  */
 export async function recordBaseCut(input: {
@@ -100,7 +97,7 @@ export async function recordBaseCut(input: {
       return;
     }
     // On the project default there is no drift to report by definition, and this
-    // is the path nearly every task takes — return before touching git.
+    // is the path nearly every task takes; return before touching git.
     if (!projectDefault || cutBase === projectDefault) return;
 
     const drift = await branchDriftStatus(repoPath, cutBase, projectDefault);
@@ -113,12 +110,11 @@ export async function recordBaseCut(input: {
 }
 
 /**
- * Take the pending note for a task, if any, and clear it.
- *
- * Consumed rather than read, so it lands in the OPENING turn after the cut and
- * not in every turn thereafter: the drift is a fact about that cut, its numbers
- * age, and a session that has already been told once doesn't need telling again
- * on every follow-up message.
+ * Take the pending note for a task, if any, and clear it. Clearing it means
+ * it lands in the OPENING turn after the cut and not in every turn
+ * thereafter: the drift is a fact about that cut, its numbers age, and a
+ * session that has already been told once doesn't need telling again on
+ * every follow-up message.
  */
 export function takeBaseCutNote(taskId: string): string {
   const notes = registry().notes;

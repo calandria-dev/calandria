@@ -1,14 +1,13 @@
-// The LiteLLM gateway's own model catalog (docs/design/litellm.md, "Model
-// catalog, context windows and prices") — GET <gateway>/model/info, which
-// states each model's context window and price, unlike a driver's own
-// hardcoded catalog (lib/agents/claude/capabilities.ts and friends) or the
-// Ollama/OpenAI-shaped probe in lib/modelEndpoint.ts, which the gateway
-// doesn't answer the same way (it 404s /api/tags and /v1/models).
+// The LiteLLM gateway's own model catalog (docs/AGENTS.md): GET
+// <gateway>/model/info, which states each model's context window and price,
+// unlike a driver's hardcoded catalog (lib/agents/claude/capabilities.ts and
+// friends) or the Ollama/OpenAI-shaped probe in lib/modelEndpoint.ts (the
+// gateway 404s /api/tags and /v1/models instead of answering those).
 //
-// SDK-free and Node-free beyond fetch, mirroring lib/gatewayHealth.ts — so
-// lib/agents/claude/capabilities.ts (itself SDK-free) can read the last probe
-// synchronously without dragging an SDK into the graph. tests/importGraph.test.ts
-// pins the SDK-free set this belongs to.
+// SDK-free and Node-free beyond fetch, mirroring lib/gatewayHealth.ts, so
+// lib/agents/claude/capabilities.ts (itself SDK-free) can read the last
+// probe synchronously without dragging an SDK into the graph.
+// tests/importGraph.test.ts pins the SDK-free set this belongs to.
 
 import { MODEL_PROBE_MS } from "./config";
 import { gatewayBaseUrl, normalizeBaseUrl } from "./agentEnv";
@@ -61,8 +60,8 @@ function unreachable(base: string, error: string): GatewayCatalog {
   return { base_url: base, reachable: false, models: [], error };
 }
 
-// Same reason lib/gatewayHealth.ts / lib/modelEndpoint.ts fold this: a Node
-// fetch failure's useful text is on `message`/`cause`, and "timed out" reads
+// Mirrors lib/gatewayHealth.ts / lib/modelEndpoint.ts: a Node fetch
+// failure's useful text is on `message`/`cause`, and "timed out" reads
 // better than an AbortError's default message.
 function reason(e: unknown): string {
   const m = e instanceof Error ? e.message : String(e);
@@ -83,9 +82,9 @@ async function probe(base: string, key: string, timeoutMs: number): Promise<Gate
       const parsed = parseEntry(raw);
       if (parsed) models.push(parsed);
     }
-    // The same response feeds pricing (docs/design/litellm.md) — every caller
-    // of this probe, not just the picker route, keeps lib/gatewayPricing.ts's
-    // rate table current.
+    // The same response feeds pricing (docs/AGENTS.md): every caller of this
+    // probe, not just the picker route, keeps lib/gatewayPricing.ts's rate
+    // table current.
     recordGatewayRates(models);
     return { base_url: base, reachable: true, models, error: null };
   } catch (e) {
@@ -100,7 +99,7 @@ async function probe(base: string, key: string, timeoutMs: number): Promise<Gate
  *  loading it at once don't each open a socket. */
 export const GATEWAY_MODELS_CACHE_MS = 10_000;
 
-// On globalThis so an HMR reload doesn't reset it — see lib/modelEndpoint.ts.
+// On globalThis so an HMR reload doesn't reset it; see lib/modelEndpoint.ts.
 const store = globalThis as { __calandriaGatewayModels?: Map<string, { at: number; value: GatewayCatalog }> };
 const cache = (store.__calandriaGatewayModels ??= new Map());
 
@@ -122,12 +121,12 @@ export async function gatewayModelCatalog(
 }
 
 /**
- * The last successfully probed catalog, synchronously — what
+ * The last successfully probed catalog, synchronously: what
  * claudeCapabilities() reads, since it must stay synchronous like every other
- * branch of that descriptor. `null` = nothing has been probed yet, or the last
- * probe failed, which callers treat as "fall back to the static catalog" — the
- * same "absent is a supported state" contract every other probe-backed
- * descriptor branch already follows (lib/agents/claude/modelProbe.ts).
+ * branch of that descriptor. `null` means nothing has been probed yet, or
+ * the last probe failed; callers treat that as "fall back to the static
+ * catalog", the same "absent is a supported state" contract every other
+ * probe-backed descriptor branch follows (lib/agents/claude/modelProbe.ts).
  */
 export function lastGatewayModelCatalog(baseUrl: string | null | undefined = gatewayBaseUrl()): GatewayModelInfo[] | null {
   const base = normalizeBaseUrl(String(baseUrl ?? ""));
@@ -137,7 +136,7 @@ export function lastGatewayModelCatalog(baseUrl: string | null | undefined = gat
 }
 
 /** The window for one model id from the gateway's last-probed catalog, or 0
- *  for "unknown" — the same contract lib/contextWindow.ts's callers read. A
+ *  for "unknown", the same contract lib/contextWindow.ts's callers read. A
  *  `[1m]` suffix (the beta variant gatewayModelOptions() below synthesizes)
  *  resolves against its bare id. */
 export function gatewayContextWindow(model: string | null | undefined, baseUrl: string | null | undefined = gatewayBaseUrl()): number {
@@ -150,27 +149,24 @@ export function gatewayContextWindow(model: string | null | undefined, baseUrl: 
   return /\[1m\]$/i.test(model) ? Math.max(hit.max_input_tokens, 1_000_000) : hit.max_input_tokens;
 }
 
-/** Drop every cached probe — the suite's between-tests reset. */
+/** Drop every cached probe. Used to reset state between tests. */
 export function clearGatewayModelCache(): void {
   cache.clear();
 }
 
 // ---------- catalog entry -> picker option, filtered by driver fit ----------
 
-/** Which driver a gateway model list is being built for. Codex and
- *  Antigravity land their own driver-side plumbing in later steps of
- *  docs/design/litellm.md, but the picker route (GET /api/projects/[id]/models)
- *  serves all three today, since a project can already point any agent's task
- *  at the gateway preset from step 1. */
+/** Which driver a gateway model list is being built for. The picker route
+ *  (GET /api/projects/[id]/models) serves all three, since a project can
+ *  point any agent's task at the gateway preset. */
 export type GatewayFitAgent = "claude" | "codex" | "gemini";
 
-// LiteLLM's own Responses-API passthrough providers. Not exhaustive by
-// measurement — no live gateway to probe against from here — so this is a
-// conservative starting set; the Codex-through-the-gateway step is where it
-// gets checked against a real instance and extended if short.
+// LiteLLM's own Responses-API passthrough providers. Not exhaustive; a
+// conservative starting set, extended as it's checked against real gateway
+// instances.
 const RESPONSES_CAPABLE_PROVIDERS = new Set(["openai", "azure"]);
 
-// Named literally in docs/design/litellm.md's "Antigravity driver" section.
+// Providers LiteLLM routes through its Gemini-shaped surface (docs/AGENTS.md).
 const GEMINI_PROVIDERS = new Set(["gemini", "vertex_ai"]);
 
 function fitsDriver(agent: GatewayFitAgent, e: GatewayModelInfo): boolean {
@@ -194,16 +190,15 @@ function priceLabel(e: GatewayModelInfo): string | null {
 }
 
 /**
- * Catalog entries → the picker's AgentModelOption[], filtered to what fits
- * `agent` (docs/design/litellm.md: Claude shows every chat entry and marks
+ * Catalog entries to the picker's AgentModelOption[], filtered to what fits
+ * `agent` (docs/AGENTS.md: Claude shows every chat entry and marks
  * non-Anthropic providers translated; Codex shows Responses-capable
  * providers; Antigravity shows gemini/vertex_ai). `group` is the provider, so
  * the picker sections the same way a driver's own static catalog does.
  *
- * A LiteLLM wildcard route (`anthropic/*`) already arrives as exactly one
- * entry — the proxy doesn't expand it into every model it would match — so it
- * needs no collapsing, only a label that says what it is instead of the raw
- * pattern.
+ * A LiteLLM wildcard route (`anthropic/*`) arrives as exactly one entry (the
+ * proxy doesn't expand it into every model it would match), so it needs no
+ * collapsing, only a label that says what it is instead of the raw pattern.
  */
 export function gatewayModelOptions(catalog: readonly GatewayModelInfo[], agent: GatewayFitAgent): AgentModelOption[] {
   const out: AgentModelOption[] = [];
@@ -222,9 +217,9 @@ export function gatewayModelOptions(catalog: readonly GatewayModelInfo[], agent:
       group,
     });
     // The [1m] beta variant, synthesized only where the catalog itself claims
-    // the window — never offered for a model the gateway reports as 200k, the
+    // the window: never offered for a model the gateway reports as 200k, the
     // same reasoning the Vertex correction applies to an alias's window
-    // (lib/agents/claude/capabilities.ts, f82f66d).
+    // (lib/agents/claude/capabilities.ts).
     if (agent === "claude" && !wildcard && !translated && e.max_input_tokens >= 1_000_000 && !e.model_name.endsWith("[1m]")) {
       out.push({ value: `${e.model_name}[1m]`, label: `${e.model_name} (1M)`, sub, contextWindow: e.max_input_tokens, group });
     }

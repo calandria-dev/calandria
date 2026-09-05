@@ -1,9 +1,9 @@
-// One log line per Calandria agent-tool call, written the moment it ARRIVES
-// and again when it settles, so "did the call land?" is a grep rather than a
-// manual GET. Shared by the in-process Claude server (lib/agents/claude/driver.ts,
+// One log line per Calandria agent-tool call, written the moment it arrives
+// and again when it settles, so "did the call land?" is answered with a
+// grep, not a manual GET. Shared by the in-process Claude server (lib/agents/claude/driver.ts,
 // via guardToolHandler's onCall hook) and the stdio bridge's endpoints
-// (app/api/internal/agent-tools/*), which log the arrival only: their outcome
-// is the HTTP response. Kept SDK-free and pinned in tests/importGraph.test.ts.
+// (app/api/internal/agent-tools/*), which log the arrival only, since their
+// outcome is the HTTP response. Kept SDK-free and pinned in tests/importGraph.test.ts.
 import { createLogger } from "./log.mjs";
 
 const log = createLogger("agent-tools");

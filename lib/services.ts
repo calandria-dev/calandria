@@ -1,28 +1,24 @@
 // Supervised per-project services.
 //
-// Calandria runs a project's dev server (and optional setup/test commands)
-// as long-lived child processes OWNED BY THE SERVER PROCESS — not by a Claude turn
-// or a browser tab. That's the whole point: `npm run dev` started here keeps
-// running after the turn ends and after the tab closes, with its logs captured so
-// the UI can show them on reconnect. Same lifetime model as the detached turn
-// runner (lib/runner.ts): processes are reset when the server itself restarts —
-// but the REGISTRY is not: every mutation writes through to the `services` table
-// (lib/db.ts), and restoreServices() (server.js's boot ping to
-// /api/instance/services-restore) re-starts every managed service whose
-// desired_state is 'running', so a dev server survives a container restart at
-// the same public URL. Because the children outlive us, a crashed server
-// (kill -9) leaves them orphaned; the persisted pid column lets the next boot
-// reap the old process tree before respawning (see reapOrphan), and a clean
-// process exit force-kills every managed tree on the way out (installExitHook).
-// "Tree" rather than "group" because the two platforms disagree about what that
-// means — lib/processTree.ts owns the difference, and it is the only place in
-// this file that knows a negative pid from a taskkill.
+// Calandria runs a project's dev server (and optional setup/test commands) as
+// long-lived child processes owned by the server process, not by a Claude
+// turn or a browser tab: `npm run dev` started here keeps running after the
+// turn ends and the tab closes, with logs captured for reconnect. Processes
+// reset when the server restarts, but the registry doesn't: every mutation
+// writes through to the `services` table (lib/db.ts), and restoreServices()
+// (server.js's boot ping to /api/instance/services-restore) restarts every
+// managed service with desired_state 'running'. A crashed server (kill -9)
+// leaves children orphaned; the persisted pid column lets the next boot reap
+// the old process tree before respawning (reapOrphan), and a clean exit
+// force-kills every managed tree (installExitHook). Called a "tree" since the
+// two platforms disagree about what a process group means, and
+// lib/processTree.ts owns the difference.
 //
-// State lives on globalThis so it survives Next's dev HMR module reloads (same
-// pattern as lib/events.ts / lib/abort.ts). Each project also gets a stable PORT
-// (projects.port), injected into every service's env so the dev server binds a
-// predictable address the host-header router (lib/service-router.mjs) proxies
-// public hostnames to: <slug>--<appHost>, e.g. calc--ishan.calandria.example.com.
+// State lives on globalThis so it survives Next's dev HMR module reloads
+// (same pattern as lib/events.ts / lib/abort.ts). Each project gets a stable
+// PORT (projects.port), injected into every service's env so the dev server
+// binds a predictable address the host-header router (lib/service-router.mjs)
+// proxies public hostnames to: <slug>--<appHost>.
 
 import { spawn, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
@@ -38,7 +34,7 @@ import { SERVICE_LOG_LINES } from "./config";
 import { appHostFromEnv, serviceHostsEnabled, slugifyServiceName } from "./service-host.mjs";
 import { hasProcessGroups, killTree, treeAlive, treeMatchesCommand } from "./processTree";
 
-// Per-service log ring buffer cap (lines) — CALANDRIA_SERVICE_LOG_LINES, default 1500.
+// Per-service log ring buffer cap (lines): CALANDRIA_SERVICE_LOG_LINES, default 1500.
 const LOG_CAP = SERVICE_LOG_LINES;
 
 type Listener = (ev: ServiceEvent) => void;
@@ -58,7 +54,7 @@ interface Managed {
   error: string | null; // supervisor-level failure (port taken, spawn failed)
   logs: ServiceLogLine[];
   // Persisted identity/sharing state (services table). slug is the public
-  // hostname label — assigned once at first persist and never changed, so the
+  // hostname label, assigned once at first persist and never changed, so the
   // URL survives restarts and re-registrations.
   slug: string | null;
   visibility: ServiceVisibility;
@@ -91,10 +87,10 @@ const keyOf = (projectId: string, name: string) => `${projectId}:${name}`;
 // ---------- public URLs ----------
 
 // Public routing is on only when the feature flag is on, public hostnames are
-// explicitly opted into (CALANDRIA_SERVICE_HOSTS — the flag alone must never expose
-// anything), AND the instance knows its own hostname; otherwise serviceUrl
-// falls back to the honest local URL. A nonstandard port in PUBLIC_BASE_URL
-// (local testing) is carried into the built URLs; hostname parsing ignores it
+// explicitly opted into (CALANDRIA_SERVICE_HOSTS; the flag alone never exposes
+// anything), and the instance knows its own hostname; otherwise serviceUrl
+// falls back to the local URL. A nonstandard port in PUBLIC_BASE_URL (local
+// testing) is carried into the built URLs; hostname parsing ignores it
 // (lib/service-host.mjs strips ports).
 function publicBase(): { proto: string; host: string; portSuffix: string } | null {
   if (!resolveFeatures().services || !serviceHostsEnabled()) return null;
@@ -119,7 +115,7 @@ function publicServiceUrl(slug: string | null): string | null {
   return base && slug ? `${base.proto}://${slug}--${base.host}${base.portSuffix}` : null;
 }
 
-// The browseable URL for a service on the local host — the fallback when the
+// The browseable URL for a service on the local host, the fallback when the
 // instance has no public hostname (local dev) or the feature flag is off.
 function serviceUrl(port: number): string {
   return `http://localhost:${port}`;
@@ -161,10 +157,10 @@ function hydrate(m: Managed): Managed {
 }
 
 // Assign the public hostname label. Globally unique (the hostname carries no
-// project): prefer the service name — except the ubiquitous "dev", which takes
-// the project's name so the URL reads calc--ishan…, not dev--ishan…. On a
-// clash, qualify with the project name, then a numeric suffix. Never reassigned
-// once persisted, so URLs are stable for a service's whole life.
+// project): prefer the service name, except "dev", which takes the project's
+// name so the URL reads calc--ishan…, not dev--ishan…. On a clash, qualify
+// with the project name, then a numeric suffix. Never reassigned once
+// persisted, so URLs are stable for a service's whole life.
 function assignSlug(m: Managed, project: Project): string {
   if (m.slug) return m.slug;
   const db = getDb();
@@ -190,13 +186,13 @@ function assignSlug(m: Managed, project: Project): string {
 }
 
 // Write the entry through to the services table (insert or update). The
-// in-memory Managed map stays the runtime source of truth; rows carry what must
-// survive a restart: identity (slug), sharing state, and — for managed dev
-// servers — the intent to be running so boot can restore them.
+// in-memory Managed map stays the runtime source of truth; rows carry what
+// must survive a restart: identity (slug), sharing state, and, for managed
+// dev servers, the intent to be running so boot can restore them.
 function persist(m: Managed, project: Project, desired: "running" | "stopped"): void {
   const db = getDb();
   assignSlug(m, project);
-  getGateSecret(); // any persisted service can be routed — the router needs the secret on globalThis
+  getGateSecret(); // any persisted service can be routed; the router needs the secret on globalThis
   const now = Date.now();
   const existing = rowFor(m.projectId, m.name);
   if (existing) {
@@ -227,7 +223,7 @@ function setDesired(projectId: string, name: string, desired: "running" | "stopp
 
 // Record the live process tree's root pid (0 = none). Written at spawn and cleared
 // on exit, so a row with a nonzero pid after boot means the previous server
-// died without stopping the service — restoreServices() reaps that tree.
+// died without stopping the service; restoreServices() reaps that tree.
 function setPid(projectId: string, name: string, pid: number): void {
   getDb()
     .prepare("UPDATE services SET pid = ? WHERE project_id = ? AND name = ?")
@@ -341,18 +337,17 @@ function newManaged(projectId: string, name: string, kind: ServiceKind, command:
 // Extra env injected into every service process. PORT makes the bind address
 // deterministic; the host-check vars pre-clear the frameworks that respect env
 // for requests arriving via the public hostname (the router preserves the
-// original Host header). Vite/Next need a config line instead — the public
-// host is handed over as CALANDRIA_PUBLIC_HOST so configs can reference it; see
+// original Host header). Vite/Next need a config line: the public host is
+// handed over as CALANDRIA_PUBLIC_HOST so configs can reference it; see
 // docs/SERVICES.md.
 function serviceEnv(m: Managed): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(m.port), FORCE_COLOR: "1" };
   const host = publicServiceHost(m.slug);
   if (host) {
-    // Both names are injected, and ORCH_PUBLIC_HOST is not on a deprecation
-    // clock: unlike our own env reads, this one is baked into users' own
-    // vite/next configs in THEIR repos (docs/SERVICES.md), which this app has
-    // no way to migrate — so the old name keeps being set indefinitely,
-    // alongside the new one, rather than only until the alias table is retired.
+    // Both names are injected. ORCH_PUBLIC_HOST has no deprecation clock: it
+    // gets baked into users' own vite/next configs in their repos
+    // (docs/SERVICES.md), which this app can't migrate, so it keeps being set
+    // indefinitely alongside the new name.
     env.CALANDRIA_PUBLIC_HOST = host;
     env.ORCH_PUBLIC_HOST = host;
     env.DANGEROUSLY_DISABLE_HOST_CHECK = "true"; // CRA / webpack-dev-server
@@ -389,9 +384,9 @@ async function portBecameFree(port: number, timeoutMs: number): Promise<boolean>
   }
 }
 
-// Resolves once the managed process has exited (or after timeoutMs — the
-// SIGKILL escalation in killServiceTree fires at 4s, so callers wait a bit past
-// that). Immediate when nothing is running.
+// Resolves once the managed process has exited, or after timeoutMs (the
+// SIGKILL escalation in killServiceTree fires at 4s, so callers wait a bit
+// past that). Immediate when nothing is running.
 function procExited(m: Managed, timeoutMs: number): Promise<void> {
   const proc = m.proc;
   if (!proc) return Promise.resolve();
@@ -404,13 +399,13 @@ function procExited(m: Managed, timeoutMs: number): Promise<void> {
 
 // ---------- lifecycle ----------
 
-// Best-effort cleanup when THIS process exits cleanly (process.exit — e.g. Next
-// dev's SIGINT handler, or server.js's fallback signal handler): force-kill
-// every managed process tree so an app restart never leaves zombie dev servers
-// holding ports. Sync-only by contract ('exit' handlers can't await); rows keep
-// desired_state='running', so boot restores the services. A kill -9 of the
-// server skips this entirely — that's what the boot reaper in restoreServices()
-// is for. Registered once per process (flag survives HMR with the registry).
+// Best-effort cleanup when this process exits cleanly (process.exit, e.g.
+// Next dev's SIGINT handler, or server.js's fallback signal handler):
+// force-kills every managed process tree so an app restart never leaves
+// zombie dev servers holding ports. Sync-only ('exit' handlers can't await);
+// rows keep desired_state='running', so boot restores the services. A
+// kill -9 of the server skips this, which is what the boot reaper in
+// restoreServices() is for. Registered once per process.
 function installExitHook(): void {
   const r = reg();
   if (r.exitHook) return;
@@ -424,10 +419,10 @@ function installExitHook(): void {
   });
 }
 
-// Start (or no-op if already running) a configured service for a project. Spawns
-// the command in the project's working dir with PORT injected, in its own process
-// group where the platform has them, so stop() can signal the whole tree
-// (shell → npm → node) rather than just the shell we hold a handle to.
+// Start (or no-op if already running) a configured service for a project.
+// Spawns the command in the project's working dir with PORT injected, in its
+// own process group where the platform has them, so stop() can signal the
+// whole tree (shell → npm → node), not just the shell it holds a handle to.
 // Async because a dev server's port is probed first (see probePort).
 export async function startService(project: Project, name: string): Promise<ServiceInfo> {
   const cfg = configuredCommand(project, name);
@@ -438,7 +433,7 @@ export async function startService(project: Project, name: string): Promise<Serv
   const k = keyOf(project.id, name);
   const existing = r.services.get(k);
   if (existing && (existing.status === "running" || existing.status === "starting")) {
-    return toInfo(existing); // already up — idempotent
+    return toInfo(existing); // already up, idempotent
   }
 
   const m: Managed = existing ?? newManaged(project.id, name, cfg.kind, cfg.command, project.port, true);
@@ -522,11 +517,11 @@ export async function startService(project: Project, name: string): Promise<Serv
 }
 
 // SIGTERM a managed service's whole process tree, then SIGKILL any survivor
-// after a short grace period. The tree, not the child: shell:true wraps the real
-// server (sh → npm → node, or cmd.exe → npm.cmd → node.exe). On win32 the
-// escalation is skipped — taskkill /T /F already terminated everything, and
-// there is no gentler tree signal to have tried first. No-op for an entry we
-// don't own.
+// after a short grace period. Signals the tree because shell:true wraps the
+// real server (sh → npm → node, or cmd.exe → npm.cmd → node.exe). On win32
+// the escalation is skipped: taskkill /T /F already terminated everything,
+// and there is no gentler tree signal to try first. No-op for an entry this
+// process doesn't own.
 function killServiceTree(m: Managed): void {
   const proc = m.proc;
   if (!proc || proc.pid == null) return;
@@ -537,13 +532,13 @@ function killServiceTree(m: Managed): void {
 }
 
 // Signal a managed service's process tree to stop. Returns the settled info.
-// This is a PAUSE: the registry entry (and its persisted row) stay put so the
-// service can be restarted at the same public URL. To fully retire a service —
-// e.g. when its project is deleted — use removeProjectServices().
+// This is a pause: the registry entry (and its persisted row) stay put so the
+// service can be restarted at the same public URL. To fully retire a service,
+// e.g. when its project is deleted, use removeProjectServices().
 export function stopService(projectId: string, name: string): ServiceInfo | null {
   const m = reg().services.get(keyOf(projectId, name));
   if (!m) return null;
-  // The user asked for stopped — record it so boot doesn't resurrect it. (A
+  // The user asked for stopped: record it so boot doesn't resurrect it. (A
   // crash mid-run leaves desired_state='running' on purpose.)
   setDesired(projectId, name, "stopped");
   if (m.proc && m.proc.pid != null) {
@@ -555,13 +550,14 @@ export function stopService(projectId: string, name: string): ServiceInfo | null
   return toInfo(m);
 }
 
-// Fully retire every service belonging to a project: kill each managed process
-// group AND drop its in-memory registry entry so the public host-header router
-// (lib/service-router.mjs) stops serving its <slug>--<host> URL immediately —
-// findBySlug returns null → the branded 404, not a "stopped" 503. Called from
-// the project DELETE handler, where the services table rows are cascade-removed
-// alongside (getServices no longer sees them either). Unlike stopService, there
-// is no coming back: the entry, the process, and the row are all gone.
+// Fully retire every service belonging to a project: kill each managed
+// process group and drop its in-memory registry entry so the public
+// host-header router (lib/service-router.mjs) stops serving its
+// <slug>--<host> URL immediately (findBySlug returns null, so the branded
+// 404 shows instead of a "stopped" 503). Called from the project DELETE
+// handler, where the services table rows are cascade-removed alongside.
+// Unlike stopService, there is no coming back: the entry, the process, and
+// the row are all gone.
 export function removeProjectServices(projectId: string): void {
   const r = reg();
   for (const [k, m] of r.services) {
@@ -575,18 +571,19 @@ export function removeProjectServices(projectId: string): void {
 export async function restartService(project: Project, name: string): Promise<ServiceInfo> {
   const m = reg().services.get(keyOf(project.id, name));
   stopService(project.id, name);
-  // Wait for the old process tree to actually die (SIGKILL escalation fires at
-  // 4s) so the port is free — otherwise the new spawn would race its
+  // Wait for the old process tree to actually die (SIGKILL escalation fires
+  // at 4s) so the port is free; otherwise the new spawn would race its
   // predecessor and report a bogus port conflict.
   if (m) await procExited(m, 6000);
   return startService(project, name);
 }
 
-// Register (or update) a service Claude started inside a turn — the expose_service
-// MCP tool. We don't own the process, so this entry is informational: it records
-// the port/url so the UI can show it and Claude can report a working link. It IS
-// persisted (never auto-started — the process dies with the server) so its
-// public URL and visibility survive a restart for when it's re-registered.
+// Register (or update) a service Claude started inside a turn, via the
+// expose_service MCP tool. The process isn't owned here, so this entry is
+// informational: it records the port/url so the UI can show it and Claude
+// can report a working link. It is persisted (never auto-started, since the
+// process dies with the server) so its public URL and visibility survive a
+// restart for when it's re-registered.
 export function exposeService(project: Project, name: string, port: number, url?: string): ServiceInfo {
   const r = reg();
   const k = keyOf(project.id, name);
@@ -611,17 +608,17 @@ export function exposeService(project: Project, name: string, port: number, url?
 
 const VISIBILITIES: ServiceVisibility[] = ["private", "shared", "public"];
 
-// Flip who may open the service's public URL. Applies on the next request — the
-// router reads the live registry. Entering "shared" mints the token the link
-// carries (kept when switching away so flipping back revives old links; rotate
-// to cut them off).
+// Flip who may open the service's public URL. Applies on the next request,
+// since the router reads the live registry. Entering "shared" mints the
+// token the link carries (kept when switching away so flipping back revives
+// old links; rotate to cut them off).
 export function setServiceVisibility(project: Project, name: string, visibility: ServiceVisibility): ServiceInfo {
   if (!VISIBILITIES.includes(visibility)) throw new Error(`Unknown visibility "${visibility}"`);
   const r = reg();
   const k = keyOf(project.id, name);
   let m = r.services.get(k);
   if (!m) {
-    // Not running this process-lifetime — a configured command or a persisted
+    // Not running this process-lifetime: a configured command or a persisted
     // entry. Materialize it so the setting sticks and the router can see it.
     const cfg = configuredCommand(project, name);
     const row = rowFor(project.id, name);
@@ -638,8 +635,9 @@ export function setServiceVisibility(project: Project, name: string, visibility:
   return toInfo(m);
 }
 
-// Mint a fresh share token — every previously-sent shared link stops working on
-// the next request (existing browser cookies expire on their own short TTL).
+// Mint a fresh share token: every previously-sent shared link stops working
+// on the next request (existing browser cookies expire on their own short
+// TTL).
 export function rotateShareToken(project: Project, name: string): ServiceInfo {
   const m = reg().services.get(keyOf(project.id, name));
   if (!m) throw new Error(`Unknown service "${name}"`);
@@ -652,12 +650,13 @@ export function rotateShareToken(project: Project, name: string): ServiceInfo {
 
 // ---------- boot restore + orphan reaping ----------
 
-// The recycled-pid guard lives in lib/processTree.ts (treeMatchesCommand): after
-// a crash the persisted pid could have been recycled by an unrelated process,
-// and killing that would be worse than leaving an orphan, so the reaper only
-// fires when some process under that pid still carries the service's command
-// line. Both halves of the check are platform-specific — process groups + `ps`
-// on POSIX, taskkill + a Win32_Process CommandLine lookup on Windows.
+// The recycled-pid guard lives in lib/processTree.ts (treeMatchesCommand):
+// after a crash the persisted pid could have been recycled by an unrelated
+// process, and killing that would be worse than leaving an orphan, so the
+// reaper only fires when some process under that pid still carries the
+// service's command line. Both halves of the check are platform-specific:
+// process groups + `ps` on POSIX, taskkill + a Win32_Process CommandLine
+// lookup on Windows.
 
 // Kill a process tree orphaned by a dead server (kill -9, OOM, power loss) so
 // the respawn doesn't fight its own predecessor for the port. SIGKILL, not
@@ -677,13 +676,13 @@ async function reapOrphan(row: ServiceRow): Promise<void> {
   setPid(row.project_id, row.name, 0);
 }
 
-// Re-hydrate the registry from the services table — triggered at boot by
+// Re-hydrate the registry from the services table, triggered at boot by
 // server.js's loopback ping to /api/instance/services-restore, idempotent per
-// process. First, any process tree a dead server left behind is reaped (stale
-// pid column). Then managed rows with desired_state='running' are actually
-// started; everything else (stopped services, expose_service entries whose
-// process died with the old server) is seeded stopped so its slug, visibility
-// and share token stay attached to the same public URL.
+// process. First, any process tree a dead server left behind is reaped
+// (stale pid column). Then managed rows with desired_state='running' are
+// actually started; everything else (stopped services, expose_service
+// entries whose process died with the old server) is seeded stopped so its
+// slug, visibility and share token stay attached to the same public URL.
 export async function restoreServices(): Promise<void> {
   const r = reg();
   if (r.restored) return;
@@ -695,7 +694,7 @@ export async function restoreServices(): Promise<void> {
   } catch {
     return; // fresh instance, nothing persisted yet
   }
-  // Reap orphans even when the feature flag is off — a stale process tree from
+  // Reap orphans even when the feature flag is off: a stale process tree from
   // a crashed flag-on run must not survive the flag being flipped.
   for (const row of rows) {
     if (row.managed) await reapOrphan(row);

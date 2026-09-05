@@ -1,51 +1,52 @@
-// The worktree half of retention (issue #15 item 2), and the disk-usage warning
-// that runs whether or not it is switched on.
+// The worktree half of retention, and the disk-usage warning that runs
+// whether or not it is switched on.
 //
 // Per-task git worktrees are the single biggest disk-growth vector in the
-// product — a full checkout of the project repo per task, deliberately outside
-// every repo (CALANDRIA_WORKTREES_DIR) — and until now they were reclaimed only
-// by hand, through Settings → Storage. lib/retention.ts prunes the tables; this
-// prunes the checkouts, on the same ticker, against the same predicate.
+// product: a full checkout of the project repo per task, outside every repo
+// (CALANDRIA_WORKTREES_DIR), reclaimed otherwise only by hand through
+// Settings → Storage. lib/retention.ts prunes the tables; this prunes the
+// checkouts, on the same ticker, against the same predicate.
 //
-// TWO RULES ARE LOAD-BEARING, and both exist because reclaiming a worktree is
-// not obviously destructive: `ensureWorktree` SELF-HEALS a missing checkout on
-// the next turn, so removing the wrong one "works" — the task simply cuts a new
-// worktree from the branch tip and carries on, having silently thrown away
-// whatever was in the old one.
+// Two rules matter here, both because reclaiming a worktree is not obviously
+// destructive: `ensureWorktree` self-heals a missing checkout on the next
+// turn, so removing the wrong one "works": the task simply cuts a new
+// worktree from the branch tip and carries on, having thrown away whatever
+// was in the old one.
 //
-//   1. TERMINAL ONLY. The candidate list is prunableTaskIds() from
-//      lib/retention.ts — verbatim, not a variant. That predicate is where
+//   1. Terminal only. The candidate list is prunableTaskIds() from
+//      lib/retention.ts, verbatim, not a variant. That predicate is where
 //      "a done task can still be live" is decided (running, awaiting a
 //      permission card, snoozed, a parked follow-up, an in-flight scheduled
 //      run), and a second copy of it here would be the copy that goes stale.
-//      Only the CUTOFF differs: a checkout is worth reclaiming in weeks, while
+//      Only the cutoff differs: a checkout is worth reclaiming in weeks, while
 //      a transcript is worth keeping for months.
-//   2. NEVER OVER WORK. Every removal is gated on worktreePruneSafety()
-//      (lib/git.ts) — the same read the Storage sweep and a discard-move gate
+//   2. Never over work. Every removal is gated on worktreePruneSafety()
+//      (lib/git.ts), the same read the Storage sweep and a discard-move gate
 //      on. Unsafe means uncommitted edits, or commits the base branch has not
-//      absorbed; either way the sweep SKIPS and reports rather than asking for
-//      a stronger acknowledgement, because there is nobody here to give one.
+//      absorbed; either way the sweep skips and reports instead of asking for
+//      a stronger acknowledgement, since there is nobody here to give one.
 //      The refusal is phrased in lib/taskMove.ts's words (UNSAFE_DISCARD_REASON),
-//      so a log line about a skipped checkout and a refused discard-move say the
-//      same thing rather than inventing a second vocabulary for one question.
+//      so a log line about a skipped checkout and a refused discard-move say
+//      the same thing instead of inventing a second vocabulary for one question.
 //
-// The task's staged CHAT ATTACHMENTS go with the checkout. Any file type can be
-// attached (lib/uploads.ts), so an instance can be sitting on gigabytes of PDFs
-// and log bundles that outlive every worktree they were staged for. They are
-// swept here rather than in one of the other teardowns because this is the only
-// one whose licence is "this task has been terminal and untouched for weeks":
-// a reclaim fires the instant a PR lands, on a task the user may still be
-// reading, and a project MOVE keeps the task alive with its transcript intact —
-// deleting its uploads in either would break marker links under a live task.
-// Hard delete and the transcript prune already cover their own cases.
+// The task's staged chat attachments go with the checkout. Any file type can
+// be attached (lib/uploads.ts), so an instance can be sitting on gigabytes of
+// PDFs and log bundles that outlive every worktree they were staged for. They
+// are swept here, and not in one of the other teardowns, because this is
+// the only one whose licence is "this task has been terminal and untouched
+// for weeks": a reclaim fires the instant a PR lands, on a task the user may
+// still be reading, and a project move keeps the task alive with its
+// transcript intact, so deleting its uploads in either would break marker
+// links under a live task. Hard delete and the transcript prune already cover
+// their own cases.
 //
-// The branch is always KEPT (`keepBranch: true`, as the Storage sweep's safe
-// path does). A worktree can be re-cut; a deleted branch takes the task's diff
-// with it, and this sweep fires on a CLOCK — "cold for fourteen days" is not
-// evidence that the diff is anywhere else. lib/reclaim.ts is the case where it
-// is: a merged PR (or a local merge) says the work is in the base branch, and
-// that reclaim does delete the local branch, optionally unattended. Same
-// teardown, different licence, and the licence is the landing.
+// The branch is always kept (`keepBranch: true`, as the Storage sweep's safe
+// path does). A worktree can be re-cut; a deleted branch takes the task's
+// diff with it, and this sweep fires on a clock, so "cold for fourteen days"
+// is not evidence that the diff is anywhere else. lib/reclaim.ts is the case
+// where it is: a merged PR (or a local merge) says the work is in the base
+// branch, and that reclaim does delete the local branch, optionally
+// unattended. Same teardown, different licence, tied to the landing.
 //
 // Off by default, unlike the table prune. The table prune's defaults (180/400
 // days) are longer than most instances have existed, so switching it on for
@@ -74,8 +75,8 @@ import { heldHandleHint } from "@/lib/paths";
 import { hasTurn } from "@/lib/abort";
 import { removeTaskUploads, taskUploadsDir } from "@/lib/uploads";
 
-/** One reclaimed checkout. `bytes` is what it was costing before removal —
- *  the working tree plus the task's staged chat attachments, which go with it. */
+/** One reclaimed checkout. `bytes` is what it was costing before removal: the
+ *  working tree plus the task's staged chat attachments, which go with it. */
 export interface ReclaimedWorktree {
   taskId: string;
   bytes: number;
@@ -83,27 +84,27 @@ export interface ReclaimedWorktree {
 
 export interface WorktreeSweepResult {
   reclaimed: ReclaimedWorktree[];
-  /** Candidates left alone, each with the reason — never silently dropped. */
+  /** Candidates left alone, each with the reason; never dropped without one. */
   skipped: { taskId: string; reason: string }[];
   /** Total bytes the removed checkouts were occupying. */
   bytes: number;
 }
 
-/** Bytes as GB, one decimal — the unit these numbers are talked about in. */
+/** Bytes as GB, one decimal: the unit these numbers are talked about in. */
 const gb = (bytes: number): string => (bytes / 1024 ** 3).toFixed(1);
 
 const EMPTY = (): WorktreeSweepResult => ({ reclaimed: [], skipped: [], bytes: 0 });
 
 /**
- * One worktree-reclaim pass. Async and sequential, unlike the table prune: each
- * candidate costs a handful of git subprocesses, and a hundred of them at once
- * would fork an army inside the ticker's own sweep.
+ * One worktree-reclaim pass. Async and sequential, unlike the table prune:
+ * each candidate costs a handful of git subprocesses, and a hundred of them
+ * at once would fork an army inside the ticker's own sweep.
  *
- * Locks in the same order lib/taskMove.ts takes them — the task lock, then the
- * repo lock — so the two can only ever wait on each other in one direction. The
- * task lock is what makes the safety read mean anything: it is the lock a turn
- * launch holds through registerTurn(), so nothing can start writing into a
- * checkout between "this is clean" and `git worktree remove`.
+ * Locks in the same order lib/taskMove.ts takes them, the task lock then the
+ * repo lock, so the two can only ever wait on each other in one direction.
+ * The task lock is what makes the safety read mean anything: it is the lock a
+ * turn launch holds through registerTurn(), so nothing can start writing into
+ * a checkout between "this is clean" and `git worktree remove`.
  */
 export async function sweepWorktrees(
   now = Date.now(),
@@ -111,8 +112,8 @@ export async function sweepWorktrees(
 ): Promise<WorktreeSweepResult> {
   const retentionMs = opts.retentionMs ?? WORKTREE_RETENTION_MS;
   const result = EMPTY();
-  // 0 turns this half off the way it does for the table windows, and a window
-  // of zero would otherwise mean "reclaim every terminal task's checkout the
+  // 0 turns this half off the way it does for the table windows; a window of
+  // zero would otherwise mean "reclaim every terminal task's checkout the
   // moment it is marked done".
   if (retentionMs <= 0) return result;
 
@@ -122,7 +123,7 @@ export async function sweepWorktrees(
     if (!getTask(id)?.worktree_path) continue;
 
     await withTaskLock(id, async () => {
-      // Re-read under the lock — the pre-screen above raced anything that could
+      // Re-read under the lock: the pre-screen above raced anything that could
       // have reclaimed or re-cut this checkout in the meantime.
       const task = getTask(id);
       if (!task?.worktree_path) return;
@@ -136,8 +137,8 @@ export async function sweepWorktrees(
       const project = getProject(task.project_id);
       if (!project?.repo_path) {
         // A path on record with no repo to remove it from. Deleting the
-        // directory anyway would mean rm-ing a tree without git's registry ever
-        // confirming it is ours, which is the one thing this sweep must not do.
+        // directory anyway would mean rm-ing a tree without git's registry
+        // ever confirming it belongs to this task.
         result.skipped.push({ taskId: id, reason: "the project has no repo" });
         return;
       }
@@ -154,7 +155,7 @@ export async function sweepWorktrees(
           return;
         }
         const bytes = await worktreeDiskUsage(task.worktree_path);
-        // keepBranch is not an option here — see the header. The branch is the
+        // keepBranch is not an option here; see the header. The branch is the
         // diff base a reopened task is read against.
         await removeWorktree(project.repo_path, task.worktree_path, task.work_branch, { keepBranch: true });
         // removeWorktree never throws, so a surviving directory is only visible
@@ -217,12 +218,12 @@ const state = (): WorktreeSweepState =>
 /**
  * The disk-usage measurement, and the warning when it crosses the threshold.
  *
- * Deliberately independent of the sweep: the instance that has NOT opted into
- * automatic reclaim is exactly the one that needs telling its worktrees are
- * eating the volume, since the only fix is a human opening Settings → Storage.
+ * Independent of the sweep: the instance that has not opted into automatic
+ * reclaim is the one that needs telling its worktrees are eating the volume,
+ * since the only fix is a human opening Settings → Storage.
  *
- * Measured after any sweep in the same tick, so the number reported is the one
- * that is true now rather than the one that justified the sweep.
+ * Measured after any sweep in the same tick, so the number reported is the
+ * one that is true now instead of the one that justified the sweep.
  */
 export async function checkWorktreeDisk(now = Date.now()): Promise<number> {
   const s = state();
@@ -231,7 +232,7 @@ export async function checkWorktreeDisk(now = Date.now()): Promise<number> {
   s.diskCheckedAt = now;
   if (WORKTREES_DISK_WARN_BYTES > 0 && bytes >= WORKTREES_DISK_WARN_BYTES) {
     // Repeated every pass while it is over, not once per crossing: a warning
-    // that fires once and then goes quiet is one nobody sees, and at the sweep
+    // that fires once and then goes quiet is easy to miss, and at the sweep
     // cadence (6h by default) this is four lines a day, not a flood.
     console.warn(
       `[worktrees] ${WORKTREES_DIR} is using ${gb(bytes)} GB, over the ` +
@@ -254,8 +255,8 @@ export const worktreeSweepHealth = () => {
     lastReclaimed: s.lastReclaimed,
     lastReclaimedBytes: s.lastBytes,
     lastSkipped: s.lastSkipped,
-    // 0/0 when the warning is switched off: nothing measures on this clock
-    // then. The Settings panel reads the directory directly either way.
+    // 0/0 when the warning is switched off, since nothing measures on this
+    // clock then. The Settings panel reads the directory directly either way.
     diskBytes: s.diskBytes,
     diskCheckedAt: s.diskCheckedAt,
     diskWarnBytes: WORKTREES_DISK_WARN_BYTES,
@@ -268,8 +269,8 @@ export const worktreeSweepHealth = () => {
  * retention cadence, since both are policies measured in days), returning null
  * when it isn't due.
  *
- * The DISK CHECK runs on the same clock but not the same switch — with the
- * sweep off, this degrades to "measure and warn", which is item 2 of the issue.
+ * The disk check runs on the same clock but not the same switch: with the
+ * sweep off, this degrades to "measure and warn".
  */
 export async function maybeSweepWorktrees(now = Date.now()): Promise<WorktreeSweepResult | null> {
   const s = state();
@@ -288,15 +289,15 @@ export async function maybeSweepWorktrees(now = Date.now()): Promise<WorktreeSwe
           `${result.reclaimed.length === 1 ? "" : "s"} (${gb(result.bytes)} GB)`
       );
     }
-    // Every refusal is named. A sweep that silently declines the same three
-    // checkouts every six hours reads as "there is nothing to reclaim", when
-    // what it means is "three tasks have work nobody has landed".
+    // Every refusal is named. A sweep that declines the same three checkouts
+    // every six hours reads as "there is nothing to reclaim", when what it
+    // means is "three tasks have work nobody has landed".
     for (const skip of result.skipped) {
       console.log(`[worktrees] kept ${skip.taskId}: ${skip.reason}`);
     }
   }
 
-  // Skipped entirely when the threshold is off — this is a `du` over every
+  // Skipped entirely when the threshold is off: this is a `du` over every
   // checkout on the box, and there is nothing to compare it against. Settings →
   // Storage measures on demand regardless, so turning the warning off costs the
   // panel nothing.

@@ -1,20 +1,12 @@
-// Detection + recovery constants for the "your agent login stopped working"
-// failure mode.
-//
-// An expired OAuth session is invisible until you send a turn, and then it looks
-// like a code problem: the raw provider string ("Failed to authenticate: OAuth
-// session expired and could not be refreshed") lands in ONE task's transcript,
-// while every other task on the instance is equally dead — same CLI, same
-// credentials on disk. Worse, each queued follow-up would dequeue and fail the
-// same way, emptying the queue for nothing.
-//
-// So an auth failure is classified here (agent-agnostically — Codex phrases it
-// differently and fails identically), which lets lib/runner.ts append
-// AUTH_EXPIRED_NOTICE for a one-click reconnect, park the queue instead of
-// burning it, and flag the agent instance-wide (lib/agents/connections.ts) so
-// the app can say so in the titlebar rather than only inside the task that
-// happened to run first. Kept dependency-free so both server and client bundles
-// can import it (same rule as lib/promptLimits.ts).
+// Detection and recovery constants for the "your agent login stopped working"
+// failure mode. An expired OAuth session fails identically for every task on
+// the instance, but the raw provider error lands in only the one transcript
+// that runs first, and each queued follow-up would dequeue and fail the same
+// way. Auth failures are classified here, agent-agnostically, so
+// lib/runner.ts can append AUTH_EXPIRED_NOTICE for a one-click reconnect,
+// park the queue instead of burning it, and flag the agent instance-wide
+// (lib/agents/connections.ts) for the titlebar. Kept dependency-free so both
+// server and client bundles can import it.
 
 // Each agent CLI/SDK words a dead credential differently, and the recovery
 // ("reconnect this agent") is identical for all of them:
@@ -41,14 +33,14 @@ const AUTH_FAILURE_RES = [
 ];
 
 /** True when a turn's error text is a dead-credential rejection (expired OAuth
- *  session, revoked token, bad/missing API key) rather than a work failure. */
+ *  session, revoked token, bad/missing API key) and not a work failure. */
 export function isAuthFailure(msg: string | null | undefined): boolean {
   return !!msg && AUTH_FAILURE_RES.some((re) => re.test(msg));
 }
 
 /** Appended to the persisted error line when a turn dies on authentication. The
  *  UI (app/shell/Transcript.tsx) matches this exact string to render the
- *  "Reconnect" button, so it must stay agent-neutral — the client already knows
+ *  "Reconnect" button, so it must stay agent-neutral: the client already knows
  *  the task's agent and labels the button with it. Persisted message content is
  *  the durable channel: it survives SSE reconnects because the snapshot replays
  *  from SQLite. */

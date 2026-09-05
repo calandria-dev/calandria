@@ -1,36 +1,23 @@
-// Asking a local model server what it can actually run.
+// Probes a local model server (Ollama or LM Studio; see lib/agentEnv.ts,
+// docs/AGENTS.md "Local models") for the model ids it can run, since the
+// driver's built-in model list is the vendor's cloud catalog, not what is
+// pulled locally. Tries Ollama's GET {base}/api/tags first, since its names
+// match the ids its Anthropic endpoint expects, then falls back to the
+// OpenAI-compatible GET {base}/v1/models.
 //
-// A project pointed at Ollama or LM Studio (lib/agentEnv.ts, docs/AGENTS.md
-// "Local models") has no catalog worth showing: the driver's model list is the
-// vendor's cloud line-up, and the ids on THIS machine are whatever was pulled.
-// So the picker asks the endpoint. Two response shapes cover both servers and
-// everything that imitates one of them:
-//
-//   GET {base}/api/tags   -> { models: [{ name: "qwen3-coder:latest" }] }   (Ollama)
-//   GET {base}/v1/models  -> { data:   [{ id:   "qwen/qwen3-coder" }] }     (OpenAI-compatible)
-//
-// Ollama serves BOTH, and the names its /api/tags returns are the ids its
-// Anthropic endpoint wants (`qwen3-coder:latest`, tag included), so it is tried
-// first and only a server that doesn't answer it falls through to /v1/models.
-//
-// Always server-side, never from the browser: the endpoint is loopback on the
-// machine Calandria runs on (or the Docker host), which the browser generally
-// cannot reach — on a hosted instance it is a different machine entirely, and
-// on a local one a page served over a tunnel would be making a cross-origin
-// request the model server doesn't allow.
-//
-// SDK-free and pinned (tests/importGraph.test.ts): GET /api/agents probes on
-// every load and that route entry compiles sync.
+// Server-side only: the endpoint is loopback on the machine Calandria runs on
+// (or the Docker host) and is not reachable from the browser directly.
+// SDK-free and pinned by tests/importGraph.test.ts, since GET /api/agents
+// probes on every load and that route entry compiles synchronously.
 
 import { normalizeBaseUrl } from "./agentEnv";
 import { MODEL_PROBE_MS } from "./config";
 
-/** Which API answered. Not "which product": LM Studio, llama.cpp, vLLM and
- *  Ollama's own /v1 all answer the OpenAI shape. "gateway" is never returned
- *  by this module — it's the LiteLLM gateway branch in
- *  app/api/projects/[id]/models/route.ts, which answers from
- *  lib/gatewayModels.ts instead of probing here — but lives on the shared
- *  type so the one response shape covers both branches. */
+/** Which API answered. LM Studio, llama.cpp, vLLM and Ollama's own /v1 all
+ *  answer the OpenAI shape, so this identifies the response shape, not the
+ *  product. "gateway" is set by the LiteLLM gateway branch in
+ *  app/api/projects/[id]/models/route.ts (lib/gatewayModels.ts), which shares
+ *  this type instead of probing here. */
 export type EndpointApi = "ollama" | "openai" | "gateway";
 
 export interface EndpointModels {
@@ -44,8 +31,8 @@ export interface EndpointModels {
   error: string | null;
 }
 
-/** The same fact without the list — what GET /api/agents carries for the
- *  instance-wide default endpoint, where a count is the whole story. */
+/** The same fact without the list: what GET /api/agents carries for the
+ *  instance-wide default endpoint, which only needs a count. */
 export interface EndpointStatus {
   base_url: string;
   reachable: boolean;
@@ -60,8 +47,8 @@ export function summarizeEndpoint(m: EndpointModels): EndpointStatus {
 
 const unreachable = (base_url: string, error: string): EndpointModels => ({ base_url, reachable: false, api: null, models: [], error });
 
-// A fetch failure from Node carries the useful part on `cause`, not the message
-// ("fetch failed"), and the message is what ends up in front of a person.
+// A fetch failure from Node carries the useful detail on `cause.code`; the
+// error message alone is generic ("fetch failed") and is what reaches the user.
 function reason(e: unknown): string {
   const code = (e as { cause?: { code?: unknown } } | null | undefined)?.cause?.code;
   if (typeof code === "string") {
@@ -90,9 +77,9 @@ function ids(raw: unknown[]): string[] {
   return out;
 }
 
-// null = "this isn't that API's answer", which is different from an empty list
-// (a running server with nothing pulled) and has to fall through to the next
-// shape rather than being reported as a reachable-but-empty endpoint.
+// null means "this isn't that API's answer" and falls through to the next
+// shape. An empty list means the server answered with nothing pulled, and is
+// reported as reachable-but-empty.
 function ollamaShape(body: unknown): string[] | null {
   const list = record(body)?.models;
   if (!Array.isArray(list)) return null;
@@ -157,8 +144,8 @@ export async function listEndpointModels(baseUrl: string | null | undefined, tim
  *  don't each open a socket. */
 export const ENDPOINT_CACHE_MS = 10_000;
 
-// On globalThis for the reason lib/events.ts and lib/abort.ts are: HMR reloads
-// the module, and a probe cache that resets on every edit isn't one.
+// On globalThis, like lib/events.ts and lib/abort.ts: HMR reloads this
+// module, so state that must survive a reload has to live outside it.
 const store = (globalThis as { __calandriaEndpointProbes?: Map<string, { at: number; value: EndpointModels }> });
 const probes = (store.__calandriaEndpointProbes ??= new Map());
 
@@ -172,7 +159,7 @@ export async function endpointModels(baseUrl: string | null | undefined): Promis
   return value;
 }
 
-/** Drop every cached probe — the suite's between-tests reset. */
+/** Drop every cached probe. Used to reset state between tests. */
 export function clearEndpointProbeCache(): void {
   probes.clear();
 }

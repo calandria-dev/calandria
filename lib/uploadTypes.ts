@@ -2,18 +2,18 @@
  * What an attachment may be, what it is stored as, and what it is served back
  * as. Shared by the upload route, the serving route and the composer, and kept
  * dependency-free (no node builtins, no env reads) so the client bundle can
- * import it — lib/uploads.ts is the server half that touches the filesystem.
+ * import it; lib/uploads.ts is the server half that touches the filesystem.
  *
- * The policy is deliberately EXTENSION-first rather than MIME-first. A browser
- * fills `file.type` from an OS registry: it is empty for anything unregistered
+ * The policy is extension-first instead of MIME-first. A browser fills
+ * `file.type` from an OS registry: it is empty for anything unregistered
  * (`.log`, `.patch`, `.toml` on most Linux desktops), and inconsistent for the
  * rest (`.md` is `text/markdown`, `text/x-markdown` or `""` depending on the
- * machine). A MIME whitelist is precisely what pinned this to images. The name
- * the user picked is the signal that actually survives the round trip — and it
- * is the signal the AGENT needs too, since all it receives is the staged path
+ * machine), which is why a MIME whitelist previously pinned this to images.
+ * The name the user picked is the signal that survives the round trip, and it
+ * is the signal the agent needs too, since all it receives is the staged path
  * and it decides from the extension how to open the thing.
  *
- * Nothing here inspects file CONTENT. A staged file is never parsed, executed
+ * Nothing here inspects file content. A staged file is never parsed, executed
  * or inlined into a prompt by Calandria; the two places bytes matter are the
  * size cap (CALANDRIA_MAX_UPLOAD_MB) and `servedType()` below, which is why an
  * open extension set is safe to accept.
@@ -31,7 +31,7 @@ export const IMAGE_MIME_BY_EXT: Record<string, string> = {
   webp: "image/webp",
 };
 
-/** The reverse map, for the one case a filename has no usable extension: a
+/** The reverse map, for the case where a filename has no usable extension: a
  *  clipboard screenshot, whose File carries a real MIME and a blank name. */
 const EXT_BY_IMAGE_MIME: Record<string, string> = {
   "image/png": "png",
@@ -42,11 +42,11 @@ const EXT_BY_IMAGE_MIME: Record<string, string> = {
 
 /**
  * Extensions served back to the browser as text/plain so a click previews them
- * in a tab. Markup and script extensions are in the list ON PURPOSE: served as
- * text/plain with `nosniff` they render as source rather than executing, which
- * is strictly better than the alternative of letting `.html` or `.svg` fall
- * through to a sniffable type on a same-origin route. Anything not listed and
- * not an image is served as an opaque download.
+ * in a tab. Markup and script extensions are in the list on purpose: served as
+ * text/plain with `nosniff` they render as source instead of executing,
+ * avoiding letting `.html` or `.svg` fall through to a sniffable type on a
+ * same-origin route. Anything not listed and not an image is served as an
+ * opaque download.
  */
 const TEXT_EXTS = new Set([
   "txt", "md", "markdown", "rst", "log", "csv", "tsv", "json", "jsonl", "ndjson",
@@ -58,14 +58,14 @@ const TEXT_EXTS = new Set([
   "sql", "graphql", "proto", "diff", "patch", "srt", "vtt",
 ]);
 
-/** True for an extension the UI shows as a picture rather than a file chip. */
+/** True for an extension the UI shows as a picture instead of a file chip. */
 export const isImageExt = (ext: string): boolean => Object.hasOwn(IMAGE_MIME_BY_EXT, ext);
 
 /**
- * The extension to stage a file under: 1–12 lowercase alphanumerics taken from
- * the user's own filename, falling back to the MIME type (clipboard images) and
- * finally to `bin`. Bounded and charset-restricted because this value ends up
- * in a path on disk and in a URL segment.
+ * The extension to stage a file under: 1-12 lowercase alphanumerics taken from
+ * the user's own filename, falling back to the MIME type (clipboard images)
+ * and finally to `bin`. Bounded and charset-restricted because this value ends
+ * up in a path on disk and in a URL segment.
  */
 export function uploadExtension(fileName: string, mimeType: string): string {
   const base = fileName.split(/[\\/]/).pop() ?? "";
@@ -78,9 +78,9 @@ export function uploadExtension(fileName: string, mimeType: string): string {
 }
 
 /**
- * The readable half of a staged filename. Every dot is stripped rather than
- * escaped, so `..` cannot be reconstructed at all — the traversal guard on the
- * serving route is then a plain charset test rather than a sequence hunt.
+ * The readable half of a staged filename. Every dot is stripped instead of
+ * escaped, so `..` cannot be reconstructed at all, and the traversal guard on
+ * the serving route is then a plain charset test instead of a sequence hunt.
  */
 export function safeStem(fileName: string): string {
   const base = fileName.split(/[\\/]/).pop() ?? "";
@@ -94,7 +94,7 @@ export function safeStem(fileName: string): string {
   return cleaned || "file";
 }
 
-/** Length of the unique prefix `stagedFileName()` puts in front — nanoid()'s
+/** Length of the unique prefix `stagedFileName()` puts in front: nanoid()'s
  *  default. Fixed so displayFileName() can strip it back off for the UI. */
 export const UNIQUE_PREFIX_LEN = 21;
 
@@ -118,7 +118,7 @@ export function displayFileName(staged: string): string {
 }
 
 // Server-generated names only: `<unique>-<stem>.<ext>` where neither half can
-// contain a dot or a slash (see safeStem/uploadExtension). This is the whole
+// contain a dot or a slash (see safeStem/uploadExtension). This is the
 // traversal guard for the serving route, so it is anchored and total.
 const SAFE_UPLOAD_FILE = /^[A-Za-z0-9_-]+\.([a-z0-9]{1,12})$/;
 
@@ -141,7 +141,7 @@ export function servedType(ext: string): { contentType: string; download: boolea
 }
 
 /**
- * The size cap as the CLIENT sees it. The server is the authority (the upload
+ * The size cap as the client sees it. The server is the authority (the upload
  * route rejects on Content-Length before buffering anything); this mirror only
  * exists so the composer can refuse a 2 GB drop without pushing it over the
  * wire first. Injected as `window.__MAX_UPLOAD_MB` by app/layout.tsx, the same

@@ -1,25 +1,25 @@
-// The agent-facing half of runbooks: create, list, and a deliberately narrow
-// update. Policy lives here rather than in either caller so the in-process
-// Claude MCP server and the stdio bridge cannot drift — the same reason
+// The agent-facing half of runbooks: create, list, and a narrow update.
+// Policy lives here instead of in either caller so the in-process Claude MCP
+// server and the stdio bridge cannot drift, the same reason
 // updateTaskForAgent() is shared.
 //
-// A separate module from lib/agentTools.ts, which is already large and is about
-// TASKS. DB only — no runner, no SDK (pinned by tests/importGraph.test.ts).
+// A separate module from lib/agentTools.ts, which is already large and is
+// about tasks. DB only, no runner, no SDK (pinned by tests/importGraph.test.ts).
 //
-// What an agent may NOT do, and why:
+// What an agent may not do, and why:
 //
 //   Delete. Delete is hard delete throughout this repo with no undo, and the
 //   user's own Delete button at least confirms and names what breaks. The
-//   analogous verb for tasks (withdraw_suggestion) exists precisely so an agent
-//   retracts rather than destroys; a runbook has nothing to retract — it is
-//   inert until someone runs it — so there is no verb at all.
+//   analogous verb for tasks (withdraw_suggestion) exists so an agent retracts
+//   instead of destroying; a runbook has nothing to retract, since it is inert
+//   until someone runs it, so there is no verb at all.
 //
 //   Edit a runbook a schedule fires. Linking a schedule to a runbook aims
-//   unattended automation at a mutable row. That is a trade the USER makes
-//   knowingly — both editors say so on screen — but a model rewriting the
-//   recipe behind an 08:30 job is the same hazard with nobody in the loop. This
-//   is the runbook analogue of isInertSuggestion(): touch what nothing has
-//   committed to, never what someone has already built on.
+//   unattended automation at a mutable row. That is a trade the user makes
+//   knowingly (both editors say so on screen), but a model rewriting the
+//   recipe behind an 08:30 job is the same hazard with nobody in the loop.
+//   This is the runbook analogue of isInertSuggestion(): touch what nothing
+//   has committed to, never what someone has already built on.
 
 import { getProject } from "@/lib/store";
 import { resolveTargetProject } from "@/lib/agentTools";
@@ -30,7 +30,7 @@ import {
 } from "@/lib/runbooks/store";
 import type { Priority, Project, Runbook } from "@/lib/types";
 
-// Every permission_mode value any registered driver honors — the same
+// Every permission_mode value any registered driver honors: the same
 // capability data GET /api/agents renders into the human picker
 // (lib/agents/*/capabilities.ts, SDK-free by design; see tests/importGraph.test.ts).
 // Not scoped to the runbook's own agent: resolveConnectedAgent can pick a
@@ -43,17 +43,17 @@ function knownPermissionModes(): Set<string> {
 /**
  * The one field these tools must never pass through unchecked. bypassPermissions
  * (the never-asks mode) skips every permission card, and the ⌘K palette dispatches a
- * runbook with no preview step — so a model that can write this value into a
+ * runbook with no preview step, so a model that can write this value into a
  * saved runbook (e.g. steered by injected instructions in something it read)
  * has planted unattended, full-auto execution for whenever a human next clicks
- * Run. It's a RECOGNIZED mode, so the driver's forgiving resolution
- * (permissionModeFor in lib/agents/claude/driver.ts) would honor it rather than
- * degrade it to a safe default — the refusal has to happen here, before it's
- * ever written. Only a human, from the UI, may set it.
+ * Run. It's a recognized mode, so the driver's forgiving resolution
+ * (permissionModeFor in lib/agents/claude/driver.ts) would honor it instead of
+ * degrading it to a safe default, so the refusal has to happen here, before
+ * it's ever written. Only a human, from the UI, may set it.
  *
- * Any other unrecognized string is refused too, for a duller reason: silently
- * coercing a typo to the default would hide the mistake from the one place
- * (this tool call) that could report it.
+ * Any other unrecognized string is refused too, for a duller reason: coercing
+ * a typo to the default without a trace would hide the mistake from the one
+ * place (this tool call) that could report it.
  */
 function refuseUnsafePermissionMode(mode: string, verb: "created" | "changed"): string | null {
   if (mode === "bypassPermissions") {
@@ -72,7 +72,7 @@ function refuseUnsafePermissionMode(mode: string, verb: "created" | "changed"): 
  * "" (or whitespace) reads as omitted, not as an unrecognized mode. The schema
  * only types permission_mode `optional()`, so a model meaning "leave the
  * default" has no way to express that other than omitting the key or sending
- * an empty string — and `createRunbook`/`updateRunbook` already treat a blank
+ * an empty string, and `createRunbook`/`updateRunbook` already treat a blank
  * value as "inherit" (`?? null`). Rejecting "" here would refuse the one
  * input that's least dangerous, not most.
  */
@@ -93,11 +93,11 @@ export interface CreateRunbookToolInput {
 
 /**
  * `create_runbook`. Files into the calling project by default, or any project
- * by the same strict resolution suggest_task uses — no fallback on an
- * unrecognized value, because a recipe quietly saved into the wrong repo is
- * worse than an error the agent can retry.
+ * by the same strict resolution suggest_task uses: no fallback on an
+ * unrecognized value, because a recipe saved into the wrong repo without a
+ * trace is worse than an error the agent can retry.
  *
- * The agent it will RUN under is resolved connected-first rather than taken
+ * The agent it will run under is resolved connected-first instead of taken
  * from the model: which CLI a saved recipe should use is a property of the
  * user's setup, not something worth spending a tool parameter on.
  */
@@ -128,7 +128,7 @@ export function createRunbookForAgent(
     permission_mode: permissionMode ?? null,
     priority: input.priority,
     // Provenance, not a review gate: a runbook is inert until someone presses
-    // Run, so it needs no suggested-tray equivalent — but the user should be
+    // Run, so it needs no suggested-tray equivalent, but the user should be
     // able to see at a glance which recipes they didn't write.
     created_by: agentId,
   });
@@ -147,7 +147,7 @@ export interface AgentRunbookInfo {
   prompt: string;
   agent: string;
   priority: Priority;
-  /** Schedules that fire this runbook — it cannot be edited while any do. */
+  /** Schedules that fire this runbook; it cannot be edited while any do. */
   used_by: string[];
 }
 
@@ -183,11 +183,11 @@ export interface UpdateRunbookToolInput {
 }
 
 /**
- * `update_runbook`. Any runbook in any project by id — but only one no schedule
+ * `update_runbook`. Any runbook in any project by id, but only one no schedule
  * fires. See the header note: a model must never be the thing that changed what
  * runs unattended at 08:30.
  *
- * The refusal NAMES the schedules, because "you may not edit this" with no
+ * The refusal names the schedules, because "you may not edit this" with no
  * reason leaves the agent nothing to tell the user and nothing to try instead.
  */
 export function updateRunbookForAgent(

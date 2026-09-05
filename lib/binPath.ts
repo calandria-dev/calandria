@@ -1,24 +1,18 @@
-// Finding a CLI on disk, portably — the one thing every agent/tool binary we
-// shell out to needs and that Node does not do for us.
+// Finding a CLI on disk, portably: the one thing every agent/tool binary
+// this app shells out to needs that Node does not handle. Node's spawn is
+// shell-less; on win32 CreateProcess appends PATHEXT for `claude.exe` but
+// cannot execute the `.cmd`/`.bat` shims npm writes, and since
+// CVE-2024-27980 Node refuses to try without a shell involved, so a
+// bare-name or extension-less binary path breaks on native Windows
+// (lib/agents/codex/mcp.ts degrades to leaving the user's MCP servers
+// mounted). resolveBin/findOnPath/findInDirs find WHERE a binary is, trying
+// each PATHEXT extension on win32; spawnSpec builds HOW to launch it,
+// wrapping a `.cmd`/`.bat` in cmd.exe because Node won't.
 //
-// Node's spawn is shell-less, so on POSIX it takes the path verbatim and on
-// win32 it hands the name to CreateProcess, which appends PATHEXT itself. That
-// covers `claude.exe` and `gh.exe` but NOT the shims npm writes (`codex.cmd`,
-// `claude.cmd`) — CreateProcess cannot execute a batch file at all, and since
-// CVE-2024-27980 Node refuses to try (`EINVAL`) unless a shell is involved.
-// Every bare-name or extension-less binary path in this repo therefore breaks
-// on native Windows, silently in the one place it matters most
-// (lib/agents/codex/mcp.ts, which degrades to "leave the user's MCP servers
-// mounted"). Two exports answer the two halves:
-//
-//   * resolveBin/findOnPath/findInDirs — WHERE the binary is, trying each
-//     PATHEXT extension on win32 so a `.cmd` shim is found rather than missed.
-//   * spawnSpec — HOW to launch what was found, wrapping a `.cmd`/`.bat` in
-//     cmd.exe because Node won't.
-//
-// SDK-free and dependency-free (node:fs + node:path) so anything can import it,
-// and every function takes its platform/PATH/PATHEXT as arguments so the win32
-// behavior is unit-testable from the Linux/macOS suite. See docs/WINDOWS.md §6.
+// SDK-free and dependency-free (node:fs + node:path) so anything can import
+// it, and every function takes its platform/PATH/PATHEXT as arguments so the
+// win32 behavior is unit-testable from the Linux/macOS suite. See
+// docs/WINDOWS.md §6.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -26,9 +20,9 @@ import path from "node:path";
 /**
  * Windows' own default when PATHEXT is unset, trimmed to what a CLI is
  * plausibly shipped as. Order matters and is the OS's: a real `.exe` wins over
- * an npm `.cmd` shim for the same name, which is what we want everywhere —
+ * an npm `.cmd` shim for the same name, which is what is wanted everywhere:
  * spawning the executable directly avoids the cmd.exe wrapper below, and the
- * Claude SDK's `pathToClaudeCodeExecutable` spawns whatever we hand it with no
+ * Claude SDK's `pathToClaudeCodeExecutable` spawns whatever it's handed with no
  * wrapper available at all.
  */
 export const DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
@@ -68,9 +62,9 @@ export function binCandidates(name: string, opts: BinLookupOptions = {}): string
 }
 
 /**
- * Whether `p` is a file we could spawn. The X_OK check is meaningless on
- * Windows — it passes for any existing file, since executability there is
- * carried by the extension, not a mode bit — so win32 asks only "is this a
+ * Whether `p` is a file that could be spawned. The X_OK check is meaningless
+ * on Windows: it passes for any existing file, since executability there is
+ * carried by the extension, not a mode bit. So win32 asks only "is this a
  * file", which combined with the PATHEXT candidates above is the same question.
  */
 export function isExecutableFile(p: string, platform?: NodeJS.Platform): boolean {
@@ -110,7 +104,7 @@ export function findOnPath(
 /**
  * The full resolution for an unpinned binary: PATH first (what the user's own
  * shell would run), then the well-known install dirs a server process's
- * trimmed PATH can't see. Returns null when nothing was found — callers decide
+ * trimmed PATH can't see. Returns null when nothing was found; callers decide
  * whether to fall back to the bare name so the ENOENT lands in their existing
  * not-installed handling.
  */
@@ -148,8 +142,8 @@ export interface SpawnSpec {
 /**
  * What to actually hand child_process (or node-pty) for `bin argv…`.
  * Pass-through everywhere except a win32 batch shim, which becomes
- * `cmd.exe /d /s /c ""<bin>" <argv…>"` — the same wrapper `shell: true` would
- * build, except we quote the pieces instead of letting Node join them with
+ * `cmd.exe /d /s /c ""<bin>" <argv…>"`: the same wrapper `shell: true` would
+ * build, except the pieces are quoted instead of letting Node join them with
  * spaces (an install under `C:\Program Files\…` otherwise splits in two). The
  * outer quote pair is what `/s` strips, so it has to be there for the inner
  * ones to survive; verbatim arguments then stop Node re-escaping the line.

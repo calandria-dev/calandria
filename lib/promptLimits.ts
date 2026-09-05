@@ -1,17 +1,15 @@
-// Guards + recovery constants for the "Prompt is too long" failure mode.
+// Guards and recovery constants for the "prompt is too long" failure mode.
 //
-// A giant paste used to permanently poison a task: the SDK reports the API's
-// "prompt is too long" error as a soft stream error AFTER the session has
-// already opened, so lib/runner.ts persists the session id anyway and every
-// later message resumes the same over-limit session — the error repeats
-// forever. These shared limits let the composer defuse big pastes up front
-// (attach as a file instead of inlining), the messages route reject anything
-// that slips through, and the runner recognize the error to surface a
-// one-click recovery. Kept dependency-free so both server and client bundles
-// can import it.
+// The SDK reports the API's overflow error as a soft stream error after the
+// session has already opened, so lib/runner.ts persists the session id and
+// every later message resumes the same over-limit session, repeating the
+// error. These shared limits let the composer divert large pastes into an
+// attachment, the messages route reject anything that slips through, and the
+// runner recognize the error to offer one-click recovery. Dependency-free so
+// both server and client bundles can import it.
 
-/** Client: a text paste larger than this becomes a `.txt` attachment instead
- *  of being inlined into the message (see app/shell/Composer.tsx). */
+/** Client: a text paste larger than this becomes a `.txt` attachment
+ *  (see app/shell/Composer.tsx). */
 export const PASTE_ATTACH_THRESHOLD = 100_000; // ~100 KB
 
 /** Server: hard cap on a single message's characters (POST /messages). Big
@@ -45,7 +43,7 @@ export function isPromptTooLong(msg: string | null | undefined): boolean {
 /** Appended to the persisted error line when a turn overflows the context
  *  window. The UI (app/shell/Transcript.tsx) matches this exact string
  *  to render the "Start fresh context" recovery button. Persisted message
- *  content is the durable channel — it survives SSE reconnects because the
+ *  content is the durable channel: it survives SSE reconnects because the
  *  snapshot replays messages from SQLite. */
 export const CONTEXT_OVERFLOW_NOTICE =
   "This session's context exceeds the model's limit, so it can't continue. " +

@@ -1,18 +1,18 @@
 // Why a turn is running, and whether anyone can answer it.
 //
-// The permission gate (lib/permissions.ts) has always inferred "is a human
-// around?" from watcherCount() — presence, not intent. That is a decent
-// heuristic for a turn the user launched, and the wrong question entirely for a
+// The permission gate (lib/permissions.ts) infers "is a human around?" from
+// watcherCount(), which is presence, not intent. That is a decent heuristic
+// for a turn the user launched, and the wrong question entirely for a
 // scheduled one: a tab open on a second monitor at 08:30 would let a card park
 // for the full attended cap on a turn nobody asked for and nobody is reading.
 //
 // So a scheduled turn says so explicitly. The runner owns the entry's lifetime
-// (registered as the turn starts, cleared in its finally), keyed by task id —
+// (registered as the turn starts, cleared in its finally), keyed by task id,
 // the same globalThis-on-a-single-process pattern as lib/abort.ts and
-// lib/asks.ts. Deliberately a named shape rather than a bare boolean so the
-// planned RunContext work (task S6asJLbDQpfWp_u3pDpEC) can widen it in place.
+// lib/asks.ts. A named shape instead of a bare boolean, so this can widen in
+// place as more run origins are added.
 //
-// No DB, no SDK — pinned by tests/importGraph.test.ts.
+// No DB, no SDK: pinned by tests/importGraph.test.ts.
 
 export type RunOrigin = "user" | "dependency" | "schedule";
 
@@ -22,11 +22,11 @@ export interface RunContext {
    * "deny" = settle any permission OR ask request at once instead of parking.
    *
    * Both halves are honored: lib/permissions.ts's waitForPermission() for the
-   * canUseTool gate, and the AskUserQuestion paths — the Claude driver's
+   * canUseTool gate, and the AskUserQuestion paths: the Claude driver's
    * PreToolUse hook and the MCP bridge's ask_user (lib/agentTools.ts). An ask
    * is the more dangerous of the two under a schedule, because it fires in
-   * EVERY permission mode (bypassPermissions short-circuits the gate but not
-   * the hook), and parking one holds the turn slot open indefinitely — which
+   * every permission mode (bypassPermissions short-circuits the gate but not
+   * the hook), and parking one holds the turn slot open indefinitely, which
    * turns every future occurrence of that schedule into `skipped_overlap`.
    */
   interactionPolicy: "interactive" | "deny";
@@ -46,15 +46,15 @@ export interface RunContext {
 export const SCHEDULED_RUN_CONTEXT: RunContext = { origin: "schedule", interactionPolicy: "deny" };
 
 /**
- * What a dependency-triggered auto-start runs under. "interactive" on purpose:
+ * What a dependency-triggered auto-start runs under. "interactive" because,
  * unlike a schedule, this is work the user filed and asked to start when its
  * blockers finished, so a permission card or an ask belongs in the "N need
- * you" inbox rather than being auto-denied — the presence heuristic still
+ * you" inbox instead of being auto-denied; the presence heuristic still
  * shortens the wait when nobody is watching. What the context adds is the
- * ORIGIN: the gate and the runner can tell "launched by a status change" from
+ * origin: the gate and the runner can tell "launched by a status change" from
  * "launched by a click" instead of guessing from watcherCount(). Spread into
- * a fresh object per turn (like SCHEDULED_RUN_CONTEXT) — the runner keys the
- * registry on object identity and recordUnattendedDenial() mutates it.
+ * a fresh object per turn (like SCHEDULED_RUN_CONTEXT), since the runner keys
+ * the registry on object identity and recordUnattendedDenial() mutates it.
  */
 export const DEPENDENCY_RUN_CONTEXT: RunContext = { origin: "dependency", interactionPolicy: "interactive" };
 
@@ -97,9 +97,9 @@ export function recordUnattendedDenial(taskId: string): void {
 }
 
 /**
- * What the model is told when its question can't be asked. Written FOR the
- * model: it has to stop and summarize rather than guess an answer or retry the
- * same question in a loop for the rest of the turn.
+ * What the model is told when its question can't be asked. Written for the
+ * model: it has to stop and summarize instead of guessing an answer or
+ * retrying the same question in a loop for the rest of the turn.
  */
 export const UNATTENDED_ASK_DENIAL =
   "This is a scheduled run: nobody is watching it, so the question cannot be answered and was " +
