@@ -14,7 +14,7 @@
       }
       /* Both states are laid out the same way; only one of them is ever on
          screen. The wrapper exists so main.js can swap them with one property
-         each, rather than hiding three elements by name. */
+         each, instead of hiding three elements by name. */
       .stack {
         display: flex; flex-direction: column;
         align-items: center; justify-content: center; gap: 18px;
@@ -35,9 +35,9 @@
         @keyframes pulse { 0%,100% { opacity: .3; } 50% { opacity: 1; } }
       }
       /* A cold Next boot is a few seconds; a first-ever launch can be much
-         longer, and a spinner alone in that window reads as a hang. Rather than
+         longer, and a spinner alone in that window reads as a hang. There's no need to
          narrate the whole boot to say so, say it only once the wait is long
-         enough to worry about — a delayed, non-repeating animation, so no
+         enough to worry about, with a delayed, non-repeating animation, so no
          script is needed (this page's CSP blocks its own inline <script>). */
       .slow {
         color: #6b737c; font-size: 12px; opacity: 0;
@@ -45,18 +45,18 @@
       }
       @keyframes appear { to { opacity: 1; } }
       /* main.js appends sidecar output here with executeJavaScript, which is not
-         subject to this page's CSP. It is deliberately off screen: the lines are
+         subject to this page's CSP. It is off screen: the lines are
          diagnostics, not something to read while waiting, and they are the only
          surviving copy of the supervisor's FIRST lines (desktop/e2e reads them
          back through this element, since Electron stdout capture starts too
-         late to see them). Hidden by clipping rather than `display: none` so it
+         late to see them). Hidden by clipping, not `display: none`, so it
          is still rendered and still has innerText. */
       #log {
         position: absolute; width: 1px; height: 1px;
         overflow: hidden; clip-path: inset(50%); white-space: pre-wrap;
       }
-      /* The unreachable-instance state. Never shown by the page itself — this
-         document has no script — only by main.js, which fills in the detail
+      /* The unreachable-instance state. This document has no script, so only
+         main.js fills in the detail
          and wires the two buttons when an attach fails. */
       #detail { color: #8b939c; font-size: 12.5px; word-break: break-word; }
       #fail .buttons { display: flex; gap: 10px; }

@@ -11,13 +11,13 @@
 #   Claude Code   ~/.claude/skills/<name>/      or  <repo>/.claude/skills/<name>/
 #   Codex         ~/.agents/skills/<name>/      or  <repo>/.agents/skills/<name>/
 #
-# Default is user scope — every project you open gets the skill and nobody's
-# repository grows a file they didn't ask for. Use --project to commit it into
-# one repo instead, which is what you want when the whole team should have it.
+# Default is user scope: every project you open gets the skill and no
+# repository grows a file it didn't ask for. Use --project to commit it into
+# one repo instead, when the whole team should have it.
 #
-# Copies by default rather than symlinking: a symlink is nicer to keep current
-# but does not survive a Windows checkout without Developer Mode, and a skill
-# that silently isn't there is worse than one that's a version behind. --link
+# Copies by default instead of symlinking: a symlink is nicer to keep current
+# but does not survive a Windows checkout without Developer Mode, and a
+# missing skill is worse than one that's a version behind. --link
 # opts in.
 set -euo pipefail
 

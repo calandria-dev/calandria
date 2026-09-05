@@ -1,46 +1,16 @@
 #!/usr/bin/env node
-/* Hot backup of a Calandria instance — safe to run against a LIVE server.
+/* Hot backup of a Calandria instance, safe to run against a live server.
  *
- * The whole point of this file is the first step: a WAL-mode SQLite database
- * must never be backed up by copying the file. `cp calandria.db somewhere`
- * captures the main database without the write-ahead log that holds the most
- * recent transactions, so the copy is silently stale at best and torn at worst,
- * and it reads fine right up until the day you need it. So the snapshot is
- * `VACUUM INTO`, which takes a read transaction on the live database and writes
- * a self-contained, already-checkpointed copy — no `-wal`/`-shm` sidecars in
- * the archive at all, nothing to forget to move together.
+ * Snapshots the database with `VACUUM INTO` (a read-only transaction, no
+ * application lock) instead of copying calandria.db directly: a WAL-mode
+ * database copied by `cp` misses the write-ahead log and can be stale or
+ * torn, while VACUUM INTO writes a self-contained, checkpointed copy.
  *
- * The connection is READ-ONLY and takes no application lock. lib/db-lock.mjs's
- * single-process mutex is a separate lock FILE by design, precisely so an
- * out-of-band reader like this one can work while the app owns the database;
- * claiming it here would mean a backup could stop the app from booting.
- *
- * What goes in, and why it isn't everything:
- *   db/         the VACUUM INTO snapshot, under its real name (calandria.db, or
- *               a pre-rename orchestrator.db still in place — lib/storage.mjs
- *               decides, never this script)
- *   db-dir/     everything else the app keeps beside the database: uploads/,
- *               vapid.json, anthropic-api-key / openai-api-key. Copied by
- *               exclusion (skip *.db*, the lock pair, the backup dir itself)
- *               so a file added beside the database later is captured without
- *               anyone remembering to list it here.
- *   agent-login/ the CLI login state the agents run on (~/.claude*, ~/.codex,
- *                ~/.gemini).
- *               Small, and its absence is the difference between "restored" and
- *               "restored, now re-authenticate every agent".
- *   worktrees/  --worktrees, off by default
- *   projects/   --projects, off by default
- *
- * The last two are RECONSTRUCTIBLE — a worktree is a checkout of a branch that
- * lives in the project repo, a project clone is a clone — and they are also the
- * two that are large enough to turn a nightly backup into a disk problem. They
- * are opt-in for that reason, and the restore docs say what it costs to skip
- * them (docs/SELF_HOSTING.md, "Backup & restore").
- *
- * Plain Node, like every other script here, and cwd-independent. It resolves
- * paths through lib/storage.mjs rather than hardcoding a directory or a file
- * name, so it finds the same database the app booted against — including a
- * pre-rename install that was never migrated.
+ * Archives db/ (the snapshot), db-dir/ (uploads, VAPID key, API keys) and
+ * agent-login/ (~/.claude*, ~/.codex, ~/.gemini) by default. --worktrees and
+ * --projects are opt-in: both are reconstructible from the project repo and
+ * large enough to make a nightly backup a disk problem. Paths are resolved
+ * through lib/storage.mjs so a pre-rename orchestrator.db install is still found.
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -100,7 +70,7 @@ function parseArgs(argv) {
   return opts;
 }
 
-/** `20260827T151004Z` — sorts lexically, and carries no ambiguity about zone. */
+/** UTC stamp like `YYYYMMDDTHHMMSSZ`: sorts lexically, unambiguous about zone. */
 function stamp(now = new Date()) {
   return now.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
 }
@@ -132,7 +102,7 @@ function dirSize(dir) {
       try {
         total += fs.statSync(full).size;
       } catch {
-        // raced with a delete; a backup is a point in time, not a lock
+        // File vanished mid-scan; the total is best-effort.
       }
     }
   }
@@ -146,10 +116,10 @@ function sha256(file) {
 }
 
 /**
- * The consistent snapshot. `VACUUM INTO` reads the live database inside one
- * read transaction and writes a fresh, fully checkpointed file — so a turn
- * committing mid-backup lands either wholly inside the snapshot or wholly after
- * it, and the result needs no sidecars.
+ * Writes the consistent snapshot. `VACUUM INTO` reads the live database
+ * inside one read transaction and writes a fresh, checkpointed file, so a
+ * turn committing mid-backup lands wholly inside the snapshot or wholly
+ * after it, and the result needs no `-wal`/`-shm` sidecars.
  */
 function snapshotDb(srcPath, destPath) {
   const db = new Database(srcPath, { readonly: true, fileMustExist: true });
@@ -180,11 +150,11 @@ function snapshotDb(srcPath, destPath) {
 }
 
 /**
- * Everything in the database's directory that ISN'T the database: uploads,
- * the VAPID key, a persisted API key. Excludes any SQLite file (the snapshot
- * above is the only copy of one we ever make), the boot lock's pure-mutex pair,
- * the output directory, and the worktrees dir when it is nested inside — which
- * it is by default, `~/.calandria/worktrees` under `~/.calandria`.
+ * Copies everything in the database's directory besides the database itself:
+ * uploads, the VAPID key, a persisted API key. Excludes any SQLite file
+ * (snapshotDb already made that copy), the boot lock file, the output
+ * directory, and the worktrees dir when nested inside it (the default,
+ * `~/.calandria/worktrees` under `~/.calandria`).
  */
 function copyDbDirExtras(dbDir, destDir, excludeDirs) {
   const root = path.resolve(dbDir);
@@ -208,14 +178,14 @@ function copyDbDirExtras(dbDir, destDir, excludeDirs) {
 }
 
 /**
- * The agent CLIs' own login state, kept at its real path under a `home/` prefix
- * so restoring is `cp -a agent-login/home/. ~/` and nothing has to be renamed.
+ * Copies the agent CLIs' login state, kept at its real path under a `home/`
+ * prefix so restoring is `cp -a agent-login/home/. ~/`.
  *
- * Curated rather than a whole-directory copy: `~/.claude` also holds every
- * session transcript the CLI has ever written, which is large, not ours, and
- * not what makes an instance work again. On macOS the Claude credential lives
- * in the login Keychain instead of `.credentials.json`, so its absence here is
- * expected and recorded rather than treated as an error.
+ * Curated instead of a whole-directory copy: `~/.claude` also holds every
+ * session transcript the CLI has written, which is large and not needed to
+ * make a restored instance work. On macOS the Claude credential lives in the
+ * login Keychain instead of `.credentials.json`, so its absence here is
+ * recorded rather than treated as an error.
  */
 function copyAgentLogin(home, destDir) {
   const wanted = [
@@ -224,10 +194,10 @@ function copyAgentLogin(home, destDir) {
     path.join(".claude", "settings.json"),
     path.join(".codex", "auth.json"),
     path.join(".codex", "config.toml"),
-    // Antigravity's CLI settings (which model provider it uses). Its OAuth
-    // TOKEN is deliberately absent: `agy` keeps that in the OS keyring, not in
-    // any file, so a restored instance signs in again — or runs on the API key,
-    // which Calandria stores in its own database and the db backup carries.
+    // Antigravity's CLI settings (which model provider it uses). The OAuth
+    // token is absent: `agy` keeps that in the OS keyring rather than a file,
+    // so a restored instance signs in again, or runs on the API key, which
+    // Calandria stores in its own database and the db backup already carries.
     path.join(".gemini", "antigravity-cli", "settings.json"),
   ];
   const included = [];
@@ -329,9 +299,9 @@ function main() {
       calandriaVersion: appVersion(),
       hostname: os.hostname(),
       platform: process.platform,
-      // The absolute source paths, because the database stores absolute paths
-      // too (projects.repo_path, tasks.worktree_path) and a restore onto a
-      // different layout has to reconcile them. See docs/SELF_HOSTING.md.
+      // The absolute source paths: the database stores absolute paths too
+      // (projects.repo_path, tasks.worktree_path), and a restore onto a
+      // different layout has to reconcile them.
       source: {
         dbPath: db.path,
         dbDir: db.dir,
@@ -362,19 +332,17 @@ function main() {
     }
 
     const archive = path.join(outDir, `${name}.tar.gz`);
-    // Run IN the output dir and name everything relatively: a Windows absolute
+    // Run in the output dir and name everything relatively: a Windows absolute
     // path is `C:\...`, and a colon before the first slash is how tar spells a
-    // remote host. Windows ships bsdtar, which doesn't do that — but the
-    // difference is not worth depending on for the one command that has to work
-    // on the day someone actually needs it.
+    // remote host.
     const tar = spawnSync("tar", ["-czf", `${name}.tar.gz`, name], {
       cwd: outDir,
       stdio: ["ignore", "ignore", "pipe"],
     });
     if (tar.error || tar.status !== 0) {
       const why = tar.error ? tar.error.message : (tar.stderr?.toString().trim() || `tar exited ${tar.status}`);
-      // Keep the staging dir: the expensive work is done and it IS the backup,
-      // just uncompressed. --no-archive produces this shape deliberately.
+      // Keep the staging dir: the expensive work is done and it is the backup,
+      // just uncompressed (the same shape --no-archive produces).
       process.stderr.write(`tar failed (${why})\nthe uncompressed backup is at ${staging}\n`);
       process.exit(1);
     }
@@ -388,9 +356,9 @@ function main() {
     process.stdout.write(`${archive}\n`);
     ok = true;
   } finally {
-    // A half-written staging dir is worse than none — it looks like a backup.
-    // The one case that deliberately keeps it is tar failing, and that path
-    // exits through process.exit(), which never reaches a finally block.
+    // A half-written staging dir is worse than none: it looks like a backup.
+    // The tar-failure path keeps it instead, exiting through process.exit(),
+    // which never reaches this finally block.
     if (!ok) fs.rmSync(staging, { recursive: true, force: true });
   }
 }
