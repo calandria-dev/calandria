@@ -43,6 +43,8 @@ const ask = (method, params) =>
   });
 
 const THREAD = "thread-fake-1";
+// `resetsAt` is a Unix timestamp in SECONDS, fixed so the test can assert on it.
+const RATE_LIMIT_RESETS = Math.floor(Date.parse("2026-09-02T21:00:00Z") / 1000);
 let turnId = null;
 let threadId = THREAD;
 let interrupted = false;
@@ -181,6 +183,18 @@ async function runTurn() {
   notify("item/agentMessage/delta", { ...base, itemId: "item-msg", delta: "all " });
   notify("item/completed", { ...base, item: { type: "agentMessage", id: "item-msg", text: "all done", phase: null }, completedAtMs: Date.now() });
   notify("turn/plan/updated", { ...base, explanation: null, plan: [{ step: "run tests", status: "completed" }, { step: "report", status: "inProgress" }] });
+  // The server pushes the account's limits mid-turn; the same RateLimitSnapshot
+  // `account/rateLimits/read` answers with, which is what lets the plan-usage
+  // meter coast without spawning its own app-server.
+  notify("account/rateLimits/updated", {
+    rateLimits: {
+      planType: "pro",
+      primary: { usedPercent: 23, windowDurationMins: 300, resetsAt: RATE_LIMIT_RESETS },
+      secondary: { usedPercent: 61, windowDurationMins: 10080, resetsAt: RATE_LIMIT_RESETS + 86400 },
+      rateLimitReachedType: null,
+      spendControlReached: false,
+    },
+  });
   notify("thread/tokenUsage/updated", {
     ...base,
     tokenUsage: {

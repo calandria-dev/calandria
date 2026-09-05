@@ -353,17 +353,24 @@ is the failure this is built to avoid. `CODEX_CAPABILITIES` became `codexCapabil
 same reason `claudeCapabilities()` is a function — a descriptor frozen at module load would be
 the old hardcoded number under a new name.
 
-**Plan usage is an ACTIVE read here, unlike Claude's.** The titlebar meter is fed for free on
-the Claude side by the `rate_limit_event` messages every turn's stream carries. Codex's turn
-stream carries no equivalent, and this was verified against the shipped CLI rather than
-assumed, because the failure mode is a meter that silently reports nothing: the SDK's
-`ThreadEvent` union is closed at eight members, `turn.completed.usage` is token counts only,
-and the exec JSONL serializer's own field table in the 0.146.0 binary lists no `token_count`
-and no `rate_limits` (older codex builds did emit one; the dotted exec protocol doesn't). Nor
-is it cached on disk — the rollout transcripts under `$CODEX_HOME/sessions` hold no
-rate-limit entry. So `codex/planUsage.ts` reads `account/rateLimits/read` from a throwaway
-`codex app-server` (`codex/appServer.ts`, where the verified JSON-RPC handshake is
-transcribed), behind the same `PLAN_USAGE_MIN_FETCH_MS` floor. Field names come from the
+**Plan usage is fed both ways here, and the passive half only exists on app-server.** The
+titlebar meter is fed for free on the Claude side by the `rate_limit_event` messages every
+turn's stream carries. The app-server transport has the equivalent: while a turn runs the
+server pushes `account/rateLimits/updated` carrying the same `RateLimitSnapshot`, and
+`codex/appServerTurn.ts`'s notification handler hands it to `ingestRateLimits` in
+`codex/planUsage.ts`, which writes the same cache a fetch would. Because that write stamps the
+snapshot's time, `getCodexPlanUsage()`'s existing `PLAN_USAGE_MIN_FETCH_MS` floor is what
+skips the read: an instance running turns back to back never spawns for this at all.
+
+The exec transport carries no such thing, which is why the ACTIVE read stays. That was
+verified against the shipped CLI rather than assumed, because the failure mode is a meter that
+silently reports nothing: the SDK's `ThreadEvent` union is closed at eight members,
+`turn.completed.usage` is token counts only, and the exec JSONL serializer's own field table in
+the 0.146.0 binary lists no `token_count` and no `rate_limits` (older codex builds did emit
+one; the dotted exec protocol doesn't). Nor is it cached on disk — the rollout transcripts
+under `$CODEX_HOME/sessions` hold no rate-limit entry. So `codex/planUsage.ts` also reads
+`account/rateLimits/read` from a throwaway `codex app-server` (`codex/appServer.ts`, where the
+verified JSON-RPC handshake is transcribed), behind that same floor. Field names come from the
 CLI's own `codex app-server generate-json-schema` and are camelCase (`usedPercent`,
 `windowDurationMins`, `resetsAt` in seconds) with windows named by RANK — `primary` /
 `secondary`, not by duration — which is why `PlanUsagePill` matches two id vocabularies.

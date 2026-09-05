@@ -901,8 +901,10 @@ export const PLAN_USAGE_ENABLED = !["0", "off", "false", "no"].includes(
  * cache plus the passive rate-limit telemetry that rides every turn for free.
  *
  * It floors the Codex side too, where the cost is different but no smaller: a
- * throwaway `codex app-server` process per read, since that CLI's turn stream
- * carries no rate-limit telemetry to coast on (lib/agents/codex/planUsage.ts).
+ * throwaway `codex app-server` process per read. There the floor is also what
+ * the passive half rides — an app-server turn pushes the same snapshot for
+ * free, and a cache inside this window means no process is spawned at all
+ * (lib/agents/codex/planUsage.ts).
  */
 export const PLAN_USAGE_MIN_FETCH_MS = ms(readEnv("CALANDRIA_PLAN_USAGE_MIN_FETCH_MS"), 300_000);
 
