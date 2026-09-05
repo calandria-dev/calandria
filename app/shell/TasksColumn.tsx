@@ -20,17 +20,14 @@ import { TaskBoard, type TaskMovePatch } from "./TaskBoard";
 import { BaseBranchBanner } from "./BaseBranchBanner";
 import { DiffFooter } from "./DiffFooter";
 
-// The multi-select checkbox. In a task row it sits INSIDE the card, stacked
-// over the status dot (.pick-slot) and swapped in on hover or while a
-// selection is going — the card used to reserve a left gutter for it, which
-// left every card ~46px narrower than the suggested tray beside it. In a
-// suggestion row it's an ordinary flex item. Either way it stays faded until
-// hovered or anything is picked, so the affordance is there without turning
-// the list into a form.
+// The multi-select checkbox. In a task row it sits inside the card, stacked
+// over the status dot (.pick-slot), and swaps in on hover or while a
+// selection is in progress. In a suggestion row it's an ordinary flex item.
+// It stays faded until hovered or something is picked.
 //
-// Wired through onClick rather than onChange because the SHIFT key is the whole
-// range gesture and only a mouse event carries it; onChange keeps React from
-// warning about a controlled input with no handler.
+// Wired through onClick because the shift key is the range gesture and only
+// a mouse event carries it. onChange keeps React from warning about a
+// controlled input with no handler.
 function PickBox({ picked, pickable, onPick }: { picked: boolean; pickable: boolean; onPick: (range: boolean) => void }) {
   return (
     <label className="pickbox" onClick={(e) => e.stopPropagation()}
@@ -44,8 +41,8 @@ function PickBox({ picked, pickable, onPick }: { picked: boolean; pickable: bool
 function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked, onPick, onSnooze, onUnsnooze, onAckRun, onStopTurn, sparkline, tagsById, onSelectTag, projectBranch }: { task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[]; onSelect: () => void; picked: boolean; onPick: (id: string, range: boolean) => void; onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void; onAckRun: (id: string) => void; onStopTurn: (id: string) => void; sparkline?: number[]; tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void; projectBranch: string }) {
   const sessionCount = task.started ? task.generation : Math.max(0, task.generation - 1);
   const snoozed = isSnoozed(task);
-  // Snoozed beats awaiting: the whole point of parking a task that's asking you
-  // a question is that it stops reading as "waiting on you" until it's back.
+  // Snoozed beats awaiting: parking a task that's asking a question stops it
+  // from reading as "waiting on you" until it's back.
   const awaiting = !snoozed && isAwaiting(task);
   // The other half of "needs you": an open PR whose checks are failing. Below
   // awaiting, because a parked question is a person being asked something
@@ -54,16 +51,16 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
   const ciRed = !snoozed && !awaiting && isPrRed(task);
   const blocked = !!blockedBy?.length && !task.started;
   // Ran on its own and nobody has read it yet. Below snoozed and awaiting for
-  // the same reason they're ordered that way — a parked or questioning row is
-  // describing something more urgent than "there is output here".
+  // the same reason they're ordered that way: a parked or questioning row
+  // describes something more urgent than "there is output here".
   const ranClean = !snoozed && !awaiting && !ciRed && isUnreadRun(task);
   // The model's turn ended but the session is held open for run_in_background
-  // work — live, but nothing to watch and nothing needed from the user.
+  // work: live, but nothing to watch and nothing needed from the user.
   const inBackground = !snoozed && !awaiting && running && !!task.background_pending;
-  // Live, but nothing has come out of it for a long time (./idleTurn.ts). Said
-  // beside the running state rather than instead of it: the turn IS still going
-  // and may be doing real work, so this reports the gap and leaves the call to
-  // whoever reads it.
+  // Live, but nothing has come out of it for a long time (./idleTurn.ts). Shown
+  // alongside the running state: the turn is still going and may be doing
+  // real work, so this reports the gap and leaves the call to whoever reads
+  // it.
   const idle = isIdleTurn(task, running) && !awaiting;
   useIdleClock(idle);
   const idleNote = idle ? ` · ${idleFor(task.idle_since ?? 0)}` : "";
@@ -84,10 +81,10 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
   return (
     <div className={`task-row ${picked ? "picked" : ""} ${snoozed ? "snoozed" : ""}`}>
       {/* An <article role="button">, not a <button>: the card hosts real
-          controls (the pick checkbox, the snooze corner) and interactive
-          content inside a <button> is invalid — same shape, and same reason,
-          as the board's BoardCard. Keeping them inside is what lets the card
-          run the column's full width instead of reserving side gutters. */}
+          controls (the pick checkbox, the snooze corner), and interactive
+          content inside a <button> is invalid. Same shape and same reason as
+          the board's BoardCard. Keeping them inside lets the card run the
+          column's full width without reserving side gutters. */}
       <article className={`task ${selected ? "sel" : ""} ${awaiting ? "awaiting" : ""}`} role="button" tabIndex={0}
         onClick={onSelect}
         onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) { e.preventDefault(); onSelect(); } }}>
@@ -98,14 +95,13 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
           <StatusDot status={task.status} running={running} awaiting={awaiting} background={inBackground} />
           <PickBox picked={picked} pickable={pickable} onPick={(range) => onPick(task.id, range)} />
         </span>
-        {/* Left of the title, where a logo costs a line-height's width. The
-            name used to sit in the footer instead, because inline here the
-            badge + pill took half the width the title exists to use — the
-            mark doesn't, so the agent can qualify the title it belongs to. */}
+        {/* Left of the title, where a logo costs only a line-height's width,
+            so the agent mark can qualify the title without taking space
+            from it. */}
         <AgentBadge agent={task.agent} label={agentLabel(agents, task.agent)} multi={agents.agents.length > 1} />
         <span className="ttitle">{task.title}</span>
-        {/* Which feature(s) this is a step of — a task can carry several. After
-            the title, per the tags spec; clicking one lights that tag alone. */}
+        {/* Which feature(s) this is a step of; a task can carry several. Placed
+            after the title. Clicking one lights that tag alone. */}
         <TagBadges tagIds={task.tag_ids} tagsById={tagsById} onSelect={onSelectTag} />
         {/* Snoozed reports the category it came from, not "Snoozed": the status
             group header already says that, and where it goes BACK to is the
@@ -114,19 +110,19 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
         <PriPill p={task.priority} />
       </div>
       <AgentEditedChip task={task} variant="list" />
-      {/* Why this card is back where you didn't leave it. An unread marker, not
-          history — opening the task clears it (useShell). */}
+      {/* Why this card is back where you didn't leave it: an unread marker.
+          Opening the task clears it (useShell). */}
       {!snoozed && wasSnoozed(task) && (
         <div className="snz-chip was" title={`Snoozed until ${new Date(task.snoozed_until).toLocaleString()}`}>
           {Icon.moon()} Was snoozed
         </div>
       )}
-      {/* A scheduled run that finished with nothing to answer. The button is
-          the only way out of this state, which is why it's on the card and not
-          just in a menu: acknowledging IS a status write (the server clears the
-          mark with it), so the row lands in Done rather than sliding back into
-          the undifferentiated "In progress" pile. Sending it another message
-          works too — the next turn clears the mark when its session opens. */}
+      {/* A scheduled run that finished with nothing to answer. The button sits
+          on the card, not just in a menu, because acknowledging is a status
+          write: the server clears the mark and files the row in Done instead
+          of leaving it in the undifferentiated "In progress" pile. Sending
+          another message also clears the mark, when the next turn's session
+          opens. */}
       {ranClean && (
         <div className="ran-chip" title={`Ran on its own ${relTime(task.unread_run_at)}, unattended, with nothing to answer. Read it, then mark it done`}>
           {Icon.check()} Ran clean · {relTime(task.unread_run_at)}
@@ -145,7 +141,7 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
           {Icon.lock()} Blocked by {blockedBy!.length === 1 ? blockedBy![0] : `${blockedBy!.length} tasks`}
         </div>
       ))}
-      {/* Queued for the usage-window reset (./queuedStart.ts) — blue like the
+      {/* Queued for the usage-window reset (./queuedStart.ts). Blue like the
           auto-start chip, since both say "this launches itself". */}
       {isQueuedStart(task) && !running && (
         <div className="blocked-chip auto" title={`Queued for the usage-window reset: ${task.started ? "resumes" : "starts"} ${wakeLabel(task.start_at)}`}>
@@ -159,18 +155,17 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
         <span className="spacer" />
         {sessionCount > 0 && <span className="activity">{sessionCount} session{sessionCount !== 1 ? "s" : ""}</span>}
       </div>
-      {/* The gone-quiet mark's one affordance, directly under the activity line
-          that explains it — the chip's own label is only the verb. It lives on
-          the card rather than in the session because the session already has
-          Stop in its composer; this is the surface where reaching that means
-          selecting the task first. It confirms; ./IdleStop.tsx has why both of
-          those are the way round they are. */}
+      {/* The idle mark's affordance, directly under the activity line that
+          explains it: the chip's own label is only the verb. It lives on the
+          card, not in the session, because the session's composer already
+          has Stop; reaching that here means selecting the task first. It
+          confirms; ./IdleStop.tsx has why. */}
       {idle && <IdleStopChip variant="list" onStop={() => onStopTurn(task.id)} />}
       {/* Corner affordance, mirroring the board card's .bc-snz. Snoozing fades
-          in on hover like the checkbox does; waking stays visible, because
-          "unsnooze it from here" is the one action a parked row exists to
-          offer. SnoozeButton stops click propagation itself, so opening the
-          menu doesn't select the task. */}
+          in on hover like the checkbox; waking stays visible, since a
+          parked row's only action here is "unsnooze it". SnoozeButton stops
+          click propagation itself, so opening the menu doesn't select the
+          task. */}
       <div className="task-snz">
         {snoozed ? (
           <button className="snz-wake" title={`Wakes ${wakeLabel(task.snoozed_until)}. Click to wake it now`}
@@ -186,20 +181,20 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
   );
 }
 
-// Whether a task can be picked for a bulk move, as far as the client can tell.
-// The server decides for real (it also refuses one whose turn is merely in
-// flight, and reports that as a skip) — this only keeps the obvious cases from
-// being selectable at all.
+// Whether a task can be picked for a bulk move, as far as the client can
+// tell. The server makes the real decision (it also refuses one whose turn
+// is merely in flight, reporting that as a skip); this only keeps the
+// obvious cases from being selectable at all.
 //
-// A STARTED task IS pickable: it moves by discarding the worktree it cut from
-// this project's repo, and the move modal asks for that per row, with what that
-// particular checkout holds beside the box. Only a live turn is unpickable —
-// no answer moves a task an agent is writing into.
+// A started task is pickable: it moves by discarding the worktree it cut
+// from this project's repo, and the move modal asks for that per row, with
+// what that particular checkout holds beside the box. Only a live turn is
+// unpickable: no answer moves a task an agent is writing into.
 const canPick = (t: TaskRow) => t.running === 0;
 
 // Header dot color, keyed the same as the per-card <StatusDot> classes (see
-// shared.tsx) — "c" (needs you) and "z" (snoozed) aren't real Statuses, so
-// they're passed explicitly rather than derived from SCLS.
+// shared.tsx). "c" (needs you) and "z" (snoozed) aren't real Statuses, so
+// they're passed explicitly instead of derived from SCLS.
 type DotCls = "r" | "a" | "h" | "g" | "x" | "c" | "z" | "u";
 
 function TaskGroup({ label, tasks, agents, selTaskId, running, blockedBy, onSelect, picked, onPick, onSnooze, onUnsnooze, onAckRun, onStopTurn, sparklines, tagsById, onSelectTag, projectBranch, accent, dot, collapsible, collapsed, onToggle }: { label: string; tasks: TaskRow[]; agents: AgentsBundle; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; onSelect: (id: string) => void; picked: Set<string>; onPick: (id: string, range: boolean) => void; onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void; onAckRun: (id: string) => void; onStopTurn: (id: string) => void; sparklines: Record<string, number[]>; tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void; projectBranch: string; accent?: boolean; dot?: DotCls; collapsible?: boolean; collapsed?: boolean; onToggle?: () => void }) {
@@ -236,16 +231,16 @@ function TaskGroup({ label, tasks, agents, selTaskId, running, blockedBy, onSele
 
 /**
  * The multi-select: which task ids are picked for a bulk action, and the
- * shift-click range gesture over `order` — the ids as they are actually
+ * shift-click range gesture over `order`, the ids as they are actually
  * rendered, top to bottom.
  *
- * Deliberately NOT persisted, and dropped whenever the project or the view
- * changes: a selection is a gesture in progress, and one surviving a navigation
- * would act on rows that are no longer on screen — worse, the board doesn't
- * render the action bar, so a selection carried into it would be invisible.
- * Pruned against `order` on every render for the same reason — a picked task
- * that got moved, deleted, filtered out by the search box, or launched into a
- * turn under the selection must leave it.
+ * Not persisted, and dropped whenever the project or the view changes: a
+ * selection is a gesture in progress, and one surviving a navigation would
+ * act on rows no longer on screen. The board doesn't render the action bar
+ * either, so a selection carried into it would be invisible. Pruned against
+ * `order` on every render for the same reason: a picked task that got
+ * moved, deleted, filtered out by the search box, or launched into a turn
+ * under the selection must leave it.
  */
 function usePicked(scope: string, order: string[]) {
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -261,24 +256,24 @@ function usePicked(scope: string, order: string[]) {
   }, [live.join(","), picked.size]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pick = (id: string, range: boolean) => {
-    // Resolve the range BEFORE touching the ref: a setState updater runs at
-    // render time, so a ref read inside it would see the value written on the
-    // line below rather than the anchor this click is extending from.
+    // Resolve the range before touching the ref: a setState updater runs at
+    // render time, so a ref read inside it would see the value written on
+    // the line below instead of the anchor this click is extending from.
     const from = anchor.current ? order.indexOf(anchor.current) : -1;
     const to = order.indexOf(id);
-    // Always re-anchor, including on a shift-click. A shift-click with no anchor
-    // yet (the first gesture, or after the anchor was pruned) can only toggle
-    // itself — if it didn't leave an anchor behind, every later range gesture
-    // would degrade to the same single toggle and the list would be stuck going
-    // one task at a time. Re-anchoring costs nothing here because the range is
+    // Always re-anchor, including on a shift-click. A shift-click with no
+    // anchor yet (the first gesture, or after the anchor was pruned) can
+    // only toggle itself. Leaving no anchor behind would make every later
+    // range gesture degrade to the same single toggle, stuck going one task
+    // at a time. Re-anchoring costs nothing here because the range is
     // additive: extending from the last click never un-picks anything.
     anchor.current = id;
     setPicked((prev) => {
       const next = new Set(prev);
       if (range && from >= 0 && to >= 0) {
         // Extending: everything between the anchor and here joins the selection.
-        // Additive, never subtractive — a range gesture that silently deselected
-        // rows above it would be a nasty surprise on a long list.
+        // Additive, never subtractive: a range gesture that deselected rows
+        // above it would be a nasty surprise on a long list.
         const [lo, hi] = from < to ? [from, to] : [to, from];
         for (const between of order.slice(lo, hi + 1)) next.add(between);
       } else if (next.has(id)) next.delete(id);
@@ -291,13 +286,12 @@ function usePicked(scope: string, order: string[]) {
 
 /**
  * Which suggestion rows have their brief expanded. A suggestion's description
- * is the whole case FOR it, and the tray clamps it to one line — so every row
+ * is the whole case for it, and the tray clamps it to one line, so every row
  * gets a disclosure triangle.
  *
- * Deliberately NOT persisted, and dropped when the project changes: expanding
- * is a reading gesture, not a preference. A remembered set would also re-open
- * rows whose text the user has already read, which is the opposite of what the
- * clamp is for.
+ * Not persisted, and dropped when the project changes: expanding is a
+ * reading gesture, not a preference. A remembered set would also re-open
+ * rows whose text the user has already read, which defeats the clamp.
  */
 function useExpanded(scope: string) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -333,7 +327,7 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
   view: TaskView; onSetView: (v: TaskView) => void;
   onMoveTask: (id: string, patch: TaskMovePatch) => void;
   onSnoozeTask: (id: string, until: number) => void; onUnsnoozeTask: (id: string) => void;
-  // Acknowledge a clean unattended run: "I've read it" — a status write that
+  // Acknowledge a clean unattended run ("I've read it"): a status write that
   // files the task under Done and clears the mark (useShell.ts).
   onAckRun: (id: string) => void;
   onStopTurn: (id: string) => void;
@@ -341,7 +335,7 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
   onEditTask: (id: string) => void; onCollapse: () => void;
   onStartSuggestion: (id: string) => void; onAcceptSuggestion: (id: string) => void; onDismissSuggestion: (id: string) => void;
   // Hand a multi-select off to the bulk-move / bulk-tag modal. Owned by the
-  // shell (it owns every modal) — this column only decides WHAT is selected.
+  // shell, which owns every modal; this column only decides what is selected.
   onBulkMove: (ids: string[]) => void;
   onBulkTag: (ids: string[]) => void;
   mobile?: boolean; onBack?: () => void;
@@ -350,21 +344,23 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
 }) {
   const [query, setQuery] = useState("");
   // Minimize the Done/Cancelled groups so a long backlog of finished (or
-  // abandoned) tasks doesn't force scrolling past them. Per-project, persisted
-  // so the choice sticks across reloads. Cancelled starts collapsed — it's the
-  // graveyard, not the working set.
+  // abandoned) tasks doesn't force scrolling past them. Per-project,
+  // persisted so the choice sticks across reloads. Cancelled starts
+  // collapsed: it's the graveyard.
   const [doneCollapsed, toggleDone] = useCollapsed(`calandria_done_collapsed_${project.id}`, `orch_done_collapsed_${project.id}`, false);
   const [cancelledCollapsed, toggleCancelled] = useCollapsed(`calandria_cancelled_collapsed_${project.id}`, `orch_cancelled_collapsed_${project.id}`, true);
-  // The tag chips narrow every bucket below — the Suggested tray included —
-  // to the lit tags' members (any/all — TagChips.tsx). Applied before the
-  // search so the two compose. (`tags`, not `groups`: the status buckets below
-  // keep that name — a task carrying several tags never collides with them.)
+  // The tag chips narrow every bucket below, including the Suggested tray,
+  // to the lit tags' members (any/all: TagChips.tsx). Applied before the
+  // search so the two compose. (Named `tags`, not `groups`: the status
+  // buckets below keep that name, and a task carrying several tags never
+  // collides with them.)
   const { filter: tagFilter, set: setTagFilter, toggle: toggleTag } = useTagFilter(project.id, tags);
   const tagsById = useMemo(() => new Map(tags.map((t) => [t.id, t])), [tags]);
-  // The strip is single-tag only (TagStrip.tsx's own reasoning) — two lit chips
-  // are a filter over two plans, not one plan's detail view.
+  // The strip is single-tag only (TagStrip.tsx's own reasoning): two lit
+  // chips filter over two plans, and the strip only has room for one plan's
+  // detail.
   const selectedTag = tagFilter.ids.length === 1 ? tagsById.get(tagFilter.ids[0]) ?? null : null;
-  // A badge click lights exactly one tag, from any surface — the chip bar's
+  // A badge click lights exactly one tag, from any surface. The chip bar's
   // own toggle (above) is the only thing that builds a multi-tag filter.
   const selectTag = (id: string) => selectOneTag(project.id, id);
   const q = query.trim().toLowerCase();
@@ -379,9 +375,9 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
   // would be drawn twice.
   const snoozedGroup = shown.filter((t) => isSnoozed(t)).sort((a, b) => a.snoozed_until - b.snoozed_until);
   const awake = shown.filter((t) => !isSnoozed(t));
-  // Both arms of "needs you" (./format.ts): parked on a question, or an open PR
-  // gone red. Every status group below has to exclude the same predicate — a
-  // DONE task with a red PR belongs here, and left in `g` as well it would be
+  // Both arms of "needs you" (./format.ts): parked on a question, or an open
+  // PR gone red. Every status group below has to exclude the same predicate.
+  // A done task with a red PR belongs here; left in `g` as well it would be
   // drawn twice.
   const needsYouGroup = awake.filter((t) => needsYou(t));
   // Unattended runs that finished clean and haven't been read. Lifted out of
@@ -399,24 +395,25 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
   };
   const canSearch = tasks.length + suggested.length >= SEARCH_MIN;
   const noMatches = q && shown.length === 0 && shownSuggested.length === 0;
-  // Nothing left after the tag filter (every member deleted, or the remembered
-  // chips name tags whose members all moved) — say so rather than showing "No
-  // tasks yet" for a project that has plenty. One lit tag names it; several
-  // name the plural, since "these tags" is the honest description of an
-  // intersection or union over more than one.
+  // Nothing left after the tag filter (every member deleted, or the
+  // remembered chips name tags whose members all moved). Say so instead of
+  // showing "No tasks yet" for a project that has plenty. One lit tag names
+  // it; several name the plural, since "these tags" is the honest
+  // description of an intersection or union over more than one.
   const tagEmpty = !q && tagFilter.ids.length > 0 && shown.length === 0 && shownSuggested.length === 0;
   const tagEmptyMsg = tagFilter.ids.length === 1
     ? `No tasks in ${tagsById.get(tagFilter.ids[0])?.name ?? "this tag"}.`
     : "No tasks with these tags.";
 
-  // The rows a shift-click range runs over: every group in render order, then
-  // the Suggested tray. Collapsed groups are excluded — a range must not sweep
-  // up tasks the user can't see — and so are the ones mid-turn, which can't be
-  // re-filed at all, so a range spanning one skips it rather than selecting
-  // something the server will only refuse. Started rows are swept up like any
-  // other; what their move costs is asked for one row at a time in the modal.
-  // Suggested rows are ordinary unstarted task rows server-side, so a range
-  // crossing into the tray is a real selection, not a category error.
+  // The rows a shift-click range runs over: every group in render order,
+  // then the Suggested tray. Collapsed groups are excluded, since a range
+  // must not sweep up tasks the user can't see, and so are the ones
+  // mid-turn, which can't be re-filed at all: a range spanning one skips it
+  // instead of selecting something the server will only refuse. Started
+  // rows are swept up like any other; what their move costs is asked for
+  // one row at a time in the modal. Suggested rows are ordinary unstarted
+  // task rows server-side, so a range crossing into the tray is a real
+  // selection.
   const order = [
     ...needsYouGroup, ...ranClean, ...groups.a, ...groups.h, ...groups.r, ...groups.z,
     ...(doneCollapsed && !q ? [] : groups.g),
@@ -428,24 +425,22 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
   const { picked, pick, clearPicked } = usePicked(`${project.id}:${view}:${tagFilter.ids.join(",")}:${tagFilter.match}`, order);
   const { expanded, toggleExpanded } = useExpanded(project.id);
 
-  // Everything above the list — the project banner, the search field, the
-  // tag chips and the selected tag's summary strip — scrolls WITH the
-  // tasks rather than being pinned above them. Stacked, they took most of a
-  // narrow column's height and left the list itself a couple of cards tall,
-  // and none of them is something you need while scrolling a backlog: the app
-  // titlebar is the only thing that stays put. Board view is the exception
-  // below — its columns scroll individually and only have a height because the
-  // wrapper is bounded, so pinning is what makes it work at all.
+  // Everything above the list (the project banner, the search field, the
+  // tag chips, and the selected tag's summary strip) scrolls with the tasks
+  // instead of being pinned above them: stacked, they take most of a narrow
+  // column's height, and none of them is needed while scrolling a backlog.
+  // The app titlebar is the only thing that stays put. Board view is the
+  // exception: its columns scroll individually and only have a height
+  // because the wrapper is bounded, so pinning is what makes it work.
   const head = (
     <>
       <div className="proj-banner">
         <div className="pb-row">
           {onBack && <button className="mobile-back" onClick={onBack} title="Back to projects" aria-label="Back to projects">{Icon.chevRight({ style: { transform: "rotate(180deg)" } })}</button>}
           {/* The project home: recap, schedules, project-level overview. An
-              explicit intent, not just "deselect the task" — the landing
-              decision in useRecaps.ts auto-picks a task whenever none is
-              selected, which used to bounce this click straight back and made
-              the button dead on any project that had a task. */}
+              explicit intent, since the landing decision in useRecaps.ts
+              auto-picks a task whenever none is selected: this button must
+              stay reachable even on a project that has a task. */}
           <button className="pb-home" onClick={onShowRecap} aria-label="Project home" title="Project home: recap, schedules and overview">
             <span className="pb-pic" style={{ background: project.color }}>{project.name[0]}</span>
             <span className="pb-name">{project.name}</span>
@@ -469,12 +464,12 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
       {canSearch && <SearchBar value={query} onChange={setQuery} placeholder="Search tasks…" />}
       <TagChips tags={tags} filter={tagFilter} onToggle={toggleTag} onSet={setTagFilter} />
       {/* The selected chip's detail: description, progress, provenance, the
-          members in dependency order, and the two verbs a tag has. A tag gets
-          no route of its own — this band IS the epic page. Members come from
-          both lists because a plan lands in the tray first; shown only with
-          exactly one chip lit (two lit chips are a filter over two plans), and
-          filtered by THAT tag alone rather than the compound filter — a second
-          lit chip elsewhere doesn't narrow what the strip itself shows. */}
+          members in dependency order, and the two verbs a tag has. A tag has
+          no route of its own; this band is the epic page. Members come from
+          both lists because a plan lands in the tray first. Shown only with
+          exactly one chip lit (two lit chips filter over two plans), and
+          filtered by that tag alone: a second lit chip elsewhere doesn't
+          narrow what the strip itself shows. */}
       {selectedTag && (
         <TagStrip
           tag={selectedTag}
@@ -494,7 +489,7 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
   return (
     <div className="col col-tasks" style={{ flexBasis: width }}>
       {loading ? (
-        // The list in state is still the previous project's — skeleton cards
+        // The list in state is still the previous project's: skeleton cards
         // instead of a flash of the wrong tasks (or a false "No tasks yet").
         <div className="scroll">
           {head}
@@ -532,14 +527,14 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
           {noMatches && <div className="search-empty">No tasks match “{query.trim()}”.</div>}
           {tagEmpty && <div className="search-empty">{tagEmptyMsg}</div>}
           <TaskGroup label="Needs your input" tasks={needsYouGroup} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} accent dot="c" />
-          {/* Between the two for a reason: a clean run wants reading, which is
-              less than answering a question and more than a task that is
+          {/* Between the two for a reason: a clean run needs reading, which
+              is less than answering a question and more than a task that is
               simply still open. */}
           <TaskGroup label={RAN_LABEL} tasks={ranClean} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="u" />
           <TaskGroup label="In progress" tasks={groups.a} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="a" />
           <TaskGroup label="On hold" tasks={groups.h} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="h" />
           <TaskGroup label="Not started" tasks={groups.r} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="r" />
-          {/* Parked work sits between the live groups and the terminal ones —
+          {/* Parked work sits between the live groups and the terminal ones:
               it isn't finished, but it isn't asking for anything either. */}
           <TaskGroup label={SNOOZE_LABEL} tasks={groups.z} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="z" />
           <TaskGroup label="Done" tasks={groups.g} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="g" collapsible collapsed={doneCollapsed && !q} onToggle={toggleDone} />
@@ -549,22 +544,23 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
           <div className="suggest">
             <div className="suggest-h">{Icon.spark()} Suggested by agents<span className="sp">{shownSuggested.length}</span></div>
             {shownSuggested.map((s) => {
-              // Retracted by the agent that filed it. The row stays here on
-              // purpose — struck through, with the reason where the brief was —
-              // because the retraction is a recommendation, not a deletion:
-              // Add/Start revive it (clearing the cancel server-side), the ✕
+              // Retracted by the agent that filed it. The row stays here,
+              // struck through, with the reason where the brief was, because
+              // the retraction is a recommendation, not a deletion. Add or
+              // Start revives it (clearing the cancel server-side); the ✕
               // still dismisses it for good.
               const gone = isWithdrawn(s);
-              // Blockers gate a START, and accepting a suggestion is not one —
-              // Add stays live, Start does not. Since PR #139 the server 409s a
-              // blocked first turn, and `startSuggestion` accepts the task
-              // BEFORE it asks for the turn, so an offered Start here would put
-              // the task on the board and then be refused the run.
+              // Blockers gate a start; accepting a suggestion does not. Add
+              // stays live, Start does not: the server 409s a blocked first
+              // turn, and `startSuggestion` accepts the task before it asks
+              // for the turn, so an offered Start here would put the task on
+              // the board and then be refused the run.
               const blockNote = blockedNote(blockedBy.get(s.id));
-              // The brief is clamped to one line, so anything with text behind
-              // that clamp gets a disclosure triangle. A withdrawn row has two
-              // things to reveal — the retraction reason AND the proposal it
-              // retracts, which the collapsed row replaces entirely.
+              // The brief is clamped to one line, so anything with text
+              // behind that clamp gets a disclosure triangle. A withdrawn row
+              // has two things to reveal: the retraction reason and the
+              // proposal it retracts, which the collapsed row replaces
+              // entirely.
               const expandable = gone ? !!(s.withdrawn_reason || s.description) : !!s.description;
               const open = expandable && expanded.has(s.id);
               const meta = (
@@ -581,7 +577,7 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
                     s.description && <div className="sg-why">{s.description}</div>
                   )}
                   {/* Expanded, a withdrawn row shows what was proposed under
-                      why it was pulled — otherwise accepting or dismissing it
+                      why it was pulled. Otherwise accepting or dismissing it
                       is a decision made on the retraction alone. */}
                   {open && gone && s.description && <div className="sg-why">{s.description}</div>}
                 </>
@@ -595,14 +591,14 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
                     title={open ? "Collapse" : "Show the full description"}>{Icon.chevDown()}</button>
                 ) : <span className="sug-chev is-spacer" aria-hidden />}
                 <StatusDot status={gone ? "cancelled" : "not_started"} />
-                {/* The brief itself toggles too — the triangle alone is a small
-                    target, and the row has no other click behavior. */}
+                {/* The brief itself toggles too: the triangle alone is a
+                    small target, and the row has no other click behavior. */}
                 {expandable ? (
                   <button className="sg-meta" aria-expanded={open} onClick={() => toggleExpanded(s.id)}
                     title={open ? "Collapse" : "Show the full description"}>{meta}</button>
                 ) : <div className="sg-meta">{meta}</div>}
                 {/* Grouped so the whole set can drop to its own line when the
-                    row is expanded — inline, four buttons leave the brief a
+                    row is expanded: inline, four buttons leave the brief a
                     column barely wide enough for one word. */}
                 <div className="sug-acts">
                   <button className="sug-dismiss" title="Edit title & description" onClick={() => onEditTask(s.id)}>{Icon.edit()}</button>
@@ -617,10 +613,10 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
         )}
       </div>
       )}
-      {/* The multi-select action bar. Only in list view — the board's cards are
-          drag targets, and a second selection model over them would fight the
-          drag. Docked to the bottom of the column so a long list can scroll
-          under it while the count and the action stay put. */}
+      {/* The multi-select action bar. Only in list view: the board's cards
+          are drag targets, and a second selection model over them would
+          fight the drag. Docked to the bottom of the column so a long list
+          can scroll under it while the count and the action stay put. */}
       {view === "list" && picked.size > 0 && (
         <div className="pick-bar">
           <span className="pb-count">{picked.size} selected</span>

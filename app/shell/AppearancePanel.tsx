@@ -13,9 +13,9 @@ export function AppearancePanel({ appearance, setAppearance, onClose }: { appear
   return (
     <div className="modal" style={{ position: "fixed", right: 16, bottom: 16, width: 264, zIndex: 300, animation: "pop .16s ease" }}>
       <div className="modal-h" style={{ padding: "14px 16px 12px" }}>
-        {/* No size override: .m-title is the display face now, and Spectral is
-            never set below 18px (type-system rule) — the popover takes the
-            same 20px every modal title gets. */}
+        {/* No size override: .m-title is the display face, and Spectral is never
+            set below 18px, so the popover takes the same 20px every modal title
+            gets. */}
         <div className="m-title" style={{ flex: 1, display: "flex", alignItems: "center", gap: 8 }}>{Icon.sliders()} Appearance</div>
         <button className="modal-close" onClick={onClose}>{Icon.x()}</button>
       </div>
@@ -33,9 +33,9 @@ export function AppearancePanel({ appearance, setAppearance, onClose }: { appear
             <button className={appearance.density === "0.72" ? "on" : ""} onClick={() => setAppearance("density", "0.72")}>Compact</button>
           </div>
         </Row>
-        {/* How wide the transcript + composer run. "Reading" keeps the 760px measure
-            the design was drawn at; "Full" spends the whole session pane, which is
-            what a wide monitor or a collapsed rail is for. */}
+        {/* How wide the transcript and composer run. "Reading" keeps a 760px measure;
+            "Full" spends the whole session pane, for a wide monitor or a collapsed
+            rail. */}
         <Row label={`Text width · ${appearance.wide === "1" ? "full pane" : "reading measure"}`}>
           <div className="seg">
             <button className={appearance.wide !== "1" ? "on" : ""} onClick={() => setAppearance("wide", "0")}>Reading</button>

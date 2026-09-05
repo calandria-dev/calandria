@@ -16,7 +16,7 @@ export function useRecaps({ selProj, selTask, tasks, setSelTask, selProjRef, set
   settingsReady: boolean;
   backgroundJobs: boolean;
   recapMode: "automatic" | "on_open" | "off";
-  /** The user explicitly asked for the project home — don't pick a task over it. */
+  /** The user explicitly asked for the project home: don't pick a task over it. */
   homeRequested: boolean;
 }) {
   const [recaps, setRecaps] = useState<Record<string, RecapInfo>>({});
@@ -45,21 +45,20 @@ export function useRecaps({ selProj, selTask, tasks, setSelTask, selProjRef, set
 
   useEffect(() => { if (selProj && settingsReady) fetchRecap(selProj); }, [selProj, settingsReady, fetchRecap]);
 
-  // Landing decision: once tasks + recap status are in, auto-select the first
-  // task ONLY when there's no recap to show. If you're returning to a project
-  // with a recap (or one brewing), land on the recap so you can reorient first.
+  // Landing decision: once tasks and recap status are in, auto-select the
+  // first task only when there is no recap to show. If the project has a
+  // recap (or one brewing), land on the recap so the user can reorient first.
   //
   // Never on mobile: there the task list is its own pane, so auto-selecting a
-  // task forces you into the session view and you can never see the list — in
-  // particular it would instantly undo a Back press that cleared the task,
-  // making it impossible to switch tasks. On mobile, no task selected = show the
-  // task list, which is exactly what we want.
-  // An explicit ASK for the project home always wins. Without it this effect
-  // made the tasks banner's project-home button a dead control on any project
-  // with a task and no recap: it cleared selTask, this ran (selTask is in its
-  // deps), and a task went straight back — so the landing pane, the recap, and
-  // the Schedules card with its pause control were unreachable exactly where
-  // they matter most, in the project you're actively working in.
+  // task forces the session view and hides the list, undoing a Back press
+  // that cleared the task and making it impossible to switch tasks. On
+  // mobile, no task selected means show the task list.
+  //
+  // An explicit request for the project home always wins over this effect:
+  // otherwise the tasks banner's project-home button, which clears selTask,
+  // would immediately have a task selected again by this effect on any
+  // project with a task and no recap, making the landing pane, the recap, and
+  // the Schedules card unreachable.
   useEffect(() => {
     if (!selProj || selTask || homeRequested) return;
     if (window.matchMedia("(max-width: 760px)").matches) return;

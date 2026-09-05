@@ -12,7 +12,7 @@ import type { TaskRow } from "./types";
 // Drafts persist per-task in localStorage so switching tasks, opening Settings,
 // or reloading the page doesn't throw away half-typed messages. (SessionView is
 // keyed by task.id, so the Composer remounts on every task switch.)
-// Per-key migration from the old `orch:draft:` name — see loadDraft/saveDraft.
+// loadDraft/saveDraft also migrate a draft stored under the old `orch:draft:` key.
 const draftKey = (taskId: string) => `calandria:draft:${taskId}`;
 const legacyDraftKey = (taskId: string) => `orch:draft:${taskId}`;
 const loadDraft = (taskId: string) => {
@@ -37,19 +37,17 @@ const saveDraft = (taskId: string, v: string) => {
       window.localStorage.removeItem(draftKey(taskId));
       window.localStorage.removeItem(legacyDraftKey(taskId));
     }
-  } catch { /* private mode / quota — drafts just won't persist */ }
+  } catch { /* private mode / quota: drafts just won't persist */ }
 };
 
-// An attachment on the draft. ANY file type is accepted (drop/paste/pick) — a
-// screenshot, a log bundle, a spreadsheet, a PDF — plus a large text paste
-// diverted to a .txt file (see PASTE_ATTACH_THRESHOLD) so it never bloats the
-// prompt and poisons the session. Uploaded eagerly on attach so send stays
-// instant; on send its server path is appended to the message as a marker line
-// (attachmentMarker for images, fileAttachmentMarker for everything else). The
-// bytes never enter the prompt either way: the agent gets a staged path and
-// decides how to open it. Not persisted with the draft — object URLs don't
-// survive a remount, and an unsent upload is just an orphaned file that the
-// task's hard delete sweeps away.
+// An attachment on the draft. Any file type is accepted (drop/paste/pick), and a
+// large text paste is diverted to a .txt file (see PASTE_ATTACH_THRESHOLD) so it
+// doesn't bloat the prompt. It uploads on attach, and on send its server path is
+// appended to the message as a marker line (attachmentMarker for images,
+// fileAttachmentMarker for everything else); the bytes never enter the prompt,
+// the agent gets a staged path to open. Not persisted with the draft: object
+// URLs don't survive a remount, and an unsent upload is an orphaned file the
+// task's hard delete removes.
 type Attachment = {
   key: string;
   kind: "image" | "file";
@@ -60,30 +58,28 @@ type Attachment = {
   error?: string;
 };
 
-// One row in the "/" menu. Calandria's own commands carry a `run` (they're
-// actions this component performs, not text the agent expands); the agent's own
-// commands don't — picking one completes it into the box and the ordinary send
-// path hands it to the CLI, which is what already made typing them in full work.
+// One row in the "/" menu. Calandria's own commands carry a `run`: this
+// component performs the action directly instead of expanding text. Agent
+// commands have no `run`; picking one completes it into the box and the
+// ordinary send path hands it to the CLI, the same as typing it in full.
 type MenuCommand = { name: string; desc: string; hint?: string; aliases?: string[]; run?: () => void };
 
 export function Composer({ task, agentLabel, disabled, running, onSend, onStop, onClear }: { task: TaskRow; agentLabel: string; disabled: boolean; running: boolean; onSend: (t: string) => void; onStop: () => void; onClear: () => void }) {
   const [val, setVal] = useState(() => loadDraft(task.id));
-  // On a touch keyboard, return means "new line" — there is no Shift to hold,
-  // and the send button is the one visible affordance for sending. Enter-to-send
-  // stays a hardware-keyboard behavior.
+  // On a touch keyboard, return means "new line" since there is no Shift to
+  // hold, and the send button is the one visible affordance for sending.
+  // Enter-to-send stays a hardware-keyboard behavior.
   const coarse = useCoarsePointer();
   // Tapping a button steals focus from the textarea, and on iOS that dismisses
-  // the keyboard BEFORE the click lands — the layout shifts under the finger
-  // and the tap is spent closing the keyboard, so send needed a second tap.
-  // Cancelling mousedown (the compat event iOS fires on tap) keeps focus put:
-  // the keyboard stays up, the click fires on a stable layout, and the box is
-  // ready for the follow-up without a re-tap.
+  // the keyboard before the click lands, so the tap closes the keyboard instead
+  // of sending. Cancelling mousedown (the compat event iOS fires on tap) keeps
+  // focus on the textarea so the keyboard stays up and the click lands normally.
   const keepFocus = (e: React.MouseEvent) => e.preventDefault();
   const [slash, setSlash] = useState(false);
   // The agent's own slash commands, fetched once per task the first time the
   // user types "/". Lazy because a task the user only reads should never spawn
-  // a CLI, and empty is a fine steady state — a driver may have none (Codex),
-  // and the route answers [] rather than failing when discovery doesn't work.
+  // a CLI. Empty is a fine steady state: a driver may have none (Codex), and
+  // the route answers [] when discovery doesn't work.
   const [agentCmds, setAgentCmds] = useState<AgentCommand[]>([]);
   // Highlighted row, driven by ↑/↓. Reset whenever the query changes, because
   // index 3 of the old list means nothing in the new one.
@@ -94,7 +90,7 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
   const [stopping, setStopping] = useState(false);
   const [atts, setAtts] = useState<Attachment[]>([]);
   const [dragging, setDragging] = useState(false);
-  // dragenter/dragleave fire per child element — depth-count to know when the
+  // dragenter/dragleave fire per child element, so depth-count to know when the
   // pointer has really left the drop zone.
   const dragDepth = useRef(0);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -104,16 +100,12 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
   // Mirror the draft to localStorage so it survives remounts/navigation.
   useEffect(() => { saveDraft(task.id, val); }, [task.id, val]);
   const ref = useRef<HTMLTextAreaElement>(null);
-  // Chromium counts the PLACEHOLDER in scrollHeight, so measuring an EMPTY box
-  // measured how many lines the placeholder wrapped to, not the message: 76px
-  // (three lines) at the 312px composer a 1440px window with the rail open
-  // gives, 112px (four) on an iPhone, against the 34px/40px a typed line is —
-  // so the box snapped shut on the first keystroke and the empty state read as
-  // a tall grey slab. An empty box has no content to fit, so it is left at its
-  // rows={1} height and the placeholder held to that one line
-  // (`.comp-area textarea.blank`). That is also what a just-sent composer has
-  // always done — submit() resets height to "auto" and nothing re-measures it —
-  // so this only makes mount, /clear and delete-to-empty agree with send.
+  // Chromium counts the placeholder in scrollHeight, so measuring an empty box
+  // measures how many lines the placeholder wraps to, not the message. An empty
+  // box therefore skips the measurement and stays at its rows={1} height, with
+  // the placeholder held to that one line (`.comp-area textarea.blank`). This
+  // matches what submit() already does: it resets height to "auto" and nothing
+  // re-measures it, so mount, /clear and delete-to-empty all agree with send.
   const autosize = (el: HTMLTextAreaElement) => {
     el.style.height = "auto";
     if (!el.value) return;
@@ -136,13 +128,12 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
     fetch(`/api/tasks/${task.id}/commands`)
       .then((r) => (r.ok ? r.json() : { commands: [] }))
       .then((j: { commands?: AgentCommand[] }) => { if (alive) setAgentCmds(j.commands ?? []); })
-      // Discovery failing costs the menu its long tail, nothing else — typing a
+      // Discovery failing costs the menu its long tail, nothing else: typing a
       // command in full still works, so there's no error worth showing here.
       .catch(() => {});
   }, [task.id, disabled]);
-  // Discovery outlives a fast task switch (a cold CLI spawn is ~300ms, a click
-  // is faster) — drop a late response rather than let one task's commands land
-  // in another's menu.
+  // Discovery can outlive a fast task switch, so drop a late response rather
+  // than let one task's commands land in another's menu.
   useEffect(() => () => cancelLoad.current?.(), []);
 
   const addFiles = (files: File[]) => {
@@ -157,8 +148,8 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
       const name = f.name || (isImage ? "image" : "attachment");
       // Only images get a local object-URL thumbnail; file chips render a label.
       const preview = isImage ? URL.createObjectURL(f) : "";
-      // Refuse an oversized file here rather than pushing it over the wire for
-      // the route to reject — the chip is the same either way, the upload isn't.
+      // Refuse an oversized file here instead of pushing it over the wire for
+      // the route to reject: the chip is the same either way, the upload isn't.
       if (f.size > cap) {
         setAtts((prev) => [...prev, { key, kind, name, preview, path: "", status: "error", error: `Too large (max ${Math.round(cap / 1024 / 1024)} MB).` }]);
         continue;
@@ -188,25 +179,25 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
 
   const ready = atts.filter((a) => a.status === "ready");
   const uploading = atts.some((a) => a.status === "uploading");
-  // Calandria's own commands, then the agent's. /clear is ours and only ours:
-  // it summarizes the transcript and starts the next generation of the task's
-  // session lineage, which the CLI's same-named command does not do — so the
-  // server drops the CLI's (lib/agentCommands.ts) and this one stands alone.
-  // It's also the one command that can't run mid-turn (it would collide with
-  // the live session), so while a turn runs it simply isn't offered.
+  // Calandria's own commands, then the agent's. /clear is Calandria's only: it
+  // summarizes the transcript and starts the next generation of the task's
+  // session lineage, which the CLI's same-named command does not do, so the
+  // server drops the CLI's version (lib/agentCommands.ts). /clear also can't
+  // run mid-turn, since it would collide with the live session, so it isn't
+  // offered while a turn runs.
   const cmds: MenuCommand[] = [
     ...(running ? [] : [{ name: "clear", desc: "save summary · fresh session", run: () => { onClear(); setVal(""); setSlash(false); } }]),
     ...agentCmds.map((c) => ({ name: c.name, desc: c.description, hint: c.argumentHint, aliases: c.aliases })),
   ];
 
-  // The menu is for picking a command, so it's only live while the value IS a
-  // bare command token — once there's a space the user has moved on to writing
+  // The menu is for picking a command, so it's only live while the value is a
+  // bare command token. Once there's a space the user has moved on to writing
   // arguments and a dropdown over the box is just in the way.
   const token = val.trim();
   const picking = token.startsWith("/") && !/\s/.test(token);
   const q = picking ? token.slice(1).toLowerCase() : "";
   // Prefix matches first, then a match on the part after the namespace, then
-  // any substring — so "/plan" still finds superpowers:writing-plans, but "/cl"
+  // any substring, so "/plan" still finds superpowers:writing-plans, but "/cl"
   // puts /clear at the top where muscle memory expects it. Aliases match too
   // (the CLI resolves /cost and /stats to /usage) but the canonical name is
   // what's shown and inserted.
@@ -224,15 +215,14 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
   const menuOpen = slash && picking && filtered.length > 0;
   const idx = Math.min(active, Math.max(filtered.length - 1, 0));
   const highlighted = filtered[idx];
-  // Enter normally commits the highlighted completion rather than sending —
-  // that's the predictable rule when a menu is open. The one exception is a
-  // command that's already fully typed, still highlighted, and takes no
-  // arguments: completing it would be a no-op keystroke, so Enter acts. That's
-  // what keeps `/clear`-and-Enter working exactly as it always has, while
-  // arrowing away from an exact match correctly commits what's highlighted.
+  // While a menu is open, Enter commits the highlighted completion instead of
+  // sending. The exception is a command that's already fully typed, still
+  // highlighted, and takes no arguments: completing it would be a no-op
+  // keystroke, so Enter acts instead, letting `/clear`-and-Enter send directly
+  // while arrowing away from an exact match still commits what's highlighted.
   const enterActs = !!highlighted && highlighted.name.toLowerCase() === q && !highlighted.hint;
 
-  // Pick a row: an Calandria action runs; an agent command completes into the
+  // Pick a row: a Calandria action runs; an agent command completes into the
   // box with a trailing space, ready for arguments, and is sent by the user.
   const choose = (c: MenuCommand) => {
     if (c.run) { c.run(); return; }
@@ -242,25 +232,24 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
     if (el) { el.focus(); requestAnimationFrame(() => autosize(el)); }
   };
 
-  // /clear can't run mid-turn — it would collide with the live session. It also
-  // must not be QUEUED as an ordinary follow-up: the agent's CLI has a /clear of
-  // its own, so the queued text would reach it and wipe the session's context
-  // behind Calandria's back, with no handoff summary and no new generation to
-  // show for it. So mid-turn it's refused outright (canSend goes false and the
-  // footer says why) rather than sent.
+  // /clear can't run mid-turn, since it would collide with the live session. It
+  // also must not be queued as an ordinary follow-up: the agent's CLI has its
+  // own /clear, so the queued text would reach it and wipe the session's
+  // context with no handoff summary and no new generation to show for it. So
+  // mid-turn it's refused outright: canSend goes false and the footer says why.
   const blockedClear = running && val.trim() === "/clear" && ready.length === 0;
 
-  // A turn LINGERING on background work or a scheduled wakeup has no model
+  // A turn lingering on background work or a scheduled wakeup has no model
   // running and still holds an open input into the agent session, so a message
-  // sent now isn't queued — the server pushes it straight in as the next turn.
-  // The composer says so rather than promising a wait that won't happen.
+  // sent now isn't queued: the server pushes it straight in as the next turn.
+  // The composer states that instead of promising a wait that won't happen.
   const lingering = running && !!task.background_pending;
 
   const submit = () => {
     const v = val.trim();
     if ((!v && ready.length === 0) || disabled || uploading || blockedClear) return;
     if (v === "/clear" && ready.length === 0) { onClear(); setVal(""); setSlash(false); if (ref.current) ref.current.style.height = "auto"; return; }
-    // Attachments ride along as marker lines after the typed text — an image or
+    // Attachments ride along as marker lines after the typed text: an image or
     // file marker depending on the attachment kind.
     onSend([v, ...ready.map((a) => (a.kind === "image" ? attachmentMarker(a.path) : fileAttachmentMarker(a.path)))].filter(Boolean).join("\n\n"));
     atts.forEach((a) => { if (a.preview) URL.revokeObjectURL(a.preview); });
@@ -269,7 +258,7 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
   };
   const canSend = (!!val.trim() || ready.length > 0) && !uploading && !blockedClear;
 
-  // Keep the highlighted row visible — the list scrolls once an agent brings
+  // Keep the highlighted row visible: the list scrolls once an agent brings
   // dozens of commands, and arrowing into an offscreen row looks like nothing
   // happened.
   useEffect(() => {
@@ -322,73 +311,26 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
             <textarea
               ref={ref} rows={1} value={val} disabled={disabled}
               // Empty: the placeholder is the only thing to lay out, so it's
-              // held to the one line the box is rather than wrapped out of
+              // held to the box's one line instead of being wrapped out of
               // sight (see autosize).
               className={val ? undefined : "blank"}
-              // These state the field's intent and are kept because they are
-              // correct — NOT because they fix the mobile keyboard bug. They
-              // don't, and neither did the attribute combinations tried before
-              // them. DO NOT "fix" that bug by editing this line again.
-              //
-              // THE BUG: on mobile the composer offers an SMS/verification-code
-              // suggestion above the keyboard and refuses to autocorrect.
-              // MEASURED 2026-08-25 on an iPhone running an iOS 27 BETA, as an
-              // INSTALLED PWA (display-mode: standalone, navigator.standalone
-              // true) — the only configuration it has ever been reported from.
-              // The UA reads "CPU iPhone OS 18_7" and that is NOT the OS: Apple
-              // freezes that token, and "Version/27.0" is the real signal. Do
-              // not read the OS off the UA string here. Five rounds of
-              // side-by-side A/B on the device; docs/kbprobe.html is the
-              // instrument (copy it into public/ and restart to re-run it).
-              //
-              // A replica of this textarea — same attributes, same rows={1},
-              // same 22px min-height, same placeholder — does NEITHER, while
-              // the live composer beside it does both. Every static property of
-              // this element has now been copied exactly and none reproduces it:
-              //   · attributes — a bare textarea and this one behave alike
-              //   · one-line geometry — 22px vs 46px min-height: no difference
-              //   · the placeholder, even carrying a task title containing the
-              //     literal words "verification-code" (clean — so sanitising
-              //     task titles is not the fix either)
-              //   · the task title — a neutral-titled task reproduces the bug
-              //   · field count — lone field vs two: no difference
-              //   · <form> membership — the app has no <form> anywhere
-              //   · controlled-component behaviour — reassigning .value on every
-              //     keystroke, autosizing, and re-render churn, separately and
-              //     together, all autocorrect normally
-              //
-              // What IS true, and worth not breaking: iOS's classifier can be
-              // reached through text, but only when the accessible name is
-              // essentially nothing BUT trigger words — "verification code" as
-              // the entire placeholder, or in aria-label, reproduces it on
-              // demand, while prose around the same words defeats it. So
-              // aria-label is a second channel here, not just the placeholder.
-              // And there are two levels: a bare <input> gets the code
-              // suggestion but still autocorrects; losing autocorrect as well
-              // is the stronger classification the live composer is stuck in,
-              // which is why "no autocorrect" is the tell worth watching.
-              //
-              // The mechanism remains unidentified and is not anything this
-              // element declares about itself. Since every measurement above
-              // was taken on a BETA OS, the leading remaining explanation is a
-              // beta regression rather than something we can fix in markup —
-              // so the cheap next step is a retest on a shipping OS (and on a
-              // second device) before anyone concludes it is permanent, not a
-              // sixth round of attribute edits here.
+              // These attributes state the field's intent and are correct on
+              // their own merits, not because they fix a mobile bug: some iOS
+              // PWA installs show a one-time-code suggestion above the
+              // keyboard and lose autocorrect. No attribute combination tried
+              // here reproduces or fixes it and the mechanism is unidentified,
+              // so do not "fix" it by editing this line again. The probe used
+              // to test it lives at
+              // https://github.com/calandria-dev/calandria-notes/blob/main/tools/kbprobe.html
+              // (copy it into public/ and restart to re-run it).
               autoComplete="off" autoCorrect="on" autoCapitalize="sentences" spellCheck={true}
-              // Inert: added on the since-disproven theory that an unnamed field
-              // invited the one-time-code guess. Harmless, so left alone.
+              // Not required for this field's behavior; harmless, so left in place.
               name="message"
-              // Short enough to fit the ONE line the empty box now is (see
-              // autosize). A textarea placeholder can't ellipsize — Chromium
-              // ignores text-overflow there — so anything that doesn't fit is
-              // cut mid-word. Measured against the narrowest ordinary composer
-              // (312px at 1440px with the rail open; 287px on an iPhone): the
-              // task title alone rendered 920px of placeholder, and the
-              // "(try /clear, drop an image)" tail pushed the rest past the
-              // phone's width. Both were duplicates — the title is in the
-              // session header directly above, and the tail is the comp-foot's
-              // own "/ commands", "attach" and "/clear" affordances.
+              // Short enough to fit the one line the empty box now is (see
+              // autosize). A textarea placeholder can't ellipsize, so anything
+              // that doesn't fit is cut mid-word. Keep it short: the task title
+              // is already shown in the session header above, so don't repeat
+              // it here.
               placeholder={disabled ? "Start the session to reply…" : lingering ? "Reply now: the session is held open…" : running ? "Queue a follow-up… (sent at turn end)" : `Reply to ${agentLabel}…`}
               onChange={(e) => {
                 const v = e.target.value;
@@ -399,7 +341,7 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
               }}
               onKeyDown={(e) => {
                 // Mid-composition Enter is the IME committing a candidate, not
-                // the user sending — never act on it.
+                // the user sending. Never act on it.
                 if (e.nativeEvent.isComposing) return;
                 if (menuOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
                   e.preventDefault();
@@ -417,7 +359,7 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
                 if (e.key === "Escape") setSlash(false);
               }}
               onPaste={(e) => {
-                // Any pasted file attaches — a screenshot from the clipboard, or
+                // Any pasted file attaches: a screenshot from the clipboard, or
                 // a file copied out of a file manager.
                 const files = Array.from(e.clipboardData?.files ?? []);
                 if (files.length) { e.preventDefault(); addFiles(files); return; }
@@ -433,9 +375,9 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
             />
             {running ? (
               // Mid-turn: queue the typed follow-up (when there's text), and keep
-              // Stop available to interrupt the current turn. Mid-LINGER it isn't
-              // queued at all — the model has stopped and the session's input is
-              // still open, so the server sends it straight in (see
+              // Stop available to interrupt the current turn. While lingering it
+              // isn't queued at all: the model has stopped and the session's
+              // input is still open, so the server sends it straight in (see
               // sendToLingeringTurn in lib/runner.ts). Same button, honest label.
               <div className="send-group">
                 {canSend && <button className={`send${lingering ? "" : " queue"}`} onMouseDown={keepFocus} onClick={submit} title={lingering ? "Send now: the session is held open and picks this up as its next turn" : "Queue this follow-up: it'll send when the current turn ends"}>{Icon.send()}</button>}
@@ -447,8 +389,8 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
           </div>
           <div className="comp-foot">
             {blockedClear ? (
-              // The one input the composer refuses outright — say so, rather
-              // than leaving Enter silently dead (see blockedClear).
+              // The composer refuses this input outright, so say so instead of
+              // leaving Enter dead with no explanation (see blockedClear).
               <span className="hint warn">/clear can’t run mid-turn. Stop the turn first</span>
             ) : (
               <>

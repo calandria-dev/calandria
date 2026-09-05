@@ -4,9 +4,9 @@ import { setAgentConnection } from "@/lib/agents/connections";
 
 export const dynamic = "force-dynamic";
 
-// Hand the pasted authorization code to the waiting login (paste-code drivers
-// like Claude). Device-auth drivers like Codex treat this as a no-op — the user
-// enters the code in the browser — and the UI just keeps polling GET
+// Hands the pasted authorization code to the waiting login (paste-code drivers
+// like Claude). Device-auth drivers like Codex treat this as a no-op: the user
+// enters the code in the browser, and the UI keeps polling GET
 // /api/agents/[id]/login until the flow lands on its own.
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

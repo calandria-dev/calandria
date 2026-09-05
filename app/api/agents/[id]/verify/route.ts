@@ -5,10 +5,10 @@ import { getAgentConnection, setAgentConnection } from "@/lib/agents/connections
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-// Prove an agent's connection works by running a real one-shot test turn through
-// the same binary the driver drives — a green result means real turns will work,
-// not just that credentials exist on disk. Agent-scoped mirror of
-// app/api/claude/verify; persists the per-agent connection record so the
+// Proves an agent's connection works by running a real one-shot test turn
+// through the same binary the driver drives: a green result means real turns
+// will work, beyond confirming credentials exist on disk. Agent-scoped mirror
+// of app/api/claude/verify; persists the per-agent connection record so the
 // task-creation UI stops graying the agent out.
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

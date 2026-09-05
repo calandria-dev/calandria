@@ -7,7 +7,7 @@ import { SEARCH_MIN, type AgentInfo, type ProjectRow } from "./types";
 import { SearchBar } from "./shared";
 
 // Footer line under "Your workspace": the real auth state per connected agent,
-// from GET /api/agents (which reports the EFFECTIVE billing credential — an
+// from GET /api/agents (which reports the EFFECTIVE billing credential: an
 // active API key outranks a stored subscription login; see issue #4).
 function agentAuthLine(agents: AgentInfo[]): string {
   const parts = agents

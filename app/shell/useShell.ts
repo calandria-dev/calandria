@@ -21,13 +21,13 @@ type Modal = null | "task" | "context" | "project" | "sessions";
 // Calandria's single source of truth: all client state, the derived
 // views over it, the data-loading effects, and every action callback. Returns a
 // flat bag the composition root (Shell.tsx) wires straight into the UI.
-// Both trays are recency-ordered, most recently active first — the same sort
-// lib/store.ts listTasks applies, re-applied on the client because the list does
-// NOT come back from the server on every lifecycle event: a turn starting or
-// ending patches the row in place (useGlobalEvents stamps `updated_at` as it
-// does), and without this the card that just moved would sit where it was until
-// something happened to refetch the tray. `position` breaks the tie the way the
-// query's `created_at`/`rowid` do — same filing order, one field.
+// Both trays are recency-ordered, most recently active first, the same sort
+// lib/store.ts listTasks applies, re-applied on the client because the list
+// does not come back from the server on every lifecycle event: a turn starting
+// or ending patches the row in place (useGlobalEvents stamps `updated_at` as
+// it does), and without this the card that just moved would sit where it was
+// until something happened to refetch the tray. `position` breaks the tie the
+// way the query's `created_at`/`rowid` do: same filing order, one field.
 function byRecency(a: TaskRow, b: TaskRow): number {
   return b.updated_at - a.updated_at || b.position - a.position;
 }
@@ -39,7 +39,7 @@ export function useShell() {
   const [runbooks, setRunbooks] = useState<RunbookRow[]>([]);
   // The selected project's tags, with their derived counts. Loaded on the
   // same fetch as `tasks` (the counts are computed from those rows) and
-  // refetched on tags_changed; membership rides the task rows' tag_ids —
+  // refetched on tags_changed; membership rides the task rows' tag_ids,
   // many-to-many, so a task can carry several.
   const [tags, setTags] = useState<TagRow[]>([]);
   const [selTask, setSelTask] = useState<string | null>(null);
@@ -48,25 +48,25 @@ export function useShell() {
   // surfaces as a retryable error screen instead of an empty workspace.
   const [booted, setBooted] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
-  // Which project the current `tasks` array actually belongs to — until it
-  // matches the selected project, the tasks column shows a skeleton rather than
+  // Which project the current `tasks` array actually belongs to. Until it
+  // matches the selected project, the tasks column shows a skeleton instead of
   // the previous project's (stale) list.
   const [tasksFor, setTasksFor] = useState<string | null>(null);
   const [running, setRunning] = useState<Set<string>>(new Set());
   // Board-card sparkline history: last ~30 samples of diff_add+diff_del per
-  // task, sampled off every `tasks` update (loadTasks, SSE-driven patches —
+  // task, sampled off every `tasks` update (loadTasks, SSE-driven patches,
   // whatever landed the current diff_add/diff_del). Consecutive identical
   // samples are deduped so a quiet task doesn't draw a flat line's worth of
-  // redundant points; recomputed here rather than at each write site because
+  // redundant points; recomputed here instead of at each write site because
   // `tasks` is patched from a dozen different callbacks and events.
   const SPARK_LEN = 30;
   const [sparklines, setSparklines] = useState<Record<string, number[]>>({});
   useEffect(() => {
     setSparklines((prev) => {
       let changed = false;
-      // Rebuild from the live task list rather than spreading `prev` — drops
-      // rings for tasks that moved project or were deleted, so the map doesn't
-      // grow forever across a long-lived tab.
+      // Rebuild from the live task list instead of spreading `prev`. This
+      // drops rings for tasks that moved project or were deleted, so the map
+      // doesn't grow forever across a long-lived tab.
       const liveIds = new Set(tasks.map((t) => t.id));
       const next: Record<string, number[]> = {};
       for (const id of Object.keys(prev)) {
@@ -90,7 +90,7 @@ export function useShell() {
   const [termOpen, setTermOpen] = useState(false);
   const [termMounted, setTermMounted] = useState(false); // mount once, then keep alive across collapses
   const [termHeight, setTermHeight] = useState(300);
-  // Managed-services drawer — same mount-once-keep-alive pattern as the terminal.
+  // Managed-services drawer: same mount-once-keep-alive pattern as the terminal.
   const [servicesOpen, setServicesOpen] = useState(false);
   const [servicesMounted, setServicesMounted] = useState(false);
   const [servicesHeight, setServicesHeight] = useState(300);
@@ -100,13 +100,13 @@ export function useShell() {
   const [appDefaultsReady, setAppDefaultsReady] = useState(false);
   // Agent capability descriptors (GET /api/agents): the model/reasoning/permission
   // pickers, per-task agent badges, cost/ask gates, and the new-task agent picker
-  // all read from this — no hardcoded per-agent lists in the client.
+  // all read from this, so the client has no hardcoded per-agent lists.
   const [agents, setAgents] = useState<AgentsBundle>(EMPTY_AGENTS);
   // First-run onboarding. `onboarding` is the persisted wizard state (resume
   // point + connection); `wizardOpen` mounts the full-screen wizard over the app.
   const [onboarding, setOnboarding] = useState<OnboardingT | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
-  // Shown after the built-in tutorial task is merged — the "now build your own" nudge.
+  // Shown after the built-in tutorial task is merged: the "now build your own" nudge.
   const [nudge, setNudge] = useState(false);
 
   const project = useMemo(() => projects.find((p) => p.id === selProj) ?? null, [projects, selProj]);
@@ -134,7 +134,7 @@ export function useShell() {
   //
   // `needsYou`, not `isAwaiting`: a task whose open PR went red needs a human
   // just as much as one parked on a question, and the server's awaiting_count
-  // counts it — so filtering the selected project on the narrower predicate
+  // counts it, so filtering the selected project on the narrower predicate
   // would make the pill's total jump every time you switched projects.
   const liveAwaiting = useMemo(() => realTasks.filter((t) => needsYou(t)), [realTasks]);
   const needsYouTotal = useMemo(
@@ -147,17 +147,17 @@ export function useShell() {
 
   // Capture the URL selection synchronously on first render. The URL-sync effect
   // runs (once `hydrated` flips) before the async project fetch applies selection,
-  // and would wipe the query string while selProj/selTask are still null — so we
-  // must read ?project/?task before that happens, not inside the fetch callback.
+  // and would wipe the query string while selProj/selTask are still null, so
+  // ?project/?task must be read before that happens, not inside the fetch callback.
   const urlSelRef = useRef<UrlSel | null>(null);
   if (urlSelRef.current === null) urlSelRef.current = readUrlSel();
 
   // And the persisted selection, synchronously, for exactly the same reason: the
   // persist effect fires the moment prefs hydrate, which is before this fetch can
-  // resolve, so reading localStorage inside the boot callback reads back the null
-  // selection that effect had already written. That is what sent every restart to
-  // the first project rather than the last one open. (usePrefs stops writing that
-  // null too — see selectionToPersist — but the read must not depend on it.)
+  // resolve, so reading localStorage inside the boot callback would read back the
+  // null selection that effect already wrote, sending every restart to the first
+  // project instead of the last one open. (usePrefs stops writing that null too,
+  // see selectionToPersist, but the read here must not depend on it.)
   const storedSelRef = useRef<StoredSel | null>(null);
   if (storedSelRef.current === null) storedSelRef.current = loadPersist();
 
@@ -184,7 +184,7 @@ export function useShell() {
       const first = data.tasks.find((t) => !t.suggested);
       setSelTask(first ? first.id : null);
     }
-    // Reconcile the running set only against THIS project's tasks — add/remove
+    // Reconcile the running set only against this project's tasks: add/remove
     // ids it actually fetched. A partial per-project view must never imply that
     // tasks it can't see (running in other projects) have stopped; those are
     // cleared authoritatively by reconcileRunning() below.
@@ -192,10 +192,10 @@ export function useShell() {
   }, []);
 
   // Authoritative fleet-wide reconciliation of the running set. Cross-project
-  // turn boundaries normally arrive on the global /api/events stream — but if
+  // turn boundaries normally arrive on the global /api/events stream, but if
   // that stream was disconnected (laptop sleep, tunnel drop) when a turn ended,
   // the event is gone and the spinner would stick forever: the client only
-  // refetches the SELECTED project's rows, so no other path would ever clear
+  // refetches the selected project's rows, so no other path would ever clear
   // it. useGlobalEvents calls this on every SSE reconnect; replacing the whole
   // set with the server's global truth drains any stale entries.
   const reconcileRunning = useCallback(async () => {
@@ -215,9 +215,9 @@ export function useShell() {
 
   // Load the agent capability bundle (drives every run-control picker AND the
   // per-agent connected/authenticated/authBroken status). Re-runnable: any in-app
-  // connect (wizard finish, Settings → Agents) calls this so the shared bundle —
+  // connect (wizard finish, Settings → Agents) calls this so the shared bundle,
   // and thus the New-task dialog's "· not connected" flag and the reconnect
-  // banner — updates live, no reload. Declared above the event streams because
+  // banner, updates live with no reload. Declared above the event streams because
   // useGlobalEvents calls it when an agent's login dies or recovers.
   const refreshAgents = useCallback(
     () => jget<AgentsBundle>("/api/agents").then(setAgents).catch(() => {}),
@@ -226,61 +226,60 @@ export function useShell() {
   useEffect(() => { void refreshAgents(); }, [refreshAgents]);
 
   // Agents that are connected on record but whose credentials just stopped
-  // working — the titlebar reconnect banner's input. Normally empty.
+  // working: the titlebar reconnect banner's input. Normally empty.
   const brokenAgents = useMemo(() => agents.agents.filter((a) => !!a.authBroken), [agents]);
 
   // ---------- live task event stream + transcript state ----------
   const { msgsByTask, appendMsg, setAnswerOnMsg, setOutcomeOnMsg } = useTaskStream({
     selTask, selProjRef, setTaskRunning, setTasks, setProjects, loadTasks,
   });
-  // A client-side notifier used to live here, firing its own wording straight
-  // off liveAwaiting. That's retired: the server now composes the message (see
-  // lib/notifications/notify.ts) so a future webhook channel can deliver the
-  // same text — don't reintroduce a second, locally-worded notifier.
+  // The server composes notification wording (see lib/notifications/notify.ts)
+  // so a future webhook channel can deliver the same text; don't add a second,
+  // locally-worded notifier here.
   const showNotification = useNotifications({ selTaskRef });
   // Always-open global lifecycle stream (GET /api/events): keeps spinners,
   // project badges, and the "N need you" pill live for tasks whose transcript
-  // stream ISN'T open — only the selected task has one.
+  // stream isn't open. Only the selected task has one.
   useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProjects, loadTasks, reconcileRunning, refreshAgents, onNotification: showNotification });
   const messages = selTask ? msgsByTask[selTask] ?? [] : [];
-  // No entry yet for the selected task = its SSE snapshot hasn't arrived — the
-  // session view shows a transcript skeleton instead of an empty chat flash.
+  // No entry yet for the selected task means its SSE snapshot hasn't arrived,
+  // so the session view shows a transcript skeleton instead of an empty chat flash.
   const transcriptLoading = !!selTask && !(selTask in msgsByTask);
   // The tasks in state still belong to the previously selected project.
   const tasksLoading = !!project && tasksFor !== project.id;
 
   // ---------- the project-home intent ----------
   //
-  // "I want the project home" as an explicit intent, held as the project it was
-  // asked for. The landing decision (useRecaps) auto-picks the first real task
-  // whenever no task is selected and there's no recap to show, which is the
-  // right default on arrival and made the project-home button in the tasks
-  // banner a DEAD control: it cleared selTask, and the effect — which has
-  // selTask in its deps — immediately put a task back. For any project with a
-  // task, no stored recap, and activity in the last 8 hours (i.e. the one
-  // you're working in), the landing pane was simply unreachable, and with it
-  // the Schedules card and its pause control.
+  // "I want the project home" as an explicit intent, held as the project it
+  // was asked for. The landing decision (useRecaps) auto-picks the first real
+  // task whenever no task is selected and there's no recap to show, which is
+  // the right default on arrival, but without this flag the project-home
+  // button in the tasks banner would be inert: clearing selTask triggers the
+  // effect that has selTask in its deps, which immediately puts a task back.
+  // For any project with a task, no stored recap, and activity in the last 8
+  // hours (the one you're working in), the landing pane would otherwise be
+  // unreachable, and with it the Schedules card and its pause control.
   //
   // Held per project id, and cleared the moment a task is selected, so it's a
-  // one-shot intent rather than a mode: the next time you enter this project
+  // one-shot intent instead of a mode: the next time you enter this project
   // normally, auto-selection is back.
   //
-  // On a phone it is more than an intent: the landing pane is a PANE there (see
-  // Shell's mobilePane), and the only place Runbooks and Schedules are
-  // mounted — so this same flag is a navigation level, mirrored into the URL as
-  // ?home=1 and closed by Back before the project is (navHistory.ts).
+  // On a phone it is more than an intent: the landing pane is a pane there
+  // (see Shell's mobilePane), and the only place Runbooks and Schedules are
+  // mounted, so this same flag is a navigation level, mirrored into the URL
+  // as ?home=1 and closed by Back before the project is (navHistory.ts).
   const [homeProj, setHomeProj] = useState<string | null>(null);
   const showProjectHome = useCallback(() => {
     setSelTask(null);
     setHomeProj(selProjRef.current);
   }, []);
   const projectHome = !!selProj && homeProj === selProj;
-  // Back / the pane's own back chevron. Only ever turns it OFF — turning it on
+  // Back / the pane's own back chevron. Only ever turns it off; turning it on
   // is showProjectHome's job, which also has to clear the task selection.
   const setProjectHome = useCallback((on: boolean) => { if (!on) setHomeProj(null); }, []);
   useEffect(() => { if (selTask) setHomeProj(null); }, [selTask]);
-  // Moving to a DIFFERENT project drops the intent. Written as a functional
-  // update rather than an unconditional clear so it doesn't fire on the boot
+  // Moving to a different project drops the intent. Written as a functional
+  // update instead of an unconditional clear so it doesn't fire on the boot
   // restore below, where selProj goes null → the restored project in the same
   // batch that sets homeProj to it.
   useEffect(() => { setHomeProj((h) => (h === selProj ? h : null)); }, [selProj]);
@@ -317,7 +316,7 @@ export function useShell() {
   const finishWizard = useCallback(() => {
     setWizardOpen(false);
     jget<OnboardingT>("/api/onboarding").then(setOnboarding).catch(() => {});
-    // The wizard is the New-task dialog's "Connect" destination — pick up any
+    // The wizard is the New-task dialog's "Connect" destination: pick up any
     // agent it just connected so the shared bundle reflects it immediately.
     void refreshAgents();
     // Land the user on the built-in tutorial: select the seeded "Welcome" project
@@ -345,10 +344,10 @@ export function useShell() {
     jget<ProjectRow[]>("/api/projects").then((ps) => {
       setProjects(ps);
       // The last project open wins over the first one in the list; the remembered
-      // task rides along only when we landed on the project it belongs to, and
-      // ?home=1 restores the project-home pane (Runbooks/Schedules), which on
-      // mobile is a route of its own. Task validity WITHIN the project is checked
-      // once its tasks load, below.
+      // task rides along only when the landing project matches the one it belongs
+      // to, and ?home=1 restores the project-home pane (Runbooks/Schedules), which
+      // on mobile is a route of its own. Task validity within the project is
+      // checked once its tasks load, below.
       const land = landingSelection(ps.filter((p) => !p.deprecated), urlSelRef.current ?? {}, storedSelRef.current ?? {});
       setSelProj(land.proj);
       if (land.task) setSelTask(land.task);
@@ -360,13 +359,13 @@ export function useShell() {
   }, []);
   useEffect(() => { boot(); }, [boot]);
 
-  // Entering a project loads its tasks but does NOT auto-pick one — the landing
+  // Entering a project loads its tasks but does not auto-pick one; the landing
   // decision (recap vs. first task) is made in useRecaps once recap status is known.
   useEffect(() => { if (selProj) loadTasks(selProj, false); }, [selProj, loadTasks]);
 
   // The selected project's runbooks, for the ⌘K palette. Fetched on the project
-  // switch rather than when the palette opens: it's a handful of rows, and the
-  // palette has to feel instant — fetching on open would render an empty
+  // switch instead of when the palette opens: it's a handful of rows, and the
+  // palette has to feel instant. Fetching on open would render an empty
   // Commands group for a beat, every time.
   useEffect(() => {
     if (!selProj) { setRunbooks([]); return; }
@@ -374,8 +373,9 @@ export function useShell() {
   }, [selProj, loadRunbooks]);
 
   // A create/edit/copy/delete anywhere (this tab, another tab, or an agent's
-  // create_runbook) — same window event the Runbooks card listens on, so the
-  // palette can't offer a row that no longer exists or miss one just saved.
+  // create_runbook) fires the same window event the Runbooks card listens on,
+  // so the palette can't offer a row that no longer exists or miss one just
+  // saved.
   useEffect(() => {
     const onChanged = (e: Event) => {
       if ((e as CustomEvent<string>).detail === selProjRef.current) void loadRunbooks((e as CustomEvent<string>).detail);
@@ -384,9 +384,9 @@ export function useShell() {
     return () => window.removeEventListener("calandria:runbooks", onChanged);
   }, [loadRunbooks]);
 
-  // A hidden tab gets throttled and its SSE streams may quietly die, so the
-  // project badges / "needs you" counts drift while you're away. On the
-  // hidden→visible transition, refetch the project list once — skipping brief
+  // A hidden tab gets throttled and its SSE streams may die without an error,
+  // so the project badges / "needs you" counts drift while you're away. On the
+  // hidden→visible transition, refetch the project list once, skipping brief
   // tab flips (the stream never missed a beat) so rapid alt-tabbing doesn't
   // spam the endpoint.
   useEffect(() => {
@@ -433,10 +433,10 @@ export function useShell() {
   // If nothing was waiting (e.g. the turn was torn down by a page reload), resume
   // the session with the answer as a normal reply.
   const answerQuestion = useCallback(async (taskId: string, askId: string, questions: AskQuestion[], answers: AskAnswers) => {
-    setAnswerOnMsg(taskId, askId, answers); // optimistic — the stream echoes ask_answered
+    setAnswerOnMsg(taskId, askId, answers); // optimistic; the stream echoes ask_answered
     try {
-      // No tool_use id to resolve against — e.g. a question persisted before
-      // ask-id tracking was added, or one whose turn was already torn down. The
+      // No tool_use id to resolve against: a question persisted before ask-id
+      // tracking was added, or one whose turn was already torn down. The
       // /answer route requires a non-empty askId, so skip it and just send the
       // choices as a normal reply, which resumes the current session.
       if (!askId) { await runTurn(taskId, formatAnswersText(questions, answers), false); return; }
@@ -447,10 +447,10 @@ export function useShell() {
     }
   }, [runTurn, tasks, appendMsg, setAnswerOnMsg]);
 
-  // Answer a tool-permission prompt. It rides the SAME /answer route as a
-  // question — the decision is just an answer whose value is a fixed keyword
+  // Answer a tool-permission prompt. It rides the same /answer route as a
+  // question: the decision is just an answer whose value is a fixed keyword
   // (validated server-side, see parseDecision) plus an optional typed reason.
-  // Unlike an ask there is NO resume fallback: if nothing is parked the turn is
+  // Unlike an ask there is no resume fallback: if nothing is parked the turn is
   // already gone, and re-sending "allow_once" as a chat message would be
   // meaningless. The card locks itself and the failed state says why.
   const decidePermission = useCallback(async (taskId: string, permId: string, decision: PermissionDecision, note?: string) => {
@@ -471,7 +471,7 @@ export function useShell() {
     }
   }, [tasks, appendMsg, setOutcomeOnMsg]);
 
-  // Interrupt a running turn — the ONLY way one stops early now that turns are
+  // Interrupt a running turn: the only way one stops early, since turns are
   // detached from connections. The server aborts the SDK query, persists the
   // partial transcript, and publishes turn_end, which the event stream handler
   // turns into a task refresh (now awaiting_input, resumable).
@@ -480,7 +480,7 @@ export function useShell() {
   }, []);
 
   // Drop a queued (not-yet-run) follow-up. The server publishes `dequeued`,
-  // which the stream handler turns into removing the bubble — so this is
+  // which the stream handler turns into removing the bubble, so this is
   // fire-and-forget; no optimistic local mutation needed.
   const cancelQueued = useCallback(async (taskId: string, pendingId: string) => {
     try { await fetch(`/api/tasks/${taskId}/pending`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pendingId }) }); } catch {}
@@ -494,7 +494,7 @@ export function useShell() {
       const res = await fetch(`/api/tasks/${taskId}/merge/prepare`, { method: "POST" });
       const prep = await res.json();
       if (!res.ok || !prep?.ok) return { ok: false, error: prep?.error || "could not prepare the merge" };
-      // Clean trial merge — it landed immediately, no AI needed.
+      // Clean trial merge: it landed immediately, no AI needed.
       if (prep.clean) {
         if (selProj) loadTasks(selProj, false);
         try { const fresh = await jget<TaskRow>(`/api/tasks/${taskId}`); setTasks((prev) => prev.map((x) => (x.id === taskId ? { ...x, ...fresh } : x))); } catch {}
@@ -503,13 +503,13 @@ export function useShell() {
       // Nothing left for an agent to edit: the merge is already paused with
       // every text conflict resolved (a finished resolution turn, or a manual
       // edit) or only binaries remain, which a prompt can't fix. Don't launch
-      // a turn over an empty file list — the caller lands in Changes' review
+      // a turn over an empty file list: the caller lands in Changes' review
       // state (Accept & merge / Discard) instead, which is where this goes next.
       if (!prep.conflicts?.length)
         return { ok: true, conflicts: [], binaryConflicts: prep.binaryConflicts ?? [] };
-      // Conflicts present — stream the resolution turn (shows in the transcript).
+      // Conflicts present: stream the resolution turn (shows in the transcript).
       // Fire-and-forget: the caller switches to the chat view as soon as this
-      // returns, so the user watches the resolution stream in live rather than
+      // returns, so the user watches the resolution stream live instead of
       // sitting on the "Changes" tab until the whole turn completes.
       void runTurn(taskId, prep.prompt, false);
       return { ok: true, resolving: true, conflicts: prep.conflicts, binaryConflicts: prep.binaryConflicts };
@@ -518,15 +518,15 @@ export function useShell() {
     }
   }, [runTurn, selProj, loadTasks]);
 
-  // "Fix CI": the red-PR twin of resolveConflictsWithAI, and deliberately the
-  // same shape. The server composes the prompt (it re-checks GitHub, then reads
-  // the failing job's log tail); we stream it into the task's OWN session as an
-  // ordinary turn, so the fix shows up in the transcript like any other work
-  // rather than in some parallel channel.
+  // "Fix CI": the red-PR twin of resolveConflictsWithAI, and the same shape on
+  // purpose. The server composes the prompt (it re-checks GitHub, then reads
+  // the failing job's log tail); this streams it into the task's own session as
+  // an ordinary turn, so the fix shows up in the transcript like any other
+  // work instead of in some parallel channel.
   //
   // Fire-and-forget on the turn, like the conflict path: the caller switches to
   // the chat as soon as this returns, so the user watches the diagnosis stream
-  // rather than sitting on a spinner until the whole turn completes.
+  // instead of sitting on a spinner until the whole turn completes.
   const fixCi = useCallback(async (taskId: string): Promise<{ ok: boolean; error?: string }> => {
     try {
       const res = await fetch(`/api/tasks/${taskId}/pr/fix-ci`, { method: "POST" });
@@ -539,8 +539,8 @@ export function useShell() {
     }
   }, [runTurn]);
 
-  // A merge just landed. Refresh the task list so its merged state shows, and —
-  // if this was the tutorial (a task in the seeded Welcome project) — fire the
+  // A merge just landed. Refresh the task list so its merged state shows, and,
+  // if this was the tutorial (a task in the seeded Welcome project), fire the
   // "now build your own" nudge, the payoff for finishing the loop.
   const [baseBranchTick, setBaseBranchTick] = useState(0);
 
@@ -548,7 +548,7 @@ export function useShell() {
     if (selProj) void loadTasks(selProj, false);
     if (project?.seeded) setNudge(true);
     // A merge moves the project's base branch, which is exactly what the
-    // base-branch banner reports on — nudge it to re-read rather than leaving a
+    // base-branch banner reports on: nudge it to re-read instead of leaving a
     // stale "in sync" (or a stale behind-count) on screen.
     setBaseBranchTick((n) => n + 1);
   }, [selProj, loadTasks, project]);
@@ -570,13 +570,13 @@ export function useShell() {
     if (p) selectProject(p.id);
   };
 
-  // Jump straight to a specific task in any project — the "need you" dropdown's
+  // Jump straight to a specific task in any project: the "need you" dropdown's
   // row action. Setting selProj fires the load-tasks effect with selectFirst=false
-  // (useEffect on selProj), so it won't clobber the selTask we set here.
-  // navEpoch bumps on EVERY jump, including one to the already-selected task:
+  // (useEffect on selProj), so it won't clobber the selTask set here.
+  // navEpoch bumps on every jump, including one to the already-selected task:
   // the mobile shell watches selTask changes to snap its tab bar back to the
   // board, and a jump that changes nothing (you were in that chat, then went
-  // to Diffs) would otherwise leave the screen where it is — looking like the
+  // to Diffs) would otherwise leave the screen where it is, looking like the
   // tap did nothing.
   const [navEpoch, setNavEpoch] = useState(0);
   const goToTask = (projectId: string, taskId: string) => {
@@ -586,8 +586,8 @@ export function useShell() {
     setNavEpoch((e) => e + 1);
   };
 
-  // Clicking a browser notification. A window event rather than a prop because
-  // the channel hook runs above this definition — same pattern as calandria:runbooks.
+  // Clicking a browser notification. A window event instead of a prop because
+  // the channel hook runs above this definition, same pattern as calandria:runbooks.
   useEffect(() => {
     const onGoto = (e: Event) => {
       const { projectId, taskId } = (e as CustomEvent<{ projectId: string; taskId: string }>).detail;
@@ -621,7 +621,7 @@ export function useShell() {
   }, [tasks, running, runTurn, appendMsg]);
 
   // Cheap local patch: a mutation just took a task out of the "needs you" set,
-  // so drop it from its project's badge now rather than waiting for the SSE
+  // so drop it from its project's badge now instead of waiting for the SSE
   // roundtrip (the published lifecycle event re-syncs the exact count moments
   // later; the selected project's pill reads liveAwaiting, so this only matters
   // once you navigate away).
@@ -632,27 +632,27 @@ export function useShell() {
   //
   // Both writes are ordinary PATCHes, so the `task_edited` they publish carries
   // the project's recomputed awaiting count and re-syncs every other tab's
-  // badge for free — a snoozed task drops out of the "needs you" surfaces
+  // badge for free: a snoozed task drops out of the "needs you" surfaces
   // server-side, and reappears in them when it wakes.
   const snoozeTask = async (id: string, until: number) => {
     const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", { snoozed_until: until });
     setTasks((prev) => prev.map((x) => (x.id === id ? { ...x, ...fresh } : x)));
   };
-  // "Wake it now" is resolved by the SERVER, not by sending our own clock: the
-  // deadline is compared against SQLite's `now` in the needs-you predicate, so
-  // a browser running fast would otherwise write a future timestamp and leave
+  // "Wake it now" sends unsnooze:true and lets the server resolve the deadline:
+  // it is compared against SQLite's `now` in the needs-you predicate, so a
+  // browser running fast would otherwise write a future timestamp and leave
   // the task it just woke hidden from the pill until the skew elapsed.
   const unsnoozeTask = async (id: string) => {
     const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", { unsnooze: true });
     setTasks((prev) => prev.map((x) => (x.id === id ? { ...x, ...fresh } : x)));
   };
 
-  // "I've read it" for a clean unattended run — the ran-clean group's one verb
+  // "I've read it" for a clean unattended run: the ran-clean group's one verb
   // (issue #28). It's a plain status write because that is exactly what clears
   // the mark server-side: the state has no third resting place to fall back
   // into, and clearing the flag alone would drop the task straight back into
   // the undifferentiated "In progress" pile it was lifted out of. Takes an id
-  // rather than acting on the selection — the button lives on the card, and
+  // instead of acting on the selection: the button lives on the card, and
   // acknowledging a run you can see is not the same as opening it.
   const ackRun = async (id: string) => {
     const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", { status: "done" });
@@ -663,7 +663,7 @@ export function useShell() {
   //
   // "Start at the usage-window reset": one deadline on the row, set from the
   // reset the plan meter reports and cleared with 0. The launch itself is the
-  // server's — it arrives here as ordinary turn events plus a task_edited.
+  // server's, arriving here as ordinary turn events plus a task_edited.
   const queueStart = async (id: string, at: number) => {
     const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", { start_at: at });
     setTasks((prev) => prev.map((x) => (x.id === id ? { ...x, ...fresh } : x)));
@@ -674,9 +674,9 @@ export function useShell() {
   };
 
   /**
-   * The wake timer. A deadline passing writes NOTHING — a snooze decays by
+   * The wake timer. A deadline passing writes nothing: a snooze decays by
    * being compared against the clock, which is what makes it survive the app
-   * being closed — so the one thing the client owes the user is a re-render at
+   * being closed, so the one thing the client owes the user is a re-render at
    * the moment the card should move. One timeout set to the soonest deadline
    * does that for the whole board; polling every task on an interval would be
    * the same answer recomputed continuously.
@@ -691,12 +691,12 @@ export function useShell() {
     const at = nextWake(tasks);
     if (at === null) return;
     // The second of slack guarantees the predicates read "awake" when the
-    // re-render lands, rather than racing the deadline by a millisecond.
+    // re-render lands, instead of racing the deadline by a millisecond.
     const timer = setTimeout(() => {
       setWakeTick((n) => n + 1);
       // The awaiting counts were computed server-side against a deadline that
       // has only just passed, and no write means no event to carry the new
-      // ones. This is the one place they'd stay stale, so re-read them.
+      // ones, so they'd otherwise stay stale here. Re-read them.
       jget<ProjectRow[]>("/api/projects").then(setProjects).catch(() => {});
     }, Math.max(0, at - Date.now()) + 1000);
     return () => clearTimeout(timer);
@@ -756,7 +756,7 @@ export function useShell() {
     setTasks((prev) => prev.map((x) => (x.id === task.id ? { ...x, ...fresh } : x)));
   };
   // "Start when unblocked" from the task's own start screen (TaskHero), the
-  // same flag the edit dialog's checkbox writes — offered there because that
+  // same flag the edit dialog's checkbox writes. Offered there because that
   // screen is where you land when a blocked task is the one you wanted to work
   // on, and opening a modal to tick one box was the only way to say "go ahead
   // without me". The edges themselves are still the dialog's: this only decides
@@ -768,15 +768,15 @@ export function useShell() {
   };
 
   /**
-   * Dispatch a runbook straight from ⌘K — no sheet.
+   * Dispatch a runbook straight from ⌘K, with no sheet.
    *
    * The sheet exists for the run you want to tweak; the palette exists for the
-   * run you want NOW, and interposing a dialog on the accelerator path defeats
-   * the whole point. Everything the sheet would ask is already saved on the
+   * run you want now, and interposing a dialog on the accelerator path would
+   * defeat its purpose. Everything the sheet would ask is already saved on the
    * runbook.
    *
-   * A failure has nowhere to render here — the palette has closed, and the user
-   * may be deep in another task's session — so it goes to the project home,
+   * A failure has nowhere to render here: the palette has closed, and the user
+   * may be deep in another task's session. So it goes to the project home,
    * where the Runbooks card owns an error slot and the offending recipe is
    * right there to fix. That is also where a half-minted task (the launch
    * failed, the row exists) is reachable from.
@@ -800,10 +800,10 @@ export function useShell() {
 
   const createTask = async (input: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; permission_mode: string | null; tag_ids: string[] }) => {
     if (!project) return;
-    // model and permission_mode go in the CREATE, not a follow-up PATCH:
-    // `startNow` below launches the first turn, and either applied after that
-    // would miss the very turn the user picked it for. The tags ride the
-    // create too, so the first turn's context (phase 2 of the tags spec) sees them.
+    // model and permission_mode go in the create call, since `startNow` below
+    // launches the first turn, and either applied as a follow-up PATCH would
+    // miss the very turn the user picked it for. The tags ride the create too,
+    // so the first turn's context (phase 2 of the tags spec) sees them.
     const t = await jsend<TaskRow>("/api/tasks", "POST", { project_id: project.id, title: input.title, description: input.desc, priority: input.priority, agent: input.agent, send_context: input.sendContext, ...(input.model ? { model: input.model } : {}), ...(input.permission_mode ? { permission_mode: input.permission_mode } : {}), tag_ids: input.tag_ids });
     // Dependencies (and the auto-start opt-in that rides on them) are an
     // edit-after-create step (the task id doesn't exist until now).
@@ -815,7 +815,7 @@ export function useShell() {
   };
 
   // A board drop: re-status the dragged task, optimistically. The board's
-  // columns ARE statuses, so a drop between them is the whole write — there is
+  // columns are statuses, so a drop between them is the whole write; there is
   // no manual order to persist alongside it any more (listTasks sorts by
   // recency), which is why a drop within one column is a no-op the board
   // never calls this for. A failure reloads server truth.
@@ -831,7 +831,7 @@ export function useShell() {
     }
   }, [loadTasks]);
 
-  // Mint a tag from the edit/new-task dialogs' "New tag…" — name only;
+  // Mint a tag from the edit/new-task dialogs' "New tag…": name only;
   // description and color come later from the tag strip. Rejects on a name
   // collision (409), which the field shows. The tags_changed echo refetches
   // the list; the row is added here too so the field can select it before
@@ -843,12 +843,13 @@ export function useShell() {
     return g;
   }, []);
 
-  // Add or remove a set of tags across a whole selection — the selection bar's
-  // Tags…. Not a replace: a mixed selection rarely shares tags, so "set" over
-  // it would silently strip whatever each row already carried that wasn't in
-  // the picked set. One request, one transaction; the server's tags_changed
-  // echo refetches the tray, but the rows are patched here too so the badges
-  // land with the modal closing rather than a beat later.
+  // Add or remove a set of tags across a whole selection: the selection bar's
+  // Tags…. Not a replace: a mixed selection rarely shares tags, so a "set"
+  // operation would strip whatever each row already carried that wasn't in
+  // the picked set, with no indication anything was removed. One request, one
+  // transaction; the server's tags_changed echo refetches the tray, but the
+  // rows are patched here too so the badges land with the modal closing
+  // instead of a beat later.
   const tagTasks = useCallback(async (ids: string[], tagIds: string[], mode: "add" | "remove") => {
     const { changed } = await jsend<{ changed: string[] }>("/api/tasks/tags", "POST", { ids, [mode]: tagIds });
     const set = new Set(changed);
@@ -862,7 +863,7 @@ export function useShell() {
   }, []);
 
   // `action` is the edit dialog's Add / Start: the same write, plus accepting
-  // the task out of the suggestions tray (`suggested: 0`) and — for "start" —
+  // the task out of the suggestions tray (`suggested: 0`) and, for "start",
   // launching its first turn. One PATCH carries both, so a sharpened brief and
   // the decision it led to can't half-apply, and the route's revive branch
   // clears a withdrawal (reason + cancelled status) for free.
@@ -887,13 +888,13 @@ export function useShell() {
   // Re-parent a misfiled task. Every dependency edge touching it is dropped,
   // since edges can't span projects. The row leaves this project's list right
   // away; the published tasks_moved event re-syncs every other tab. Rejects on
-  // refusal — the modal shows why.
+  // refusal, and the modal shows why.
   //
-  // A started task carries a worktree cut from the OLD project's repo, so it
+  // A started task carries a worktree cut from the old project's repo, so it
   // moves only with `discardWorktree`: the server tears that checkout down and
   // the next turn cuts a fresh one from the destination. `discardUnsafe` is the
   // second answer, needed only when the worktree holds work removing it would
-  // lose — the modal asks for it after naming what that work is.
+  // lose. The modal asks for it after naming what that work is.
   const moveTaskToProject = async (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => {
     await jsend<TaskRow>(`/api/tasks/${id}/move`, "POST", {
       project_id: projectId,
@@ -907,14 +908,14 @@ export function useShell() {
     jget<ProjectRow[]>("/api/projects").then(setProjects).catch(() => {});
   };
 
-  // Re-parent a whole selection at once — the bulk sibling of the above, and
+  // Re-parent a whole selection at once: the bulk sibling of the above, and
   // the reason the batch endpoint exists: one request, one transaction, one
-  // task_moved event for every other tab. Unlike the single move it does NOT
+  // task_moved event for every other tab. Unlike the single move it does not
   // reject on a refusal; a task that couldn't move comes back in `skipped` and
   // stays where it is, so the caller can report it and keep it selected.
   //
   // `discard` carries the ids whose worktree the user ticked, and `discardUnsafe`
-  // those whose unsaved work they were shown by name — per task, because that's
+  // those whose unsaved work they were shown by name, per task, because that's
   // how the answers were given.
   const moveTasksToProject = async (
     ids: string[],
@@ -941,14 +942,14 @@ export function useShell() {
     const t = tasks.find((x) => x.id === id);
     await jsend(`/api/tasks/${id}`, "DELETE");
     setTasks((prev) => prev.filter((x) => x.id !== id));
-    // A deleted task can no longer need you — the task_deleted event confirms
+    // A deleted task can no longer need you; the task_deleted event confirms
     // with the server-recomputed count moments later.
     if (t && isAwaiting(t)) decAwaiting(t);
     setEditId(null);
     setSelTask((cur) => (cur === id ? null : cur));
   };
 
-  // Accept, then run — two calls, and the first is not undone if the second is
+  // Accept, then run: two calls, and the first is not undone if the second is
   // refused. `POST /api/tasks/[id]/messages` 409s a blocked first turn
   // (PR #139), so the callers gate on `blockedNote()` and never offer Start for
   // a suggestion whose blockers are open. A stale tab that gets through anyway
@@ -1018,8 +1019,8 @@ export function useShell() {
 
   // Restore run defaults to built-ins: clear every server-backed default_* key
   // (agent-scoped and legacy) plus the reset of client-only settings. The list
-  // must stay in step with what SettingsView's `isDefault` considers non-default
-  // — a key that enables the Reset button but isn't cleared here makes the click
+  // must stay in step with what SettingsView's `isDefault` considers non-default:
+  // a key that enables the Reset button but isn't cleared here makes the click
   // do nothing and leaves the button lit.
   const RESET_KEYS = new Set([
     "utility_agent", "background_jobs", "recap_mode",

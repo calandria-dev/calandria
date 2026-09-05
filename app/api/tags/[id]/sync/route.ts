@@ -10,15 +10,14 @@ export const maxDuration = 120;
  * A tag's base branch against the project's default: how far behind it is, and
  * the one click that fixes it.
  *
- * Deliberately NOT folded into `listTags`. That read is synchronous (better-
- * sqlite3, straight off the row) and runs on every project open, every
- * `tags_changed` echo and every board refresh, while this answer costs three git
- * subprocesses AND a fetch per tag that sets a base. Measured on this repo: the
- * local reads are 14ms together, the fetch is 1.04s — and `fetchBase` is keyed
- * per branch, so five tags on five integration branches is five sequential
- * network round trips, on a read that today returns instantly. Paid here it is
- * one call when the user opens the tag whose branch they're asking about.
- * `base_branch` is still on the row, so the list still knows which tags HAVE an
+ * Not folded into `listTags`. That read is synchronous (better-sqlite3,
+ * straight off the row) and runs on every project open, every `tags_changed`
+ * echo and every board refresh, while this answer costs three git subprocesses
+ * and a fetch per tag that sets a base. `fetchBase` is keyed per branch, so
+ * five tags on five integration branches would mean five sequential network
+ * round trips on a read that otherwise returns instantly. Paid here, it is one
+ * call when the user opens the tag whose branch they're asking about.
+ * `base_branch` is still on the row, so the list still knows which tags have an
  * answer to fetch.
  *
  * A tag with no base of its own follows the project default and cannot drift
@@ -34,19 +33,18 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   if (tag.base_branch === project.branch)
     return NextResponse.json({ inherited: false, sameAsProject: true, projectBranch: project.branch, branch: tag.base_branch });
 
-  // The reading must describe the cut a task under this tag would get, and
-  // `ensureWorktree` gives a branch that exists only on the remote a local ref
-  // before cutting from it. Measuring the bare local ref instead reported a
-  // colleague's pushed integration branch as gone, which is the one answer a
-  // reader can't act on. Same call, same outcome: a tracking branch the next
-  // launch would have created anyway. Best-effort, like every fetch here.
+  // The reading must describe the cut a task under this tag would get, so it
+  // gives a branch that exists only on the remote a local ref before cutting
+  // from it, the same thing `ensureWorktree` does. Measuring the bare local ref
+  // instead would report a pushed integration branch as gone, which a reader
+  // cannot act on. Best-effort, like every fetch here.
   await ensureLocalBaseBranch(project.repo_path, tag.base_branch).catch(() => {});
 
   // Fetched first because `branchDriftStatus` is read-only by contract, and a
-  // stale local default UNDERSTATES the drift — the one direction this reading
-  // must not be wrong in. Measured at `baseStartPoint`, the commit
-  // `ensureWorktree` would actually cut a new task from, so a stale checkout of
-  // the user's own can't hide a stale integration branch.
+  // stale local default understates the drift, which this reading must not do.
+  // Measured at `baseStartPoint`, the commit `ensureWorktree` would actually cut
+  // a new task from, so a stale checkout of the user's own cannot hide a stale
+  // integration branch.
   await fetchBase(project.repo_path, project.branch).catch(() => {});
   const againstTip = await baseStartPoint(project.repo_path, project.branch);
   // `branchDriftStatus` folds a missing `against` into `unknown`; the tip is in
@@ -67,20 +65,21 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 /**
  * Two actions on the tag's base branch, chosen by the body's `action`.
  *
- * The default, Sync, merges the project default INTO the tag's base branch —
- * one level up from the per-task one. Never a reset: `lib/git.ts`'s
- * `syncBranchFrom` carries the why, and the refusal when a live worktree is
- * holding the branch over unsaved work comes from there too, in
+ * The default, Sync, merges the project default into the tag's base branch,
+ * one level up from the per-task version. Never a reset: `lib/git.ts`'s
+ * `syncBranchFrom` carries the reasoning, and the refusal when a live worktree
+ * is holding the branch over unsaved work comes from there too, in
  * `worktreePruneSafety`'s words.
  *
- * `create` makes the branch when nothing has yet. A tag's base is settable before
- * the branch exists, on purpose (`PATCH /api/tags/[id]` touches no git), so the
- * usual first sighting is a name typed into the editor that nothing has created
- * anywhere. Until something does, every task under the tag is silently cut from
- * HEAD, and the drift line said the branch "no longer exists" about one that
- * never had. This cuts it at the very commit a new task would be cut from
- * (`baseStartPoint`: the fetched remote tip when the local default is merely
- * behind it), so the integration branch starts where its first member would.
+ * `create` makes the branch when none exists yet. A tag's base is settable
+ * before the branch exists (`PATCH /api/tags/[id]` touches no git), so the
+ * usual first sighting is a name typed into the editor with nothing created
+ * anywhere yet. Until something creates it, every task under the tag is cut
+ * from HEAD, and the drift line reports the branch as "no longer exists" for
+ * one that never existed. This creates it at the exact commit a new task
+ * would be cut from (`baseStartPoint`: the fetched remote tip when the local
+ * default is merely behind it), so the integration branch starts where its
+ * first member would.
  *
  * Nothing in the database changes either way, so no event is published: the
  * tag row is untouched and what the strip re-reads is a fact about git.

@@ -9,10 +9,10 @@ import type { NotificationPayload } from "@/lib/notifications/types";
  *
  * The server already decided this is worth interrupting somebody for; the
  * browser knows exactly one thing the server cannot, which is whether the user
- * is looking at the very task being announced. Everything else — a background
- * tab, another task selected, a second monitor — is a case where a toast is the
- * whole point, so the rule is deliberately narrow rather than "notify only when
- * the tab is hidden".
+ * is looking at the very task being announced. Everything else, including a
+ * background tab, another task selected, or a second monitor, still gets a
+ * toast, so the rule stays narrow instead of "notify only when the tab is
+ * hidden".
  */
 export function shouldDisplay(
   payload: NotificationPayload,
@@ -31,18 +31,19 @@ export type BrowserNotificationState =
 /**
  * Is this page running inside the Electron desktop shell (desktop/main.js)?
  *
- * A user-agent read, and deliberately not a server-side flag. What is being
- * asked here is a fact about the CLIENT — the same server can be open in the
- * shell and in an ordinary browser tab at the same moment, and both an env var
- * on the sidecars and the per-instance `window.__FEATURES` bundle would answer
- * one of them with the other's truth. The UA is the only signal that already
+ * A user-agent read, not a server-side flag. What is being asked here is a
+ * fact about the CLIENT: the same server can be open in the shell and in an
+ * ordinary browser tab at the same moment, and both an env var on the
+ * sidecars and the per-instance `window.__FEATURES` bundle would answer one
+ * of them with the other's truth. The UA is the only signal that already
  * travels per client, and usePush.ts reads it for iPadOS for the same reason.
  *
- * The `Calandria-Desktop/` token is our own, appended by the shell, so the part
- * of this that matters can only "rot" if we retire it ourselves. `Electron/` is
- * kept as a fallback so a packaged build that predates the token still gets the
- * right copy — and getting this wrong costs a sentence of help text, not a
- * notification: the hook below stands down either way (see hardenSession()).
+ * The `Calandria-Desktop/` token is the app's own, appended by the shell, so
+ * the part of this that matters can only "rot" if it is retired here first.
+ * `Electron/` is kept as a fallback so a packaged build that predates the
+ * token still gets the right copy. Getting this wrong costs a sentence of
+ * help text, not a notification: the hook below stands down either way (see
+ * hardenSession()).
  */
 export function isDesktopShell(userAgent: string): boolean {
   return /\bCalandria-Desktop\/|\bElectron\//.test(userAgent);
@@ -76,17 +77,17 @@ export function isMacDesktopShell(userAgent: string): boolean {
  * inside it none of them describe the channel the user actually hears. The
  * shell denies the renderer `notifications` (both handlers) and raises them
  * from the Electron main process instead, so `Notification.permission` reads
- * "denied" while the OS toasts keep arriving — literally true and completely
- * misleading, and the page cannot see the channel that replaced it.
+ * "denied" while the OS toasts keep arriving: literally true and completely
+ * misleading, since the page cannot see the channel that replaced it.
  *
  * Then the insecure check, because it explains the other two signals away:
  * outside a secure context Chrome reports permission "denied" without ever
  * having prompted (and can never prompt), and some browsers hide the
  * Notification API entirely. Reading either of those at face value produces
- * the wrong diagnosis — "you blocked this site" or "this browser can't" —
- * when the real fix is reaching the instance over https or localhost.
- * localhost IS a secure context, so "insecure" only fires on origins where
- * notifications genuinely cannot work.
+ * the wrong diagnosis, "you blocked this site" or "this browser can't", when
+ * the real fix is reaching the instance over https or localhost. localhost IS
+ * a secure context, so "insecure" only fires on origins where notifications
+ * genuinely cannot work.
  */
 export function classifyNotificationSupport(env: {
   desktopShell: boolean;
@@ -113,12 +114,12 @@ export function notificationPermission(): BrowserNotificationState {
 }
 
 /**
- * The browser channel. Renders a payload the SERVER composed — the wording, the
- * suppression rules and the dedupe all happened before this hook saw it, so a
- * webhook delivering the same payload says the same thing.
+ * The browser channel. Renders a payload the SERVER composed: the wording,
+ * the suppression rules and the dedupe all happened before this hook saw it,
+ * so a webhook delivering the same payload says the same thing.
  */
 export function useNotifications({ selTaskRef }: { selTaskRef: MutableRefObject<string | null> }) {
-  // The ref object is stable, so the returned callback is too — which is what
+  // The ref object is stable, so the returned callback is too, which is what
   // keeps useGlobalEvents from re-subscribing its EventSource on every render.
   return useCallback((payload: NotificationPayload) => {
     if (notificationPermission() !== "granted") return;
@@ -127,15 +128,15 @@ export function useNotifications({ selTaskRef }: { selTaskRef: MutableRefObject<
       selectedTaskId: selTaskRef.current,
     })) return;
     try {
-      // `tag` is the payload id — stable per (kind, task) — so a second
-      // notification about the same task replaces the first rather than
+      // `tag` is the payload id, stable per (kind, task), so a second
+      // notification about the same task replaces the first instead of
       // stacking toasts on a screen nobody is watching.
       const n = new Notification(payload.title, { body: payload.body, tag: payload.id });
       n.onclick = () => {
         window.focus();
         n.close();
         if (!payload.taskId) return;
-        // Routed through a window event rather than a callback prop: this hook
+        // Routed through a window event, not a callback prop: this hook
         // is wired before goToTask exists in useShell, and the app
         // already uses this pattern for cross-cutting facts (calandria:runbooks).
         window.dispatchEvent(new CustomEvent("calandria:goto-task", {

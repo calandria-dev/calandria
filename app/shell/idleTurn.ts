@@ -14,7 +14,7 @@ export const isIdleTurn = (t: { idle_since?: number }, running: boolean): boolea
 
 /**
  * How long a turn has been quiet, as the tail of an activity line: "no activity
- * for 34m". Rounded to whole minutes — this is a "go and look" cue, not a
+ * for 34m". Rounded to whole minutes, since this is a "go and look" cue, not a
  * measurement, and a seconds-precise figure would imply the server is watching
  * more closely than it is.
  */
@@ -31,9 +31,9 @@ export const IDLE_TITLE =
   "The turn is still live but has produced nothing for a while — no output, no tool call. Often a wait on something that already finished. Nothing has been stopped: open it and decide, or press Stop.";
 
 /**
- * Re-render on a one-minute heartbeat while `on`. The age of an idle turn grows
- * with the clock rather than with anything the server pushes — a quiet turn
- * publishes exactly one event, when it goes quiet — so without this the label
+ * Re-render on a one-minute heartbeat while `on`. The age of an idle turn
+ * grows with the clock, not with anything the server pushes: a quiet turn
+ * publishes exactly one event, when it goes quiet, so without this the label
  * would freeze at whatever it said the moment it appeared. Same reasoning as
  * the schedules card polling to age `lastTickAt` (./Schedules.tsx); the timer
  * exists only on the cards that are actually idle.

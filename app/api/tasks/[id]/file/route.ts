@@ -20,9 +20,9 @@ function locate(taskId: string, rel: string): { abs: string; worktree: string } 
   if (!task.worktree_path) return NextResponse.json({ error: "task has no worktree" }, { status: 409 });
   const abs = resolveWorktreeFile(task.worktree_path, rel);
   if (!abs) {
-    // Either outside the worktree or nonexistent; the guard can't tell the
-    // route which without leaking which paths exist, so both are "not found"
-    // unless the request was malformed on its face.
+    // Either outside the worktree or nonexistent; the guard cannot tell the
+    // route which without leaking which paths exist, so both cases return
+    // "not found" unless the request was malformed on its face.
     const malformed = malformedWorktreePath(rel);
     return NextResponse.json({ error: malformed ? "bad path" : "file not found" }, { status: malformed ? 400 : 404 });
   }
@@ -42,9 +42,9 @@ function locate(taskId: string, rel: string): { abs: string; worktree: string } 
 // Read one text file out of a task's worktree, for the document collaboration
 // modal (the diff only carries hunks; the modal renders the whole document).
 // The path is repo-relative and confined to the worktree by
-// resolveWorktreeFile — symlinks included. Size-capped and text-only: the
+// resolveWorktreeFile, symlinks included. Size-capped and text-only: the
 // whole content rides back in the collaboration POST, and a binary would
-// never render as a document anyway. `sha` is the content's git blob id — the
+// never render as a document anyway. `sha` is the content's git blob id, the
 // anchor a document comment is stamped with (see TaskDocComment).
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -56,18 +56,18 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   return NextResponse.json({ path: rel, content: buf.toString("utf8"), size: buf.length, sha: blobSha(buf) });
 }
 
-// Write the modal's edited text straight into the worktree — the "direct"
+// Write the modal's edited text straight into the worktree: the "direct"
 // edit mode, GET's twin. Same path guard; the file must already exist (the
 // modal only opens files the diff lists, and creating files is the agent's
 // job). Two refusals, both 409, both about the worktree having another
-// writer: a running turn (the agent may be mid-edit on this very file, and
-// a write under it would be silently clobbered or clobber its work), and a
-// file that no longer matches the `original` the modal loaded (someone —
-// the agent's last turn, a terminal — wrote it since, and the user's edits
-// were made against text that is no longer there). The stale check is a
-// byte comparison, not a hash: the modal already holds the whole original,
-// and the cap keeps it small. The current text rides back on that refusal so
-// the client can show what happened instead of guessing.
+// writer: a running turn (the agent may be mid-edit on this file, and a
+// write under it could clobber the write or be clobbered by it), and a file
+// that no longer matches the `original` the modal loaded (the agent's last
+// turn or a terminal wrote it since, so the user's edits were made against
+// text that is no longer there). The stale check is a byte comparison, not
+// a hash: the modal already holds the whole original, and the cap keeps it
+// small. The current text rides back on that refusal so the client can show
+// what happened instead of guessing.
 //
 // hasTurn() and the write share one synchronous block after the body has
 // been parsed, so a turn can't start between the check and the write.

@@ -6,25 +6,24 @@ import { logAgentToolArrival } from "@/lib/agentToolLog";
 
 export const dynamic = "force-dynamic";
 // Push + `gh pr create` against github.com, with createTaskPr's own 120s
-// subprocess cap under it — the same ceiling POST /api/tasks/[id]/pr uses.
+// subprocess cap under it, the same ceiling POST /api/tasks/[id]/pr uses.
 export const maxDuration = 180;
 
 // Internal endpoint behind the `create_pr` tool for the stdio MCP bridge
-// (scripts/calandria-mcp.mjs) — the same push the Claude driver mounts
+// (scripts/calandria-mcp.mjs), the same push the Claude driver mounts
 // in-process. Auth is the per-instance SERVICE_TOKEN (middleware.ts,
 // isAgentToolPath).
 //
-// One id, not two, unlike most tools here:
+// This body carries only one id:
 //
-//   body.taskId  the CALLER. CALANDRIA_TASK_ID, injected into the bridge's env by
-//                lib/agents/codex/driver.ts — never a field the model can set.
+//   body.taskId  the CALLER. CALANDRIA_TASK_ID, injected into the bridge's env
+//                by lib/agents/codex/driver.ts, never a field the model can set.
 //
 // There is no target parameter: this tool acts on the caller's own row only.
 // Pushing another task's branch would commit a checkout this session has never
-// seen, and "is this finished?" is a judgement only the session that did the
-// work can make.
+// seen, and only the session that did the work can judge whether it's finished.
 //
-// The policy — the landing_mode gate, the no-worktree refusal, the push itself —
+// The policy (the landing_mode gate, the no-worktree refusal, the push itself)
 // is entirely in lib/prTools.ts, shared with the in-process Claude tool and, for
 // the machinery half, with POST /api/tasks/[id]/pr.
 export async function POST(req: NextRequest) {
@@ -50,10 +49,10 @@ export async function POST(req: NextRequest) {
     (id) => { schedulePrRefresh(id, { force: true }); startPrPolling(); }
   );
 
-  // 400, not 404: the caller's row exists (we just read it), and the request
-  // either landed on a project that doesn't open PRs at all or on a push github
-  // refused. `error` is what the bridge shows the agent as the tool's failure
-  // text — which is what tells it how to retry.
+  // A refusal here is 400: the caller's row exists (we just read it), and the
+  // request either landed on a project that doesn't open PRs at all or on a
+  // push github refused. `error` is what the bridge shows the agent as the
+  // tool's failure text, and what tells it how to retry.
   if (!url) return NextResponse.json({ error: text }, { status: 400 });
   return NextResponse.json({ ok: true, url, number, text });
 }

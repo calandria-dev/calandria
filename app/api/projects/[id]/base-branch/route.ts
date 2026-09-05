@@ -7,11 +7,10 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 // GET: how the project's local base branch stands against its remote, for the
-// banner above the task list. Refreshes the remote-tracking ref first — this is
-// the "fetch on project open" half of keeping new worktrees off a stale tip, and
-// it's the only place the app reaches the network without the user asking. Every
+// banner above the task list. Refreshes the remote-tracking ref first: this is
+// the only place the app reaches the network without the user asking. Every
 // failure (no remote, no network, dead credential) comes back as a status the
-// banner can render, never an error the UI has to special-case.
+// banner can render, not an error the UI has to special-case.
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   return jsonGuard(`base-branch status ${id}`, async () => {
@@ -31,9 +30,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 }
 
 // POST: the banner's one-click actions.
-//   fast-forward — move local <base> up to the fetched remote tip
-//   push         — publish local <base> commits to the remote
-// Both are forward-only and refuse rather than force; see lib/git.ts.
+//   fast-forward: move local <base> up to the fetched remote tip
+//   push: publish local <base> commits to the remote
+// Both are forward-only and refuse when that isn't possible; see lib/git.ts.
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   return jsonGuard(`base-branch action ${id}`, async () => {
@@ -52,15 +51,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     if (action === "fast-forward") {
-      // Re-read the remote tip under this request rather than trusting one the
-      // client saw earlier — the banner may have been sitting on screen for a while.
+      // Re-reads the remote tip for this request: the client's copy may be
+      // stale if the banner has been on screen for a while.
       await fetchBase(project.repo_path, project.branch);
       const status = await remoteBaseStatus(project.repo_path, project.branch);
       if (!status.remoteTip) return NextResponse.json({ ok: false, error: "no remote branch to catch up to" }, { status: 409 });
-      // Nothing local to move. advanceBaseBranch refuses this in the same words,
-      // but the all-zero status a missing ref used to produce made the check
-      // below answer "up to date" first, so that refusal was never reached and
-      // the project reported itself permanently in sync.
+      // Checked before the behind === 0 case below: a missing base branch
+      // reports an all-zero status, so this must run first or the
+      // missing-branch case would read as already up to date.
       if (status.baseMissing)
         return NextResponse.json({ ok: false, error: `base branch ${project.branch} not found in this repository` }, { status: 409 });
       if (status.behind === 0) return NextResponse.json({ ok: true, upToDate: true });

@@ -1,10 +1,10 @@
 "use client";
 
-// A task the user already accepted can still be changed by an agent (its own
-// session's update_task, or another task's — see lib/agentTools.ts). Every such
-// edit is recorded server-side; this is the user-facing half: a chip on the card
-// that lights up while one is unreviewed (TaskRow.agent_edited_at !== 0), and a
-// modal that shows what changed with a per-edit Revert.
+// A task the user already accepted can still be changed by an agent, via its
+// own session's update_task or another task's (see lib/agentTools.ts). Every
+// such edit is recorded server-side; this is the user-facing half: a chip on
+// the card that lights up while one is unreviewed (TaskRow.agent_edited_at
+// !== 0), and a modal that shows what changed with a per-edit Revert.
 
 import { useCallback, useEffect, useState } from "react";
 import { Icon } from "../icons";
@@ -32,9 +32,9 @@ export function AgentEditedChip({ task, variant }: { task: TaskRow; variant: "li
   const [open, setOpen] = useState(false);
   // `&& !open` matters: reverting or acking the last outstanding edit clears
   // agent_edited_at, the global task_edited event refetches the row, and this
-  // component would otherwise vanish — taking the panel the user is reading
-  // out from under them mid-review. Once opened, the modal closes on the
-  // user's word alone; only the chip beside it disappears.
+  // component would otherwise vanish, closing the panel the user is reading
+  // mid-review. Once opened, the modal closes only on the user's action; the
+  // chip beside it can still disappear on its own.
   if (!task.agent_edited_at && !open) return null;
   return (
     <>

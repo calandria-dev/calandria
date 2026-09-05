@@ -1,4 +1,4 @@
-// Calandria logomark — a 3×3 isometric lattice of control rods, radial
+// Calandria logomark: a 3×3 isometric lattice of control rods, radial
 // opacity fade from the raised center rod, each standing in a thin open
 // "channel ring". Single color via currentColor; tint with CSS (see
 // .tb-logo in globals.css). Source: docs/design/handoff/assets/logo.svg.

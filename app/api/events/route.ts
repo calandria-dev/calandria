@@ -13,7 +13,7 @@ export const maxDuration = 300;
 // `user` fires the moment a turn launches (running=1 is already persisted);
 // `session` re-fires turn_started once the agent session actually opens,
 // because that's when status flips to in_progress. Both map to the same
-// coarse event — the payload is a snapshot, so replays are idempotent.
+// coarse event. The payload is a snapshot, so replays are idempotent.
 // `task_updated` is a mutation route (status PATCH, /clear) settling the row
 // with no turn involved; same snapshot payload, same idempotence.
 function coarse(ev: BusEvent): GlobalTaskWireEvent["event"] | null {
@@ -33,7 +33,7 @@ function coarse(ev: BusEvent): GlobalTaskWireEvent["event"] | null {
     case "suggested":
       return "suggested";
     // The linger boundary, both directions: entering "working in background"
-    // and waking from it. One coarse name — the payload is a snapshot and
+    // and waking from it. One coarse name: the payload is a snapshot and
     // background_pending on the re-read row says which side this is.
     case "background_pending":
     case "background_resumed":
@@ -42,16 +42,16 @@ function coarse(ev: BusEvent): GlobalTaskWireEvent["event"] | null {
       return "turn_end";
     case "task_updated":
       return "task_updated";
-    // A write rewrote the row's title/description/priority/dependencies too —
-    // the user's edit dialog (PATCH /api/tasks/[id]) or the `update_task` agent
-    // tool. The payload below can't carry those, so the client refetches on it.
+    // A write rewrote the row's title/description/priority/dependencies too,
+    // from the user's edit dialog (PATCH /api/tasks/[id]) or the `update_task`
+    // agent tool. The payload below can't carry those, so the client refetches on it.
     case "task_edited":
       return "task_edited";
     // A live turn went quiet, or started talking again after having done so
     // (lib/turnActivity.ts). Coarse for the same reason the linger boundary is:
     // the payload is a snapshot, `idle_since` on it says which side this is, and
     // the transcript detail that would otherwise tell a client the turn is alive
-    // deliberately never reaches this stream.
+    // never reaches this stream.
     case "turn_idle":
       return "turn_idle";
     default:
@@ -61,26 +61,23 @@ function coarse(ev: BusEvent): GlobalTaskWireEvent["event"] | null {
 
 /**
  * The global task-lifecycle stream: one always-open SSE connection per client
- * tab, broadcasting coarse turn boundaries for EVERY task across EVERY project
- * — turn started, parked on a question, question answered, suggestion created,
+ * tab, broadcasting coarse turn boundaries for EVERY task across EVERY project:
+ * turn started, parked on a question, question answered, suggestion created,
  * turn ended, plus the route-published mutations (status PATCH / /clear settles,
  * task deletion). It's what keeps the task list's spinners, the project rail's
  * "needs you" badges, and the titlebar pill live for tasks whose transcript
- * stream isn't open (only the SELECTED task has one), replacing the old
- * 10-second task-list poll.
+ * stream isn't open (only the SELECTED task has one).
  *
  * Each event is built by re-reading the task row at publish time: the runner
  * persists running/awaiting_input/status BEFORE it publishes, so the snapshot
  * the client applies is authoritative, and replays/reconnect overlaps are
- * idempotent. There is deliberately no snapshot-on-connect — the client owns
- * its lists via the REST endpoints and refetches them on reconnect (events
- * missed while disconnected are gone; this stream is a live tail only).
+ * idempotent. There is no snapshot-on-connect: the client owns its lists via
+ * the REST endpoints and refetches them on reconnect (events missed while
+ * disconnected are gone; this stream is a live tail only).
  */
 export async function GET(req: Request) {
   // The bus subscriber that mints notifications. Idempotent, so every tab's
-  // stream calls it and only the first one subscribes. Here rather than at boot
-  // because this stream IS the only channel today: a notification published
-  // with no tab open has nowhere to go.
+  // stream calls it and only the first one subscribes.
   ensureNotifier();
   const encoder = new TextEncoder();
   let cleanup = () => {};
@@ -95,35 +92,35 @@ export async function GET(req: Request) {
       };
       const unsub = subscribeGlobal((taskId, ev) => {
         // An agent's login died (or started working again). Task-keyed on the bus
-        // because that's where it was detected, but instance-wide in meaning —
-        // one login per agent, shared by every task — so it relays verbatim and
+        // because that's where it was detected, but instance-wide in meaning:
+        // one login per agent, shared by every task. It relays verbatim, so
         // every tab raises/drops the reconnect banner at once.
         if (ev.type === "agent_auth") {
           send({ type: "agent_auth", agent: ev.agent, broken: ev.broken, reason: ev.reason });
           return;
         }
-        // A task row was hard-deleted. There is nothing left to re-read — the
-        // event carries its own project id + recomputed awaiting count — and
-        // the getTask bail below would otherwise drop it, freezing the
-        // project's badge in other tabs until the next SSE reconnect.
+        // A task row was hard-deleted. There is nothing left to re-read, so the
+        // event carries its own project id and recomputed awaiting count. The
+        // getTask bail below would otherwise drop it, freezing the project's
+        // badge in other tabs until the next SSE reconnect.
         if (ev.type === "task_deleted") {
           send({ type: "task_deleted", taskId, projectId: ev.projectId, awaiting_count: ev.awaiting_count });
           return;
         }
         // Tasks were re-parented. The rows still exist, but re-reading them can
-        // only say where they landed — the projects they LEFT have to drop them
-        // from their trays, so both ends travel with the event. Relayed whole:
-        // the bus key is one arbitrary member of the set, so `taskId` is
-        // deliberately ignored here.
+        // only say where they landed. The projects they LEFT have to drop them
+        // from their trays too, so both ends travel with the event. Relayed
+        // whole: the bus key is one arbitrary member of the set, so `taskId`
+        // is ignored here.
         if (ev.type === "tasks_moved") {
           send({ type: "tasks_moved", taskIds: ev.taskIds, fromProjectIds: ev.fromProjectIds, toProjectId: ev.toProjectId });
           return;
         }
-        // A project's saved runbooks changed — a create/edit/copy/delete here,
+        // A project's saved runbooks changed: a create/edit/copy/delete here,
         // in another tab, or an agent's create_runbook. Project-keyed, so it
-        // bypasses the getTask re-read below the way task_deleted does — and
-        // for a stronger reason: there is no task row in this mutation at all,
-        // so its publishers key the bus with "" and `taskId` is meaningless.
+        // bypasses the getTask re-read below the way task_deleted does, and for
+        // a stronger reason: there is no task row in this mutation at all, so
+        // its publishers key the bus with "" and `taskId` is meaningless.
         if (ev.type === "runbooks_changed") {
           send({ type: "runbooks_changed", projectId: ev.projectId });
           return;
@@ -135,9 +132,8 @@ export async function GET(req: Request) {
           return;
         }
         // A composed notification (lib/notifications/notify.ts). Bypasses the
-        // re-read below for the strongest reason of all these branches: the
-        // payload isn't a fact to look up but a message already written for a
-        // human, screened against the row when it was minted — and a test
+        // re-read below because the payload is a message already written for a
+        // human, screened against the row when it was minted. A test
         // notification names no task at all, so the getTask bail would drop it.
         if (ev.type === "notification") {
           send({ type: "notification", payload: ev.payload });
@@ -145,8 +141,8 @@ export async function GET(req: Request) {
         }
         const event = coarse(ev);
         if (!event) return;
-        // Task deleted mid-turn (rows are hard-deleted) — nothing to report;
-        // the DELETE route's own task_deleted publish (above) covers cleanup.
+        // Task deleted mid-turn (rows are hard-deleted): nothing to report.
+        // The DELETE route's own task_deleted publish (above) covers cleanup.
         const t = getTask(taskId);
         if (!t) return;
         const payload: GlobalTaskWireEvent = {
@@ -167,11 +163,11 @@ export async function GET(req: Request) {
           unread_run_at: t.unread_run_at ?? 0,
           // When this task's live turn last produced anything, once it has been
           // quiet long enough to be worth saying (0 otherwise). Read off the
-          // in-memory registry rather than the row: it is turn state, not task
-          // state, and persisting it would move `updated_at` — the board's sort
-          // key — every time a task went QUIET, floating the silent ones to the
-          // top. Carried on every task payload, not just the turn_idle one, so
-          // any event a client receives re-settles the mark.
+          // in-memory registry: it is turn state, not task state, and
+          // persisting it would move `updated_at`, the board's sort key, every
+          // time a task went quiet, floating the silent ones to the top.
+          // Carried on every task payload, not just the turn_idle one, so any
+          // event a client receives re-settles the mark.
           idle_since: turnIdleSince(taskId),
           awaiting_count: countAwaiting(t.project_id),
           // A suggestion can be filed into a project other than the one the

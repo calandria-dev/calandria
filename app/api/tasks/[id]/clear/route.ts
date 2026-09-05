@@ -33,14 +33,15 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
   const gen = task.generation;
 
-  // Claim the task for the WHOLE retirement, before the abort below frees the
-  // turn slot. Aborting used to leave hasTurn() false across the multi-minute
-  // summarize that follows, so a POST /messages or a queue drain could start a
-  // turn on the generation this route is in the middle of retiring — a session
-  // about to be summarized away, and a summary covering a generation still being
-  // written to (issue #36). The claim makes every launch path park its message
-  // instead; the finally below releases it on every exit, including a summarize
-  // that throws and a task deleted while we waited.
+  // Claims the task for the whole retirement, before the abort below frees
+  // the turn slot. Without this, hasTurn() reads false across the
+  // multi-minute summarize that follows, so a POST /messages or a queue
+  // drain could start a turn on the generation this route is retiring: a
+  // session about to be summarized away, with a summary covering a
+  // generation still being written to (issue #36). The claim makes every
+  // launch path park its message instead; the finally below releases it on
+  // every exit, including a summarize that throws and a task deleted while
+  // this request waited.
   if (!beginClearing(id)) {
     return NextResponse.json({ error: "a /clear is already in progress for this task" }, { status: 409 });
   }
@@ -52,22 +53,23 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 }
 
 async function clearGeneration(id: string, task: Task, project: Project, gen: number) {
-  // Stop any turn still streaming before we end this generation. /clear starts a
-  // fresh context, so the running turn's work belongs to the OLD generation and
-  // must not bleed into the new one. Aborting trips the runner's unwind; the
-  // generation bump below — combined with the runner's generation-guarded settle
-  // (lib/runner.ts) — stops that turn's finally from resurrecting the session id
-  // this route nulls. We don't block on the turn fully settling: whichever order
-  // the abort's finally and this write land in, the guard keeps session_id null.
-  // The clearing claim taken above means the slot the abort frees stays unusable
-  // until we're done, so the unwinding turn's handoff can't drain into it either.
+  // Stops any turn still streaming before ending this generation. /clear
+  // starts a fresh context, so the running turn's work belongs to the old
+  // generation and must not bleed into the new one. Aborting trips the
+  // runner's unwind; the generation bump below, combined with the runner's
+  // generation-guarded settle (lib/runner.ts), stops that turn's finally
+  // from resurrecting the session id this route nulls. This does not block
+  // on the turn fully settling: whichever order the abort's finally and
+  // this write land in, the guard keeps session_id null. The clearing claim
+  // taken above keeps the slot the abort frees unusable until this route is
+  // done, so the unwinding turn's handoff can't drain into it either.
   if (hasTurn(id)) abortTurn(id);
 
-  // Build a transcript from the current generation's messages, clipping each
-  // message and capping the total so an oversized session (a giant paste, or a
-  // conversation that hit the context limit) can still be summarized —
-  // otherwise summarizeTranscript would itself fail "prompt is too long" and
-  // the handoff summary would be lost.
+  // Builds a transcript from the current generation's messages, clipping
+  // each message and capping the total so an oversized session (a giant
+  // paste, or a conversation that hit the context limit) can still be
+  // summarized. Otherwise summarizeTranscript would itself fail "prompt is
+  // too long" and the handoff summary would be lost.
   const transcript = buildClippedTranscript(
     listMessages(id).filter(
       (m) => m.generation === gen && (m.role === "user" || m.role === "assistant" || m.role === "tool")
@@ -83,17 +85,19 @@ async function clearGeneration(id: string, task: Task, project: Project, gen: nu
     }
   }
 
-  // The summarize above can take minutes — re-read before writing. The task may
-  // have been deleted while we waited (addSummary would then throw FOREIGN KEY
-  // and 500). The generation check is belt-and-braces since the clearing claim
-  // 409s a second /clear: nothing else in the app advances a generation, and
-  // bumping twice would skip one and double-record the boundary.
+  // The summarize above can take minutes, so re-read before writing. The
+  // task may have been deleted while this route waited (addSummary would
+  // then throw a foreign key error and 500). The generation check is a
+  // second safeguard, since the clearing claim already 409s a second
+  // /clear: nothing else in the app advances a generation, and bumping
+  // twice would skip one and double-record the boundary.
   const cur = getTask(id);
   if (!cur) return NextResponse.json({ error: "task was deleted while summarizing" }, { status: 404 });
   if (cur.generation !== gen) return NextResponse.json({ task: cur, summary, generation: cur.generation });
 
   addSummary(id, gen, summary);
-  // Record the boundary + summary in the message log for continuity in the UI.
+  // Records the boundary and summary in the message log for continuity in
+  // the UI.
   addMessage(id, gen, "session_break", summary);
 
   // Fresh generation: new context window, session reset. started=0 so the next
@@ -111,18 +115,18 @@ async function clearGeneration(id: string, task: Task, project: Project, gen: nu
     status: "in_progress",
   });
 
-  // Discard any follow-ups queued against the OLD generation. They were lined up
-  // behind the context the user just cleared, so auto-draining them into the
-  // fresh session would replay stale intent. (The aborted turn's finally also
-  // clears the queue on its own path; doing it here too covers the no-turn case
-  // and any residual rows, and is idempotent.)
+  // Discards any follow-ups queued against the old generation. They were
+  // lined up behind the context the user just cleared, so auto-draining
+  // them into the fresh session would replay stale intent. The aborted
+  // turn's finally also clears the queue on its own path; doing it here too
+  // covers the no-turn case and any residual rows, and is idempotent.
   const dropped = clearPendingMessages(id);
   for (const p of dropped) publish(id, { type: "dequeued", msgId: p.id });
-  // A dequeued bubble just disappears from the transcript with nothing said, and
-  // the clearing claim above means a message sent DURING the clear now lands in
-  // this queue rather than starting a turn — so the wait is where the user is
-  // most likely to type one. Say what was dropped, in the fresh generation, with
-  // enough of the text to retype it from.
+  // A dequeued bubble disappears from the transcript with nothing said, and
+  // the clearing claim above means a message sent during the clear now
+  // lands in this queue instead of starting a turn, so the wait is where
+  // the user is most likely to type one. States what was dropped, in the
+  // fresh generation, with enough of the text to retype it from.
   if (dropped.length) {
     const note =
       `ℹ ${dropped.length} queued message${dropped.length === 1 ? "" : "s"} discarded by /clear — ` +
@@ -133,10 +137,10 @@ async function clearGeneration(id: string, task: Task, project: Project, gen: nu
     publish(id, { type: "notice", content: note, msgId: m.id, generation: gen + 1, ts: m.created_at });
   }
 
-  // The row just settled (running/awaiting reset, status in_progress) outside
-  // any turn, and the `dequeued` publishes above are transcript detail the
-  // coarse /api/events filter drops — announce the settle so every other tab's
-  // spinners and "needs you" badges recount.
+  // The row just settled (running/awaiting reset, status in_progress)
+  // outside any turn, and the `dequeued` publishes above are transcript
+  // detail the coarse /api/events filter drops. Announces the settle so
+  // every other tab's spinners and "needs you" badges recount.
   publishGlobal(id, { type: "task_updated" });
 
   return NextResponse.json({ task: next, summary, generation: gen + 1 });
