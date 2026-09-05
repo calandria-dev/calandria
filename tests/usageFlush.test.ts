@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// The spend ledger on a turn that never reached a result message. Measured on
-// a live instance: a Stop 33.7 minutes into one segment recorded 0 tokens and
-// $0, because `usage` was only ever read from the SDK's result message and a
-// model can run for half an hour of tool calls without producing one. The
-// driver now reports each request's own tokens as a PARTIAL usage event, which
-// the runner holds rather than writes: a full report supersedes them, and the
+// The spend ledger on a turn that never reached a result message. `usage` is
+// otherwise only read from the SDK's result message, and a model can run
+// through tool calls for a long time without producing one. The driver
+// reports each request's own tokens as a PARTIAL usage event, which the
+// runner holds instead of writing: a full report supersedes them, and the
 // finally writes whatever is left when none arrived.
 const { runTurnMock } = vi.hoisted(() => ({ runTurnMock: vi.fn() }));
 
@@ -117,11 +116,11 @@ describe("spend on a turn that never reported a result", () => {
     expect(usageRows(task.id)).toEqual([
       { cost_usd: null, input_tokens: 14, output_tokens: 12, cache_read_tokens: 300, cache_creation_tokens: 20 },
     ]);
-    // Unpriced rather than a confident $0: the per-request source carries
-    // tokens alone, so the total is a floor and the UI must say so.
+    // Unpriced, not a confident $0: the per-request source carries tokens
+    // alone, so the total is a floor and the UI must say so.
     const totals = getTaskUsage(task.id);
     expect(totals).toMatchObject({ cost_usd: 0, total_tokens: 346, turns: 1, unpriced_turns: 1 });
-    // The live chip gets it too, marked unpriced, rather than waiting for a refetch.
+    // The live chip gets it too, marked unpriced, instead of waiting for a refetch.
     expect(events.filter((e) => e.type === "usage")).toHaveLength(1);
     expect(events.find((e) => e.type === "usage")).toMatchObject({ unpriced: true });
   });
@@ -132,8 +131,8 @@ describe("spend on a turn that never reported a result", () => {
       { type: "session", sessionId: "s1" },
       request(10, 5),
       // Every resumed session's first result message reports all zeros. It
-      // says nothing about the requests already made, so it must not supersede
-      // them — that would put the bug straight back for every resumed turn.
+      // says nothing about the requests already made, so it must not
+      // supersede them, or every resumed turn would lose those tokens.
       { type: "usage", usage: { cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 } },
       { type: "assistant", content: "working" },
     ]);
@@ -157,7 +156,7 @@ describe("spend on a turn that did report a result", () => {
       yield { type: "session", sessionId: "s1" } as StreamEvent;
       yield request(10, 5, 100, 20);
       yield request(4, 7, 200, 0);
-      // The result message's usage is the segment's own totals — the sum over
+      // The result message's usage is the segment's own totals: the sum over
       // exactly those requests (verified to the token; see claudeSubagentTokens).
       yield {
         type: "usage",

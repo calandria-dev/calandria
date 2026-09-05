@@ -1,32 +1,13 @@
-/* Launching the real Electron shell for the desktop e2e suite.
+/**
+ * Launches the real Electron shell for the desktop e2e suite, through
+ * Playwright's `_electron` driver so specs get retrying assertions, a
+ * per-test timeout and failure screenshots against a real renderer.
  *
- * WHY THIS IS A PLAYWRIGHT SUITE AND NOT PLAIN NODE. `desktop/`'s other two
- * test scripts (`test-supervisor.js`, `test-real-boot.js`) are deliberately
- * dependency-free plain node: they assert process supervision on a box with
- * nothing installed, including inside Electron's own runtime. This suite cannot
- * be that — driving a window means `playwright`'s `_electron` driver either
- * way, and a display either way — so the plain style would buy nothing and cost
- * three things it needs: auto-retrying `expect` against a live renderer (the
- * smoke path streams SSE into the DOM), a per-test timeout so a wedged launch
- * fails one spec instead of hanging the process, and screenshots-on-failure in
- * the same `test-results/` shape the CI lane already uploads for the browser
- * suite. The proof of concept this replaces (`desktop/test-window.js`) had
- * hand-rolled versions of all three.
- *
- * WHAT A "SHELL" IS HERE. One `electron.launch()` against `desktop/`, with its
- * own hermetic Calandria instance underneath: its own database, worktrees,
- * projects and Electron user-data directory, all minted under the browser
- * suite's run root (e2e/env.ts) so `e2e/cleanup-reporter.ts` removes them on a
- * green run and keeps them on a red one. Per-launch rather than per-run because
- * half of what this suite asserts is *fatal* to an instance — the single-
- * instance refusal, the db-lock collision, quit-drains-and-exits.
- *
- * The environment is `e2e/env.ts`'s `SERVER_ENV` with the per-instance paths
- * and ports swapped: `supervisor.js`'s `sidecarEnv()` forwards its own
- * environment to both sidecars, so the shape the browser suite hands `npm
- * start` reaches server.js and pty-server.js unchanged through
- * `electron.launch({ env })` — same temp dirs, same pinned gitconfig, same
- * `CALANDRIA_E2E_MOCK_AGENT=1` deterministic driver, no agent CLI or login.
+ * Each launch gets its own hermetic Calandria instance (database, worktrees,
+ * projects, Electron user-data directory) minted under the browser suite's
+ * run root (`e2e/env.ts`), reusing its `SERVER_ENV` with per-instance ports
+ * and the deterministic mock agent driver (`CALANDRIA_E2E_MOCK_AGENT=1`), no
+ * agent CLI or login required.
  */
 
 import { spawnSync } from "node:child_process";
@@ -39,31 +20,29 @@ const DESKTOP_DIR = path.resolve(__dirname, "..");
 const REPO_ROOT = path.resolve(DESKTOP_DIR, "..");
 
 /**
- * Either the dev shell (`electron .`) or a packaged build: point
- * `CALANDRIA_TEST_BIN` at the packaged executable to run the same specs against
- * the artifact a user would download.
+ * Either the dev shell (`electron .`) or a packaged build: set
+ * `CALANDRIA_TEST_BIN` to the packaged executable to run the same specs
+ * against the artifact a user would download.
  *
- * The packaged run is not the dev run with a different binary — see
- * `instanceEnv()` and `assertOutsideCheckout()` below. It carries no
- * `CALANDRIA_REPO_ROOT`, and the artifact must sit outside this checkout, so
- * that what is exercised is the payload the installer laid down rather than the
- * repo it happened to be built in.
+ * A packaged run carries no `CALANDRIA_REPO_ROOT` (see `instanceEnv()`), and
+ * the artifact must sit outside this checkout, so the specs exercise the
+ * payload the installer produced instead of the repo it was built from. See
+ * `assertOutsideCheckout()` below.
  */
 export const PACKAGED = process.env.CALANDRIA_TEST_BIN || null;
 
 /**
- * A packaged artifact still standing inside the checkout is not a packaged
- * test.
+ * A packaged artifact still inside the checkout does not test packaging.
  *
  * `desktop/main.js` resolves its repo root from `process.resourcesPath` when
- * `app.isPackaged`, so a payload with a hole in it does not fall back to the
- * repo — but everything *downstream* of the payload can: a stray relative path,
- * a module resolved by walking up to the repo's `node_modules`, a lockfile Next
- * finds two directories above. All of that is satisfied for free while the
- * artifact lives at `desktop/dist/linux-unpacked/`, and satisfied by nothing on
- * a user's machine. Relocating the artifact is what makes the difference
- * observable, so refusing to run un-relocated is the assertion — a green run
- * from inside the tree would be the exact false pass this lane exists to catch.
+ * `app.isPackaged`, so a payload missing a file does not fall back to the
+ * repo, but code downstream of the payload still can: a stray relative path,
+ * a module resolved by walking up to the repo's `node_modules`, a lockfile
+ * Next finds two directories above. All of that resolves while the artifact
+ * sits at `desktop/dist/linux-unpacked/`, and resolves to nothing on a
+ * user's machine. Refusing to run an un-relocated artifact is the assertion:
+ * a run from inside the tree would pass without exercising the packaged
+ * payload.
  */
 function assertOutsideCheckout(bin: string): void {
   const real = fs.realpathSync(bin);
@@ -80,37 +59,31 @@ function assertOutsideCheckout(bin: string): void {
 }
 
 /**
- * Linux-only, and CI-only there. Chromium's setuid sandbox helper needs the
- * SUID bit, which an unpacked Electron (`node_modules/electron/dist`, or
- * `electron-builder --dir`) does not have — so the suite drops the sandbox to
- * run at all on a runner. A packaged `.deb`/AppImage installed as a user would
- * install it DOES have it, and the lane that tests that must set
- * `CALANDRIA_DESKTOP_SANDBOX=1` so this flag is not what makes it pass.
+ * Linux CI only. Chromium's setuid sandbox helper needs the SUID bit, which
+ * an unpacked Electron (`node_modules/electron/dist`, or `electron-builder
+ * --dir`) does not have, so the suite drops the sandbox to run at all on a
+ * runner. An installed `.deb`/AppImage does have the bit, so the lane that
+ * tests one sets `CALANDRIA_DESKTOP_SANDBOX=1` to keep this flag from being
+ * what makes it pass.
  *
- * Not passed on Windows or macOS: neither has a setuid helper to be missing —
- * Chromium sandboxes with a restricted token and a job object there — so the
- * flag would buy nothing and would quietly weaken what those lanes test.
- * `01-shell.spec.ts` asserts `sandbox: true` on the renderer's webPreferences,
- * which is a different (and unaffected) setting: that is the renderer opting
- * out of Node, this is the OS-level process sandbox.
+ * Not passed on Windows or macOS: neither has a setuid helper to be missing,
+ * and passing it there would weaken what those lanes test. That is distinct
+ * from `01-shell.spec.ts`'s `sandbox: true` assertion on the renderer's
+ * webPreferences, which is the renderer opting out of Node, not the OS-level
+ * process sandbox.
  *
- * PASSING THE FLAG IS NOT THE ONLY WAY IT GETS THERE, and this cost a
- * measurement to find: on Linux `_electron.launch()` UNSHIFTS `--no-sandbox`
- * onto the argument list itself unless `chromiumSandbox: true` is given
- * (playwright-core 1.61.1, `Electron.launch`; the option is documented as
- * "Enable Chromium sandboxing. Defaults to false."). So an installed .deb
- * driven by this suite ran unsandboxed no matter what the fixture omitted —
- * `app.commandLine.hasSwitch("no-sandbox")` read true against a launch that
- * passed no such flag. `launchOptions()` below sets both halves from the one
- * switch, so the flag is present exactly when the lane means it to be.
+ * Playwright's `electron.launch()` adds `--no-sandbox` to the argument list
+ * on Linux by itself unless `chromiumSandbox: true` is passed, so
+ * `launchOptions()` below sets both halves from this one switch to keep them
+ * in agreement.
  */
 const NO_SANDBOX = process.platform === "linux" && process.env.CALANDRIA_DESKTOP_SANDBOX !== "1";
 
 /**
- * Base for the per-instance port pair. Distinct from the browser suite's 4711
- * so both can run on one box; it is only ever a *preference* — `pickPorts()`
- * steps past a busy one — which is why every assertion reads the origin back
- * off the window rather than trusting this.
+ * Base for the per-instance port pair. Distinct from the browser suite's
+ * 4711 so both can run on one box. It is only a preference: `pickPorts()`
+ * steps past a busy port, which is why every assertion reads the origin back
+ * off the window instead of trusting this constant.
  */
 const PORT_BASE = Number(process.env.CALANDRIA_DESKTOP_E2E_PORT || 4741);
 let instances = 0;
@@ -119,7 +92,7 @@ export type Shell = {
   app: ElectronApplication;
   /** The shell's one BrowserWindow. */
   win: Page;
-  /** `http://127.0.0.1:<port>` — the origin the shell really bound. */
+  /** `http://127.0.0.1:<port>`: the origin the shell actually bound. */
   origin: string;
   /** Hermetic instance root (db/, worktrees/, projects/, electron-user-data/). */
   root: string;
@@ -128,19 +101,20 @@ export type Shell = {
   firstUrl: string;
   /**
    * What the boot screen's `<pre id="log">` had streamed into it before the
-   * swap. The pane is off screen — the boot screen shows a spinner — but it is
+   * swap. The pane is off screen (the boot screen shows a spinner) but is
    * still written, and is the only place the supervisor's first lines survive.
    */
   bootScreenLog: string;
   /**
-   * What the boot screen actually SHOWED while it was up: the spinner, and how
-   * wide the log pane rendered (`-1` if it was gone by the time we looked).
+   * What the boot screen actually showed while it was up: the spinner, and
+   * how wide the log pane rendered (`-1` if it was already gone).
    */
   bootScreen: { spinner: boolean; logWidth: number };
   /**
-   * Everything the Electron main process wrote to stdout/stderr from the moment
-   * `electron.launch()` resolved. The supervisor's very first lines are already
-   * flushed by then — `[shell] ready on …` is the earliest one guaranteed here.
+   * Everything the Electron main process wrote to stdout/stderr from the
+   * moment `electron.launch()` resolved. The supervisor's first lines are
+   * already flushed by then; `[shell] ready on …` is the earliest one
+   * guaranteed here.
    */
   log: string[];
   /**
@@ -161,26 +135,23 @@ export function instanceRoot(name: string): string {
 }
 
 /**
- * Linux-only, and load-bearing rather than tidy-up. Electron's default
- * permission CHECK grants notifications, so `Notification.permission` reads
- * "granted" in the shell with nothing asked, and the app posts a real native
- * notification on every turn event (app/shell/useNotifications.ts). On Linux
- * that is libnotify on the main thread: with a session bus present but NO
- * notification daemon owning org.freedesktop.Notifications — which is every
- * headless box and every GitHub runner — each one blocks the entire Electron
- * main process for GDBus's 25 s call timeout. Measured: the quit-drain spec's
- * shutdown went from >90 s (main process wedged, not even answering
- * `app.evaluate`) to 0.2 s with this set. Pointing libnotify at a socket that
- * is not there makes it fail immediately instead.
+ * Linux only. Electron's default permission check grants notifications, so
+ * `Notification.permission` reads "granted" in the shell with nothing asked,
+ * and the app posts a native notification on every turn event
+ * (app/shell/useNotifications.ts). On Linux that goes through libnotify on
+ * the main thread: with a session bus present but no notification daemon
+ * owning `org.freedesktop.Notifications` (true of every headless box and
+ * every GitHub runner), each call blocks the whole Electron main process for
+ * GDBus's 25 s call timeout. Pointing libnotify at a socket that does not
+ * exist makes it fail immediately instead.
  *
- * Windows and macOS post notifications through the OS API directly, with no bus
- * to misconfigure and no measured stall, so the variable is simply absent there
- * rather than set to something inert — a `DBUS_SESSION_BUS_ADDRESS` in a
- * Windows process's environment is a lie the sidecars would inherit.
+ * Windows and macOS post notifications through the OS API directly, with no
+ * bus to misconfigure, so the variable is absent there instead of set to
+ * something inert: a `DBUS_SESSION_BUS_ADDRESS` in a Windows process's
+ * environment would be inherited by the sidecars incorrectly.
  *
- * The bench-VM specs that assert notifications actually reach the bus must
- * override this and run under a real session with a daemon (dunst) —
- * docs/DESKTOP_E2E.md §1.
+ * The bench-VM specs that assert notifications reach the bus override this
+ * and run under a real session with a daemon (dunst).
  */
 const NO_NOTIFICATION_BUS: Record<string, string> =
   process.platform === "linux"
@@ -197,16 +168,13 @@ export function instanceEnv(root: string, port: number): Record<string, string> 
     CALANDRIA_DB_DIR: path.join(root, "db"),
     CALANDRIA_WORKTREES_DIR: path.join(root, "worktrees"),
     CALANDRIA_PROJECTS_DIR: path.join(root, "projects"),
-    // Unpackaged, the shell launches whatever repo this is, not the parent of
-    // some installed app bundle.
+    // Unpackaged, the shell launches whatever repo this is; it does not
+    // resolve the parent of an installed app bundle.
     //
-    // PACKAGED, this variable is deliberately ABSENT — it is the one piece of
-    // env that would hide the failure this lane exists to find. Setting it
-    // points a downloaded app back at a working checkout, which is how the
-    // research spike's packaged shell passed while still leaning on the repo:
-    // every assertion held, and a real download would have died on a missing
-    // payload. Without it `main.js` must resolve `resources/app-payload` and
-    // the artifact has to carry everything itself.
+    // Packaged, this variable is absent: setting it would point a downloaded
+    // app back at a working checkout, masking a missing payload. Without it,
+    // main.js must resolve resources/app-payload, so the artifact carries
+    // everything itself.
     ...(PACKAGED ? {} : { CALANDRIA_REPO_ROOT: REPO_ROOT }),
     // Nothing here tests the ticker, and an unattended sweep inside a suite
     // that kills servers mid-run is only a source of noise.
@@ -223,7 +191,7 @@ export type LaunchOptions = {
    * `false` for the specs whose subject is a boot that never gets there.
    */
   waitForApp?: boolean;
-  /** Reuse another shell's Electron user-data dir — i.e. its single-instance lock. */
+  /** Reuse another shell's Electron user-data dir: this is its single-instance lock. */
   userDataDir?: string;
 };
 
@@ -243,8 +211,8 @@ function launchArgs(root: string, opts: LaunchOptions): string[] {
 
 /**
  * `chromiumSandbox` is the half of the sandbox decision that lives in
- * Playwright rather than in our arguments — see `NO_SANDBOX`. Kept beside
- * `launchArgs()` so the two can never disagree.
+ * Playwright's own launch option instead of the argument list; see
+ * `NO_SANDBOX`. Kept beside `launchArgs()` so the two stay in agreement.
  */
 function launchOptions(): { chromiumSandbox: boolean } {
   return { chromiumSandbox: !NO_SANDBOX };
@@ -253,23 +221,24 @@ function launchOptions(): { chromiumSandbox: boolean } {
 function launchEnv(root: string, port: number, opts: LaunchOptions): Record<string, string> {
   const inherited: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) inherited[k] = v;
-  // The whole environment is inherited (PATH matters: resolveNode() has to find
-  // a real `node` for the sidecars), so a developer who exports
-  // CALANDRIA_REPO_ROOT for their own shell would otherwise re-introduce
-  // exactly the crutch instanceEnv() drops. Deleted rather than overwritten:
-  // "absent" is the state under test.
+  // The whole environment is inherited (PATH matters: resolveNode() needs a
+  // real `node` on it for the sidecars), so a developer who exports
+  // CALANDRIA_REPO_ROOT in their own shell would reintroduce the crutch
+  // instanceEnv() removes. The key is deleted here, since the test needs
+  // the variable to be absent, not merely empty.
   if (PACKAGED) delete inherited.CALANDRIA_REPO_ROOT;
   return { ...inherited, ...instanceEnv(root, port), ...(opts.env ?? {}) };
 }
 
 /**
- * Launch the shell against a fresh hermetic instance and wait for the window.
+ * Launches the shell against a fresh hermetic instance and waits for the
+ * window.
  *
  * The boot screen is captured on the way past: `main.js` opens the window on
- * `loading.html` and only swaps to the app once `/api/version` answers, so the
+ * `loading.html` and swaps to the app once `/api/version` answers, so the
  * URL at `firstWindow()` and the log lines the supervisor pushed into
- * `<pre id="log">` are the only evidence the handoff happened at all — both are
- * gone the moment `loadURL(appUrl)` lands.
+ * `<pre id="log">` are the only evidence the handoff happened at all. Both
+ * are gone the moment `loadURL(appUrl)` lands.
  */
 export async function launchShell(name: string, opts: LaunchOptions = {}): Promise<Shell> {
   const root = instanceRoot(name);
@@ -294,25 +263,23 @@ export async function launchShell(name: string, opts: LaunchOptions = {}): Promi
 
   const win = await app.firstWindow({ timeout: 120_000 });
 
-  // The FIRST NON-EMPTY url, not the first one. `firstWindow()` resolves as soon
-  // as the BrowserWindow object exists, which can be before `main.js`'s
-  // `loadURL(loading.html)` has landed a navigation — `win.url()` then reads ""
-  // and 01-shell's boot-screen assertion fails on a race rather than on
-  // anything real. Measured flaky on both the macOS and the Windows lane
-  // (2026-08-29 and 2026-08-30, three occurrences interleaved with passes on
-  // unrelated branches).
+  // The first NON-EMPTY url, not the first one. `firstWindow()` resolves as
+  // soon as the BrowserWindow object exists, which can be before
+  // `main.js`'s `loadURL(loading.html)` has landed a navigation, so
+  // `win.url()` can read "" and fail 01-shell's boot-screen assertion on a
+  // race rather than on anything real.
   //
-  // The loop is deliberately tight, and short. What we are recording is
-  // replaced by the app url within a second or two of the server answering
-  // /api/version, so a generous poll would trade one wrong answer for another.
-  // Staying "" past the deadline is a real failure and still fails.
+  // The loop is tight and short. The value being recorded is replaced by
+  // the app url within a second or two of the server answering
+  // /api/version, so a generous poll would trade one wrong answer for
+  // another. Staying "" past the deadline is a real failure and still
+  // fails.
   //
-  // This used to add that the first non-empty value "can only ever be
-  // loading.html (or `about:blank`) and never the app". That was wrong, and
-  // #75 is the counterexample: on a fast macOS boot the swap lands before the
-  // first read, and the first thing this sees is already the app. The
-  // consumer's predicate is `isBootHandoffUrl` in ./bootUrl, which accepts
-  // either side of that race.
+  // The first non-empty value is not always `loading.html` (or
+  // `about:blank`): on a fast macOS boot the swap can land before the first
+  // read, so the first value seen is already the app (#75). The consumer's
+  // predicate is `isBootHandoffUrl` in ./bootUrl, which accepts either side
+  // of that race.
   let firstUrl = win.url();
   const firstUrlDeadline = Date.now() + 5_000;
   while (firstUrl === "" && Date.now() < firstUrlDeadline) {
@@ -320,13 +287,13 @@ export async function launchShell(name: string, opts: LaunchOptions = {}): Promi
     firstUrl = win.url();
   }
 
-  // Read the boot screen while it still exists. `main.js` pushes each sidecar
-  // log line into `<pre id="log">` with `executeJavaScript`, and the whole page
-  // is replaced the moment the server answers /api/version (~2 s), so this is a
-  // hand-rolled loop rather than `expect.poll`: the moment the swap lands the
-  // locator stops resolving, and a retrying matcher would sit on its own
-  // timeout waiting for an element that is never coming back. Short per-read
-  // timeouts, and the last non-empty read wins.
+  // Read the boot screen while it still exists. `main.js` pushes each
+  // sidecar log line into `<pre id="log">` with `executeJavaScript`, and the
+  // whole page is replaced the moment the server answers /api/version
+  // (~2 s). This loop is hand-rolled instead of `expect.poll`: once the
+  // swap lands the locator stops resolving, and a retrying matcher would
+  // run out its own timeout waiting on an element that will not return.
+  // Short per-read timeouts; the last non-empty read wins.
   let bootScreenLog = "";
   let bootScreen: Shell["bootScreen"] = { spinner: false, logWidth: -1 };
   const deadline = Date.now() + 20_000;
@@ -336,10 +303,10 @@ export async function launchShell(name: string, opts: LaunchOptions = {}): Promi
         .locator("#log")
         .innerText({ timeout: 500 })
         .catch(() => "")) || bootScreenLog;
-    // Same window of opportunity, so read it here rather than in a second loop.
-    // A rect, not `isVisible()`: the log pane is clipped to 1×1 rather than
-    // `display: none` (it has to stay rendered for `innerText` above), and
-    // Playwright calls a 1×1 element visible.
+    // Read here, in the same window of opportunity, instead of a second
+    // loop. A rect, not `isVisible()`: the log pane is clipped to 1×1
+    // instead of set to `display: none` (it must stay rendered for
+    // `innerText` above), and Playwright treats a 1×1 element as visible.
     bootScreen = await win
       .evaluate(() => {
         const log = document.getElementById("log");
@@ -375,11 +342,12 @@ export async function launchShell(name: string, opts: LaunchOptions = {}): Promi
 }
 
 /**
- * The executable every launch in this file goes through: the packaged artifact
- * when `CALANDRIA_TEST_BIN` names one, the unpacked dev Electron otherwise.
+ * The executable every launch in this file goes through: the packaged
+ * artifact when `CALANDRIA_TEST_BIN` names one, the unpacked dev Electron
+ * otherwise.
  *
- * The relocation check lives here rather than at module load so it reports as a
- * failing test with the rest of the launch context, and so a spec that never
+ * The relocation check runs here, not at module load, so it reports as a
+ * failing test with the rest of the launch context, and a spec that never
  * launches (the win32-only file, on Linux) does not fail on it.
  */
 export function shellBinary(): string {
@@ -389,12 +357,12 @@ export function shellBinary(): string {
 }
 
 /**
- * The unpacked Electron this suite launches, spelled for the platform.
+ * The unpacked Electron this suite launches, spelled out per platform.
  *
- * `electron`'s own `index.js` exports exactly this path, but requiring it would
- * mean resolving a module out of `desktop/node_modules` from a file compiled
- * against the repo root's — so the three spellings are written out instead.
- * They are stable across Electron majors and each one is what
+ * `electron`'s `index.js` exports this exact path, but requiring it would
+ * resolve a module out of `desktop/node_modules` from a file compiled
+ * against the repo root's, so the three spellings are written out instead.
+ * They are stable across Electron majors, and each one is what
  * `electron-builder` unpacks too:
  *
  *   linux   dist/electron
@@ -420,14 +388,14 @@ function electronBinary(): string {
 }
 
 /**
- * Launch a SECOND shell against a live one's Electron user-data directory —
- * i.e. its single-instance lock — and report whether it was refused.
+ * Launches a second shell against a live one's Electron user-data directory
+ * (its single-instance lock) and reports whether it was refused.
  *
- * Same binary, same args, same instance env as the original: the only thing
- * being varied is that one is already running. `requestSingleInstanceLock()`
+ * Same binary, same args, same instance env as the original: the only
+ * difference is that one is already running. `requestSingleInstanceLock()`
  * fails, `main.js` calls `app.exit(0)` before any Supervisor exists, and
- * Playwright never gets a CDP socket — a rejected launch is what the refusal
- * looks like from out here.
+ * Playwright never gets a CDP socket, so a rejected launch is what the
+ * refusal looks like from the test's side.
  */
 export async function launchDuplicate(shell: Shell): Promise<{ refused: boolean; ms: number }> {
   const started = Date.now();
@@ -449,9 +417,10 @@ export async function launchDuplicate(shell: Shell): Promise<{ refused: boolean;
 }
 
 /**
- * Quit through the product's own path — `app.quit()` → `before-quit` →
- * `supervisor.stop()` → SIGTERM → drain — rather than killing the process, so
- * the sidecars are reaped instead of orphaned holding a port and the db lock.
+ * Quits through the product's own path: `app.quit()` → `before-quit` →
+ * `supervisor.stop()` → SIGTERM → drain. Killing the process directly would
+ * leave the sidecars orphaned holding a port and the db lock instead of
+ * reaped.
  */
 export async function quitShell(shell: Shell | null | undefined): Promise<void> {
   if (!shell) return;
@@ -463,24 +432,23 @@ export async function quitShell(shell: Shell | null | undefined): Promise<void> 
 }
 
 /**
- * Kill the shell and everything under it — the backstop only, never the path a
+ * Kills the shell and everything under it. A backstop only, never the path a
  * spec asserts on.
  *
- * The two branches are not interchangeable, and the Windows one is why this
- * exists at all. `child.kill("SIGKILL")` on win32 is a `TerminateProcess` of
- * that pid ALONE: the supervisor deliberately spawns its sidecars without
- * `detached` (there, that would mean a new console window) and Node puts them
- * in no job object, so killing the Electron process leaves `server.js` and
- * `pty-server.js` running — orphaned, still holding the instance's ports and
- * its database lock, and inherited by the runner's session rather than reaped.
- * The next spec then fails on a collision that has nothing to do with it.
- * `taskkill /T` is the tree walk that closes that gap (the same call
- * lib/processTree.ts makes for managed services).
+ * The two branches are not interchangeable. On win32, `child.kill("SIGKILL")`
+ * is a `TerminateProcess` of that pid alone: the supervisor spawns its
+ * sidecars without `detached` (there, that would open a new console window),
+ * and Node puts them in no job object, so killing the Electron process
+ * leaves `server.js` and `pty-server.js` running, orphaned, holding the
+ * instance's ports and database lock, inherited by the runner's session
+ * instead of reaped. The next spec then fails on a collision unrelated to
+ * it. `taskkill /T` walks the tree to close that gap (the same call
+ * `lib/processTree.ts` makes for managed services).
  *
- * POSIX keeps the plain signal rather than borrowing `killTree()`: that
- * function's POSIX branch is `process.kill(-pid)`, and Playwright does not
- * spawn Electron `detached`, so the negative pid names the TEST RUNNER's own
- * process group.
+ * POSIX uses the plain signal instead of `lib/processTree.ts`'s
+ * `killTree()`: that function's POSIX branch is `process.kill(-pid)`, and
+ * Playwright does not spawn Electron `detached`, so a negative pid there
+ * would name the test runner's own process group.
  */
 function killTree(pid: number | undefined): void {
   if (!pid) return;
@@ -496,19 +464,19 @@ function killTree(pid: number | undefined): void {
 }
 
 /**
- * Attach the shell's captured output to a failing test.
+ * Attaches the shell's captured output to a failing test.
  *
- * Almost everything that goes wrong here goes wrong in a process this suite
- * does not own — a sidecar that would not start, a drain that never finished —
- * and the supervisor's log is the only account of it. The attachment lands in
+ * Most failures here originate in a process this suite does not own, such
+ * as a sidecar that would not start or a drain that never finished, and the
+ * supervisor's log is the only account of it. The attachment lands in
  * `test-results/`, which the CI lane already uploads on failure.
  */
 export async function attachShellLog(testInfo: TestInfo, shell: Shell | null | undefined): Promise<void> {
   if (!shell || testInfo.status === testInfo.expectedStatus) return;
   // Written into the instance root as well as attached: a red run keeps that
-  // root (e2e/cleanup-reporter.ts), so the log ends up beside the database and
-  // worktrees it explains, and attaching by path keeps the whole thing rather
-  // than the two lines a console reporter would print.
+  // root (e2e/cleanup-reporter.ts), so the log ends up beside the database
+  // and worktrees it explains. Attaching by path keeps the whole file
+  // instead of the couple of lines a console reporter would print.
   const file = path.join(shell.root, "shell.log");
   fs.writeFileSync(file, [...shell.log, await geometryLine(shell)].join("\n"));
   await testInfo.attach("shell.log", { path: file, contentType: "text/plain" });
@@ -518,16 +486,14 @@ export async function attachShellLog(testInfo: TestInfo, shell: Shell | null | u
 /**
  * A picture of the window a spec failed against.
  *
- * `use.screenshot: "only-on-failure"` does NOT cover this suite: Playwright
- * captures the `page` FIXTURE, and every page here comes from
- * `electron.launch()` instead — so the config's setting is inert and a red
- * desktop run uploaded no image at all. That absence read as evidence on PR #54
- * (a window producing no frames), when it only ever meant nobody had asked for
- * one; the actual failure was a layout collapsed to zero width, which one
- * screenshot would have shown at a glance. So the suite takes its own.
+ * `use.screenshot: "only-on-failure"` does not cover this suite: Playwright
+ * captures the `page` fixture, and every page here comes from
+ * `electron.launch()` instead, so that config setting is inert and a red
+ * desktop run uploads no image. This function takes its own screenshot to
+ * cover that gap.
  *
  * Same best-effort contract as `geometryLine`: the window may already be
- * destroyed, and failing to photograph a failure must not replace it.
+ * destroyed, and failing to capture a failure must not replace it.
  */
 async function attachScreenshot(testInfo: TestInfo, shell: Shell): Promise<void> {
   const file = path.join(shell.root, "failure.png");
@@ -540,27 +506,28 @@ async function attachScreenshot(testInfo: TestInfo, shell: Shell): Promise<void>
 }
 
 /**
- * The window's measurements, appended to the log a FAILED spec attaches.
+ * The window's measurements, appended to the log a failed spec attaches.
  *
- * This suite pins no viewport — the whole point is a real OS window — so the
- * size the renderer lays out at is the runner's, and the runners disagree: a
- * hosted macOS or Windows runner's virtual display is 1024x768 and the OS
- * clamps `main.js`'s requested 1440x900 down to fit it, while the ubuntu lane's
- * Xvfb screen is larger and has no window manager to clamp anything. A layout
- * assertion that fails on two lanes and passes on the third is a size question
- * until something rules it out, and nothing in a Playwright failure says so.
+ * This suite pins no viewport, since the subject is a real OS window, so
+ * the size the renderer lays out at is the runner's, and runners disagree:
+ * a hosted macOS or Windows runner's virtual display is 1024x768 and the OS
+ * clamps `main.js`'s requested 1440x900 to fit it, while the ubuntu lane's
+ * Xvfb screen is larger with no window manager to clamp anything. A layout
+ * assertion that fails on two lanes and passes on the third is a size
+ * question until something rules it out, and a Playwright failure alone
+ * does not say so.
  *
- * Best effort by construction. In `afterEach` the app may already be gone —
- * 03-quit-drain and 04-db-lock end it on purpose — and a hung `evaluate`
- * against a dying process must not replace the failure it was meant to explain,
- * hence the race.
+ * Best effort by construction: in `afterEach` the app may already be gone
+ * (03-quit-drain and 04-db-lock end it on purpose), and a hung `evaluate`
+ * against a dying process must not replace the failure it was meant to
+ * explain, hence the race below.
  */
 async function geometryLine(shell: Shell): Promise<string> {
   let timer: NodeJS.Timeout | undefined;
-  // The rejection is handled HERE rather than by a try/catch around the race:
-  // a dead app can reject after the timeout has already won, and that would
-  // land as an unhandled rejection in the reporter long after the spec that
-  // caused it finished.
+  // Rejection is handled here, not by wrapping the race in a try/catch: a
+  // dead app can reject after the timeout has already won, and that would
+  // surface as an unhandled rejection in the reporter after the spec that
+  // caused it has finished.
   const read = shell.app
     .evaluate(({ BrowserWindow, screen }) => {
       const w = BrowserWindow.getAllWindows()[0];
@@ -584,35 +551,35 @@ async function geometryLine(shell: Shell): Promise<string> {
 }
 
 /**
- * Whether this session is actually DRAWING the shell's tray icon — which is
- * what decides the close button's behaviour, and is not a property of the
- * platform or of the runner but of the desktop the shell happened to launch on.
+ * Whether this session is actually drawing the shell's tray icon, which
+ * decides the close button's behavior. It depends on the desktop the shell
+ * launched on, not on the platform or the runner.
  *
- * Read from the shell's own log rather than from D-Bus, for two reasons. It is
- * the only form of the answer available on every lane (the CI runners have no
- * session bus to ask, and `bench.ts`'s reads are bench-only), and what the
- * close specs need to know is which branch the shell WILL take — the session
- * and the shell agreeing about that is `10-bench-tray.spec.ts`'s assertion, on
- * the one lane that can make it.
+ * Read from the shell's own log instead of from D-Bus, for two reasons: it
+ * is the only form of the answer available on every lane (CI runners have
+ * no session bus to ask, and `bench.ts`'s reads are bench-only), and what
+ * the close specs need is which branch the shell will take. The session and
+ * the shell agreeing about that is `10-bench-tray.spec.ts`'s assertion, on
+ * the lane that can make it.
  *
- * Polled because `createTray()` confirms asynchronously: registering an item
- * and a panel picking it up are round trips on the session bus after the
- * constructor returns.
+ * Polled because `createTray()` confirms asynchronously: registering an
+ * item and a panel picking it up are round trips on the session bus after
+ * the constructor returns.
  */
 export async function trayIsHosted(shell: Shell, timeoutMs = 30_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    // The LATEST verdict, not the first: `main.js` logs again whenever the
-    // answer changes, and a session whose panel came back mid-run has said both
-    // things. Read backwards so the newest one wins, the way the shell's own
-    // flag does.
+    // The latest verdict, not the first: `main.js` logs again whenever the
+    // answer changes, and a session whose panel came back mid-run has said
+    // both things. Read backwards so the newest one wins, matching the
+    // shell's own flag.
     for (let i = shell.log.length - 1; i >= 0; i--) {
       const line = shell.log[i];
       if (line.includes("[shell] tray icon confirmed in the status area")) return true;
       if (line.includes("[shell] tray icon is not in any status area")) return false;
-      // Two ways to have no answer at all, and both are a no for the same
-      // reason they are one in the shell: nothing has ever confirmed an icon,
-      // so nothing may hide into one.
+      // Two ways to have no answer at all, both treated as no for the same
+      // reason the shell treats them as one: nothing has confirmed an icon,
+      // so there is nothing to report as hosted.
       if (line.includes("[shell] no tray available")) return false;
       if (line.includes("[shell] could not confirm the tray icon")) return false;
     }
@@ -631,23 +598,23 @@ export async function serverIsUp(origin: string): Promise<boolean> {
     .catch(() => false);
 }
 
-/* ---- A SECOND server, for the remote-instance specs --------------------- *
+/* ---- A second server, for the remote-instance specs --------------------- *
  *
- * `desktop/supervisor.js`, driven straight from the test process rather than
- * from a shell — the same class main.js uses for `local`, so the "remote"
+ * `desktop/supervisor.js`, driven directly from the test process instead of
+ * from a shell: the same class `main.js` uses for `local`, so the "remote"
  * server in 12-remote-instance.spec.ts is a real production `node server.js`
  * with a real pty sidecar, on its own port, over its own hermetic instance.
- * Anything less (a stub answering /api/version) would prove the handshake and
- * nothing about the page load that follows it.
+ * A stub answering /api/version would prove only the handshake, not the
+ * page load that follows it.
  *
- * `require` rather than `import`: supervisor.js is plain CommonJS with no
- * types, and Playwright compiles this file to CommonJS anyway.
+ * `require`, not `import`: supervisor.js is plain CommonJS with no types,
+ * and Playwright compiles this file to CommonJS anyway.
  */
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { Supervisor } = require("../supervisor");
 
 export type RemoteServer = {
-  /** `http://127.0.0.1:<port>` — the origin the shell will be told to attach to. */
+  /** `http://127.0.0.1:<port>`: the origin the shell will be told to attach to. */
   origin: string;
   root: string;
   log: string[];
@@ -676,12 +643,12 @@ export async function bootRemoteServer(name: string, extraEnv: Record<string, st
 }
 
 /**
- * Write an instance list for a shell to launch against, and return the path to
- * point `CALANDRIA_INSTANCES_FILE` at.
+ * Writes an instance list for a shell to launch against, and returns the
+ * path to point `CALANDRIA_INSTANCES_FILE` at.
  *
- * Inside the run root rather than the real `~/.config/calandria`, which is the
- * whole reason main.js reads that variable: a suite that edited a developer's
- * own instance list would be unrunnable on the machine that most needs it.
+ * Written inside the run root instead of the real `~/.config/calandria`:
+ * `main.js` reads that variable so a suite editing a developer's own
+ * instance list would be unrunnable on the machine that needs it most.
  */
 export function writeInstancesFile(root: string, state: unknown): string {
   const file = path.join(root, "instances.json");
@@ -690,8 +657,9 @@ export function writeInstancesFile(root: string, state: unknown): string {
 }
 
 /* ---- Driving the instance over its own REST API ------------------------- *
- * Plain `fetch` rather than Playwright's `request` fixture: this suite has no
- * browser context to hang one off, and every call is a bare loopback JSON POST.
+ * Plain `fetch`, not Playwright's `request` fixture: this suite has no
+ * browser context to hang one off, and every call is a bare loopback JSON
+ * POST.
  */
 
 async function api<T>(origin: string, method: "GET" | "POST", route: string, body?: unknown): Promise<T> {

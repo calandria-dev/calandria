@@ -9,14 +9,14 @@ import {
   describeCron,
 } from "@/lib/agents/claude/sessionCrons";
 
-// The Stop hook's session_crons payload as measured on claude CLI 2.1.240: a
-// one-shot ScheduleWakeup encodes ONLY its wall-clock minute ("58 11 * * *"
-// for 11:58, local time, day/month wildcards); a recurring CronCreate carries
-// the expression it was given. These pin the local-time math the driver uses
-// to decide whether a wakeup fits a bounded linger window and to label it.
+// The Stop hook's session_crons payload: a one-shot ScheduleWakeup encodes
+// ONLY its wall-clock minute ("58 11 * * *" for 11:58, local time, day/month
+// wildcards); a recurring CronCreate carries the expression it was given.
+// These pin the local-time math the driver uses to decide whether a wakeup
+// fits a bounded linger window and to label it.
 
-// A fixed local "now": Mon 2026-08-24 11:56:40 (local time — the CLI's cron
-// clock IS the server's local clock, since the CLI is our child process).
+// A fixed local "now": Mon 2026-08-24 11:56:40, local time. The CLI's cron
+// clock is the server's local clock, since the CLI runs as a child process.
 const NOW = new Date(2026, 7, 24, 11, 56, 40).getTime();
 const local = (h: number, m: number, dayOffset = 0) => new Date(2026, 7, 24 + dayOffset, h, m).getTime();
 

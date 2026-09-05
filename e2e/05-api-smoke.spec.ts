@@ -31,9 +31,9 @@ test("sync endpoint reports an isolated, up-to-date worktree", async ({ request 
 });
 
 test("base-branch endpoint stays quiet for a project with no remote", async ({ request }) => {
-  // The banner must render nothing — and the endpoint must not error or hang —
-  // for the very common local-only project. Every remote-aware surface is
-  // supposed to no-op rather than degrade when there's nowhere to fetch from.
+  // A local-only project must not error or hang, and the banner must render
+  // nothing. A remote-aware surface no-ops when there's nowhere to fetch
+  // from, instead of degrading.
   const { task } = await runTaskToCompletion(request, { name: `remote-${uid()}`, title: "No remote here" });
   const res = await request.get(`/api/projects/${task.project_id}/base-branch`);
   expect(res.ok()).toBe(true);

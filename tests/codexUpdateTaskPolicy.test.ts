@@ -16,25 +16,24 @@ import { POST as setBaseBranchEp } from "@/app/api/internal/agent-tools/set-base
 import { POST as updateTagEp } from "@/app/api/internal/agent-tools/update-tag/route";
 import { git, makeRepo, uid } from "./helpers";
 
-// update_task's cross-task policy, proved END TO END on the Codex path.
+// update_task's cross-task policy, proved end to end on the Codex path.
 //
-// tests/calandriaMcp.test.ts drives the same bridge against a FAKE app server, so it
-// can only show what the bridge forwards. This file closes the loop: the real
-// scripts/calandria-mcp.mjs runs as its own process and its calls are served by the
-// REAL route handler against the REAL database.
+// tests/calandriaMcp.test.ts drives the same bridge against a fake app server,
+// so it can only show what the bridge forwards. This file closes the loop:
+// the real scripts/calandria-mcp.mjs runs as its own process and its calls
+// are served by the real route handler against the real database.
 //
-// That matters because this is the one path where the MODEL names the write
-// target. On the Claude side the driver closes over the task and the id never
-// leaves the process; here it crosses a wire, so "the bridge doesn't enforce
-// it" and "the server does" have to be demonstrated together rather than
-// assumed. Every case below asks the bridge to write a row it must not, and
-// checks the DB afterwards — a refusal that still wrote would pass a
-// text-only assertion.
+// This is the path where the model names the write target. On the Claude
+// side the driver closes over the task and the id never leaves the process;
+// here it crosses a wire, so "the bridge doesn't enforce it" and "the server
+// does" must be demonstrated together, not assumed. Every case below asks
+// the bridge to write a row it must not, and checks the DB afterwards: a
+// refusal that still wrote would pass a text-only assertion.
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "calandria-mcp.mjs");
 
 // The real handlers, keyed by the path the bridge posts to. Only the endpoints
-// these tests exercise are mounted: an unrouted path 404s loudly rather than
+// these tests exercise are mounted: an unrouted path 404s loudly instead of
 // being served by the wrong one.
 const ROUTES: Record<string, (req: NextRequest) => Promise<Response>> = {
   "/api/internal/agent-tools/update-task": updateTaskEp,
@@ -120,10 +119,9 @@ describe("update_task policy, end to end over the Codex bridge", () => {
 
     const { client, close } = await connectBridge(caller.id, project.id);
     try {
-      // An unreviewed suggestion was always writable — the old gate's one
-      // permitted cross-task case. It still writes, but this class of write
-      // never raises the "changed since you accepted it" chip: nobody has
-      // accepted it yet, so there is nothing to warn them changed.
+      // An unreviewed suggestion is writable. It never raises the "changed
+      // since you accepted it" chip: nobody has accepted it yet, so there is
+      // nothing to warn them changed.
       const ok = (await client.callTool({
         name: "update_task",
         arguments: { task: inert.id, title: "Sharpened", priority: "hi" },
@@ -133,10 +131,10 @@ describe("update_task policy, end to end over the Codex bridge", () => {
       expect(listAgentEdits(inert.id)).toEqual([]);
       expect(getTask(inert.id)!.agent_edited_at).toBe(0);
 
-      // The old gate refused these outright. Now they're writable, but the
-      // write is RECORDED — attributed to the caller's session, naming the
-      // fields that moved — because the user already accepted this row and
-      // has to find out something changed underneath them.
+      // These are writable, but the write is recorded, attributed to the
+      // caller's session and naming the fields that moved, because the user
+      // already accepted this row and needs to find out something changed
+      // underneath them.
       for (const row of [started, accepted]) {
         const res = (await client.callTool({
           name: "update_task",
@@ -151,9 +149,9 @@ describe("update_task policy, end to end over the Codex bridge", () => {
         expect(edits[0].changes.map((c) => c.field).sort()).toEqual(["status", "title"]);
       }
 
-      // The one refusal left: a live turn in the target, since that session may
-      // be mid-read of the very fields this call would rewrite. Byte-identical
-      // afterwards and nothing recorded — a refused write is not an edit.
+      // A live turn in the target is refused, since that session may be
+      // mid-read of the very fields this call would rewrite. Byte-identical
+      // afterwards and nothing recorded: a refused write is not an edit.
       const before = getTask(running.id)!;
       const res = (await client.callTool({
         name: "update_task",
@@ -186,12 +184,11 @@ describe("update_task policy, end to end over the Codex bridge", () => {
       await client.callTool({ name: "update_task", arguments: { title: "Renamed", status: "in_progress" } });
       expect(getTask(caller.id)).toMatchObject({ title: "Renamed", status: "in_progress" });
 
-      // `taskId` is not in the tool's schema, so the model can't send one — the
+      // `taskId` is not in the tool's schema, so the model cannot send one; the
       // bridge always forwards its own CALANDRIA_TASK_ID there. Post directly to
-      // the endpoint to prove `taskId` (the trusted CALLER) and `task` (the
-      // untrusted TARGET) are not interchangeable, now that the cross-task gate
-      // is gone and the write to `task` succeeds: the request lands on the
-      // NAMED row, not on the identity in `taskId`, and the edit it leaves
+      // the endpoint to prove `taskId` (the trusted caller) and `task` (the
+      // untrusted target) are not interchangeable: the request lands on the
+      // named row, not on the identity in `taskId`, and the edit it leaves
       // behind is attributed to `taskId` regardless of which row it touched.
       const res = await fetch(`${baseUrl}/api/internal/agent-tools/update-task`, {
         method: "POST",
@@ -201,7 +198,7 @@ describe("update_task policy, end to end over the Codex bridge", () => {
       expect(res.status).toBe(200);
       expect(getTask(bystander.id)!.title).toBe("Hijacked");
       // The caller's own row is untouched by a call that named a different
-      // target — `taskId` decides who gets credited, not who gets written.
+      // target; `taskId` decides who gets credited, not who gets written.
       expect(getTask(caller.id)).toMatchObject({ title: "Renamed", status: "in_progress" });
       const edits = listAgentEdits(bystander.id);
       expect(edits).toHaveLength(1);
@@ -223,11 +220,11 @@ describe("update_task policy, end to end over the Codex bridge", () => {
   });
 
   it("orders a plan in two phases, and refuses to order the caller's own row", async () => {
-    // The whole point of the parameter: a planning turn files its tasks, gets
-    // ids back, and comes BACK to say what waits on what. Driven over the real
-    // bridge because this is where the model names the target, and asserted on
-    // the DB because a "Blocked by 1 task(s)" that wrote no edge is the exact
-    // failure this feature is meant to end.
+    // A planning turn files its tasks, gets ids back, and comes back to say
+    // what waits on what. Driven over the real bridge because this is where
+    // the model names the target, and asserted on the DB because a "Blocked
+    // by 1 task(s)" note that wrote no edge is the failure this feature must
+    // prevent.
     const project = createProject({ name: "Codex-Order" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
     const first = createSuggestedTask(project, { title: "Phase one", description: "" }).task!;
@@ -242,7 +239,7 @@ describe("update_task policy, end to end over the Codex bridge", () => {
       expect(ok.isError).toBeFalsy();
       expect(getTaskDeps(second.id)).toEqual([first.id]);
 
-      // The caller's own row is refused — it's already running, so an edge on it
+      // The caller's own row is refused: it's already running, so an edge on it
       // would gate nothing and mislabel the board.
       const own = (await client.callTool({
         name: "update_task",
@@ -252,8 +249,8 @@ describe("update_task policy, end to end over the Codex bridge", () => {
       expect(own.content[0].text).toContain("on_hold");
       expect(getTaskDeps(caller.id)).toEqual([]);
 
-      // A ref the server can't use fails the WHOLE call: the edge already there
-      // survives rather than being replaced by the half we recognized.
+      // A ref the server can't use fails the whole call: the edge already there
+      // survives instead of being replaced by the half that resolved.
       const bad = (await client.callTool({
         name: "update_task",
         arguments: { task: second.id, blocked_by: [first.id, "ghost"] },
@@ -282,8 +279,8 @@ describe("update_task policy, end to end over the Codex bridge", () => {
       expect(res.content[0].text).toContain("status");
       expect(getTask(inert.id)!.status).toBe("not_started");
 
-      // Neither layer is load-bearing alone: bypass the schema entirely and
-      // prove the ENDPOINT refuses it too, on a row it would happily retitle.
+      // Neither layer alone is enough: bypass the schema entirely and prove
+      // the endpoint refuses it too, on a row it would happily retitle.
       const direct = await fetch(`${baseUrl}/api/internal/agent-tools/update-task`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -297,20 +294,20 @@ describe("update_task policy, end to end over the Codex bridge", () => {
   });
 });
 
-// Tags over the same wire. The Codex path is where the MODEL names both the
-// project a task is filed into AND the tags it carries, so the rules that make
-// tagging safe have to be shown together here rather than assumed: suggest_task
-// creates a tag in the project the task ACTUALLY landed in, and update_task
-// refuses one it doesn't recognize instead of minting a near-twin — and, being
-// many-to-many, REPLACES the whole set rather than adding to it.
+// Tags over the same wire. The Codex path is where the model names both the
+// project a task is filed into and the tags it carries, so the rules that
+// make tagging safe must be shown together here, not assumed: suggest_task
+// creates a tag in the project the task actually landed in, update_task
+// refuses one it doesn't recognize instead of minting a near-twin, and,
+// being many-to-many, replaces the whole set instead of adding to it.
 describe("tags, end to end over the Codex bridge", () => {
   it("tags a cross-project suggestion in the TARGET project, creating the tag there", async () => {
     const here = createProject({ name: "Codex-TagHere" });
     const there = createProject({ name: "Codex-TagThere" });
     const caller = createTask({ project_id: here.id, title: "Planner", description: "" });
-    // A same-named tag in the CALLER's project: if resolution ran before the
-    // project did, the suggestion would be tagged into this one — a tag
-    // spanning two repos, which the schema and the UI both forbid.
+    // A same-named tag in the caller's project: if resolution ran before the
+    // project did, the suggestion would be tagged into this one, a tag spanning
+    // two repos, which the schema and the UI both forbid.
     const decoy = createTag({ project_id: here.id, name: "Auth migration" });
 
     const { client, close } = await connectBridge(caller.id, here.id);
@@ -327,11 +324,11 @@ describe("tags, end to end over the Codex bridge", () => {
       expect(made).toHaveLength(1);
       expect(landed.tag_ids).toEqual([made[0].id]);
       expect(landed.tag_ids).not.toContain(decoy.id);
-      // Provenance is the CALLER's task id, which the model never sends — the
+      // Provenance is the caller's task id, which the model never sends; the
       // bridge only forwards CALANDRIA_TASK_ID.
       expect(made[0].origin_task_id).toBe(caller.id);
 
-      // The second step of the plan reuses it rather than minting a twin.
+      // The second step of the plan reuses it instead of minting a twin.
       const again = (await client.callTool({
         name: "suggest_task",
         arguments: { title: "Second step", description: "", project: "Codex-TagThere", tags: ["Auth migration"] },
@@ -403,7 +400,7 @@ describe("tags, end to end over the Codex bridge", () => {
       expect(first.isError).toBeFalsy();
       expect(getTaskTagIds(inert.id)).toEqual([a.id]);
 
-      // A second call naming only B drops A rather than adding B alongside it.
+      // A second call naming only B drops A instead of adding B alongside it.
       const second = (await client.callTool({
         name: "update_task",
         arguments: { task: inert.id, tags: [b.id] },
@@ -416,10 +413,9 @@ describe("tags, end to end over the Codex bridge", () => {
   });
 });
 
-// set_base_branch and update_tag over the same wire. Both are new verbs in
-// phase 3 of the per-task base branch work, and Codex is the path where the
-// MODEL names the target — so the refusals have to be shown to hold on the far
-// side of a process boundary, against the DB, rather than assumed from the
+// set_base_branch and update_tag over the same wire. Codex is the path where
+// the model names the target, so the refusals must be shown to hold on the
+// far side of a process boundary, against the DB, not assumed from the
 // in-process policy (tests/agentToolsBaseBranch.test.ts).
 describe("set_base_branch, end to end over the Codex bridge", () => {
   /** A project on a real repo with a `release` branch to aim at, plus a caller. */
@@ -447,8 +443,8 @@ describe("set_base_branch, end to end over the Codex bridge", () => {
     await git(repo, "checkout", "release");
     const releaseTip = (await git(repo, "rev-parse", "HEAD")).trim();
     await git(repo, "checkout", "main");
-    // A live turn in the caller's own session — exactly the state this tool is
-    // called from, and the one case the liveness refusal must NOT fire on.
+    // A live turn in the caller's own session is exactly the state this tool
+    // is called from, and the one case the liveness refusal must not fire on.
     updateTask(caller.id, { running: 1 });
 
     const { client, close } = await connectBridge(caller.id, project.id);
@@ -459,10 +455,10 @@ describe("set_base_branch, end to end over the Codex bridge", () => {
       const after = getTask(caller.id)!;
       expect(after.base_branch).toBe("release");
       // Nothing of its own in the worktree, so it was re-cut: up to date with
-      // the new base rather than merely pointed at it.
+      // the new base, not merely pointed at it.
       expect(after.base_sha).toBe(releaseTip);
       expect((await git(after.worktree_path, "rev-parse", "HEAD")).trim()).toBe(releaseTip);
-      // Its own row, so no "changed by an agent" chip — nobody to surprise.
+      // Its own row, so no "changed by an agent" chip; nobody to surprise.
       expect(listAgentEdits(caller.id)).toEqual([]);
     } finally {
       await close();
@@ -546,8 +542,8 @@ describe("update_tag, end to end over the Codex bridge", () => {
 
     const { client, close } = await connectBridge(caller.id, project.id);
     try {
-      // By exact NAME, like every other tag reference — and setting three
-      // things the tag itself owns, none of which update_task can reach.
+      // By exact name, like every other tag reference, and setting three things
+      // the tag itself owns, none of which update_task can reach.
       const res = (await client.callTool({
         name: "update_tag",
         arguments: { tag: "Auth migration", description: "Port every route.", color: "#3E7CA8", base_branch: "feature/auth" },
@@ -555,7 +551,7 @@ describe("update_tag, end to end over the Codex bridge", () => {
       expect(res.isError, res.content[0].text).toBeFalsy();
       expect(getTag(tag.id)).toMatchObject({ description: "Port every route.", color: "#3E7CA8", base_branch: "feature/auth" });
 
-      // The uncut member inherits it — that's the point of putting a base on a
+      // The uncut member inherits it: that's the point of putting a base on a
       // tag instead of on N tasks. Membership itself is untouched.
       expect(resolveBaseBranch(getTask(member.id)!, project)).toBe("feature/auth");
       expect(getTaskTagIds(member.id)).toEqual([tag.id]);
@@ -590,14 +586,14 @@ describe("update_tag, end to end over the Codex bridge", () => {
       expect(clash.content[0].text).toContain('A tag named "Mobile PWA" already exists');
       expect(getTag(a.id)).toMatchObject({ name: "Auth migration", description: "keep me" });
 
-      // Exact names only — a near miss must not mint a near-duplicate of the
-      // tag the user filters their board by.
+      // Exact names only: a near miss must not mint a near-duplicate of the tag
+      // the user filters their board by.
       const nearMiss = (await client.callTool({ name: "update_tag", arguments: { tag: "auth migration", description: "nope" } })) as ToolResult;
       expect(nearMiss.isError).toBe(true);
       expect(listTags(project.id)).toHaveLength(2);
 
       // The endpoint resolves inside CALANDRIA_PROJECT_ID, so a tag in another
-      // project is simply not there — there is no `project` param to redirect it.
+      // project is not there; there is no `project` param to redirect it.
       const cross = (await client.callTool({ name: "update_tag", arguments: { tag: foreign.id, description: "mine now" } })) as ToolResult;
       expect(cross.isError).toBe(true);
       expect(getTag(foreign.id)!.description).toBe("");

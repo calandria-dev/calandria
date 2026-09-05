@@ -1,17 +1,17 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// Session-scoped wakeups (ScheduleWakeup / CronCreate / /loop) under the
-// UNBOUNDED linger default — its own file because claudeBackgroundLinger.test.ts
-// pins CALANDRIA_BACKGROUND_LINGER_MS=500 at module load, and a cron fires at a
-// minute boundary, so on that instance no wakeup can ever fit the window.
+// Session-scoped wakeups (ScheduleWakeup, CronCreate, /loop) under the
+// unbounded linger default. Kept in its own file because
+// claudeBackgroundLinger.test.ts pins CALANDRIA_BACKGROUND_LINGER_MS=500 at
+// module load, and a cron fires at a minute boundary, so no wakeup fits that
+// window on that instance.
 //
-// Measured on claude CLI 2.1.240 / SDK 0.3.159 (record in the commit): with
-// the prompt iterable held open a session cron DOES fire; the wake arrives as
-// a bare second `init` on the same session — no user message, no
-// task_notification — followed by a fresh assistant turn; the Stop hook
+// With the prompt iterable held open, a session cron fires: the wake arrives
+// as a bare second `init` on the same session, with no user message and no
+// task_notification, followed by a fresh assistant turn. The Stop hook
 // reports the cron before the first result and `[]` after a one-shot wakes,
 // while a recurring cron is reported again on every wake turn. Closing the
-// input with a cron pending exits the CLI in ~300ms and the wake is gone.
+// input while a cron is pending ends the CLI and the wake never fires.
 const { queryMock } = vi.hoisted(() => {
   delete process.env.CALANDRIA_BACKGROUND_LINGER_MS;
   delete process.env.CALANDRIA_BACKGROUND_LINGER;
@@ -93,7 +93,7 @@ describe("one-shot wakeup (unbounded linger)", () => {
       void nextInput().then(() => { if (!lingerOver) inputClosedEarly = true; });
       await Promise.resolve();
       lingerOver = true;
-      // The wake: a second init on the same session, nothing else (measured).
+      // The wake is a second init on the same session, nothing else.
       yield init;
       yield text("DONE");
       await stop([], []); // the one-shot is consumed
@@ -135,9 +135,9 @@ describe("one-shot wakeup (unbounded linger)", () => {
   });
 
   it("does not mistake a background task's wake init for a cron wake", async () => {
-    // Order measured for background tasks: task_notification, THEN init. The
-    // notification is that path's resume; the init behind it must be inert,
-    // and with no cron in the wait it can't be claimed as a "woke".
+    // Background tasks report task_notification before init. The
+    // notification is that path's resume signal; the init behind it must be
+    // inert, and with no cron in the wait it cannot be claimed as a wake.
     mockCli(async function* ({ stop, nextInput }) {
       await nextInput();
       yield init;
@@ -167,10 +167,10 @@ describe("recurring cron (/loop shape)", () => {
       for (const n of [1, 2]) {
         yield init; // tick
         yield text(`TICKED ${n}`);
-        await stop([], [LOOP]); // survives its own wake (measured)
+        await stop([], [LOOP]); // survives its own wake
         yield result(0.01 * (n + 1));
       }
-      // The model finally deletes it (CronDelete) — Stop reports nothing.
+      // The model deletes it (CronDelete); Stop reports nothing.
       yield init;
       yield text("stopping the loop");
       await stop([], []);

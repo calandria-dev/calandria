@@ -1,24 +1,13 @@
-// `move_task` — re-parenting tasks between projects from an agent (issue #24).
-//
-// The operation itself is lib/taskMove.ts's and is pinned by tests/taskMove.ts
-// and tests/taskMoveWorktree.test.ts. What this file pins is the AGENT-facing
-// half, which is where the interesting refusals live:
-//
-//   - a started task is refused rather than acknowledged away. The bulk route
-//     takes its two discard acknowledgements as LISTS OF IDS because each
-//     destroyed checkout is a separate irreversible answer; the whole point of
-//     this tool is that it must not become the shortcut past that question, so
-//     the endpoint ignores one even when a caller sends it.
-//   - dependency edges are never dropped silently — the issue's one named
-//     failure mode, since a task that looks ready and isn't is worse than a
-//     refusal.
-//   - the move of a task the user had already accepted is recorded and can be
-//     reverted, on update_task's rule.
-//
-// The last case runs END TO END over the real stdio bridge against the real
-// endpoint, because Codex is the path where the MODEL names the targets and
-// they cross a wire — "the bridge doesn't enforce it" and "the server does"
-// have to be shown together (same reasoning as tests/codexUpdateTaskPolicy.ts).
+// Pins the agent-facing half of `move_task`, re-parenting tasks between
+// projects from an agent (issue #24); the operation itself is
+// lib/taskMove.ts's, pinned by tests/taskMove.ts and
+// tests/taskMoveWorktree.test.ts. Covers: a started task is refused instead
+// of acknowledged away, with the bulk route's discard acknowledgements
+// (lists of ids) ignored here; dependency edges are never dropped without
+// naming the drop; and moving a task the user already accepted is recorded
+// and revertible under update_task's rule. The last case runs end to end
+// over the real stdio bridge against the real endpoint, since Codex is the
+// path where the model names the targets across the wire.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "node:fs";
 import http from "node:http";
@@ -82,8 +71,8 @@ describe("move_task", () => {
     expect(getTask(stays.id)!.project_id).toBe(here.id);
 
     // The edge whose ends both moved survives; the one that would now span
-    // projects is gone — and, the part that matters, it is SAID so. A dropped
-    // blocker nobody mentions leaves a task that looks ready and isn't.
+    // projects is gone, and the move reports it. A dropped blocker nobody
+    // mentions leaves a task that looks ready and isn't.
     expect(getTaskDeps(a.id)).toEqual([b.id]);
     expect(res.text).toContain('"A" was blocked by "Stays behind"');
     expect(res.text).toContain("update_task");
@@ -108,10 +97,10 @@ describe("move_task", () => {
     expect(getTask(started.id)!.project_id).toBe(here.id);
     expect(fs.existsSync(wt.path)).toBe(true);
 
-    // And the endpoint the bridge posts to ignores one that is sent anyway —
-    // the bulk route demands lists of ids precisely so a single flag can never
-    // stand in for eleven irreversible answers, and this tool must not reopen
-    // that as a boolean on a JSON body.
+    // The endpoint the bridge posts to also ignores one sent anyway: the bulk
+    // route demands lists of ids so a single flag can never stand in for
+    // eleven irreversible answers, and this tool must not reopen that as a
+    // boolean on a JSON body.
     const out = await moveTaskEp(
       new NextRequest("http://127.0.0.1/api/internal/agent-tools/move-task", {
         method: "POST",
@@ -181,8 +170,8 @@ describe("move_task", () => {
     expect(res.ok).toBe(true);
     expect(res.moved).toHaveLength(2);
 
-    // Nobody has looked at a tray suggestion the agent filed itself, so moving
-    // it surprises no one — the same rule update_task records by.
+    // Nobody has looked at a tray suggestion the agent filed itself, so
+    // moving it is not recorded, following the same rule update_task uses.
     expect(listAgentEdits(inert.id)).toEqual([]);
     expect(getTask(inert.id)!.agent_edited_at).toBe(0);
 
@@ -200,7 +189,7 @@ describe("move_task", () => {
     expect(getTask(seen.id)!.agent_edited_at).toBeGreaterThan(0);
     expect(res.text).toContain("one-click revert");
 
-    // Revert re-runs the move backwards rather than writing project_id, so the
+    // Revert re-runs the move backwards instead of writing project_id, so the
     // task's sessions, usage and merges follow it home too.
     const undo = await postEdits(seen.id, { action: "revert", edit_id: edits[0].id });
     expect(undo.status).toBe(200);
@@ -219,10 +208,10 @@ describe("move_task", () => {
     expect(res.moved).toHaveLength(1);
     const edit = listAgentEdits(task.id)[0];
 
-    // The user accepted the move and started the task in its new home. Undoing
-    // it now would mean destroying that checkout, which is still their answer
-    // to give from the board — not something an undo button takes on their
-    // behalf.
+    // The user accepted the move and started the task in its new home.
+    // Undoing it now would mean destroying that checkout, which stays a
+    // decision the board asks the user to make, not one an undo button takes
+    // on their behalf.
     updateTask(task.id, { started: 1, work_branch: "calandria/x" });
     const undo = await postEdits(task.id, { action: "revert", edit_id: edit.id });
     expect(undo.status).toBe(409);
@@ -232,9 +221,9 @@ describe("move_task", () => {
   });
 });
 
-// The Codex half: the real bridge process, the real endpoint, the real DB. The
-// bridge holds no policy — it forwards whatever the model named — so this is
-// where "the server decides" is demonstrated rather than assumed.
+// The Codex half: the real bridge process, the real endpoint, the real DB.
+// The bridge holds no policy; it forwards whatever the model named, so this
+// is where "the server decides" is demonstrated instead of assumed.
 describe("move_task, end to end over the Codex bridge", () => {
   const ROUTES: Record<string, (req: NextRequest) => Promise<Response>> = {
     "/api/internal/agent-tools/move-task": moveTaskEp,
@@ -312,9 +301,9 @@ describe("move_task, end to end over the Codex bridge", () => {
       expect(getTask(started.id)!.project_id).toBe(here.id);
       expect(ok.content[0].text).toContain("a started task can't be moved");
 
-      // A destination the model invented is a refusal, never a fallback to the
-      // session's own project — resolveTargetProject's rule, reached through
-      // the wire this time.
+      // A destination the model invented is a refusal, never a fallback to
+      // the session's own project, following resolveTargetProject's rule,
+      // reached through the wire this time.
       const bad = (await client.callTool({
         name: "move_task",
         arguments: { tasks: [movable.id], project: "Somewhere Else" },

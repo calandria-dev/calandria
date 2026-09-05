@@ -1,8 +1,7 @@
 // Drift guard between two hand-maintained inventories: the Dockerfile's
 // runtime-stage COPY list and desktop/payload-manifest.js's DOCKER_PARITY set.
-// Both describe the same thing — everything `node server.js` needs beyond the
-// Next build output — and CLAUDE.md flags this exact pair as a repeat
-// offender, so this test fails the suite the moment they diverge.
+// Both describe the same thing, everything `node server.js` needs beyond the
+// Next build output, and this test fails the suite the moment they diverge.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -11,11 +10,11 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = path.resolve(__dirname, "..");
 
-// desktop/payload-manifest.js is deliberately dependency-free CommonJS so it
-// can be required here without pulling in desktop/node_modules (Electron is
-// never installed in the app's own tree). Load it by absolute path rather
-// than a relative import so this doesn't depend on module resolution rules
-// for a file outside the "@/*" root.
+// desktop/payload-manifest.js is dependency-free CommonJS so it can be
+// required here without pulling in desktop/node_modules (Electron is never
+// installed in the app's own tree). Load it by absolute path rather than a
+// relative import so this doesn't depend on module resolution rules for a
+// file outside the "@/*" root.
 const require = createRequire(import.meta.url);
 const manifest = require(path.join(process.cwd(), "desktop/payload-manifest.js")) as {
   NODE_MODULES: string;
@@ -31,8 +30,8 @@ const manifest = require(path.join(process.cwd(), "desktop/payload-manifest.js")
  *
  * These lines never wrap across multiple lines in this Dockerfile, so a
  * simple per-line scan is sufficient. Flags (`--from=…`, `--chown=…`) are
- * skipped, and the final token — the destination, always starting with
- * `./` — is dropped; everything else that starts with `/app/` is a source.
+ * skipped, and the final token, the destination, always starting with
+ * `./`, is dropped; everything else that starts with `/app/` is a source.
  */
 function dockerCopySources(): Set<string> {
   const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf8");
@@ -68,13 +67,13 @@ describe("desktop payload manifest matches the Dockerfile's runtime COPY list", 
   });
 
   it("every checked-in DOCKER_PARITY and BUILD_ONLY path exists in the repo", () => {
-    // Two entries in the parity set are PRODUCED rather than checked in, so a
+    // Two entries in the parity set are produced rather than checked in, so a
     // clean tree does not have them and this check would fail the unit lane,
     // which never runs `next build`: node_modules is installed (by the
     // Dockerfile's build stage, and by build-payload.js into its own staging
     // dir) and .next is the build output the payload wraps. Everything else is
     // a real file, and "the manifest names something that no longer exists" is
-    // the failure worth catching — a rename that only touched the Dockerfile.
+    // the failure worth catching: a rename that only touched the Dockerfile.
     const produced = new Set([manifest.NODE_MODULES, ".next"]);
     const paths = [
       ...manifest.DOCKER_PARITY.filter((p) => !produced.has(p)),

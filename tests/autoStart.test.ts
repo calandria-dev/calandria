@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Pin the launch at the runner boundary: auto-start's job is deciding WHEN to
-// start a task and handing the runner a correctly prepared launch; the turn
-// itself is the driver-contract test's problem (tests/agentDriver.test.ts).
+// Pins the launch at the runner boundary: auto-start decides WHEN to start a
+// task and hands the runner a prepared launch. The turn itself is covered by
+// tests/agentDriver.test.ts.
 vi.mock("@/lib/runner", () => ({ startTurn: vi.fn(), publishTurnError: vi.fn() }));
 
 import { startTurn, publishTurnError } from "@/lib/runner";
@@ -24,8 +24,8 @@ const startTurnMock = vi.mocked(startTurn);
 const publishTurnErrorMock = vi.mocked(publishTurnError);
 
 function makeProject() {
-  // A plain (non-git) working dir: ensureWorktree falls back to repo_path,
-  // which is exactly the launch path we want to keep out of these tests.
+  // A plain, non-git working dir makes ensureWorktree fall back to
+  // repo_path, keeping that launch path out of these tests.
   return createProject({ name: "Pipeline", repo_path: tmpDir("pipeline-") });
 }
 
@@ -39,9 +39,8 @@ function makeChain(autoStart = true) {
   return { project, a, b };
 }
 
-// Launching hands the claimed turn slot to the (mocked) runner, which never
-// releases it — free it so later tests can claim the same task id again... and
-// because each test uses fresh task ids, just clearing the mock is enough.
+// The mocked runner never releases the claimed turn slot. Each test uses
+// fresh task ids, so clearing the mock between tests is enough.
 beforeEach(() => {
   startTurnMock.mockReset();
   publishTurnErrorMock.mockReset();
@@ -103,7 +102,8 @@ describe("maybeAutoStartDependents (the launch)", () => {
     const { a, b } = makeChain();
     updateTask(a.id, { status: "done" });
     maybeAutoStartDependents(a.id);
-    // The launch initializes a real git repo + worktree — allow it a few seconds.
+    // The launch initializes a real git repo and worktree, so allow it a few
+    // seconds.
     await vi.waitFor(() => expect(startTurnMock).toHaveBeenCalledTimes(1), { timeout: 10_000 });
 
     // The runner gets a generic opening turn plus the auto-start note; task
@@ -133,20 +133,18 @@ describe("maybeAutoStartDependents (the launch)", () => {
     const { a, b } = makeChain(false);
     updateTask(a.id, { status: "done" });
     maybeAutoStartDependents(a.id);
-    // A would-be launch claims the turn slot synchronously before its first
-    // await, so no-claim right here proves no launch is even in flight.
+    // A launch claims the turn slot synchronously before its first await, so
+    // no claim here proves no launch is in flight.
     expect(hasTurn(b.id)).toBe(false);
     expect(startTurnMock).not.toHaveBeenCalled();
     expect(listMessages(b.id)).toEqual([]);
     expect(getTask(b.id)!.running).toBe(0);
   });
 
-  // The sweep used to fire only on the transition into done, which left a
-  // whole class of task stranded: blocks() has always treated CANCELLED as
-  // terminal (waiting on a task that will never finish would deadlock), so
-  // cancelling the last blocker unblocked the dependent without launching it —
-  // Start button live, nothing to ever press it. Both ways of cancelling reach
-  // this: the user's PATCH /api/tasks/[id] and the withdraw_suggestion tool.
+  // Cancelling the last blocker must also start the dependent, since blocks()
+  // treats a cancelled task as terminal. Both the user's PATCH
+  // /api/tasks/[id] and the withdraw_suggestion tool cancel through this
+  // path.
   it("cancelling the last blocker starts the dependent too, not just marking it done", async () => {
     const { a, b } = makeChain();
     updateTask(a.id, { status: "cancelled" });
@@ -156,19 +154,15 @@ describe("maybeAutoStartDependents (the launch)", () => {
 
     const [task, , , note] = startTurnMock.mock.calls[0];
     expect(task.id).toBe(b.id);
-    // The cause travels into the transcript rather than being flattened to
-    // "is done": an agent about to build on a CANCELLED blocker should know.
+    // The transcript names the actual cause instead of flattening it to "is
+    // done": an agent building on a cancelled blocker needs to know.
     expect(note).toContain('"A" was cancelled');
     expect(note).not.toContain("is done");
   });
 
-  // Nobody is watching an auto-start — it runs fire-and-forget behind someone
-  // else's status change — so a launch that throws after the row was marked
-  // running used to leave the task spinning forever on a turn that never
-  // started, recoverable only by restarting the server. That is exactly what
-  // the production Turbopack bug did on EVERY auto-start: lib/runner.ts is an
-  // async module and a static import read `startTurn` off a pending Promise,
-  // so the handoff threw a TypeError with the row already flagged.
+  // An auto-start runs fire-and-forget behind another task's status change,
+  // with nothing watching it. A launch that throws after the row is marked
+  // running must not leave the task spinning on a turn that never started.
   it("a launch that throws unwinds the row instead of leaving it spinning", async () => {
     const { a, b } = makeChain();
     startTurnMock.mockImplementation(() => {
@@ -185,7 +179,7 @@ describe("maybeAutoStartDependents (the launch)", () => {
     expect(fresh.started).toBe(0);
     expect(fresh.status).toBe("not_started");
     expect(hasTurn(b.id)).toBe(false);
-    // …and the failure is where the user will see it, not only in the log.
+    // The failure is published where the user sees it.
     expect(publishTurnErrorMock).toHaveBeenCalledTimes(1);
     const [id, gen, text] = publishTurnErrorMock.mock.calls[0];
     expect(id).toBe(b.id);

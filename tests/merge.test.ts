@@ -16,7 +16,7 @@ const read = (dir: string, file: string) => fs.readFileSync(path.join(dir, file)
 describe("mergeTask", () => {
   it("commits pending work and lands it on the base branch", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
-    writeFile(wt.path, "feature.txt", "feature\n"); // left uncommitted on purpose
+    writeFile(wt.path, "feature.txt", "feature\n"); // left uncommitted
 
     const res = await mergeTask({
       repoPath: repo,
@@ -108,9 +108,10 @@ describe("mergeTask", () => {
     expect(res.stashed).toBeUndefined();
   });
 
-  // `--porcelain -z` reverses the rename pair (destination first, origin in a
-  // second NUL field) — reading it as one entry per field would report the old
-  // path and then offer to stash a path that no longer exists.
+  // `--porcelain -z` reverses the rename pair, giving the destination path
+  // first and the origin in a second NUL field. Reading it as one entry per
+  // field would report the old path and offer to stash a path that no longer
+  // exists.
   it("reports the destination path of a staged rename", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
     await commitFile(wt.path, "feature.txt", "feature\n", "task commit");
@@ -137,11 +138,11 @@ describe("mergeTask", () => {
 
     expect(res.ok).toBe(true);
     expect(res.stashed?.restored).toBe(true);
-    // The merge landed…
+    // The merge landed.
     expect(await git(repo, "log", "-1", "--format=%s", "main")).toBe("land feature");
     expect(read(repo, "feature.txt")).toBe("feature\n");
-    // …and the borrowed work is back, tracked and untracked alike, with the
-    // stash entry cleaned up rather than left on the user's stack.
+    // The borrowed work is back, tracked and untracked alike, and the stash
+    // entry is cleaned up instead of left on the user's stack.
     expect(read(repo, "file.txt")).toBe("local edit\n");
     expect(read(repo, ".gitattributes")).toBe("* text=auto\n");
     expect(await git(repo, "stash", "list")).toBe("");
@@ -299,10 +300,9 @@ describe("mergeTask", () => {
     expect(fs.existsSync(path.join(repo, "feature.txt"))).toBe(false);
   });
 
-  // This used to fall back to the repo's CURRENT branch, which is how a task's
-  // work could land on an unrelated branch under a green "merged". A base that
-  // exists on the remote is a local branch by cut time now, so a miss here means
-  // the branch is genuinely nowhere and there is no second-guessing to do.
+  // A base that exists on the remote is already a local branch by cut time,
+  // so a missing branch here is genuinely absent, not a checkout to fall
+  // back to.
   it("refuses when the base branch is missing, rather than landing on the checked-out one", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
     await commitFile(wt.path, "feature.txt", "feature\n", "task commit");
@@ -383,12 +383,12 @@ describe("prepareWorktreeMerge", () => {
     expect(res.conflicts).toEqual(["file.txt"]);
 
     // An AI resolution turn rewrites the file marker-free but never `git add`s
-    // it — the index still flags it unmerged, but the content is resolved.
+    // it. The index still flags it unmerged even though the content is resolved.
     writeFile(wt.path, "file.txt", "resolved version\n");
 
     const status = await worktreeMergeStatus(wt.path);
-    expect(status.mergeInProgress).toBe(true); // the merge still awaits accept…
-    expect(status.unresolved).toEqual([]); // …but nothing is left to resolve
+    expect(status.mergeInProgress).toBe(true); // the merge still awaits accept
+    expect(status.unresolved).toEqual([]); // nothing is left to resolve
   });
 
   it("no-ops when the work branch already contains the base tip", async () => {
@@ -399,8 +399,8 @@ describe("prepareWorktreeMerge", () => {
     expect(first.clean).toBe(true);
     const head = await git(wt.path, "rev-parse", "HEAD");
 
-    // Re-running prepare on the already-synced branch (e.g. after a
-    // half-completed accept) must not stack another sync commit — and must not
+    // Re-running prepare on the already-synced branch (for example after a
+    // half-completed accept) must not stack another sync commit, and must not
     // sweep pending edits into a sync-titled commit either.
     writeFile(wt.path, "pending.txt", "wip\n");
     const second = await prepareWorktreeMerge(input);
@@ -514,7 +514,7 @@ describe("conflict resolution: complete / abort", () => {
   it("abortWorktreeMerge unwinds a merge Claude already committed", async () => {
     const { wt } = await conflictedWorktree();
     const preMergeTip = await git(wt.path, "rev-parse", "HEAD");
-    // Resolve and commit the merge by hand — MERGE_HEAD is consumed.
+    // Resolve and commit the merge by hand; MERGE_HEAD is consumed.
     writeFile(wt.path, "file.txt", "resolved\n");
     await git(wt.path, "add", "-A");
     await git(wt.path, "commit", "--no-edit", "--no-verify");
@@ -533,13 +533,13 @@ describe("conflict resolution: complete / abort", () => {
   });
 
   it("abortWorktreeMerge spares a prior sync merge commit + uncommitted work", async () => {
-    // Reproduces the P1 data-loss bug: HEAD is an EARLIER merge commit the app did
-    // not create for conflict resolution (e.g. a sync of main), and the agent has
-    // since made uncommitted edits. "Discard merge" must be a no-op here.
+    // HEAD may be an earlier merge commit the app did not create for conflict
+    // resolution (for example a sync of main), with uncommitted edits made
+    // since. Discard merge must be a no-op in that case.
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
     await commitFile(wt.path, "task.txt", "task\n", "task edit");
     await commitFile(repo, "main.txt", "main\n", "main moved on");
-    // Sync main into the work branch — HEAD becomes a (non-resolution) merge commit.
+    // Sync main into the work branch; HEAD becomes a non-resolution merge commit.
     await git(wt.path, "merge", "--no-ff", "-m", "sync main", "main");
     const syncMerge = await git(wt.path, "rev-parse", "HEAD");
     // Agent edits a file but does not commit.
@@ -553,8 +553,9 @@ describe("conflict resolution: complete / abort", () => {
   });
 
   it("abortWorktreeMerge unwinds a resolution merge but keeps unrelated later work", async () => {
-    // A genuine app-started resolution merge is committed, then MORE commits land on
-    // top. Abort must not blow away that later work — it only owns the merge it made.
+    // A genuine app-started resolution merge is committed, then more commits
+    // land on top. Abort must not discard that later work; it only owns the
+    // merge it made.
     const { repo, wt } = await conflictedWorktree();
     const preMergeTip = await git(wt.path, "rev-parse", "HEAD");
     writeFile(wt.path, "file.txt", "resolved\n");
@@ -576,11 +577,10 @@ describe("conflict resolution: complete / abort", () => {
   });
 });
 
-// Landing on a branch that ISN'T what the main checkout has open — the shape a
-// task with a base of its own has (lib/baseBranch.ts). mergeTask already routes
-// `target !== current` through the object-level path, so nothing new is being
-// built here; what these pin is that the user's checkout is left completely
-// alone, which is the promise the feature makes.
+// Covers a base branch other than the one the main checkout has open, the
+// shape a task with its own base has (lib/baseBranch.ts). mergeTask routes
+// `target !== current` through the object-level path; these tests pin that
+// the user's checkout stays untouched.
 describe("merging into a non-default base branch", () => {
   it("lands on the task's own base while the main checkout stays on main", async () => {
     const repo = await makeRepo();
@@ -600,8 +600,8 @@ describe("merging into a non-default base branch", () => {
     // carries the merge commit that absorbed it.
     expect(res.mergedSha).toBe(await git(wt.path, "rev-parse", "HEAD"));
     expect(await git(repo, "log", "-1", "--format=%s", "feature/x")).toBe("land on feature/x");
-    // The user's checkout never moved and never saw the file: no branch switch,
-    // no working tree materialized, main exactly where it was.
+    // The user's checkout never moved and the file never appeared there: no
+    // branch switch, no working tree materialized, main exactly where it was.
     expect(await git(repo, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
     expect(await git(repo, "rev-parse", "main")).toBe(mainTip);
     expect(await git(repo, "status", "--porcelain")).toBe("");
@@ -624,7 +624,7 @@ describe("merging into a non-default base branch", () => {
     ]);
 
     // withRepoLock serializes them and update-ref carries the old tip, so the
-    // second merge sees the first rather than overwriting it.
+    // second merge builds on the first instead of overwriting it.
     expect(ra.ok).toBe(true);
     expect(rb.ok).toBe(true);
     const landed = await git(repo, "log", "--format=%s", "feature/x");
@@ -635,11 +635,11 @@ describe("merging into a non-default base branch", () => {
     expect(fs.existsSync(path.join(repo, "a.txt"))).toBe(false);
   });
 
-  // The object-level fast path advances the base with a bare `update-ref`, which
-  // has no idea a checkout is standing on it. A LINKED worktree on the base is
-  // the case `mergeTask`'s target !== current check doesn't cover: without the
-  // holder check the merge "succeeded" and left that worktree reporting the
-  // whole merge as uncommitted local changes.
+  // The object-level fast path advances the base with a bare `update-ref`,
+  // which does not check whether a checkout is standing on it. A linked
+  // worktree on the base is the case `mergeTask`'s target !== current check
+  // doesn't cover: without the holder check the merge succeeds and leaves
+  // that worktree reporting the whole merge as uncommitted local changes.
   it("refuses rather than moving a base branch a linked worktree has checked out", async () => {
     const repo = await makeRepo();
     await git(repo, "branch", "feature/x");
@@ -659,13 +659,13 @@ describe("merging into a non-default base branch", () => {
 
     expect(res.ok).toBe(false);
     expect(res.targetBranch).toBe("feature/x");
-    // The refusal names the worktree standing on the branch, so the user knows
-    // which checkout to let go of. Git prints that path with forward slashes on
-    // every platform while path.join gives backslashes on Windows, so match on
-    // the unique leaf name rather than the whole path.
+    // The refusal names the worktree standing on the branch, identifying
+    // which checkout to let go of. Git prints that path with forward slashes
+    // on every platform while path.join gives backslashes on Windows, so the
+    // assertion matches on the unique leaf name instead of the whole path.
     expect(res.error).toContain("feature/x");
     expect(res.error).toContain(path.basename(held));
-    // The branch did not move, and the held worktree sees nothing out of place.
+    // The branch did not move, and the held worktree reports nothing out of place.
     expect(await git(repo, "rev-parse", "feature/x")).toBe(featureTip);
     expect(await git(held, "rev-parse", "HEAD")).toBe(featureTip);
     expect(await git(held, "status", "--porcelain")).toBe("");

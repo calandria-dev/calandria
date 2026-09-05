@@ -4,8 +4,8 @@ import { isAuthFailure } from "@/lib/authFailure";
 import { isPromptTooLong } from "@/lib/promptLimits";
 import { isUsageLimit } from "@/lib/usageLimit";
 
-// Real CLI wordings, captured from codex 2026-08 against an enterprise-managed
-// config that disallows approval_policy=never (see lib/approvalFailure.ts).
+// Real CLI wordings for an enterprise-managed config that disallows
+// approval_policy=never (see lib/approvalFailure.ts).
 const DOWNGRADE =
   "Configured value for `approval_policy` is disallowed by requirements; falling back to required value " +
   "UnlessTrusted. Details: invalid value for `approval_policy`: `Never` is not in the allowed set " +
@@ -52,8 +52,8 @@ describe("isApprovalBlocked", () => {
     }
   });
 
-  // publishTurnError picks exactly one notice per failure; the earlier
-  // classifiers must not steal these signatures (nor this one steal theirs).
+  // publishTurnError picks exactly one notice per failure, so the earlier
+  // classifiers must not match these signatures, and this one must not match theirs.
   it("stays disjoint from the other recoverable-failure classifiers", () => {
     for (const msg of [DOWNGRADE, ...EXEC_REJECTIONS]) {
       expect(isAuthFailure(msg)).toBe(false);

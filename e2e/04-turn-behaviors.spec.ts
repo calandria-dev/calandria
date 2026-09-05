@@ -36,7 +36,7 @@ test("a follow-up sent mid-turn queues, then runs as the next turn", async ({ re
   await sendMessage(request, task.id); // initial turn: sleeps 3s
   await expect.poll(async () => (await getTask(request, task.id)).running).toBe(1);
 
-  // Second message while the turn is live → parked, not run.
+  // Second message while the turn is live is parked, not run.
   const res = await request.post(`/api/tasks/${task.id}/messages`, { data: { text: "follow-up work" } });
   expect(res.status()).toBe(202);
   expect((await res.json()).queued).toBe(true);
@@ -71,7 +71,7 @@ test("Stop ends a live turn cleanly and discards the queue", async ({ page, requ
   await page.getByTitle("Stop the current turn").click();
 
   const settled = await waitForIdle(request, task.id, 15_000);
-  // Stopped, not failed: no error line, and the parked follow-up was discarded.
+  // The turn ends without an error line, and the parked follow-up is discarded.
   const errors = settled.messages.filter((m: { content: string }) => m.content.startsWith("⚠"));
   expect(errors).toHaveLength(0);
   const assistants = settled.messages.filter((m: { role: string }) => m.role === "assistant");
@@ -111,14 +111,14 @@ test("agent suggestions land in the Suggested tray", async ({ page, request }) =
   await gotoApp(page);
   await page.getByText(PROJECT).first().click();
   await expect(page.getByText("Suggested by agents")).toBeVisible();
-  // Scoped to the tray's name element — the originating task's description
+  // Scoped to the tray's name element: the originating task's description
   // contains the same words, so a bare text match is ambiguous.
   await expect(page.locator(".sg-name").filter({ hasText: "Refactor the widget factory" })).toBeVisible();
 });
 
 test("a suggestion is reviewable in the transcript that made it, and starts from there", async ({ page, request }) => {
-  // The point of the card: the user watching the session sees the proposal
-  // where it was made, and can act on it without leaving for the tray.
+  // The card lets the user act on the proposal where it was made, without
+  // leaving for the tray.
   const suggested = `Cache the widget lookups ${uid()}`;
   const task = await createTask(request, {
     projectId,
@@ -132,9 +132,8 @@ test("a suggestion is reviewable in the transcript that made it, and starts from
   await page.getByText(PROJECT).first().click();
   await page.getByText("Suggesting in-window").first().click();
 
-  // The card is settled onto the suggest_task call's own row — not floating
-  // beside it — and names the project the task was filed into, because
-  // suggest_task can point anywhere.
+  // The card settles onto the suggest_task call's own row and names the
+  // project the task was filed into, since suggest_task can point anywhere.
   const card = page.locator(".sugcard");
   await expect(card).toBeVisible({ timeout: 20_000 });
   await expect(card).toContainText(suggested);
@@ -162,14 +161,14 @@ test("a suggestion is reviewable in the transcript that made it, and starts from
 });
 
 test("a suggestion filed into another project reaches that project's tray live", async ({ page, request }) => {
-  // The cross-project fan-out: the turn runs in PROJECT, the task lands in
-  // OTHER. The receiving tray is the one that has to refresh, and it belongs to
-  // a project the running task knows nothing about — so this is the path that
-  // only works if the `suggested` event carries the TARGET project id.
+  // The turn runs in PROJECT, but the task lands in OTHER. This exercises the
+  // path where the receiving tray, belonging to a different project than the
+  // one running the turn, only refreshes because the `suggested` event
+  // carries the TARGET project id.
   const other = await createProject(request, { name: OTHER, repoPath: makeFixtureRepo("behaviors-other") });
 
-  // Sit on the RECEIVING project with no transcript stream open for the turn
-  // that's about to run — only the global /api/events stream can deliver this.
+  // Sits on the receiving project with no transcript stream open for the turn
+  // about to run, so only the global /api/events stream can deliver this.
   await gotoApp(page);
   await page.getByText(OTHER).first().click();
   await expect(page.getByText("Suggested by agents")).toBeHidden();
@@ -199,10 +198,10 @@ test("an unrecognized project ref is refused instead of filed into the current p
   await waitForIdle(request, task.id);
 
   const detail = await (await request.get(`/api/projects/${projectId}`)).json();
-  // Nothing created anywhere — in particular NOT quietly in the calling project.
+  // Nothing is created anywhere, including the calling project.
   expect(detail.tasks.some((t: { title: string }) => t.title === "Should never exist")).toBe(false);
   expect(detail.tasks.length).toBe(before.tasks.length + 1); // just the task we made
-  // …and the agent was told why, so it can retry with a real name.
+  // The agent is told why, so it can retry with a real name.
   const t = await getTask(request, task.id);
   expect(t.messages.some((m: { content: string }) => m.content.includes("no-such-project"))).toBe(true);
 });
@@ -224,18 +223,11 @@ test("a second turn resumes the same session", async ({ request }) => {
   expect(afterSecond.session_id).toBe(afterFirst.session_id);
 });
 
-// Auto-start has to be exercised against the BUILT server, which is the whole
-// reason this lives here and not in tests/autoStart.ts: that suite mocks
-// lib/runner, so it pins WHEN a launch happens but can never see the launch
-// itself fail. In production it always did — lib/autoStart.ts reaches
-// lib/runner.ts, which Turbopack compiles as an async module (the agent SDKs
-// are async ESM externals), and a static import of one reads every export off
-// a pending Promise, so every single auto-start died on `startTurn` not being
-// a function. Dev and vitest were both green throughout. The cycle that made
-// Turbopack skip the propagation is gone (the Claude driver takes the sweep as
-// an injected callback now — TurnHooks), and tests/importGraph.test.ts pins
-// both that acyclicity and the dynamic runner import; this stays the only
-// check that the LAUNCH itself still works in a real production bundle.
+// Auto-start must run against the built server: tests/autoStart.ts mocks
+// lib/runner, so it can pin WHEN a launch happens but not whether the launch
+// itself succeeds in a production Turbopack bundle. This is the only check
+// for that failure mode; tests/importGraph.test.ts pins the import-graph
+// shape (acyclicity and the dynamic runner import) that keeps it working.
 test("a blocker marked done auto-starts its dependent's first turn", async ({ request }) => {
   const blocker = await createTask(request, { projectId, title: `Blocker ${uid()}` });
   const dependent = await createTask(request, { projectId, title: "Waits for the blocker" });
@@ -264,11 +256,11 @@ test("a blocker marked done auto-starts its dependent's first turn", async ({ re
 });
 
 test("a task an agent renames updates the list live, with no reload", async ({ page, request }) => {
-  // The update_task path. Unlike a status change, a retitle carries no field the
-  // coarse /api/events payload knows about, so this only works if the write
-  // publishes "task_edited" and the client refetches the tray on it. Sitting on
-  // the project WITHOUT selecting the task keeps the transcript stream shut, so
-  // the global stream is the only thing that can deliver it.
+  // Exercises the update_task path. Unlike a status change, a retitle carries
+  // no field the coarse /api/events payload includes, so this only works if
+  // the write publishes "task_edited" and the client refetches the tray on
+  // it. Not selecting the task keeps the transcript stream closed, so the
+  // global stream is the only way to deliver the update.
   const task = await createTask(request, {
     projectId,
     title: "Working title",

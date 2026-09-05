@@ -1,9 +1,8 @@
-// The notification emitter is the ONLY place a notification is minted, so it is
-// the only place the policy can be pinned: which events are worth a buzz, which
-// rows must stay quiet (snoozed, suggested, already-settled), and the dedupe
-// window that stops one assistant message opening two cards from sending two.
-// Composed server-side on purpose — the browser is a channel, not the author —
-// so these assertions are what the webhook channel will inherit.
+// The notification emitter is where a notification is minted and where the
+// policy is pinned: which events are worth a buzz, which rows must stay quiet
+// (snoozed, suggested, already-settled), and the dedupe window that stops one
+// assistant message opening two cards from sending two. It runs server-side,
+// so these assertions are what a webhook channel would inherit.
 import { beforeEach, describe, expect, it } from "vitest";
 import { createProject, createTask, setSetting, updateTask } from "@/lib/store";
 import { publish, subscribeGlobal, watcherCount, type BusEvent } from "@/lib/events";
@@ -31,7 +30,7 @@ function notificationsDuring(fn: () => void): NotificationPayload[] {
 }
 
 // A task parked on a question: in_progress + awaiting_input, not suggested,
-// not snoozed — the same shape the NEEDS_YOU predicate recognizes.
+// not snoozed. The same shape the NEEDS_YOU predicate recognizes.
 function parkedTask(projectId: string, title = "Parked") {
   const t = createTask({ project_id: projectId, title });
   updateTask(t.id, { status: "in_progress", running: 1, awaiting_input: 1 });
@@ -62,7 +61,7 @@ describe("the notification emitter", () => {
     expect(sent[0].body).toContain("Review the migration");
     expect(sent[0].body).toContain("Inbox Zero");
     // The id doubles as the browser Notification tag, so it must be STABLE per
-    // (kind, task) — a timestamped id would stack toasts instead of replacing.
+    // (kind, task); a timestamped id would stack toasts instead of replacing.
     expect(sent[0].id).toBe(`awaiting_input:${task.id}`);
   });
 
@@ -71,7 +70,7 @@ describe("the notification emitter", () => {
     updateTask(snoozed.id, { snoozed_until: Date.now() + 60_000 });
     const suggested = createTask({ project_id: projectId, title: "Suggested", suggested: true });
     updateTask(suggested.id, { status: "in_progress", awaiting_input: 1 });
-    // Settled between the runner's publish and our read — an ask that
+    // Settled between the runner's publish and our read: an ask that
     // auto-denied on an unattended turn looks exactly like this.
     const settled = createTask({ project_id: projectId, title: "Settled" });
     updateTask(settled.id, { status: "in_progress", awaiting_input: 0 });
@@ -145,8 +144,8 @@ describe("the notification emitter", () => {
     expect(sent[0].taskId).toBe(withTask.id);
     expect(sent[0].body).toContain("Morning sweep");
     expect(sent[0].body).toContain("Unknown command: /x");
-    // A run that failed before minting a task still notifies — that is the
-    // silent failure this kind exists for.
+    // A run that failed before minting a task still notifies, which is the
+    // failure case this kind exists for.
     expect(sent[1].taskId).toBe("");
     expect(sent[1].body).toContain("Nightly");
   });
@@ -156,7 +155,7 @@ describe("the notification emitter", () => {
 
     const sent = notificationsDuring(() => { emitTestNotification(); emitTestNotification(); });
 
-    expect(sent).toHaveLength(2); // a diagnostic that silently self-suppresses is a lie
+    expect(sent).toHaveLength(2); // a diagnostic that self-suppresses without saying so is a lie
     expect(sent[0].kind).toBe("test");
     expect(sent[0].taskId).toBe("");
 
@@ -201,17 +200,13 @@ describe("the notification dispatcher", () => {
 
   it("subscribes at most once however many callers start it", () => {
     const task = parkedTask(projectId, "Once only");
-    // The obvious instrument is ruled out by design: the notifier subscribes as
-    // INTERNAL, so it is invisible to watcherCount() (the permission gate's
-    // presence heuristic — see tests/permissions.test.ts). A notification count
-    // is no good either, since the emitter's dedupe window would collapse three
-    // live subscribers to one toast.
-    //
-    // What does measure the guard is TEARDOWN. stopNotifier() remembers exactly
-    // ONE unsubscribe function, so a second subscription could never be removed:
-    // if ensureNotifier() ever subscribed twice, the extra listener would
-    // outlive stopNotifier() and keep notifying forever. So publish after
-    // teardown and require silence.
+    // The notifier subscribes as INTERNAL, so it is invisible to
+    // watcherCount() (the permission gate's presence heuristic; see
+    // tests/permissions.test.ts), and the emitter's dedupe window would
+    // collapse three live subscribers into one toast anyway, so neither
+    // instrument proves a single subscription. TEARDOWN does: stopNotifier()
+    // remembers exactly one unsubscribe function, so a second subscription
+    // could never be removed. Publish after teardown and require silence.
     const baseline = watcherCount();
     ensureNotifier();
     ensureNotifier();
@@ -231,8 +226,8 @@ describe("the notification dispatcher", () => {
   it("notifies on the turn-end settle, which is the commonest 'your move'", () => {
     const parked = parkedTask(projectId, "Handed back");
     // Same event, but the runner settled this one: awaiting_input is 0, so the
-    // turn ended with nothing owed to the user. turn_end must NOT become a
-    // "turn finished" notification — the row decides, exactly as it does for a
+    // turn ended with nothing owed to the user. turn_end must not become a
+    // "turn finished" notification; the row decides, exactly as it does for a
     // card.
     const done = createTask({ project_id: projectId, title: "Ran to completion" });
     updateTask(done.id, { status: "in_progress", awaiting_input: 0 });
@@ -253,8 +248,8 @@ describe("the notification dispatcher", () => {
     // emits `error`, then the row is settled with awaiting_input = 1 (any turn
     // that opened a session and ended mid-task), then turn_end. Two kinds means
     // two ids, so neither the dedupe window nor the browser tag would collapse
-    // them — the user would get two stacked toasts about one death, the second
-    // of them claiming a dead session is waiting on them.
+    // them; the user would get two stacked toasts about one death, the second
+    // saying a dead session is waiting on them.
     const task = parkedTask(projectId, "Died mid-turn");
     ensureNotifier();
     try {
@@ -266,8 +261,8 @@ describe("the notification dispatcher", () => {
     } finally {
       stopNotifier();
     }
-    // …and the stand-down is bounded by the same 10s window, not permanent: a
-    // genuine later question on a task that failed earlier still gets through.
+    // …and the stand-down is bounded by the same 10s window: a genuine later
+    // question on a task that failed earlier still gets through.
     resetNotificationDedupe();
     ensureNotifier();
     try {
@@ -293,11 +288,10 @@ describe("the notification dispatcher", () => {
   });
 
   it("stays quiet for a turn that declared nobody can answer it", () => {
-    // A scheduled run: the driver publishes the permission card BEFORE
-    // waitForPermission() auto-settles it, so the row genuinely reads
-    // awaiting_input = 1 for an instant. Telling the user a task is waiting on
-    // them that by design never will is the same false "N need you" item the
-    // scheduler works to avoid.
+    // A scheduled run: the driver publishes the permission card before
+    // waitForPermission() auto-settles it, so the row reads awaiting_input = 1
+    // for an instant. Telling the user a task is waiting on them when it never
+    // will is the same false "N need you" item the scheduler avoids.
     const task = parkedTask(projectId, "08:30 sweep");
     setRunContext(task.id, SCHEDULED_RUN_CONTEXT);
     try {
@@ -330,9 +324,8 @@ describe("the /api/events relay", () => {
       const frames: string[] = [];
       // A short LOCAL timeout per read, well under vitest's global 30s one:
       // these SSE writes are in-process and synchronous, so 2s is generous.
-      // Without this, a misplaced relay branch fails as a bare "Test timed out
-      // in 30000ms" that names nothing — this instead names which frame never
-      // showed up, so the failure points straight at the missing branch.
+      // A misplaced relay branch then fails naming which frame never showed
+      // up, instead of a bare "Test timed out in 30000ms" that names nothing.
       const readOrTimeout = (): Promise<{ done: boolean; value?: Uint8Array }> =>
         new Promise((resolve, reject) => {
           const timer = setTimeout(
@@ -355,11 +348,11 @@ describe("the /api/events relay", () => {
       const payloads = frames.map((f) => JSON.parse(f));
       expect(payloads[0].type).toBe("notification");
       expect(payloads[0].payload.taskId).toBe(task.id);
-      // The task-less test notification must survive the relay: the branch must
-      // sit BEFORE coarse(ev) is even called, not merely before the getTask
-      // re-read further down — coarse() returns null for "notification" and
-      // swallows the event right there, so anywhere after coarse(ev) reproduces
-      // this same failure, not just placement below the re-read.
+      // The task-less test notification must survive the relay: the check
+      // must run before coarse(ev) is called, not merely before the getTask
+      // re-read further down. coarse() returns null for "notification" and
+      // swallows the event there, so anywhere after coarse(ev) reproduces this
+      // failure, not just placement below the re-read.
       expect(payloads[1].payload.kind).toBe("test");
     } finally {
       // ensureNotifier() was started indirectly by eventsRoute() above; undo it
@@ -417,23 +410,23 @@ describe("a failed scheduled run", () => {
 
     // The real sequence for a scheduled turn that CRASHES: the runner publishes
     // `error` during the turn, then settles the run from its finally with the
-    // same text. Two kinds, two ids, so nothing else would collapse them — the
+    // same text. Two kinds, two ids, so nothing else would collapse them; the
     // user would get two toasts naming one failure.
     const run = claimRun(schedule.id, 10, "scheduled")!;
     startRun(run.id, task.id);
     const sent = notificationsDuring(() => {
       emitTurnFailed(task.id, "⚠ the session ended unexpectedly");
       // The turn-end settle sits BETWEEN them in the runner's finally, and the
-      // run context has already been cleared by the time it publishes — so this
+      // run context has already been cleared by the time it publishes, so this
       // is the third toast the same death would produce, not a hypothetical.
       emitAwaitingInput(task.id);
       settleRun(run.id, "failed", "the session ended unexpectedly");
     });
     expect(sent.map((n) => n.kind)).toEqual(["turn_failed"]);
 
-    // …but a run that failed with NO turn error still fires: a preflight
-    // failure or an unknown command is the silent case this kind exists for,
-    // and suppressing it would restore the bug the feature was built to fix.
+    // …but a run that failed with no turn error still fires: a preflight
+    // failure or an unknown command is the case this kind exists for, and
+    // suppressing it would leave that failure unreported.
     resetNotificationDedupe();
     const other = parkedTask(projectId, "02:00 sweep, take two");
     const dry = claimRun(schedule.id, 11, "scheduled")!;
@@ -456,7 +449,7 @@ describe("notification settings", () => {
   });
 
   it("sends a test notification through the real bus, and reports the master switch", async () => {
-    // Subscribed by hand rather than through notificationsDuring: the route is
+    // Subscribed by hand, not through notificationsDuring: the route is
     // async, and that helper only spans a synchronous callback.
     const sent: NotificationPayload[] = [];
     const unsub = subscribeGlobal((_id, ev) => { if (ev.type === "notification") sent.push(ev.payload); });
@@ -498,9 +491,9 @@ describe("the browser channel's display rule", () => {
 
 describe("the browser channel's support classifier", () => {
   it("reads an insecure origin as insecure, not as the user having blocked the site", () => {
-    // The bug this pins: on plain-http LAN origins Chrome reports permission
-    // "denied" without ever prompting. That "denied" must not surface as
-    // "you blocked notifications — unblock in site settings", which can't work.
+    // On plain-http LAN origins, Chrome reports permission "denied" without
+    // ever prompting. That "denied" must not surface as "you blocked
+    // notifications, unblock in site settings", which can't work.
     expect(classifyNotificationSupport({ desktopShell: false, secureContext: false, hasNotificationApi: true, permission: "denied" }))
       .toBe("insecure");
     // Some browsers hide the API entirely on insecure origins; same diagnosis.
@@ -528,7 +521,8 @@ describe("the browser channel's support classifier", () => {
     expect(classifyNotificationSupport({ desktopShell: true, secureContext: true, hasNotificationApi: true, permission: "denied" }))
       .toBe("desktop_shell");
     // It outranks every other signal, including "insecure": whatever the page's
-    // own channel could or couldn't do, it is not the one the user hears.
+    // own channel could or couldn't do, the desktop shell's denial is what the
+    // user hears.
     expect(classifyNotificationSupport({ desktopShell: true, secureContext: false, hasNotificationApi: false, permission: null }))
       .toBe("desktop_shell");
   });
@@ -564,10 +558,10 @@ describe("spotting the desktop shell from the user agent", () => {
     const WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 
     expect(isMacDesktopShell(`${MAC} Electron/44.0.0 Calandria-Desktop/0.3.0`)).toBe(true);
-    // Native frame intact — padding it would inset the logo for nothing.
+    // Native frame intact: padding it would inset the logo for nothing.
     expect(isMacDesktopShell(`${WIN} Electron/44.0.0 Calandria-Desktop/0.3.0`)).toBe(false);
     expect(isMacDesktopShell(`${CHROME} Electron/44.0.0 Calandria-Desktop/0.3.0`)).toBe(false);
-    // A Mac browser tab is a page, not a window.
+    // A Mac browser tab is only a page, with no window of its own.
     expect(isMacDesktopShell(MAC)).toBe(false);
     // An iPhone's "like Mac OS X" reaches this predicate only through a shell
     // that can't run there, but the platform half must not be what lets it in.

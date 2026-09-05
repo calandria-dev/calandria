@@ -7,7 +7,7 @@ const DAILY = 127;
 const at = (iso: string) => Date.parse(iso);
 const weekdays830 = { daysMask: WEEKDAYS, timeOfDay: "08:30", timezone: LA };
 
-// A recurring spec always resolves or throws — the nullable return exists only
+// A recurring spec always resolves or throws. The nullable return exists only
 // for a one-time date that is already behind us, which the `once` block below
 // exercises against the raw export.
 const nextFireAt = (spec: ScheduleSpec, afterMs: number) => rawNextFireAt(spec, afterMs)!;
@@ -86,11 +86,9 @@ describe("nextFireAt", () => {
 
 describe("formatWallClock", () => {
   it("renders an instant on the SCHEDULE's clock, not the server's", () => {
-    // The minted task's title. This is the case that was wrong: the run fired
-    // at 08:30 Pacific and the task was called "…— 2026-08-14 15:30", which is
-    // the one thing this whole feature is supposed to get right. Tests run on a
-    // UTC host (tests/setup.ts) precisely like the container does, so the bug
-    // reproduces here.
+    // The minted task's title renders in the schedule's own timezone, not UTC:
+    // an 08:30 Pacific firing must produce a title reading 08:30, not 15:30.
+    // Tests run on a UTC host (tests/setup.ts), matching the container.
     expect(formatWallClock(at("2026-08-14T15:30:00Z"), LA)).toBe("2026-08-14 08:30");
     expect(formatWallClock(at("2026-08-14T15:30:00Z"), "UTC")).toBe("2026-08-14 15:30");
     expect(formatWallClock(at("2026-08-14T15:30:00Z"), "Asia/Kathmandu")).toBe("2026-08-14 21:15");
@@ -98,7 +96,7 @@ describe("formatWallClock", () => {
 
   it("keeps the wall time across a DST boundary, and pads midnight", () => {
     // Same nominal 08:30 either side of the spring-forward, eight hours apart
-    // in UTC on one side and seven on the other — the title must read 08:30 in
+    // in UTC on one side and seven on the other. The title must read 08:30 in
     // both, or it contradicts the schedule it came from.
     expect(formatWallClock(at("2026-01-14T16:30:00Z"), LA)).toBe("2026-01-14 08:30");
     expect(formatWallClock(at("2026-07-14T15:30:00Z"), LA)).toBe("2026-07-14 08:30");
@@ -124,7 +122,7 @@ describe("nextFireAt, one-time", () => {
   it("has nothing after that occurrence — the whole point of a one-off", () => {
     const spec = once("2026-09-03");
     const fired = nextFireAt(spec, at("2026-09-01T00:00:00Z"));
-    // Strictly after, same as the recurring path: the slot we just fired is gone.
+    // Strictly after, same as the recurring path: the slot just fired is gone.
     expect(rawNextFireAt(spec, fired.ms)).toBeNull();
     expect(rawNextFireAt(spec, at("2026-09-04T00:00:00Z"))).toBeNull();
   });

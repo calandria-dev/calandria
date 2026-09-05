@@ -3,10 +3,10 @@ import { clearGatewayProbeCache, gatewayHealth, probeGateway } from "@/lib/gatew
 import { startFakeGateway, type FakeGateway } from "./fakeGateway";
 
 // What Settings → Agents can say about a LiteLLM gateway, against the response
-// shapes recorded in docs/design/litellm.md's appendix (tests/fakeGateway.ts).
-// The card exists because an agent's `connected` is its CLI login and says
-// nothing about whether the gateway is up, so "unreachable" is an ordinary
-// answer here rather than a failure — probeGateway never throws.
+// shapes recorded in docs/AGENTS.md's appendix (tests/fakeGateway.ts). An
+// agent's `connected` reflects its CLI login only, not whether the gateway is
+// up, so probeGateway treats "unreachable" as an ordinary answer and never
+// throws.
 
 let gw: FakeGateway | null = null;
 
@@ -23,16 +23,16 @@ describe("probeGateway", () => {
     expect(h).toMatchObject({ reachable: true, version: "1.101.0", model_count: 3, has_key: true, error: null });
   });
 
-  // The one answer the card has to state rather than leave blank: every key,
-  // budget and spend feature on a LiteLLM proxy needs its database, and without
-  // one /key/info answers 500 "Database not connected".
+  // Every key, budget and spend feature on a LiteLLM proxy needs its database.
+  // Without one, /key/info answers 500 "Database not connected", and the card
+  // must state that explicitly.
   it("reads the no-database 500 as a fact about the proxy, not an outage", async () => {
     gw = await startFakeGateway({ database: false });
     const h = await probeGateway(gw.url, "sk-test");
     expect(h.reachable).toBe(true);
     expect(h.database).toBe(false);
     expect(h.error).toBe(null);
-    // No database, no budget readout — all four together, never a mix.
+    // No database, no budget readout: all four together, never a mix.
     expect(h.spend).toBe(null);
     expect(h.max_budget).toBe(null);
     expect(h.budget_reset_at).toBe(null);
@@ -49,8 +49,8 @@ describe("probeGateway", () => {
     expect(h.key_models).toEqual(["claude-sonnet-4-5", "gpt-5-codex"]);
   });
 
-  // /health/readiness takes no key, which is what lets an instance that has the
-  // address but not the key still see whether the gateway is up.
+  // /health/readiness takes no key, so an instance with the address but not
+  // the key can still see whether the gateway is up.
   it("answers reachability with no key, and leaves the key-gated facts unknown", async () => {
     gw = await startFakeGateway({ requireKey: "sk-test" });
     const h = await probeGateway(gw.url, "");

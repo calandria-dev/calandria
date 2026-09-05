@@ -34,7 +34,7 @@ describe("isPendingPrompt", () => {
 
 describe("pendingPromptIds", () => {
   it("picks the open question out from under everything that streamed in after it", () => {
-    // The reported bug: a subagent returns enough output to bury the card.
+    // A subagent's output can bury the card under a wall of tool result text.
     const q = ask();
     const messages = [
       msg("user", "go"),
@@ -74,8 +74,8 @@ describe("pendingPromptIds", () => {
   });
 
   it("returns nothing when the caller says no prompt is live", () => {
-    // A Stop leaves the row unanswered forever — nothing backfills an ask card
-    // — so "no answers" alone must never be enough to dock it.
+    // A Stop leaves the row unanswered forever, and nothing backfills an ask
+    // card, so "no answers" alone must never be enough to dock it.
     expect(pendingPromptIds([msg("user", "go"), ask()], false)).toEqual([]);
   });
 

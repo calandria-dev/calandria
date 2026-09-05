@@ -19,17 +19,18 @@ import { getDb } from "@/lib/db";
 import { commitFile, git, makeRepo, writeFile } from "./helpers";
 import { canonicalPath } from "@/lib/paths";
 
-// Moving a task that has ALREADY RUN. The plain move refuses these: the task
-// holds a git worktree cut from its current project's repo, so re-parenting the
-// row alone would leave it diffing against one repository and merging into
-// another. The way out isn't to keep refusing — it's to throw the checkout away
-// on purpose. The transcript, summaries and spend are task-keyed and survive;
-// only the worktree and its branch are lost, and the next turn cuts a fresh one
-// from the destination's repo.
+// Pins moving a task that has already run.
 //
-// So what these pin is the cost being named before it's paid: the acknowledge-
-// ment, the second acknowledgement when the worktree holds work nobody saved,
-// the refusal while a turn is live, and the child rows that would otherwise keep
+// The plain move refuses these: the task holds a git worktree cut from its
+// current project's repo, so re-parenting the row alone would leave it
+// diffing against one repository and merging into another. Instead the move
+// discards the checkout: the transcript, summaries and spend are task-keyed
+// and survive, only the worktree and its branch are lost, and the next turn
+// cuts a fresh one from the destination's repo.
+//
+// These tests pin the cost being named before it's paid: the acknowledgement,
+// the second acknowledgement when the worktree holds unsaved work, the
+// refusal while a turn is live, and the child rows that would otherwise keep
 // billing the project the task just left.
 
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
@@ -40,8 +41,8 @@ async function move(id: string, body: Record<string, unknown>) {
 
 /**
  * Two projects with real repos, and a task in the first that has run: a
- * worktree, a branch, a session, spend, and a merge on record — the whole shape
- * the move used to refuse.
+ * worktree, a branch, a session, spend, and a merge on record, the shape the
+ * move has to handle.
  */
 async function startedTask(name: string) {
   const fromRepo = await makeRepo();
@@ -69,7 +70,7 @@ async function startedTask(name: string) {
   return { from, to, fromRepo, toRepo, task: getTask(task.id)!, wt };
 }
 
-/** Land the task's branch in its base branch — the safe, merged case. */
+/** Land the task's branch in its base branch: the safe, merged case. */
 async function landIt(repo: string, wt: { path: string; branch: string }) {
   await commitFile(wt.path, "feature.txt", "the work\n", "task commit");
   const res = await mergeTask({ repoPath: repo, worktreePath: wt.path, workBranch: wt.branch, baseBranch: "main", message: "land" });
@@ -106,7 +107,7 @@ describe("moving a started task by discarding its worktree", () => {
 
     expect(res.status).toBe(200);
     expect(body.project_id).toBe(to.id);
-    // The point of moving instead of recreating: the row itself survives.
+    // The task row survives; only the checkout is replaced.
     expect(body.id).toBe(task.id);
     expect(body.started).toBe(1);
     // The checkout is gone from disk AND from the old repo's registry.
@@ -114,7 +115,7 @@ describe("moving a started task by discarding its worktree", () => {
     await expect(git(fromRepo, "rev-parse", "--verify", `refs/heads/${wt.branch}`)).rejects.toThrow();
     // …and off the row, which is what makes the next turn cut a fresh one.
     expect(getTask(task.id)).toMatchObject({ worktree_path: "", work_branch: "", base_sha: "" });
-    // Reported, so the caller can say what it cost rather than leaving the user
+    // Reported, so the caller can say what it cost instead of leaving the user
     // to notice.
     expect(body.discarded).toMatchObject({ id: task.id, branch: wt.branch, dirty: false, ahead: 0 });
   });
@@ -129,7 +130,7 @@ describe("moving a started task by discarding its worktree", () => {
     await move(task.id, { project_id: to.id, discard_worktree: true });
 
     // Left behind, these would keep billing a project that no longer owns the
-    // task — and crediting it with insights it didn't earn.
+    // task, and crediting it with insights it didn't earn.
     expect(childCounts(from.id, task.id)).toEqual({ sessions: 0, usage: 0, merges: 0 });
     expect(childCounts(to.id, task.id)).toEqual({ sessions: 1, usage: 1, merges: 1 });
     expect(getProjectUsage(from.id).cost_usd).toBe(0);
@@ -144,14 +145,14 @@ describe("moving a started task by discarding its worktree", () => {
     await move(task.id, { project_id: to.id, discard_worktree: true });
 
     const moved = getTask(task.id)!;
-    // Resuming the old agent thread would drop it into a repo it has never
-    // seen, at the very path it remembers (worktrees are keyed by task id).
+    // Resuming the old agent thread would point it at a repo it was never run
+    // against, at the same path (worktrees are keyed by task id).
     expect(moved.session_id).toBeNull();
     // Nothing of this task is in the destination's base branch, and its PR is
     // against a repo it no longer belongs to.
     expect(moved.merged_at).toBe(0);
     expect(moved.pr_url).toBe("");
-    // The session row itself is history and survives — re-pointed, not erased.
+    // The session row survives: re-pointed to the new project, not deleted.
     expect(childCounts(to.id, task.id).sessions).toBe(1);
   });
 
@@ -175,7 +176,8 @@ describe("discarding a worktree that still holds work", () => {
   it("refuses uncommitted changes until they're acknowledged by name", async () => {
     const { from, to, fromRepo, task, wt } = await startedTask("Dirty");
     await landIt(fromRepo, wt);
-    // An edit made after the merge — force-remove would shred it silently.
+    // An edit made after the merge. Force-remove would destroy it without
+    // asking.
     writeFile(wt.path, "feature.txt", "an afternoon of unsaved work\n");
 
     const res = await move(task.id, { project_id: to.id, discard_worktree: true });
@@ -183,7 +185,7 @@ describe("discarding a worktree that still holds work", () => {
 
     expect(res.status).toBe(409);
     expect(body.error).toMatch(/unsaved work: uncommitted changes/);
-    // The flag the client uses to offer the stronger confirmation rather than
+    // The flag the client uses to offer the stronger confirmation instead of
     // presenting this as a dead end.
     expect(body.needs_discard_unsafe).toBe(true);
     expect(getTask(task.id)?.project_id).toBe(from.id);
@@ -315,8 +317,8 @@ describe("what the next turn cuts", () => {
     // as "cut one".
     const fresh = await ensureWorktree(toRepo, task.id, "main");
     expect(fresh).toBeTruthy();
-    expect(fresh!.path).toBe(wt.path); // same path — worktrees are keyed by task id
-    // …but a different repo, which is the whole point.
+    expect(fresh!.path).toBe(wt.path); // same path: worktrees are keyed by task id
+    // …but a different repo.
     // canonicalPath both sides: git prints C:/Users/... on Windows where
     // realpathSync gives C:\Users\..., and NTFS case-folds (lib/paths.ts).
     expect(canonicalPath(await git(fresh!.path, "rev-parse", "--git-common-dir"))).toContain(canonicalPath(toRepo));
@@ -338,8 +340,8 @@ describe("what the next turn cuts", () => {
 
     expect(fresh).toBeTruthy();
     expect(fresh!.path).toBe(stale!.path);
-    // Reusing it would run the agent — and its commits, and its merge — against
-    // the repo the task just left.
+    // Reusing it would run the agent, and its commits and merge, against the
+    // repo the task just left.
     expect(canonicalPath(await git(fresh!.path, "rev-parse", "--git-common-dir"))).toContain(canonicalPath(newRepo));
     expect(fs.existsSync(path.join(fresh!.path, "only-here.txt"))).toBe(true);
   });
@@ -359,8 +361,8 @@ describe("a branch that outlived its worktree", () => {
     const res = await move(task.id, { project_id: to.id, discard_worktree: true });
 
     expect(res.status).toBe(200);
-    // Left behind it would be an orphan ref in a repo nothing points at any
-    // more — and would silently re-adopt the old work if the task ever moved back.
+    // Left behind, it would be an orphan ref in a repo nothing points at, and
+    // would re-adopt the old work without warning if the task ever moved back.
     await expect(git(fromRepo, "rev-parse", "--verify", `refs/heads/${wt.branch}`)).rejects.toThrow();
     expect(getTask(task.id)?.work_branch).toBe("");
   });

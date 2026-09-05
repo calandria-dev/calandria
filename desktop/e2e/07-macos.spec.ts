@@ -1,31 +1,31 @@
 /* The macOS half of the shell: `titleBarStyle: "hiddenInset"` and the menubar.
  *
- * Both are one line each in `desktop/main.js` and neither has ever run on a Mac
- * in CI — docs/DESKTOP_APP.md §5 listed the title bar as "needs a look on a real
- * screen", which is what this file plus its screenshot artifact settles.
+ * Both are one line each in `desktop/main.js`. This file and its screenshot
+ * artifact are the coverage for them on an actual Mac.
  *
- * WHAT MAKES THESE macOS-ONLY RATHER THAN JUST macOS-FLAVOURED.
+ * What makes these macOS-only rather than just macOS-flavoured:
  *
  *   `hiddenInset` removes the native title bar strip and moves the traffic
- *   lights INTO the web content's coordinate space. On every other platform
- *   `main.js` asks for "default" and the OS draws a strip above the page, so the
- *   geometry assertion below (content box == window box) is false there by
- *   design and true here — it is the observable difference, not a preference.
+ *   lights into the web content's coordinate space. On every other platform
+ *   `main.js` asks for "default" and the OS draws a strip above the page, so
+ *   the geometry assertion below (content box == window box) is false there
+ *   by design and true here.
  *
  *   The menu roles are what wire Cmd+C/V/A. On Windows and Linux those come
  *   from Chromium's own key handling and an absent Edit menu is cosmetic; on
- *   macOS the application menu IS the keyboard, so a missing role is a broken
- *   app. `01-shell.spec.ts` already asserts the top-level roles on every
- *   platform; this file goes one level down, into the submenus, because that is
- *   where the individual shortcuts live and where a role rename would land.
+ *   macOS the application menu is the keyboard, so a missing role is a
+ *   broken app. `01-shell.spec.ts` already asserts the top-level roles on
+ *   every platform; this file goes one level down, into the submenus, since
+ *   that is where the individual shortcuts live and where a role rename
+ *   would land.
  *
- * The screenshot is the point of the second test, not decoration: the traffic
- * lights sit over the app's own titlebar row and no assertion can say whether
- * that looks right. So this measures the overlap, attaches the numbers, and
- * attaches the picture — a human looks once and the answer goes in
- * docs/DESKTOP_APP.md §5.
+ * The screenshot in the second test is evidence, not decoration: the traffic
+ * lights sit over the app's own titlebar row and no assertion can say
+ * whether that looks right, so this measures the overlap, attaches the
+ * numbers, and attaches the picture for a human to check.
  *
- * One `launchShell()` for the file, as in 01-shell: every test here is a read.
+ * One `launchShell()` for the file, as in 01-shell: every test here is a
+ * read.
  */
 
 import { expect, test } from "@playwright/test";
@@ -66,11 +66,11 @@ test("hiddenInset gives the page the whole window, with the traffic lights intac
     };
   });
 
-  // THE assertion for hiddenInset. Under "default" macOS draws a ~28pt strip
+  // The assertion for hiddenInset. Under "default" macOS draws a ~28pt strip
   // above the page and the content box is shorter than the window box by
   // exactly that; under hiddenInset they are the same rectangle, because the
-  // page now owns the rows the strip used to. If main.js's ternary ever
-  // resolves to "default" on darwin, this is what says so.
+  // page now owns the rows the strip would otherwise draw. If main.js's
+  // ternary ever resolves to "default" on darwin, this is what catches it.
   expect(chrome.content, "the window still has a native title bar strip above the page").toEqual(
     chrome.bounds
   );
@@ -78,7 +78,7 @@ test("hiddenInset gives the page the whole window, with the traffic lights intac
   expect(chrome.visible).toBe(true);
   expect(chrome.resizable).toBe(true);
   // Frameless would have taken these with it, and with them the only way to
-  // close the window — the app draws no window controls of its own.
+  // close the window, since the app draws no window controls of its own.
   expect({
     closable: chrome.closable,
     minimizable: chrome.minimizable,
@@ -87,19 +87,19 @@ test("hiddenInset gives the page the whole window, with the traffic lights intac
 
   // Not an exact size: a runner's display can be smaller than main.js's
   // requested 1440x900 and macOS clamps to what fits. The floor is what
-  // matters — minWidth/minHeight are 720x480 and a window below them would
+  // matters: minWidth/minHeight are 720x480, and a window below them would
   // mean the constraint was ignored.
   expect(chrome.bounds.width).toBeGreaterThanOrEqual(720);
   expect(chrome.bounds.height).toBeGreaterThanOrEqual(480);
 });
 
 test("the traffic lights land on the app's own titlebar row", async ({}, testInfo) => {
-  // Where the buttons are, in window points — CSS pixels at the renderer's
-  // default zoom. These used to be AppKit's numbers and a probe rather than a
-  // contract; they are now main.js's, because the page has to reserve room for
-  // them and cannot reserve room for a position it does not know
-  // (`trafficLightPosition: { x: 18, y: 17 }`, three 12px buttons on a 20px
-  // pitch, so centres at 24/44/64 and a cluster ending at 70).
+  // Where the buttons are, in window points: CSS pixels at the renderer's
+  // default zoom. These are main.js's numbers, not a probe of AppKit,
+  // because the page has to reserve room for them and cannot reserve room
+  // for a position it does not know (`trafficLightPosition: { x: 18, y: 17 }`,
+  // three 12px buttons on a 20px pitch, so centres at 24/44/64 and a cluster
+  // ending at 70).
   const probes = [
     { name: "close", x: 24, y: 23 },
     { name: "minimise", x: 44, y: 23 },
@@ -136,13 +136,13 @@ test("the traffic lights land on the app's own titlebar row", async ({}, testInf
   // it is also what would make the human's one look worthless.
   expect(shot.byteLength).toBeGreaterThan(5000);
 
-  // The one part that IS a verdict, and a deliberately narrow one: the page's
-  // layout reaches the rows the native strip used to own. `elementsFromPoint`
+  // The one part that is a verdict, and a narrow one: the page's layout
+  // reaches the rows the native strip would otherwise own. `elementsFromPoint`
   // returns the enclosing boxes as well as the painted leaf, so html + body is
-  // what "nothing is laid out here" looks like and anything more is the app's
-  // own chrome extending to the top of the window. Whether that chrome *looks*
-  // right under the traffic lights is the screenshot's business, not this
-  // assertion's.
+  // what "nothing is laid out here" looks like, and anything more is the
+  // app's own chrome extending to the top of the window. Whether that chrome
+  // looks right under the traffic lights is the screenshot's business, not
+  // this assertion's.
   const topRow = hits.find((h) => h.name === "past the lights")!;
   expect(
     topRow.stack.length,
@@ -151,11 +151,11 @@ test("the traffic lights land on the app's own titlebar row", async ({}, testInf
 });
 
 // The two jobs the page inherited when hiddenInset took the native bar away.
-// Both were missing until a user reported them (docs/DESKTOP_APP.md §5), and
-// neither is visible from anywhere else: tests/desktopWindowChrome.test.ts pins
-// the numbers agreeing across main.js and globals.css, but only a real packaged
-// launch can say whether the class that applies them ever reached the page —
-// it hangs off a user-agent read, and the token behind it is set by main.js.
+// Neither is visible from anywhere else: tests/desktopWindowChrome.test.ts
+// pins the numbers agreeing across main.js and globals.css, but only a real
+// packaged launch can say whether the class that applies them ever reached
+// the page, since it hangs off a user-agent read and the token behind it is
+// set by main.js.
 test("the page reserves the traffic lights' corner and is draggable", async () => {
   const chrome = await shell.win.evaluate(() => {
     const app = document.querySelector(".app");
@@ -200,7 +200,7 @@ test("the page reserves the traffic lights' corner and is draggable", async () =
 
 test("the menubar's submenus carry the roles the system shortcuts come from", async () => {
   // Electron's own types live under desktop/node_modules, so everything the
-  // main process hands back arrives as `any` — hence the annotations.
+  // main process hands back arrives as `any`, hence the annotations.
   const menus: Record<string, string[]> = await shell.app.evaluate(async ({ Menu }) => {
     const items = (Menu.getApplicationMenu()?.items || []) as any[];
     const out: Record<string, string[]> = {};
@@ -222,8 +222,8 @@ test("the menubar's submenus carry the roles the system shortcuts come from", as
     wanted.filter((w) => !(menu || []).some((entry) => entry.includes(w)));
 
   // Cmd+C / Cmd+V / Cmd+A are not ours and are not Chromium's here: on macOS
-  // they are the Edit menu's roles, and an app without them cannot copy text.
-  // That is the whole reason `{ role: "editMenu" }` is in main.js.
+  // they are the Edit menu's roles, and an app without them cannot copy
+  // text, which is why `{ role: "editMenu" }` is in main.js.
   expect(
     missing(menus.editmenu, ["undo", "redo", "cut", "copy", "paste", "select"]),
     `Edit menu is incomplete — Cmd+C/V/A come from these roles. Menu was ${JSON.stringify(menus.editmenu)}`
@@ -236,9 +236,9 @@ test("the menubar's submenus carry the roles the system shortcuts come from", as
     `application menu is incomplete — Cmd+Q and Cmd+H have nowhere to come from. Menu was ${JSON.stringify(menus.appmenu)}`
   ).toEqual([]);
 
-  // Cmd+M. `close` is deliberately checked against the FILE menu instead: on
-  // darwin Electron's fileMenu expands to a lone `close` (Cmd+W) while `quit`
-  // moves to the app menu, which is the opposite of every other platform.
+  // Cmd+M. `close` is checked against the file menu instead: on darwin
+  // Electron's fileMenu expands to a lone `close` (Cmd+W) while `quit` moves
+  // to the app menu, which is the opposite of every other platform.
   expect(missing(menus.windowmenu, ["minimize"])).toEqual([]);
   expect(missing(menus.filemenu, ["close"])).toEqual([]);
 });

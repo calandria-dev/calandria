@@ -2,10 +2,10 @@ import { describe, it, expect } from "vitest";
 import { EFFORT } from "@/lib/agents/codex/driver";
 import { codexCapabilities } from "@/lib/agents/codex/capabilities";
 
-// Pins the reasoning-preset → model_reasoning_effort mapping. Every current
+// Pins the reasoning-preset to model_reasoning_effort mapping. Every current
 // codex model supports exactly low|medium|high|xhigh; "minimal" still exists
-// in the SDK's ModelReasoningEffort type but the API rejects the whole turn
-// with a 400 (verified live on codex-cli 0.142.5), so it must never be sent.
+// in the SDK's ModelReasoningEffort type, but the API rejects the whole turn
+// with a 400, so it must never be sent.
 describe("codex reasoning-effort mapping", () => {
   it("only sends levels every codex model supports (never 'minimal')", () => {
     const supported = new Set(["low", "medium", "high", "xhigh"]);

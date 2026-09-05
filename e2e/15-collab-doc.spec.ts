@@ -1,10 +1,10 @@
 // Document collaboration mode: a markdown file in the diff opens as a document,
 // a selected passage takes a comment, the source can be edited, and Send turns
-// both into ONE message — the edit as a patch OR written straight into the
-// worktree with the diff as context, the comment with its located line — that
-// lands in the transcript through the ordinary chat path. The second entry
-// point is the transcript's own Write card, keyed on the path the agent wrote
-// rather than on git status, which is what makes a GITIGNORED file reachable:
+// both into one message that lands in the transcript through the ordinary
+// chat path (the edit as a patch, or written straight into the worktree with
+// the diff as context; the comment with its located line). The second entry
+// point is the transcript's own Write card, keyed on the path the agent
+// wrote instead of on git status, so a gitignored file is reachable there:
 // the diff never lists it, the card still offers it.
 import fs from "node:fs";
 import path from "node:path";
@@ -27,7 +27,7 @@ const DOC = [
 ].join("\n");
 
 // A design doc with a ```mermaid fence: the collaboration modal renders it
-// as a diagram (the transcript deliberately doesn't — see app/Markdown.tsx).
+// as a diagram, unlike the transcript (see app/Markdown.tsx).
 const DIAGRAM_DOC = [
   "# Architecture",
   "",
@@ -45,9 +45,9 @@ let taskId: string;
 let worktreePath: string;
 let docPath: string;
 
-// ONE file's diff section, found by the section header rather than by any
+// One file's diff section, found by the section header instead of by any
 // text in the section: once the review is sent, the notes file the mock agent
-// writes quotes the packet — "Document review of `docs/setup.md`" — so a
+// writes quotes the packet ("Document review of `docs/setup.md`"), so a
 // body-text match would resolve to two sections.
 const fileSection = (page: Page, file: string) =>
   page.locator(".tc-file", { has: page.locator(".tc-fhead-main", { hasText: file }) });
@@ -55,9 +55,9 @@ const collaborateOn = (page: Page, file: string) => fileSection(page, file).getB
 
 test.beforeAll(async ({ request }) => {
   await ensureOnboarded(request);
-  // `scratch/` is gitignored in the fixture, so what the mock writes there is
-  // invisible to `git ls-files --others --exclude-standard` — the diff's
-  // untracked list — while CHANGELOG.md gives the branch a real commit.
+  // `scratch/` is gitignored in the fixture, so what the mock writes there
+  // does not appear in `git ls-files --others --exclude-standard` (the
+  // diff's untracked list), while CHANGELOG.md gives the branch a real commit.
   const repo = makeFixtureRepo("collab-doc");
   fs.writeFileSync(path.join(repo, ".gitignore"), "scratch/\n");
   git(repo, "add", "-A");
@@ -88,8 +88,8 @@ test("the file route serves worktree files and refuses everything else", async (
   const okJson = await ok.json();
   expect(okJson.content).toBe(DOC);
   // sha is the file's git blob id (lib/worktreeFile.ts blobSha), the anchor a
-  // document comment is stamped with — not a real git object here (the file
-  // is untracked), just the hash git would compute for these bytes.
+  // document comment is stamped with. It isn't a real git object here (the
+  // file is untracked), just the hash git would compute for these bytes.
   expect(okJson.sha).toMatch(/^[0-9a-f]{40}$/);
   expect((await request.get(`/api/tasks/${taskId}/file?path=../outside.md`)).status()).toBe(400);
   expect((await request.get(`/api/tasks/${taskId}/file?path=docs/missing.md`)).status()).toBe(404);
@@ -123,9 +123,10 @@ test("edit + comment + send as a patch arrive as one located packet", async ({ p
   await expect(modal.locator(".collab-c-where")).toHaveText("Configuration");
 
   // Passage comments are persisted the moment they're added (task_doc_comments),
-  // unlike the edit and the general note, which stay modal-local. Closing here
-  // — nothing else dirty yet — fires no confirm dialog, and reopening still
-  // shows the comment: it survived the modal unmounting, not just a re-render.
+  // unlike the edit and the general note, which stay modal-local. Closing here,
+  // with nothing else dirty yet, fires no confirm dialog, and reopening still
+  // shows the comment, confirming it survived the modal unmounting and isn't
+  // just held in a re-render.
   await modal.locator(".modal-f").getByRole("button", { name: "Cancel" }).click();
   await expect(modal).toBeHidden();
   await collaborateOn(page, "docs/setup.md").click();
@@ -163,8 +164,8 @@ test("edit + comment + send as a patch arrive as one located packet", async ({ p
   await expect(page.getByText("Mock turn complete").nth(1)).toBeVisible({ timeout: 20_000 });
 
   // Reopening now shows the comment under "Sent to agent": read-only (no ×),
-  // tagged, and — since the underlying file hasn't changed since — not
-  // outdated. Nothing to send, so Send to agent is disabled.
+  // tagged, and not outdated, since the underlying file hasn't changed since.
+  // Nothing to send, so Send to agent is disabled.
   await collaborateOn(page, "docs/setup.md").click();
   await expect(modal.locator(".collab-c.sent")).toHaveCount(1);
   await expect(modal.locator(".collab-c-x")).toHaveCount(0);
@@ -248,7 +249,7 @@ test("the write route refuses a live turn and a stale original", async ({ reques
   expect(fs.readFileSync(docPath, "utf8")).toBe(current);
   await waitForIdle(request, taskId);
 
-  // A modal that loaded an older text can't write over what's there now —
+  // A modal that loaded an older text can't write over what's there now:
   // the refusal carries the current text.
   const stale = await write(DOC, DOC + "\nMy edit.\n");
   expect(stale.status()).toBe(409);
@@ -265,12 +266,12 @@ test("the write route refuses a live turn and a stale original", async ({ reques
 });
 
 test("a gitignored file the agent wrote opens from its transcript card, though the diff never lists it", async ({ page, request }) => {
-  // The route's only screen is "inside the worktree" — git status is not
+  // The route's only screen is "inside the worktree"; git status is not
   // consulted, so the ignored file is served like any other.
   const served = await request.get(`/api/tasks/${taskId}/file?path=scratch/notes.md`);
   expect(served.status()).toBe(200);
   expect((await served.json()).content).toBe("# Scratch notes\n");
-  // …and the diff, which follows git, doesn't know it exists.
+  // The diff, which follows git, doesn't know it exists.
   const diff = await request.get(`/api/tasks/${taskId}/diff`);
   const listed = ((await diff.json()).files as { path: string }[]).map((f) => f.path);
   expect(listed).toContain("CHANGELOG.md");
@@ -309,9 +310,9 @@ test("a mermaid fence renders as a diagram, and a broken edit keeps the last goo
   await expect(diagram.locator("pre")).toHaveCount(0);
 
   // Edit tab: the render beside the editor follows the source. A dangling
-  // arrow is the state a diagram is in for most of the time it's being typed;
-  // the last good picture stays up, dimmed, with the parser's complaint under
-  // it, rather than blinking out.
+  // arrow is a common state while a diagram is being typed; the last good
+  // picture stays up, dimmed, with the parser's complaint under it, instead
+  // of blinking out.
   await modal.locator(".collab-tabs").getByRole("button", { name: "EDIT" }).click();
   const live = modal.locator(".collab-render [data-testid=mermaid]");
   await expect(live.locator("svg")).toBeVisible();
@@ -331,7 +332,7 @@ test("a mermaid fence renders as a diagram, and a broken edit keeps the last goo
   await expect(live.locator(".md-mermaid-err")).toHaveCount(0);
   await expect(live).toContainText("Cache");
 
-  // Nothing was sent, so discard — the confirm is the edited-document one.
+  // Nothing was sent, so discard: the confirm is the edited-document one.
   page.once("dialog", (d) => d.accept());
   await modal.locator(".modal-f").getByRole("button", { name: "Cancel" }).click();
   await expect(modal).toBeHidden();

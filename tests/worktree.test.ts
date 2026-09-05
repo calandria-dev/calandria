@@ -43,8 +43,8 @@ describe("recentCommits", () => {
     const repo = await makeRepo();
     await commitFile(repo, "a.txt", "a\n", "second commit");
     const log = await recentCommits(repo);
-    // `$`-anchored per line, so a trailing `\r` would fail this and nothing
-    // else — hence outputLines rather than split("\n") (issue #53).
+    // The match is `$`-anchored per line, so a trailing `\r` would fail it;
+    // outputLines strips that, unlike split("\n") (issue #53).
     const lines = outputLines(log);
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatch(/second commit$/);
@@ -79,15 +79,15 @@ describe("ensureWorktree", () => {
     expect(await isGitRepo(wt!.path)).toBe(true);
     expect(await git(wt!.path, "rev-parse", "--abbrev-ref", "HEAD")).toBe(`calandria/${taskId}`);
     expect(fs.existsSync(path.join(wt!.path, "file.txt"))).toBe(true);
-    // The main repo stays on its original branch.
+    // Cutting the worktree must not move the main checkout off its branch.
     expect(await git(repo, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
   });
 
   it("bases off the configured branch even when another branch is checked out", async () => {
     const repo = await makeRepo();
     const mainSha = await git(repo, "rev-parse", "main");
-    // Park the main checkout on a diverged side branch — the trap that used to
-    // make tasks base off one branch and merge into another.
+    // The main checkout sits on a diverged side branch; the base must come
+    // from the configured branch, not from whatever HEAD happens to be.
     await git(repo, "checkout", "-b", "side");
     const sideSha = await commitFile(repo, "side.txt", "side\n");
     const taskId = uid();
@@ -105,8 +105,8 @@ describe("ensureWorktree", () => {
     await git(repo, "checkout", "-b", "side");
     const sideSha = await commitFile(repo, "side.txt", "side\n");
 
-    // Misconfigured project (or a fresh repo whose default branch is named
-    // differently): current HEAD is the only sane base.
+    // A misconfigured project, or a fresh repo whose default branch has a
+    // different name: current HEAD is the only base available.
     const wt = await ensureWorktree(repo, uid(), "no-such-branch");
     expect(wt!.baseSha).toBe(sideSha);
     expect(await git(wt!.path, "rev-parse", "HEAD")).toBe(sideSha);
@@ -156,11 +156,10 @@ describe("ensureWorktree", () => {
   });
 });
 
-// Issue #44: ensureWorktree fails CLOSED, which is right — but a bare "Could
-// not prepare an isolated worktree: fatal: …" with nothing to click is a dead
-// end, and a scheduled run in that state settles `failed` every morning. Each
-// case below pins one classification and, where a repair can act, that it
-// actually recovers the task rather than just claiming to.
+// ensureWorktree fails closed (issue #44): a raw prep error is classified so
+// the UI can offer a repair action instead of a dead end. Each case below
+// pins one classification and, where a repair can act, confirms it actually
+// recovers the task.
 describe("worktree prep failures — classification", () => {
   it("reads a crashed git's leftover lock as recoverable", () => {
     const d = classifyWorktreePrep(
@@ -181,9 +180,9 @@ describe("worktree prep failures — classification", () => {
   });
 
   it("reads a full disk as a full disk even when it surfaces as a failed lock write", () => {
-    // Ordering matters: ENOSPC kills the very lock-file write git was making,
-    // so a "stale lock" read here would offer a repair that deletes a lock
-    // nothing left behind and then fails identically.
+    // Classification order matters: ENOSPC kills the same lock-file write
+    // git was making, so a "stale lock" read here would offer a repair that
+    // deletes a lock no process left behind, then fails the same way again.
     const raw = "fatal: Unable to create '/repo/.git/index.lock': No space left on device";
     const d = classifyWorktreePrep(raw);
     expect(d.kind).toBe("disk_full");
@@ -209,9 +208,9 @@ describe("worktree prep failures — classification", () => {
   });
 
   it("offers the repair only on a PREP failure, not on the agent's own git output", () => {
-    // A turn dies with git output in it all the time — a Bash call inside the
-    // worktree hitting the same lock. That failure has nothing to do with
-    // preparing the checkout, and re-cutting it is the wrong advice.
+    // A turn can die with git output in it, such as a Bash call inside the
+    // worktree hitting the same lock text. That failure has nothing to do
+    // with preparing the checkout, so offering to re-cut it would be wrong.
     const fromTheAgent = "Another git process seems to be running in this repository";
     expect(worktreePrepNotice(fromTheAgent)).toBeNull();
     expect(worktreePrepNotice(`${WORKTREE_PREP_PREFIX}: ${fromTheAgent}`)).toContain(WORKTREE_REPAIR_NOTICE);
@@ -222,9 +221,9 @@ describe("repairWorktree", () => {
   it("classifies, then recovers, a worktree whose directory is gone but whose registration isn't", async () => {
     const { repo, taskId, wt } = await makeRepoWithWorktree(ensureWorktree);
     const tip = await commitFile(wt.path, "work.txt", "work\n");
-    // The dir deleted out from under git (external cleanup, a full disk being
-    // reclaimed) WITHOUT `git worktree remove`: the registration survives, and
-    // git then refuses both the path and the branch.
+    // The directory was deleted without `git worktree remove` (external
+    // cleanup, disk reclamation): the registration survives, and git then
+    // refuses both the path and the branch.
     fs.rmSync(wt.path, { recursive: true, force: true });
 
     const err = await ensureWorktree(repo, taskId).then(() => null, (e: unknown) => e);
@@ -233,20 +232,20 @@ describe("repairWorktree", () => {
     expect(prep.kind).toBe("stale_registration");
     expect(prep.recoverable).toBe(true);
     expect(prep.message).toContain(WORKTREE_PREP_PREFIX);
-    // The line the user actually reads carries the button.
+    // The line the user reads carries the button.
     expect(worktreePrepNotice(prep.message)).toContain(WORKTREE_REPAIR_NOTICE);
 
     const repaired = await repairWorktree(repo, taskId);
     expect(repaired.worktree!.path).toBe(wt.path);
     expect(repaired.worktree!.branch).toBe(wt.branch);
-    // Recovery, not amnesia: the branch and its commits are what came back.
+    // The repair recovers the branch and its commits intact.
     expect(await git(wt.path, "rev-parse", "HEAD")).toBe(tip);
     expect(await git(wt.path, "rev-parse", "--abbrev-ref", "HEAD")).toBe(wt.branch);
   });
 
   it("clears a leftover lock in the task's own admin dir without waiting", async () => {
-    // Nothing but this task owns that directory, and no turn is running (the
-    // route refuses), so a lock there is stale by definition.
+    // Only this task owns that directory, and no turn can be running there
+    // (the route refuses), so a lock found there is stale.
     const { repo, taskId, wt } = await makeRepoWithWorktree(ensureWorktree);
     const lock = path.join(repo, ".git", "worktrees", taskId, "index.lock");
     fs.writeFileSync(lock, "");
@@ -270,9 +269,9 @@ describe("repairWorktree", () => {
     expect((err as WorktreePrepError).kind).toBe("stale_lock");
     expect((err as WorktreePrepError).recoverable).toBe(true);
 
-    // Seconds old: it may belong to a `git add` running in the user's own
-    // checkout this instant, so the repair leaves it — and fails the same way,
-    // which is the honest answer.
+    // A lock seconds old may belong to a `git add` running in the user's
+    // own checkout right now, so the repair leaves it alone and fails the
+    // same way again.
     await expect(repairWorktree(dir, taskId)).rejects.toBeInstanceOf(WorktreePrepError);
     expect(fs.existsSync(lock)).toBe(true);
 
@@ -298,9 +297,9 @@ describe("removeWorktree", () => {
 
   it("falls back to prune + branch delete when the worktree dir is already gone", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
-    // Simulate the dir being deleted out from under git (external cleanup): the
-    // registration goes stale, so `git worktree remove` errors and the catch
-    // branch (rmSync + prune) is what actually cleans up.
+    // The directory is deleted out from under git (external cleanup): the
+    // registration goes stale, `git worktree remove` errors, and the catch
+    // branch (rmSync + prune) does the actual cleanup.
     fs.rmSync(wt.path, { recursive: true, force: true });
 
     await removeWorktree(repo, wt.path, wt.branch);
@@ -334,7 +333,7 @@ describe("worktreePruneSafety", () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
     await commitFile(wt.path, "feature.txt", "feature\n", "task commit");
     await mergeTask({ repoPath: repo, worktreePath: wt.path, workBranch: wt.branch, baseBranch: "main", message: "land" });
-    // Round-2 edit left uncommitted — force-remove would silently discard it.
+    // The round-2 edit is left uncommitted; a force-remove would discard it.
     writeFile(wt.path, "feature.txt", "round two edit\n");
 
     const safety = await safetyOf(repo, wt);
@@ -347,7 +346,7 @@ describe("worktreePruneSafety", () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
     await commitFile(wt.path, "feature.txt", "feature\n", "task commit");
     await mergeTask({ repoPath: repo, worktreePath: wt.path, workBranch: wt.branch, baseBranch: "main", message: "land" });
-    // Round-2 commit never merged — branch -D would orphan it.
+    // The round-2 commit is never merged; branch -D would orphan it.
     await commitFile(wt.path, "feature.txt", "round two\n", "round two commit");
 
     const safety = await safetyOf(repo, wt);
@@ -362,10 +361,10 @@ describe("worktreePruneSafety", () => {
     expect(safety).toMatchObject({ safe: true, isDirty: false, ahead: 0 });
   });
 
-  // A base branch with no ref here makes the count unknowable, and it used to
-  // come back as the same zero a fully-merged branch produces — which every
-  // caller reads as "no unlanded work, safe to prune" while it authorises
-  // deleting the checkout AND its branch.
+  // A base branch with no ref here makes the ahead count unknowable, and it
+  // must not come back as the same zero a fully-merged branch produces:
+  // every caller reads zero as "no unlanded work, safe to prune," which
+  // authorizes deleting the checkout and its branch.
   it("reports an unknown count, not zero, when the base branch has no ref here", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
     await commitFile(wt.path, "feature.txt", "feature\n", "task commit");
@@ -389,8 +388,8 @@ describe("worktreePruneSafety", () => {
     expect(safety.reason).toContain("gone");
   });
 
-  // The other missing ref is NOT the same answer: with no work branch there are
-  // no commits left to orphan, so zero is the truth and pruning stays safe.
+  // A missing work branch is a different case: with no branch there are no
+  // commits to orphan, so zero is correct and pruning stays safe.
   it("a missing WORK branch is a real zero, not an unknown", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
 

@@ -4,16 +4,16 @@ import { publishTurnError } from "../lib/runner";
 import { registerTurn, unregisterTurn, hasTurn, abortTurn } from "../lib/abort";
 import { subscribe } from "../lib/events";
 
-// Regression: deleting a project (or task) while a turn is live must never crash
-// the shared server process. The runner keeps writing to SQLite after the task
-// row is cascade-deleted, so those writes hit FOREIGN KEY errors; the fix makes
-// the error path swallow-and-log instead of throwing out of the detached turn.
+// Deleting a project (or task) while a turn is live must never crash the
+// shared server process. The runner keeps writing to SQLite after the task
+// row is cascade-deleted, so those writes hit FOREIGN KEY errors; the error
+// path must swallow and log instead of throwing out of the detached turn.
 describe("project/task delete mid-turn", () => {
   it("addMessage on a deleted task row hits a FOREIGN KEY error (the hazard)", () => {
     const project = createProject({ name: "DelHazard" });
     const task = createTask({ project_id: project.id, title: "T", description: "" });
     deleteProject(project.id); // cascade-drops the task row
-    // This is exactly what the runner does mid-stream — and why the error path
+    // This is exactly what the runner does mid-stream, and why the error path
     // must be hardened.
     expect(() => addMessage(task.id, 1, "assistant", "hi")).toThrow(/FOREIGN KEY/i);
   });
@@ -22,8 +22,8 @@ describe("project/task delete mid-turn", () => {
     const project = createProject({ name: "DelErr" });
     const task = createTask({ project_id: project.id, title: "T", description: "" });
     deleteProject(project.id);
-    // Before the fix this re-threw a FOREIGN KEY error that escaped the runner's
-    // catch and, unhandled on the detached run(), crashed the process.
+    // A FOREIGN KEY error here must not escape the runner's catch and crash the
+    // detached run() unhandled.
     expect(() => publishTurnError(task.id, 1, "boom")).not.toThrow();
   });
 

@@ -39,9 +39,9 @@ describe("adjudicate, one-time schedules", () => {
     const slot = s.next_fire_at;
     const verdict = adjudicate(pinNextFire(s.id, slot), slot + 1_000, never);
     expect(verdict.kind).toBe("fire");
-    // Spent, not deleted: enabled off and pointed at nothing, so the ticker
-    // never looks at it again while the run ledger and the row survive for the
-    // user to read at breakfast.
+    // Firing spends the schedule: enabled goes to 0 and next_fire_at to 0, so
+    // the ticker skips it afterward, while the run ledger and the row remain
+    // for the user to read.
     const after = getSchedule(s.id)!;
     expect(after.enabled).toBe(0);
     expect(after.next_fire_at).toBe(0);
@@ -52,7 +52,7 @@ describe("adjudicate, one-time schedules", () => {
     const s = makeOnce();
     const slot = s.next_fire_at;
     expect(adjudicate(pinNextFire(s.id, slot), slot + 1_000, never).kind).toBe("fire");
-    // Disabled now, so the second pass is a no-op rather than a duplicate claim.
+    // Disabled now, so the second pass is a no-op.
     expect(adjudicate(getSchedule(s.id)!, slot + 2_000, never).kind).toBe("none");
     expect(listRuns(s.id)).toHaveLength(1);
   });
@@ -65,8 +65,8 @@ describe("adjudicate, one-time schedules", () => {
     const verdict = adjudicate(pinned, slot + 86_400_000, never);
     expect(verdict.kind).toBe("missed");
     expect(listRuns(s.id)[0].status).toBe("missed");
-    // Spent regardless — a one-time that was missed has still had its moment,
-    // and leaving it enabled would re-adjudicate the same dead slot forever.
+    // Spent regardless: a missed one-time schedule already had its slot, and
+    // leaving it enabled would re-adjudicate the same dead slot forever.
     expect(getSchedule(s.id)!.enabled).toBe(0);
   });
 
@@ -97,7 +97,7 @@ describe("adjudicate", () => {
     const verdict = adjudicate(pinned, slot + 1_000, never);
     expect(verdict.kind).toBe("fire");
     if (verdict.kind === "fire") expect(verdict.run.trigger).toBe("scheduled");
-    // and the schedule has moved on, so the same slot can't be re-adjudicated
+    // and the schedule points past that slot, so it can't be re-adjudicated
     expect(getSchedule(s.id)!.next_fire_at).toBeGreaterThan(slot);
   });
 
@@ -126,12 +126,12 @@ describe("adjudicate", () => {
     expect(verdict.kind).toBe("fire");
     if (verdict.kind === "fire") {
       expect(verdict.run.trigger).toBe("catch_up");
-      expect(verdict.run.scheduled_for).toBe(at("2026-08-17T15:30:00Z")); // Monday's slot, not Friday's
+      expect(verdict.run.scheduled_for).toBe(at("2026-08-17T15:30:00Z")); // Monday's slot
     }
-    // Friday is on the record as missed, not quietly dropped.
+    // Friday is recorded as missed.
     const statuses = listRuns(s.id, 10).map((r) => r.status);
     expect(statuses).toContain("missed");
-    // Next up is Tuesday — the backlog is fully consumed.
+    // Next up is Tuesday: the backlog is fully consumed.
     expect(getSchedule(s.id)!.next_fire_at).toBe(at("2026-08-18T15:30:00Z"));
   });
 
@@ -141,7 +141,7 @@ describe("adjudicate", () => {
     const verdict = adjudicate(pinned, slot + 1_000, () => true);
     expect(verdict.kind).toBe("skipped");
     expect(listRuns(s.id, 10)[0].status).toBe("skipped_overlap");
-    // It still moves on, or one wedged turn would freeze the schedule forever.
+    // The schedule still advances, or one wedged turn would freeze it forever.
     expect(getSchedule(s.id)!.next_fire_at).toBeGreaterThan(slot);
   });
 
@@ -168,8 +168,8 @@ describe("adjudicate", () => {
     const stale = pinNextFire(s.id, slot);
     updateSchedule(s.id, { enabled: 0 });
     expect(adjudicate(stale, slot + 1_000, never).kind).toBe("none");
-    // And a paused schedule accrues NO missed rows — unpausing must not greet
-    // the user with a wall of red for slots they deliberately skipped.
+    // A paused schedule accrues no missed rows, so unpausing does not show the
+    // user a wall of red for skipped slots.
     expect(listRuns(s.id, 10)).toHaveLength(0);
   });
 

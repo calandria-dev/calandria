@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-// Hosted LiteLLM gateway MCP servers on Claude tasks (docs/design/litellm.md,
-// "Hosted MCP servers"): mcpServers[alias] mounted next to the in-process
-// `calandria` server in query() options. Same trick as
-// tests/claudeTurnHooks.test.ts — the SDK is mocked at its module boundary so
-// the REAL driver builds the REAL options object.
+// Pins hosted LiteLLM gateway MCP servers on Claude tasks (docs/AGENTS.md):
+// mcpServers[alias] mounted next to the in-process `calandria` server in
+// query() options. Same approach as tests/claudeTurnHooks.test.ts: the SDK is
+// mocked at its module boundary so the real driver builds the real options
+// object.
 const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }));
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
@@ -46,7 +46,7 @@ describe("hosted gateway MCP servers mount on a Claude turn", () => {
   it("mounts a project's selected aliases as http servers, independent of the task's own model-provider kind", async () => {
     process.env.CALANDRIA_LITELLM_BASE_URL = "http://gw.example";
     process.env.CALANDRIA_LITELLM_KEY = "sk-instance";
-    // No agent_env override at all — an ordinary cloud-login task — proving the
+    // No agent_env override at all, an ordinary cloud-login task, proving the
     // mount doesn't gate on describeProvider(...).kind === "gateway".
     let project = createProject({ name: "McpMountCloud" });
     project = updateProject(project.id, { gateway_mcp: JSON.stringify(["demo", "search"]) })!;
@@ -90,8 +90,8 @@ describe("hosted gateway MCP servers mount on a Claude turn", () => {
 
     const mcp = await mcpServersFor(task, project);
     expect(Object.keys(mcp)).toEqual(["calandria"]);
-    // Still the real in-process server (has tools), not the http passthrough
-    // an unguarded spread would have produced.
+    // Must stay the real in-process server, since an unguarded spread would
+    // overwrite it with a plain http passthrough entry.
     expect((mcp.calandria as { type?: string }).type).toBe("sdk");
   });
 });

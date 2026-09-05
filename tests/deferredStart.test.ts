@@ -1,8 +1,8 @@
-// "Start at the usage-window reset": tasks.start_at + the sweep that honours it
-// (lib/deferredStart.ts). Pinned at the runner boundary, like tests/autoStart —
-// the module's job is deciding WHAT to launch when a deadline passes and
-// handing the runner a correctly prepared launch; the turn itself is the
-// driver-contract test's problem.
+// Pins "start at the usage-window reset": tasks.start_at and the sweep that
+// honors it (lib/deferredStart.ts). Pinned at the runner boundary, like
+// tests/autoStart: this module's job is deciding what to launch when a
+// deadline passes and handing the runner a correctly prepared launch; the turn
+// itself is the driver-contract test's problem.
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/runner", () => ({ startTurn: vi.fn(), startResumeTurn: vi.fn(), publishTurnError: vi.fn() }));
@@ -116,7 +116,7 @@ describe("sweepDeferredStarts — a never-started task", () => {
     const [launched, project, userText, note, controller] = calls[0];
     expect(launched.id).toBe(task.id);
     expect(project.id).toBe(task.project_id);
-    // Same generic opener the POST route sends — the brief travels in the
+    // Same generic opener the POST route sends: the brief travels in the
     // injected project context, never in the prompt.
     expect(userText).toBe(INITIAL_TASK_PROMPT);
     expect(note).toBe(DEFERRED_START_NOTE);

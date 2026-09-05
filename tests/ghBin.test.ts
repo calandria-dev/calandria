@@ -7,10 +7,9 @@ import { IS_WIN } from "./platform";
 
 // resolveGhBin exists because the server process never reads a shell profile:
 // a gh installed via linuxbrew/Homebrew/snap works in the user's terminal but
-// ENOENTs under the server's PATH, which used to surface as "gh is not
-// installed". Resolution order: CALANDRIA_GH_BIN verbatim, then bare "gh" when the
-// server's PATH can see it, then the well-known install dirs, then bare "gh"
-// so callers' ENOENT handling still fires.
+// ENOENTs under the server's PATH. Resolution order: CALANDRIA_GH_BIN verbatim,
+// then bare "gh" when the server's PATH can see it, then the well-known
+// install dirs, then bare "gh" so callers' ENOENT handling still fires.
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-ghbin-"));
 afterAll(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
@@ -23,7 +22,7 @@ function dir(withGh: { executable: boolean } | false): string {
   return d;
 }
 
-/** A directory holding `gh.exe` — what every Windows package manager installs. */
+/** A directory holding `gh.exe`, what every Windows package manager installs. */
 function winDir(withGh = true): string {
   const d = path.join(tmpRoot, `w${n++}`);
   fs.mkdirSync(d);
@@ -38,7 +37,8 @@ const WIN = { platform: "win32" as const, pathext: ".COM;.EXE;.BAT;.CMD" };
 // fixtures are POSIX facts a Windows filesystem cannot represent: a bare `gh`
 // with no extension (which CreateProcess would never find) and the executable
 // bit (`fs.access(X_OK)` is a no-op on Windows, so mode 0o644 and 0o755 are
-// indistinguishable there). Skipped rather than ported — docs/WINDOWS.md §7.
+// indistinguishable there). These cases are skipped on Windows instead of
+// ported.
 describe.skipIf(IS_WIN)("resolveGhBin on POSIX", () => {
   it("uses CALANDRIA_GH_BIN verbatim when set, even over a PATH hit", () => {
     const onPath = dir({ executable: true });
@@ -72,15 +72,15 @@ describe.skipIf(IS_WIN)("resolveGhBin on POSIX", () => {
   });
 });
 
-// Driven through the explicit `WIN` descriptor, so these run on every platform
-// — including the Linux/macOS lanes, which is the point: the Windows rules are
-// pinned by the suite everybody runs, not only by a Windows CI lane.
+// Driven through the explicit `WIN` descriptor, so these run on every
+// platform, including the Linux/macOS lanes. The Windows rules are pinned by
+// the suite everybody runs, not only by a Windows CI lane.
 describe("resolveGhBin on win32", () => {
-  // On Windows the file is gh.exe, never gh, so every candidate the old
-  // extension-less probe built missed — a winget/scoop/MSI install invisible to
-  // a server whose PATH doesn't carry it would have reported "not installed".
-  // Bare "gh" is still the answer for a PATH hit (CreateProcess repeats the
-  // PATH+PATHEXT search itself); the probe half is what needed the extension.
+  // On Windows the file is gh.exe, never gh, so a candidate built without the
+  // extension misses every winget/scoop/MSI install even when the server's
+  // PATH cannot see it. Bare "gh" is still the answer for a PATH hit
+  // (CreateProcess repeats the PATH+PATHEXT search itself); the probe half is
+  // what needs the extension.
   it("finds gh.exe on a win32 PATH and still answers bare gh", () => {
     expect(resolveGhBin("", [winDir(false), winDir()].join(";"), [], WIN)).toBe("gh");
   });

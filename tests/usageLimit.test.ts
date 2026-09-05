@@ -58,7 +58,7 @@ describe("usage-limit recovery", () => {
     addPendingMessage(task.id, task.generation, "and then deploy it");
     addPendingMessage(task.id, task.generation, "and write a test");
 
-    // The session opens, then the quota turns out to be spent — the real shape
+    // The session opens, then the quota turns out to be spent: the real shape
     // of a mid-run limit hit (it fails at the API, not at spawn).
     runTurnMock.mockImplementation(async function* () {
       yield { type: "session", sessionId: "sess-1" };
@@ -70,12 +70,12 @@ describe("usage-limit recovery", () => {
     await w.done;
 
     // The transcript carries the provider's own words AND the durable notice
-    // the UI renders as the informational recovery hint (no button — the
-    // recovery is waiting for the reset).
+    // the UI renders as the informational recovery hint (no button, since
+    // recovery means waiting for the reset).
     const errMsg = listMessages(task.id).find((m) => m.role === "system" && m.content.includes(USAGE_LIMIT_NOTICE));
     expect(errMsg).toBeTruthy();
     expect(errMsg!.content).toContain("usage limit reached");
-    // One ⚠ — the runner prefixes it, so the renderer must not add a second.
+    // One ⚠: the runner prefixes it, so the renderer must not add a second.
     expect(errMsg!.content.startsWith("⚠ ")).toBe(true);
     expect(errMsg!.content).not.toContain("⚠ ⚠");
 
@@ -84,7 +84,7 @@ describe("usage-limit recovery", () => {
     expect(w.events.some((e) => e.type === "agent_auth")).toBe(false);
     expect(listMessages(task.id).some((m) => m.content.includes(AUTH_EXPIRED_NOTICE))).toBe(false);
 
-    // The queue is untouched — no dequeue, no second (identically failing) turn.
+    // The queue is untouched: no dequeue, no second (identically failing) turn.
     expect(listPendingMessages(task.id)).toHaveLength(2);
     expect(w.events.some((e) => e.type === "dequeued")).toBe(false);
     expect(runTurnMock).toHaveBeenCalledTimes(1);
@@ -103,7 +103,7 @@ describe("usage-limit recovery", () => {
     addPendingMessage(task.id, task.generation, "follow-up");
 
     // The driver's pump reports the limit as a soft error event (with the reset
-    // time it folded in from rate_limit_event) rather than a throw.
+    // time it folded in from rate_limit_event), not a throw.
     runTurnMock.mockImplementation(async function* () {
       yield { type: "session", sessionId: "sess-2" };
       yield { type: "error", content: `${LIMIT_HIT} — resets at 7/30/2026, 3:00:00 PM` };
@@ -138,8 +138,8 @@ describe("isUsageLimit — spent-quota detection", () => {
   });
 
   it("does not fire on unrelated failures (or on the other two recoverable ones)", () => {
-    // The other two classifiers own these — checked before us in the runner,
-    // but they must not double-match here either.
+    // The other two classifiers own these, checked earlier in the runner, but
+    // they must not double-match here either.
     expect(isUsageLimit("Failed to authenticate: OAuth session expired and could not be refreshed")).toBe(false);
     expect(isUsageLimit("API Error: 400 prompt is too long: 250000 tokens > 204698 maximum")).toBe(false);
     // Generic failures with limit-adjacent words but no quota meaning.
@@ -155,7 +155,7 @@ describe("isUsageLimit — spent-quota detection", () => {
   it("stays disjoint from the classifiers checked before it", () => {
     // The runner checks isPromptTooLong → isAuthFailure → isUsageLimit; a
     // usage-limit message claimed by an earlier classifier would render the
-    // wrong recovery, so the raw limit string must belong to us alone.
+    // wrong recovery, so the raw limit string must not match either one.
     expect(isPromptTooLong(LIMIT_HIT)).toBe(false);
     expect(isAuthFailure(LIMIT_HIT)).toBe(false);
   });

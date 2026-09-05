@@ -1,17 +1,17 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// Regression, issue #36: POST /clear used to abort the live turn — releasing its
-// turn slot — and only THEN await summarizeTranscript(), a real agent call that
-// takes minutes, advancing the generation afterwards. Across that whole window
-// hasTurn() read false, so a POST /messages (or the runner's queue-drain
-// handoff) could claim the freed slot and start a turn on the very generation
-// /clear was retiring: a session about to be summarized away, and a summary
-// covering a generation still being written to.
+// POST /clear aborts the live turn, releasing its turn slot, then awaits
+// summarizeTranscript(), a real agent call that can take minutes, before
+// advancing the generation. During that window hasTurn() reads false, so a
+// POST /messages (or the runner's queue-drain handoff) must not claim the
+// freed slot and start a turn on the generation /clear is retiring: a session
+// about to be summarized away, with a summary covering a generation still
+// being written to.
 //
-// The fix is a per-task clearing claim (lib/abort.ts) held across the whole
-// route, vetoing claimTurn/handoffTurn so a successor QUEUES instead of
-// starting. These tests park the summarize on a gate and race the launch paths
-// against it. A SCRIPTED fake driver stands in for the agent, the same seam
+// A per-task clearing claim (lib/abort.ts) is held across the whole route,
+// vetoing claimTurn/handoffTurn so a successor queues instead of starting.
+// These tests park the summarize on a gate and race the launch paths against
+// it. A scripted fake driver stands in for the agent, the same seam
 // tests/clearMidTurn.test.ts uses.
 const { runTurnMock, summarizeMock } = vi.hoisted(() => ({ runTurnMock: vi.fn(), summarizeMock: vi.fn() }));
 
@@ -107,15 +107,14 @@ describe("/clear holds the turn slot until the generation advances", () => {
     const clearing = clear(task.id);
     await summarizing.promise; // /clear is inside summarizeTranscript
 
-    // The window the bug lived in: the live turn's slot is gone, the generation
-    // has NOT advanced yet.
+    // The live turn's slot is gone, but the generation has not advanced yet.
     expect(hasTurn(task.id)).toBe(false);
     expect(getTask(task.id)!.generation).toBe(1);
 
     const res = await post(task.id, "sent while clearing");
     expect(res.status).toBe(202);
     expect(await res.json()).toEqual({ ok: true, queued: true });
-    // The whole point: no turn was launched against generation 1.
+    // No turn was launched against generation 1.
     expect(runTurnMock).not.toHaveBeenCalled();
     expect(listPendingMessages(task.id)).toHaveLength(1);
 
@@ -162,8 +161,8 @@ describe("/clear holds the turn slot until the generation advances", () => {
     const body = (await res.json()) as { generation: number; summary: string };
     expect(body.generation).toBe(2);
     expect(body.summary).toContain("model exploded");
-    // A claim left behind here would wedge the task forever: every future
-    // message would queue into the void with nothing able to start a turn.
+    // A claim left behind here wedges the task forever: every future message
+    // would queue with nothing able to start a turn.
     expect(isClearing(task.id)).toBe(false);
 
     runTurnMock.mockImplementation(async function* () {
@@ -195,7 +194,7 @@ describe("/clear holds the turn slot until the generation advances", () => {
 
     gate.resolve("HANDOFF SUMMARY");
     await first;
-    // One generation boundary, one summary — not two.
+    // One generation boundary, one summary.
     expect(getTask(task.id)!.generation).toBe(2);
     expect(listSummaries(task.id)).toHaveLength(1);
   });
@@ -221,8 +220,9 @@ describe("the clearing claim", () => {
 
     endClearing(id);
     expect(isClearing(id)).toBe(false);
-    // A clear leaves no residue: the handoff `live` was refused now goes
-    // through, and the slot is claimable again once its successor releases.
+    // A clear leaves no residue: the handoff `live` was refused earlier now
+    // goes through, and the slot is claimable again once its successor
+    // releases.
     const next = handoffTurn(id, live);
     expect(next).not.toBeNull();
     unregisterTurn(id, next!);

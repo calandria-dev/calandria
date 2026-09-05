@@ -1,16 +1,16 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// The model a turn actually asks for, end to end: the task's own pick (the New/
-// Edit dialogs and the session rail all write tasks.model), else the agent's
-// Settings default ("default_model:<agent>"), else nothing at all — the CLI's
-// own choice, which is what "Default" in every picker promises.
+// Pins the model a turn actually asks for, end to end: the task's own pick (the
+// New/Edit dialogs and the session rail all write tasks.model), else the
+// agent's Settings default ("default_model:<agent>"), else no override at all,
+// which is what "Default" in every picker promises.
 //
-// Both drivers are exercised through their REAL runTurn(); only the two agent
+// Both drivers are exercised through their real runTurn(); only the two agent
 // SDKs are swapped, so the resolution, the omit-when-unset branch, and the
-// options object handed to the CLI are all covered rather than asserted about.
+// options object handed to the CLI are all covered.
 //
 // The third fallback matters as much as the first two: an instance that has
-// never opened Settings must keep sending NO model override, so a user's
+// never opened Settings must keep sending no model override, so a user's
 // ~/.claude or ~/.codex default keeps winning.
 
 const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }));
@@ -69,7 +69,7 @@ async function claudeModel(taskModel: string | null, appDefault: string | null):
   return "model" in options ? options.model : undefined;
 }
 
-/** The `model` the Codex driver asked for, plus the model it REPORTED for the turn. */
+/** The `model` the Codex driver asked for, plus the model it reported for the turn. */
 async function codexModel(taskModel: string | null, appDefault: string | null): Promise<{ asked: unknown; reported: string | undefined }> {
   const { project, task } = fixture("codex", taskModel ? { model: taskModel } : {});
   setSetting("default_model:codex", appDefault);
@@ -94,8 +94,8 @@ describe("resolving a turn's model", () => {
     expect(await claudeModel(null, null)).toBeUndefined();
     const codex = await codexModel(null, null);
     expect(codex.asked).toBeUndefined();
-    // Codex emits no model event of its own, so the driver still REPORTS the
-    // CLI default it assumes — that's what prices the estimate and fills the
+    // Codex emits no model event of its own, so the driver still reports the
+    // CLI default it assumes; that is what prices the estimate and fills the
     // badge. Asking for nothing and reporting an assumption are separate acts.
     expect(codex.reported).toBe(DEFAULT_CODEX_MODEL);
   });
@@ -114,8 +114,8 @@ describe("resolving a turn's model", () => {
   });
 
   it("keeps the default agent-scoped — one agent's default never leaks onto the other", async () => {
-    // A model id names one provider's catalog: "opus" would be a value Codex
-    // could never run, so there is deliberately no un-suffixed key to read.
+    // A model id names one provider's catalog: "opus" is a value Codex could
+    // never run, so there is no un-suffixed key to read.
     setSetting("default_model:claude", "opus");
     expect((await codexModel(null, null)).asked).toBeUndefined();
     setSetting("default_model:codex", "gpt-5.6-luna");
@@ -149,8 +149,9 @@ describe("POST /api/tasks — model at creation", () => {
   };
 
   it("persists the model chosen in the New-task dialog", async () => {
-    // It rides the CREATE rather than a follow-up PATCH because the dialog can
-    // launch the first turn in the same gesture — a PATCH would land behind it.
+    // It rides the create call rather than a follow-up PATCH because the dialog
+    // can launch the first turn in the same gesture, and a PATCH would land
+    // behind it.
     const project = createProject({ name: `Create ${Math.random().toString(36).slice(2)}`, repo_path: "" });
     const task = await post({ project_id: project.id, title: "Pinned", model: "haiku" });
     expect(getTask(task.id)!.model).toBe("haiku");

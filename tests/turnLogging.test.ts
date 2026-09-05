@@ -1,11 +1,10 @@
 // Turn-lifecycle logging (issue #16 item 1).
 //
-// The runner used to log eight failure sites and not one happy path, so an
-// instance doing its job in production said nothing about the work: no rate, no
-// duration, no spend. These lines are the operator's only view of that without
-// opening the database, so they are pinned like any other contract — the fields
-// a dashboard would key on, and the rule that the outcome word matches what the
-// schedule ledger recorded for the same turn.
+// Every turn logs a start and an outcome line, giving the operator a view of
+// rate, duration, and spend without opening the database. These lines are
+// pinned like any other contract: the fields a dashboard would key on, and
+// the rule that the outcome word matches what the schedule ledger recorded
+// for the same turn.
 //
 // Driven through the REAL runner with a scripted driver, the same seam
 // tests/agentDriver.test.ts uses: a line asserted against a hand-called logger
@@ -36,8 +35,8 @@ function script(events: StreamEvent[]) {
   });
 }
 
-/** Resolves when the runner publishes turn_end — the point both lifecycle
- *  lines have been emitted. */
+/** Resolves when the runner publishes turn_end, by which point both
+ *  lifecycle lines have been emitted. */
 function turnEnded(taskId: string): Promise<void> {
   return new Promise((resolve) => {
     const unsub = subscribe(taskId, (ev) => {
@@ -144,7 +143,7 @@ describe("turn lifecycle logging", () => {
     expect("error" in end).toBe(false);
     // Likewise a turn whose Calandria tool calls all reached Calandria.
     expect("tool_cutoffs" in end).toBe(false);
-    // Exactly two lines per turn — the point is a readable log, not a trace.
+    // Exactly two lines per turn, keeping the log readable and not a trace.
     expect(lines.map((l) => l.msg)).toEqual(["turn start", "turn ok"]);
   });
 

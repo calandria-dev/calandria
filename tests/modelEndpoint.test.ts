@@ -3,12 +3,12 @@ import { clearEndpointProbeCache, endpointModels, listEndpointModels, summarizeE
 import { endpointSummary } from "@/app/shell/modelEndpoint";
 
 // Asking a local model server what it can run (lib/modelEndpoint.ts). The
-// server is mocked at `fetch`, since the point of every case here is a shape or
-// a failure rather than a real Ollama.
+// server is mocked at `fetch`, since every case here tests a shape or a
+// failure, not a real Ollama.
 //
-// Two shapes, tried in order: Ollama's /api/tags first (its names are the ids
-// its Anthropic endpoint wants, tag included), then /v1/models for LM Studio
-// and everything else OpenAI-compatible.
+// Two shapes, tried in order: Ollama's /api/tags first (its names are the
+// ids its Anthropic endpoint expects, tag included), then /v1/models for LM
+// Studio and everything else OpenAI-compatible.
 
 type Handler = (url: string) => Response | Promise<Response>;
 

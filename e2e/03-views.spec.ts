@@ -19,8 +19,8 @@ test.beforeAll(async ({ request }) => {
 });
 
 // A task's title renders in several places at once (list row, board card,
-// session header) — scope to the list row title (.ttitle) / board card title
-// to stay out of Playwright strict-mode violations.
+// session header). Scope to the list row title (.ttitle) or board card title
+// to avoid Playwright strict-mode violations.
 const listRow = (page: import("@playwright/test").Page, title: string) =>
   page.locator(".ttitle").filter({ hasText: title });
 
@@ -54,27 +54,27 @@ test("board view shows kanban columns with cards in the right places", async ({ 
   await page.getByText(PROJECT).first().click();
   await expect(page.locator(".bcol.k-done").getByText("Gamma task")).toBeVisible();
 
-  // And the toggle goes back to list view — in board layout the switch is the
+  // The toggle goes back to list view. In board layout the switch is the
   // board workspace's own "List"/"Board" segmented control, not the task
-  // column's icon toggle (that column is replaced by the full-width board).
+  // column's icon toggle, since that column is replaced by the full-width board.
   await page.getByRole("tab", { name: "List", exact: true }).click();
   await expect(page.locator(".bcol.k-done")).toBeHidden();
   await expect(listRow(page, "Alpha task")).toBeVisible();
 });
 
-// Appearance → Text width. Needs a viewport wide enough that the session pane is
-// bigger than the 760px reading measure, otherwise "reading" and "full" render
-// identically and the test would pass on a no-op. Default columns are
-// 236 + 352 + 430 = 1018px, so 2000 leaves ~980 for the transcript.
+// Appearance: Text width. Needs a viewport wide enough that the session pane
+// is bigger than the 760px reading measure, otherwise "reading" and "full"
+// render identically and the test would pass on a no-op. Default columns are
+// 236 + 352 + 430 = 1018px, so 2000 leaves about 980 for the transcript.
 test.describe("full-width text", () => {
   test.use({ viewport: { width: 2000, height: 900 } });
 
   const READING = 760;
   const WIDE_TASK = "Width task";
 
-  // The transcript only exists once a task has a session — an unstarted one shows
-  // the "Start session" hero instead. Its own task so the layout tests above keep
-  // their fixtures untouched.
+  // The transcript only exists once a task has a session; an unstarted one
+  // shows the "Start session" hero instead. This uses its own task so the
+  // layout tests above keep their fixtures untouched.
   test.beforeAll(async ({ request }) => {
     const projects = await (await request.get("/api/projects")).json();
     const proj = projects.find((p: { name: string }) => p.name === PROJECT);
@@ -84,13 +84,10 @@ test.describe("full-width text", () => {
   });
 
   // The transcript column and the composer share the measure, so both move
-  // together. Read in ONE page.evaluate rather than three boundingBox() calls,
-  // and polled: the three widths are supposed to describe a single layout, and
-  // React remounts the transcript moments after a reload, so a handle Playwright
-  // resolved could be replaced before it measured and come back null — the
-  // element was there the whole time (connected, display:block, 981px wide),
-  // it just wasn't the same node any more. That raced ~10% of the time and
-  // failed on the deref, not on an assertion.
+  // together. Reads all three widths in one page.evaluate call, polled: a
+  // separate boundingBox() call per element risks resolving a handle to a
+  // node that React has since remounted, which returns null even though the
+  // element is still on screen under a new node.
   type Widths = { pane: number; tw: number; composer: number };
   const columnWidths = async (page: import("@playwright/test").Page): Promise<Widths> => {
     let last: Widths | null = null;
@@ -134,7 +131,7 @@ test.describe("full-width text", () => {
     expect(after.tw).toBeGreaterThan(READING);
     expect(after.composer).toBeGreaterThan(READING);
 
-    // Persisted, not just in-memory: survives a full reload of the app.
+    // The setting persists across a full reload of the app.
     await page.reload();
     await expect(page.locator(".transcript .tw")).toBeVisible();
     const reloaded = await columnWidths(page);
@@ -148,17 +145,16 @@ test.describe("full-width text", () => {
 });
 
 // Narrow desktop windows. The three tracks beside the transcript are fixed
-// (236 + 352 + 430 = 1018 at the defaults) and only the transcript flexes, so
-// below ~1400px it was the transcript — the one pane being read — that absorbed
-// the whole shortfall: 262px at 1280, 6px at 1024. The shell now sheds a side
-// column instead, projects then tasks then the diff rail, at the widths in
-// AUTO_COLLAPSE_BELOW (app/shell/types.ts).
+// (236 + 352 + 430 = 1018 at the defaults); only the transcript flexes. Below
+// the widths in AUTO_COLLAPSE_BELOW (app/shell/types.ts), the shell sheds a
+// side column instead of letting the transcript shrink: projects, then
+// tasks, then the diff rail.
 //
-// 1024x768 is not hypothetical: it is the GitHub-hosted macOS and Windows
-// runners' virtual display, which is what the Electron shell's window gets
-// clamped to on two of the three desktop lanes. 800x600 is the tier below it,
-// where the rail goes too. Both are driven here rather than only in the desktop
-// suite so a regression is caught on the cheap Linux browser lane.
+// 1024x768 is the GitHub-hosted macOS and Windows runners' virtual display,
+// which is what the Electron shell's window is clamped to on two of the
+// three desktop lanes. 800x600 is the tier below it, where the rail goes
+// too. Both are exercised here as well as in the desktop suite, so a
+// regression is caught on the cheap Linux browser lane.
 test.describe("auto-collapse on a narrow window", () => {
   const NARROW_TASK = "Narrow task";
 
@@ -170,7 +166,7 @@ test.describe("auto-collapse on a narrow window", () => {
     await waitForIdle(request, task.id);
   });
 
-  // Which of the three side tracks are panels rather than 30px spines, read in
+  // Which of the three side tracks are panels versus 30px spines, read in
   // one pass so they describe a single layout.
   type Tracks = { proj: boolean; task: boolean; rail: boolean; spines: number };
   const tracks = (page: import("@playwright/test").Page): Promise<Tracks> =>
@@ -182,19 +178,19 @@ test.describe("auto-collapse on a narrow window", () => {
     }));
 
   // Polled, not read once. A viewport change reaches the shell through
-  // matchMedia and a reload remounts the whole session pane, so a single
-  // evaluate can land mid-render — the rail is a sibling of the transcript and
-  // has been seen missing for a frame after `.transcript .tw` is already
-  // visible. Same reason the full-width spec above polls its widths.
+  // matchMedia, and a reload remounts the whole session pane, so a single
+  // evaluate can land mid-render. The rail is a sibling of the transcript
+  // and can be missing for a frame after `.transcript .tw` is already
+  // visible, the same reason the full-width spec above polls its widths.
   const expectTracks = async (page: import("@playwright/test").Page, want: Tracks) => {
     await expect
       .poll(() => tracks(page), { message: `shell never settled into ${JSON.stringify(want)}` })
       .toEqual(want);
   };
 
-  // The transcript's own measure, inside its 28px gutters: the width a message
-  // is actually laid out into, and the number this whole policy exists to keep
-  // off the floor.
+  // The transcript's own measure, inside its 28px gutters: the width a
+  // message is actually laid out into, the number this policy exists to
+  // keep off the floor.
   const measure = (page: import("@playwright/test").Page) =>
     page.evaluate(() => document.querySelector(".transcript .tw")?.getBoundingClientRect().width ?? 0);
 
@@ -216,15 +212,15 @@ test.describe("auto-collapse on a narrow window", () => {
     const narrow = await measure(page);
     expect(narrow).toBeGreaterThan(wide);
 
-    // 800: the rail goes too, and the transcript keeps growing rather than
-    // shrinking — the whole point of shedding in this order.
+    // 800: the rail goes too, and the transcript keeps growing instead of
+    // shrinking, which is why the columns shed in this order.
     await page.setViewportSize({ width: 800, height: 600 });
     await expectTracks(page, { proj: false, task: false, rail: false, spines: 3 });
     expect(await measure(page)).toBeGreaterThan(narrow);
 
-    // Back up: the policy is applied at render, never written into the persisted
-    // Layout, so the user's own columns come straight back — and are still there
-    // after a reload, which reads what was actually stored.
+    // Back up: the policy is applied at render, never written into the
+    // persisted Layout, so the user's own columns come straight back, and
+    // are still there after a reload, which reads what was actually stored.
     await page.setViewportSize({ width: 1440, height: 900 });
     await expectTracks(page, { proj: true, task: true, rail: true, spines: 0 });
 
@@ -232,11 +228,11 @@ test.describe("auto-collapse on a narrow window", () => {
     await expectTracks(page, { proj: true, task: true, rail: true, spines: 0 });
   });
 
-  // The spine's button has to mean something at a width the policy is collapsing
-  // at, or it is a control that visibly does nothing. Expanding wins over the
-  // policy for as long as the window stays this size; leaving the size and
-  // coming back starts the policy over rather than remembering a decision made
-  // at a width the user has since left.
+  // The spine's button has to mean something at a width the policy is
+  // collapsing at, or it is a control that does nothing. Expanding wins over
+  // the policy for as long as the window stays this size. Leaving the size
+  // and coming back starts the policy over; it does not remember a decision
+  // made at a width the user has since left.
   test("a column the policy tucked away still opens from its spine", async ({ page }) => {
     await page.setViewportSize({ width: 1024, height: 768 });
     await gotoApp(page);
@@ -257,15 +253,15 @@ test.describe("auto-collapse on a narrow window", () => {
 
     // Leave the breakpoint and come back: both are tucked away again.
     //
-    // The leaving has to be SEEN. Both columns are open at 1024 (reopened) and
-    // at 1440 (nothing shed), so the DOM is identical at the two widths and a
-    // `.col-projects` check passes before the browser has so much as evaluated
-    // the new width. matchMedia reports a crossing per rendered frame, and a
-    // loaded runner can take the second resize before the first has had one —
-    // to the app the window then never left 1024, and nothing, in the app or
-    // out of it, could tell it otherwise (#104). `data-shed` is the policy as
-    // the app currently sees it; waiting for it is waiting for the app to have
-    // observed the width, which is the precondition the return leg asserts on.
+    // The leaving has to be observed, not just performed. Both columns are
+    // open at 1024 (reopened) and at 1440 (nothing shed), so the DOM is
+    // identical at the two widths, and a `.col-projects` check can pass
+    // before the browser has evaluated the new width. matchMedia reports a
+    // crossing once per rendered frame, and a loaded runner can process the
+    // second resize before the first is reflected, so the app can still read
+    // the window as 1024 (#104). `data-shed` reflects the policy as the app
+    // currently applies it; waiting on it is waiting for the app to have
+    // registered the width change, the precondition the return leg asserts on.
     await page.setViewportSize({ width: 1440, height: 900 });
     await expect(page.locator("[data-shed]")).toHaveAttribute("data-shed", "");
     await expect(page.locator(".col-projects")).toBeVisible();
@@ -275,16 +271,11 @@ test.describe("auto-collapse on a narrow window", () => {
     await expect(page.getByTitle("Show tasks panel")).toBeVisible();
   });
 
-  // The same window is also SHORT, which the shedding policy above says nothing
-  // about — it is a width policy. The rail's scroll box carried a 40px
-  // `padding-bottom`, incompressible, so `min-height:0` could not shrink it past
-  // 40px and, being `position:relative`, it painted over its next sibling
-  // instead of scrolling. With the terminal drawer taking 300px off a 768px
-  // display that overhang landed across the drawer's own button bar and ate the
-  // clicks on it, which is how it surfaced: as a 30s `locator.click` timeout on
-  // the desktop lanes, whose windows the runners clamp to exactly this size.
-  // Clicking Hide THROUGH the drawer is the assertion — an intercepted click
-  // times out rather than failing on the toggle.
+  // The same window is also short, which the shedding policy above does not
+  // address, since it only reacts to width. The diff rail must not overhang
+  // the terminal drawer's buttons: an overhang there blocks the drawer's own
+  // button-bar clicks, surfacing as a click timeout instead of a failed
+  // assertion. Clicking Hide through the drawer is the assertion.
   test("the diff rail does not overhang the terminal drawer's buttons", async ({ page }) => {
     // Selected at the full width, since at 1024 both side columns are spines.
     await gotoApp(page);
@@ -292,16 +283,16 @@ test.describe("auto-collapse on a narrow window", () => {
     await listRow(page, NARROW_TASK).click();
     await expect(page.locator(".tc-scroll")).toBeVisible();
 
-    // 600 tall, not 768: at 768 the wrapped toolbar still just fits above the
-    // drawer, so the case would pass with the clip removed. This is the height
-    // the overhang is 107px at.
+    // 600 tall, not 768: at 768 the wrapped toolbar still fits above the
+    // drawer, so the case would pass even with the clip removed.
     await page.setViewportSize({ width: 1024, height: 600 });
-    // Both spines expanded back out, which the policy above allows and which is
-    // the WORST case for this pane rather than an exotic one: 236 + 352 leaves
-    // the rail on SESS_MAIN_MIN's floor at ~74px, where `.tc-bar`'s
+    // Both spines expanded back out, which the policy above allows. This is
+    // the worst case for this pane, not an exotic one: 236 + 352 leaves the
+    // rail on SESS_MAIN_MIN's floor at about 74px, where `.tc-bar`'s
     // `flex-wrap:wrap` turns one toolbar row into five and the rail's own
-    // children stop fitting its height. Reached from the shell's own controls,
-    // so nothing here depends on a layout the user cannot actually produce.
+    // children stop fitting its height. It is reached from the shell's own
+    // controls, so nothing here depends on a layout the user cannot
+    // actually produce.
     await page.getByTitle("Show projects panel").click();
     await page.getByTitle("Show tasks panel").click();
     await expect(page.locator(".col-projects")).toBeVisible();
@@ -340,10 +331,10 @@ async function idOf(page: import("@playwright/test").Page, title: string): Promi
 }
 
 // Phone layout: one pane at a time, with the bottom tab bar. Re-tapping the
-// ACTIVE Board tab from inside a task pops back to the task list (the board
-// root) the way a native tab bar pops its stack; it used to be a dead tap.
-// Tapping Board from another tab only switches tabs — the session you left is
-// still where you left it — so the pop takes one tap from Board, two from Diffs.
+// active Board tab from inside a task pops back to the task list (the board
+// root), the way a native tab bar pops its stack. Tapping Board from another
+// tab only switches tabs, and the session you left stays where you left it,
+// so the pop takes one tap from Board, two from Diffs.
 test.describe("mobile tab bar", () => {
   test.use({ viewport: { width: 390, height: 800 } });
 
@@ -380,16 +371,15 @@ test.describe("mobile tab bar", () => {
   });
 });
 
-// Settings on a phone: the section nav is a horizontal chip rail. `.nav-item`
-// is `width:100%` for the desktop sidebar, which in a flex row made every chip
-// a full screen wide — one section visible, the other nine reachable only by a
-// horizontal scroll with nothing on screen to suggest it existed.
+// Settings on a phone: the section nav is a horizontal chip rail. Several
+// chips fit in the row at once, with a scroll affordance to reach the rest,
+// instead of each chip filling the full screen width.
 test.describe("mobile settings nav", () => {
   test.use({ viewport: { width: 390, height: 800 } });
 
   test("several sections are on screen at once and stay reachable", async ({ page }) => {
     await gotoApp(page);
-    // Wait for the phone layout to mount before reading which pane is up — a
+    // Wait for the phone layout to mount before reading which pane is up. A
     // phone boots into the first project's task pane, and Settings hangs off
     // the projects column behind it.
     await expect(page.locator(".mtabbar")).toBeVisible();
@@ -399,9 +389,9 @@ test.describe("mobile settings nav", () => {
 
     const chips = page.locator(".settings-nav-list .nav-item");
     await expect(chips.first()).toBeVisible();
-    // Shrink-to-fit, not full-bleed: several chips share the row, and the next
-    // one is cut off by the right edge — that clipped chip IS the affordance
-    // that says the rail scrolls.
+    // Shrink-to-fit, not full-bleed: several chips share the row, and the
+    // next one is cut off by the right edge. That clipped chip is the
+    // affordance that says the rail scrolls.
     const boxes = await chips.evaluateAll((els) =>
       els.map((el) => el.getBoundingClientRect()).map((r) => ({ left: r.left, right: r.right })));
     expect(boxes.every((b) => b.right - b.left < 390)).toBe(true);

@@ -1,17 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// The `create_pr` agent tool (lib/prTools.ts).
-//
-// A session that finished its work had no way to say so in git: the sandbox
-// classifier blocks `git push` and `gh pr create` from inside a task, so
-// landing was entirely a human click. This tool is the server doing it on the
-// session's behalf, through the SAME machinery POST /api/tasks/[id]/pr runs.
-//
-// `gh` itself is mocked — the real one needs a network, a login and a GitHub
-// repo — but the commit, the store writes and the policy are all real. What is
-// pinned here is the policy: the landing_mode gate, the no-worktree refusal,
-// the own-row-only scope, and that a success actually persists pr_url/pr_number
-// the way the route's does.
+// Pins the policy of the `create_pr` agent tool (lib/prTools.ts): it runs the
+// same machinery as POST /api/tasks/[id]/pr, since the sandbox classifier
+// blocks `git push` and `gh pr create` from inside a task. `gh` is mocked; the
+// commit, store writes, and policy (the landing_mode gate, the no-worktree
+// refusal, the own-row-only scope, and that success persists
+// pr_url/pr_number the way the route does) are real.
 const { createTaskPrMock, fetchPrStateMock } = vi.hoisted(() => ({
   createTaskPrMock: vi.fn(),
   fetchPrStateMock: vi.fn(),
@@ -29,8 +23,8 @@ import { createPrForAgent } from "@/lib/prTools";
 import { makeRepo, uid, writeFile } from "./helpers";
 import type { Task } from "@/lib/types";
 
-// A started task on a project that lands by PR — the only shape the tool is
-// meant to run in.
+// A started task on a project that lands by PR, the only shape the tool runs
+// in.
 async function prTask(over: { landing_mode?: "merge" | "pr" } = {}) {
   const repo = await makeRepo();
   const project = createProject({
@@ -56,17 +50,15 @@ beforeEach(() => {
 describe("create_pr", () => {
   it("commits, pushes and records the PR on the task", async () => {
     const { task, wt } = await prTask();
-    // Work the session did but never committed — the tool commits it, the same
-    // way Merge does, so the PR shows the diff the Changes tab shows.
+    // Work the session did but never committed is committed by the tool, the
+    // same way Merge does, so the PR shows the diff the Changes tab shows.
     writeFile(wt.path, "new.txt", "from the session\n");
     createTaskPrMock.mockResolvedValue({ ok: true, url: "https://github.com/o/r/pull/7" });
 
     const { url, number, text } = await createPrForAgent(task, {});
     expect(url).toBe("https://github.com/o/r/pull/7");
-    // The success result names the PR by number as well as URL. This tool has
-    // twice come back EMPTY mid-turn while the session went on to report a PR
-    // that did not exist; a success the model can only relay by quoting a number
-    // and a link it was handed is one it cannot claim by accident.
+    // The success result names the PR by number and URL, so the model can
+    // only report success by quoting values it was actually handed.
     expect(number).toBe(7);
     expect(text).toContain("#7");
     expect(text).toContain("https://github.com/o/r/pull/7");
@@ -74,11 +66,11 @@ describe("create_pr", () => {
     const arg = createTaskPrMock.mock.calls[0][0];
     expect(arg.workBranch).toBe(wt.branch);
     expect(arg.baseBranch).toBe("main");
-    // No title/body given, so it describes itself from the row.
+    // No title or body given, so the PR is described from the task row.
     expect(arg.title).toBe("Give the agent a create_pr tool");
     expect(arg.body).toContain(`task ${task.id}`);
 
-    // Persisted exactly as the route persists it — the number parsed once, here.
+    // Persisted exactly as the route persists it, with the number parsed once here.
     const after = getTask(task.id)!;
     expect(after.pr_url).toBe("https://github.com/o/r/pull/7");
     expect(after.pr_number).toBe(7);
@@ -138,8 +130,8 @@ describe("create_pr", () => {
   it("re-reads the caller's row: a detached turn's snapshot predates its own worktree cut", async () => {
     const repo = await makeRepo();
     const project = createProject({ name: `pr-tool-${uid()}`, repo_path: repo, branch: "main", landing_mode: "pr" });
-    // The snapshot the turn is holding — read before ensureWorktree filled the
-    // columns in, which is the ordinary case rather than an exotic one.
+    // The snapshot the turn is holding was read before ensureWorktree filled
+    // the columns in; this is the ordinary case, not an exotic one.
     const stale = createTask({ project_id: project.id, title: "cut after the read" });
     const wt = await ensureWorktree(repo, stale.id);
     updateTask(stale.id, { worktree_path: wt!.path, work_branch: wt!.branch });
@@ -155,7 +147,7 @@ describe("create_pr", () => {
     const { url, text } = await createPrForAgent(task, {});
     expect(url).toBeNull();
     expect(text).toContain("push failed: protected branch");
-    // The detail travels too — it's the half that says what to fix.
+    // The detail travels too, since it says what to fix.
     expect(text).toContain("hook declined");
     expect(getTask(task.id)!.pr_url).toBeFalsy();
   });

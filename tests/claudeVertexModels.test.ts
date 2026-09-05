@@ -1,29 +1,12 @@
-// The Claude model picker, when the instance routes through Vertex.
+// The Claude model picker when the instance routes through Vertex.
 //
-// The shape asserted here is MEASURED, not inferred. Every value in the catalog
-// was probed with a one-shot `claude -p --model <value>` against Vertex project
-// example-vertex-project (region global, CLI 2.1.228), reading the resolved
-// id back out of the run's `modelUsage`, and cross-checked with a direct
-// rawPredict to the Vertex REST endpoint. What that found:
-//
-//   fable                 403 — publisher data sharing not enabled on the project
-//   opus                  -> claude-opus-5[1m]      (1M)
-//   sonnet                -> claude-sonnet-5[1m]    (1M)
-//   haiku                 -> claude-haiku-4-5@20251001 (200k)
-//   opusplan              -> claude-sonnet-5[1m]    (1M, post-plan)
-//   opus[1m]              -> claude-opus-5[1m]      (1M, same string as `opus`)
-//   sonnet[1m]            -> claude-sonnet-5[1m]    (1M, same string as `sonnet`)
-//   opusplan[1m]          -> claude-sonnet-5[1m]    (1M)
-//   claude-opus-4-8       -> claude-opus-4-8        (200k)
-//   claude-opus-4-8[1m]   -> claude-opus-4-8[1m]    (1M)
-//   claude-sonnet-4-6     -> claude-sonnet-4-6      (200k)
-//   claude-sonnet-4-6[1m] -> claude-sonnet-4-6[1m]  (1M)
-//   claude-opus-4-7       -> claude-opus-4-7        (200k)
-//   claude-opus-4-6       -> claude-opus-4-6        (200k)
-//
-// The headline is the negative result: the bare pinned ids DO resolve on Vertex,
-// so the "Pinned versions" group must survive untouched. The `@version` suffix
-// (claude-haiku-4-5@20251001) is an optional pin there, not a required spelling.
+// On Vertex, opus and sonnet resolve to their `[1m]` spellings and haiku
+// stays at 200k; opusplan follows the sonnet mapping since it runs on Sonnet
+// after planning. Fable is unavailable there (403, publisher data sharing not
+// enabled). Bare pinned model ids resolve unchanged on Vertex, so the
+// "Pinned versions" group must survive untouched, and the `@version` suffix
+// (claude-haiku-4-5@20251001) is an optional pin there, not a required
+// spelling.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -44,9 +27,9 @@ function configDir(settings?: unknown): string {
   return d;
 }
 
-// This machine's real configuration, as the probes found it — except the project
-// id, which is a placeholder: nothing reads it here, and it doesn't belong in a
-// public repo. The model mappings below are the measured ones and do matter.
+// The project id here is a placeholder: nothing reads it, and it should not
+// appear in a public repo. The model mappings below are what the assertions
+// depend on.
 const VERTEX_SETTINGS = {
   env: {
     CLAUDE_CODE_USE_VERTEX: "1",
@@ -86,11 +69,11 @@ describe("configuredProvider", () => {
 });
 
 describe("claudeDefaultModels", () => {
-  // MEASURED precedence, and the reason this isn't just process.env: exporting
+  // settings.json's env block takes precedence over process.env: exporting
   // ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-8 into the process while
-  // settings.json said claude-opus-5[1m] still ran claude-opus-5[1m]. Reading
-  // these the other way round would make the picker name a model the turn
-  // won't use.
+  // settings.json says claude-opus-5[1m] still runs claude-opus-5[1m].
+  // Reading these the other way round would make the picker name a model the
+  // turn does not use.
   it("lets the settings.json env block win over the process env", () => {
     const mapped = claudeDefaultModels({
       CLAUDE_CONFIG_DIR: configDir(VERTEX_SETTINGS),
@@ -113,9 +96,9 @@ describe("claudeCapabilities on a plain Anthropic login", () => {
     expect(claudeCapabilities({ CLAUDE_CONFIG_DIR: configDir() })).toBe(CLAUDE_CAPABILITIES);
   });
 
-  // No Bedrock instance exists to measure against, and upstream's Bedrock list
-  // drops the [1m] variants that demonstrably work on Vertex — so Bedrock is
-  // deliberately left on the default catalog rather than guessed at.
+  // Bedrock has no equivalent catalog here, and upstream's Bedrock list drops
+  // the [1m] variants that work on Vertex, so Bedrock stays on the default
+  // catalog instead of an unverified guess.
   it("leaves Bedrock on the default catalog rather than guessing at an unmeasured list", () => {
     const caps = claudeCapabilities({ CLAUDE_CONFIG_DIR: configDir(), CLAUDE_CODE_USE_BEDROCK: "1" });
     expect(caps).toBe(CLAUDE_CAPABILITIES);
@@ -128,8 +111,8 @@ describe("claudeCapabilities on Vertex", () => {
     caps = claudeCapabilities({ CLAUDE_CONFIG_DIR: configDir(VERTEX_SETTINGS) });
   });
 
-  // Spelled out rather than derived from the same predicate the implementation
-  // uses, so a filter that widened by accident fails here instead of agreeing
+  // Spelled out instead of derived from the same predicate the implementation
+  // uses, so a filter that widens by accident fails here instead of agreeing
   // with itself.
   const DROPPED_ON_VERTEX = ["fable", "claude-fable-5-1"];
 
@@ -145,8 +128,8 @@ describe("claudeCapabilities on Vertex", () => {
     expect(caps.loginStyle).toBe(CLAUDE_CAPABILITIES.loginStyle);
   });
 
-  // The headline finding: the suspicion that bare Anthropic ids need an
-  // `@version` suffix on Vertex is FALSE. All six pinned entries ran.
+  // Bare Anthropic model ids do not need an `@version` suffix on Vertex; all
+  // six pinned entries resolve.
   it("leaves the pinned-version group exactly as it is — bare ids do resolve on Vertex", () => {
     for (const value of [
       "claude-opus-4-8",
@@ -160,11 +143,11 @@ describe("claudeCapabilities on Vertex", () => {
     }
   });
 
-  // The bug worth fixing: contextWindow feeds the context gauge and the
-  // overflow notice, and a mapping carrying [1m] makes the bare alias 1M.
+  // contextWindow feeds the context gauge and the overflow notice; a mapping
+  // carrying [1m] makes the bare alias 1M.
   it("gives the family aliases the window of the id they actually resolve to", () => {
     expect(optionFor(CLAUDE_CAPABILITIES, "opus").contextWindow).toBe(K200); // what the catalog claims
-    expect(optionFor(caps, "opus").contextWindow).toBe(M1); // what the turn really gets
+    expect(optionFor(caps, "opus").contextWindow).toBe(M1); // what the turn actually gets
     expect(optionFor(caps, "sonnet").contextWindow).toBe(M1);
     expect(optionFor(caps, "haiku").contextWindow).toBe(K200);
   });
@@ -175,10 +158,10 @@ describe("claudeCapabilities on Vertex", () => {
     expect(optionFor(caps, "haiku").sub).toBe("claude-haiku-4-5@20251001");
   });
 
-  // No alias label claims a version on EITHER catalog now — the default one
-  // says "(latest)" because the installed CLI picks, this one says "(provider
-  // default)" because the env mapping picks and we can read it. Both are honest
-  // about who resolves; only a real pin names a version.
+  // No alias label claims a version on either catalog: the default catalog
+  // says "(latest)" because the installed CLI picks the version, and this one
+  // says "(provider default)" because the env mapping picks it and the value
+  // can be read. Only a real pin names a version.
   it("names the resolver in an alias label, but keeps the version on a real pin", () => {
     expect(optionFor(CLAUDE_CAPABILITIES, "opus").label).toBe("Opus (latest)");
     expect(optionFor(caps, "opus").label).toBe("Opus (provider default)");
@@ -187,8 +170,7 @@ describe("claudeCapabilities on Vertex", () => {
     expect(optionFor(caps, "claude-opus-4-8").label).toBe("Opus 4.8");
   });
 
-  // Neither catalog may leak a version into an alias row, which is the whole
-  // point of this change and the thing a future model launch will retest.
+  // Neither catalog may leak a version into an alias row.
   it("lets no alias row on either catalog carry a version number", () => {
     const aliases = ["fable", "opus", "sonnet", "haiku", "opusplan", "opus[1m]", "sonnet[1m]", "opusplan[1m]"];
     for (const list of [CLAUDE_CAPABILITIES.models, caps.models]) {
@@ -199,8 +181,8 @@ describe("claudeCapabilities on Vertex", () => {
     }
   });
 
-  // opusplan plans on Opus and runs on Sonnet afterwards; probing it resolved
-  // the sonnet mapping, so the session's window is Sonnet's.
+  // opusplan plans on Opus and runs on Sonnet afterward, using the sonnet
+  // mapping, so the session's window is Sonnet's.
   it("follows the sonnet mapping for opusplan, which is what runs after the plan", () => {
     expect(optionFor(caps, "opusplan").sub).toBe("claude-sonnet-5[1m]");
     expect(optionFor(caps, "opusplan").contextWindow).toBe(M1);
@@ -211,16 +193,13 @@ describe("claudeCapabilities on Vertex", () => {
     expect(optionFor(caps, "sonnet[1m]").sub).toContain("same as sonnet");
   });
 
-  // The entries that genuinely fail here (403, publisher data sharing not
-  // enabled). Dropped rather than labeled: on this fork Fable arrives with the
-  // direct-platform arrangement with Anthropic, not by flipping a GCP setting,
-  // so until then they would 403 every turn they were picked for. The gate is
-  // per publisher, so a pinned Fable version goes for the alias's reason — it
-  // is not a separately probed result.
+  // Fable rows are dropped instead of labeled, since they 403 (publisher data
+  // sharing not enabled) on this project. The gate applies per publisher, so
+  // a pinned Fable version is dropped for the same reason as the alias.
   it("drops every Fable row, which 403s on this project", () => {
     for (const v of DROPPED_ON_VERTEX) expect(caps.models.find((m) => m.value === v)).toBeUndefined();
-    // still offered on the plain Anthropic path, where they work — the alias
-    // naming its resolver, the pin naming the version it pins
+    // Still offered on the plain Anthropic path, where they work: the alias
+    // names its resolver, and the pin names the version it pins.
     expect(optionFor(CLAUDE_CAPABILITIES, "fable").label).toBe("Fable (latest)");
     expect(optionFor(CLAUDE_CAPABILITIES, "claude-fable-5-1").label).toBe("Fable 5.1");
   });
@@ -232,8 +211,8 @@ describe("claudeCapabilities on Vertex", () => {
       }),
     });
     expect(optionFor(partial, "opus").contextWindow).toBe(M1);
-    // sonnet/haiku unmapped: the CLI picks its own built-in default, which we
-    // can't name, so the catalog entry stands.
+    // sonnet and haiku are unmapped here: the CLI picks its own built-in
+    // default, which cannot be named, so the catalog entry stands.
     expect(optionFor(partial, "sonnet")).toEqual(optionFor(CLAUDE_CAPABILITIES, "sonnet"));
     expect(optionFor(partial, "haiku")).toEqual(optionFor(CLAUDE_CAPABILITIES, "haiku"));
   });
@@ -246,9 +225,9 @@ describe("claudeCapabilities on Vertex", () => {
     });
     expect(optionFor(narrow, "opus").contextWindow).toBe(K200);
     expect(optionFor(narrow, "opus").sub).toBe("claude-opus-4-8");
-    // With a 200k mapping the [1m] variant is a genuinely different model, so
-    // it must stay 1M and must not be labeled a duplicate. `claude-opus-4-8[1m]`
-    // is real — it was probed directly and ran with a 1M window.
+    // With a 200k mapping, the [1m] variant is a different model, so it must
+    // stay 1M and must not be labeled a duplicate. `claude-opus-4-8[1m]` is a
+    // real, distinct model with a 1M window.
     expect(optionFor(narrow, "opus[1m]").sub).toBe("claude-opus-4-8[1m]");
     expect(optionFor(narrow, "opus[1m]").contextWindow).toBe(M1);
   });

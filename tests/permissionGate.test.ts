@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// The permission prompt end-to-end THROUGH THE RUNNER: a scripted driver emits
+// The permission prompt end-to-end through the runner: a scripted driver emits
 // the `permission` / `permission_decided` events the Claude driver's canUseTool
-// gate produces, and this pins what lib/runner.ts does with them — the card is
+// gate produces, and this pins what lib/runner.ts does with them. The card is
 // persisted answerably, the task is flagged as needing you while parked, the
-// flag drops only when NOTHING is waiting, a turn that dies mid-prompt settles
+// flag drops only when nothing is waiting, a turn that dies mid-prompt settles
 // the card instead of leaving live buttons, and an unattended auto-deny parks
-// the queue rather than draining it into the same wall.
+// the queue instead of draining it into the same wall.
 //
 // Same seam trick as tests/agentDriver.test.ts: only the SDK-driving module is
 // swapped, so the registry, runner, store, and event bus all run for real.
@@ -120,7 +120,7 @@ describe("permission prompts through the runner", () => {
 
     const { done } = collect(task.id);
     startTurn(task, project, "go", "");
-    // One of two answered — still waiting on the other.
+    // One of two answered; still waiting on the other.
     await vi.waitFor(() => {
       const rows = toolRows(task.id);
       expect(rows.filter((d) => d.permission?.outcome).length).toBe(1);
@@ -179,7 +179,7 @@ describe("permission prompts through the runner", () => {
     startTurn(task, project, "go", "");
     await done;
 
-    // Still queued — a follow-up would have hit the same unanswerable prompt.
+    // Still queued: a follow-up would have hit the same unanswerable prompt.
     expect(listPendingMessages(task.id).map((p) => p.content)).toEqual(["and then deploy it"]);
     expect(events.some((e) => e.type === "notice" && e.content.includes("kept in the queue"))).toBe(true);
   });
@@ -203,10 +203,10 @@ describe("permission prompts through the runner", () => {
   });
 });
 
-// A refusal the CLI makes on its OWN — the "auto" classifier vetoing a call, a
-// deny rule, `dontAsk` — never reaches canUseTool, so no card was ever raised
-// and there is nothing for the user to answer. The runner's job is to make sure
-// that decision still lands somewhere honest instead of reading as an ordinary
+// A refusal the CLI makes on its own (the "auto" classifier vetoing a call, a
+// deny rule, `dontAsk`) never reaches canUseTool, so no card was ever raised
+// and there is nothing for the user to answer. The runner makes sure that
+// decision still lands somewhere honest instead of reading as an ordinary
 // tool failure: as an already-settled permission card on the very tool call it
 // killed. The wire shape is pinned in tests/claudePermissionMode.test.ts against
 // messages captured from the live CLI.
@@ -308,7 +308,7 @@ describe("a refusal the CLI made without a card", () => {
     const rows = toolRows(task.id);
     expect(rows).toHaveLength(1);
     expect(rows[0].title).toBe("Write (in a subagent)");
-    // No input to show — saying so beats inventing one.
+    // No input to show; saying so beats inventing one.
     expect(rows[0].permission?.request.detail).toBe("");
     expect(rows[0].permission?.outcome?.reason).toBe("blocked");
   });

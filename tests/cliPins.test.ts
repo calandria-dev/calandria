@@ -16,31 +16,28 @@ const pins = extractPins(
 );
 
 /**
- * The Codex CLI version is written down in four places that drift
- * independently, and nothing at build time compares them. This is the cheap
- * check that does, on the PR that desynchronizes them rather than on a cron.
+ * The Codex CLI version is written down in four places that can drift
+ * independently, with nothing at build time comparing them. This check
+ * catches a mismatch on the PR that causes it.
  *
- * Why it matters that they agree, rather than merely being close: the SDK
- * speaks JSONL to one exact binary, and WHICH binary that is depends on where
- * Calandria is running. In the image, `ENV CODEX_CLI_PATH=/usr/local/bin/codex`
+ * The SDK speaks JSONL to one exact binary, and which binary that is depends
+ * on where Calandria is running. In the image, `ENV CODEX_CLI_PATH=/usr/local/bin/codex`
  * points at the globally installed `@openai/codex@${CODEX_VERSION}`, so the
- * Dockerfile ARG is what runs a turn. Outside it — `npm run dev`, the test
- * suite, a non-Docker install — CODEX_CLI_PATH is empty and the SDK falls back
- * to the copy it exact-depends on in `node_modules`. Let the two diverge and
- * development and production drive different CLI versions, which is precisely
- * the skew the Dockerfile comment warns about and nothing enforces.
+ * Dockerfile ARG is what runs a turn. Outside it, in `npm run dev`, the test
+ * suite, or a non-Docker install, CODEX_CLI_PATH is empty and the SDK falls
+ * back to the copy it depends on exactly in `node_modules`. If the two
+ * diverge, development and production run different CLI versions.
  *
- * `.github/workflows/pin-drift.yml` is the other half, and cannot cover this:
- * it reads upstreams, so it can say a pin is behind but never that two of our
- * own files disagree.
+ * `.github/workflows/pin-drift.yml` covers upstream pins and cannot catch
+ * this: it can say a pin is behind but not that two of our own files
+ * disagree.
  */
 describe("Codex CLI pins", () => {
   const declared = pkg.dependencies["@openai/codex-sdk"];
 
   it("pins @openai/codex-sdk exactly, with no range", () => {
-    // A caret lets `npm install` float the SDK a patch, which silently
-    // desynchronizes it from ARG CODEX_VERSION — the failure this whole file
-    // exists for. Exact means a bump is an edit somebody reviewed.
+    // A caret lets `npm install` float the SDK a patch, desynchronizing it
+    // from ARG CODEX_VERSION. An exact pin means a bump is a reviewed edit.
     expect(declared).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
@@ -53,10 +50,10 @@ describe("Codex CLI pins", () => {
   });
 
   it("installs the CLI version the SDK actually asks for", () => {
-    // Read the coupling off the SDK rather than assuming its version number
-    // equals the CLI's. @openai/codex-sdk exact-depends on @openai/codex, so
-    // this is the version the SDK will drive when CODEX_CLI_PATH is empty, and
-    // the Dockerfile has to install the same one.
+    // The coupling is read off the SDK's own dependency, not assumed from its
+    // version number. @openai/codex-sdk depends exactly on @openai/codex, so
+    // this is the version the SDK drives when CODEX_CLI_PATH is empty, and the
+    // Dockerfile must install the same one.
     const wants =
       lock.packages["node_modules/@openai/codex-sdk"].dependencies[
         "@openai/codex"
@@ -68,8 +65,9 @@ describe("Codex CLI pins", () => {
 
   it("moves every platform binary with it", () => {
     // The CLI ships its native builds as separate optional packages tagged
-    // `<version>-<platform>`. A lockfile edited by hand, or refreshed only
-    // partly, leaves these behind and the image installs a mismatched binary.
+    // `<version>-<platform>`. A lockfile edited by hand, or only partly
+    // refreshed, leaves these behind, and the image installs a mismatched
+    // binary.
     const platforms = Object.entries(lock.packages).filter(([name]) =>
       /^node_modules\/@openai\/codex-(darwin|linux|win32)-/.test(name),
     );
@@ -88,14 +86,12 @@ describe("Claude CLI pin", () => {
   });
 
   it("has no version to couple @anthropic-ai/claude-agent-sdk to", () => {
-    // Deliberately asymmetric with Codex above, and worth stating so nobody
-    // adds the "missing" equality check: the Agent SDK declares no dependency
-    // on @anthropic-ai/claude-code and is versioned on its own line (0.3.x
+    // Asymmetric with Codex above: the Agent SDK declares no dependency on
+    // @anthropic-ai/claude-code and is versioned on its own line (0.3.x
     // against 2.1.x), so there is no version the two must share. It spawns
     // whatever CLAUDE_CLI_PATH resolves to, which the image installs from
-    // CLAUDE_CODE_VERSION. Compatibility between them is a behavioural
-    // question, settled by exercising a turn at bump time, not by a file
-    // comparison.
+    // CLAUDE_CODE_VERSION. Compatibility between them is a behavioral
+    // question, verified by exercising a turn at bump time.
     const deps = lock.packages["node_modules/@anthropic-ai/claude-agent-sdk"]
       .dependencies as Record<string, string> | undefined;
     expect(deps?.["@anthropic-ai/claude-code"]).toBeUndefined();

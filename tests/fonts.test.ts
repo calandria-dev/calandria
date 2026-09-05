@@ -1,29 +1,18 @@
-// Fonts are declared in two places that can drift silently, and both failure
-// directions have already happened here:
+// Fonts are declared in two places that can drift: a --nf-* variable used in
+// globals.css or the font picker (shell/types.ts) but never declared in
+// app/fonts.ts falls back to system-ui with no error, and a family declared in
+// app/fonts.ts but never referenced by a --nf-* variable downloads for no
+// pixels. Neither shows up in a typecheck, a unit test, or a Chromium e2e, so
+// this file pins the two lists against each other.
 //
-//   - USED BUT NOT LOADED — reference a --nf-* variable in globals.css or the
-//     font picker (shell/types.ts) without declaring it in app/fonts.ts
-//     and every glyph quietly falls back to system-ui. Nothing errors; the app
-//     just stops looking like itself on the machines that lack it.
-//   - LOADED BUT NOT USED — app/fonts.ts ships a next/font/google family that
-//     no --nf-* reference ever points at, a pure download for no pixels.
+// Fonts load via next/font/google: downloaded once at build time and served
+// from this instance, with no runtime Google Fonts CDN link.
 //
-// Neither is visible in a typecheck, a unit test, or a Chromium e2e (which has
-// the fallback installed and renders something plausible). So pin the two lists
-// against each other.
-//
-// The rebrand also replaced the runtime Google Fonts CDN
-// <link> with next/font/google, which downloads once at build time and serves
-// the fonts from this instance — no CDN request at runtime.
-//
-// The last assertion is the one this file was actually written for. --sans was
-// Space Grotesk, whose U+0027/U+0022 are composite glyphs built from the SAME
-// component at the SAME identity transform as U+2019/U+201D — the CLOSING curly
-// marks. A typed 'foo' therefore rendered as two closing curly quotes in the
-// composer and read as prompt corruption. The characters were always plain
-// ASCII, but "the quote glyph is a different character than the one you typed"
-// is a genuinely expensive illusion in a box people type shell commands into,
-// so Space Grotesk must not come back as the body/UI face by accident.
+// Space Grotesk's U+0027/U+0022 are composite glyphs built from the same
+// component and identity transform as U+2019/U+201D, the closing curly quote
+// marks. A typed 'foo' renders as two closing curly quotes, which is
+// misleading in a box people type shell commands into. Space Grotesk must not
+// be the body/UI face.
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";

@@ -2,13 +2,11 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 
 /**
  * GET /api/version is the desktop shell's handshake (desktop/main.js
- * `probeVersion`), so what it reports is a client-facing contract rather than a
- * debug endpoint: the shell reads `version` to decide whether to warn about an
- * old server, and `instanceName` to name the instance in its window title, its
- * menus and the toasts it raises.
+ * `probeVersion`): it reports `version` for the shell's stale-server warning,
+ * and `instanceName` for the window title, menus and toasts.
  *
- * CALANDRIA_INSTANCE_NAME is read at import time by lib/config.ts, so each case
- * sets the env and re-imports the route rather than mutating a resolved
+ * CALANDRIA_INSTANCE_NAME is read at import time by lib/config.ts, so each
+ * case sets the env and re-imports the route instead of mutating a resolved
  * constant.
  */
 async function version(instanceName?: string) {
@@ -31,8 +29,9 @@ describe("GET /api/version", () => {
   });
 
   it("reports null rather than an empty string when it is unset", async () => {
-    // The desktop falls back to the URL's host on null; "" would be adopted as
-    // a name and leave an instance labelled with nothing at all.
+    // The desktop falls back to the URL's host when instanceName is null. An
+    // empty string would be adopted as a name, labeling the instance with
+    // nothing.
     expect((await version(undefined)).instanceName).toBeNull();
     expect((await version("   ")).instanceName).toBeNull();
   });

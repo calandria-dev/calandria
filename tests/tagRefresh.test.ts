@@ -1,11 +1,11 @@
-// "Refresh tag" — the button that reads a plan's tasks against the code and
-// fixes what drifted (lib/tagRefresh.ts). Two halves are tested here:
+// Tests for "Refresh tag" (lib/tagRefresh.ts), the button that reads a plan's
+// tasks against the code and fixes what drifted. Two halves are covered:
 //
 //   - the detached-job state machine, the same shape contextRefresh.test.ts
 //     pins for the project draft;
-//   - applyTagPlan, which IS the feature's policy: what a model's judgement is
-//     allowed to do to a real row. That half runs without an agent at all, on
-//     purpose — the rules must be assertable from a plain object.
+//   - applyTagPlan, the feature's policy for what a model's judgement may do
+//     to a real row. That half runs without an agent, so the rules are
+//     assertable from a plain object.
 import { describe, expect, it, beforeEach, vi } from "vitest";
 
 // The plan comes from the utility agent (lib/agents/oneshots.ts → the Claude
@@ -49,8 +49,8 @@ function fixture(name = `tr-${Math.random().toString(36).slice(2)}`) {
   return { project, tag };
 }
 
-// A member in a given lifecycle state. The state is the whole point: what
-// applyTagPlan may do to a task is decided by whether there is work in it.
+// A member in a given lifecycle state: what applyTagPlan may do to a task
+// depends on whether there is work in it.
 function member(projectId: string, tagId: string, title: string, fields: Record<string, unknown> = {}) {
   const t = createTask({ project_id: projectId, title, description: `brief for ${title}` });
   setTaskTags([t.id], [tagId]);
@@ -135,8 +135,8 @@ describe("detached tag refresh job", () => {
     const project = createProject({ name: `stale-${Math.random()}` }); // no repo_path
     const tag = createTag({ project_id: project.id, name: "p" });
     setTagRefresh(tag.id, { refresh_status: "running", refresh_started_at: Date.now() - 21 * 60 * 1000 });
-    // A poll of the orphan reports a settled error rather than a bar that will
-    // never move again, and the next click re-evaluates instead of short-circuiting.
+    // A poll of the orphan settles as an error immediately, so the bar does not
+    // read as still moving, and the next click re-evaluates instead of short-circuiting.
     expect(getTagRefreshState(tag.id)).toMatchObject({ status: "error" });
     expect(startTagRefreshJob(tag.id).status).toBe("error");
   });
@@ -153,8 +153,8 @@ describe("applyTagPlan", () => {
     const out = applyTagPlan(tag, tagMembers(tag), { description: "", tasks: [{ id: m.id, title: "new title" }] }, ACTOR);
     expect(out.reworded).toBe(1);
     expect(getTask(m.id)!.title).toBe("new title");
-    // The chip is the review surface — without the row there is no Revert, and
-    // the whole reason this job may apply rather than propose is that there is.
+    // The chip is the review surface: without the row there is no Revert, which
+    // is what lets this job apply changes instead of only proposing them.
     const rows = edits(m.id);
     expect(rows).toHaveLength(1);
     expect(JSON.parse(rows[0].changes)).toEqual([
@@ -200,8 +200,8 @@ describe("applyTagPlan", () => {
     );
     expect(out.retired).toBe(1);
     expect(getTask(m.id)!.status).toBe("cancelled");
-    // Nothing was in it, so cancelling destroys nothing — but a cancel nobody
-    // can undo is not something to do on a model's reading, hence the edit row.
+    // Nothing was in it, so cancelling destroys nothing. A cancel nobody can
+    // undo still should not rest on a model's reading alone, hence the edit row.
     expect(JSON.parse(edits(m.id)[0].changes)).toEqual([
       expect.objectContaining({ field: "status", before: "not_started", after: "cancelled" }),
     ]);
@@ -263,7 +263,7 @@ describe("parseTagPlan", () => {
 
   it("degrades to an empty plan rather than throwing", () => {
     // A model that emitted prose has justified no change; the caller reports
-    // "nothing needed changing", which is honest — we did look.
+    // "nothing needed changing", which is honest since a check was made.
     for (const raw of ["", "no json here", "<<<TAG_PLAN>>>{ nope }<<<END_TAG_PLAN>>>", "[1,2]"]) {
       expect(parseTagPlan(raw)).toEqual({ description: "", tasks: [] });
     }
@@ -279,8 +279,8 @@ describe("parseTagPlan", () => {
       ],
     }));
     expect(parsed.description).toBe("d");
-    // "" is a field the model left blank, not a proposed rewrite — applying it
-    // would blank a real brief.
+    // "" is a field the model left blank, not a proposed rewrite. Applying it
+    // as one would blank a real brief.
     expect(parsed.tasks).toEqual([{ id: "a", reason: "r" }, { id: "b", retire: true, reason: "why" }]);
   });
 });

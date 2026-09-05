@@ -131,9 +131,9 @@ describe("remoteBaseStatus", () => {
     expect(await remoteBaseStatus(await makeRepo(), "main")).toMatchObject({ hasRemote: false, behind: 0 });
   });
 
-  // A branch the repo has only ever seen on the remote returned every count at
-  // its default, which reads as "in sync" — forever, since nothing about it can
-  // change. Say "couldn't compare" instead, the way SyncStatus.baseMissing does.
+  // A branch the repo has only ever seen on the remote reports "couldn't
+  // compare" (baseMissing) instead of an all-zero "in sync", the way
+  // SyncStatus.baseMissing does.
   it("flags a base branch with no local ref instead of an all-zero 'in sync'", async () => {
     const { repo, colleague } = await makeRepoWithOrigin();
     await git(colleague, "checkout", "-b", "pr-workflow");
@@ -158,11 +158,11 @@ describe("remoteBaseStatus", () => {
   });
 });
 
-// The banner's one-click catch-up. advanceBaseBranchLocked has always refused a
-// base branch it can't resolve, but the all-zero status a missing local ref
-// produced answered "up to date" before the refusal could run, so a project
-// pointed at a remote-only branch reported itself in sync with its remote and
-// the button did nothing, forever.
+// The banner's one-click catch-up. advanceBaseBranchLocked refuses a base
+// branch it can't resolve, and a missing local ref must not report an
+// all-zero "up to date" before that refusal runs, or a project pointed at a
+// remote-only branch would show in sync with its remote while the button
+// does nothing.
 describe("POST /api/projects/[id]/base-branch — fast-forward", () => {
   const ff = (id: string) =>
     projectBaseBranchRoute(
@@ -313,7 +313,7 @@ describe("pushBaseBranch", () => {
   });
 
   // The project's landing policy can be wrong or simply not set yet, so the
-  // remote still gets the last word — and GH006 is not a sentence to show anyone.
+  // remote still gets the last word, and GH006 is not a sentence to show anyone.
   onPosix("turns a protected-branch rejection into the same sentence, keeping the forge's words as detail", async () => {
     const { repo, origin } = await makeRepoWithOrigin();
     // tests/setup.ts points core.hooksPath at the null device for the whole
@@ -342,11 +342,10 @@ describe("pushBaseBranch", () => {
   });
 });
 
-// The bug: `pr-workflow` existed as refs/remotes/origin/pr-workflow and nowhere
-// else, because nobody in this checkout had ever asked for it. Every base-branch
-// check goes through the local-only `branchExists`, so the cut silently fell back
-// to HEAD, the sync banner said "in sync", and the first honest answer came from
-// Fix with AI: "base branch pr-workflow not found".
+// `pr-workflow` can exist only as refs/remotes/origin/pr-workflow, with no
+// local ref, when nobody in this checkout has asked for it yet. Every
+// base-branch check goes through the local-only `branchExists`, so this
+// materializes the branch locally instead of falling back to HEAD.
 describe("ensureWorktree — a base branch that exists only on the remote", () => {
   const pushBranch = async (colleague: string, branch: string) => {
     await git(colleague, "checkout", "-b", branch);
@@ -365,7 +364,7 @@ describe("ensureWorktree — a base branch that exists only on the remote", () =
 
     expect(await git(repo, "rev-parse", "refs/heads/pr-workflow")).toBe(tip);
     expect(await git(repo, "config", "--get", "branch.pr-workflow.remote")).toBe("origin");
-    // ...and the cut used it, rather than falling back to the checkout's HEAD.
+    // The cut used it instead of falling back to the checkout's HEAD.
     expect(wt?.baseBranch).toBe("pr-workflow");
     expect(wt?.baseSha).toBe(tip);
     expect(fs.existsSync(path.join(wt!.path, "pr-workflow.txt"))).toBe(true);

@@ -2,16 +2,13 @@
 // production build.
 //
 // The agent SDKs (@anthropic-ai/claude-agent-sdk, @openai/codex-sdk) are
-// ESM-only serverExternalPackages, which Turbopack emits as ASYNC externals —
+// ESM-only serverExternalPackages, which Turbopack emits as async externals,
 // and async-ness propagates to every transitive importer. A module compiled
-// async but consumed by a route entry Turbopack happened to compile sync gets a
-// pending Promise instead of its namespace: every export reads back undefined
-// at runtime. That's exactly how /api/services/grant (public service links) and
-// /api/instance/services-restore (boot restore of managed services) 500'd in
-// prod: lib/store.ts imported getDriver from the registry for one context-window
-// lookup, dragging both SDKs into lib/services.ts's graph.
+// async but consumed by a route entry Turbopack compiled sync gets a pending
+// Promise instead of its namespace, so every export reads back undefined at
+// runtime.
 //
-// The fix is lib/agents/capabilities.ts — capability DATA without the SDKs.
+// The fix is lib/agents/capabilities.ts: capability data without the SDKs.
 // This test walks the static import graph from the low-level modules and fails
 // if any path reaches an SDK again.
 
@@ -24,7 +21,7 @@ const FORBIDDEN = ["@anthropic-ai/claude-agent-sdk", "@openai/codex-sdk"];
 
 // Modules that must stay SDK-free, and why:
 const PINNED = [
-  "lib/store.ts", //     imported by nearly everything; the original poison edge
+  "lib/store.ts", //     imported by nearly everything, so it must stay SDK-free
   "lib/services.ts", //  behind sync-compiled routes (grant, services-restore)
   "lib/db.ts",
   "lib/db-lock.mjs", //          the boot lock; server.js loads it in plain Node, before Next exists
@@ -32,8 +29,8 @@ const PINNED = [
   "lib/log.mjs", //              the shared line emitter; zero imports, and BOTH plain-Node entrypoints load it before Next exists
   "lib/schema-version.mjs", //   the schema stamp + boot gate; better-sqlite3 + storage.mjs only, and server.js runs it before Next exists
   "lib/storage.mjs", //          where the db/worktrees live incl. the pre-rename fallback; fs + env only, and server.js reads it before Next exists
-  "lib/agents/capabilities.ts", // the whole point of the module
-  "lib/agents/connections.ts", // connection state is ID lookups only — no driving
+  "lib/agents/capabilities.ts", // capability data with no SDK imports, why this module exists
+  "lib/agents/connections.ts", // connection state is ID lookups only, no driving
   "lib/agentEnv.ts", //          the main-turn process env (issue #102); types-only, no driving
   "lib/agents/codex/catalog.ts", // ~/.codex models_cache.json + config.toml; node:fs only, and ./capabilities.ts reads it on the request path
   "lib/agents/codex/provider.ts", // the override → codex config.toml mapping; pure data, tested without the SDK
@@ -51,19 +48,19 @@ const PINNED = [
   "lib/prTools.ts", //          the commit/push/`gh pr create` both POST /api/tasks/[id]/pr and the create_pr tool run; store + git + github, no driving
   "lib/agentToolGuard.mjs", //  the loud-failure wrapper every agent tool answers through; zero imports, and scripts/calandria-mcp.mjs loads it in plain Node
   "lib/git.ts", //               every worktree/diff/merge/remote operation; subprocesses only, and baseBranch.ts sits on it
-  "lib/permissions.ts", //       the tool-permission gate's policy — pure logic, no driving
-  "lib/settingsDrift.ts", //     the pre-turn settings gate; store + fs + the permission card's own policy, and which files it watches comes from the driver rather than from here
-  "lib/agentCommands.ts", //     which slash commands the menu offers — policy the client imports too
+  "lib/permissions.ts", //       the tool-permission gate's policy, pure logic, no driving
+  "lib/settingsDrift.ts", //     the pre-turn settings gate; store + fs + the permission card's own policy, and which files it watches comes from the driver, not from here
+  "lib/agentCommands.ts", //     which slash commands the menu offers, policy the client imports too
   "lib/binPath.ts", //           where a CLI is on disk + how to launch it on Windows; node:fs/node:path only
   "lib/processTree.ts", //       how to kill a spawned command's whole tree per platform; node:child_process only, and lib/services.ts sits on it
   "lib/secretFile.ts", //        how a persisted credential is locked to its owner on each platform; node:fs/node:os/node:path only
   "lib/agents/codex/bin.ts", //  which `codex` to spawn; config + binPath, no driving
-  "lib/worktreeFailure.ts", //   how a failed worktree prep is classified + its recovery notice — the client imports it to render the button
-  "lib/usageReset.ts", //        which usage-window reset a queued start targets — the client derives the button from it
-  "lib/agents/claude/planUsage.ts", // plan-usage cache + fetch policy — fs/fetch only, no driving
-  "lib/schedule/time.ts", //     pure wall-clock math — no DB, no SDK
+  "lib/worktreeFailure.ts", //   how a failed worktree prep is classified + its recovery notice, which the client imports to render the button
+  "lib/usageReset.ts", //        which usage-window reset a queued start targets, which the client derives the button from
+  "lib/agents/claude/planUsage.ts", // plan-usage cache + fetch policy, fs/fetch only, no driving
+  "lib/schedule/time.ts", //     pure wall-clock math, no DB, no SDK
   "lib/retention.ts", //         the scheduled prune of the unbounded tables; DB + fs only, no driving
-  "lib/gatewayKeys.ts", //       per-task LiteLLM virtual key mint/delete/reconcile; store + fetch + config + retention, no driving — lib/runner.ts imports THIS, never the reverse
+  "lib/gatewayKeys.ts", //       per-task LiteLLM virtual key mint/delete/reconcile; store + fetch + config + retention, no driving; lib/runner.ts imports THIS, never the reverse
   "lib/gatewayMcp.ts", //        hosted LiteLLM gateway MCP servers: catalog probe + selection + the mcpServers a turn mounts; fetch + agentEnv + config only, no driving
   "app/api/projects/[id]/mcp-servers/route.ts", // the picker's catalog + trust-mint route, behind lib/gatewayMcp.ts and lib/permissions.ts only
   "lib/worktreeSweep.ts", //     the scheduled worktree reclaim + disk warning; store + git + locks, no driving
@@ -92,59 +89,54 @@ const PINNED = [
   "app/api/settings/permissions/route.ts",
   "app/api/services/grant/route.ts",
   "app/api/instance/services-restore/route.ts",
-  "app/api/instance/metrics/route.ts", // the scrape target — a "which agents are configured?" series later must use capabilities.ts
+  "app/api/instance/metrics/route.ts", // the scrape target; a "which agents are configured?" series later must use capabilities.ts
 ];
 
 // Modules that MAY reach an SDK, but only ever through a dynamic `import()`.
 //
-// Different failure from the one above, same async externals. lib/runner.ts
-// statically imports the driver registry, so it IS an async module — and under
-// Turbopack an async module's `namespaceObject` is a PROMISE until its factory
-// settles, so every static importer of it must be compiled async too. These two
-// are launchers reached from ORDINARY ROUTE ENTRIES (PATCH /api/tasks/[id], the
-// agent-edits route, the two internal agent-tools routes), which is the same
-// position lib/store.ts was in when /api/services/grant 500'd: a sync-compiled
-// route entry reading every export of an async dependency back as undefined.
-// So the requirement is PINNED's — no static path to an SDK — and the dynamic
-// `await import("@/lib/runner")` is how a module that must launch turns still
-// meets it. Turbopack's asyncModule resolves that promise with the populated
-// namespace, so it never depends on propagation at all.
+// A different failure from the one above, with the same async externals.
+// lib/runner.ts statically imports the driver registry, so it is an async
+// module, and under Turbopack an async module's `namespaceObject` is a
+// promise until its factory settles, so every static importer of it must be
+// compiled async too. These two are launchers reached from ordinary route
+// entries (PATCH /api/tasks/[id], the agent-edits route, the two internal
+// agent-tools routes): a sync-compiled route entry reading every export of an
+// async dependency back as undefined. So the requirement is PINNED's, no
+// static path to an SDK, and the dynamic `await import("@/lib/runner")` is
+// how a module that must launch turns still meets it. Turbopack's
+// asyncModule resolves that promise with the populated namespace, so it never
+// depends on propagation at all.
 //
-// The historic reason was narrower and is now gone: lib/autoStart.ts used to
-// close a cycle back into the async graph, because the Claude driver's
-// update_task/withdraw_suggestion tools imported it at call time —
+// lib/autoStart.ts must not import the driver registry statically: doing so
+// closes a cycle back into the async graph:
 //
 //   autoStart → runner → agents/registry → agents/claude/driver → autoStart
 //
-// — and Turbopack, seeing the cycle, skipped propagating async-ness into
-// autoStart even along its then-STATIC runner edge. Every emitted copy came out
-// a plain sync factory, so `startTurn` was read off a pending Promise and EVERY
-// auto-start launch died with "(0 , n.startTurn) is not a function" in
-// production while dev and vitest stayed green. The driver now takes the sweep
-// as an injected callback (TurnHooks in lib/agents/types.ts), so the cycle is
-// gone — pinned by the acyclicity test below, which is what stops it growing
-// back and turning these entries into that bug again.
+// That stops Turbopack from propagating async-ness into autoStart along its
+// static runner edge and breaks every auto-start launch in production while
+// dev and vitest stay green. The driver takes the sweep as an injected
+// callback instead (TurnHooks in lib/agents/types.ts), so no such cycle
+// exists; the acyclicity test below is what keeps it that way.
 const DYNAMIC_ONLY = [
   "lib/autoStart.ts", // launches turns, but its importers are sync route entries
   "lib/deferredStart.ts", // imports lib/autoStart statically and reaches the runner the same way
   // Reclaiming a landed task marks it done, and a non-terminal → terminal
-  // transition has to release whatever was blocked on it — the same sweep the
+  // transition has to release whatever was blocked on it, the same sweep the
   // user-facing PATCH and the agent tools run. That is the only edge out of
   // either module; both are otherwise store + git + bus.
   "lib/reclaim.ts",
-  // …and lib/prState.ts hands a merged PR to it. It was PINNED, which is the
-  // same requirement stated more strictly than the hazard needs: what the two
-  // sync-compiled PR routes depend on is that nothing here is STATICALLY async,
-  // which is exactly what this list pins.
+  // lib/prState.ts hands a merged PR to it. What the two sync-compiled PR
+  // routes depend on is that nothing here is statically async, which is
+  // exactly what this list pins.
   "lib/prState.ts",
 ];
 
 // The other half of the same rule, in the other direction: nothing the driver
-// registry can reach — statically OR dynamically — may import a launcher back.
-// A dynamic edge counts, because Turbopack's cycle detection counted the
-// driver's `await import("../../autoStart")` and bailed out of async-ness
-// propagation on the strength of it. What a driver needs from a launcher is
-// injected (lib/agents/types.ts's TurnHooks), never imported.
+// registry can reach, statically or dynamically, may import a launcher back.
+// A dynamic edge counts too: Turbopack's cycle detection counts a dynamic
+// `import()` back into a launcher and bails out of async-ness propagation on
+// the strength of it. What a driver needs from a launcher is injected
+// (lib/agents/types.ts's TurnHooks), never imported.
 const LAUNCHERS = ["lib/runner.ts", "lib/autoStart.ts", "lib/deferredStart.ts", "lib/dispatch.ts"];
 
 // import/export/require specifiers, coarse but sufficient for this repo's
@@ -158,8 +150,8 @@ const IMPORT_BARE_RE = /^\s*import\s+["']([^"']+)["']/gm;
 /**
  * A repo-relative module id, always `/`-separated. `path.relative` gives
  * backslashes on Windows, and these strings are both map KEYS looked up with
- * the literals in PINNED/LAUNCHERS and the trails printed in failure messages
- * — so a platform-shaped separator would make every lookup miss.
+ * the literals in PINNED/LAUNCHERS and the trails printed in failure messages,
+ * so a platform-shaped separator would make every lookup miss.
  */
 const relKey = (file: string) => path.relative(ROOT, file).split(path.sep).join("/");
 
@@ -203,7 +195,7 @@ function reachablePackages(entry: string, staticOnly = false): Map<string, strin
 
 /**
  * All repo-local modules reachable from `entry`, with one witness path each.
- * Dynamic `import()` edges included, deliberately — see LAUNCHERS.
+ * Dynamic `import()` edges are included; see LAUNCHERS.
  */
 function reachableFiles(entry: string): Map<string, string[]> {
   const files = new Map<string, string[]>();

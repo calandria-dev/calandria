@@ -1,15 +1,15 @@
-// Where an unconfigured install puts its data — and what it does when it finds
+// Where an unconfigured install puts its data, and what it does when it finds
 // a pre-rename install already there.
 //
-// The defaults moved to ~/.calandria, but nothing is ever MOVED: an operator
+// The defaults moved to ~/.calandria, but nothing is ever moved: an operator
 // upgrading in place must keep every project and task, and the worktrees half
 // can't be relocated from this side at all (git stores an absolute path in each
-// repo's .git/worktrees/<id>/gitdir). So the rules below are the whole feature,
-// and they're the kind of thing that reads as obviously-correct right up until
-// someone reorders two `if`s and silently hands a returning user an empty app.
+// repo's .git/worktrees/<id>/gitdir). These rules are what a returning user's
+// data depends on; reordering two `if`s here can hand them an empty app with
+// no error.
 //
-// The resolver reads os.homedir() and the env at CALL time, not import time,
-// which is what makes a fake HOME testable here at all.
+// The resolver reads os.homedir() and the env at call time, not import time,
+// which is what makes a fake HOME testable here.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -57,7 +57,7 @@ afterEach(() => {
   }
 });
 
-/** Write a plausible database file (contents are never read — only existence is). */
+/** Write a plausible database file (contents are never read, only existence is). */
 function seedDb(dir: string, file: string): string {
   fs.mkdirSync(dir, { recursive: true });
   const p = path.join(dir, file);
@@ -71,7 +71,7 @@ describe("database location", () => {
     expect(at.path).toBe(path.join(home, NEW_DIR, DB_FILE));
     expect(at.legacyDir).toBe(false);
     expect(at.legacyFile).toBe(false);
-    // Resolution must not CREATE anything — the caller mkdirs when it opens.
+    // Resolution must not create anything: the caller mkdirs when it opens.
     expect(fs.existsSync(path.join(home, NEW_DIR))).toBe(false);
     expect(legacyStorageWarning()).toBeNull();
   });
@@ -127,7 +127,7 @@ describe("database location", () => {
     const dir = path.join(home, "empty-but-configured");
     process.env.CALANDRIA_DB_DIR = dir;
 
-    // An operator who set the var said where the data lives. A silent hop to
+    // An operator who set the var said where the data lives. Falling back to
     // ~/.zen-orchestrator would be the app choosing a different database than
     // the one it was pointed at.
     expect(resolveDbLocation().path).toBe(path.join(dir, DB_FILE));
@@ -176,16 +176,16 @@ describe("worktrees location", () => {
 });
 
 /*
- * The end-to-end shape of the two cases that actually matter to a person: an
- * upgrade in place must still find every project and task, and a brand-new
- * install must land at the new default. Both boot the real store against a fake
- * HOME rather than asserting on the resolver alone — lib/config.ts reads its
- * paths at IMPORT time, so a wiring mistake between the resolver and DB_PATH
- * would pass every test above and still hand a returning user an empty app.
+ * The end-to-end shape of the two cases that matter to a person: an upgrade in
+ * place must still find every project and task, and a brand-new install must
+ * land at the new default. Both boot the real store against a fake HOME instead
+ * of asserting on the resolver alone: lib/config.ts reads its paths at import
+ * time, so a wiring mistake between the resolver and DB_PATH would pass every
+ * test above and still hand a returning user an empty app.
  */
 async function bootStore() {
   // getDb() memoizes on globalThis, and lib/config.ts computes DB_PATH once per
-  // module graph — so a "boot" is a module reset plus dropping that connection.
+  // module graph, so a "boot" is a module reset plus dropping that connection.
   closeDb();
   vi.resetModules();
   return await import("../lib/store");
@@ -195,7 +195,7 @@ function closeDb() {
   const open = (globalThis as { __calandriaDb?: { close(): void } }).__calandriaDb;
   if (open) {
     // close() checkpoints the WAL away, which is what makes the file below
-    // movable — the same reason the migration recipe says to stop the app first.
+    // movable: the same reason the migration recipe says to stop the app first.
     try { open.close(); } catch {}
     delete (globalThis as { __calandriaDb?: unknown }).__calandriaDb;
   }

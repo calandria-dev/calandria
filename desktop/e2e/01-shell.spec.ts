@@ -1,16 +1,14 @@
-/* The shell layer, on one running instance: boot handoff, the native menu, the
- * renderer's hardening, the permission handler, external-link policy and the
- * single-instance lock.
+/* Covers the shell layer on one running instance: boot handoff, the native
+ * menu, renderer hardening, the permission handler, external-link policy and
+ * the single-instance lock. Everything here reaches the main process through
+ * `app.evaluate()` into `desktop/main.js`, which is why this suite exists
+ * alongside the browser one. It does not repeat what the browser suite
+ * already covers: no onboarding, no project/task flow (02-smoke covers one
+ * pass of that to prove the renderer is a working browser), no API surface.
  *
- * Everything here is main-process reach — `app.evaluate()` into `desktop/main.js`
- * — which is the whole reason a desktop suite exists next to the browser one.
- * Nothing the browser suite already asserts is repeated: no onboarding, no
- * project/task flow (02-smoke does exactly one pass of that, to prove the
- * renderer is a working browser), no API surface.
- *
- * One `launchShell()` for the file: each assertion below is a read, not a
- * mutation of the app's lifecycle, so paying for a second Next boot per test
- * would buy nothing. The specs that DO end their instance have their own files.
+ * The file shares one `launchShell()` instance because each test below reads
+ * state without mutating the app's lifecycle, so a second Next boot per test
+ * would add nothing. Tests that end the instance live in their own files.
  */
 
 import { statSync } from "node:fs";
@@ -36,32 +34,29 @@ test.afterAll(async () => {
 });
 
 test("the boot screen streams supervisor logs, then hands off to the app", async () => {
-  // The window is created on loading.html and only swaps once /api/version
-  // answers, so these three facts together ARE the handoff.
+  // The window is created on loading.html and swaps only once /api/version
+  // answers, so these three facts together are the handoff.
   //
-  // EITHER SIDE of the swap passes (issue #75). Requiring the boot screen here
-  // made the assertion a race the shell could lose by being fast: on macOS the
-  // swap sometimes lands before the fixture's first non-empty read, and this
-  // failed for the app having come up promptly — reddening packaging and the
-  // two steps after it. `isBootHandoffUrl` says what is actually claimed, and
-  // `tests/bootUrl.test.ts` pins it on every lane rather than only this one.
+  // Either side of the swap can pass: on macOS the swap can land before the
+  // fixture's first non-empty read, so the assertion accepts a fast app
+  // coming up promptly as well as the boot screen. `isBootHandoffUrl` says
+  // what is actually claimed, and `tests/bootUrl.test.ts` pins it on every
+  // lane.
   expect(
     isBootHandoffUrl(shell.firstUrl, shell.origin),
     `the window's first URL was neither the boot screen nor the app: ${JSON.stringify(shell.firstUrl)}`
   ).toBe(true);
-  // The supervisor really did narrate its start...
+  // The supervisor narrated its start.
   expect(shell.log.join("\n")).toMatch(/\[shell] ready on http:\/\/127\.0\.0\.1:\d+/);
-  // ...and those lines reached the boot screen, which is a SEPARATE claim and
-  // the one that was false until this suite existed: they get there through
-  // `webContents.executeJavaScript`, the only bridge main.js has instead of a
-  // preload, and loading.html's `default-src 'none'` CSP silently blocked the
-  // page-side half of it.
+  // Those lines also reached the boot screen, a separate claim: they arrive
+  // through `webContents.executeJavaScript`, the only bridge main.js has
+  // without a preload, past loading.html's `default-src 'none'` CSP.
   expect(shell.bootScreenLog, "the boot screen never received a supervisor log line").toMatch(
     /\[shell] node: /
   );
-  // Received, not displayed. What someone waiting for the window sees is a
-  // spinner; the lines go into a pane clipped out of the layout, which is the
-  // only reason the assertion above (and 06-packaged's) can read them at all.
+  // Received, not displayed: the lines land in a pane clipped out of the
+  // layout, so a person watching sees only a spinner. That clipping is also
+  // why the assertion above (and 06-packaged's) can read the lines at all.
   expect(shell.bootScreen.spinner, "the boot screen showed no spinner").toBe(true);
   expect(
     shell.bootScreen.logWidth,
@@ -70,19 +65,19 @@ test("the boot screen streams supervisor logs, then hands off to the app", async
   expect(shell.origin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
   expect(shell.win.url().startsWith(shell.origin)).toBe(true);
 
-  // The app's own DOM, not a blank frame — the supervisor→window chain end to end.
+  // Confirms the app's own DOM rendered, not a blank frame: the
+  // supervisor-to-window chain end to end.
   await expect(shell.win.locator("body")).not.toBeEmpty();
 });
 
 test("the window renders and can be captured", async () => {
   const shot = `${shell.root}/window.png`;
   await shell.win.screenshot({ path: shot });
-  // The display underneath differs by lane — Xvfb on the Ubuntu runner, a real
-  // window station on the Windows one, the bench VM's session on the bench —
-  // and this asserts the part that does not: SwiftShader is the only rendering
-  // path on any machine this runs on (no GPU exists on the fleet, and a runner
-  // has none either), and a blank or truncated PNG is what a broken one looks
-  // like.
+  // The display differs by lane (Xvfb on the Ubuntu runner, a real window
+  // station on Windows, the bench VM's session), but the rendering path does
+  // not: SwiftShader is the only one available on any machine this runs on,
+  // since no GPU exists on the fleet or on a runner. A blank or truncated PNG
+  // is what a broken render looks like.
   expect(statSync(shot).size).toBeGreaterThan(5000);
 });
 
@@ -94,16 +89,16 @@ test("the window carries the app title", async () => {
 });
 
 test("the application menu is installed with the roles the OS shortcuts need", async () => {
-  // `electron`'s own types are only installed under desktop/node_modules, so
-  // the main-process argument arrives here as `any` — hence the annotations.
+  // electron's own types are installed only under desktop/node_modules, so
+  // the main-process argument arrives here as `any`; hence the annotations.
   const menu: Array<{ label: string; role?: string }> = await shell.app.evaluate(async ({ Menu }) =>
     (Menu.getApplicationMenu()?.items || []).map((i: any) => ({ label: i.label, role: i.role }))
   );
 
-  // Without an Edit menu macOS has no Cmd+C/V/A at all — the roles are what
-  // wire the system shortcuts, so this asserts roles rather than cosmetics.
-  // Electron lower-cases a role on the way in, so `{ role: "fileMenu" }` reads
-  // back as "filemenu"; the custom View submenu has no role at all.
+  // Without an Edit menu macOS has no Cmd+C/V/A: the roles wire the system
+  // shortcuts, so this checks roles rather than labels. Electron lower-cases
+  // a role on the way in, so `{ role: "fileMenu" }` reads back as
+  // "filemenu"; the custom View submenu carries no role at all.
   expect(menu.map((i) => i.role)).toEqual(
     expect.arrayContaining(
       process.platform === "darwin"
@@ -113,7 +108,7 @@ test("the application menu is installed with the roles the OS shortcuts need", a
   );
   expect(menu.map((i) => i.label)).toContain("View");
 
-  // The two items the shell owns rather than inherits from a role.
+  // The two items the shell owns directly, not inherited from a role.
   const view: string[] = await shell.app.evaluate(async ({ Menu }) => {
     const v = (Menu.getApplicationMenu()?.items || []).find((i: any) => i.label === "View");
     return ((v as any)?.submenu?.items || []).map((i: any) => i.label);
@@ -133,8 +128,8 @@ test("the renderer stayed a hardened browser tab", async () => {
       preload: p.preload || null,
     };
   });
-  // main.js's one piece of policy: no bridge, so an XSS in the transcript
-  // renderer cannot reach the Node API.
+  // main.js's policy: no bridge, so an XSS in the transcript renderer cannot
+  // reach the Node API.
   expect(prefs.nodeIntegration).toBe(false);
   expect(prefs.contextIsolation).not.toBe(false);
   expect(prefs.sandbox).toBe(true);
@@ -142,24 +137,23 @@ test("the renderer stayed a hardened browser tab", async () => {
 });
 
 test("the permission handler denies everything, notifications included", async () => {
-  // Notifications used to be the ONE grant here, and the reason for the
-  // handler's existence: turn-finished pings are the point of a desktop shell.
-  // They still are — they just come from the main process now (`new
-  // Notification` in main.js, fed by the same GET /api/events payload the
-  // renderer would have used). Granting the renderer as well would give the
-  // user two toasts for every event, so the page's channel is switched off at
-  // the source: `notificationPermission()` in app/shell/useNotifications.ts
-  // returns something that isn't `granted` and the hook returns before
-  // constructing anything. (It returns `desktop_shell` rather than `denied`,
-  // off the user-agent token asserted below — same standing down, better copy
-  // in Settings. The raw `denied` this test reads is what that is built on.)
+  // Turn-finished pings are the point of a desktop shell, and they come from
+  // the main process (`new Notification` in main.js, fed by the same GET
+  // /api/events payload the renderer would otherwise use). Granting the
+  // renderer as well would produce two toasts per event, so the page's
+  // channel is switched off at the source: `notificationPermission()` in
+  // app/shell/useNotifications.ts returns something other than `granted` and
+  // the hook returns before constructing anything. It returns `desktop_shell`
+  // rather than `denied`, off the user-agent token asserted below, which
+  // gives Settings better copy while standing on the same `denied` read this
+  // test checks.
   //
-  // BOTH readings are asserted because they are answered by different handlers
-  // and only the second one is on the path that matters: the hook checks
-  // `Notification.permission`, which is a permission CHECK, and Electron
+  // Both readings are asserted because they are answered by different
+  // handlers, and only the second is on the path that matters: the hook
+  // checks `Notification.permission`, a permission check, and Electron
   // answers those with a hardcoded "granted" unless a check handler says
-  // otherwise — so a shell that only denied the REQUEST would still have shown
-  // the duplicate toast.
+  // otherwise. A shell that only denied the request would still show the
+  // duplicate toast.
   const notifications = await shell.win.evaluate(async () => ({
     requested: await Notification.requestPermission(),
     checked: Notification.permission,
@@ -171,9 +165,9 @@ test("the permission handler denies everything, notifications included", async (
     "denied"
   );
 
-  // Denied — and geolocation is the one that can PROVE denial rather than
-  // merely fail. Its error code discriminates: 1 is PERMISSION_DENIED (the
-  // handler said no), 2 is POSITION_UNAVAILABLE (permitted, but nothing could
+  // Geolocation is the one call that can prove denial rather than merely
+  // fail. Its error code discriminates: 1 is PERMISSION_DENIED (the handler
+  // said no), 2 is POSITION_UNAVAILABLE (permitted, but nothing could
   // answer), which is what a granted request would return on a runner.
   const geo = await shell.win.evaluate(
     async () =>
@@ -186,11 +180,11 @@ test("the permission handler denies everything, notifications included", async (
   );
   expect(geo, "geolocation was not refused by setPermissionRequestHandler").toBe(1);
 
-  // The camera is the one the handler is written for, but a headless runner has
-  // no capture device, and Chromium answers `NotFoundError` from device
-  // enumeration before the permission handler is ever consulted. So this asserts
-  // what it can — no stream comes back — and geolocation above is what asserts
-  // the default-deny policy itself.
+  // The camera is the case the handler is written for, but a headless runner
+  // has no capture device, and Chromium answers `NotFoundError` from device
+  // enumeration before the permission handler is consulted. This asserts
+  // what it can, that no stream comes back; geolocation above is what proves
+  // the default-deny policy.
   const camera = await shell.win.evaluate(async () =>
     navigator.mediaDevices
       .getUserMedia({ video: true, audio: true })
@@ -204,66 +198,66 @@ test("the permission handler denies everything, notifications included", async (
 });
 
 test("the user agent tells the page it is inside the shell", async () => {
-  // The other half of the denial above. Because the check handler makes
-  // `Notification.permission` read "denied" on a perfectly good 127.0.0.1
-  // origin, Settings → Notifications would tell the user they had blocked
-  // notifications for this site — while OS toasts were arriving the whole time
-  // from a channel the page cannot see. `announceShell()` appends this token so
-  // `isDesktopShell()` can say "handled by the desktop app" instead.
+  // The other half of the denial above: because the check handler makes
+  // `Notification.permission` read "denied" on a valid 127.0.0.1 origin,
+  // Settings → Notifications would otherwise tell the user they blocked
+  // notifications for this site, even while OS toasts arrive from a channel
+  // the page cannot see. `announceShell()` appends this token so
+  // `isDesktopShell()` can report "handled by the desktop app" instead.
   //
-  // Asserted against the app's own matcher rather than by re-spelling the
-  // regex, so a change to either end fails here rather than drifting apart.
+  // Asserted against the app's own matcher rather than a re-spelled regex,
+  // so a change to either end fails here instead of drifting apart.
   const ua = await shell.win.evaluate(() => navigator.userAgent);
   expect(ua, "announceShell() must run before the first load").toContain("Calandria-Desktop/");
   expect(isDesktopShell(ua)).toBe(true);
-  // Appended, not replacing: the app may reasonably branch on Chrome's version.
+  // Appended rather than replaced: the app can still branch on Chrome's version.
   expect(ua).toContain("Chrome/");
 });
 
 test("Settings → Notifications says the shell owns push instead of offering a subscribe button", async () => {
   // What the two denials above look like from the panel. The Web Push field
-  // used to read only the capability checks (secure context, service worker,
-  // PushManager), never the user agent, so in here it offered "Enable push on
-  // this device" and then failed the click against the denied permission with
-  // "unblock them in the browser's site settings" — a page the shell has no
-  // way to open. The panel now stands down off the same token the field above
-  // it uses (app/shell/usePush.ts, `desktop_shell`), and nothing in this window
-  // may call Notification.requestPermission() for push.
+  // reads the same user-agent token the field above it uses
+  // (app/shell/usePush.ts, `desktop_shell`) rather than only the capability
+  // checks (secure context, service worker, PushManager), so it stands down
+  // instead of offering "Enable push on this device", which would fail the
+  // click against the denied permission with copy pointing at browser site
+  // settings the shell has no way to open. Nothing in this window may call
+  // Notification.requestPermission() for push.
   await ensureOnboarded(shell.origin);
   await shell.win.addInitScript(() => {
     localStorage.setItem("calandria_agent_nudge_dismissed", "1");
     localStorage.setItem("calandria:welcomeCoach:dismissed", "1");
   });
-  // Opened through the URL (`?view=settings`, app/shell/persist.ts) rather than
-  // the projects column's gear, for the reason 02-smoke.spec.ts navigates by
-  // URL: the hosted runners clamp the window under AUTO_COLLAPSE_BELOW and the
-  // column that holds that button is a 30px spine there.
+  // Opened through the URL (`?view=settings`, app/shell/persist.ts) rather
+  // than the projects column's gear: the hosted runners clamp the window
+  // under AUTO_COLLAPSE_BELOW, where the column holding that button is a
+  // 30px spine. 02-smoke.spec.ts navigates by URL for the same reason.
   await shell.win.goto(`${shell.origin}/?view=settings`);
   await shell.win.locator(".settings-nav .nav-item", { hasText: "Notifications" }).click();
   await expect(shell.win.getByText("Push notifications", { exact: true })).toBeVisible();
-  // The one sentence the whole fix exists to show: native is already on.
+  // The sentence this fix exists to show: native is already on.
   await expect(shell.win.getByText(/Native notifications are already on/)).toBeVisible();
-  // And nothing to click: no subscribe button, and none of the copy the
-  // browser-only verdicts would have produced in its place.
+  // And nothing to click: no subscribe button, and none of the copy a
+  // browser-only verdict would show in its place.
   await expect(shell.win.getByRole("button", { name: /push on this device/ })).toHaveCount(0);
   await expect(shell.win.getByText(/This browser can't receive push notifications/)).toHaveCount(0);
   await expect(shell.win.getByText(/blocked for this site/)).toHaveCount(0);
-  // The browser-notifications field beside it stood down the same way already;
-  // the two must agree, or the panel contradicts itself two fields apart.
+  // The browser-notifications field beside it stands down the same way; the
+  // two must agree, or the panel contradicts itself two fields apart.
   await expect(shell.win.getByText("Desktop notifications", { exact: true })).toBeVisible();
 });
 
 test("copy and paste reach the system clipboard", async () => {
-  // The menu test above asserts the Edit roles EXIST. This asserts they do
-  // something: a keystroke in the renderer ends up on the OS clipboard and
-  // comes back. It is the one shell behaviour a user notices instantly when it
-  // is missing, and on macOS the roles are literally where Cmd+C comes from —
-  // an application menu without `{ role: "editMenu" }` leaves the app unable to
-  // copy at all, with no error anywhere to say so.
+  // The menu test above checks that the Edit roles exist. This checks that
+  // they do something: a keystroke in the renderer reaches the OS clipboard
+  // and comes back. A user notices immediately when this is missing, and on
+  // macOS the roles are where Cmd+C comes from: an application menu without
+  // `{ role: "editMenu" }` leaves the app unable to copy, with no error to
+  // explain why.
   //
-  // A textarea injected into the app's own page rather than a product surface:
-  // the subject is the shell's editing pipeline, and depending on the composer
-  // would make this fail for reasons that have nothing to do with it.
+  // Uses a textarea injected into the app's own page rather than a product
+  // surface, since the subject is the shell's editing pipeline; depending on
+  // the composer would make this fail for reasons unrelated to it.
   await shell.win.evaluate(() => {
     const t = document.createElement("textarea");
     t.id = "clipboard-probe";
@@ -286,12 +280,12 @@ test("copy and paste reach the system clipboard", async () => {
 });
 
 test("a right-click opens a context menu built from what is under the cursor", async () => {
-  // Electron shows NO context menu unless main builds one, so the keyboard
-  // test above passing says nothing about the mouse: right-click did nothing
-  // at all until `wireContextMenu` in main.js. `Menu.prototype.popup` is a JS
-  // method on the same `Menu` main.js destructured, so swapping it here
+  // Electron shows no context menu unless main builds one, so the keyboard
+  // test above passing says nothing about the mouse: right-click produced
+  // nothing until `wireContextMenu` in main.js. `Menu.prototype.popup` is a
+  // JS method on the same `Menu` main.js destructured, so swapping it here
   // captures each template the real right-click produces instead of showing
-  // it — a menu on screen has nothing Playwright could read anyway.
+  // it on screen, which Playwright could not read anyway.
   await shell.app.evaluate(({ Menu }) => {
     const g = globalThis as unknown as { __popups: unknown[]; __origPopup: unknown };
     g.__popups = [];
@@ -315,9 +309,9 @@ test("a right-click opens a context menu built from what is under the cursor", a
   await probe.click({ button: "right" });
   await expect.poll(async () => (await popups()).length).toBe(1);
 
-  // An editable field with a selection: the full edit set, Copy and Cut live.
-  // Electron lower-cases a role on the way in, so `selectAll` reads back as
-  // "selectall".
+  // An editable field with a selection: the full edit set, with Copy and Cut
+  // enabled. Electron lower-cases a role on the way in, so `selectAll` reads
+  // back as "selectall".
   const editable = (await popups())[0];
   const byRole = (role: string) => editable.find((i) => i.role === role);
   expect(editable.map((i) => i.role).filter(Boolean)).toEqual(
@@ -327,8 +321,8 @@ test("a right-click opens a context menu built from what is under the cursor", a
   expect(byRole("cut")?.enabled).toBe(true);
   expect(byRole("paste")?.enabled).toBe(true);
 
-  // Somewhere with nothing to copy: still a menu, with Copy visibly disabled
-  // rather than the silence this test exists to prevent.
+  // Somewhere with nothing to copy: still a menu, with Copy disabled rather
+  // than absent.
   await shell.win.evaluate(() => {
     document.getElementById("context-probe")?.remove();
     window.getSelection()?.removeAllRanges();
@@ -346,7 +340,7 @@ test("a right-click opens a context menu built from what is under the cursor", a
 });
 
 test("external links leave for the real browser instead of navigating the app", async () => {
-  // `shell` in main.js is the same object this patches — it destructures the
+  // `shell` in main.js is the same object this patches: it destructures the
   // electron module at load, so the method swap is visible to it.
   await shell.app.evaluate(async ({ shell: electronShell }) => {
     const g = globalThis as unknown as { __opened?: string[] };

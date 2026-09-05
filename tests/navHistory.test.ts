@@ -130,8 +130,8 @@ describe("navHistory — mobile Back via single trap entry", () => {
   });
 
   // The project home is the only mount point for Runbooks and Schedules, and on
-  // a phone it is a pane of its own rather than "no task selected" — so it has
-  // to be a Back level, or the one press that should return to the task list
+  // a phone it is a pane of its own, not just "no task selected". So it has to
+  // be a Back level, or the one press that should return to the task list
   // would drop the whole project instead.
   it("project home: Back steps project → tasks → projects → exit", () => {
     const h = new FakeHistory("/app");
@@ -147,8 +147,8 @@ describe("navHistory — mobile Back via single trap entry", () => {
   });
 
   it("opening a task from the project home leaves no home level behind", () => {
-    // A runbook dispatch selects the task it minted, which drops the intent —
-    // one Back must then land on the task list, not back on the cards.
+    // A runbook dispatch selects the task it minted, which drops the intent,
+    // so one Back must then land on the task list, not back on the cards.
     const h = new FakeHistory("/app");
     const ref = { sel: sel(null, null) };
     settle(h, ref.sel);
@@ -186,7 +186,7 @@ describe("navHistory — mobile Back via single trap entry", () => {
     expect(selectionUrl(sel("P", null, "settings"), "/app")).toBe("?project=P&view=settings");
     expect(selectionUrl(home("P"), "/app")).toBe("?project=P&home=1");
     // home never travels without a project, and a selected task supersedes it
-    // (selecting one drops the intent) — so neither combination is mirrored.
+    // (selecting one drops the intent), so neither combination is mirrored.
     expect(selectionUrl({ proj: null, task: null, home: true, view: "workspace" }, "/app")).toBe("/app");
     expect(selectionUrl({ proj: "P", task: "T", home: true, view: "workspace" }, "/app")).toBe("?project=P&task=T");
   });
@@ -194,7 +194,7 @@ describe("navHistory — mobile Back via single trap entry", () => {
 
 // The on-screen Back buttons ("Back to projects", "Back to tasks") go through
 // backOneLevel. Pressing one is the same as the device button when the trap is
-// armed, and must still close the pane when it isn't — the trap is armed by a
+// armed, and must still close the pane when it isn't. The trap is armed by a
 // passive effect one paint after the button is tappable.
 describe("navHistory — the in-app Back button acts on the history it finds", () => {
   // The button's press: what the shell's goBack does, minus React.

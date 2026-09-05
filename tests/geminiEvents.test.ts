@@ -1,8 +1,8 @@
 // Event-mapping tests for the Antigravity (Gemini) driver, run against NDJSON
-// recorded from the real `agy` CLI (1.1.22, 2026-09-02) rather than hand-written
-// literals — the same shape as tests/codexEvents.test.ts. The fixtures are what
-// pins this driver to the CLI's actual wire format, which differs from the
-// vendor's documentation on nearly every detail.
+// recorded from the real `agy` CLI instead of hand-written literals, the same
+// shape as tests/codexEvents.test.ts. The fixtures pin this driver to the
+// CLI's actual wire format, which differs from the vendor's documentation on
+// nearly every detail.
 
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
@@ -52,10 +52,9 @@ describe("classify", () => {
 });
 
 describe("mcpIdentity", () => {
-  // The load-bearing one. Every MCP call goes through the CLI's own
-  // `call_mcp_tool` dispatcher, so reading tool_info.name would name every
-  // Calandria tool "call_mcp_tool" and lib/suggestionCard.ts would never match
-  // a suggest_task row.
+  // Every MCP call goes through the CLI's own `call_mcp_tool` dispatcher, so
+  // reading tool_info.name would name every Calandria tool "call_mcp_tool"
+  // and lib/suggestionCard.ts would never match a suggest_task row.
   it("recovers the real server and tool from call_mcp_tool's parameters", () => {
     expect(
       mcpIdentity({ name: "call_mcp_tool", parameters: { ServerName: "calandria", ToolName: "suggest_task" } })
@@ -114,7 +113,7 @@ describe("a turn that calls an MCP tool", () => {
     expect(usage[0].usage.input_tokens).toBe(45546);
     expect(usage[0].usage.output_tokens).toBe(505 + 384);
     expect(usage[0].usage.cache_read_tokens).toBe(0);
-    // Token-only reporting, so cost is an estimate rather than a billed figure.
+    // Token-only reporting, so cost is an estimate, not a billed figure.
     expect(usage[0].usage.cost_usd).toBeGreaterThan(0);
   });
 });
@@ -139,7 +138,7 @@ describe("usage is cumulative over the conversation, not per turn", () => {
 
   it("takes a report at face value when the counters went backwards", () => {
     // A baseline from a different run of the conversation. Clamping to zero
-    // would silently stop billing; the Codex driver makes the same call.
+    // would stop billing without warning; the Codex driver makes the same call.
     const high: GeminiCum = { input: 999_999, output: 0, thinking: 0, cacheRead: 0 };
     const { events } = replay("resume-cumulative-usage.jsonl", { cum: high });
     expect(only(events, "usage")[0].usage.input_tokens).toBe(61357);
@@ -152,9 +151,9 @@ describe("usage is cumulative over the conversation, not per turn", () => {
 });
 
 describe("a tool the CLI auto-denied", () => {
-  // Measured: headless mode has nobody to prompt, so it denies the call, ends
-  // the run CANCELED and still exits 0. Treating CANCELED as "the user stopped
-  // it" would report a turn that did nothing as a clean success.
+  // Headless mode has nobody to prompt, so it denies the call, ends the run
+  // CANCELED and still exits 0. Treating CANCELED as "the user stopped it"
+  // would report a turn that did nothing as a clean success.
   it("surfaces an error when we did not ask for the stop", () => {
     const { events } = replay("tool-auto-denied.jsonl");
     const errors = only(events, "error");

@@ -1,16 +1,15 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// The Claude driver's permission-MODE resolution, and what each mode does to
-// the canUseTool gate. tests/permissionGate.test.ts covers the runner side of a
-// prompt (persistence, "needs you", the unattended park) with a scripted
-// driver; this covers the half above that seam, where the mode is chosen and
-// handed to the SDK.
+// Pins the Claude driver's permission-MODE resolution and what each mode does
+// to the canUseTool gate. tests/permissionGate.test.ts covers the runner side
+// of a prompt (persistence, "needs you", the unattended park) with a scripted
+// driver; this covers the mode selection and its handoff to the SDK.
 //
-// The REAL lib/agents/claude/driver.ts runs — only @anthropic-ai/claude-agent-sdk
+// The real lib/agents/claude/driver.ts runs; only @anthropic-ai/claude-agent-sdk
 // is swapped, so permissionModeFor(), the gate, and the message pump are all
 // exercised. The fake query() records the options it was handed and replays a
-// scripted message stream, which is also how a `system/permission_denied`
-// message gets in front of the pump without a live CLI.
+// scripted message stream, which also puts a `system/permission_denied`
+// message in front of the pump without a live CLI.
 const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }));
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
@@ -70,20 +69,19 @@ beforeEach(() => {
 
 describe("which permission modes the driver offers", () => {
   it("honors exactly the modes the picker offers — no entry that silently means something else", async () => {
-    // The bug this guards: adding a mode to the capability list that
-    // permissionModeFor() doesn't recognize gives the user a picker entry that
-    // quietly runs as the default instead. Every offered value must survive the
-    // round trip to the SDK unchanged.
+    // Every mode the capability list offers must survive the round trip to
+    // the SDK unchanged, since an unrecognized value falls back to the
+    // default.
     for (const { value } of CLAUDE_CAPABILITIES.permissionModes) {
       expect(await modeOf(value), `picker offers "${value}"`).toBe(value);
     }
   });
 
   it("offers the five SDK modes worth surfacing, and not dontAsk", () => {
-    // dontAsk is off for a reason the list can't show: verified against
-    // claude-cli 2.1.x, it never invokes canUseTool, so the whole gate in
-    // lib/permissions.ts — read-only allowlist, the project's remembered rules,
-    // the card — is inert under it. See the note in capabilities.ts.
+    // dontAsk is excluded because it never invokes canUseTool, so the
+    // permission gate in lib/permissions.ts (the read-only allowlist,
+    // remembered project rules, the card) never runs under it. See the note
+    // in capabilities.ts.
     expect(CLAUDE_CAPABILITIES.permissionModes.map((p) => p.value)).toEqual([
       "bypassPermissions",
       "auto",
@@ -95,11 +93,11 @@ describe("which permission modes the driver offers", () => {
 
   it("labels every mode with Anthropic's own spelling, and never 'Inherit' — the picker's head owns that word", () => {
     // Provider-native labels: the picker shows exactly the strings
-    // `--permission-mode` takes, so label === value for every entry — including
-    // the mode Anthropic spells "default". Calandria's synthetic head is
-    // "Inherit" precisely so it can't be mistaken for that one (it used to be
-    // "Default", differing by a single capital); tests/pickerInheritHead.test.ts
-    // pins the head end of that separation for every driver.
+    // `--permission-mode` takes, so label equals value for every entry,
+    // including the mode Anthropic spells "default". Calandria's synthetic
+    // head is "Inherit" so it isn't mistaken for that one;
+    // tests/pickerInheritHead.test.ts pins the head end of that separation
+    // for every driver.
     for (const p of CLAUDE_CAPABILITIES.permissionModes) expect(p.label).toBe(p.value);
     const labels = CLAUDE_CAPABILITIES.permissionModes.map((p) => p.label);
     expect(new Set(labels).size).toBe(labels.length);
@@ -126,10 +124,10 @@ describe("resolving a task's permission mode", () => {
   });
 
   it("runs in the mode the task was CREATED with, without a follow-up edit", async () => {
-    // The New-task dialog sets this up front rather than PATCHing after, because
-    // "Start session immediately" launches the first turn — a mode applied
-    // afterwards would miss the very turn it was picked for. So createTask has
-    // to persist it, not just updateTask.
+    // The New-task dialog sets the mode up front instead of PATCHing after
+    // creation, because "Start session immediately" launches the first turn
+    // and a mode applied afterward would miss it. createTask must persist it,
+    // not just updateTask.
     const project = createProject({ name: `CreateMode ${Math.random().toString(36).slice(2)}`, repo_path: "" });
     const created = createTask({ project_id: project.id, title: "Unattended", description: "", permission_mode: "bypassPermissions" });
     expect(created.permission_mode).toBe("bypassPermissions");
@@ -161,9 +159,9 @@ describe("resolving a task's permission mode", () => {
 describe("what each mode does to the gate", () => {
   /**
    * Run a turn, calling canUseTool mid-stream, and report what it decided.
-   * `answer`, when given, is submitted as soon as the gate has actually parked —
-   * the driver keys its waiter on `perm:<toolUseID>`, so submitAnswer only
-   * succeeds once the card is live, which makes the retry the synchronization.
+   * `answer`, when given, is submitted once the gate has parked: the driver
+   * keys its waiter on `perm:<toolUseID>`, so submitAnswer only succeeds once
+   * the card is live, and the retry provides the synchronization.
    */
   async function gate(
     mode: PermissionMode,
@@ -199,9 +197,8 @@ describe("what each mode does to the gate", () => {
 
   for (const mode of ["auto", "default"] as const) {
     it(`raises a real permission card under ${mode}, and the user's allow lets the call run`, async () => {
-      // The regression this pins: before the gate was real, every mode behaved
-      // like bypassPermissions. A command in a prompting mode has to reach the user, and
-      // their answer has to be what decides it.
+      // A command in a prompting mode must reach the user, and the user's
+      // answer must be what decides it.
       const { result, events } = await gate(mode, "Bash", { command: "curl -s https://example.com" }, [["allow_once"]]);
       const card = events.find((e) => e.type === "permission");
       expect(card, `${mode} must prompt, not auto-run`).toBeDefined();
@@ -246,18 +243,18 @@ describe("what each mode does to the gate", () => {
   });
 });
 
-// Two `system`/`permission_denied` messages CAPTURED VERBATIM from claude-cli
-// 2.1.x (via the Agent SDK against the real binary), not written from sdk.d.ts.
-// Both matter, and the type alone would have got both wrong:
+// Two `system`/`permission_denied` messages captured verbatim from the Agent
+// SDK against the real CLI, not written from sdk.d.ts. Both matter, since the
+// type alone gets both wrong:
 //
-//  - `decision_reason` — the field the SDK documents as "human-readable reason
-//    from the deciding component" — is ABSENT on both. Only `message` is set,
-//    and `message` is documented as (and reads as) the text handed to the
-//    MODEL: the `mode` one is ~700 characters of "IMPORTANT: You *may* attempt
-//    to accomplish this action using other tools…". Pasting it at the user is
-//    exactly what blockedReason() exists to stop.
-//  - `decision_reason_type` is open-ended. `subcommandResults` is a real value
-//    the CLI emits and the SDK's own doc comment doesn't list, which is why the
+//  - `decision_reason`, the field the SDK documents as "human-readable reason
+//    from the deciding component", is absent on both. Only `message` is set,
+//    and it is the text handed to the model: the `mode` one is a long
+//    "IMPORTANT: You *may* attempt to accomplish this action using other
+//    tools..." instruction. Pasting it at the user is what blockedReason()
+//    exists to stop.
+//  - `decision_reason_type` is open-ended. `subcommandResults` is a value the
+//    CLI emits that the SDK's own doc comment doesn't list, so the
 //    discriminator is persisted raw and phrased at render time.
 const DENIED_BY_MODE = {
   type: "system",
@@ -294,11 +291,11 @@ describe("a call the CLI denies without asking", () => {
     events.find((e) => e.type === "permission_denied") as Extract<StreamEvent, { type: "permission_denied" }> | undefined;
 
   it("reports the refusal against the tool_use it killed, not as a loose notice", async () => {
-    // Reachable in normal use now that "auto" is the default: the classifier can
-    // deny without ever calling canUseTool, and the only other trace the user
-    // gets is an is_error tool_result that reads like the command simply failed.
-    // Carrying the tool_use id is what lets the runner settle a decided
-    // permission card onto that very call (tests/permissionGate.test.ts).
+    // Reachable in normal use since "auto" is the default: the classifier can
+    // deny without calling canUseTool, and the only other trace is an
+    // is_error tool_result that reads like the command failed on its own.
+    // Carrying the tool_use id lets the runner settle a decided permission
+    // card onto that call (tests/permissionGate.test.ts).
     const { project, task } = fixture({ permission_mode: "auto" });
     scriptSdk([DENIED_BY_SUBCOMMAND]);
 
@@ -310,7 +307,7 @@ describe("a call the CLI denies without asking", () => {
       reasonType: "subcommandResults",
       reason: "Permission to use Bash with command rm -f /tmp/permprobe/scratch.txt has been denied.",
     });
-    // The notice this replaced floated beside the call and said the same thing twice.
+    // A denial must not also emit a separate notice event.
     expect(events.some((e) => e.type === "notice")).toBe(false);
   });
 
@@ -326,8 +323,9 @@ describe("a call the CLI denies without asking", () => {
   });
 
   it("prefers decision_reason when the CLI does supply one", async () => {
-    // Not observed live on 2.1.x, but it's the field the SDK documents as the
-    // human-readable one — if a build starts filling it, it wins over `message`.
+    // Not observed live, but it's the field the SDK documents as the
+    // human-readable one, so it must win over `message` if a build starts
+    // filling it.
     const { project, task } = fixture({ permission_mode: "auto" });
     scriptSdk([{ ...DENIED_BY_MODE, decision_reason_type: "classifier", decision_reason: "Command could exfiltrate credentials" }]);
 
@@ -363,7 +361,7 @@ describe("a call the CLI denies without asking", () => {
 
   it("marks a refusal that happened inside a subagent", async () => {
     // A subagent's tool_use blocks never reach this stream, so there is no
-    // transcript card to settle onto — the runner needs to know why.
+    // transcript card to settle onto. The runner needs to know why.
     const { project, task } = fixture({ permission_mode: "auto" });
     scriptSdk([{ ...DENIED_BY_SUBCOMMAND, agent_id: "agent_7" }]);
 

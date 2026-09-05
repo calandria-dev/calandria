@@ -5,10 +5,10 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-// Smoke test for the portable stdio MCP bridge (scripts/calandria-mcp.mjs). We stand
-// up a tiny fake "app" HTTP server that records the internal calls the bridge
-// makes and returns canned tool text, spawn the real bridge over stdio, and
-// drive it with the MCP client SDK — the same protocol Codex speaks to it.
+// Smoke test for the portable stdio MCP bridge (scripts/calandria-mcp.mjs). A fake
+// "app" HTTP server records the internal calls the bridge makes and returns canned
+// tool text; the real bridge is spawned over stdio and driven with the MCP client
+// SDK, the same protocol Codex uses.
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "calandria-mcp.mjs");
 
@@ -33,9 +33,9 @@ beforeAll(async () => {
       res.setHeader("content-type", "application/json");
       if (req.url?.endsWith("/suggest-task")) {
         const id = `id-${nextId++}`;
-        // Stand in for resolveTargetProject: any `project` ref resolves to the
-        // one "other" project, and omitting it means the session's own. The
-        // bridge keys its title map off what comes back here.
+        // Stands in for resolveTargetProject: any `project` ref resolves to the
+        // one "other" project; omitting it means the session's own. The bridge
+        // keys its title map off what comes back here.
         const other = { projectId: "proj-other", projectName: "Other Project" };
         const here = { projectId: "proj-abc", projectName: "Here" };
         const resolved = body.project ? other : here;
@@ -71,8 +71,8 @@ beforeAll(async () => {
       } else if (req.url?.endsWith("/list-runbooks")) {
         res.end(JSON.stringify({ ok: true, project: "Here", runbooks: [], text: "[]" }));
       } else if (req.url?.endsWith("/update-runbook")) {
-        // Stand in for the real policy: a runbook a schedule fires is refused,
-        // with the reason travelling back as the tool's error text.
+        // Stands in for the real policy: a runbook a schedule fires is refused,
+        // with the reason returned as the tool's error text.
         if (body.runbook === "rb-scheduled") {
           res.statusCode = 400;
           res.end(JSON.stringify({ error: `"Morning sweep" fires this runbook, so editing it would silently change unattended work.` }));
@@ -92,9 +92,9 @@ beforeAll(async () => {
 
 afterAll(() => new Promise<void>((r) => server.close(() => r())));
 
-// `extra` is the per-turn env the Codex driver varies — today only
-// CALANDRIA_LANDING_MODE, which decides whether create_pr is registered at all.
-// Omitted means the default a merge project gets.
+// `extra` is the per-turn env the Codex driver varies: CALANDRIA_LANDING_MODE,
+// which decides whether create_pr is registered. Omitted means the default a
+// merge project gets.
 async function connectBridge(extra: Record<string, string> = {}) {
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -135,16 +135,15 @@ describe("calandria-mcp stdio bridge", () => {
         "update_task",
         "withdraw_suggestion",
       ]);
-      // No delete_runbook, and that is a policy rather than an omission: delete
-      // is hard delete with no undo here, so retiring a recipe stays the user's
-      // call. See lib/runbookTools.ts.
+      // No delete_runbook: delete is hard delete with no undo, so retiring a
+      // recipe stays the user's call. See lib/runbookTools.ts.
       expect(tools.map((t) => t.name)).not.toContain("delete_runbook");
-      // No create_pr either, and that IS the landing gate: this connection has
-      // no CALANDRIA_LANDING_MODE, so the bridge sees a merge project, where
-      // there is no PR to open. The tool is absent rather than present-and-
-      // refusing — an offered tool reads as a sanctioned move.
+      // No create_pr either: this connection has no CALANDRIA_LANDING_MODE, so
+      // the bridge sees a merge project, where there is no PR to open. The tool
+      // is absent instead of present-and-refusing, since an offered tool reads
+      // as a sanctioned move.
       expect(tools.map((t) => t.name)).not.toContain("create_pr");
-      // Descriptions come from the shared defs — sanity check they're populated.
+      // Descriptions come from the shared defs; sanity check they're populated.
       expect(tools.find((t) => t.name === "suggest_task")?.description).toContain("Suggested tray");
     } finally {
       await close();
@@ -155,8 +154,8 @@ describe("calandria-mcp stdio bridge", () => {
     // CALANDRIA_MCP_ASK_USER=0 is what the Claude driver sets when it mounts
     // this bridge (lib/agents/claude/mcp.ts): the CLI's AskUserQuestion already
     // reaches the same card through the same registry, so a second asking tool
-    // would give one session two ways to ask. Nothing else may go missing with
-    // it, which is why the rest of the set is asserted too.
+    // would give one session two ways to ask. The rest of the set is asserted
+    // too, to confirm nothing else is missing.
     const { client, close } = await connectBridge({ CALANDRIA_MCP_ASK_USER: "0" });
     try {
       const { tools } = await client.listTools();
@@ -187,11 +186,11 @@ describe("calandria-mcp stdio bridge", () => {
     try {
       const { tools } = await client.listTools();
       // `task` is the target the model picks; it is optional, so omitting it
-      // still means "my own row". What is deliberately absent is `taskId` —
-      // the CALLER, which callInternal supplies from CALANDRIA_TASK_ID. If the model
-      // could set that, naming any row would be enough to be treated as owning
-      // it. Whether the named target may actually be written is the server's
-      // call, proved end-to-end in tests/codexUpdateTaskPolicy.test.ts.
+      // still means "my own row". `taskId`, the CALLER, is absent: callInternal
+      // supplies it from CALANDRIA_TASK_ID. If the model could set that, naming
+      // any row would be enough to be treated as owning it. Whether the named
+      // target may actually be written is the server's call, proved end-to-end
+      // in tests/codexUpdateTaskPolicy.test.ts.
       const schema = tools.find((t) => t.name === "update_task")!.inputSchema as {
         properties?: Record<string, { enum?: string[] }>;
       };
@@ -213,9 +212,9 @@ describe("calandria-mcp stdio bridge", () => {
         properties?: Record<string, unknown>;
         required?: string[];
       };
-      // `created_by` is deliberately absent. The endpoint reads the agent off
-      // the CALLER'S task row, so a model can't file a recipe under another
-      // agent's name — the card shows that value to the user as provenance.
+      // `created_by` is absent. The endpoint reads the agent off the CALLER'S
+      // task row, so a model can't file a recipe under another agent's name;
+      // the card shows that value to the user as provenance.
       expect(Object.keys(schema.properties ?? {})).not.toContain("created_by");
       expect(Object.keys(schema.properties ?? {}).sort()).toEqual(
         ["description", "name", "permission_mode", "priority", "project", "prompt"]
@@ -265,7 +264,7 @@ describe("calandria-mcp stdio bridge", () => {
       // comes from CALANDRIA_TASK_ID via callInternal, and a model that could set it
       // would own any row it could name.
       expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["reason", "task"]);
-      // Both required — a retraction with no target is meaningless and one with
+      // Both required: a retraction with no target is meaningless and one with
       // no explanation is worse than none. Whether the named target may actually
       // be withdrawn is the server's call, proved in tests/agentTools.test.ts.
       expect([...(schema.required ?? [])].sort()).toEqual(["reason", "task"]);
@@ -325,8 +324,8 @@ describe("calandria-mcp stdio bridge", () => {
     const { client, close } = await connectBridge();
     try {
       const res = (await client.callTool({ name: "get_task", arguments: {} })) as { content: { text: string }[] };
-      // The bridge doesn't substitute CALANDRIA_TASK_ID itself — it always sends it
-      // as `taskId`, and the endpoint falls back to it when `task` is absent.
+      // The bridge doesn't substitute CALANDRIA_TASK_ID itself: it always sends
+      // it as `taskId`, and the endpoint falls back to it when `task` is absent.
       expect(calls.find((c) => c.path.endsWith("/get-task"))!.body).toMatchObject({ taskId: "task-xyz" });
       expect(JSON.parse(res.content[0].text)).toMatchObject({ id: "task-xyz", description: "my brief" });
 
@@ -349,8 +348,8 @@ describe("calandria-mcp stdio bridge", () => {
       const call = calls.find((c) => c.path.endsWith("/update-task"))!;
       expect(call.body).toMatchObject({ taskId: "task-xyz", title: "Renamed", status: "done" });
       expect(call.token).toBe("smoke-token");
-      // Omitted fields must not travel as nulls — the endpoint treats
-      // "field present" as "write this", so a null would blank the column.
+      // Omitted fields must not travel as nulls: the endpoint treats "field
+      // present" as "write this", so a null would blank the column.
       expect(call.body.priority).toBeUndefined();
       expect(call.body.description).toBeUndefined();
       // No `task` either, so the endpoint applies its own-row default.
@@ -364,8 +363,9 @@ describe("calandria-mcp stdio bridge", () => {
     calls.length = 0;
     const { client, close } = await connectBridge();
     try {
-      // The bridge holds no policy — it passes the id straight through. What it
-      // must NOT do is let that id become the caller: `taskId` stays CALANDRIA_TASK_ID.
+      // The bridge holds no policy: it passes the id straight through. What it
+      // must NOT do is let that id become the caller: `taskId` stays
+      // CALANDRIA_TASK_ID.
       await client.callTool({ name: "update_task", arguments: { task: "task-someone-else", title: "Sharpened" } });
       const call = calls.find((c) => c.path.endsWith("/update-task"))!;
       expect(call.body).toMatchObject({ taskId: "task-xyz", task: "task-someone-else", title: "Sharpened" });
@@ -412,7 +412,7 @@ describe("calandria-mcp stdio bridge", () => {
       })) as { content: { type: string; text: string }[] };
       expect(r1.content[0].text).toContain("id-0");
 
-      // Reference the first task BY TITLE — the bridge should resolve it to id-0.
+      // Reference the first task BY TITLE: the bridge should resolve it to id-0.
       await client.callTool({
         name: "suggest_task",
         arguments: { title: "Second", description: "do second", blocked_by: ["First"] },
@@ -443,16 +443,16 @@ describe("calandria-mcp stdio bridge", () => {
       const blocker = calls.find((c) => c.body.title === "Blocker")!;
       expect(blocker.body.project).toBe("Other Project");
 
-      // Same title, same project — resolves to the id the endpoint returned,
-      // even though this call names the project by ID rather than by name.
+      // Same title, same project: resolves to the id the endpoint returned,
+      // even though this call names the project by ID instead of by name.
       await client.callTool({
         name: "suggest_task",
         arguments: { title: "Same project", description: "", project: "proj-other", blocked_by: ["Blocker"] },
       });
       expect(calls.find((c) => c.body.title === "Same project")!.body.blocked_by).toEqual(["id-0"]);
 
-      // Same title, DIFFERENT project (this session's own): must NOT resolve —
-      // dependencies never cross projects, so it travels on as a literal for
+      // Same title, DIFFERENT project (this session's own): must NOT resolve.
+      // Dependencies never cross projects, so it travels on as a literal for
       // the server to report as unusable.
       await client.callTool({
         name: "suggest_task",
@@ -520,9 +520,9 @@ describe("calandria-mcp stdio bridge", () => {
 
 describe("create_pr is gated on the project's landing mode", () => {
   // The tool pushes and runs `gh pr create`, which the sandbox blocks from
-  // inside a session — that is why it exists at all. It is only meaningful on a
-  // project that lands by pull request, so the bridge registers it only when the
-  // driver says so (CALANDRIA_LANDING_MODE, off projects.landing_mode).
+  // inside a session. It is only meaningful on a project that lands by pull
+  // request, so the bridge registers it only when the driver says so
+  // (CALANDRIA_LANDING_MODE, off projects.landing_mode).
   it("is registered on a pr project and calls the internal endpoint", async () => {
     const { client, close } = await connectBridge({ CALANDRIA_LANDING_MODE: "pr" });
     try {
@@ -538,7 +538,7 @@ describe("create_pr is gated on the project's landing mode", () => {
       const res = await client.callTool({ name: "create_pr", arguments: { title: "feat: land it" } });
       const call = calls.slice(before).find((c) => c.path.endsWith("/create-pr"))!;
       expect(call).toBeTruthy();
-      // The caller identity is the SERVER's, from env — never a tool argument.
+      // The caller identity is the SERVER's, from env, never a tool argument.
       expect(call.body.taskId).toBe("task-xyz");
       expect(call.body.title).toBe("feat: land it");
       expect(JSON.stringify(res.content)).toContain("pull/7");
@@ -558,19 +558,15 @@ describe("create_pr is gated on the project's landing mode", () => {
 });
 
 describe("a tool that cannot answer says so", () => {
-  // The bug (2026-08-24, 2026-08-30): mid-turn, every Calandria tool call came
-  // back with no content and no error, and the sessions could not tell that from
-  // success — they announced a withdrawal, a runbook and a pull request that were
-  // never written. Whatever drops the answer lives below this seam; what is ours
-  // is that the model is never handed silence. lib/agentToolGuard.mjs is the
-  // shared enforcement (unit-tested in tests/agentToolGuard.test.ts); this pins
-  // that it survives the real stdio MCP round trip, which is the thing a model
-  // actually reads.
+  // A tool call must never come back with no content and no error: an empty
+  // result is indistinguishable from success, and nothing in the response
+  // would say otherwise. lib/agentToolGuard.mjs is the shared enforcement
+  // (unit-tested in tests/agentToolGuard.test.ts); this pins that it survives
+  // the real stdio MCP round trip, which is what the model reads.
 
   it("relays a dead app as an error, not an empty result", async () => {
-    // Nothing is listening on this port, so callInternal's fetch rejects. Before
-    // the guard the throw still reached the model, but a read-only call coming
-    // back blank is precisely what the live sessions saw and misread.
+    // Nothing is listening on this port, so callInternal's fetch rejects. The
+    // guard must turn that throw into a visible error, never a blank result.
     const { client, close } = await connectBridge({ CALANDRIA_BASE_URL: "http://127.0.0.1:1" });
     try {
       const res = await client.callTool({ name: "list_tasks", arguments: {} });
@@ -586,10 +582,10 @@ describe("a tool that cannot answer says so", () => {
   });
 
   it("relays a create_pr failure with its reason, and never as a bare flag", async () => {
-    // create_pr is the one way a session says in git that its work is finished:
-    // it cannot push and cannot merge, so a silent no-op here strands the work
-    // with no signal at all. The endpoint answers 400 with the reason; the model
-    // has to get that sentence, not an empty isError.
+    // create_pr is how a session records in git that its work is finished: it
+    // cannot push and cannot merge, so a silent no-op here strands the work
+    // with no signal at all. The endpoint answers 400 with the reason, and the
+    // model has to receive that sentence instead of an empty isError.
     const { client, close } = await connectBridge({
       CALANDRIA_LANDING_MODE: "pr",
       CALANDRIA_BASE_URL: "http://127.0.0.1:1",
@@ -597,7 +593,7 @@ describe("a tool that cannot answer says so", () => {
     try {
       const res = await client.callTool({
         name: "create_pr",
-        // A body the size of the one that preceded the 2026-08-30 window.
+        // A large body, to exercise the guard's handling of an oversized call.
         arguments: { title: "fix: something", body: "## What\n\n".padEnd(6000, "x") },
       });
       expect(res.isError).toBe(true);

@@ -7,23 +7,19 @@ import { IS_WIN } from "./platform";
 //
 // `codex exec` treats a non-TTY stdin as pending input: it prints "Reading
 // additional input from stdin..." and blocks on the read before running the
-// turn. execFile always hands the child a stdin *pipe*, and nothing in
-// verifyCodexTurn() wrote to or closed it, so the child waited forever — the
-// call sat there until the 90s timeout and the wizard reported a failed verify.
-// It only looked fine when driven from a terminal, where a TTY stdin isn't
-// treated as pending input. Verified on codex-cli 0.146.0: identical commands,
-// 0 bytes of output after 60s with the pipe left open vs. 344 bytes in 6.7s
-// with it closed.
+// turn. execFile always hands the child a stdin pipe, so verifyCodexTurn()
+// must write to or close it, or the child waits until the 90s timeout and the
+// wizard reports a failed verify. A TTY stdin isn't treated as pending input,
+// so the hang is invisible when driven from a terminal.
 //
-// Note the shape of the failure this guards against: codex exits 0 on the
-// timeout's SIGTERM, so the hang surfaced as a *successful* execFile with empty
-// stdout ("the test turn returned no output"), not as an error. The stand-in
-// below mimics that, so a regression fails on the assertion instead of hanging
-// the suite.
+// codex exits 0 on the timeout's SIGTERM, so the hang surfaces as a
+// successful execFile with empty stdout, not as an error. The stand-in below
+// mimics that, so a regression fails on the assertion instead of hanging the
+// suite.
 
 // A stand-in for the codex binary. Emits the JSONL of a successful turn only
-// once stdin reaches EOF; if stdin stays open it gives up quietly (empty
-// stdout, exit 0) the way the real CLI does when the timeout kills it.
+// once stdin reaches EOF; if stdin stays open it gives up with empty stdout
+// and exit 0, the way the real CLI does when the timeout kills it.
 const fakeCodexBody = `
 const EVENTS = [
   JSON.stringify({ type: "thread.started", thread_id: "t-verify" }),
@@ -57,7 +53,7 @@ function installFakeCodex(): string {
     fs.writeFileSync(bin, `#!${process.execPath}${fakeCodexBody}`, { mode: 0o755 });
     return bin;
   }
-  // Windows has no shebang — CreateProcess runs a file by its extension — so
+  // Windows has no shebang; CreateProcess runs a file by its extension, so
   // the stand-in is the same pair npm itself installs: the script, plus a .cmd
   // shim that launches it with node. That also puts the real Windows launch
   // path under test, since Node refuses to spawn a .cmd without a shell and

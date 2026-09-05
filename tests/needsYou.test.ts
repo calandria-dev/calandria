@@ -1,12 +1,10 @@
-// The "needs you" surfaces must never disagree: the titlebar pill count
-// (countAwaiting, carried on /api/events payloads), its dropdown (listNeedsYou),
-// and the project badges (listProjects' awaiting_count subquery) all share one
-// predicate in lib/store.ts. The regression this pins: listNeedsYou used to add
-// `running = 0`, so a turn parked mid-stream on an AskUserQuestion (running=1 +
-// awaiting_input=1) showed a red pill count while the dropdown said nothing
-// needed you. Also pinned: the three mutation routes that used to settle or
-// delete a task silently (status PATCH, /clear, DELETE) now publish on the bus,
-// and GET /api/events relays a deletion even though the row is gone.
+// The titlebar pill count (countAwaiting, carried on /api/events payloads),
+// its dropdown (listNeedsYou), and the project badges (listProjects'
+// awaiting_count subquery) share one predicate in lib/store.ts and must agree,
+// including for a turn parked mid-stream on an AskUserQuestion (running=1 +
+// awaiting_input=1). The three mutation routes that settle or delete a task
+// (status PATCH, /clear, DELETE) publish on the bus, and GET /api/events
+// relays a deletion even though the row is gone.
 import { describe, it, expect } from "vitest";
 import {
   createProject, createTask, updateTask, getTask, deleteTask,
@@ -50,7 +48,7 @@ describe("the shared needs-you predicate", () => {
             if (status === "in_progress" && running === 1 && awaiting === 1 && suggested === 0) askParked.push(t.id);
           }
 
-    // Real in_progress tasks with awaiting_input set count — running is
+    // Real in_progress tasks with awaiting_input set count; running is
     // irrelevant (2 of the 40 rows: running 0 and 1).
     const n = countAwaiting(project.id);
     expect(n).toBe(2);
@@ -58,7 +56,7 @@ describe("the shared needs-you predicate", () => {
     // Dropdown rows and pill count are the same set…
     const dropdown = listNeedsYou().filter((r) => r.project_id === project.id);
     expect(dropdown).toHaveLength(n);
-    // …including the mid-turn ask park the old `running = 0` filter dropped.
+    // …including the mid-turn ask park.
     expect(dropdown.map((r) => r.id)).toContain(askParked[0]);
 
     // The project badge subquery agrees too.
@@ -84,8 +82,8 @@ describe("mutation routes publish lifecycle events", () => {
     expect(countAwaiting(project.id)).toBe(0);
 
     // A non-status edit changes nothing awaiting-related, but it does change
-    // what every other tab renders — and the coarse payload can't carry a
-    // title, so it goes out as the wider task_edited ("refetch the row").
+    // what every other tab renders. The coarse payload can't carry a title, so
+    // it goes out as the wider task_edited ("refetch the row").
     // tests/taskEditEvents.ts covers which patches earn which event.
     const renamed = await busEventsFor(t.id, async () => {
       await patchTask(new Request("http://test", { method: "PATCH", body: JSON.stringify({ title: "renamed" }) }), params(t.id));
@@ -158,15 +156,15 @@ describe("GET /api/events wire relay", () => {
     };
 
     try {
-      // A route settle on a live row → the usual re-read-the-task payload,
-      // with the mid-turn ask park (running + awaiting) counted.
+      // A route settle on a live row produces the usual re-read-the-task
+      // payload, with the mid-turn ask park (running + awaiting) counted.
       publishGlobal(t.id, { type: "task_updated" });
       expect(await nextData()).toMatchObject({
         type: "task", event: "task_updated", taskId: t.id, projectId: project.id,
         running: true, awaiting_input: true, awaiting_count: 1,
       });
 
-      // Deletion: the getTask bail can't apply — the event carries everything.
+      // Deletion: the getTask bail can't apply, since the event carries everything.
       deleteTask(t.id);
       publishGlobal(t.id, { type: "task_deleted", projectId: project.id, awaiting_count: 0 });
       expect(await nextData()).toEqual({ type: "task_deleted", taskId: t.id, projectId: project.id, awaiting_count: 0 });

@@ -1,14 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// A red PR in the "needs you" inbox.
-//
-// .github/CLAUDE.md has always said "a push isn't done until its CI runs
-// conclude", and left it entirely to the agent to remember; main once sat red
-// for hours because every session verified locally and nobody watched Actions.
-// What's pinned here is the product version of that policy: a failing check
-// rollup RAISES the task into the same surface a parked question does, it says
-// WHICH check broke, and it can seed a fix — all of it on the events bus and
-// the inbox that already exist.
+// Pins the "red PR in the needs-you inbox" behavior: a failing check rollup
+// raises the task into the same surface a parked question uses, names which
+// check broke, and can seed a fix prompt, through the existing events bus and
+// inbox.
 const { fetchPrStateMock } = vi.hoisted(() => ({ fetchPrStateMock: vi.fn() }));
 
 vi.mock("@/lib/github", async (importOriginal) => ({
@@ -55,9 +50,9 @@ function taskWithPr(projectId: string, number = 42) {
   return task.id;
 }
 
-// Put a task in whatever PR state the case is about, through the real refresh
-// path — the columns are written by lib/prState.ts, and a test that reached
-// past it into the DB would stop proving that the refresh persists anything.
+// Put a task into whatever PR state the case is about, through the real
+// refresh path. The columns are written by lib/prState.ts; reaching past it
+// into the DB directly would stop proving that the refresh persists anything.
 async function land(taskId: string, over: Partial<PrSnapshot>) {
   fetchPrStateMock.mockResolvedValue({ ok: true, snapshot: snapshot(over) });
   await refreshPrState(taskId, { force: true });
@@ -108,7 +103,7 @@ describe("failingChecks", () => {
       status: "COMPLETED", conclusion: "FAILURE", name: `test (${i})`,
     }));
     // One bug, fifteen red cells. The column this lands in is read on every
-    // task list, so the list is bounded rather than growing with the matrix.
+    // task list, so the list stays bounded instead of growing with the matrix.
     expect(failingChecks(entries)).toHaveLength(8);
   });
 
@@ -170,9 +165,9 @@ describe("persisting which check failed", () => {
     await land(id, { checks: "failing", failing: [RED, second] });
     w.off();
 
-    // pr_checks didn't move — it was "failing" before and after — so without
-    // the failing list in changed() this would be silent, and the chip would
-    // keep naming one job while two were broken.
+    // pr_checks did not change (it was "failing" before and after), so
+    // without the failing list in changed() no event would fire, and the chip
+    // would keep naming one job while two were broken.
     expect(w.seen.map((e) => e.type)).toContain("task_edited");
     expect(parseFailingChecks(getTask(id)!.pr_failing)).toHaveLength(2);
   });
@@ -208,8 +203,8 @@ describe("persisting which check failed", () => {
     fetchPrStateMock.mockResolvedValue({ ok: false, error: "network is down" });
     await refreshPrState(id, { force: true });
 
-    // "We couldn't ask" is not "the checks passed" — same rule the other pr_*
-    // columns follow on a failed fetch.
+    // "We couldn't ask" is not "the checks passed". The other pr_* columns
+    // follow the same rule on a failed fetch.
     expect(parseFailingChecks(getTask(id)!.pr_failing)).toEqual([RED]);
   });
 
@@ -229,7 +224,7 @@ describe("a red PR in the needs-you inbox", () => {
 
     await land(id, { checks: "failing", failing: [RED] });
 
-    // Nothing asked the user anything — awaiting_input is still 0 — and the
+    // Nothing asked the user anything (awaiting_input is still 0), and the
     // task still needs them.
     expect(getTask(id)!.awaiting_input).toBe(0);
     expect(countAwaiting(p.id)).toBe(1);
@@ -257,8 +252,8 @@ describe("a red PR in the needs-you inbox", () => {
     const rows = listNeedsYou().filter((r) => r.project_id === p.id);
     expect(rows.find((r) => r.id === red)?.reason).toBe("ci");
     expect(rows.find((r) => r.id === red)?.pr_number).toBe(1);
-    // "waiting for 3 hours" is true of a parked turn and a lie about a red PR,
-    // whose age we never stored — so the two rows get different sublines.
+    // A red PR's age is never stored, unlike a parked turn's wait time, so the
+    // two rows get different sublines.
     expect(rows.find((r) => r.id === parked)?.reason).toBe("input");
   });
 
@@ -270,7 +265,7 @@ describe("a red PR in the needs-you inbox", () => {
     expect(countAwaiting(p.id)).toBe(1);
 
     // A merged PR is never re-polled (stalePrTasks), so a last-seen "failing"
-    // on one would sit in the pill forever with nothing able to clear it.
+    // on one would sit in the pill indefinitely with nothing to clear it.
     await land(id, { state: "merged", checks: "failing", failing: [RED], mergedAt: Date.now() });
     expect(countAwaiting(p.id)).toBe(0);
   });

@@ -8,8 +8,8 @@ import { gatewayPresetEnv, taskProvider } from "@/lib/agentEnv";
 // The persisted half of the provider override: the allowlist is enforced by
 // the store (serializeAgentEnv) on every write path, `task_usage.provider`
 // tags a turn with the endpoint it ran against, and `suggest_task`'s
-// `provider` param — the delegation hook — writes the same preset the
-// settings form does.
+// `provider` param, the delegation hook, writes the same preset the settings
+// form does.
 
 describe("agent_env in the store", () => {
   it("updateProject normalizes the override through the allowlist, from an object or JSON text", () => {
@@ -83,11 +83,11 @@ describe("suggest_task provider param", () => {
   });
 });
 
-// The gateway preset's persisted half. The one thing that must be true of every
-// row it writes: no credential is in it. `agent_env` is served to the browser by
-// GET /api/projects, so a key stored there would be readable by anyone with the
-// app open — lib/litellm-key.ts holds it instead and agentTurnEnv resolves it
-// per turn (docs/design/litellm.md, "Instance configuration").
+// The gateway preset's persisted half. Every row it writes must contain no
+// credential. `agent_env` is served to the browser by GET /api/projects, so a
+// key stored there would be readable by anyone with the app open.
+// lib/litellm-key.ts holds it instead, and agentTurnEnv resolves it per turn
+// (docs/AGENTS.md, "Instance configuration").
 describe("the gateway preset in the store", () => {
   const GW = "http://gw.example.com:4000";
 
@@ -112,8 +112,8 @@ describe("the gateway preset in the store", () => {
         GOOGLE_GEMINI_BASE_URL: GW,
         GEMINI_MODEL: "gemini-3.1-pro-preview",
         CALANDRIA_GATEWAY_BILLING: "subscription",
-        // The header knob is deliberately NOT on the allowlist: agentTurnEnv
-        // composes it, so a project row can never name a request header.
+        // The header knob is not on the allowlist: agentTurnEnv composes it,
+        // so a project row can never name a request header.
         ANTHROPIC_CUSTOM_HEADERS: "x-evil: 1",
         NODE_OPTIONS: "--require /evil.js",
       } as unknown as string,

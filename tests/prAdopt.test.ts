@@ -13,15 +13,15 @@ import { IS_WIN } from "./platform";
 //
 // When `create_pr` is cut off before it reaches Calandria, the session falls
 // back to `git push` + `gh pr create`. The PR is real; the task row is empty.
-// What's pinned here is that the row catches up on its own, and that it does so
-// without ever adopting somebody else's branch or forking gh for a task that
-// could not possibly have a PR.
+// This pins that the row catches up on its own, without ever adopting
+// somebody else's branch or forking gh for a task that could not possibly
+// have a PR.
 //
-// gh is a REAL subprocess here, stubbed as a script on PATH rather than mocked
+// gh is a REAL subprocess here, stubbed as a script on PATH instead of mocked
 // at the module boundary, because two of the things worth pinning live in the
 // argv and the JSON: that the query is filtered to `--head <branch> --state
 // open`, and that a headRefName which does not match is refused. Everything
-// else — the git repo, the remote-tracking ref, the store writes, the bus — is
+// else (the git repo, the remote-tracking ref, the store writes, the bus) is
 // real. Windows is skipped: resolveGhBin answers bare "gh" for a PATH hit, and
 // execFile can't run a .cmd shim without a shell (see tests/ghBin.test.ts for
 // the same split).
@@ -65,8 +65,8 @@ describe.skipIf(IS_WIN)("adopting a PR opened outside Calandria", () => {
   });
 
   /**
-   * A project that lands by PR, a task with a work branch, and — unless
-   * `pushed` is false — that branch pushed to origin, which is what leaves the
+   * A project that lands by PR, a task with a work branch, and (unless
+   * `pushed` is false) that branch pushed to origin, which is what leaves the
    * refs/remotes ref the cheap gate looks for.
    */
   async function fixture(opts: { landing?: LandingMode; pushed?: boolean } = {}) {
@@ -101,7 +101,7 @@ describe.skipIf(IS_WIN)("adopting a PR opened outside Calandria", () => {
     const row = getTask(taskId)!;
     expect(row.pr_url).toBe(url);
     expect(row.pr_number).toBe(198);
-    // The client is told to re-read the row, and the PR-state read is kicked —
+    // The client is told to re-read the row, and the PR-state read is kicked;
     // the same two things create_pr's own success does.
     expect(events.some((e) => e.type === "task_edited")).toBe(true);
     expect(opened).toEqual([taskId]);
@@ -125,7 +125,7 @@ describe.skipIf(IS_WIN)("adopting a PR opened outside Calandria", () => {
 
     expect(await adoptExistingPr(taskId)).toBeNull();
     expect(getTask(taskId)!.pr_url).toBe("");
-    // The whole point of the local-ref gate: no subprocess, no network call.
+    // The local-ref gate exists for this: no subprocess, no network call.
     expect(ghCalls()).toEqual([]);
   });
 
@@ -150,7 +150,7 @@ describe.skipIf(IS_WIN)("adopting a PR opened outside Calandria", () => {
 
   it("stays quiet when gh fails", async () => {
     const { taskId } = await fixture();
-    ghAnswers([], 1); // logged out, no network, not a GitHub remote — all the same here
+    ghAnswers([], 1); // logged out, no network, not a GitHub remote: all the same here
 
     expect(await adoptExistingPr(taskId)).toBeNull();
     expect(getTask(taskId)!.pr_url).toBe("");
