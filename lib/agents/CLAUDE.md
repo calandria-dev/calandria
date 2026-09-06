@@ -384,8 +384,10 @@ rejection before the host sees it, so under it no permission mode can ask anyone
 and the old picker honestly offered only "workspace-write, never asks" and "read-only".
 On app-server the approval arrives as a JSON-RPC request the turn cannot finish without our
 answer — `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`,
-`item/permissions/requestApproval` — and `codex/permissionPrompt.ts` answers it through the
-same rules, card and `/answer` registry the Claude gate uses (`lib/permissions.ts`), so the
+`item/permissions/requestApproval` — and it is answered by `promptPermission()`
+(`lib/permissionPrompt.ts`), which is not a parallel implementation but the Claude gate itself:
+`canUseTool` calls the same function and the two differ only in how they spell the verdict back
+to their own protocol. So the
 Bash-only `permission_rules`, the attended/unattended deadlines and the scheduled-run
 `interactionPolicy: "deny"` all apply unchanged. `item/tool/requestUserInput`, Codex's native
 question tool, lands on the ask card. The protocol has no approval timeout of its own

@@ -162,6 +162,7 @@ picker entry can't quietly resolve to something else.
 
 `canUseTool` is the SDK callback that also has to be present before the CLI will expose
 `AskUserQuestion` at all. It routes every call the SDK doesn't auto-approve through
+**`lib/permissionPrompt.ts`**, the gate the Codex driver shares, and the policy it applies is
 **`lib/permissions.ts`**: a read-only allowlist passes silently unless the CLI flagged a
 `blockedPath`, which forces a prompt; otherwise the check falls through to the project's
 remembered rules, then to a human. A prompt reuses the ask machinery wholesale
@@ -250,8 +251,9 @@ Turns run on `codex app-server` by default (`appServerClient.ts` is the JSON-RPC
 `appServerTurn.ts` the turn, `appServerEvents.ts` the adapter that respells v2 items as the
 exec protocol's so `events.ts` maps both transports). The server's approval requests
 (`item/commandExecution/requestApproval`, `item/fileChange/requestApproval`,
-`item/permissions/requestApproval`) are answered through `permissionPrompt.ts`, the same
-rules, card and `/answer` registry as the Claude gate, and its `item/tool/requestUserInput`
+`item/permissions/requestApproval`) are answered through `lib/permissionPrompt.ts`, which is
+the Claude gate — `canUseTool` calls the same `promptPermission()`, so the rules, the card and
+the `/answer` registry are one implementation — and its `item/tool/requestUserInput`
 through the ask card. `CODEX_TRANSPORT=exec` keeps the SDK's `codex exec` path, which
 auto-rejects approvals inside the CLI. Auth (`auth.ts`) drives `codex login --device-auth` and `codex login status`. The one-shot
 helpers run as `codex exec` one-shots in a read-only sandbox (no writes, no approvals, no

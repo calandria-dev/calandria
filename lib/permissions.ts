@@ -1,5 +1,6 @@
-// Tool-permission policy: the decision logic behind the Claude driver's
-// canUseTool gate (lib/agents/claude/driver.ts).
+// Tool-permission policy: the decision logic behind the permission gate every
+// driver parks on (lib/permissionPrompt.ts, called from the Claude driver's
+// canUseTool and from the Codex app-server's approval handlers).
 //
 // Under bypassPermissions nothing here runs — the SDK never
 // consults the callback. Under acceptEdits / plan every tool call the

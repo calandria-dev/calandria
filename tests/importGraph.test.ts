@@ -53,6 +53,7 @@ const PINNED = [
   "lib/agentToolGuard.mjs", //  the loud-failure wrapper every agent tool answers through; zero imports, and scripts/calandria-mcp.mjs loads it in plain Node
   "lib/git.ts", //               every worktree/diff/merge/remote operation; subprocesses only, and baseBranch.ts sits on it
   "lib/permissions.ts", //       the tool-permission gate's policy — pure logic, no driving
+  "lib/permissionPrompt.ts", //  the card BOTH drivers park on; that policy adds the store and the turn's queue to the line above, and nothing else
   "lib/settingsDrift.ts", //     the pre-turn settings gate; store + fs + the permission card's own policy, and which files it watches comes from the driver rather than from here
   "lib/agentCommands.ts", //     which slash commands the menu offers — policy the client imports too
   "lib/binPath.ts", //           where a CLI is on disk + how to launch it on Windows; node:fs/node:path only

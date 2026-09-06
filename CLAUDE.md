@@ -200,12 +200,20 @@ sends `buildConflictPrompt()` output as an ordinary message through `startTurn()
 
 ### The permission gate
 
-Under every mode but `bypassPermissions`, the SDK's `canUseTool` is a real gate
-(**`lib/permissions.ts`**): a read-only allowlist, then the project's remembered Bash rules
-(`permission_rules`), then a permission card that parks the turn on the user through the same
-`lib/asks.ts` and `/answer` machinery an AskUserQuestion uses. Every non-answer path denies (Stop,
-expiry, unwatched turn, unparseable answer), and an unattended auto-deny parks the pending queue
-the way a dead login does.
+Under every mode but `bypassPermissions`, the SDK's `canUseTool` is a real gate: a read-only
+allowlist, then the project's remembered Bash rules (`permission_rules`), then a permission card
+that parks the turn on the user through the same `lib/asks.ts` and `/answer` machinery an
+AskUserQuestion uses. Every non-answer path denies (Stop, expiry, unwatched turn, unparseable
+answer), and an unattended auto-deny parks the pending queue the way a dead login does.
+
+That sequence is **`lib/permissionPrompt.ts`** (`promptPermission()`), and it is not the Claude
+driver's: the Codex app-server's three approval requests call the same function. Each driver only
+translates the verdict into its own protocol — `canUseTool`'s `PermissionResult`, the app-server's
+accept / acceptForSession / decline / cancel — and passes in what only it knows, which is the
+whole of the difference: `blockedPath`, the CLI's `suggestions` payload and its own prompt
+sentence for Claude, an explicit session-scoped offer for a Codex grant no durable rule fits. The
+policy underneath stays in **`lib/permissions.ts`**, which is pure; the prompt module is that plus
+the store and the turn's event queue.
 
 Rules are minted from the card and, since the card is unreachable on a turn nobody is watching, by
 typing one into Settings → Run defaults (`POST /api/settings/permissions`). The typed path is not
