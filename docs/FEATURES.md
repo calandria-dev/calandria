@@ -146,9 +146,12 @@ beside it for markdown, and ```mermaid fences drawn as diagrams) and **Comment**
 passage and attach a note, plus a general comments box). **Send to agent** turns your edits
 into a unified diff (or writes them straight into the worktree, the default) and your
 comments into located, quoted feedback, sent as one message through the ordinary chat path.
-Passage comments save as you add them and survive a reload. Sent comments stay listed
-against the document, read-only, and collapse into an outdated group once the document
-changes. See [DOCUMENT_COLLABORATION.md](DOCUMENT_COLLABORATION.md) for details.
+Passage comments, the edit, and the general note all save as you go and are restored when
+you reopen the modal; a draft comment can still be edited up until it's sent. Sent comments
+stay listed against the document, read-only, and collapse into an outdated group once the
+document changes; an edit made against an older version of the file is offered back as
+stale, with a choice to restore or discard it, rather than being reapplied silently. See
+[DOCUMENT_COLLABORATION.md](DOCUMENT_COLLABORATION.md) for details.
 
 ### Base branches
 

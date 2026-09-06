@@ -2425,6 +2425,8 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .collab-tabs .rail-tab{display:inline-flex;align-items:center;gap:6px;}
 .collab-tabs .rail-tab svg{width:12px;height:12px;}
 .collab-hint{margin-left:auto;font-size:12px;color:var(--ink-3);}
+.collab-stale{display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:8px 12px;border:1px solid color-mix(in oklab,var(--warn) 50%,var(--line));border-radius:var(--r-sm);background:color-mix(in oklab,var(--warn) 8%,var(--surface));font-size:12.5px;line-height:1.45;}
+.collab-stale span{flex:1;}
 .collab-split{display:grid;grid-template-columns:1fr 1fr;gap:12px;flex:1;min-height:0;}
 .collab-split:has(.collab-side){grid-template-columns:minmax(0,1.6fr) minmax(280px,1fr);}
 .collab-split.collab-solo{grid-template-columns:1fr;}

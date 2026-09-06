@@ -9,7 +9,7 @@ import { getDb } from "./db";
 // break sync route entries at runtime (see the note in that file).
 import { modelContextWindow } from "./agents/capabilities";
 import { SERVICE_PORT_BASE } from "./config";
-import type { Project, Task, Tag, Message, PendingMessage, TaskComment, TaskDocComment, Summary, Session, Priority, Status, MsgRole, LedgerUsage, UsageTotals, PermissionRule, PermissionMatchKind, AgentEditChange, TaskAgentEdit, SettingsSnapshot } from "./types";
+import type { Project, Task, Tag, Message, PendingMessage, TaskComment, TaskDocComment, TaskDocDraft, Summary, Session, Priority, Status, MsgRole, LedgerUsage, UsageTotals, PermissionRule, PermissionMatchKind, AgentEditChange, TaskAgentEdit, SettingsSnapshot } from "./types";
 import { isLandingMode, type LandingMode } from "./types";
 export { addInternalUsage, type InternalJob } from "./internalUsage";
 
@@ -1901,6 +1901,51 @@ export function deleteTaskDocComment(taskId: string, id: string): "deleted" | "s
   if (row.sent_to_agent) return "sent";
   db.prepare("DELETE FROM task_doc_comments WHERE task_id = ? AND id = ?").run(taskId, id);
   return "deleted";
+}
+
+// Rewrite an UNSENT comment's body. A sent one is what the agent was told and
+// is refused the way deletion is; the caller reports "sent".
+export function updateTaskDocComment(taskId: string, id: string, body: string): TaskDocComment | "sent" | "missing" {
+  const db = getDb();
+  const row = db.prepare("SELECT * FROM task_doc_comments WHERE task_id = ? AND id = ?").get(taskId, id) as TaskDocComment | undefined;
+  if (!row) return "missing";
+  if (row.sent_to_agent) return "sent";
+  db.prepare("UPDATE task_doc_comments SET body = ? WHERE task_id = ? AND id = ?").run(body, taskId, id);
+  return { ...row, body };
+}
+
+// ---------- document drafts (collaboration modal edits + general note) ----------
+
+export function getTaskDocDraft(taskId: string, file: string): TaskDocDraft | null {
+  const row = getDb().prepare("SELECT * FROM task_doc_drafts WHERE task_id = ? AND file = ?").get(taskId, file) as TaskDocDraft | undefined;
+  return row ?? null;
+}
+
+// Upsert the draft for one (task, file). A draft with nothing in it (no edit,
+// empty note) is DELETED rather than stored, so the row's existence means
+// "there is something to restore"; returns null in that case.
+export function putTaskDocDraft(
+  taskId: string,
+  file: string,
+  draft: { text: string | null; general: string; anchorSha: string | null }
+): TaskDocDraft | null {
+  const db = getDb();
+  if (draft.text === null && draft.general.trim() === "") {
+    db.prepare("DELETE FROM task_doc_drafts WHERE task_id = ? AND file = ?").run(taskId, file);
+    return null;
+  }
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO task_doc_drafts (task_id, file, text, general, anchor_sha, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(task_id, file) DO UPDATE SET
+       text = excluded.text, general = excluded.general, anchor_sha = excluded.anchor_sha, updated_at = excluded.updated_at`
+  ).run(taskId, file, draft.text, draft.general, draft.anchorSha, now);
+  return { task_id: taskId, file, text: draft.text, general: draft.general, anchor_sha: draft.anchorSha, updated_at: now };
+}
+
+export function deleteTaskDocDraft(taskId: string, file: string): boolean {
+  return getDb().prepare("DELETE FROM task_doc_drafts WHERE task_id = ? AND file = ?").run(taskId, file).changes > 0;
 }
 
 // ---------- summaries ----------

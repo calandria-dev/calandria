@@ -106,30 +106,46 @@ test("edit + comment + send as a patch arrive as one located packet", async ({ p
   const modal = page.locator(".modal", { hasText: "Collaborate on document" });
   await expect(modal.locator(".collab-render h1")).toHaveText("Setup guide");
 
-  // Comment: select the first list item, attach a note.
-  await page.evaluate(() => {
-    const root = document.querySelector(".collab-selectable")!;
-    const range = document.createRange();
-    range.selectNodeContents(root.querySelectorAll("li")[0]);
-    const sel = window.getSelection()!;
-    sel.removeAllRanges();
-    sel.addRange(range);
-    root.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-  });
-  await modal.getByRole("button", { name: "Add comment" }).click();
-  await modal.getByPlaceholder("What should change here?").fill("Say what the default port is.");
-  await modal.getByRole("button", { name: "Add", exact: true }).click();
-  await expect(modal.locator(".collab-c")).toHaveCount(1);
-  await expect(modal.locator(".collab-c-where")).toHaveText("Configuration");
+  // Select the nth list item in the rendered view, as a mouse drag would.
+  const selectItem = (n: number) =>
+    page.evaluate((n) => {
+      const root = document.querySelector(".collab-selectable")!;
+      const range = document.createRange();
+      range.selectNodeContents(root.querySelectorAll("li")[n]);
+      const sel = window.getSelection()!;
+      sel.removeAllRanges();
+      sel.addRange(range);
+      root.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    }, n);
+  const box = modal.getByPlaceholder("What should change here?");
 
-  // Passage comments are persisted the moment they're added (task_doc_comments),
-  // unlike the edit and the general note, which stay modal-local. Closing here
-  // — nothing else dirty yet — fires no confirm dialog, and reopening still
-  // shows the comment: it survived the modal unmounting, not just a re-render.
-  await modal.locator(".modal-f").getByRole("button", { name: "Cancel" }).click();
-  await expect(modal).toBeHidden();
-  await collaborateOn(page, "docs/setup.md").click();
+  // Comment: select the first list item, type a note, and forget to press Add.
+  // Moving on to another passage SAVES that note instead of dropping it: the
+  // compose box comes back empty on the new quote, and the first note is a
+  // card.
+  await selectItem(0);
+  await modal.getByRole("button", { name: "Add comment" }).click();
+  await box.fill("Say what the default prot is.");
+  await selectItem(1);
+  await modal.getByRole("button", { name: "Add comment" }).click();
   await expect(modal.locator(".collab-c")).toHaveCount(1);
+  await expect(modal.locator(".collab-c-body")).toHaveText("Say what the default prot is.");
+  await expect(box).toHaveValue("");
+  await expect(modal.locator(".collab-compose .collab-quote")).toContainText("BASE_URL");
+  await modal.locator(".collab-compose").getByRole("button", { name: "Cancel" }).click();
+  await expect(modal.locator(".collab-compose")).toHaveCount(0);
+
+  // A draft is editable until it's sent: the pencil reopens it in the compose
+  // box, Save rewrites it in place.
+  await modal.locator(".collab-c").getByRole("button", { name: "Edit comment" }).click();
+  await expect(modal.locator(".collab-compose .collab-c-tag")).toHaveText(/editing/);
+  await expect(box).toHaveValue("Say what the default prot is.");
+  await box.fill("Say what the default port is.");
+  await modal.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(modal.locator(".collab-compose")).toHaveCount(0);
+  await expect(modal.locator(".collab-c")).toHaveCount(1);
+  await expect(modal.locator(".collab-c-body")).toHaveText("Say what the default port is.");
+  await expect(modal.locator(".collab-c-where")).toHaveText("Configuration");
 
   await modal.getByPlaceholder("Feedback on the document as a whole…").fill("Too terse overall.");
 
@@ -139,7 +155,23 @@ test("edit + comment + send as a patch arrive as one located packet", async ({ p
   await page.keyboard.press("Control+End");
   await page.keyboard.type("\nRestart the server after changing either value.\n");
   await expect(modal.locator(".collab-render")).toContainText("Restart the server after changing either value.");
-  await expect(modal.locator(".collab-status")).toHaveText("edited · 1 comment · general note");
+  // "saved" is the autosave confirming the server holds the edit and the note
+  // (task_doc_drafts); the comment went to task_doc_comments when it was added.
+  await expect(modal.locator(".collab-status")).toHaveText("edited · 1 comment · general note · saved");
+
+  // All three halves are persisted, so closing here fires no confirm dialog
+  // (Playwright would dismiss one, and the modal would stay), and reopening
+  // restores the comment, the note and the edit: they survived the modal
+  // unmounting, not just a re-render.
+  await modal.locator(".modal-f").getByRole("button", { name: "Cancel" }).click();
+  await expect(modal).toBeHidden();
+  await collaborateOn(page, "docs/setup.md").click();
+  await expect(modal.locator(".collab-c")).toHaveCount(1);
+  await expect(modal.getByPlaceholder("Feedback on the document as a whole…")).toHaveValue("Too terse overall.");
+  await expect(modal.locator(".collab-render")).toContainText("Restart the server after changing either value.");
+  await expect(modal.locator(".collab-status")).toHaveText("edited · 1 comment · general note · saved");
+  await modal.locator(".collab-tabs").getByRole("button", { name: "EDIT" }).click();
+  await expect(modal.locator(".cm-content")).toContainText("Restart the server after changing either value.");
   // The picker appears once there's an edit to route; this test takes the
   // patch route, so the agent's session stays the worktree's only writer.
   await modal.locator(".collab-mode select").selectOption("patch");
@@ -162,34 +194,72 @@ test("edit + comment + send as a patch arrive as one located packet", async ({ p
   // The mock ran the message as a turn like any other.
   await expect(page.getByText("Mock turn complete").nth(1)).toBeVisible({ timeout: 20_000 });
 
-  // Reopening now shows the comment under "Sent to agent": read-only (no ×),
-  // tagged, and — since the underlying file hasn't changed since — not
-  // outdated. Nothing to send, so Send to agent is disabled.
+  // Reopening now shows the comment under "Sent to agent": read-only (no ×,
+  // no pencil), tagged, and — since the underlying file hasn't changed since —
+  // not outdated. Send cleared the edit draft too, so nothing is restored and
+  // there is nothing to send: Send to agent is disabled.
   await collaborateOn(page, "docs/setup.md").click();
   await expect(modal.locator(".collab-c.sent")).toHaveCount(1);
   await expect(modal.locator(".collab-c-x")).toHaveCount(0);
   await expect(modal.locator(".collab-c-tag")).toContainText("sent");
+  await expect(modal.locator(".collab-status")).toHaveText("No changes yet. Edit the text or select a passage to comment.");
   await expect(modal.getByRole("button", { name: "Send to agent" })).toBeDisabled();
   await modal.locator(".modal-f").getByRole("button", { name: "Cancel" }).click();
   await expect(modal).toBeHidden();
 });
 
-test("a sent comment goes outdated when the document changes", async ({ page }) => {
-  // Change the reviewed file on disk, out from under the sent comment's
-  // anchor (the file's blob sha as it was when the comment was written).
-  fs.appendFileSync(docPath, "\nChanged after review.\n");
-
+test("a sent comment goes outdated and an unsent edit goes stale when the document changes", async ({ page }) => {
   await gotoApp(page);
   await page.getByText(PROJECT, { exact: true }).first().click();
   await page.getByText("Write the setup guide").first().click();
   await collaborateOn(page, "docs/setup.md").click();
   const modal = page.locator(".modal", { hasText: "Collaborate on document" });
+  await expect(modal.locator(".collab-render h1")).toHaveText("Setup guide");
+
+  // Leave an edit unsent (autosaved against the file as it is now)...
+  await modal.locator(".collab-tabs").getByRole("button", { name: "EDIT" }).click();
+  await modal.locator(".cm-content").click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.type("\nEdited before the file moved.\n");
+  await expect(modal.locator(".collab-status")).toHaveText("edited · saved");
+  await modal.locator(".modal-f").getByRole("button", { name: "Cancel" }).click();
+  await expect(modal).toBeHidden();
+
+  // ...then change the reviewed file on disk, out from under both the sent
+  // comment's anchor and the draft's (the file's blob sha as it was when each
+  // was written).
+  fs.appendFileSync(docPath, "\nChanged after review.\n");
+  await collaborateOn(page, "docs/setup.md").click();
 
   await expect(modal.locator(".collab-c.sent")).toHaveCount(0);
   const outdatedToggle = modal.locator(".collab-outdated");
   await expect(outdatedToggle).toHaveText(/Show 1 outdated comment/);
   await outdatedToggle.getByRole("button").click();
   await expect(modal.locator(".collab-c.outdated")).toHaveCount(1);
+
+  // The draft is NOT restored into the editor over the new text: the current
+  // file is shown, and the banner offers the edit back. Restoring puts the
+  // user's version in the editor (and re-anchors it on the next save);
+  // discarding from the footer records the file as unedited again.
+  const stale = modal.locator(".collab-stale");
+  await expect(stale).toContainText("from before it last changed");
+  await expect(modal.locator(".collab-render")).toContainText("Changed after review.");
+  await expect(modal.locator(".collab-render")).not.toContainText("Edited before the file moved.");
+  await stale.getByRole("button", { name: "Restore edits" }).click();
+  await expect(stale).toHaveCount(0);
+  await expect(modal.locator(".cm-content")).toContainText("Edited before the file moved.");
+  await expect(modal.locator(".collab-status")).toHaveText("edited · saved");
+  page.once("dialog", (d) => d.accept());
+  await modal.locator(".modal-f").getByRole("button", { name: "Discard edits" }).click();
+  await expect(modal.locator(".collab-status")).toHaveText("No changes yet. Edit the text or select a passage to comment.");
+  await expect(modal.locator(".cm-content")).toContainText("Changed after review.");
+  await modal.locator(".modal-f").getByRole("button", { name: "Cancel" }).click();
+  await expect(modal).toBeHidden();
+  // Reopening restores nothing: the discard reached the server.
+  await collaborateOn(page, "docs/setup.md").click();
+  await expect(modal.locator(".collab-render h1")).toHaveText("Setup guide");
+  await expect(modal.locator(".collab-stale")).toHaveCount(0);
+  await expect(modal.locator(".collab-status")).toHaveText("No changes yet. Edit the text or select a passage to comment.");
 });
 
 test("Write to file lands the edit in the worktree and tells the agent what changed", async ({ page, request }) => {
@@ -209,9 +279,9 @@ test("Write to file lands the edit in the worktree and tells the agent what chan
   await modal.locator(".cm-content").click();
   await page.keyboard.press("Control+End");
   await page.keyboard.type("\nThe default port is 3000.\n");
-  // Only the modal-local halves count: the one saved comment is sent (and
-  // outdated), so it's neither a draft nor in the status.
-  await expect(modal.locator(".collab-status")).toHaveText("edited");
+  // The one saved comment is sent (and outdated), so it's neither a draft nor
+  // in the status; the edit is, once the autosave confirms it.
+  await expect(modal.locator(".collab-status")).toHaveText("edited · saved");
   // Direct write is the default (a fresh browser context holds no preference).
   const picker = modal.locator(".collab-mode select");
   await expect(picker).toHaveValue("direct");
