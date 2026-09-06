@@ -363,6 +363,10 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .settings-nav{flex:0 0 220px;min-width:0;border-right:1px solid var(--line);background:var(--panel-2);padding:10px;gap:2px;}
 .settings-nav-h{padding:6px 9px 10px;font-size:15px;font-weight:700;color:var(--ink);}
 .settings-nav-list{display:flex;flex-direction:column;gap:2px;flex:1;min-height:0;overflow-y:auto;}
+/* Pinned to the bottom of the nav column when the section list is shorter than
+   the pane. On mobile the list is a horizontal chip row, where auto resolves to
+   0 and this reads as one more chip at the end. */
+.settings-nav-logout{margin-top:auto;color:var(--ink-2);}
 .settings-nav-foot{padding:10px 9px 4px;border-top:1px solid var(--line);font-family:var(--mono);font-size:10px;color:var(--ink-3);}
 .settings-head{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:14px 20px 12px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,var(--surface) 0%, var(--panel) 100%);}
 .settings-title{font-size:16px;font-weight:700;color:var(--ink);}

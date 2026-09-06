@@ -382,7 +382,7 @@ test.describe("mobile tab bar", () => {
 
 // Settings on a phone: the section nav is a horizontal chip rail. `.nav-item`
 // is `width:100%` for the desktop sidebar, which in a flex row made every chip
-// a full screen wide — one section visible, the other nine reachable only by a
+// a full screen wide — one section visible, the rest reachable only by a
 // horizontal scroll with nothing on screen to suggest it existed.
 test.describe("mobile settings nav", () => {
   test.use({ viewport: { width: 390, height: 800 } });
