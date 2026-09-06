@@ -105,7 +105,7 @@ export const UNATTENDED_ASK_DENIAL =
   "This is a scheduled run: nobody is watching it, so the question cannot be answered and was " +
   "declined automatically. Do not ask again. Continue with whatever you can do without an answer, " +
   "using the most conservative reasonable assumption, and if that leaves the task blocked, stop and " +
-  "state exactly what you needed to know — the user will pick it up when they return.";
+  "state exactly what you needed to know. The user will pick it up when they return.";
 
 /** The same fact, written for the human reading the transcript afterwards. */
 export const UNATTENDED_ASK_NOTE =

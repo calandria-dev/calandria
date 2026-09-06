@@ -103,7 +103,7 @@ function blockFor(tag: Tag, task: Task, projectTasks: (Task & { depends_on: stri
     lines.push(`Other tasks with this tag:`);
     for (const m of members) lines.push(memberLine(m, task.id));
     lines.push(
-      `Their descriptions are not included here — call \`get_task\` with an id above when you need one. ` +
+      `Their descriptions are not included here. Call \`get_task\` with an id above when you need one. ` +
         `Don't start a sibling's work: each is its own session.`
     );
   } else {
