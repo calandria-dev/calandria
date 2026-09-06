@@ -238,6 +238,26 @@ function launchArgs(root: string, opts: LaunchOptions): string[] {
   // desktop app shares the lock with the suite, and each would refuse the other.
   args.push(`--user-data-dir=${opts.userDataDir ?? userDataDir(root)}`);
   if (NO_SANDBOX) args.push("--no-sandbox");
+  // The login keychain is the last piece of global machine state this suite
+  // still wrote into, and the only one it could not clean up. `safeStorage`
+  // keeps one generic-password item per app name, so every shell the suite
+  // launches shared ONE item on the developer's or runner's real keychain —
+  // and macOS gates reading such an item on the calling binary being named in
+  // its ACL, answering a binary that is not with an authorization dialog.
+  //
+  // On CI that is fatal rather than annoying. The unpackaged pass runs first
+  // and creates the item as `node_modules/electron`; the packaged pass is a
+  // different binary, gets the dialog, and hangs on it forever with nobody
+  // there to click it — `safeStorage` is synchronous, so the main thread never
+  // comes back and the app cannot even quit (issue #240; the app's own half of
+  // that is `credentialCipher` in main.js, which no longer asks unless a
+  // credential is actually in play, leaving only the sign-in spec here).
+  //
+  // `--use-mock-keychain` is Chromium's own answer, and the reason to prefer it
+  // to skipping the spec: OSCrypt still encrypts and decrypts, so the path
+  // stays genuinely under test, it just holds its key in memory instead of in
+  // the OS. Hermetic in exactly the sense the rest of the fixture already is.
+  if (process.platform === "darwin") args.push("--use-mock-keychain");
   return args;
 }
 
