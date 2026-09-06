@@ -11,8 +11,8 @@
 //
 // The env block matches the Codex driver's field for field
 // (calandriaMcpConfig in ../codex/driver.ts), with one addition: see
-// CALANDRIA_MCP_ASK_USER below. Keeping the two identical is what makes the
-// bridge behave the same for Claude as it does for Codex.
+// CALANDRIA_MCP_ASK_USER below. Keeping the two identical makes the bridge
+// behave the same for Claude as it does for Codex.
 
 import type { McpStdioServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import type { Project, Task } from "../../types";

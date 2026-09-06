@@ -232,7 +232,7 @@ describe("getInsightsData", () => {
     expect(data.tags.find((g) => g.id === tag.id)).toMatchObject({ name: "Auth migration", project_id: project.id });
   });
 
-  it("a task with two tags contributes usage to BOTH — tagUsage does not sum to `usage`", () => {
+  it("a task with two tags contributes usage to BOTH: tagUsage does not sum to `usage`", () => {
     const { project } = makeProjectTask();
     const first = createTag({ project_id: project.id, name: "Auth migration" });
     const second = createTag({ project_id: project.id, name: "Flaky tests" });

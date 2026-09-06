@@ -184,7 +184,7 @@ export function driftLine(d: TagDriftInfo): { text: string; tone: "ok" | "warn" 
   // cut it. Said as "yet", with Create on offer.
   if (d.exists === false)
     return {
-      text: `${branch} doesn't exist here yet — new tasks are cut from HEAD until it does`,
+      text: `${branch} doesn't exist here yet. New tasks are cut from HEAD until it does`,
       tone: "bad",
       syncable: false,
       creatable: d.againstExists !== false,
@@ -531,7 +531,7 @@ export function TagStrip({ tag, members, allTags, projectBranch, originTask, onS
           {job.status === "running" && (
             <div className="gs-job" role="status" aria-live="polite">
               <div className="gs-job-bar" aria-hidden="true"><span /></div>
-              <div className="gs-job-stage">{job.stage || "Working"}… you can leave this tag — it keeps running.</div>
+              <div className="gs-job-stage">{job.stage || "Working"}… you can leave this tag, it keeps running.</div>
             </div>
           )}
           {job.status === "done" && job.summary && (

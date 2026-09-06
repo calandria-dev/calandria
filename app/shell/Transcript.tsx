@@ -139,7 +139,7 @@ function AskView({ data, agentLabel, onAnswer }: { data: ToolData; agentLabel: s
         {questions.map((q, i) => (
           <div className="ask-q" key={i}>
             <div className="ask-qh"><span className="ask-chip">{q.header}</span>{q.question}</div>
-            <div className="ask-picked">{(existing[i] ?? []).join(", ") || "—"}</div>
+            <div className="ask-picked">{(existing[i] ?? []).join(", ") || "–"}</div>
           </div>
         ))}
       </div>
@@ -253,7 +253,7 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
       : settings
         ? allowed
           ? "You approved this settings change"
-          : outcome.auto ? "Declined automatically — the turn did not run" : "You declined this settings change"
+          : outcome.auto ? "Declined automatically, the turn did not run" : "You declined this settings change"
         : outcome.decision === "allow_always"
           ? `Allowed: ${outcome.remembered ?? "remembered for this project"}`
           : outcome.decision === "allow_once"
@@ -301,7 +301,7 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
       </div>
       <div className="perm-hint">
         {settings
-          ? "Declining ends this turn before the agent starts — nothing runs under the new settings. Revert the file, or send again and approve, to carry on."
+          ? "Declining ends this turn before the agent starts. Nothing runs under the new settings. Revert the file, or send again and approve, to carry on."
           : "Declines automatically if nobody responds. The session keeps running either way."}
       </div>
     </div>
@@ -407,7 +407,7 @@ function SuggestionView({ data, actions }: { data: ToolData; actions?: Suggestio
     : card.suggested === 0
       ? "Added to the task list"
       : withdrawn
-        ? `Withdrawn${card.withdrawn_reason ? ` — ${card.withdrawn_reason}` : ""}`
+        ? `Withdrawn${card.withdrawn_reason ? `: ${card.withdrawn_reason}` : ""}`
         : "Suggested a task";
 
   return (
@@ -432,16 +432,16 @@ function SuggestionView({ data, actions }: { data: ToolData; actions?: Suggestio
       {actionable && actions && (
         <div className="sugcard-acts">
           {elsewhere ? (
-            <span className="sugcard-note">Open {card.project_name} to start it — starting it here would leave this session.</span>
+            <span className="sugcard-note">Open {card.project_name} to start it. Starting it here would leave this session.</span>
           ) : (
             <button className="btn btn-accent btn-sm" disabled={busy || !!blockNote} onClick={() => act(actions.onStart)} title={blockNote ?? "Cut a worktree and start the session now"}>
               {Icon.play()} Start
             </button>
           )}
-          <button className="btn btn-sm" disabled={busy} onClick={() => act(actions.onAccept)} title={withdrawn ? "Disagree — restore it to the task list" : "Add to the task list to start later"}>
+          <button className="btn btn-sm" disabled={busy} onClick={() => act(actions.onAccept)} title={withdrawn ? "Disagree, restore it to the task list" : "Add to the task list to start later"}>
             {Icon.plus()} {withdrawn ? "Restore" : "Add"}
           </button>
-          <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => act(actions.onDismiss)} title="Dismiss — deletes the task">
+          <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => act(actions.onDismiss)} title="Dismiss, deletes the task">
             {Icon.x()} Dismiss
           </button>
         </div>

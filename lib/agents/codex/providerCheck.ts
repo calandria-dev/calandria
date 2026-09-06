@@ -7,7 +7,7 @@
 // user's machine independently of Calandria. The SDK spawns whatever `codex` is
 // on PATH, so there is no version this app controls.
 //
-// The failure mode is what makes this worth a subprocess. If a codex release
+// A subprocess check is worth it because of this failure mode. If a codex release
 // renames a key or drops the `responses` wire API, the CLI does not error: an
 // unknown `-c` override is inert and `model_provider` falls back to the built-in
 // `openai` provider, i.e. the user's real ChatGPT login. A project configured
@@ -281,7 +281,7 @@ function mismatchMessage(actual: string, version: string | null, baseUrl: string
 
 function unverifiableMessage(detail: string, version: string | null, baseUrl: string): string {
   return (
-    `Refusing this turn: couldn't confirm the local model provider took — asked codex ` +
+    `Refusing this turn: couldn't confirm the local model provider took. Asked codex ` +
     `${version ?? "(unknown version)"} for its effective configuration and ${detail}. Calandria refuses rather ` +
     `than risk running ${baseUrl || "this turn"} against your paid ChatGPT login. The check needs ` +
     `codex ${CODEX_PROVIDER_MIN_VERSION} or newer (\`codex doctor --json\`); upgrade the CLI, or set ` +

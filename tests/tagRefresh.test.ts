@@ -218,7 +218,7 @@ describe("applyTagPlan", () => {
     // It has a checkout and probably a diff; reading main tells you nothing
     // about what is in it.
     expect(out.retired).toBe(0);
-    expect(out.flagged).toEqual(["half done — looks redundant"]);
+    expect(out.flagged).toEqual(["half done: looks redundant"]);
     expect(getTask(m.id)!.status).toBe("not_started");
     expect(out.summary).toMatch(/left alone for you to judge/);
   });
@@ -258,7 +258,7 @@ describe("parseTagPlan", () => {
     const body = JSON.stringify(plan);
     expect(parseTagPlan(`chat\n<<<TAG_PLAN>>>\n${body}\n<<<END_TAG_PLAN>>>\nmore`)).toEqual(plan);
     expect(parseTagPlan(`<<<TAG_PLAN>>>\n\`\`\`json\n${body}\n\`\`\`\n<<<END_TAG_PLAN>>>`)).toEqual(plan);
-    expect(parseTagPlan(`Here is the plan: ${body} — hope that helps`)).toEqual(plan);
+    expect(parseTagPlan(`Here is the plan: ${body}, hope that helps`)).toEqual(plan);
   });
 
   it("degrades to an empty plan rather than throwing", () => {

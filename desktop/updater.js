@@ -133,7 +133,7 @@ function updaterDisposition({ env = {}, platform, packaged, appImage = null, mac
     return {
       enabled: false,
       code: "linux-package",
-      reason: "Installed from a system package — updates come from your package manager.",
+      reason: "Installed from a system package, updates come from your package manager.",
     };
   }
   if (platform === "darwin" && mac) {

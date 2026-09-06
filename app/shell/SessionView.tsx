@@ -88,13 +88,13 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitc
         title={
           unset
             ? "This project has no base branch set, so nothing here can be compared, synced or merged. Set one in Settings → Project."
-            : `Nothing in this repository is called ${st.baseBranch}, so this task can't be compared against it, synced with it or merged into it. Point the task or its project at a branch that exists — or push and fetch the one it names.`
+            : `Nothing in this repository is called ${st.baseBranch}, so this task can't be compared against it, synced with it or merged into it. Point the task or its project at a branch that exists, or push and fetch the one it names.`
         }
       >
         <span className="sync-msg">
           {unset
-            ? "This project has no base branch set — set one in Settings → Project"
-            : <>{st.baseBranch} isn&apos;t a branch in this repository — this task can&apos;t sync or merge until it points at one that is</>}
+            ? "This project has no base branch set. Set one in Settings → Project"
+            : <>{st.baseBranch} isn&apos;t a branch in this repository. This task can&apos;t sync or merge until it points at one that is</>}
         </span>
         <span className="sync-spacer" />
       </div>
@@ -243,8 +243,8 @@ function CiBanner({ task, running, onFixCi, onSwitchToChat }: {
     setErr(null);
     try {
       const res = await onFixCi(task.id);
-      // The turn is fire-and-forget, so switching to the chat is what makes the
-      // click feel like it did something: the diagnosis streams in live.
+      // The turn is fire-and-forget, so switching to the chat makes the click
+      // feel like it did something: the diagnosis streams in live.
       if (res.ok) onSwitchToChat();
       else setErr(res.error || "could not start the fix");
     } finally { setBusy(false); }
@@ -259,7 +259,7 @@ function CiBanner({ task, running, onFixCi, onSwitchToChat }: {
           <Fragment key={`${c.name}-${i}`}>
             {i > 0 && ", "}
             {c.url
-              ? <a className="ci-check" href={c.url} target="_blank" rel="noreferrer" title={c.workflow ? `${c.workflow} — open the run on GitHub` : "Open the run on GitHub"}>{c.name}</a>
+              ? <a className="ci-check" href={c.url} target="_blank" rel="noreferrer" title={c.workflow ? `${c.workflow}: open the run on GitHub` : "Open the run on GitHub"}>{c.name}</a>
               : <span className="ci-check">{c.name}</span>}
           </Fragment>
         ))}

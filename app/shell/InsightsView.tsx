@@ -71,7 +71,7 @@ const pluralTurns = (n: number) => `${n} turn${n === 1 ? "" : "s"}`;
 // Why a turn has no price: it ran against a custom base URL nobody has told
 // Calandria the cost of, so it's left OUT of a total instead of counted as
 // a measured $0 (which is what a local Ollama/LM Studio turn really is).
-const unprTitle = (n: number) => `${pluralTurns(n)} unpriced — ran against a custom endpoint with no price set, so left out of this total rather than counted as $0.`;
+const unprTitle = (n: number) => `${pluralTurns(n)} unpriced. Ran against a custom endpoint with no price set, so left out of this total rather than counted as $0.`;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const fmtDateLong = (d: Date) => `${WEEKDAYS[d.getDay()]} ${MONTHS[d.getMonth()]} ${d.getDate()}`;
@@ -554,7 +554,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
     : estIds.size === chartAgents.length ? "estimated from token counts" : "API-equivalent, partly estimated";
 
   const delta = (c: number, p: number): { text: string; arrow: string; color: string } => {
-    if (!p || p <= 0) return { text: c > 0 ? "new" : "—", arrow: "", color: "var(--ink-4)" };
+    if (!p || p <= 0) return { text: c > 0 ? "new" : "–", arrow: "", color: "var(--ink-4)" };
     const pct = Math.round(((c - p) / p) * 100);
     if (pct === 0) return { text: "0%", arrow: "", color: "var(--ink-4)" };
     return { text: `${Math.abs(pct)}%`, arrow: pct > 0 ? "▲ " : "▼ ", color: pct > 0 ? "var(--run)" : "var(--err)" };
@@ -829,7 +829,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                     <div key={j.job} className="in-orow">
                       <span>
                         <span className="in-oname">{meta.label}</span>
-                        <span className="mono in-oscope">{[...j.projects].map((p) => p ? projName(p) : "—").join(" · ")}</span>
+                        <span className="mono in-oscope">{[...j.projects].map((p) => p ? projName(p) : "–").join(" · ")}</span>
                         <span className="mono in-oscope" title="The models these runs actually ran on">{j.modelNames.length ? j.modelNames.join(" · ") : "model not recorded"}</span>
                       </span>
                       <span className="mono dim">{j.n.toLocaleString()}</span>
@@ -871,7 +871,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                       <span className="in-leg-dot" style={{ background: hues[p.id] }} />
                       <span style={{ minWidth: 0 }}>
                         <span className="in-provname">{label(p.id)}</span>
-                        <span className="mono in-provmodels">{p.models.length ? p.models.join(" · ") : "—"}</span>
+                        <span className="mono in-provmodels">{p.models.length ? p.models.join(" · ") : "–"}</span>
                       </span>
                     </span>
                     <span className="mono" title={p.gateway ? "Estimated from the gateway's own price table" : estIds.has(p.id) ? "Estimated from token counts × published API prices" : undefined}>
@@ -881,7 +881,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                     <span className="mono dim">{String(Math.round(p.tasks))}</span>
                     {hasGatewayCache && (
                       <span className={`mono dim${p.cacheHit != null && p.cacheHit < 0.01 ? " warn" : ""}`}>
-                        {p.cacheHit == null ? "—" : `${Math.round(p.cacheHit * 100)}%`}
+                        {p.cacheHit == null ? "–" : `${Math.round(p.cacheHit * 100)}%`}
                       </span>
                     )}
                   </div>
@@ -921,7 +921,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                       <span style={{ color: "var(--run)" }}>+{fmtCompact(p.add)}</span>{" "}
                       <span style={{ color: "var(--err)" }}>−{fmtCompact(p.del)}</span>
                     </span>
-                    <span className="mono dim" style={{ fontSize: 11.5 }}>{p.lastKey ? relDay(p.lastKey) : "—"}</span>
+                    <span className="mono dim" style={{ fontSize: 11.5 }}>{p.lastKey ? relDay(p.lastKey) : "–"}</span>
                     <span style={{ display: "flex", justifyContent: "flex-end" }}>
                       <span style={{ width: 120 }}><Sparkline vals={p.spark} color={p.color} h={26} /></span>
                     </span>

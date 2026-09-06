@@ -3,8 +3,7 @@
  * only by the `macos` label, a weekly cron or a dispatch, so a case that only
  * lived in the spec would be checked a handful of times a year.
  *
- * Playwright is not imported here, which is what makes it importable from
- * `tests/`.
+ * Playwright is not imported here, so it can be imported from `tests/` too.
  */
 
 /**

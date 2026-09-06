@@ -191,7 +191,7 @@ describe("authenticated (Access) mode WebSocket origin boundary", () => {
  * navigation case below states. Do not converge them.
  */
 describe("authenticated (Access) mode HTTP origin boundary", () => {
-  it("allows a cross-site top-level navigation — the reason this is not the local rule", () => {
+  it("allows a cross-site top-level navigation, the reason this is not the local rule", () => {
     // Someone clicking a link to the instance from an email or a wiki. The
     // browser sends no Origin; Sec-Fetch-Site IS cross-site, which is exactly
     // what local mode rejects. Rejecting it here would be a real UX regression

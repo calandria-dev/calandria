@@ -112,7 +112,7 @@ describe("ensureWorktree", () => {
     expect(await git(wt!.path, "rev-parse", "HEAD")).toBe(sideSha);
   });
 
-  it("is idempotent — a second call reuses the existing worktree", async () => {
+  it("is idempotent, since a second call reuses the existing worktree", async () => {
     const { repo, taskId, wt } = await makeRepoWithWorktree(ensureWorktree);
     const again = await ensureWorktree(repo, taskId);
     expect(again).toEqual(wt);
@@ -160,7 +160,7 @@ describe("ensureWorktree", () => {
 // the UI can offer a repair action instead of a dead end. Each case below
 // pins one classification and, where a repair can act, confirms it actually
 // recovers the task.
-describe("worktree prep failures — classification", () => {
+describe("worktree prep failures, classification", () => {
   it("reads a crashed git's leftover lock as recoverable", () => {
     const d = classifyWorktreePrep(
       "fatal: Unable to create '/repo/.git/index.lock': File exists.\n\n" +
@@ -193,7 +193,7 @@ describe("worktree prep failures — classification", () => {
     expect(notice).not.toContain(WORKTREE_REPAIR_NOTICE);
   });
 
-  it("reads a detached HEAD as unrecoverable — repairing bookkeeping wouldn't touch it", () => {
+  it("reads a detached HEAD as unrecoverable, since repairing bookkeeping wouldn't touch it", () => {
     const d = classifyWorktreePrep("fatal: You are in a detached HEAD state");
     expect(d.kind).toBe("detached_head");
     expect(d.recoverable).toBe(false);

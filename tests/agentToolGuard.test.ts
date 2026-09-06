@@ -90,7 +90,7 @@ describe("guardToolHandler", () => {
     }
   });
 
-  it("rewrites an empty result as a failure — the bug this module is named for", async () => {
+  it("rewrites an empty result as a failure, the bug this module is named for", async () => {
     // Every shape an empty result can take. None of them may reach the model
     // looking like a success.
     const empties: unknown[] = [

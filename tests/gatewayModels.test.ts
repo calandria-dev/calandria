@@ -30,7 +30,7 @@ function entry(over: Partial<GatewayModelInfo> = {}): GatewayModelInfo {
   };
 }
 
-describe("gatewayModelOptions — mapping", () => {
+describe("gatewayModelOptions, mapping", () => {
   it("maps value/contextWindow/group and folds provider + price into sub", () => {
     const [opt] = gatewayModelOptions([entry()], "claude");
     expect(opt.value).toBe("claude-sonnet-4-5");

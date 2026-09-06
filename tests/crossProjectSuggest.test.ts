@@ -238,7 +238,7 @@ describe("per-session blocked_by title refs are scoped to their target project",
 });
 
 describe("badges and the needs-you pill on a cross-project suggestion", () => {
-  it("moves neither count — a suggestion is not work waiting on the user", () => {
+  it("moves neither count, since a suggestion is not work waiting on the user", () => {
     // The fan-out only has to refresh the receiving TRAY. Both project-rail
     // counts exclude suggested rows (the NEEDS_YOU predicate and
     // task_count's `suggested = 0`), so there is nothing else to update: this

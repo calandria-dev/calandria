@@ -220,7 +220,7 @@ describe("sync against a non-default base branch", () => {
 // and resolving them is the same work: merge the base into the task branch so
 // the PR becomes mergeable. It must not do the second half: land that branch
 // on the local base, since that merge can never be pushed.
-describe("completeWorktreeMerge — resolveOnly (PR landing policy)", () => {
+describe("completeWorktreeMerge, resolveOnly (PR landing policy)", () => {
   it("commits the resolution to the work branch and leaves the base branch where it was", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
     await commitFile(wt.path, "file.txt", "task version\n", "task edit");
@@ -242,7 +242,7 @@ describe("completeWorktreeMerge — resolveOnly (PR landing policy)", () => {
   });
 });
 
-describe("worktreeSyncStatus — a missing work branch stays silent", () => {
+describe("worktreeSyncStatus, a missing work branch stays silent", () => {
   it("stays silent for a missing WORK branch, which the next launch self-heals", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
     const s = await worktreeSyncStatus({

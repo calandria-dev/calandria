@@ -116,7 +116,7 @@ describe("claudeCapabilities on Vertex", () => {
   // with itself.
   const DROPPED_ON_VERTEX = ["fable", "claude-fable-5-1"];
 
-  it("drops only the Fable rows — every value measured as working is still offered", () => {
+  it("drops only the Fable rows: every other value that works is still offered", () => {
     expect(caps.models.map((m) => m.value)).toEqual(
       CLAUDE_CAPABILITIES.models.map((m) => m.value).filter((v) => !DROPPED_ON_VERTEX.includes(v))
     );
@@ -130,7 +130,7 @@ describe("claudeCapabilities on Vertex", () => {
 
   // Bare Anthropic model ids do not need an `@version` suffix on Vertex; all
   // six pinned entries resolve.
-  it("leaves the pinned-version group exactly as it is — bare ids do resolve on Vertex", () => {
+  it("leaves the pinned-version group exactly as it is: bare ids do resolve on Vertex", () => {
     for (const value of [
       "claude-opus-4-8",
       "claude-opus-4-8[1m]",

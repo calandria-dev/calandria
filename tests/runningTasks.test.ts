@@ -27,7 +27,7 @@ describe("listRunningTaskIds", () => {
     expect(ids).not.toContain(bSuggested.id);
   });
 
-  it("drains to empty once every turn has ended — so a reconnect resync clears everything", () => {
+  it("drains to empty once every turn has ended, so a reconnect resync clears everything", () => {
     const p = createProject({ name: "Drain" });
     const t = createTask({ project_id: p.id, title: "T", description: "" });
 

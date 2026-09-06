@@ -77,14 +77,14 @@ describe("scheduled turns in the runner", () => {
     expect(t.running).toBe(0);
     expect(t.awaiting_input).toBe(0);
     // The status is untouched: like a snooze, this is a state over the status,
-    // which is what makes acknowledging it an ordinary write.
+    // so acknowledging it is an ordinary write.
     expect(t.status).toBe("in_progress");
     expect(t.unread_run_at).toBeGreaterThan(0);
     // The board draws it in its own group, separate from live work.
     expect(isUnreadRun(t as unknown as TaskRow)).toBe(true);
   });
 
-  it("does NOT mark a scheduled run that failed — that one raises its hand instead", async () => {
+  it("does NOT mark a scheduled run that failed: that one raises its hand instead", async () => {
     events.push({ type: "error", content: "boom" });
     startTurn(getTask(taskId)!, getProject(projectId)!, "/x", "", undefined, scheduled());
     await settled();
@@ -95,7 +95,7 @@ describe("scheduled turns in the runner", () => {
     expect(isUnreadRun(t as unknown as TaskRow)).toBe(false);
   });
 
-  it("never marks an ordinary, watched turn — nobody needs telling their own turn ended", async () => {
+  it("never marks an ordinary, watched turn: nobody needs telling their own turn ended", async () => {
     startTurn(getTask(taskId)!, getProject(projectId)!, "hello", "");
     await settled();
     expect(getTask(taskId)!.unread_run_at).toBe(0);

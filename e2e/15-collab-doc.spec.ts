@@ -293,7 +293,7 @@ test("Write to file lands the edit in the worktree and tells the agent what chan
   // The file on disk carries the edit before the agent has done anything.
   expect(fs.readFileSync(docPath, "utf8")).toBe(before + "\nThe default port is 3000.\n");
 
-  const sent = page.locator(".msg", { hasText: "directly in the worktree — the file on disk already has these changes" }).first();
+  const sent = page.locator(".msg", { hasText: "directly in the worktree: the file on disk already has these changes" }).first();
   await expect(sent).toBeVisible({ timeout: 15_000 });
   await expect(sent).toContainText("do NOT apply this diff again");
   await expect(sent).toContainText("+The default port is 3000.");

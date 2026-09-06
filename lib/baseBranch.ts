@@ -50,9 +50,8 @@ import type { Project, Task } from "./types";
  *
  * The tag leg only ever reaches an UNCUT task: `ensureWorktree` pins the
  * resolved name into `tasks.base_branch`, after which the first leg answers
- * and the tags are never consulted again. That is what makes tag-level
- * editing safe mid-plan: a started member keeps the branch its work is
- * built on.
+ * and the tags are never consulted again. That keeps tag-level editing safe
+ * mid-plan: a started member keeps the branch its work is built on.
  *
  * The SQL twin is the lookup in `listReclaimableWorktrees` (lib/store.ts),
  * which has no Task in hand; the two orders must stay identical, and

@@ -720,7 +720,7 @@ async function* runTurn(
   const withResetTime = (text: string): string => {
     if (limitResetsAt == null || !isUsageLimit(text)) return text;
     const ms = limitResetsAt > 1e12 ? limitResetsAt : limitResetsAt * 1000;
-    return `${text} — resets at ${new Date(ms).toLocaleString()}`;
+    return `${text}. Resets at ${new Date(ms).toLocaleString()}`;
   };
 
   // Resolve the run controls with a two-level fallback: the task's own choice wins;
@@ -756,8 +756,8 @@ async function* runTurn(
   //
   // Under bypassPermissions the SDK never consults it, so it stays a blanket
   // allow. In every other mode each call the CLI doesn't auto-approve arrives
-  // here, which is what makes those modes distinct from bypassPermissions
-  // under a different label. What reaches the gate differs per mode: "auto"
+  // here; that is what distinguishes those modes from bypassPermissions under
+  // a different label. What reaches the gate differs per mode: "auto"
   // escalates only what its classifier won't vouch for, acceptEdits lets
   // writes through and stops at commands, "default" stops at anything not
   // pre-approved, plan stops at leaving the plan. Known-safe tools and calls
@@ -1579,7 +1579,7 @@ async function draftProjectContext(project: Project, digest: string, opts?: OneS
     prompt:
       `You are refreshing the saved "project context" for the project "${project.name}". ` +
       `This context is prepended to every new Claude Code session in this project, so it must get a ` +
-      `fresh session up to speed fast and accurately reflect what the project IS NOW — not what it was ` +
+      `fresh session up to speed fast and accurately reflect what the project IS NOW, not what it was ` +
       `when first described.\n\n` +
       `Explore the repository in your working directory using the read-only tools available to you ` +
       `(read key files, list the tree, grep for patterns, check package manifests and configs, skim the ` +
@@ -1587,7 +1587,7 @@ async function draftProjectContext(project: Project, digest: string, opts?: OneS
       `Cover, concisely: what the app does and its purpose; the tech stack and key dependencies; how the ` +
       `code is organized (the directories/modules that matter and what lives where); important conventions, ` +
       `patterns, and constraints; how to run/build/test it; and any other orientation a new contributor needs. ` +
-      `Prefer concrete file paths over vague description. Be accurate — only state what you verified in the code. ` +
+      `Prefer concrete file paths over vague description. Be accurate: only state what you verified in the code. ` +
       `Do not invent features that aren't there.\n\n` +
       `If the project has a dev server, note how it starts and that it must bind the PORT env var ` +
       `Calandria injects, and (when the framework enforces host checks) the one-liner that allows ` +
@@ -1596,7 +1596,7 @@ async function draftProjectContext(project: Project, digest: string, opts?: OneS
       `Write the context as plain markdown (no code fences around the whole thing), tight and ` +
       `information-dense, ~200–500 words. Wrap ONLY the final document between a line containing ` +
       `${CTX_OPEN} and a line containing ${CTX_CLOSE}. Put nothing but the document between those ` +
-      `markers — any thinking-out-loud goes before the opening marker.\n\n` +
+      `markers. Any thinking-out-loud goes before the opening marker.\n\n` +
       `=== EXISTING SAVED CONTEXT (may be stale) ===\n${project.context || "(none)"}\n\n` +
       `=== RECENT ACTIVITY ===\n${digest || "(none)"}`,
     options: {
@@ -1686,7 +1686,7 @@ async function summarizeProjectRecap(project: Project, digest: string, opts?: On
       `Write a very short "where I left off" recap for the project "${project.name}", shown when the user returns ` +
       `after time away so they can quickly regain context. Output ONLY 2–4 terse markdown bullet points ` +
       `("- " each), one line each, ideally under ~12 words. Be concrete about features, files, and tasks. ` +
-      `No headings, no intro/outro sentence, no next steps or TODOs — recap only what has already happened.\n\n` +
+      `No headings, no intro/outro sentence, no next steps or TODOs. Recap only what has already happened.\n\n` +
       `=== PROJECT CONTEXT ===\n${project.context || "(none)"}\n\n=== RECENT ACTIVITY ===\n${digest}`,
     options: {
       cwd: project.repo_path || process.cwd(),

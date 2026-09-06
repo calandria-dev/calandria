@@ -72,9 +72,9 @@ describe("samePath folds case on win32 only", () => {
 });
 
 describe("the repo lock keys two case spellings of one repo together on win32", () => {
-  // A directory with no git repo in it, which is what makes `repoLockKey` fall
-  // through to the path identity: the greenfield-project case, and the only
-  // one where the comparison is ours instead of git's.
+  // A directory with no git repo in it: `repoLockKey` falls through to the
+  // path identity here, the greenfield-project case, and the only one where
+  // the comparison is ours instead of git's.
   it("hands both spellings the same lock key", async () => {
     const { dir, shouted } = caseVariant();
     mockPlatform("win32");

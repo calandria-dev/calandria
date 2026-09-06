@@ -66,7 +66,7 @@ describe("update_task records an edit exactly when the old ownership gate would 
     expect(getTask(target.id)!.agent_edited_at).toBe(0);
   });
 
-  it("edits an inert tray suggestion and records NOTHING — that write was always allowed", () => {
+  it("edits an inert tray suggestion and records nothing, since that write was always allowed", () => {
     const project = createProject({ name: "Edits-Inert" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
     const inert = createSuggestedTask(project, { title: "Proposed", description: "" }).task!;
@@ -105,7 +105,7 @@ describe("GET /api/tasks/[id]/agent-edits", () => {
   });
 });
 
-describe("POST /api/tasks/[id]/agent-edits — revert and ack", () => {
+describe("POST /api/tasks/[id]/agent-edits, revert and ack", () => {
   it("revert restores title, description, priority and status", async () => {
     const project = createProject({ name: "Edits-Revert-Scalar" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });

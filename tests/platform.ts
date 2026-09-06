@@ -71,9 +71,9 @@ export function outputLines(stdout: string): string[] {
 
 /**
  * `detached` for a child whose whole tree the test will need to kill. On POSIX
- * that gives the child its own process group, which is what makes a negative
- * pid mean "everything it started"; on win32 it means "new console" and buys
- * nothing (see lib/processTree.ts), so it stays off there.
+ * that gives the child its own process group, so a negative pid means
+ * "everything it started"; on win32 it means "new console" and buys nothing
+ * (see lib/processTree.ts), so it stays off there.
  */
 export const DETACHED = hasProcessGroups();
 

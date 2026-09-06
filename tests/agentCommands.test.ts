@@ -19,7 +19,7 @@ describe("visibleAgentCommands", () => {
     expect(out).toEqual([{ name: "simplify", description: "simplify description", argumentHint: "<path>" }]);
   });
 
-  it("keeps unknown commands — the default is show, not hide", () => {
+  it("keeps unknown commands, since the default is show, not hide", () => {
     // An unrecognized command name still passes through unmodified.
     const out = visibleAgentCommands([cmd("some-brand-new-user-command"), cmd("acme:deploy")]);
     expect(out.map((c) => c.name)).toEqual(["some-brand-new-user-command", "acme:deploy"]);

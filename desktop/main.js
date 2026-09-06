@@ -302,7 +302,7 @@ function main() {
     // covers the switch case without a flag to clear on every path out of it.
     if (win && !win.isDestroyed()) return;
     if (!trayHosted) {
-      console.log("[shell] last window closed with no tray to hide into — quitting");
+      console.log("[shell] last window closed with no tray to hide into, quitting");
       app.quit();
     }
   });
@@ -1221,7 +1221,7 @@ async function attachOrigin(inst, origin, seq) {
   // to the system browser; `did-navigate` covers that by offering the native
   // flow on top of the page (`maybeOfferNativeSignIn`).
   const serverVersion = probe.signIn ? null : probe.version?.version || "unknown";
-  if (probe.signIn) console.log(`[shell] ${inst.name} needs a sign-in (${probe.error}) — loading it`);
+  if (probe.signIn) console.log(`[shell] ${inst.name} needs a sign-in (${probe.error}), loading it`);
   // The handshake is where an instance added by URL with no name learns the
   // one its server calls itself, before the title and menus draw from it.
   inst = adoptInstanceName(inst, probe.signIn ? null : probe.version?.instanceName);
@@ -1503,7 +1503,7 @@ async function showAttachFailure(inst, address, detail) {
     // pre-wrap because an ssh failure is several lines: what it said, and
     // what to do about a host that wanted a password.
     document.getElementById("detail").style.whiteSpace = "pre-wrap";
-    document.getElementById("detail").textContent = ${JSON.stringify(`${address} — ${detail}`)};
+    document.getElementById("detail").textContent = ${JSON.stringify(`${address}: ${detail}`)};
     document.getElementById("retry").onclick = () => resolve("retry");
     document.getElementById("switch").onclick = () => resolve("switch");
   }))()`;
@@ -2253,7 +2253,7 @@ function showDraining() {
     if (win.isMinimized()) win.restore();
     win.show();
   }
-  win?.setTitle("Calandria — finishing in-flight turns…");
+  win?.setTitle("Calandria: finishing in-flight turns…");
   win?.webContents.executeJavaScript(DRAIN_OVERLAY).catch(() => {});
 }
 
@@ -2338,7 +2338,7 @@ async function refreshTrayResidency(timeoutMs) {
   const verdict = await confirmTrayResidency({ pid: process.pid, timeoutMs });
   if (verdict.hosted === null) {
     console.log(
-      `[shell] could not confirm the tray icon (${verdict.reason}) — keeping the last answer: ` +
+      `[shell] could not confirm the tray icon (${verdict.reason}), keeping the last answer: ` +
         `${trayHosted ? "hosted" : "not hosted"}`,
     );
     return trayHosted;
@@ -2352,7 +2352,7 @@ async function refreshTrayResidency(timeoutMs) {
     console.log(
       verdict.hosted
         ? `[shell] tray icon confirmed in the status area (${verdict.reason})`
-        : `[shell] tray icon is not in any status area (${verdict.reason}) — closing the window will quit`,
+        : `[shell] tray icon is not in any status area (${verdict.reason}), closing the window will quit`,
     );
   }
   trayResidencyKnown = true;
@@ -2572,8 +2572,8 @@ function startSubscriber(inst, origin) {
     // its cookie jar instead, which is why the fetch below goes through its
     // session.
     serviceToken: serviceTokenFor(inst),
-    // Electron's session fetch, not `globalThis.fetch`, is what makes an
-    // Access-protected instance work at all: the notifier's /api/events and
+    // Electron's session fetch, not `globalThis.fetch`, reaches an
+    // Access-protected instance: the notifier's /api/events and
     // /api/projects reads happen from the main process, so without the
     // window's cookie jar they arrive unauthenticated and the badge stays at
     // zero while the page beside it works. `credentials: "include"` attaches

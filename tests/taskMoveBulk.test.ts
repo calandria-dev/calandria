@@ -201,7 +201,7 @@ describe("moveTasks (store)", () => {
     expect(getTask(dependent.id)?.auto_start).toBe(0);
   });
 
-  it("leaves a left-behind BLOCKER's own flags alone — it lost nothing", () => {
+  it("leaves a left-behind BLOCKER's own flags alone, since it lost nothing", () => {
     // The severed edge cost the mover a blocker; the blocker itself is just as
     // unblocked as before. Its auto_start is a dead flag either way, but this
     // move doesn't clear it, and touching the row would bump an updated_at the
@@ -237,7 +237,7 @@ describe("moveTasks (store)", () => {
     expect(result.moved.map((t) => t.id)).toEqual([ids[0]]);
   });
 
-  it("throws on an unknown destination — that's the caller's mistake, not a skip", () => {
+  it("throws on an unknown destination, since that's the caller's mistake and not a skip", () => {
     const { ids } = batch("Bad dest", 1);
     expect(() => moveTasks(ids, "nope")).toThrow(/project not found/);
   });
@@ -418,7 +418,7 @@ describe("discarding worktrees for part of a selection", () => {
     expect(getTask(ids[1])).toMatchObject({ worktree_path: wts[1].path, work_branch: wts[1].branch });
   });
 
-  it("ignores a blanket true — the acknowledgement is a list of ids", async () => {
+  it("ignores a blanket true, since the acknowledgement is a list of ids", async () => {
     // One checkbox over three irreversible answers isn't consent. A caller that
     // sends the single route's boolean gets the plain refusal instead of a
     // shortcut.
@@ -556,7 +556,7 @@ describe("a dirty worktree inside a selection", () => {
   });
 });
 
-describe("GET /api/tasks/move — the batch discard preview", () => {
+describe("GET /api/tasks/move, the batch discard preview", () => {
   it("answers one preview per id, so each row can name its own cost", async () => {
     const { ids, wts } = await startedBatch("Preview", 2);
     // Committed first, then dirtied: commitFile stages the whole tree, so the

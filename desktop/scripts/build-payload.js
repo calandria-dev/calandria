@@ -213,9 +213,9 @@ async function main() {
     if (!fs.existsSync(buildId)) throw new Error(`--no-build, but there is no build at ${path.dirname(buildId)}`);
     log(`[payload] reusing existing .next (--no-build)`);
   } else if (fs.existsSync(buildId)) {
-    log(`[payload] reusing existing .next — delete it or run \`npm run build\` to refresh`);
+    log(`[payload] reusing existing .next, delete it or run \`npm run build\` to refresh`);
   } else {
-    log(`[payload] no .next — running \`npm run build\` in ${REPO}`);
+    log(`[payload] no .next, running \`npm run build\` in ${REPO}`);
     run("npm", ["run", "build"], REPO);
   }
 
@@ -249,10 +249,10 @@ async function main() {
   //     can audit, and these delete whole dependencies.
   const swc = pruneBuildOnlySwc(STAGE);
   if (swc?.skipped) {
-    log(`[payload] keeping @next/swc — ${swc.skipped}`);
+    log(`[payload] keeping @next/swc: ${swc.skipped}`);
   } else if (swc?.dropped?.length) {
     const total = swc.dropped.reduce((sum, d) => sum + d.size, 0);
-    log(`[payload] dropped @next/swc (${mb(total)}) — a build-time compiler; \`next start\` never loads it`);
+    log(`[payload] dropped @next/swc (${mb(total)}): a build-time compiler; \`next start\` never loads it`);
     for (const d of swc.dropped) log(`[payload]   - ${d.name} (${mb(d.size)})`);
   }
 
@@ -286,7 +286,7 @@ async function main() {
   if (fs.existsSync(cache)) {
     const dropped = bytes(cache);
     fs.rmSync(cache, { recursive: true, force: true });
-    log(`[payload] dropped .next/cache (${mb(dropped)}) — build scratch, not runtime`);
+    log(`[payload] dropped .next/cache (${mb(dropped)}): build scratch, not runtime`);
   }
 
   // 5. The Node the sidecars run under.
@@ -307,7 +307,7 @@ async function main() {
       stdio: "inherit",
     });
   } else {
-    log(`[payload] WARN: cross-build — skipping the native-addon ABI check`);
+    log(`[payload] WARN: cross-build, skipping the native-addon ABI check`);
   }
 
   log(`[payload] staged ${mb(bytes(STAGE))} at ${STAGE}`);

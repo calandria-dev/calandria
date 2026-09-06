@@ -81,7 +81,7 @@ export function ProjectsColumn({ projects, deprecated, agents, selId, running, w
                   {p.task_count} task{p.task_count !== 1 ? "s" : ""}{p.sub ? ` · ${p.sub}` : ""}
                   {(p.cost_usd > 0 || p.unpriced_turns > 0) && (
                     <span className="psub-cost" title={p.unpriced_turns > 0
-                      ? `Total spend across this project's tasks. ${p.unpriced_turns} turn${p.unpriced_turns === 1 ? "" : "s"} ran against a custom endpoint with no price set and ${p.cost_usd > 0 ? "are left out of this figure" : "there is nothing else to count, so there is no figure"} — unknown, not $0.00.`
+                      ? `Total spend across this project's tasks. ${p.unpriced_turns} turn${p.unpriced_turns === 1 ? "" : "s"} ran against a custom endpoint with no price set and ${p.cost_usd > 0 ? "are left out of this figure" : "there is nothing else to count, so there is no figure"}: unknown, not $0.00.`
                       : "Total spend across this project's tasks"}> · {fmtCostTotal(p.cost_usd, p.unpriced_turns)}</span>
                   )}
                 </div>

@@ -229,9 +229,9 @@ test("a GUI-launched .app boots, and the supervisor repairs launchd's stub PATH"
   // independently, so ours can be answered a tick before the supervisor
   // writes `[shell] ready on ...`, and `open --stdout` buffers on top of
   // that. Sampling open.log once at that instant can read a boot still
-  // mid-narration, so waiting for the final line is what makes the snapshot
-  // below a whole one; a truncated log would pass the negative assertion in
-  // (2) vacuously.
+  // mid-narration, so waiting for the final line makes the snapshot below a
+  // whole one; a truncated log would pass the negative assertion in (2)
+  // vacuously.
   await expect
     .poll(() => readLog(), { timeout: 30_000, intervals: [250] })
     .toMatch(/\[shell] ready on http:\/\/127\.0\.0\.1:\d+/);
@@ -255,9 +255,9 @@ test("a GUI-launched .app boots, and the supervisor repairs launchd's stub PATH"
   await testInfo.attach("launchd-domain-path.txt", {
     body:
       `launchd user-domain PATH override before this spec planted the stub:\n` +
-      `${priorDomainPath ?? "(none — a GUI launch on this machine gets launchd's stub unprompted)"}\n\n` +
+      `${priorDomainPath ?? "(none: a GUI launch on this machine gets launchd's stub unprompted)"}\n\n` +
       `planted for the app under test: ${STUB_PATH}\n` +
-      `PATH withheld from open(1)'s environment: ${callerHadPath ? "yes" : "no — the caller had none to withhold"}\n\n` +
+      `PATH withheld from open(1)'s environment: ${callerHadPath ? "yes" : "no, the caller had none to withhold"}\n\n` +
       `Read the first line as the premise check docs/DESKTOP_APP.md §2 asks for:\n` +
       `"none" means this machine would have handed a double-clicked .app the\n` +
       `stub on its own and the plant was redundant. Any other value means the\n` +
@@ -279,7 +279,7 @@ test("a GUI-launched .app boots, and the supervisor repairs launchd's stub PATH"
   // own; that premise is a manual check on a real Mac.
   expect(
     log,
-    "the supervisor did not report a stub PATH. Read open.log for the 'PATH is not launchd's stub, using it as-is:' line — the value it prints names which environment reached the app."
+    "the supervisor did not report a stub PATH. Read open.log for the 'PATH is not launchd's stub, using it as-is:' line: the value it prints names which environment reached the app."
   ).toContain("PATH looked like launchd's stub");
 
   // (2) …and the probe succeeded rather than falling through to the warning.
@@ -309,7 +309,7 @@ test("a GUI-launched .app boots, and the supervisor repairs launchd's stub PATH"
   ]).toString();
   const widened = loginPath.split(path.delimiter).filter((p) => p && !STUB_PATH_DIRS.has(p));
   await testInfo.attach("login-shell-path.txt", {
-    body: `${loginPath}\n\nbeyond launchd's stub: ${widened.length ? widened.join(", ") : "(nothing — the repair was a no-op here)"}\n`,
+    body: `${loginPath}\n\nbeyond launchd's stub: ${widened.length ? widened.join(", ") : "(nothing: the repair was a no-op here)"}\n`,
     contentType: "text/plain",
   });
 

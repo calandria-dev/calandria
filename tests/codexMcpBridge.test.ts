@@ -169,7 +169,7 @@ describe("codex hosted gateway MCP mount", () => {
     expect(out.demo).toEqual({ url: "http://gw.example/demo/mcp", default_tools_approval_mode: "approve" });
   });
 
-  it("mounts nothing under plan — codex exec has no approver, and plan runs read-only anyway", () => {
+  it("mounts nothing under plan, since codex exec has no approver and plan runs read-only anyway", () => {
     expect(gatewayMcpForPermission(gatewayProject, task, "plan")).toEqual({});
   });
 

@@ -328,5 +328,5 @@ test("adding an instance from the dialog attaches to it", async () => {
       .map((i: any) => `${i.label}${i.checked ? " *" : ""}`);
   });
   expect(labels).toHaveLength(3);
-  expect(labels[2]).toMatch(/^Lab Two — .* \*$/);
+  expect(labels[2]).toMatch(/^Lab Two \(.*\) \*$/);
 });

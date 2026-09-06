@@ -121,7 +121,7 @@ export function resolveTargetProject(
     // repeating it back would leave the agent no way to retry successfully.
     return {
       error:
-        `"${wanted}" is ambiguous — ${byName.length} projects share that name. ` +
+        `"${wanted}" is ambiguous: ${byName.length} projects share that name. ` +
         `Pass one of these ids instead: ${byName.map((p) => p.id).join(", ")}. ${nothingHappened}`,
     };
   }
@@ -184,7 +184,7 @@ export function resolveTagRefs(
       const names = listTags(project.id).map((t) => `"${t.name}"`).join(", ") || "(none yet)";
       return {
         error:
-          `no tag in ${project.name} matches "${ref}" — pass an existing tag id or its exact name, from: ${names}. ` +
+          `no tag in ${project.name} matches "${ref}". Pass an existing tag id or its exact name, from: ${names}. ` +
           `Call list_tags for them, or file the task with suggest_task's \`tags\`, which creates a tag that doesn't exist yet`,
       };
     }
@@ -353,7 +353,7 @@ export function createSuggestedTask(project: Project, input: SuggestTaskInput): 
     if (!localModel) {
       return {
         task: null,
-        text: `Could not add "${input.title}": provider "local" needs a model — pass one (an Ollama tag such as qwen3-coder), or set a local model on ${project.name} in its settings. Nothing was created.`,
+        text: `Could not add "${input.title}": provider "local" needs a model. Pass one (an Ollama tag such as qwen3-coder), or set a local model on ${project.name} in its settings. Nothing was created.`,
       };
     }
     agentEnv = providerPresetEnv({
@@ -886,7 +886,7 @@ export function updateTaskForAgent(
     if (problems.length)
       return fail(
         `Could not update ${what}: ${problems.join("; ")}. \`blocked_by\` takes task ids (from suggest_task or list_tasks) ` +
-          `in the same project, and it replaces the whole set — so nothing was changed rather than wiring the refs that did ` +
+          `in the same project, and it replaces the whole set, so nothing was changed rather than wiring the refs that did ` +
           `work and silently dropping the rest. Pass the complete list of blockers.`
       );
     const depsBefore = getTaskDeps(cur.id);
@@ -930,7 +930,7 @@ export function updateTaskForAgent(
       setTaskDeps(cur.id, nextDeps);
     } catch (e) {
       return fail(
-        `Could not update ${what}: ${(e as Error).message} — those blockers would make a loop, so the task could never ` +
+        `Could not update ${what}: ${(e as Error).message}. Those blockers would make a loop, so the task could never ` +
           `start. Nothing was changed. Check what each task is already blocked by with list_tasks.`
       );
     }
@@ -1038,11 +1038,11 @@ export function withdrawSuggestionForAgent(
   const wanted = targetRef?.trim() ?? "";
   const fail = (text: string) => ({ task: null, text, autoStartDependents: false });
 
-  if (!wanted) return fail("Could not withdraw: `task` is required — pass the id of the suggestion to retract. Nothing was changed.");
+  if (!wanted) return fail("Could not withdraw: `task` is required. Pass the id of the suggestion to retract. Nothing was changed.");
   // Required, and required to say something. An unexplained retraction leaves
   // the user a struck-through card and no way to judge whether to revive it.
   const why = reason?.trim() ?? "";
-  if (!why) return fail("Could not withdraw: `reason` is required — say why the suggestion should be dropped. Nothing was changed.");
+  if (!why) return fail("Could not withdraw: `reason` is required. Say why the suggestion should be dropped. Nothing was changed.");
 
   if (wanted === caller.id)
     return fail("Could not withdraw this task: it's the one this session is running in, not an unreviewed suggestion. Nothing was changed.");
@@ -1076,7 +1076,7 @@ export function withdrawSuggestionForAgent(
   return {
     task: updated,
     text:
-      `Withdrew "${updated.title}" — it stays in the user's Suggested tray, struck through, with your reason on it, ` +
+      `Withdrew "${updated.title}". It stays in the user's Suggested tray, struck through, with your reason on it, ` +
       `so they can revive it or dismiss it for good.`,
     // Cancelling is a blocker clearing. Anything auto-starting behind this
     // suggestion is now unblocked and must actually launch, or it waits forever.
@@ -1205,12 +1205,12 @@ export async function moveTasksForAgent(
   if (result.unchanged.length)
     lines.push(`Already there, so left alone: ${result.unchanged.map(name).join(", ")}.`);
   if (result.skipped.length) {
-    lines.push(`Not moved: ${result.skipped.map((s) => `${name(s.id)} — ${s.reason}`).join("; ")}.`);
+    lines.push(`Not moved: ${result.skipped.map((s) => `${name(s.id)}: ${s.reason}`).join("; ")}.`);
     // Said once, not per row, since the answer it asks for is the same
     // one, and it is not one this tool can give on the user's behalf.
     if (result.skipped.some((s) => s.reason.startsWith("a started task can't be moved")))
       lines.push(
-        `Moving a started task means destroying the worktree it was cut from, which only the user can approve — ` +
+        `Moving a started task means destroying the worktree it was cut from, which only the user can approve, ` +
           `from the task's Move dialog on the board. Say which tasks are waiting on that rather than re-filing them.`
       );
   }
@@ -1381,12 +1381,12 @@ export function updateTagForAgent(
 ): { tag: Tag | null; text: string } {
   const fail = (text: string) => ({ tag: null, text });
   const ref = tagRef?.trim() ?? "";
-  if (!ref) return fail("Could not update the tag: `tag` is required — pass a tag id or its exact name from `list_tags`. Nothing was changed.");
+  if (!ref) return fail("Could not update the tag: `tag` is required. Pass a tag id or its exact name from `list_tags`. Nothing was changed.");
 
   const hit = resolveTagRefs(project, [ref]);
   if ("error" in hit) return fail(`Could not update the tag: ${hit.error}. Nothing was changed.`);
   const cur = hit.tags[0];
-  if (!cur) return fail("Could not update the tag: `tag` is required — pass a tag id or its exact name from `list_tags`. Nothing was changed.");
+  if (!cur) return fail("Could not update the tag: `tag` is required. Pass a tag id or its exact name from `list_tags`. Nothing was changed.");
 
   const fields: { name?: string; description?: string; color?: string | null; base_branch?: string } = {};
   const changed: string[] = [];
@@ -1435,7 +1435,7 @@ export function updateTagForAgent(
   } catch (e) {
     if (e instanceof TagNameConflictError)
       return fail(
-        `Could not update "${cur.name}": ${e.message}. Two tags can't share a name — pick a different one, or tag the tasks ` +
+        `Could not update "${cur.name}": ${e.message}. Two tags can't share a name. Pick a different one, or tag the tasks ` +
           `with the existing "${e.tagName}" via update_task instead of renaming this one onto it. Nothing was changed.`
       );
     return fail(`Could not update "${cur.name}": ${(e as Error).message}. Nothing was changed.`);
@@ -1453,7 +1453,7 @@ export function updateTagForAgent(
       `Updated tag "${updated.name}": ${changed.join(", ")}.` +
       (fields.base_branch
         ? ` Tasks tagged with it are cut from ${fields.base_branch} from now on; members whose worktree already exists keep the ` +
-          `branch their work is built on — retarget those with set_base_branch.`
+          `branch their work is built on. Retarget those with set_base_branch.`
         : ""),
   };
 }
@@ -1555,10 +1555,10 @@ export function registerExposedService(project: Project, name: string, port: num
   const info = exposeService(project, name.trim() || "dev", port);
   const url = info.url ?? `http://localhost:${port}`;
   const text =
-    `Registered "${info.name}" on port ${port}. It's reachable at ${url} — ` +
-    `give the user this exact URL. It now shows in the project's Services panel` +
+    `Registered "${info.name}" on port ${port}. It's reachable at ${url}. ` +
+    `Give the user this exact URL. It now shows in the project's Services panel` +
     (info.visibility === "private"
-      ? ` (visibility: private — only the signed-in owner can open it; they can share it from the panel).`
+      ? ` (visibility: private: only the signed-in owner can open it; they can share it from the panel).`
       : ` (visibility: ${info.visibility}).`);
   return { info, url, text };
 }

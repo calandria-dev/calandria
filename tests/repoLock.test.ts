@@ -95,7 +95,7 @@ describe("repoLockKey", () => {
     expect(await repoLockKey(path.join(dir, "missing"))).toMatch(KEYED_ABSOLUTE("path"));
   });
 
-  it("does not cache the miss — a dir that becomes a repo re-resolves", async () => {
+  it("does not cache the miss, so a dir that becomes a repo re-resolves", async () => {
     // ensureWorktree inits greenfield projects, so this transition is routine.
     // A remembered "not a repo" would key the calls after the init differently
     // from the ones before it, producing two locks over one repo again.
@@ -150,7 +150,7 @@ describe("withRepoLock", () => {
     expect(wt).not.toBeNull();
   });
 
-  it("queues two ensureWorktree calls — one symlinked, one real — on one lock", async () => {
+  it("queues two ensureWorktree calls, one symlinked and one real, on one lock", async () => {
     const repo = await makeRepo();
     const link = symlinkTo(repo);
     const gate = deferred();

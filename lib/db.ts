@@ -120,7 +120,7 @@ export function init(db: Database.Database) {
       --   pr_merged_at  when GitHub says it merged (0 = it hasn't). Distinct
       --              from merged_at, which is OUR local merge into the base
       --              branch: a PR merged on github.com never touched this box.
-      --   pr_synced_at  when we last heard from GitHub — the staleness clock
+      --   pr_synced_at  when we last heard from GitHub: the staleness clock
       --              every refresh trigger reads before spawning gh.
       --   pr_draft   1 while the PR is a draft. Separate from pr_state, which
       --              only says open/merged/closed: a draft is open and cannot
@@ -172,13 +172,13 @@ export function init(db: Database.Database) {
       -- left alone: ahead of now the task is drawn in the Snoozed category,
       -- behind it the task is back in its own status group wearing a "was
       -- snoozed" chip, and the user opening it clears the value to 0. Nothing
-      -- sweeps this — a past deadline simply stops matching — so a wake can't
+      -- sweeps this: a past deadline simply stops matching, so a wake can't
       -- be missed by an app that was shut down when it came due.
       snoozed_until INTEGER NOT NULL DEFAULT 0,
       -- When an UNATTENDED run finished cleanly and nobody has acknowledged it
       -- yet (ms epoch; 0 = nothing outstanding). A scheduled turn that succeeds
-      -- deliberately leaves awaiting_input at 0 — it is not asking anybody
-      -- anything — so without this column the task rested at 'in_progress'
+      -- leaves awaiting_input at 0, since it is not asking anybody
+      -- anything, so without this column the task rested at 'in_progress'
       -- with nothing running and no path out of it, and every firing added a
       -- permanent "In progress" row (issue #28). Written by lib/runner.ts on
       -- the scheduled-success path, cleared by the next turn that starts here
@@ -222,7 +222,7 @@ export function init(db: Database.Database) {
 
     -- Follow-up messages the user typed while a turn was still running, parked
     -- FIFO per task. The runner pops the oldest one as the next turn when the
-    -- current turn ends (see lib/runner.ts). Cleared on startup — a turn that
+    -- current turn ends (see lib/runner.ts). Cleared on startup: a turn that
     -- was mid-flight when the process died can't be resumed, so its queue is moot.
     CREATE TABLE IF NOT EXISTS pending_messages (
       id          TEXT PRIMARY KEY,
@@ -235,7 +235,7 @@ export function init(db: Database.Database) {
     -- One row per agent session (one generation of a task). Lets us show every
     -- session that ran under a project. claude_session_id is the agent's own
     -- opaque session/thread id (named for the first driver; a Codex thread id
-    -- lands in the same column) — the app only stores and resumes it, never
+    -- lands in the same column); the app only stores and resumes it, never
     -- interprets it.
     CREATE TABLE IF NOT EXISTS sessions (
       id                TEXT PRIMARY KEY,
@@ -296,7 +296,7 @@ export function init(db: Database.Database) {
 
     -- One row per successful merge that actually landed commits (re-merges of an
     -- already-merged branch don't record). additions/deletions are the line
-    -- stats of what that merge introduced on the base branch — captured at merge
+    -- stats of what that merge introduced on the base branch, captured at merge
     -- time because worktrees (the only other source of diff stats) are deleted
     -- with their task. Feeds the Insights "code merged per day" charts.
     CREATE TABLE IF NOT EXISTS task_merges (
@@ -312,7 +312,7 @@ export function init(db: Database.Database) {
     -- Task ordering: a task "depends on" (is blocked by) another. While any
     -- depends_on_id task isn't 'done', the dependent task is shown as blocked and
     -- can't be started. Both sides cascade-delete with their task. CREATE IF NOT
-    -- EXISTS means older DBs pick this up automatically — no migrate() entry needed.
+    -- EXISTS means older DBs pick this up automatically, no migrate() entry needed.
     CREATE TABLE IF NOT EXISTS task_dependencies (
       task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       depends_on_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -326,7 +326,7 @@ export function init(db: Database.Database) {
     -- already accepted. actor_* denormalizes the calling session rather than
     -- foreign-keying tasks(id), because the calling task can be deleted long
     -- after this edit happened and the diff panel must still say who made it.
-    -- changes is JSON (AgentEditChange[] — see lib/types.ts). reverted_at is
+    -- changes is JSON (AgentEditChange[], see lib/types.ts). reverted_at is
     -- 0 until the user presses Revert on this specific edit.
     CREATE TABLE IF NOT EXISTS task_agent_edits (
       id            TEXT PRIMARY KEY,
@@ -344,14 +344,14 @@ export function init(db: Database.Database) {
     -- What a task's agent-configuration files looked like the last time a turn
     -- was allowed to run under them (issue #43). One row per (task, file), where
     -- 'file' is worktree-relative and comes from the driver's own
-    -- watchedSettingsFiles — today '.claude/settings.json', which the Claude CLI
+    -- watchedSettingsFiles: today '.claude/settings.json', which the Claude CLI
     -- re-reads on every turn and whose 'hooks' run shell commands outside the
     -- permission gate entirely. The runner hashes the file before each turn and
     -- holds the turn on a card when the hash moved (lib/settingsDrift.ts).
     --
     -- Its own table rather than a column on tasks: 'content' is the acknowledged
     -- copy, kept so the card can show a real diff rather than "something
-    -- changed", and listTasks selects t.* straight onto the wire — a settings
+    -- changed", and listTasks selects t.* straight onto the wire: a settings
     -- file per task card is not something the board should be shipping. hash is
     -- over the FULL file even when content was too big to keep, so an oversize
     -- file still compares correctly; content is '' in that case.
@@ -366,10 +366,10 @@ export function init(db: Database.Database) {
     );
 
     -- Remembered "always allow" answers to a tool-permission prompt (the
-    -- canUseTool gate under acceptEdits / plan — see lib/permissions.ts).
+    -- canUseTool gate under acceptEdits / plan, see lib/permissions.ts).
     -- Project-scoped on purpose: approving "npm test" for one repo must not
     -- approve it everywhere. match_kind is 'bash_prefix' (leading command
-    -- tokens) or 'bash_exact' (one literal command line) — Bash-only, because a
+    -- tokens) or 'bash_exact' (one literal command line), Bash-only because a
     -- command is the one tool input a user can read in full and generalize.
     -- CREATE IF NOT EXISTS means older DBs pick it up with no migrate() entry.
     CREATE TABLE IF NOT EXISTS permission_rules (
@@ -386,7 +386,7 @@ export function init(db: Database.Database) {
     -- and deliberately its OWN table rather than a column on a task row, so a
     -- schedule outlives the tasks it mints (each firing creates a fresh one).
     -- time_of_day is wall clock in 'timezone', which is an IANA zone name and
-    -- never an offset — the offset changes twice a year and the wall time must
+    -- never an offset: the offset changes twice a year and the wall time must
     -- not. next_fire_at is a CACHE of lib/schedule/time.ts, recomputed on edit,
     -- after each firing, and revalidated on boot (tzdata moves).
     CREATE TABLE IF NOT EXISTS schedules (
@@ -436,7 +436,7 @@ export function init(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_schedule_runs_schedule ON schedule_runs(schedule_id, scheduled_for DESC);
 
     -- A saved task-launch preset: "push everything unpushed and babysit CI".
-    -- Project-keyed and its OWN table for the same reason schedules are one —
+    -- Project-keyed and its OWN table for the same reason schedules are one:
     -- it outlives every task it dispatches, and each Run MINTS A FRESH TASK.
     --
     -- This is a schedules row with the clock taken off, which is why the two
@@ -457,7 +457,7 @@ export function init(db: Database.Database) {
       priority        TEXT NOT NULL DEFAULT 'med',
       position        INTEGER NOT NULL DEFAULT 0,
       -- '' = the user wrote it; otherwise the agent id that filed it via
-      -- create_runbook. Provenance only — a runbook is inert until someone
+      -- create_runbook. Provenance only: a runbook is inert until someone
       -- presses Run, so an agent-created one needs no review tray.
       created_by      TEXT NOT NULL DEFAULT '',
       created_at      INTEGER NOT NULL,
@@ -466,7 +466,7 @@ export function init(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_runbooks_project ON runbooks(project_id);
 
-    -- A named, project-scoped label a task can carry — the noun a multi-task
+    -- A named, project-scoped label a task can carry: the noun a multi-task
     -- feature was missing (docs/superpowers/specs/2026-08-27-tags-design.md;
     -- its one-per-task ancestor is the task-grouping spike from 2026-08-24).
     -- Deliberately NOT a task: no session, no worktree, no status of its own.
@@ -474,7 +474,7 @@ export function init(db: Database.Database) {
     -- terminal), never stored, so a deleted task can't leave it stale.
     -- UNIQUE(project_id, name) is what makes exact-name resolution from an
     -- agent unambiguous; a rename collision is a 409. origin_task_id is
-    -- provenance — the planning session that filed the tag — and SET NULL
+    -- provenance (the planning session that filed the tag) and SET NULL
     -- because deleting the plan must not delete the set it named. Membership
     -- lives in task_tags below, not in a column on tasks: a task carries as
     -- many tags as it has reasons to.
@@ -502,7 +502,7 @@ export function init(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_tags_project ON tags(project_id);
 
     -- Which tasks carry which tags. CASCADE on both ends: deleting a tag
-    -- untags its members (it never deletes them — a tag is a label over work,
+    -- untags its members (it never deletes them; a tag is a label over work,
     -- not the work), and deleting a task takes its rows with it. "position" is
     -- the order this task's tags render and inject their context in, so a task
     -- whose primary tag is the auth migration says so first.
@@ -548,11 +548,11 @@ export function init(db: Database.Database) {
     );
 
     -- Persisted service registry (lib/services.ts writes through to this).
-    -- Processes never survive a restart; these rows do — so a managed dev server
+    -- Processes never survive a restart; these rows do, so a managed dev server
     -- (desired_state='running') is auto-restarted on boot and its public URL
     -- (slug--<host>) stays stable. slug is the public hostname label, globally
     -- UNIQUE because the hostname carries no project. An expose_service entry
-    -- (managed=0 — we don't own the command) persists for URL/visibility
+    -- (managed=0, we don't own the command) persists for URL/visibility
     -- continuity only and is never auto-started.
     CREATE TABLE IF NOT EXISTS services (
       id            TEXT PRIMARY KEY,
@@ -576,12 +576,12 @@ export function init(db: Database.Database) {
     );
 
     -- Review comments on a task's diff (Changes tab). CREATE IF NOT EXISTS means
-    -- older DBs pick this up automatically — no migrate() entry needed.
+    -- older DBs pick this up automatically, no migrate() entry needed.
     CREATE TABLE IF NOT EXISTS task_comments (
       id            TEXT PRIMARY KEY,
       task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       file          TEXT NOT NULL,
-      -- 'old' or 'new' — which diff column's line numbering this anchors to
+      -- 'old' or 'new': which diff column's line numbering this anchors to
       -- (old/new are independent counters, so a bare line number collides).
       side          TEXT NOT NULL DEFAULT 'new',
       line_start    INTEGER NOT NULL,
@@ -733,7 +733,7 @@ export function settleOpenCards(db: Database.Database): { permissions: number; a
     .prepare(
       `UPDATE messages
           SET content = json_set(content, '$.ask.dismissed',
-                json('{"reason":"restarted","note":"Not answered \u2014 the app restarted before an answer arrived."}'))
+                json('{"reason":"restarted","note":"Not answered: the app restarted before an answer arrived."}'))
         WHERE role = 'tool'
           AND content LIKE '%"ask"%'
           AND json_valid(content)
@@ -976,7 +976,7 @@ export function migrate(db: Database.Database) {
   // outstanding again, which costs one extra ack and loses nothing.
   const editCols = (db.prepare("PRAGMA table_info(task_agent_edits)").all() as { name: string }[]).map((c) => c.name);
   if (!editCols.includes("acknowledged_at")) db.exec("ALTER TABLE task_agent_edits ADD COLUMN acknowledged_at INTEGER NOT NULL DEFAULT 0");
-  // Measured context-window occupancy (see the schema comment). No backfill:
+  // Context-window occupancy column (see the schema comment). No backfill:
   // NULL is the honest value for every pre-existing row, and is exactly what
   // routes the gauge to the usage-derived estimate it showed before.
   if (!taskCols.includes("context_measured")) db.exec("ALTER TABLE tasks ADD COLUMN context_measured INTEGER");

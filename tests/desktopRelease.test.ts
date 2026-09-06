@@ -95,12 +95,13 @@ describe("desktop release publishing", () => {
   });
 });
 
-// The `publish` block pinned above is what makes a release work, and it is also
-// what makes every other lane fail unless it says otherwise. electron-builder
-// does not treat a missing `--publish` as "don't": PublishManager fills the
-// policy in itself, and on CI with no tag that default is `onTagOrDraft`, which
-// still constructs a GitHubPublisher to go looking for a draft. That constructor
-// throws before it does anything useful:
+// The `publish` block pinned above is required for a release to work, and it
+// also determines whether every other lane fails unless it says otherwise.
+// electron-builder does not treat a missing `--publish` as "don't":
+// PublishManager fills the policy in itself, and on CI with no tag that
+// default is `onTagOrDraft`, which still constructs a GitHubPublisher to go
+// looking for a draft. That constructor throws before it does anything
+// useful:
 //
 //   Error: GitHub Personal Access Token is not set, neither programmatically,
 //   nor using env "GH_TOKEN"

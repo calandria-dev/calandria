@@ -9,7 +9,7 @@
 // no error.
 //
 // The resolver reads os.homedir() and the env at call time, not import time,
-// which is what makes a fake HOME testable here.
+// so a fake HOME is testable here.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -194,8 +194,8 @@ async function bootStore() {
 function closeDb() {
   const open = (globalThis as { __calandriaDb?: { close(): void } }).__calandriaDb;
   if (open) {
-    // close() checkpoints the WAL away, which is what makes the file below
-    // movable: the same reason the migration recipe says to stop the app first.
+    // close() checkpoints the WAL away, which makes the file below movable:
+    // the same reason the migration recipe says to stop the app first.
     try { open.close(); } catch {}
     delete (globalThis as { __calandriaDb?: unknown }).__calandriaDb;
   }

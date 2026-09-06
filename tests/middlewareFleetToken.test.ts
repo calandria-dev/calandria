@@ -44,7 +44,7 @@ describe("middleware: fleet token stays read-only", () => {
     });
   }
 
-  it("rejects the fleet token on POST scheduler (starts the ticker — a mutation)", async () => {
+  it("rejects the fleet token on POST scheduler (starts the ticker, a mutation)", async () => {
     const res = await middleware(req("/api/instance/scheduler", "POST", "fleet-secret"));
     expect(res.status).toBe(403);
   });
@@ -54,7 +54,7 @@ describe("middleware: fleet token stays read-only", () => {
     expect(res.status).toBe(200);
   });
 
-  it("rejects the fleet token on POST services-restore (restarts managed services — a mutation)", async () => {
+  it("rejects the fleet token on POST services-restore (restarts managed services, a mutation)", async () => {
     const res = await middleware(req("/api/instance/services-restore", "POST", "fleet-secret"));
     expect(res.status).toBe(403);
   });

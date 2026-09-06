@@ -125,7 +125,7 @@ describe("prompt-too-long recovery", () => {
   });
 });
 
-describe("isPromptTooLong — provider-agnostic context-overflow detection", () => {
+describe("isPromptTooLong: provider-agnostic context-overflow detection", () => {
   it("matches the Anthropic (Claude driver) signature", () => {
     expect(isPromptTooLong("API Error: 400 prompt is too long: 250000 tokens > 204698 maximum")).toBe(true);
   });

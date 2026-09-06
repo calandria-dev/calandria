@@ -95,7 +95,7 @@ export function estimateCostUsd(
 ): number {
   // Three steps, because the resolved default is catalog data and a catalog
   // may name a model this table has no row for. The constant is the last resort
-  // and always matches, which is what makes the assertion safe.
+  // and always matches, so the assertion below holds.
   const fallbackModel = resolveCodexModel(null);
   const p =
     PRICES.find((r) => model.startsWith(r.prefix)) ??

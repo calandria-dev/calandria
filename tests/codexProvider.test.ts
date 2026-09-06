@@ -77,7 +77,7 @@ describe("codexProviderConfig through the gateway", () => {
     });
   });
 
-  it("names the key VARIABLE rather than carrying its value — the documented Codex footgun", () => {
+  it("names the key VARIABLE rather than carrying its value, the documented Codex footgun", () => {
     const out = codexProviderConfig({ OPENAI_BASE_URL: `${GATEWAY}/v1`, CALANDRIA_GATEWAY_KEY: "sk-secret" }, GATEWAY);
     const entry = entryOf(out, CODEX_GATEWAY_PROVIDER_ID);
     expect(entry.env_key).toBe("CALANDRIA_GATEWAY_KEY");
@@ -129,7 +129,7 @@ describe("agentTurnEnv gateway key injection for Codex", () => {
     expect(entry.http_headers).toEqual({ "x-litellm-tags": "calandria,project:p1,task:t1,agent:codex" });
   });
 
-  it("keys Codex in both billing modes — `requires_openai_auth` is deliberately unimplemented", () => {
+  it("keys Codex in both billing modes: `requires_openai_auth` is not implemented", () => {
     const env = agentTurnEnv(
       { ...gatewayProject("subscription"), id: "p1" },
       { agent_env: "", id: "t1", agent: "codex" },

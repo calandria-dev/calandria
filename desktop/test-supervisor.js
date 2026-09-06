@@ -160,7 +160,7 @@ function hold(port) {
   await test("resolveNode finds a usable Node and never returns the Electron binary", async () => {
     const n = resolveNode({ env: process.env });
     assert.match(n.version, /^v\d+\./);
-    assert.ok(!/electron/i.test(path.basename(n.path)), `resolved ${n.path} — must not be Electron`);
+    assert.ok(!/electron/i.test(path.basename(n.path)), `resolved ${n.path}, must not be Electron`);
     // Under Electron, including ELECTRON_RUN_AS_NODE, execPath is the
     // Electron binary, so it must not be what we picked.
     if (process.versions.electron) assert.notEqual(n.source, "execPath");
@@ -217,7 +217,7 @@ function hold(port) {
     assert.equal("NODE_ENV" in unnamed, false, "an inherited NODE_ENV must be dropped, not merely left unset");
   });
 
-  await test("sidecarEnv never invents a SHELL — the pty sidecar probes a better one", async () => {
+  await test("sidecarEnv never invents a SHELL, the pty sidecar probes a better one", async () => {
     // pty-server.js resolves CALANDRIA_PTY_SHELL, then $SHELL, then a probed
     // default. Setting SHELL here would short-circuit that probe and pin
     // every desktop terminal tab to the wrong default shell. The same
@@ -374,7 +374,7 @@ function hold(port) {
       instanceMenuItems(state).map((i) => i.checked),
       [false, true],
     );
-    assert.equal(instanceMenuItems(state)[1].label, "lab.example.com:8443 — lab.example.com:8443");
+    assert.equal(instanceMenuItems(state)[1].label, "lab.example.com:8443 (lab.example.com:8443)");
 
     // Removing the ATTACHED instance has to leave the app somewhere to go.
     state = removeInstance(state, added.id);
@@ -659,7 +659,7 @@ function hold(port) {
     const started = Date.now();
     await sup.stop({ drainMs: 600, graceMs: 1000 });
     const took = Date.now() - started;
-    assert.ok(took < 4000, `stop() took ${took}ms — the drain wait looks unbounded`);
+    assert.ok(took < 4000, `stop() took ${took}ms, the drain wait looks unbounded`);
     assert.ok(sup.recentLog(50).includes("drain request failed"), "an abandoned drain should say so in the log");
     assert.ok(sup.children.every((c) => c.exited), "every sidecar should still be reaped");
   });
@@ -726,7 +726,7 @@ function hold(port) {
       }
     );
     const took = Date.now() - started;
-    assert.ok(took < 5000, `start() took ${took}ms — it waited out the readiness timeout`);
+    assert.ok(took < 5000, `start() took ${took}ms, it waited out the readiness timeout`);
     assert.ok(sup.children.every((c) => c.exited), "a failed start must not leak the surviving sidecar");
   });
 
@@ -908,8 +908,8 @@ function hold(port) {
 
   await test("the tray tooltip says the count in words, and gets the plural right", async () => {
     assert.equal(trayTooltip(0), "Calandria");
-    assert.equal(trayTooltip(1), "Calandria — 1 task needs you");
-    assert.equal(trayTooltip(3), "Calandria — 3 tasks need you");
+    assert.equal(trayTooltip(1), "Calandria: 1 task needs you");
+    assert.equal(trayTooltip(3), "Calandria: 3 tasks need you");
   });
 
   await test("a toast names the instance it came from, and only when there is more than one", async () => {
@@ -1315,7 +1315,7 @@ function hold(port) {
     const total = src.indexOf("function totalNeedsYou(");
     assert.notEqual(total, -1, "the badge should be a sum across subscribers");
     assert.ok(/for \(const sub of subscribers\.values\(\)\) n \+= sub\.needsYou\.total/.test(src.slice(total, total + 300)));
-    assert.ok(/function applyBadge\(\)/.test(src), "applyBadge takes no count now — it reads the sum");
+    assert.ok(/function applyBadge\(\)/.test(src), "applyBadge takes no count now, it reads the sum");
 
     // WHICH instances. An `ssh` one needs a spawned forward, so it is watched
     // only while attached; the other two kinds have an origin already.
@@ -1508,7 +1508,7 @@ function hold(port) {
     const args = sshArgs({ host: "me@build", localPort: 3100, remotePort: 8080 });
     // Both ends of -L are pinned to loopback: the local one so the forward is
     // not offered to the LAN, the remote one because the server over there is
-    // bound to loopback and that is what makes SSH the credential.
+    // bound to loopback, which makes SSH the credential.
     assert.equal(args[args.indexOf("-L") + 1], "127.0.0.1:3100:127.0.0.1:8080");
     // BatchMode is not optional: a window has no terminal for a password.
     assert.ok(args.includes("BatchMode=yes"));
@@ -1742,7 +1742,7 @@ function hold(port) {
     assert.deepEqual(pinned.instances[1].ssh, { host: "me@build", remotePort: 8080, localPort: 3199 });
     // An unnamed one is named after its host, as a url one is after its origin.
     assert.equal(pinned.instances[1].name, "me@build");
-    assert.equal(instanceMenuItems(pinned)[1].label, "me@build — me@build");
+    assert.equal(instanceMenuItems(pinned)[1].label, "me@build (me@build)");
     assert.equal(instanceAddress(pinned.instances[1]), "ssh://me@build:8080");
     assert.equal(partitionFor(pinned.instances[1]), "persist:instance-aa11", "ssh gets its own cookie jar too");
   });

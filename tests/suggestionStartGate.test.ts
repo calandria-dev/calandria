@@ -47,7 +47,7 @@ describe("the tray and board Start gate", () => {
     expect(note).toBe("Blocked until done: Land the rename");
   });
 
-  it("allows it once the blocker is done — and once it is cancelled", () => {
+  it("allows it once the blocker is done, and once it is cancelled", () => {
     for (const status of ["done", "cancelled"] as const) {
       const byId = new Map([["b1", row("b1", "Land the rename", status)]]);
       expect(blockedNote(blockerTitles(suggestion, byId))).toBeUndefined();

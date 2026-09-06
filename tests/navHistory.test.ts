@@ -56,7 +56,7 @@ const sel = (proj: string | null, task: string | null, view: NavSel["view"] = "w
 /** The project-home pane: a project open, no task, the home intent held. */
 const home = (proj: string): NavSel => ({ proj, task: null, home: true, view: "workspace" });
 
-describe("navHistory — mobile Back via single trap entry", () => {
+describe("navHistory: mobile Back via single trap entry", () => {
   it("deep-link to a task: Back steps session → tasks → projects → exit", () => {
     const h = new FakeHistory("/app?project=NB&task=O02");
     const ref = { sel: sel("NB", "O02") };
@@ -120,7 +120,7 @@ describe("navHistory — mobile Back via single trap entry", () => {
     expect(pressBack(h, ref)).toBe("tasks");  // settings → workspace (project still open)
   });
 
-  it("desktop (armTrap=false) never pushes a trap — Back is not hijacked", () => {
+  it("desktop (armTrap=false) never pushes a trap, so Back is not hijacked", () => {
     const h = new FakeHistory("/app");
     reconcileHistory(h, PATH, sel(null, null), false);
     reconcileHistory(h, PATH, sel("P", null), false);
@@ -196,7 +196,7 @@ describe("navHistory — mobile Back via single trap entry", () => {
 // backOneLevel. Pressing one is the same as the device button when the trap is
 // armed, and must still close the pane when it isn't. The trap is armed by a
 // passive effect one paint after the button is tappable.
-describe("navHistory — the in-app Back button acts on the history it finds", () => {
+describe("navHistory: the in-app Back button acts on the history it finds", () => {
   // The button's press: what the shell's goBack does, minus React.
   function pressButton(h: FakeHistory, ref: { sel: NavSel }): { via: "history" | "state"; pane: string } {
     const via = backOneLevel(h, ref.sel, (next) => { ref.sel = next; });
@@ -207,7 +207,7 @@ describe("navHistory — the in-app Back button acts on the history it finds", (
     return { via, pane: paneOf(ref.sel) };
   }
 
-  it("with the trap armed, pops it — so the device button and the on-screen one leave the same history", () => {
+  it("with the trap armed, pops it, so the device button and the on-screen one leave the same history", () => {
     const h = new FakeHistory("/app");
     const ref = { sel: sel("P", "T") };
     settle(h, ref.sel);

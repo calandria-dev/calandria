@@ -102,8 +102,8 @@ const EMPTY = (): WorktreeSweepResult => ({ reclaimed: [], skipped: [], bytes: 0
  *
  * Locks in the same order lib/taskMove.ts takes them, the task lock then the
  * repo lock, so the two can only ever wait on each other in one direction.
- * The task lock is what makes the safety read mean anything: it is the lock a
- * turn launch holds through registerTurn(), so nothing can start writing into
+ * The task lock makes the safety read mean anything: it is the lock a turn
+ * launch holds through registerTurn(), so nothing can start writing into
  * a checkout between "this is clean" and `git worktree remove`.
  */
 export async function sweepWorktrees(
@@ -222,7 +222,7 @@ const state = (): WorktreeSweepState =>
  * reclaim is the one that needs telling its worktrees are eating the volume,
  * since the only fix is a human opening Settings → Storage.
  *
- * Measured after any sweep in the same tick, so the number reported is the
+ * Checked after any sweep in the same tick, so the number reported is the
  * one that is true now instead of the one that justified the sweep.
  */
 export async function checkWorktreeDisk(now = Date.now()): Promise<number> {

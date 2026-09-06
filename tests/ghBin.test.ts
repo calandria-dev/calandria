@@ -90,7 +90,7 @@ describe("resolveGhBin on win32", () => {
     expect(resolveGhBin("", winDir(false), [winDir(false), hit], WIN)).toBe(path.join(hit, "gh.exe"));
   });
 
-  it("does not split a win32 PATH on ':' — a drive letter is not a separator", () => {
+  it("does not split a win32 PATH on ':', since a drive letter is not a separator", () => {
     const hit = winDir();
     expect(resolveGhBin("", `C:\\Windows;${hit}`, [], WIN)).toBe("gh");
   });

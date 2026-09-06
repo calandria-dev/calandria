@@ -83,7 +83,7 @@ async function pickPorts({ port = 3000, ptyPort = 3001, probes = 20 } = {}) {
         return candidate;
       }
     }
-    return 0; // let the OS choose — caller can't predict it, so this is a last resort
+    return 0; // let the OS choose: the caller can't predict it, so this is a last resort
   };
   return { port: await pick(port), ptyPort: await pick(ptyPort) };
 }
@@ -123,14 +123,14 @@ function resolveNode({
     // pointed at Electron would pass the version probe and then fail much later
     // with an ABI error from better-sqlite3. Refuse it by name up front.
     if (/^electron/i.test(path.basename(c.path))) {
-      tried.push(`${c.source}: ${c.path} — is Electron, not Node`);
+      tried.push(`${c.source}: ${c.path} (is Electron, not Node)`);
       continue;
     }
     // Probe with the same env the sidecars will get: otherwise a bare `node`
     // resolves against the supervisor's own PATH and reports a runtime the
     // child can't actually find.
     const version = nodeVersion(c.path, env);
-    tried.push(`${c.source}: ${c.path}${version ? ` (${version})` : " — not runnable"}`);
+    tried.push(`${c.source}: ${c.path}${version ? ` (${version})` : " (not runnable)"}`);
     if (!version) continue;
     const major = Number(version.replace(/^v/, "").split(".")[0]);
     if (Number.isFinite(major) && major < MIN_NODE_MAJOR) continue;
@@ -365,7 +365,7 @@ class Supervisor {
     if (path.basename(this.serverScript) === "server.js" && !fs.existsSync(next)) {
       // NODE_ENV=production + no build = a boot loop of Next errors that reads
       // like a wrapper bug. Say the real thing instead.
-      throw new Error(`no production build found at ${next} — run \`npm run build\` in ${this.repoRoot} first`);
+      throw new Error(`no production build found at ${next}, run \`npm run build\` in ${this.repoRoot} first`);
     }
     this.effectiveEnv = this.env;
 
@@ -387,7 +387,7 @@ class Supervisor {
       if (names.length) this.effectiveEnv = { ...this.effectiveEnv, ...loaded.vars };
       // Names only, never values: this log is shown verbatim on the failure
       // screen, and this file is where people put tokens.
-      this.log(`[env] ${loaded.path}: ${names.length} variable(s) — ${names.join(", ")}`);
+      this.log(`[env] ${loaded.path}: ${names.length} variable(s): ${names.join(", ")}`);
       for (const s of loaded.skipped) this.log(`[env] WARN: ${loaded.path}:${s.line} ignored (${s.reason})`);
     } else {
       this.log(`[env] no env file at ${loaded.path}`);
@@ -415,12 +415,12 @@ class Supervisor {
       // An operator who wrote PATH into the env file means it: probing over
       // the top of an explicit value would overwrite what they asked for
       // with the login shell's PATH.
-      this.log(`[env] PATH supplied by ${loaded.path} — skipping the launchd-stub probe`);
+      this.log(`[env] PATH supplied by ${loaded.path}, skipping the launchd-stub probe`);
     } else if (wantProbe) {
       const repaired = loginShellPath({ env: this.effectiveEnv });
       if (repaired) {
         this.effectiveEnv = { ...this.effectiveEnv, PATH: repaired };
-        this.log(`[shell] PATH looked like launchd's stub — took the login shell's instead`);
+        this.log(`[shell] PATH looked like launchd's stub, took the login shell's instead`);
       } else {
         this.log(`[shell] WARN: PATH looks minimal and the login-shell probe failed; git/gh/codex may not resolve`);
       }
@@ -440,7 +440,7 @@ class Supervisor {
     this.port = ports.port;
     this.ptyPort = ports.ptyPort;
     if (this.port !== this.preferredPort) {
-      this.log(`[shell] port ${this.preferredPort} busy — using ${this.port}`);
+      this.log(`[shell] port ${this.preferredPort} busy, using ${this.port}`);
     }
     const ptyEnv = sidecarEnv({ env: this.effectiveEnv, port: this.port, ptyPort: this.ptyPort, dbDir: this.dbDir });
     // The app sidecar alone keeps NODE_ENV=production: it ships a prebuilt
@@ -594,7 +594,7 @@ class Supervisor {
     let killed = false;
     for (const { name, child, exited } of this.children) {
       if (exited) continue;
-      this.log(`[shell] ${name} did not exit in ${wait}ms — SIGKILL`);
+      this.log(`[shell] ${name} did not exit in ${wait}ms, SIGKILL`);
       try { child.kill("SIGKILL"); killed = true; } catch {}
     }
     // Return only once everything is reaped: the shell calls this from

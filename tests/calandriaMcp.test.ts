@@ -374,7 +374,7 @@ describe("calandria-mcp stdio bridge", () => {
     }
   });
 
-  it("forwards update_task's blocked_by verbatim — ids only, no title lookup", async () => {
+  it("forwards update_task's blocked_by verbatim, ids only, no title lookup", async () => {
     calls.length = 0;
     nextId = 0;
     const { client, close } = await connectBridge();

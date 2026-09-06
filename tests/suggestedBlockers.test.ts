@@ -37,7 +37,7 @@ describe("a suggestion as a blocker", () => {
     expect(blocks(suggestion.id)).toBe(true);
   });
 
-  it("stops blocking once it is done, cancelled or gone — the rule isBlocking mirrors", () => {
+  it("stops blocking once it is done, cancelled or gone, the rule isBlocking mirrors", () => {
     const { suggestion } = board();
     expect(blocks("no-such-task")).toBe(false);
     updateTask(suggestion.id, { status: "cancelled" });

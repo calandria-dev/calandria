@@ -44,10 +44,10 @@ function numEnv(name, raw, def) {
 // Log loudly and keep running instead of exiting; each occurrence is still a
 // bug to fix at its call site.
 process.on("unhandledRejection", (reason) => {
-  log.error("UNHANDLED REJECTION (kept alive — investigate)", { err: reason });
+  log.error("UNHANDLED REJECTION (kept alive, investigate)", { err: reason });
 });
 process.on("uncaughtException", (err) => {
-  log.error("UNCAUGHT EXCEPTION (kept alive — investigate)", { err });
+  log.error("UNCAUGHT EXCEPTION (kept alive, investigate)", { err });
 });
 
 // Origin auth provider (lib/auth/origin.mjs): open local mode by default, or
@@ -198,7 +198,7 @@ const prepared = dbLockImport
     dbDir = held.dir;
     if (held.mode === "bypass") {
       log.warn(
-        "WARN: CALANDRIA_DB_LOCK=off — the single-instance check is DISABLED. " +
+        "WARN: CALANDRIA_DB_LOCK=off: the single-instance check is DISABLED. " +
           "If a second process is running against this database, the two will overwrite " +
           "each other's running tasks, queued follow-ups and open permission prompts.",
       );
@@ -239,7 +239,7 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
   // billing. See lib/env-keys.mjs.
   for (const name of envKeys.stripInheritedAgentKeys()) {
     log.warn(
-      `WARN: ${name} was set in the environment — unsetting it. ` +
+      `WARN: ${name} was set in the environment, unsetting it. ` +
         `Turns authenticate via the connected agent login (or a key saved in Settings). ` +
         `Set CALANDRIA_ALLOW_API_KEY_ENV=1 to bill an environment-provided key on purpose.`,
     );
@@ -344,8 +344,8 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
     // when no tab is open anywhere.
     bootPing("scheduler", "/api/instance/scheduler");
     const auth = cfAccess.originAuthEnabled()
-      ? `origin auth ON — Cloudflare Access (team ${process.env.CF_ACCESS_TEAM_DOMAIN})`
-      : "origin auth OFF — set CF_ACCESS_*" +
+      ? `origin auth ON: Cloudflare Access (team ${process.env.CF_ACCESS_TEAM_DOMAIN})`
+      : "origin auth OFF: set CF_ACCESS_*" +
         (dev ? " (fine for local dev)" : "; DO NOT expose this origin unauthenticated");
     // Kept as prose, since splitting this into fields would turn the auth
     // sentence into noise; the config line below is the machine-readable
@@ -375,7 +375,7 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
     // so that combination needs real auth.
     if (!cfAccess.originAuthEnabled() && !/^(127\.0\.0\.1|::1|\[::1\]|localhost)$/i.test(hostname)) {
       log.warn(
-        `WARN: bound to ${hostname} with origin auth OFF — anyone who can reach ` +
+        `WARN: bound to ${hostname} with origin auth OFF: anyone who can reach ` +
           `this port gets the app and a shell. Set CF_ACCESS_*, or unset CALANDRIA_HOSTNAME.`,
       );
     }
@@ -386,7 +386,7 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
     const cfSet = ["CF_ACCESS_TEAM_DOMAIN", "CF_ACCESS_AUD"].filter((k) => (process.env[k] || "").trim());
     if (cfSet.length === 1) {
       log.warn(
-        `WARN: ${cfSet[0]} is set but the other CF_ACCESS_* variable is not — ` +
+        `WARN: ${cfSet[0]} is set but the other CF_ACCESS_* variable is not: ` +
           `Cloudflare Access enforcement needs BOTH and is currently OFF.`,
       );
     }
@@ -397,7 +397,7 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
     // a bare-node deploy has to be told.
     if (cfAccess.originAuthEnabled() && !(process.env.SERVICE_TOKEN || "").trim()) {
       log.warn(
-        `WARN: Cloudflare Access is ON but SERVICE_TOKEN is unset — health probes, ` +
+        `WARN: Cloudflare Access is ON but SERVICE_TOKEN is unset: health probes, ` +
           `boot restore of managed services, and the agent-tool bridge have no way to ` +
           `authenticate and will get 403. Generate one: openssl rand -hex 32`,
       );
@@ -407,7 +407,7 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
       // the production build; not for anyone who just wants to use the app.
       log.warn(
         "============================================================\n" +
-          "  DEV MODE — routes compile on demand; everything is slower.\n" +
+          "  DEV MODE: routes compile on demand; everything is slower.\n" +
           "  For actually using the app, run:  npm run build && npm start\n" +
           "  ============================================================",
       );

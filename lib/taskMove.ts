@@ -113,8 +113,7 @@ export async function moveTasksToProject(
 
     // Only the tasks the caller answered for. Everything else keeps the plain
     // rules: a started one among them is still refused, with its checkout
-    // untouched, which is what makes a partly-acknowledged selection safe to
-    // send whole.
+    // untouched, so a partly-acknowledged selection can still be sent whole.
     const discardIds = new Set(opts.discardWorktree ?? []);
     const unsafeIds = new Set(opts.discardUnsafe ?? []);
     const discarded: WorktreeDiscard[] = [];

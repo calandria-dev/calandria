@@ -134,7 +134,7 @@ describe("update_task (writes, scoped to the calling task)", () => {
     expect(getTask(task.id)!.status).toBe("not_started");
   });
 
-  it("refuses to cancel — it would abort the very turn making the call", () => {
+  it("refuses to cancel, since that would abort the very turn making the call", () => {
     const task = own("NoCancel");
     const { task: updated, text } = updateTaskForAgent(task, undefined,{ status: "cancelled" });
     expect(updated).toBeNull();
@@ -202,7 +202,7 @@ describe("update_task (writes, scoped to the calling task)", () => {
   });
 });
 
-describe("update_task (writes to another row — any task, minus a live turn)", () => {
+describe("update_task (writes to another row: any task, minus a live turn)", () => {
   // The caller writes to a task it doesn't own. The only refusal is a LIVE
   // turn in the target; any other write is allowed and RECORDED
   // (tasks.agent_edited_at / task_agent_edits), covered in depth by
@@ -230,7 +230,7 @@ describe("update_task (writes to another row — any task, minus a live turn)", 
     expect(getTask(caller.id)).toMatchObject({ title: "Caller", status: "not_started" });
   });
 
-  it("edits an inert suggestion in ANOTHER project — writes range as widely as suggest_task files", () => {
+  it("edits an inert suggestion in ANOTHER project, since writes range as widely as suggest_task files", () => {
     const { caller } = board("Foreign-Here");
     const there = createProject({ name: "Foreign-There" });
     const theirs = createSuggestedTask(there, { title: "Theirs", description: "" }).task!;
@@ -346,7 +346,7 @@ describe("withdraw_suggestion (retracting a tray suggestion)", () => {
     }
   });
 
-  it("requires a target — there is no 'my own row' default", () => {
+  it("requires a target: there is no 'my own row' default", () => {
     const { caller } = board("Wd-NoTarget");
     const { task: updated, text } = withdrawSuggestionForAgent(caller, undefined, "redundant");
     expect(updated).toBeNull();
@@ -739,7 +739,7 @@ describe("tags on the agent tools", () => {
     expect(listTags(project.id)).toHaveLength(1);
   });
 
-  it("update_task refuses one unusable ref out of several — the whole call fails, nothing lands", () => {
+  it("update_task refuses one unusable ref out of several: the whole call fails, nothing lands", () => {
     const project = createProject({ name: "T-Strict-Partial" });
     const task = createTask({ project_id: project.id, title: "Mine", description: "" });
     const real = createTag({ project_id: project.id, name: "Real tag" });
@@ -750,7 +750,7 @@ describe("tags on the agent tools", () => {
     expect(getTaskTagIds(task.id)).toEqual([]);
   });
 
-  it("update_task refuses a tag from another project — a tag can't span repos", () => {
+  it("update_task refuses a tag from another project, since a tag can't span repos", () => {
     const here = createProject({ name: "T-Own" });
     const there = createProject({ name: "T-Foreign" });
     const task = createTask({ project_id: here.id, title: "Mine", description: "" });

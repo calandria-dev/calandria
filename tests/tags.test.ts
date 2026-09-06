@@ -39,7 +39,7 @@ describe("tags store", () => {
     expect(() => createTag({ project_id: pid, name: "   " })).toThrow(/name required/);
   });
 
-  it("names are unique per project — on create and on rename — but not across projects", () => {
+  it("names are unique per project, on create and on rename, but not across projects", () => {
     createTag({ project_id: pid, name: "Auth migration" });
     expect(() => createTag({ project_id: pid, name: "Auth migration" })).toThrow(TagNameConflictError);
     // The store checks before the constraint fires, so the error names the tag.
