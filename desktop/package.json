@@ -7,6 +7,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node test-supervisor.js",
+    "postinstall": "node scripts/patch-electron-builder-keychain.js",
     "payload": "node scripts/build-payload.js",
     "dist:dir": "npm run payload && electron-builder --linux dir",
     "dist:linux": "npm run payload && electron-builder --linux dir deb AppImage",
