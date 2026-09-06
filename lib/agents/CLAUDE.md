@@ -431,6 +431,34 @@ itself, because a writable `config` lets a sandboxed turn plant a `core.fsmonito
 unprivileged-userns AppArmor policy, so the roots were verified by reading the CLI's source
 and its own `runtimeWorkspaceRoots` echo rather than by running a sandboxed commit here.
 
+### …and `codex/sandbox.ts` refuses the modes that block can only fail
+
+That blocked bubblewrap is the reason this file exists. On a host that denies unprivileged user
+namespaces, every `workspace-write` and `read-only` turn starts normally, looks normal, and fails
+EVERY command it runs; the model reads that as a repo that rejects all work and spends the turn
+routing around it. The CLI's only signal is a `configWarning` the app-server pushes at startup,
+which `appServerEvents.ts` surfaces as a transcript notice — mid-turn, after the money is spent.
+
+So the warning is promoted to instance state. `sandboxWarningReason()` classifies it, the verdict
+is stored as `agent_sandbox_broken_codex` beside the dead-login flag (a SEPARATE key, since
+reconnecting a working login fixes nothing and the titlebar's "sign in again" would be the wrong
+instruction), and `sandboxRefusal()` fails the turn before it starts, naming the sysctl, the
+AppArmor profile, `bypassPermissions` and `CODEX_EXTERNAL_SANDBOX`. `danger-full-access` is never
+refused, having no sandbox to fail. Three writers, one reader: `probeCodexSandbox()` at connect
+time (the verify route) and from the card's Check again button (`POST /api/agents/[id]/sandbox`,
+behind the optional `AgentDriver.sandboxHealth()`), and the driver's `onWarning` mid-turn. It
+clears on a clean probe and on any app-server turn that reached a `session` and saw no such
+warning — a fresh server's silence is proof, where a turn that died before the server spoke is
+not, which is what the `sawSession` gate is for. The classifier deliberately passes the
+"could not find bubblewrap on PATH" warning, which names its own bundled fallback in the same
+sentence; treating it as fatal would refuse turns that work.
+
+`CODEX_EXTERNAL_SANDBOX` is the container answer: `workspace-write` goes out as the app-server's
+`externalSandbox` policy, so Codex confines nothing and the image is the boundary. It covers that
+one mode. `read-only` is not mapped, because a container is not a read-only filesystem and plan
+mode's whole guarantee is that nothing is writable — quietly turning "propose without editing"
+into "may edit" is the same class of silent breakage this section is about.
+
 Enterprise-managed approval requirements can disallow `approval_policy=never`. The driver
 spots the CLI's downgrade warning and sends `on-request` for the never-asking modes from then
 on, recording the `codex_approval_downgraded` setting; on app-server that means a card

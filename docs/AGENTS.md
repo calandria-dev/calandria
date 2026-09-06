@@ -229,6 +229,33 @@ Three upstream differences are visible:
   no transport. Each agent's card in **Settings → Agents** states whether your servers are
   mounted, so you can check before picking an agent for a task.
 
+### Linux sandbox
+
+Codex confines `workspace-write` and `read-only` turns with bubblewrap, which needs to
+create an unprivileged user namespace. Ubuntu 24.04 blocks that by default
+(`kernel.apparmor_restrict_unprivileged_userns=1`), and on such a host every command in
+every workspace-write or read-only turn fails. The only signal is a startup warning from
+`codex app-server`: "Codex's Linux sandbox uses bubblewrap and needs access to create user
+namespaces."
+
+Calandria detects that warning and flags the Codex card in **Settings → Agents** with the
+fix and a "Check again" button. While the flag is set, Calandria refuses to start a
+workspace-write or read-only turn and fails it with an explanation instead of running one
+where every command fails. `bypassPermissions` (danger-full-access) uses no sandbox and is
+never refused.
+
+Fix it one of these ways:
+
+- Run `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` and persist it under
+  `/etc/sysctl.d/`.
+- Add an AppArmor profile that allows `bwrap` to create user namespaces.
+- Run the task in `bypassPermissions` mode.
+- In a container, set `CODEX_EXTERNAL_SANDBOX=1`. It sends `workspace-write` turns Codex's
+  `externalSandbox` policy, which runs commands unconfined and relies on the container as
+  the boundary. It covers `workspace-write` only: `read-only` (plan mode) stays sandboxed,
+  because its guarantee is that nothing is writable and a container does not provide that.
+  It has no effect under `CODEX_TRANSPORT=exec`, which cannot express the policy.
+
 ## Antigravity (Gemini)
 
 Antigravity is Google's coding agent and Gemini is what it runs. There is no JavaScript SDK for

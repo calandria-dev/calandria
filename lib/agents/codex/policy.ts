@@ -112,9 +112,16 @@ export function codexRunPolicy(
   }
 }
 
-/** The app-server `SandboxPolicy` object for a resolved policy (turn/start's `sandboxPolicy`). */
-export function sandboxPolicyObject(p: CodexRunPolicy):
+/**
+ * The app-server `SandboxPolicy` object for a resolved policy (turn/start's
+ * `sandboxPolicy`). `external` says the caller is already confined — see
+ * CODEX_EXTERNAL_SANDBOX in lib/config.ts for which modes may claim that and
+ * why read-only may not. Passed in rather than read here so this stays the
+ * pure mapping the tests can drive both ways.
+ */
+export function sandboxPolicyObject(p: CodexRunPolicy, external = false):
   | { type: "dangerFullAccess" }
+  | { type: "externalSandbox" }
   | { type: "readOnly"; networkAccess: boolean }
   | { type: "workspaceWrite"; writableRoots: string[]; networkAccess: boolean; excludeTmpdirEnvVar: boolean; excludeSlashTmp: boolean } {
   switch (p.sandbox) {
@@ -123,7 +130,9 @@ export function sandboxPolicyObject(p: CodexRunPolicy):
     case "read-only":
       return { type: "readOnly", networkAccess: p.network };
     case "workspace-write":
-      return { type: "workspaceWrite", writableRoots: p.writableRoots, networkAccess: p.network, excludeTmpdirEnvVar: false, excludeSlashTmp: false };
+      return external
+        ? { type: "externalSandbox" }
+        : { type: "workspaceWrite", writableRoots: p.writableRoots, networkAccess: p.network, excludeTmpdirEnvVar: false, excludeSlashTmp: false };
   }
 }
 

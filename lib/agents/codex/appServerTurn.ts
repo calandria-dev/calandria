@@ -22,6 +22,7 @@ import { describePermission } from "../../permissions";
 import { promptPermission, type PromptDecision } from "./permissionPrompt";
 import { ingestRateLimits } from "./planUsage";
 import { sandboxPolicyObject, type CodexRunPolicy } from "./policy";
+import { usesExternalSandbox } from "./sandbox";
 import { interactionDenied, recordUnattendedDenial, UNATTENDED_ASK_DENIAL, UNATTENDED_ASK_NOTE } from "../../runContext";
 import { waitForAnswer, ASK_INTERRUPTED_NOTE } from "../../asks";
 
@@ -318,7 +319,7 @@ export async function* runAppServerTurn(args: AppServerTurnArgs): AsyncGenerator
         threadId,
         input: [{ type: "text", text: args.prompt(fresh), text_elements: [] }],
         cwd: args.cwd,
-        sandboxPolicy: sandboxPolicyObject(policy),
+        sandboxPolicy: sandboxPolicyObject(policy, usesExternalSandbox(policy.sandbox)),
         ...(policy.approval ? { approvalPolicy: policy.approval } : {}),
         approvalsReviewer: policy.reviewer,
         ...(args.model ? { model: args.model } : {}),

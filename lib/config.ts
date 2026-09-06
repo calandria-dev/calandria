@@ -370,6 +370,26 @@ export const CODEX_TRANSPORT = ((): "app-server" | "exec" => {
 export const CODEX_WRITABLE_ROOTS = String(process.env.CODEX_WRITABLE_ROOTS || "");
 
 /**
+ * Whether the container is already the sandbox, so Codex should not build one.
+ * Off by default; set it in a deployment where the whole process tree is
+ * confined by something else — the published image is the case it exists for.
+ *
+ * On, a `workspace-write` turn is sent the app-server's `externalSandbox`
+ * policy instead of `workspaceWrite`, which tells Codex to run commands
+ * unconfined and rely on its caller's boundary. That is the only mode it
+ * covers. `read-only` (plan mode) is left alone on purpose: its entire
+ * guarantee is that nothing is writable, and a container does not provide that
+ * — mapping it here would turn "propose without editing" into "may edit"
+ * (lib/agents/codex/sandbox.ts). Full-access modes never used a sandbox anyway.
+ *
+ * Only the app-server transport can express this; `codex exec` has no such
+ * `--sandbox` value, so under CODEX_TRANSPORT=exec the knob does nothing.
+ */
+export const CODEX_EXTERNAL_SANDBOX = ["1", "on", "true", "yes"].includes(
+  String(process.env.CODEX_EXTERNAL_SANDBOX || "").toLowerCase(),
+);
+
+/**
  * Whether Codex tasks inherit the MCP servers configured in the user's
  * ~/.codex/config.toml, alongside Calandria's own bridge. On by default, the
  * same as the Claude driver (which inherits ~/.claude MCP servers) — see
