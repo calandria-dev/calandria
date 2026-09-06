@@ -528,6 +528,10 @@ Verify the copy (the database and `projects/` are there) before
 | `CALANDRIA_PR_POLL_MS` | `300000` | How often the background sweep re-reads tasks whose PR is still open. `0` disables the sweep, leaving the on-open and explicit-Refresh triggers. The sweep stops itself when no PR is open and skips a pass when no browser tab is watching |
 | `CALANDRIA_PR_POLL_BATCH` | `5` | Most PRs refreshed per sweep (one `gh pr view` each, oldest-synced first) |
 | `CALANDRIA_CI_LOG_TAIL_LINES` | `200` | Lines of a failed job's log the **Fix CI** button seeds its turn with, per failing check. `gh run view --log-failed` already drops the green steps, but only the end of a failing suite says what broke |
+| `CALANDRIA_SCHEDULER` | `on` | Master switch for the schedule ticker. `off` stops this instance from ever starting scheduled work on its own; the worktree sweep and retention prune still run on the same ticker if either of those is on |
+| `CALANDRIA_SCHEDULE_TICK_MS` | `30000` | How often the ticker wakes to check for due firings |
+| `CALANDRIA_SCHEDULE_CATCHUP_MS` | `14400000` (4h) | How late a missed firing may still run. Past this it's recorded `missed`, never run; `0` disables catch-up entirely |
+| `CALANDRIA_SCHEDULE_PROBE_MS` | `20000` | Bound on the fire-time slash-command check, which spawns the agent CLI inside the ticker's single-flight sweep. An unbounded check would wedge every schedule on the instance |
 
 Example: relocate an instance entirely via env.
 

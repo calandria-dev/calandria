@@ -208,10 +208,13 @@ from main** button beside the line makes it, at the commit a new task would othe
 from. A branch that lives only on the remote counts as existing, and gets a local ref the way a task
 cut would give it one.
 
-The strip is the half of this you can act on; the other half reaches the session. A task whose
-worktree was cut from a base branch already behind the default is told so in its opening
-context, before it writes a pull request — same measurement, said in the two places it
-matters.
+The strip is the half of this you can act on; the other half reaches the session. Every session's
+opening context states its resolved base branch and what Sync and Merge do with it, plus the
+project's default in parentheses when the two differ. A task whose worktree was cut from a base
+branch already behind the default is told so in that same context, before it writes a pull
+request — same measurement, said in the two places it matters. A task or tag configured to branch
+from something that no longer exists is told that too: the worktree cut falls back to whatever
+`HEAD` pointed at, and the opening context states this explicitly.
 
 ### How work lands: merge or pull request
 
@@ -749,6 +752,10 @@ Two channels carry notifications, both switched on from Settings → Notificatio
   origin or `mailto:` address: Apple's push service rejects the default
   `mailto:admin@localhost` with `403 BadJwtToken`, which the device list shows as *failing
   (403)*. Chrome, Android, and Firefox accept the default.
+
+**Send test notification** in Settings → Notifications sends one through the same path a real
+notification takes, including the push to every subscribed device, so you can check the wiring
+without waiting for a task to stall.
 
 A snoozed task never shows as waiting for input, and neither does one in an archived project,
 but both still report a failure.

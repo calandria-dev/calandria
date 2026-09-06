@@ -308,6 +308,12 @@ Four upstream differences are visible:
   choosing the effort. That catalog also serves Claude and open-weights models through the same
   Antigravity subscription.
 
+This driver also watches `<worktree>/.agents/hooks.json` for changes between turns, the same way
+Claude Code's driver watches `<worktree>/.claude/settings.json` (see "A task session's settings
+can change between turns" above). Calandria hashes it before each turn and holds the turn on a
+card when it moved. It is not confirmed that the `agy` CLI actually loads hooks from that
+worktree path; Calandria watches it as a precaution.
+
 Plan usage works here the way it does for Claude: the CLI's own `/usage` reports the weekly and
 5-hour quota remaining, and reports it without spending any, so the titlebar meter works on this
 agent too. It lists two PAIRS of windows, because an Antigravity subscription meters the Gemini
@@ -466,7 +472,21 @@ Those headers are composed per turn rather than stored: `ANTHROPIC_CUSTOM_HEADER
 Code's only knob for arbitrary request headers, and a project field that could set it would be a
 way to make every turn in that project send anything at all. It is deliberately absent from the
 `agent_env` allowlist, and the key is absent from the project row entirely — it lives in a 0600
-file beside the database and is resolved at turn time.
+file beside the database and is resolved at turn time. Claude Code also sends
+`x-claude-code-session-id` on its own, so LiteLLM records the task's session as the spend log's
+session id with no configuration needed. `CALANDRIA_LITELLM_ADMIN_KEY`'s admin/master key goes on
+a plain `Authorization` header for LiteLLM's key-management calls, never on `x-litellm-api-key`,
+which is reserved for the virtual keys turns actually bill against.
+
+**Budget failures.** When a key's, user's or team's LiteLLM budget is spent, every request against
+it is rejected the same way until the budget resets or is raised: the response carries `"type":
+"budget_exceeded"` (HTTP 400 or 429) or the exception text `ExceededBudget:`. Calandria treats
+this like a dead login: the turn ends with a notice that the session and its worktree are
+untouched, the pending queue is parked so it doesn't run every follow-up into the same rejection,
+and the agent is flagged instance-wide so every open tab shows the banner. Retry re-sends the same
+message once the budget resets or is raised. The gateway card in Settings → Agents shows the
+timing (`spend`, `max_budget`, `budget_reset_at` from `/key/info`) next to the models that key
+covers.
 
 **The health card.** Settings → Agents reports the gateway separately from the agents above it,
 for the reason the local endpoint is reported separately: an agent's *connected* is its CLI login
@@ -476,12 +496,39 @@ header that rides on every response, and a model count from `/model/info`. `/key
 `500 Database not connected` on a proxy with no Postgres behind it, and the card says **keys,
 budgets and spend need LiteLLM's database** rather than showing blanks where those would go.
 
-**What a gateway turn costs.** Recorded as **unpriced** (`task_usage.cost_usd` is NULL) and left
-out of every total, the same row a custom base URL gets. The reason differs: the gateway states
-its prices in `/model/info` and computes the real figure itself, but no CLI exposes the
-`x-litellm-response-cost` header it answers with, so the number has to be recomputed from token
-counts. Until that lands, unpriced is the honest record. The session header shows a `gateway`
-chip.
+**What a gateway turn costs.** No CLI exposes the `x-litellm-response-cost` header the gateway
+answers every request with. Calandria computes the figure itself from the gateway's own
+`/model/info` rates (input, cache-read, cache-creation and output cost per token) and the turn's
+token counts, and records it as `task_usage.cost_usd`. It is marked `≈` in Insights, the same
+convention a `~` marks a Local-model or Codex estimate with, and it is included in every total. A
+per-task virtual key's spend (below) later replaces this estimate with LiteLLM's own exact
+figure. The session header shows a `gateway` chip.
+
+**Per-task virtual keys.** Set `CALANDRIA_LITELLM_ADMIN_KEY` to mint a separate LiteLLM virtual
+key for every task. The first gateway turn a task runs mints its key (`POST /key/generate`), and
+later turns reuse it. The key is scoped to the project's model pick, to the project's
+`gateway_max_budget` and `gateway_key_duration` when set, and to exactly the hosted MCP servers
+this task resolved (`object_permission.mcp_servers`), so a per-task key can only reach the servers
+this task was actually given. The key is deleted when the task reaches a terminal status, and
+again by the retention sweep as a backstop for any task that went terminal without that delete
+running. After every turn, Calandria reads the key's own `GET /key/info` in the background and
+records the difference between LiteLLM's cumulative `spend` and the running per-token estimate as
+a correcting entry, so the task's total ends up exactly what LiteLLM's own ledger says. This is
+the only exact per-task spend path: no CLI exposes `x-litellm-response-cost`, and `/spend/logs`
+has no tag filter or pagination (BerriAI/litellm#14218). Minting fails silently: with no admin
+key, no gateway, or a proxy with no database behind it, every task falls back to the shared
+instance key.
+
+**The model picker.** A project's **Model provider → Gateway** model field lists `GET
+<gateway>/model/info`, filtered to what the task's driver can actually run: Claude Code shows
+every `mode: "chat"` entry, marking anything not served by the `anthropic` provider
+**translated**; Codex shows only providers LiteLLM can reach over the Responses API
+(`openai`, `azure`); Antigravity shows `gemini` and `vertex_ai` providers. A wildcard route
+(`anthropic/*`) is listed once, as "Any anthropic model id"; it is not expanded into every model
+it matches. For Claude Code, a model whose catalog entry states a context window of at least
+1,000,000 tokens also gets a synthesized `[1m]` row alongside the plain one. Each entry's price
+(input/output per 1M tokens, from the same catalog) is shown beside it when the gateway states
+one.
 
 ### Codex through the gateway
 
@@ -573,8 +620,9 @@ Turn the feature off entirely with `CALANDRIA_LITELLM_MCP=0`.
 
 Mounting is independent of the *Model provider* choice above — a project on the *Cloud* preset can
 still mount hosted MCP servers, since the mount is a separate HTTP call to `<gateway>/<alias>/mcp`
-and never touches `ANTHROPIC_BASE_URL`. A selected alias becomes `mcpServers[alias]` in the
-session, next to Calandria's own tools:
+and never touches `ANTHROPIC_BASE_URL`. The `calandria` alias is reserved for Calandria's own
+tools and is always dropped from the picker's selection even if checked, so it can't shadow them.
+A selected alias becomes `mcpServers[alias]` in the session, next to Calandria's own tools:
 
 ```json
 { "type": "http", "url": "<gateway>/<alias>/mcp", "headers": { "x-litellm-api-key": "Bearer <key>" } }
