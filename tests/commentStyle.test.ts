@@ -35,11 +35,16 @@ const WORK_LOG_PHRASES = [
 const MEASURED_OPENER = /^\s*(\/\/|\/\*|\*|\{\/\*)\s*Measured\b/;
 
 /**
- * file -> lines that may keep a hit, and why. Start empty: every entry here
- * is a real exception (an error string matched against upstream output, a
- * fixture reproducing upstream text), named in the PR body that adds it.
+ * file -> lines that may keep a hit, and why. Every entry here is a real
+ * exception, named in the PR body that adds it.
  */
-const ALLOWED: Record<string, RegExp[]> = {};
+const ALLOWED: Record<string, RegExp[]> = {
+  // This guard has to spell out and demonstrate everything it forbids: the
+  // em-dash regex literal, the banned-phrase list, and the sanity-check
+  // examples all necessarily contain the exact patterns being guarded
+  // against. Same precedent as tests/naming.test.ts's own entry below.
+  "tests/commentStyle.test.ts": [/./],
+};
 
 const DIRS = ["lib/", "app/", "desktop/", "scripts/", "tests/", "e2e/"];
 const EXTRA_FILES = new Set(["server.js", "pty-server.js", "middleware.ts", "next.config.mjs"]);
