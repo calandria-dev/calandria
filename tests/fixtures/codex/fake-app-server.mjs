@@ -140,6 +140,15 @@ async function runTurn() {
     const decision = answer.error ? `error:${answer.error.message}` : JSON.stringify(answer.result?.decision);
     record({ decision });
     const ok = !answer.error && answer.result?.decision !== "decline" && answer.result?.decision !== "cancel";
+    // The command's output as it runs: base64 over the raw bytes, which is not
+    // the same as base64 over the text. The last character is deliberately
+    // SPLIT ACROSS two chunks (é is 0xC3 0xA9) so the decoder in
+    // lib/agents/codex/appServerEvents.ts has to hold the first half back
+    // instead of emitting a replacement character on each side of the seam.
+    const chunk = (buf) => notify("item/commandExecution/outputDelta", { ...base, itemId: "item-cmd", chunk: buf.toString("base64") });
+    chunk(Buffer.from("step 1\n"));
+    chunk(Buffer.concat([Buffer.from("step 2 caf"), Buffer.from([0xc3])]));
+    chunk(Buffer.concat([Buffer.from([0xa9]), Buffer.from("\n")]));
     notify("item/completed", {
       ...base,
       item: { ...item, status: ok ? "completed" : "declined", aggregatedOutput: `decision=${decision}`, exitCode: ok ? 0 : 1 },

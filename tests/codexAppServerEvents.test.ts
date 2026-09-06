@@ -57,8 +57,34 @@ describe("app-server item respelling", () => {
     expect(mapNotification("item/reasoning/summaryTextDelta", { turnId: "t1", itemId: "r", summaryIndex: 0, delta: "first" }, st).delta).toEqual({ id: "r", kind: "reasoning", text: "first" });
     expect(mapNotification("item/reasoning/summaryTextDelta", { turnId: "t1", itemId: "r", summaryIndex: 0, delta: " half" }, st).delta).toEqual({ id: "r", kind: "reasoning", text: " half" });
     expect(mapNotification("item/reasoning/summaryTextDelta", { turnId: "t1", itemId: "r", summaryIndex: 1, delta: "second" }, st).delta).toEqual({ id: "r", kind: "reasoning", text: "\nsecond" });
-    // Command output is not a reply: it belongs to its tool row, so it stays dropped.
-    expect(mapNotification("item/commandExecution/outputDelta", { turnId: "t1", itemId: "c", chunk: "aGk=" }, st)).toEqual({ events: [] });
+  });
+
+  it("decodes command output deltas, holding back a character split across two chunks", () => {
+    const st = newAppServerTurnState();
+    st.turnId = "t1";
+    const b64 = (buf: Buffer) => buf.toString("base64");
+    // Output is not a reply, so it rides `outputDelta` and never `delta`: it
+    // grows the tool row's peek rather than a bubble.
+    expect(mapNotification("item/commandExecution/outputDelta", { turnId: "t1", itemId: "c", chunk: b64(Buffer.from("step 1\n")) }, st)).toEqual({
+      events: [],
+      outputDelta: { id: "c", text: "step 1\n" },
+    });
+    // The chunks are base64 over BYTES, so a multi-byte character can straddle
+    // two of them. The first half decodes to nothing at all (there is no
+    // fragment to publish yet) and the second completes the character, rather
+    // than each side becoming its own replacement glyph.
+    const first = mapNotification("item/commandExecution/outputDelta", { turnId: "t1", itemId: "c", chunk: b64(Buffer.concat([Buffer.from("caf"), Buffer.from([0xc3])])) }, st);
+    expect(first.outputDelta).toEqual({ id: "c", text: "caf" });
+    const second = mapNotification("item/commandExecution/outputDelta", { turnId: "t1", itemId: "c", chunk: b64(Buffer.concat([Buffer.from([0xa9]), Buffer.from("\n")])) }, st);
+    expect(second.outputDelta).toEqual({ id: "c", text: "é\n" });
+    // A decoder per item: two commands interleaving their output must not
+    // splice one's half-character onto the other's next chunk.
+    mapNotification("item/commandExecution/outputDelta", { turnId: "t1", itemId: "d", chunk: b64(Buffer.from([0xc3])) }, st);
+    expect(mapNotification("item/commandExecution/outputDelta", { turnId: "t1", itemId: "c", chunk: b64(Buffer.from("ok")) }, st).outputDelta).toEqual({ id: "c", text: "ok" });
+    expect(mapNotification("item/commandExecution/outputDelta", { turnId: "t1", itemId: "d", chunk: b64(Buffer.from([0xa9])) }, st).outputDelta).toEqual({ id: "d", text: "é" });
+    // An empty chunk is nothing to show; another turn's output is not ours.
+    expect(mapNotification("item/commandExecution/outputDelta", { turnId: "t1", itemId: "c", chunk: "" }, st).outputDelta).toBeUndefined();
+    expect(mapNotification("item/commandExecution/outputDelta", { turnId: "other", itemId: "c", chunk: b64(Buffer.from("x")) }, st).outputDelta).toBeUndefined();
   });
 
   it("reports usage once, on turn end, from the latest total; context from the last request", () => {

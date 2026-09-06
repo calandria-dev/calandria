@@ -323,3 +323,37 @@ test("the reply types out live, then the persisted message replaces the bubble",
   // One row for the whole reply. Six fragments were published; none was stored.
   expect(replies.filter((c: string) => c.startsWith("streaming"))).toHaveLength(1);
 });
+
+test("a running command's output streams into its tool row's peek", async ({ page, request }) => {
+  // tool_output_delta: the same publish-without-persist rule as assistant_delta,
+  // one row deeper. The proof that it is LIVE rather than a late render is that
+  // the peek is already showing output while the turn is still going — the mock
+  // paces a line every 300ms and only ends the turn after the last one.
+  const LINES = Array.from({ length: 16 }, (_, i) => `line-${String(i + 1).padStart(2, "0")}`);
+  const task = await createTask(request, {
+    projectId,
+    title: "Streaming output",
+    description: `e2e:output=${LINES.join("|")}`,
+  });
+  await gotoApp(page);
+  await page.getByText(PROJECT).first().click();
+  await page.getByText("Streaming output").first().click();
+  await sendMessage(request, task.id);
+
+  const peek = page.locator(".msg-tool .tpeek-pre");
+  await expect(peek).toContainText("line-01", { timeout: 20_000 });
+  // Still mid-command: fifteen more lines are nearly five seconds away, so the
+  // peek grew from the deltas rather than from the settled result.
+  await expect(page.getByText("Mock turn complete")).toBeHidden();
+
+  await waitForIdle(request, task.id);
+  const settled = await getTask(request, task.id);
+  const rows = settled.messages
+    .filter((m: { role: string }) => m.role === "tool")
+    .map((m: { content: string }) => JSON.parse(m.content));
+  const cmd = rows.find((d: { title: string }) => d.title.includes("mock-command"));
+  // One row, holding the whole output. The sixteen fragments left no trace.
+  expect(rows.filter((d: { title: string }) => d.title.includes("mock-command"))).toHaveLength(1);
+  expect(cmd.result).toContain("line-16");
+  expect(settled.messages.filter((m: { content: string }) => m.content === "line-01")).toHaveLength(0);
+});

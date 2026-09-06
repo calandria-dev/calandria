@@ -389,5 +389,16 @@ describe("codex app-server transport", () => {
     expect(deltas.map((d) => d.delta).join("")).toContain("all done");
     expect(deltas.every((d) => d.generation === task.generation)).toBe(true);
     expect(listMessages(task.id).filter((m) => m.role === "assistant").map((m) => m.content)).toEqual(["all done"]);
+    // A running command's output follows the same rule, one row deeper: the
+    // fragments reached this subscriber carrying the DB id of the tool row they
+    // grow (a watcher who joined mid-turn has no in-memory tool_use id to match
+    // on), and what the DB kept is the item's own aggregated_output — none of
+    // the streamed text is anywhere in the transcript.
+    const outs = events.filter((e) => e.type === "tool_output_delta") as Extract<TaskStreamEvent, { type: "tool_output_delta" }>[];
+    expect(outs.map((o) => o.delta).join("")).toBe("step 1\nstep 2 café\n");
+    const cmdRow = listMessages(task.id).find((m) => m.role === "tool" && (JSON.parse(m.content) as ToolData).title.includes("npm test"));
+    expect(outs.every((o) => o.msgId === cmdRow?.id && o.generation === task.generation)).toBe(true);
+    expect(listMessages(task.id).some((m) => m.content.includes("step 2"))).toBe(false);
+    expect((JSON.parse(cmdRow!.content) as ToolData).result).toContain("decision=");
   });
 });

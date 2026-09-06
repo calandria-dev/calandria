@@ -92,6 +92,10 @@ export async function* runAppServerTurn(args: AppServerTurnArgs): AsyncGenerator
     // persisting, so it costs the transcript nothing and reaches whoever has
     // the task open right now (../../types.ts, StreamEvent.assistant_delta).
     if (mapped.delta) push({ type: "assistant_delta", id: mapped.delta.id, kind: mapped.delta.kind, delta: mapped.delta.text });
+    // The same deal for a running command's output, except that it reaches
+    // INTO the tool row `item/started` already produced and grows its peek
+    // (../../types.ts, StreamEvent.tool_output_delta).
+    if (mapped.outputDelta) push({ type: "tool_output_delta", id: mapped.outputDelta.id, delta: mapped.outputDelta.text });
     if (mapped.contextTokens != null) push({ type: "context", tokens: mapped.contextTokens });
     if (mapped.notice) push({ type: "notice", content: mapped.notice });
     if (mapped.warning) args.onWarning?.(mapped.warning);
