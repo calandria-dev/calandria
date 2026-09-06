@@ -1325,6 +1325,54 @@ of these variables and none should; `macos-desktop` asserts that Gatekeeper
 refuses what it built, precisely so that a certificate reaching the test lane is
 noticed.
 
+#### 6.4.1 The keychain patch macOS signing currently depends on
+
+`desktop/scripts/patch-electron-builder-keychain.js` runs from `desktop`'s
+`postinstall` and edits three lines of the installed
+`app-builder-lib/out/codeSign/macCodeSign.js`. Without it no macOS build signs at
+all on a current runner. This is temporary, and the file's own header carries the
+full reasoning.
+
+The defect is upstream. `createKeychain()` creates a throwaway keychain with a
+random password, imports the `.p12` into it, then runs `security
+set-key-partition-list -k <password>` to grant `codesign` access to the key.
+`-k` takes the keychain's unlock password. It is handed the `.p12`'s import
+password, `CSC_KEY_PASSWORD`, because `createKeychain` never passes its own
+`keychainPassword` down into `importCerts()`. The argument has always been the
+wrong string.
+
+It went unnoticed because the keychain is already unlocked by the time that
+command runs. Through macOS 26.5 the already-unlocked case ignored `-k`. macOS
+26.6.2, which reached the GitHub `macos-26-arm64` image in build
+`20260831.0337.3`, checks it regardless, and the build fails with:
+
+```
+security: SecKeychainUnlock: The user name or passphrase you entered is not correct.
+```
+
+v0.9.0 signed on image `20260728.0273.1`. v0.10.0 failed twice on
+`20260831.0337.3` with an identical tree, which is why v0.10.0 has no macOS
+assets.
+
+There is no released version to upgrade to. The fix is electron-builder PR
+#10101 (issue #10066), which shipped to the v27 alpha line only; PR #10172
+backports it to the v26 branch but is unpublished, and npm's `v26` dist-tag is
+still `26.16.0`.
+
+Setting `CSC_KEYCHAIN` and importing the certificate by hand also avoids the bug,
+because `macPackager.js` skips `createKeychain()` entirely when `CSC_LINK` is
+unset. It was not taken. That path also skips `bundledCertKeychainAdded`, which
+is what puts Apple's roots on the keychain search list and so what makes
+`security find-identity -v` report the Developer ID identity as valid. Changing
+one argument to one command leaves the path that signed every release through
+v0.9.0 otherwise untouched.
+
+**Remove it when a fixed version is pinned.** The script recognises the patched
+shape and no-ops with a message saying so, so the bump that makes it unnecessary
+does not also make it a failure. It only hard-fails on macOS, where signing
+actually happens; elsewhere an unrecognised file is a warning, so a shape change
+cannot take the Linux and Windows artifacts down with it.
+
 ### 6.5 The release lane
 
 `.github/workflows/release-desktop.yml` is what puts a binary in anybody's hands.

@@ -395,6 +395,14 @@ jobs:
       # --include=dev and then runs electron/install.js explicitly, because
       # Electron is a devDependency and any environment exporting
       # NODE_ENV=production makes npm report "up to date" and fetch nothing.
+      #
+      # MACOS SIGNING DEPENDS ON THIS STEP for more than Electron. desktop's
+      # postinstall runs scripts/patch-electron-builder-keychain.js, which fixes
+      # the argument app-builder-lib passes to `security set-key-partition-list`.
+      # Unpatched, every signed macOS build fails on the current runner image with
+      # "SecKeychainUnlock: The user name or passphrase you entered is not
+      # correct" — the reason v0.10.0 has no macOS assets. The script's header and
+      # docs/DESKTOP_APP.md §6.4.1 carry the why, and both say when to delete it.
       - name: Install Electron
         run: npm run desktop:install
 
