@@ -276,6 +276,24 @@ jobs:
   # path has its own end-of-pipeline proof in `verify` (which boots the actual
   # published image on both arches). Paying for a second full build + browser
   # run here would add ~10 minutes to every release for no new signal.
+  #
+  # Audited and KEPT, deliberately, because on a tag this is the suite's second
+  # run against the same commit: `prepare` has already polled the push-to-main
+  # run green through require-green-test-run, so everything here is a repeat.
+  # One release cycle therefore runs the unit suite five times across four SHAs
+  # (squash push, release-please PR, release-commit push, and this), with no
+  # vitest retry anywhere, and each repeat is a fresh chance for a flaky or
+  # clock-dependent test to sink a release that was already proven — which is
+  # exactly how v0.9.0's tag build died (PR #225).
+  #
+  # It stays because the alternative is worse. Dropping it would leave `build`
+  # with no `needs:` edge to any job this workflow controls, resting the whole
+  # publish on an externally polled run: a green poll and a `build` that starts
+  # minutes later are not the same commit's guarantee if the run is re-run,
+  # deleted or superseded in between, and a `needs:` edge is the only thing
+  # GitHub enforces. The redundant exposure is the price of that enforcement.
+  # The right lever on the risk is fewer flaky tests, not fewer runs of them,
+  # which is what test-clock.yml and test-shuffle.yml are for.
   test:
     # needs+if exist only for the nightly no-change skip; when test skips,
     # build and everything after it skip through the needs chain.
