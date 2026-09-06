@@ -354,6 +354,32 @@ real session) and no `CALANDRIA_REPO_ROOT`. The bench's
 `desktop_bench_allow_unprivileged_userns` knob should be left at stock (`1`) for
 this run — the point is that the installed app sandboxes anyway.
 
+**`CALANDRIA_DESKTOP_LOG_FILE`, for a main process that dies before there is
+anything to attach to.** Set to a path, `main.js` appends every
+`console.log`/`info`/`warn`/`error` line to it with a synchronous
+`fs.appendFileSync`, one line at a time, on top of stdout and electron-log's own
+file transport — unset, and therefore off, unless something asks for it. It
+exists because both of the other two channels can go silent at once:
+`_electron.launch()` hands back no process handle until it resolves, so
+`fixtures.ts`'s stdout capture only starts at that moment, and electron-log's
+file transport buffers its writes through the event loop, the very thing a
+blocked main thread has stopped turning. A main process that wedges before its
+first window is therefore invisible to both — which is exactly how issue #240
+(the packaged macOS shell hanging in `safeStorage.isEncryptionAvailable()`) read
+as ten unrelated `electron.launch: Timeout 120000ms exceeded` failures with no
+app output at all, and cost three CI runs to diagnose. `launchEnv()` points it
+at `<instance root>/boot-trace.log` for every launched shell; `launchFailure()`
+reads it when `launch()`/`firstWindow()` fails and quotes the last line plus the
+last 12, or says the binary never reached `main.js` at all if the file never
+appeared; `bootTrace(shell)` is exported from `fixtures.ts` for a spec that
+wants to read it directly; and `attachShellLog()` uploads it as `boot-trace.log`
+on a failing test. `main.js` logs `[shell] boot complete` as the last statement
+of its `app.whenReady()` chain, which `01-shell.spec.ts` asserts arrived, along
+with the absence of any `[shell] keyring:` line on an instance with
+nothing signed in — pinning issue #240 on every pull request instead of behind
+the bench's `macos` label. This is not a third log for users: per-line
+synchronous I/O is exactly why it stays opt-in.
+
 **Self-hosted runners on a public repo are a security decision, not a
 convenience.** A fork PR can execute arbitrary code on a self-hosted runner, and
 this one would sit on VLAN 3 next to everything else. Non-negotiables for the
