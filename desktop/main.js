@@ -37,6 +37,7 @@ const {
 } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
+const util = require("node:util");
 const { execFile } = require("node:child_process");
 const log = require("electron-log/main");
 const { Supervisor, preferredPorts } = require("./supervisor");
@@ -122,6 +123,35 @@ const {
 log.transports.console.format = "{text}";
 log.transports.file.maxSize = 5 * 1024 * 1024;
 Object.assign(console, log.functions);
+
+// A second, SYNCHRONOUS copy of the same lines, to a file the caller names.
+//
+// This exists for one failure the two transports above cannot record: a main
+// process that stops making progress before its first window exists. Playwright
+// hands back no process handle until `_electron.launch()` resolves, so
+// desktop/e2e captures stdout only from that moment on, and electron-log's file
+// transport buffers its writes through the event loop — the very thing a
+// blocked main thread stops turning. Ten identical `electron.launch: Timeout
+// 120000ms exceeded` failures with no app output between them is what issue
+// #240 cost three days to read; `appendFileSync` per line is what makes the
+// next one name itself.
+//
+// Off unless CALANDRIA_DESKTOP_LOG_FILE is set, and per-line sync I/O is why:
+// this is a diagnostic channel for the suite, not a third transport for users.
+if (process.env.CALANDRIA_DESKTOP_LOG_FILE) {
+  const traceFile = process.env.CALANDRIA_DESKTOP_LOG_FILE;
+  for (const level of ["log", "info", "warn", "error"]) {
+    const inner = console[level].bind(console);
+    console[level] = (...args) => {
+      try {
+        fs.appendFileSync(traceFile, `${util.format(...args)}\n`);
+      } catch {
+        // A diagnostic that can refuse to launch the app is worse than none.
+      }
+      inner(...args);
+    };
+  }
+}
 
 // Where the server payload lives — the thing supervisor.js runs `node server.js`
 // out of. Packaged, it is extraResources sitting NEXT TO the asar, not inside
@@ -362,15 +392,30 @@ function main() {
     // before the window, because the window's session partition is the active
     // instance's and cannot be changed after construction.
     loadInstanceList();
-    // Before the first attach, so an instance whose token is still good goes
+    Menu.setApplicationMenu(buildMenu());
+    announceShell();
+    createWindow();
+    // AFTER the window, and before the first attach.
+    //
+    // Before the attach because an instance whose token is still good should go
     // straight to its app instead of bouncing off its proxy and asking again.
+    // After the window because this is the first thing in the chain that can
+    // reach the platform keyring, and a keyring is a dependency the shell does
+    // not get to assume answers — see `credentialCipher`. Nothing here is drawn
+    // in the window, so the only thing the old order bought was a chance for
+    // issue #240 to happen with no window on screen to say so.
     loadCredentialStore();
     for (const inst of instancesState.instances) {
       if (credentials.has(inst.id)) scheduleRefresh(inst);
     }
-    Menu.setApplicationMenu(buildMenu());
-    announceShell();
-    createWindow();
+    // The end of the boot chain, named so it can be asserted on. Distinct
+    // wording from the supervisor's `[shell] ready on http://…`, which is a
+    // claim about the SERVER and which several specs already match on. Everything
+    // above is synchronous-or-local; `attach` below is the first step that
+    // waits on a server. A boot trace that stops before this line stopped
+    // inside the shell's own startup, and says on its last line where
+    // (desktop/e2e/fixtures.ts, `launchFailure`).
+    console.log("[shell] boot complete");
     await attach(activeInstance(instancesState));
   });
 }
@@ -434,23 +479,74 @@ function serviceTokenFor(inst) {
  * needs a session, a browser and a window. docs/DESKTOP_APP.md §8.8.
  * ------------------------------------------------------------------------- */
 
+/** The keyring's answer, once it has given one. See `credentialCipher`. */
+let encryptionAvailable = null;
+
+/**
+ * Ask the platform keyring whether safeStorage can encrypt.
+ *
+ * Logged on BOTH sides, every time, because the outcome worth naming is
+ * neither a value nor a throw. This is a synchronous call into the platform
+ * keyring and nothing bounds how long one may take to answer, so the
+ * interesting case leaves no trace at all except a first line with no second
+ * one. The try/catch cannot see it either: a call that never returns never
+ * throws.
+ */
+function probeEncryption() {
+  console.log("[shell] keyring: asking safeStorage whether encryption is available");
+  try {
+    const answer = safeStorage.isEncryptionAvailable();
+    console.log(`[shell] keyring: safeStorage encryption is ${answer ? "available" : "NOT available"}`);
+    return answer;
+  } catch (err) {
+    console.log(`[shell] keyring: safeStorage refused the question: ${err?.message || err}`);
+    return false;
+  }
+}
+
 /**
  * safeStorage, in the shape instance-auth.js takes it.
  *
- * Read per call rather than captured once: `isEncryptionAvailable()` is false
- * until the app is ready and, on Linux, answers for whichever keyring backend
- * Chromium settled on, which is not known at require time.
+ * `available` is a GETTER, and both halves of that carry weight.
+ *
+ * LAZY, because asking can cost the app. On macOS the keyring is the login
+ * keychain, and reading the app's own generic-password item out of it is
+ * subject to that item's ACL: a binary the ACL does not list gets an
+ * authorization dialog rather than an answer. A signature that changed since
+ * the item was written is enough — an ad-hoc-signed build has a new identity
+ * every time it is built — and with nobody there to click the dialog, the main
+ * thread never comes back. That was issue #240: the packaged app printed one
+ * line, stopped, and every spec in the suite timed out at `electron.launch`.
+ *
+ * Moving the call later does not fix that; a blocked main thread blocks the app
+ * wherever the call happens to sit. NOT MAKING IT is what fixes it, and the
+ * consumers in instance-auth.js are already shaped for it: `loadCredentials`
+ * returns before touching a cipher when the file is absent, `decodeEntry`
+ * reads `available` only for an entry that is actually encrypted, and
+ * `saveCredentials` reads it only when there is a credential to write. So an
+ * install with nothing signed in — a first launch, and every hermetic instance
+ * desktop/e2e mints — never asks the keyring anything. When something IS
+ * stored, the question is asked at the moment its answer matters, which is
+ * also the moment a user is in a position to answer a dialog.
+ *
+ * The plaintext reporting is untouched by this. `loaded.plain` is derived from
+ * the `enc` marker each entry carries, not from the cipher, so
+ * `loadCredentialStore` can still say that secrets are on disk in the clear
+ * without a keyring having been consulted at all.
+ *
+ * CACHED, because the answer describes the process, not the call. It was read
+ * per call to avoid capturing it at require time, where it is false until the
+ * app is ready and, on Linux, says nothing about which keyring backend
+ * Chromium will settle on. Both of those are facts about require time. By the
+ * time anything reads this the app is ready and the backend is chosen, so
+ * asking twice buys nothing and risks the hang above a second time.
  */
 function credentialCipher() {
-  const available = (() => {
-    try {
-      return safeStorage.isEncryptionAvailable();
-    } catch {
-      return false;
-    }
-  })();
   return {
-    available,
+    get available() {
+      if (encryptionAvailable === null) encryptionAvailable = probeEncryption();
+      return encryptionAvailable;
+    },
     encrypt: (s) => safeStorage.encryptString(s),
     decrypt: (b) => safeStorage.decryptString(b),
   };

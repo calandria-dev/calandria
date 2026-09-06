@@ -17,7 +17,16 @@ import { statSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { isDesktopShell } from "@/app/shell/useNotifications";
 import { isBootHandoffUrl } from "./bootUrl";
-import { attachShellLog, ensureOnboarded, launchDuplicate, launchShell, quitShell, serverIsUp, type Shell } from "./fixtures";
+import {
+  attachShellLog,
+  bootTrace,
+  ensureOnboarded,
+  launchDuplicate,
+  launchShell,
+  quitShell,
+  serverIsUp,
+  type Shell,
+} from "./fixtures";
 
 test.describe.configure({ mode: "serial" });
 
@@ -382,4 +391,32 @@ test("a second launch is refused rather than starting a second server", async ()
   // The first one is untouched: still up, still serving. Without the lock the
   // second shell would have raced this one for the database instead.
   expect(await serverIsUp(shell.origin)).toBe(true);
+});
+
+test("the boot chain finishes, and does not consult the keyring to do it", async () => {
+  const trace = bootTrace(shell);
+  // Written by main.js as the last statement of its `whenReady` chain. Its
+  // absence means the shell stopped partway through starting up, which is a
+  // failure the suite could not otherwise describe: the app stays alive and
+  // silent, so every spec in the file just times out at `electron.launch`.
+  expect(
+    trace,
+    `the shell never finished its boot chain; its last line was ${JSON.stringify(trace[trace.length - 1] ?? "(nothing)")}`
+  ).toContain("[shell] boot complete");
+
+  // And it got there without asking the platform keyring anything, which is
+  // issue #240 pinned on every lane rather than only the one that broke.
+  //
+  // `safeStorage.isEncryptionAvailable()` is a synchronous call with no bound
+  // on it — on macOS a keychain item whose ACL does not list the calling binary
+  // answers with an authorization dialog instead of a value, and a packaged
+  // build with nobody at the machine hangs there forever. This instance has
+  // nothing signed in, so nothing should have needed an answer.
+  //
+  // Asserted HERE, in the shared file, so the lane that catches a regression is
+  // the Linux one — which runs on every push to main and on any pull request
+  // carrying `e2e`. The lane that PAYS for one is macOS, which runs only on the
+  // weekly schedule, a dispatch, or the `macos` label, and so found this three
+  // days and three runs late.
+  expect(trace.filter((l) => l.startsWith("[shell] keyring:"))).toEqual([]);
 });
