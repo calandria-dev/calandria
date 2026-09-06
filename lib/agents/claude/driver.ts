@@ -834,7 +834,10 @@ async function* runTurn(
   };
 
   // --- Background linger (measured against CLI 2.1.240 / SDK 0.3.159; the
-  // spike record lives in this feature's commit message) ---
+  // spike record lives in this feature's commit message. Re-measured live on
+  // CLI 2.1.261 / SDK 0.3.263 at the 0.3.263 bump and unchanged: a turn that
+  // starts a run_in_background Bash call enters LINGERING, and the child ran to
+  // completion and wrote its file after the model's turn had ended) ---
   //
   // In single-prompt mode the CLI exits ~5s after the result message and KILLS
   // every run_in_background child with it — "you will be notified when it
@@ -940,6 +943,10 @@ async function* runTurn(
   // wake takes, and with no user echo on the wire either, which is why the
   // wake branch below must not read an injected turn's init as a wakeup.
   // Closing the channel is what ends the query, exactly as the latch did.
+  // Re-measured live on CLI 2.1.261 / SDK 0.3.263 at the 0.3.263 bump and
+  // unchanged: the send was accepted (`sent`, not `queued`) and the injected
+  // text landed as an ordinary user message in the SAME session and generation,
+  // which the task's single `sessions` row is the durable evidence for.
   const input = makeQueue<SDKUserMessage>();
   const closeInput = () => input.close();
   const userMessage = (text: string) =>

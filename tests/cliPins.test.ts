@@ -87,6 +87,42 @@ describe("Claude CLI pin", () => {
     expect(pins.claudeCode.value).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
+  it("pins @anthropic-ai/claude-agent-sdk exactly, with no range", () => {
+    // The reason is reproducibility, not the coupling the case below rules out.
+    // `npm ci` — CI, the image, every built artifact — reads the lockfile and
+    // ignores the range entirely, so a caret ships nothing. What it does reach
+    // is a developer's plain `npm install`, which adopts whatever 0.3.x is
+    // current that day. That makes the SDK a session ran against a function of
+    // when somebody last installed, and this repo writes measured SDK behaviour
+    // down by version (the linger and injection notes in
+    // `lib/agents/claude/driver.ts`, `tests/lingerInject.test.ts`,
+    // `tests/sessionCrons.test.ts`). Those claims only mean something if the
+    // version is a fact somebody chose. Exact makes a bump an edit, on the PR
+    // that re-measures it.
+    expect(pkg.dependencies["@anthropic-ai/claude-agent-sdk"]).toMatch(
+      /^\d+\.\d+\.\d+$/,
+    );
+  });
+
+  it("moves the SDK and all nine of its platform packages together", () => {
+    // The SDK ships its native builds as separate optional packages held at its
+    // own exact version. A lockfile refreshed only partly leaves them behind,
+    // and npm then resolves a mismatched binary rather than failing.
+    const declared = pkg.dependencies["@anthropic-ai/claude-agent-sdk"];
+    expect(lock.packages[""].dependencies["@anthropic-ai/claude-agent-sdk"]).toBe(
+      declared,
+    );
+    const entries = Object.entries(lock.packages).filter(([name]) =>
+      /^node_modules\/@anthropic-ai\/claude-agent-sdk(-|$)/.test(name),
+    );
+    expect(entries).toHaveLength(9);
+    for (const [name, entry] of entries) {
+      expect(`${name} ${(entry as { version: string }).version}`).toBe(
+        `${name} ${declared}`,
+      );
+    }
+  });
+
   it("has no version to couple @anthropic-ai/claude-agent-sdk to", () => {
     // Deliberately asymmetric with Codex above, and worth stating so nobody
     // adds the "missing" equality check: the Agent SDK declares no dependency
