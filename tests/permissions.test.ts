@@ -74,7 +74,7 @@ describe("the built-in allowlist", () => {
     expect(isAlwaysAllowed("Read", "/etc/shadow")).toBe(false);
   });
 
-  it("always prompts for ExitPlanMode — approving the plan IS Plan mode", () => {
+  it("always prompts for ExitPlanMode, since approving the plan is Plan mode", () => {
     expect(isAlwaysAllowed("ExitPlanMode")).toBe(false);
     expect(scopeOfferFor("ExitPlanMode", { plan: "do things" })).toBeNull();
   });
@@ -223,7 +223,7 @@ describe("what a remembered rule covers", () => {
 // matched by NAMESPACE, not by rule.tool. LiteLLM names every tool under an
 // alias `mcp__<alias>__<alias>-<tool>`, and trusting the server means
 // trusting all of them, including ones the catalog never listed.
-describe("mcp_server rules — trusting a whole hosted MCP server", () => {
+describe("mcp_server rules: trusting a whole hosted MCP server", () => {
   it("matches every tool call under the alias's namespace", () => {
     const r = rule("mcp_server", "demo", "mcp__demo__*");
     expect(ruleMatches(r, "mcp__demo__demo-lookup_ticket", {})).toBe(true);
@@ -252,7 +252,7 @@ describe("mcp_server rules — trusting a whole hosted MCP server", () => {
   });
 });
 
-describe("ruleForGatewayMcpServer — minting a whole-server rule", () => {
+describe("ruleForGatewayMcpServer: minting a whole-server rule", () => {
   it("mints mcp__<alias>__* keyed on the bare alias, never what the card would name a single call", () => {
     const drafted = ruleForGatewayMcpServer("demo");
     expect(drafted).toEqual({ ok: true, tool: "mcp__demo__*", match_kind: "mcp_server", value: "demo" });
@@ -295,7 +295,7 @@ describe("decoding the user's decision", () => {
     expect(parseDecision([["deny", "  not that dir  "]])).toEqual({ decision: "deny", note: "not that dir" });
   });
 
-  it("fails CLOSED on anything else — a stale or hostile client can't widen a grant", () => {
+  it("fails CLOSED on anything else, so a stale or hostile client can't widen a grant", () => {
     for (const answers of [undefined, [], [[]], [["allow"]], [["ALLOW_ONCE"]], [["allow_once ; deny"]]]) {
       expect(parseDecision(answers as string[][] | undefined).decision).toBe("deny");
     }
@@ -349,7 +349,7 @@ describe("parking on a human", () => {
     }
   });
 
-  it("expires as 'timeout' — not 'unattended' — when someone IS watching", async () => {
+  it("expires as 'timeout', not 'unattended', when someone is watching", async () => {
     await withWatcher(async () => {
       const p = waitForPermission({ taskId: "t-perm-3", id: "perm:3", attendedMs: 60, unattendedMs: 30 });
       await expect(p).resolves.toEqual({ expired: "timeout" });

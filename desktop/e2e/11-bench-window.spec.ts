@@ -134,7 +134,7 @@ test("minimize and restore are carried out by the window manager", async () => {
   expect(await windowFacts()).toMatchObject({ windows: 1, visible: true, minimized: false });
 });
 
-test("closing the window withdraws it from the window manager — into the tray, or into a quit", async () => {
+test("closing the window withdraws it from the window manager, into the tray or into a quit", async () => {
   // Read before the close, so the expectation comes from the session and not
   // from whatever happened. On a session drawing the icon this is a hide; on
   // one that is not, it is a quit, and both are the shell working correctly.

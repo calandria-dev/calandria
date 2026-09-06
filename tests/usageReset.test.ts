@@ -21,7 +21,7 @@ function snap(over: Partial<PlanUsageSnapshot> = {}): PlanUsageSnapshot {
 }
 
 describe("usageResetAt", () => {
-  it("with room left, offers the session window's reset — the boundary you pace work against", () => {
+  it("with room left, offers the session window's reset, the boundary you pace work against", () => {
     expect(usageResetAt(snap(), now)).toBe(now + 2 * H);
   });
 
@@ -41,7 +41,7 @@ describe("usageResetAt", () => {
     expect(usageResetAt(s, now)).toBe(now + 10 * H);
   });
 
-  it("never offers a reset that has already passed — stale data, the window rolled over", () => {
+  it("never offers a reset that has already passed: stale data, the window rolled over", () => {
     const rolled = snap({
       status: "rejected", statusWindow: "five_hour", statusResetsAt: now - 60_000,
       windows: [{ id: "five_hour", label: "Current session", utilization: 100, resetsAt: now - 60_000 }],

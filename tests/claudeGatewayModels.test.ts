@@ -28,7 +28,7 @@ afterEach(async () => {
   clearGatewayRates();
 });
 
-describe("claudeCapabilities — gateway", () => {
+describe("claudeCapabilities for the gateway", () => {
   it("falls back to the static catalog when nothing has been probed yet", async () => {
     gw = await startFakeGateway({ models: ["claude-sonnet-4-5"] });
     await withGatewayEnv(gw.url, () => {

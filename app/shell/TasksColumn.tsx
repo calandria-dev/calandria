@@ -431,7 +431,7 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
   // column's height, and none of them is needed while scrolling a backlog.
   // The app titlebar is the only thing that stays put. Board view is the
   // exception: its columns scroll individually and only have a height
-  // because the wrapper is bounded, so pinning is what makes it work.
+  // because the wrapper is bounded, so pinning it works.
   const head = (
     <>
       <div className="proj-banner">

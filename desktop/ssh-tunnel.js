@@ -63,7 +63,7 @@ function sshBinary(env = process.env) {
  * to loopback in local mode, making SSH itself the credential instead of an
  * added origin allowlist entry.
  *
- * `ExitOnForwardFailure=yes` is what makes the wait below terminate: without
+ * `ExitOnForwardFailure=yes` makes the wait below terminate: without
  * it, an ssh whose local port is already taken stays up forever with no
  * forward, and "connected" would mean nothing.
  */

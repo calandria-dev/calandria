@@ -42,7 +42,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   // Fetched first because `branchDriftStatus` is read-only by contract, and a
   // stale local default understates the drift, which this reading must not do.
-  // Measured at `baseStartPoint`, the commit `ensureWorktree` would actually cut
+  // Reads `baseStartPoint`, the commit `ensureWorktree` would actually cut
   // a new task from, so a stale checkout of the user's own cannot hide a stale
   // integration branch.
   await fetchBase(project.repo_path, project.branch).catch(() => {});
@@ -92,7 +92,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const project = getProject(tag.project_id);
     if (!project) return NextResponse.json({ error: "no project" }, { status: 400 });
     if (!tag.base_branch)
-      return NextResponse.json({ error: "this tag follows the project's default branch — there is nothing to sync" }, { status: 400 });
+      return NextResponse.json({ error: "this tag follows the project's default branch, so there is nothing to sync" }, { status: 400 });
     if (!project.branch)
       return NextResponse.json({ error: "this project has no default branch to sync from" }, { status: 400 });
 

@@ -195,7 +195,7 @@ describe("runTurn", () => {
     spawnMock.mockReturnValue(
       fakeChild({
         stdout: fixtureText("tool-auto-denied.jsonl"),
-        stderr: 'jetski: no output produced — a tool required the "command" permission that headless mode cannot prompt for, so it was auto-denied.',
+        stderr: 'jetski: no output produced; a tool required the "command" permission that headless mode cannot prompt for, so it was auto-denied.',
         code: 0,
       })
     );

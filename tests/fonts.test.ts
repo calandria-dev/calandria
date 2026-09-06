@@ -50,11 +50,11 @@ describe("web fonts", () => {
     for (const cssVar of used) expect(loaded).toContain(cssVar);
   });
 
-  it("uses every font it loads — no paid-for-but-unrendered downloads", () => {
+  it("uses every font it loads, with no paid-for-but-unrendered downloads", () => {
     for (const cssVar of loaded) expect(used).toContain(cssVar);
   });
 
-  it("does not use Space Grotesk as the body face — its ASCII quotes are the closing curly glyphs", () => {
+  it("does not use Space Grotesk as the body face, since its ASCII quotes are the closing curly glyphs", () => {
     const bodyVarMatch = /--font-body:\s*var\((--nf-[a-z0-9-]+)/.exec(css);
     expect(bodyVarMatch, "--font-body is not declared in app/globals.css").not.toBeNull();
     const bodyFont = declaredFonts().find((f) => f.cssVar === bodyVarMatch![1]);

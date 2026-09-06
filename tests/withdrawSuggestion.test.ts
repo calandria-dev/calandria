@@ -47,7 +47,7 @@ describe("reviving a withdrawn suggestion", () => {
     expect(getTask(inert.id)).toMatchObject({ status: "not_started", suggested: 0, withdrawn_reason: "" });
   });
 
-  it("an explicit status wins over the default — the board's drag decides where it lands", async () => {
+  it("an explicit status wins over the default, since the board's drag decides where it lands", async () => {
     const { caller, inert } = board("Revive-Drag");
     withdrawSuggestionForAgent(caller, inert.id, "redundant");
     // Dragging a suggested card into "In progress" sends both fields.

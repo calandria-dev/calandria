@@ -171,7 +171,7 @@ describe("codex cost estimation", () => {
     expect(estimateCostUsd("some-future-model", usage)).toBeCloseTo(estimateCostUsd(DEFAULT_CODEX_MODEL, usage), 10);
   });
 
-  it("prices each 5.6 tier distinctly — the bare alias follows Sol, not the catch-all", () => {
+  it("prices each 5.6 tier distinctly: the bare alias follows Sol, not the catch-all", () => {
     // Sol $5/$0.50/$30, Terra $2/$0.20/$12, Luna $0.20/$0.02/$1.20 per 1M
     // (developers.openai.com/api/docs/pricing). Ordering matters: "gpt-5.6" is a
     // prefix of all three, so it must be matched last or it swallows them.

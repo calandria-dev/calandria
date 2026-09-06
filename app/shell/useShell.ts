@@ -675,11 +675,11 @@ export function useShell() {
 
   /**
    * The wake timer. A deadline passing writes nothing: a snooze decays by
-   * being compared against the clock, which is what makes it survive the app
-   * being closed, so the one thing the client owes the user is a re-render at
-   * the moment the card should move. One timeout set to the soonest deadline
-   * does that for the whole board; polling every task on an interval would be
-   * the same answer recomputed continuously.
+   * being compared against the clock, so it survives the app being closed.
+   * The one thing the client owes the user is a re-render at the moment the
+   * card should move. One timeout set to the soonest deadline does that for
+   * the whole board; polling every task on an interval would be the same
+   * answer recomputed continuously.
    *
    * `wakeTick` is in the deps as well as `tasks` so the next deadline is armed
    * after this one fires (nothing else changes, so the effect wouldn't re-run).

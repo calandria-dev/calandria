@@ -27,7 +27,7 @@ describe("resolveLogFormat", () => {
     expect(resolveLogFormat({ CALANDRIA_LOG_FORMAT: "jsonl" })).toBe("text");
   });
 
-  it("never reads the deprecated ORCH_ spelling — this knob is new", () => {
+  it("never reads the deprecated ORCH_ spelling, since this knob is new", () => {
     // lib/env.mjs's alias table exists to keep PRE-RENAME names resolving. A
     // knob born after the rename that answered to ORCH_* would be born
     // deprecated, so this one is read straight off the environment.
@@ -64,7 +64,7 @@ describe("text format (the default)", () => {
     expect(line).toBe("[runner] turn failed task=abc");
   });
 
-  it("renders an Error as its stack — what console.error(msg, err) already printed", () => {
+  it("renders an Error as its stack, matching what console.error(msg, err) already printed", () => {
     const err = new Error("boom");
     const line = formatLogLine({ level: "error", component: "runner", msg: "crashed", ts: TS, fields: { err } }, "text");
     expect(line).toContain("[runner] crashed err=");
@@ -135,8 +135,8 @@ describe("createLogger", () => {
     log.info("tick", { due: 2 });
     expect(info.mock.calls[0][0]).toBe("[scheduler] tick due=2");
 
-    // Same logger instance, format flipped underneath it: this is what makes
-    // the knob work for a module graph that loaded before the env was read.
+    // Same logger instance, format flipped underneath it: the knob works for
+    // a module graph that loaded before the env was read.
     process.env.CALANDRIA_LOG_FORMAT = "json";
     log.warn("slow", { ms: 90 });
     log.error("dead");

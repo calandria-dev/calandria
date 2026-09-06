@@ -339,7 +339,7 @@ const capReason = (text: string): string =>
 export const DENIED_BY_USER = "They declined it.";
 export const DENIED_UNATTENDED =
   "Nobody was watching this session to approve it, so it was declined automatically. " +
-  "Stop here and summarize what you were about to do — the user will pick it up when they return.";
+  "Stop here and summarize what you were about to do. The user will pick it up when they return.";
 export const DENIED_TIMED_OUT = "The request went unanswered and expired.";
 export const DENIED_INTERRUPTED = "The turn ended before this was answered.";
 

@@ -119,7 +119,7 @@ describe("nextFireAt, one-time", () => {
     expect(nextFireAt(spec, at("2026-09-01T00:00:00Z")).ms).toBe(at("2026-09-03T11:00:00Z"));
   });
 
-  it("has nothing after that occurrence — the whole point of a one-off", () => {
+  it("has nothing after that occurrence, since a one-off runs only once", () => {
     const spec = once("2026-09-03");
     const fired = nextFireAt(spec, at("2026-09-01T00:00:00Z"));
     // Strictly after, same as the recurring path: the slot just fired is gone.
@@ -131,7 +131,7 @@ describe("nextFireAt, one-time", () => {
     expect(rawNextFireAt(once("2020-01-01"), at("2026-09-01T00:00:00Z"))).toBeNull();
   });
 
-  it("ignores days_mask — the date is the whole schedule", () => {
+  it("ignores days_mask, since the date is the whole schedule", () => {
     // 2026-09-06 is a SUNDAY and the mask is Mon–Fri. It fires anyway.
     expect(nextFireAt(once("2026-09-06"), at("2026-09-01T00:00:00Z")).ms).toBe(at("2026-09-06T11:00:00Z"));
     // And an unusable mask can't stop it, so switching a weekly schedule to

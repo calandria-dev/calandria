@@ -6,7 +6,7 @@ import { PATCH as patchSettings } from "@/app/api/settings/route";
 // browser storage, so the choice follows the instance to every device, and
 // the client reads it as shown-unless-"off", so the write that HIDES a
 // tracker is a value and the one that shows it again is a clear.
-describe("PATCH /api/settings — the plan-usage key", () => {
+describe("PATCH /api/settings: the plan-usage key", () => {
   const patch = async (body: Record<string, string | null>) =>
     (await (await patchSettings(new Request("http://test/api/settings", {
       method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body),

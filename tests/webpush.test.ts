@@ -356,7 +356,7 @@ describe("the service worker", () => {
     }
   });
 
-  it("has NO fetch handler — it must never become an offline cache", () => {
+  it("has NO fetch handler: it must never become an offline cache", () => {
     // docs/FEATURES.md "Install as an app": everything on screen is live
     // server state, and a stale cache intercepting the SSE streams would be
     // worse than a browser error page.

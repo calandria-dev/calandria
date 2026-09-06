@@ -329,7 +329,7 @@ describe("the /api/events relay", () => {
       const readOrTimeout = (): Promise<{ done: boolean; value?: Uint8Array }> =>
         new Promise((resolve, reject) => {
           const timer = setTimeout(
-            () => reject(new Error(`expected 2 frames, got ${frames.length} — frame ${frames.length} never arrived`)),
+            () => reject(new Error(`expected 2 frames, got ${frames.length}; frame ${frames.length} never arrived`)),
             2000,
           );
           reader.read().then(

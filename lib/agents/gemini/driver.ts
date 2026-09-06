@@ -296,7 +296,7 @@ async function draftProjectContext(project: Project, digest: string): Promise<On
       `Cover, concisely: what the app does and its purpose; the tech stack and key dependencies; how the code is ` +
       `organized (the directories/modules that matter and what lives where); important conventions, patterns, and ` +
       `constraints; how to run/build/test it; and any other orientation a new contributor needs. Prefer concrete ` +
-      `file paths over vague description. Be accurate — only state what you verified in the code.\n\n` +
+      `file paths over vague description. Be accurate: only state what you verified in the code.\n\n` +
       `Write the context as plain markdown (no code fences around the whole thing), tight and information-dense, ` +
       `~200–500 words. Wrap ONLY the final document between a line containing ${CTX_OPEN} and a line containing ` +
       `${CTX_CLOSE}.\n\n=== EXISTING SAVED CONTEXT (may be stale) ===\n${project.context || "(none)"}\n\n` +
@@ -315,7 +315,7 @@ async function summarizeProjectRecap(project: Project, digest: string): Promise<
     project,
     `Write a very short "where I left off" recap for the project "${project.name}", shown when the user returns after ` +
       `time away. Output ONLY 2–4 terse markdown bullet points ("- " each), one line each, ideally under ~12 words. ` +
-      `Be concrete about features, files, and tasks. No headings, no intro/outro, no next steps — recap only what has ` +
+      `Be concrete about features, files, and tasks. No headings, no intro/outro, no next steps. Recap only what has ` +
       `already happened.\n\n=== PROJECT CONTEXT ===\n${project.context || "(none)"}\n\n=== RECENT ACTIVITY ===\n${digest}`
   );
   return { text: result.text || "(no recap produced)", usage: result.usage, model: result.model };

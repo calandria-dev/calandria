@@ -209,7 +209,7 @@ function overlayIconName(count) {
 /** What the tray tooltip says. The count is the whole message. */
 function trayTooltip(count) {
   if (!count) return "Calandria";
-  return `Calandria — ${count} task${count === 1 ? "" : "s"} need${count === 1 ? "s" : ""} you`;
+  return `Calandria: ${count} task${count === 1 ? "" : "s"} need${count === 1 ? "s" : ""} you`;
 }
 
 /**

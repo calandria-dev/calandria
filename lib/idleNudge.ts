@@ -36,8 +36,8 @@ const log = createLogger("idle-nudge");
  */
 export function idleNudgeText(minutes: number): string {
   return (
-    `[Calandria] This session has produced nothing for ${minutes} minutes — no output, no tool ` +
-    `call — and is being held open only so background work can finish or a wakeup can fire. ` +
+    `[Calandria] This session has produced nothing for ${minutes} minutes (no output, no tool ` +
+    `call), and is being held open only so background work can finish or a wakeup can fire. ` +
     `Nothing has been stopped and nothing is necessarily wrong. Check whether what you are ` +
     `waiting on is still worth waiting for: the process may have already exited, the file or ` +
     `condition you are polling may already be satisfied, or the loop doing the waiting may be ` +

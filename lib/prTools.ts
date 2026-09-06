@@ -134,9 +134,9 @@ export async function createPrForAgent(
     number: number || null,
     text: result.existing
       ? `Pushed ${task.work_branch}, updating ${named}, which was already open: ${result.url}\n\n` +
-        `The user reviews and merges it — you cannot, and there is no tool that can.`
+        `The user reviews and merges it. You cannot, and there is no tool that can.`
       : `Pushed ${task.work_branch} and opened ${named} against ${resolveBaseBranch(task, project)}: ${result.url}\n\n` +
-        `It is now waiting on review. Merging is the user's call — you cannot merge it, and there is no tool that can.`,
+        `It is now waiting on review. Merging is the user's call: you cannot merge it, and there is no tool that can.`,
   };
 }
 

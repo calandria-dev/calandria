@@ -134,7 +134,7 @@ describe("endpointModels caching", () => {
     expect(f).toHaveBeenCalledTimes(2);
   });
 
-  it("caches an unreachable endpoint too — a down server is the expensive one to keep asking", async () => {
+  it("caches an unreachable endpoint too, since a down server is the expensive one to keep asking", async () => {
     const f = server(() => {
       throw new TypeError("fetch failed");
     });
@@ -165,8 +165,8 @@ describe("endpointSummary", () => {
   });
 
   it("gives the reason when it isn't reachable", () => {
-    expect(endpointSummary({ base_url: "http://localhost:11434", reachable: false, api: null, models: [], error: "connection refused — is the server running?" }))
-      .toBe("No server at localhost:11434: connection refused — is the server running?");
+    expect(endpointSummary({ base_url: "http://localhost:11434", reachable: false, api: null, models: [], error: "connection refused, is the server running?" }))
+      .toBe("No server at localhost:11434: connection refused, is the server running?");
   });
 
   it("says nothing at all for a cloud project, and says it's checking while it waits", () => {

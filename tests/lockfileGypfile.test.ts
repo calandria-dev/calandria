@@ -80,7 +80,7 @@ describe("package-lock.json carries gypfile:false for packages that need it", ()
     // vacuously; this assertion cannot.
     expect(
       lock.packages["node_modules/better-sqlite3"]?.gypfile,
-      'package-lock.json lost `"gypfile": false` on node_modules/better-sqlite3 — npm strips it every time it rewrites the lockfile. Re-add it by hand; without it `npm ci` runs `node-gyp rebuild` and fails on Windows with `gyp ERR! find VS`.',
+      'package-lock.json lost `"gypfile": false` on node_modules/better-sqlite3: npm strips it every time it rewrites the lockfile. Re-add it by hand; without it `npm ci` runs `node-gyp rebuild` and fails on Windows with `gyp ERR! find VS`.',
     ).toBe(false);
   });
 
@@ -90,12 +90,12 @@ describe("package-lock.json carries gypfile:false for packages that need it", ()
     // anything, the loop passes vacuously and this test stops testing.
     expect(
       shouldHave,
-      "the gypfile scan found nothing at all — node_modules is missing, or the detection no longer matches better-sqlite3",
+      "the gypfile scan found nothing at all: node_modules is missing, or the detection no longer matches better-sqlite3",
     ).toContain("node_modules/better-sqlite3");
     for (const lockPath of shouldHave) {
       expect(
         lock.packages[lockPath]?.gypfile,
-        `${lockPath} ships a binding.gyp and sets \`gypfile: false\` in its own manifest, but package-lock.json does not repeat it — so \`npm ci\` will run \`node-gyp rebuild\` on it. Add \`"gypfile": false\` to that entry in package-lock.json.`,
+        `${lockPath} ships a binding.gyp and sets \`gypfile: false\` in its own manifest, but package-lock.json does not repeat it, so \`npm ci\` will run \`node-gyp rebuild\` on it. Add \`"gypfile": false\` to that entry in package-lock.json.`,
       ).toBe(false);
     }
   });

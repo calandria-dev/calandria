@@ -113,7 +113,7 @@ export function ProviderBadge({ provider }: { provider: AgentProvider }) {
       ? provider.gateway_billing === "subscription"
         ? "Billed to your own plan: the gateway forwards the CLI's login. Turns are recorded unpriced and left out of cost totals."
         : "Billed to the gateway's key, not your plan. Turns are recorded unpriced and left out of cost totals."
-      : "Not cloud spend, and not free either — its prices are unknown, so turns against it are recorded unpriced and left out of cost totals.";
+      : "Not cloud spend, and not free either. Its prices are unknown, so turns against it are recorded unpriced and left out of cost totals.";
   const title = `Runs against ${provider.host} (${what}${provider.model ? `, ${provider.model}` : ""}). ${billing}`;
   return (
     <span className={`provider-badge ${provider.kind}`} role="img" aria-label={title} title={title}>

@@ -251,7 +251,7 @@ export function buildCiFixPrompt(prNumber: number, failures: CiFailure[]): strin
     `CI is failing on this task's pull request${prNumber ? ` (#${prNumber})` : ""}. Please fix it.`,
     ``,
     failures.length === 1 ? `Failing check:` : `Failing checks (${failures.length}):`,
-    ...failures.map((f) => `  - ${label(f)}${f.url ? ` — ${f.url}` : ""}`),
+    ...failures.map((f) => `  - ${label(f)}${f.url ? ` (${f.url})` : ""}`),
   ];
   for (const f of failures) {
     lines.push(``, `## ${label(f)}`);
@@ -261,7 +261,7 @@ export function buildCiFixPrompt(prNumber: number, failures: CiFailure[]): strin
       lines.push(
         ``,
         `No log available${f.logError ? ` (${f.logError})` : ""}. Reproduce this job locally instead of`,
-        `guessing — read the workflow file that defines it and run the same command.`
+        `guessing. Read the workflow file that defines it and run the same command.`
       );
     }
   }
@@ -536,15 +536,15 @@ export function buildTagRefreshPrompt(project: Project, digest: string): string 
     `feature, migration or refactor, plus a description of what the plan IS. The plan was written at some point ` +
     `in the past. The code has moved since. Your job is to check the plan against the code as it stands NOW and ` +
     `report only what has actually gone stale.\n\n` +
-    `Explore the repository in your working directory using the read-only tools available to you — read the files ` +
+    `Explore the repository in your working directory using the read-only tools available to you. Read the files ` +
     `each task talks about, grep for the symbols and routes it names, check whether the thing it proposes already ` +
     `exists, and look at recent history. Judge every task on evidence you found in the code, never on how the ` +
     `brief reads.\n\n` +
     `For each task, decide which ONE of these applies:\n` +
-    `  (a) Still accurate — the work described is still needed and still described correctly. Say NOTHING about it.\n` +
-    `  (b) Stale wording — the work is still needed, but the brief points at files, symbols or an approach that no ` +
+    `  (a) Still accurate: the work described is still needed and still described correctly. Say NOTHING about it.\n` +
+    `  (b) Stale wording: the work is still needed, but the brief points at files, symbols or an approach that no ` +
     `longer exist. Return a corrected "title" and/or "description".\n` +
-    `  (c) Overtaken — the work is already done in the code, or another task in this plan has made it unnecessary. ` +
+    `  (c) Overtaken: the work is already done in the code, or another task in this plan has made it unnecessary. ` +
     `Return "retire": true with a "reason" naming the evidence (the file, function or task that settles it).\n\n` +
     `Be conservative about (c). "Retire" retracts a task the user planned; propose it only when you have READ the ` +
     `code that makes it redundant, not because the title sounds similar to something you saw. If you are unsure, ` +
@@ -556,7 +556,7 @@ export function buildTagRefreshPrompt(project: Project, digest: string): string 
     `${TAG_PLAN_CLOSE}, with this exact shape:\n` +
     `{"description": "...", "tasks": [{"id": "<the task's id, copied exactly>", "title": "...", ` +
     `"description": "...", "retire": false, "reason": "..."}]}\n` +
-    `Omit "title"/"description" on a task you aren't rewording. Use the ids exactly as given below — a task you ` +
+    `Omit "title"/"description" on a task you aren't rewording. Use the ids exactly as given below. A task you ` +
     `invent an id for is dropped. An empty "tasks" array is a perfectly good answer and means the plan is fresh. ` +
     `Any thinking-out-loud goes BEFORE the opening marker.\n\n` +
     `=== THE PLAN ===\n${digest}`

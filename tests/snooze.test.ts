@@ -192,7 +192,7 @@ describe("PATCH /api/tasks/[id] snoozing", () => {
   const patch = (id: string, body: unknown) =>
     patchTask(new Request("http://x", { method: "PATCH", body: JSON.stringify(body) }), params(id));
 
-  it("stores the deadline and leaves the status — the category it returns to — alone", async () => {
+  it("stores the deadline and leaves the status, the category it returns to, alone", async () => {
     const project = createProject({ name: "SnoozePatch" });
     const t = createTask({ project_id: project.id, title: "later" });
     updateTask(t.id, { status: "in_progress" });

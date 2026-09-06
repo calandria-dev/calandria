@@ -49,7 +49,7 @@ export function missingBaseLine(requested: string, projectDefault: string): stri
   return (
     `⚠ Base branch missing: this task is configured to branch from "${requested}", but no such branch ` +
     `exists in this repo, so the worktree was cut from whatever HEAD pointed at${fallback} instead. ` +
-    `Nothing is broken, but the branch you are on is not the one the task's tag names — say so in your ` +
+    `Nothing is broken, but the branch you are on is not the one the task's tag names. Say so in your ` +
     `summary, and have the user clear or repoint that tag's base branch rather than trying to recreate ` +
     `the branch yourself.`
   );
@@ -63,7 +63,7 @@ export function staleBaseLine(base: string, projectDefault: string, behind: numb
     `⚠ Stale base branch: this worktree was cut from "${base}", which is ${commits} behind the project ` +
     `default "${projectDefault}".${own} Everything that landed on ${projectDefault} in between is MISSING ` +
     `from this checkout, so a pull request from here can read as REVERTING that work and will show up ` +
-    `dirty. Do not rebase, reset or cherry-pick by hand to fix it — the supported fix is to Sync ` +
+    `dirty. Do not rebase, reset or cherry-pick by hand to fix it: the supported fix is to Sync ` +
     `"${base}" with "${projectDefault}". If the missing work matters to what you were asked to do, say ` +
     `so and ask for that Sync before you write the PR; otherwise carry on and mention it in your summary.`
   );

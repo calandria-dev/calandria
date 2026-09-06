@@ -179,15 +179,15 @@ export function buildCollabPacket(s: CollabSubmission): string | null {
   const direct = s.mode === "direct";
 
   const out: string[] = [];
-  out.push(`Document review of \`${s.file}\` — I read it in collaboration mode and have feedback.`);
+  out.push(`Document review of \`${s.file}\`. I read it in collaboration mode and have feedback.`);
   out.push("");
 
   if (patch) {
     out.push("## My edits");
     out.push(
       direct
-        ? `I edited \`${s.file}\` directly in the worktree — the file on disk already has these changes, so re-read it before touching it and do NOT apply this diff again. It's here so you can see what changed; the wording is final, don't rephrase it.`
-        : "I edited the document directly. Apply this patch to the file exactly as written — the wording is final, don't rephrase it — before working on the comments below."
+        ? `I edited \`${s.file}\` directly in the worktree: the file on disk already has these changes, so re-read it before touching it and do NOT apply this diff again. It's here so you can see what changed; the wording is final, don't rephrase it.`
+        : "I edited the document directly. Apply this patch to the file exactly as written. The wording is final, don't rephrase it. Then work on the comments below."
     );
     out.push("");
     out.push("```diff");

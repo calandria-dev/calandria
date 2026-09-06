@@ -76,7 +76,7 @@ export function extractPins(source, dockerfilePath) {
     const m = re.exec(source);
     if (!m) {
       throw new Error(
-        `could not find ${label} in ${dockerfilePath} — the pin moved or was ` +
+        `could not find ${label} in ${dockerfilePath}: the pin moved or was ` +
           `renamed, so this check is no longer looking at the real thing`,
       );
     }
@@ -352,13 +352,13 @@ const BUMP_CHECKLIST = [
   "",
   "1. Move the Dockerfile ARG. For Codex, move `@openai/codex-sdk` in the same",
   "   commit (`npm install --save-exact @openai/codex-sdk@<version>`): the SDK",
-  "   exact-depends on `@openai/codex`, and outside the image — where",
-  "   `CODEX_CLI_PATH` is empty — that vendored copy is the binary that runs.",
+  "   exact-depends on `@openai/codex`, and outside the image, where",
+  "   `CODEX_CLI_PATH` is empty, that vendored copy is the binary that runs.",
   "   `tests/cliPins.test.ts` fails if the two disagree.",
   "2. `npm run typecheck && npm test`.",
   "3. Build the image and run one real turn per bumped agent against a live",
   "   login: a plain prompt, one tool call, one `/clear`. A CLI too old for a",
-  "   model the driver offers says so on the first turn — 0.146.0 answered",
+  "   model the driver offers says so on the first turn: 0.146.0 answered",
   "   GPT-6 Astra with `model requires a newer version of codex`.",
   "4. Check the driver's model catalog against what the new CLI actually",
   "   offers, and add anything it has gained.",
@@ -370,7 +370,7 @@ function buildReport({ findings, stale, observed }, pins) {
 
   if (findings.length) {
     lines.push(
-      "## Aged out — the build is broken",
+      "## Aged out: the build is broken",
       "",
       "These upstreams serve only their newest version, so the pinned one is",
       "not old, it is GONE, and every uncached image build fails.",
@@ -391,7 +391,7 @@ function buildReport({ findings, stale, observed }, pins) {
 
   if (stale.length) {
     lines.push(
-      "## Behind — the build is fine, the feature may not be",
+      "## Behind: the build is fine, the feature may not be",
       "",
       "npm keeps old versions, so these still install. What goes wrong is",
       "behaviour: a new model can require a newer CLI, not just a catalog",

@@ -1005,8 +1005,8 @@ export function moveTasks(
     // the columns it always has.
     //
     // worktree_path, work_branch and base_sha name a directory and branch in
-    // the old repo that no longer apply; emptying them is what makes the next
-    // turn cut a fresh worktree from the destination (POST /messages and
+    // the old repo that no longer apply. Emptying them makes the next turn
+    // cut a fresh worktree from the destination (POST /messages and
     // lib/autoStart both read a missing worktree_path as "create one").
     //
     // The remaining columns describe current state tied to that same checkout:

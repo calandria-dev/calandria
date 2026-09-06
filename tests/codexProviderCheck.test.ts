@@ -142,7 +142,7 @@ describe("readCodexProvider against the real codex CLI", () => {
 
     const { config } = codexProviderConfig(OVERRIDE);
     const mapped = await readCodexProvider(serializeCodexConfigOverrides(config), { bin: real, cwd: dir });
-    expect(mapped, `codex ${version} no longer reports its resolved provider — the mapping can't be verified`).toMatchObject({
+    expect(mapped, `codex ${version} no longer reports its resolved provider, so the mapping can't be verified`).toMatchObject({
       kind: "provider",
       provider: CODEX_LOCAL_PROVIDER_ID,
     });

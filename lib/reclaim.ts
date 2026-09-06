@@ -173,9 +173,9 @@ export async function reclaimPreview(taskId: string): Promise<ReclaimPreview | n
  *
  * Takes locks in the order lib/taskMove.ts and the sweep take them (the task
  * lock, then the repo lock), so the three can only ever wait on each other in
- * one direction. The task lock is what makes the safety read mean anything: it
- * is the lock the turn-launch path holds through registerTurn(), so nothing
- * can start writing into the checkout between "this is clean" and
+ * one direction. The task lock makes the safety read mean anything: it is the
+ * lock the turn-launch path holds through registerTurn(), so nothing can
+ * start writing into the checkout between "this is clean" and
  * `git worktree remove`.
  *
  * `discardUnsafe` is the acknowledgement lib/taskMove.ts demands. It is

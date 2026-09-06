@@ -24,7 +24,7 @@ describe("codex reasoning-effort mapping", () => {
     }
   });
 
-  it("labels each option with the effort it actually sends — OpenAI's own scale, not Claude's think vocabulary", () => {
+  it("labels each option with the effort it actually sends, OpenAI's own scale, not Claude's think vocabulary", () => {
     // Provider-native labels: a Codex task's picker reads low/medium/high/xhigh,
     // exactly the model_reasoning_effort the preset resolves to, so the picker
     // can never claim an effort the turn doesn't run.

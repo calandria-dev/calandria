@@ -61,7 +61,7 @@ beforeEach(() => {
 });
 
 describe("claude driver mid-turn task notifications", () => {
-  it("drops the announcement of a FOREGROUND call — the card is about to carry the result", async () => {
+  it("drops the announcement of a FOREGROUND call, since the card is about to carry the result", async () => {
     mockCli(async function* ({ stop, nextInput }) {
       await nextInput();
       yield init;

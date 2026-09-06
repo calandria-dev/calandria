@@ -143,6 +143,9 @@ with every check green.
   yours is genuinely attribution, the deprecated `ORCH_*` alias table, or a pre-rename
   on-disk/localStorage name, add the file to that test's `ALLOWED` map with the narrowest
   pattern covering the line, and a comment saying which of those.
+- **Plain comments:** `tests/commentStyle.test.ts` fails any tracked source file that
+  contains an em dash or a comment written as a work log (`deliberately`, `the whole
+  point`, a dated `Measured` note, and similar) instead of stating the invariant to keep.
 
 ## AI-assisted contributions
 

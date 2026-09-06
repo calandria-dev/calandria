@@ -116,7 +116,7 @@ describe("dead-login recovery", () => {
     ]);
   });
 
-  it("leaves ordinary turn failures alone — no flag, and the queue still drains", async () => {
+  it("leaves ordinary turn failures alone: no flag, and the queue still drains", async () => {
     const project = createProject({ name: "P3", repo_path: "" });
     const task = createTask({ project_id: project.id, title: "T3", description: "d" });
     addPendingMessage(task.id, task.generation, "follow-up");
@@ -145,7 +145,7 @@ describe("dead-login recovery", () => {
   });
 });
 
-describe("isAuthFailure — provider-agnostic dead-credential detection", () => {
+describe("isAuthFailure: provider-agnostic dead-credential detection", () => {
   it("matches the Claude Code signatures", () => {
     expect(isAuthFailure(OAUTH_DEAD)).toBe(true);
     expect(isAuthFailure("Claude Code process exited with code 1: Invalid API key · Please run /login")).toBe(true);
@@ -153,7 +153,7 @@ describe("isAuthFailure — provider-agnostic dead-credential detection", () => 
   });
 
   it("matches the Codex signatures so a Codex task gets the same recovery", () => {
-    expect(isAuthFailure("stream error: not logged in — please run `codex login`")).toBe(true);
+    expect(isAuthFailure("stream error: not logged in, please run `codex login`")).toBe(true);
     expect(isAuthFailure("401 Unauthorized: your ChatGPT session has expired")).toBe(true);
     expect(isAuthFailure("token refresh failed: invalid_grant")).toBe(true);
   });

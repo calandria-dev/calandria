@@ -1473,12 +1473,12 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
             setProviderKind(kind);
             if (kind === "local" && (!providerUrl || providerKind === "cloud")) setProviderUrl(localDefaultUrl);
           }}>
-            <option value="cloud">Cloud — the agent&apos;s own login</option>
-            <option value="local">Local model — Ollama or LM Studio</option>
+            <option value="cloud">Cloud, the agent&apos;s own login</option>
+            <option value="local">Local model, Ollama or LM Studio</option>
             {/* Only when the instance has one. With no CALANDRIA_LITELLM_BASE_URL
                 there is no address to route to, so the option would be a dead
                 end rather than a setup step. */}
-            {gatewayUrl ? <option value="gateway">Gateway — the instance&apos;s LiteLLM proxy</option> : null}
+            {gatewayUrl ? <option value="gateway">Gateway, the instance&apos;s LiteLLM proxy</option> : null}
             <option value="custom">Custom base URL</option>
           </select>
         </div>
@@ -1551,7 +1551,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
         <div className="field" style={{ marginTop: 14 }}>
           <div className="lab ctx-lab">
             <span>{Icon.sliders()} Services</span>
-            <span className="opt" style={{ fontWeight: 400 }}>port <code className="ctx-mono">{project.port || "—"}</code> injected as <code className="ctx-mono">PORT</code></span>
+            <span className="opt" style={{ fontWeight: 400 }}>port <code className="ctx-mono">{project.port || "–"}</code> injected as <code className="ctx-mono">PORT</code></span>
           </div>
           <div className="hlp" style={{ marginTop: 0, marginBottom: 8 }}>
             Calandria supervises these in {repo ? repo.split("/").pop() : "the working dir"}: start/stop them from the Services panel; they outlive the tab.

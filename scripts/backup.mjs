@@ -41,7 +41,7 @@ Options:
   -h, --help      This.
 
 The archive contains credentials. It is written 0600 (POSIX); on Windows it
-inherits the ACL of the directory it lands in — put it somewhere private.
+inherits the ACL of the directory it lands in. Put it somewhere private.
 `;
 
 /** @param {string[]} argv */
@@ -244,7 +244,7 @@ function main() {
 
   const db = resolveDbLocation();
   if (!fs.existsSync(db.path)) {
-    process.stderr.write(`no database at ${db.path} — nothing to back up\n`);
+    process.stderr.write(`no database at ${db.path}: nothing to back up\n`);
     process.exit(1);
   }
   const worktrees = resolveWorktreesDir();
@@ -256,7 +256,7 @@ function main() {
   const name = `calandria-backup-${stamp()}`;
   const staging = path.join(outDir, name);
   if (fs.existsSync(staging)) {
-    process.stderr.write(`${staging} already exists — refusing to overwrite\n`);
+    process.stderr.write(`${staging} already exists: refusing to overwrite\n`);
     process.exit(1);
   }
   fs.mkdirSync(staging, { recursive: true, mode: 0o700 });
@@ -285,7 +285,7 @@ function main() {
     ]) {
       if (!flag) continue;
       if (!fs.existsSync(src)) {
-        log(`${key.padEnd(9)} ${src} does not exist — skipped`);
+        log(`${key.padEnd(9)} ${src} does not exist, skipped`);
         continue;
       }
       log(`${key.padEnd(9)} copying ${src} (this is the slow part)`);

@@ -862,8 +862,8 @@ export default function TaskChanges({
   // lands through the same in-place merge and can be refused by the same dirt.
   //
   // Under a PR landing policy it stops at the commit instead (`resolveOnly`):
-  // the branch now contains the base, which is what makes the PR mergeable, and
-  // the base itself is left for the PR to move. Nothing merged, so no onMerged.
+  // the branch now contains the base, so the PR can merge it, and the base
+  // itself is left for the PR to move. Nothing merged, so no onMerged.
   const doComplete = async (stashDirty?: string[]) => {
     setMerging(true);
     const resolveOnly = prMode;
@@ -993,7 +993,7 @@ export default function TaskChanges({
               onClick={() => doComplete()}
               disabled={merging || resolving}
               title={prMode
-                ? `Commit the resolved merge to ${data.branch}. ${data.baseLabel} takes pull requests only, so nothing lands on it here — the PR does that.`
+                ? `Commit the resolved merge to ${data.branch}. ${data.baseLabel} takes pull requests only, so nothing lands on it here; the PR does that.`
                 : undefined}
             >
               {merging ? (prMode ? "Committing…" : "Merging…") : prMode ? "Accept resolution" : "Accept & merge"}
@@ -1061,7 +1061,7 @@ export default function TaskChanges({
       {localMergeOpen && !merging && (
         <div className="tc-mergebar review">
           <b>{data.baseLabel}</b> takes pull requests only, so this merge is <b>local only</b>: it moves the copy of{" "}
-          <code>{data.baseLabel}</code> in your checkout and <b>cannot be pushed</b> afterwards — the remote will reject it, leaving
+          <code>{data.baseLabel}</code> in your checkout and <b>cannot be pushed</b> afterwards: the remote will reject it, leaving
           your local branch diverged from origin. To land this work, use <b>Create PR</b>.
           <div className="tc-conflict-actions">
             <button className="tc-btn" onClick={() => setLocalMergeOpen(false)}>Cancel</button>
@@ -1110,7 +1110,7 @@ export default function TaskChanges({
           {!prMergeRes.ok
             ? `⚠ ${prMergeRes.error || "the pull request could not be merged"}`
             : prMergeRes.queued
-              ? "Auto-merge is on. GitHub will squash-merge this pull request as soon as its requirements are met — you can close the tab."
+              ? "Auto-merge is on. GitHub will squash-merge this pull request as soon as its requirements are met. You can close the tab."
               : prMergeRes.fellBack
                 ? "Squash-merged on GitHub. Auto-merge wasn't available here, so it merged straight away."
                 : "Squash-merged on GitHub."}
@@ -1121,7 +1121,7 @@ export default function TaskChanges({
         <div className={`tc-mergebar ${mergeRes.ok ? "ok" : "bad"}`}>
           {mergeRes.ok
             ? mergeRes.resolveOnly
-              ? `Resolution committed to ${mergeRes.targetBranch}. Nothing landed on the base branch — open or update the PR to land it.`
+              ? `Resolution committed to ${mergeRes.targetBranch}. Nothing landed on the base branch. Open or update the PR to land it.`
               : mergeRes.alreadyMerged
                 ? `Already up to date with ${mergeRes.targetBranch}.`
                 : `Merged into ${mergeRes.targetBranch}.`

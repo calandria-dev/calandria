@@ -47,4 +47,4 @@ export function isPromptTooLong(msg: string | null | undefined): boolean {
  *  snapshot replays messages from SQLite. */
 export const CONTEXT_OVERFLOW_NOTICE =
   "This session's context exceeds the model's limit, so it can't continue. " +
-  "Start a fresh context window to keep going — a summary of this session carries over.";
+  "Start a fresh context window to keep going. A summary of this session carries over.";

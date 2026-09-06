@@ -110,7 +110,7 @@ describe("codex catalog: the context window", () => {
     expect(codexContextWindow("gpt-5.4", 1)).toBe(272_000);
   });
 
-  it("applies config.toml's model_context_window override — the point of parsing any of this", () => {
+  it("applies config.toml's model_context_window override, the reason for parsing any of this", () => {
     writeCache([entry("gpt-6-astra", { effective_context_window_percent: null })]);
     writeConfig('model_context_window = 500000\n');
     expect(codexLocalCatalog().windowOverride).toBe(500_000);
@@ -150,7 +150,7 @@ describe("codex catalog: the context window", () => {
 });
 
 describe("codex catalog: the default model", () => {
-  it("resolves the lowest-priority listed entry — the Astra case, where the constant is wrong", () => {
+  it("resolves the lowest-priority listed entry, the Astra case where the constant is wrong", () => {
     // In a 0.153.0 account catalog, gpt-6-astra ranks priority 1 and
     // gpt-5.6-sol priority 6. Astra bills $10/$50 against Sol's $5/$30, so
     // resolving the wrong one is a 2x mispricing of every default turn.

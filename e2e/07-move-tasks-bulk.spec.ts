@@ -96,7 +96,7 @@ test("a multi-select moves every picked task to another project at once", async 
 });
 
 test("a worktree whose cost can't be read can't be answered for", async ({ page }) => {
-  // The preview is what makes the checkbox an acknowledgement instead of a
+  // The preview turns the checkbox into an acknowledgement instead of a
   // switch. With it unavailable, the row must refuse the answer instead of
   // taking one about a checkout nobody described.
   await page.route("**/api/tasks/move?*", (route) => route.abort());

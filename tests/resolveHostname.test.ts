@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 const { resolveHostname, hostnameMigrationWarning, DEFAULT_HOSTNAME } = require("../lib/resolveHostname");
 
 describe("resolveHostname", () => {
-  it("defaults to loopback with nothing set — an unauthenticated shell must not reach the network", () => {
+  it("defaults to loopback with nothing set, since an unauthenticated shell must not reach the network", () => {
     expect(resolveHostname({})).toBe("127.0.0.1");
     expect(DEFAULT_HOSTNAME).toBe("127.0.0.1");
   });
@@ -50,7 +50,7 @@ describe("hostnameMigrationWarning", () => {
     expect(w).toContain("CALANDRIA_HOSTNAME=0.0.0.0");
   });
 
-  it("stays silent for an injected machine name — that would fire on every Fedora boot", () => {
+  it("stays silent for an injected machine name, which would otherwise fire on every Fedora boot", () => {
     expect(hostnameMigrationWarning({ HOSTNAME: "my-laptop" })).toBeNull();
     expect(hostnameMigrationWarning({ HOSTNAME: "3f2a1b9c4d5e" })).toBeNull();
   });

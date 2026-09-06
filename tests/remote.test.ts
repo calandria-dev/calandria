@@ -7,7 +7,7 @@ import { createProject } from "../lib/store";
 import { git, uid, commitFile, makeRepo, makeRepoWithOrigin, pushFromColleague } from "./helpers";
 import { onPosix } from "./platform";
 
-describe("ensureWorktree — remote-aware base", () => {
+describe("ensureWorktree: remote-aware base", () => {
   it("branches from the fetched remote tip when the local base branch is behind", async () => {
     const { repo, colleague } = await makeRepoWithOrigin();
     const remoteSha = await pushFromColleague(colleague, "remote.txt", "landed on origin\n");
@@ -163,7 +163,7 @@ describe("remoteBaseStatus", () => {
 // all-zero "up to date" before that refusal runs, or a project pointed at a
 // remote-only branch would show in sync with its remote while the button
 // does nothing.
-describe("POST /api/projects/[id]/base-branch — fast-forward", () => {
+describe("POST /api/projects/[id]/base-branch: fast-forward", () => {
   const ff = (id: string) =>
     projectBaseBranchRoute(
       new Request("http://localhost/api/projects/x/base-branch", {
@@ -237,7 +237,7 @@ describe("advanceBaseBranch", () => {
   });
 });
 
-describe("mergeTask — landing a task cut from the remote tip", () => {
+describe("mergeTask: landing a task cut from the remote tip", () => {
   // A task branched from origin/main carries the remote's commits as well as its
   // own. Fast-forwarding the base past those first keeps the merge honest.
   async function taskAheadOfLocalMain() {
@@ -346,7 +346,7 @@ describe("pushBaseBranch", () => {
 // local ref, when nobody in this checkout has asked for it yet. Every
 // base-branch check goes through the local-only `branchExists`, so this
 // materializes the branch locally instead of falling back to HEAD.
-describe("ensureWorktree — a base branch that exists only on the remote", () => {
+describe("ensureWorktree: a base branch that exists only on the remote", () => {
   const pushBranch = async (colleague: string, branch: string) => {
     await git(colleague, "checkout", "-b", branch);
     await commitFile(colleague, `${branch}.txt`, "on the tag branch\n", `${branch}: first`);
@@ -370,7 +370,7 @@ describe("ensureWorktree — a base branch that exists only on the remote", () =
     expect(fs.existsSync(path.join(wt!.path, "pr-workflow.txt"))).toBe(true);
   });
 
-  it("lets prepareWorktreeMerge run — the Fix-with-AI path that used to refuse", async () => {
+  it("lets prepareWorktreeMerge run, the Fix-with-AI path that used to refuse", async () => {
     const { repo, colleague } = await makeRepoWithOrigin();
     await pushBranch(colleague, "pr-workflow");
     const wt = await ensureWorktree(repo, uid(), "pr-workflow");

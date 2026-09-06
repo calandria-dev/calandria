@@ -50,7 +50,7 @@ function assertOutsideCheckout(bin: string): void {
   if (real === repo || real.startsWith(repo + path.sep)) {
     throw new Error(
       `CALANDRIA_TEST_BIN is inside this checkout (${real}).\n` +
-        `Move the artifact out of the repo before running the packaged suite — an installed ` +
+        `Move the artifact out of the repo before running the packaged suite: an installed ` +
         `app is never inside a source tree, and testing one that is proves nothing about the ` +
         `payload. e.g.  mv desktop/dist/linux-unpacked "$TMPDIR/calandria-app"  (or install the ` +
         `.deb and point at /opt/Calandria/calandria-desktop). See desktop/README.md.`
@@ -381,7 +381,7 @@ function electronBinary(): string {
     throw new Error(
       `Electron is not installed at ${bin}. Run \`npm run desktop:install\` from the repo root ` +
         `(Electron is a devDependency of desktop/package.json, so an install under NODE_ENV=production ` +
-        `reports "up to date" and fetches nothing — see desktop/README.md).`
+        `reports "up to date" and fetches nothing; see desktop/README.md).`
     );
   }
   return bin;

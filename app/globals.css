@@ -1,11 +1,11 @@
 /* ==========================================================================
-   Calandria — hi-fi app styling
+   Calandria: hi-fi app styling
    Three-column tool for running Claude Code projects & task sessions
    (ported from the Claude Design hi-fi prototype)
    ========================================================================== */
 
 /* ==========================================================================
-   Theme primitives — Calandria design system (docs/design/handoff/styles.css,
+   Theme primitives: Calandria design system (docs/design/handoff/styles.css,
    copied verbatim). Four selectable palettes, each dark + light, switched via
    [data-theme]="<palette>-<mode>" on <html> (app/shell/usePrefs.ts).
    cherenkov-dark is the :root default (SSR-safe before hydration picks a
@@ -21,20 +21,20 @@
 [data-theme="basic-light"]{--bg:#f5f6f7;--panel:#ffffff;--line:#e0e2e6;--ink:#26292f;--dim:#697080;--accent:#3468a8;--calandria:#3468a8;--term:#eceef0;--run-bg:#ddf1e4;--run:#19714a;--rev-bg:#f4ecd2;--rev:#7d621a;--err:#b83a52;--warn:#7d621a;--s1:#2f66c9;--s2:#8a6a12;--s3:#b83a52;--s4:#6e46c9;--s5:#5d7d87}
 
 /* ==========================================================================
-   Derivation layer — every legacy component token, expressed in terms of the
+   Derivation layer: every legacy component token, expressed in terms of the
    theme primitives above via color-mix() so it resolves per-theme dynamically.
    One block (not per-theme) because var()/color-mix() re-resolve against
-   whichever [data-theme] block is active on <html> — no duplication needed.
-   Also: type system tokens (self-hosted via next/font — see app/fonts.ts). */
+   whichever [data-theme] block is active on <html>, so no duplication is needed.
+   Also: type system tokens (self-hosted via next/font, see app/fonts.ts). */
 :root{
   /* ---- type ---- */
   --font-display:var(--nf-spectral),Georgia,serif;             /* page titles + section headers only */
   --font-body:var(--nf-source-sans),system-ui,sans-serif;      /* everything else: rows, chips, labels, controls */
-  --font-mono:var(--nf-jetbrains-mono),ui-monospace,monospace; /* code blocks, terminal, metadata (user-selectable — Settings → Appearance) */
+  --font-mono:var(--nf-jetbrains-mono),ui-monospace,monospace; /* code blocks, terminal, metadata (user-selectable, Settings → Appearance) */
   --font-prompt:var(--font-body);                              /* composer / prompt-input (user-selectable) */
   --display-weight:500;
   --display-tracking:-0.005em;
-  --sans:var(--font-body);   /* legacy alias — most of the component CSS below still reads --sans */
+  --sans:var(--font-body);   /* legacy alias: most of the component CSS below still reads --sans */
   --mono:var(--font-mono);   /* legacy alias */
 
   /* ---- surfaces ----
@@ -68,7 +68,7 @@
      --accent-ink deviates from the naive var(--bg) mapping: it's read as TEXT
      on softly-tinted surfaces (e.g. .nav-item.active), not as ink drawn on a
      solid accent fill (that's --on-accent, below). --bg is the palette's most
-     extreme value — near-black in dark, near-white in light — which is
+     extreme value (near-black in dark, near-white in light), which is
      illegible as text on a panel-toned background. Mixing toward --ink (the
      primary, always-legible-on-panel text color) reproduces the original
      relationship: a lighter accent tint in dark mode, a darker one in light. */
@@ -91,19 +91,19 @@
   --blue:var(--accent);
   --blue-soft:var(--accent-soft);
   /* Violet reads as "an agent did this, look" rather than error (red) or
-     schedule (blue) — reused from the chart-series primitive so it stays
+     schedule (blue). It reuses the chart-series primitive so it stays
      distinguishable in every palette/mode without a hardcoded hex. */
   --violet:var(--s4);
   --violet-soft:color-mix(in oklab, var(--s4) 16%, transparent);
-  /* --calandria stays a theme primitive (set per-[data-theme] block above) —
+  /* --calandria stays a theme primitive (set per-[data-theme] block above):
      it must stay distinguishable from --s1..--s5 in the chart series. */
 
   --grid:color-mix(in oklab, var(--line) 45%, transparent);
   --row-sel:color-mix(in oklab, var(--accent) 9%, transparent);
 
-  /* One glow shape for every theme/mode (the old dark/light split used two
-     different shapes — a blurred glow vs. a solid ring — which no longer
-     applies now that every theme shares one derivation block). */
+  /* One glow shape for every theme/mode. The old dark/light split used two
+     different shapes, a blurred glow vs. a solid ring, but that distinction no
+     longer applies now that every theme shares one derivation block. */
   --glow-blue:0 0 10px color-mix(in oklab, var(--accent) 40%, transparent);
   --glow-coral:0 0 10px color-mix(in oklab, var(--err) 40%, transparent);
   --glow-green:0 0 10px color-mix(in oklab, var(--run) 40%, transparent);
@@ -111,7 +111,7 @@
   --diff-add-bg:color-mix(in oklab, var(--run) 12%, transparent);
   --diff-del-bg:color-mix(in oklab, var(--err) 12%, transparent);
 
-  /* ---- geometry — unchanged from the old :root, just relocated here ---- */
+  /* ---- geometry: unchanged from the old :root, just relocated here ---- */
   --r-sm:7px;
   --r:10px;
   --r-lg:14px;
@@ -137,8 +137,8 @@ a{color:var(--accent);text-decoration:none;}
 a:hover{text-decoration:underline;text-underline-offset:2px;}
 
 *{box-sizing:border-box;}
-/* html carries the theme background too: on iOS the canvas behind the page —
-   exposed around the on-screen keyboard and during viewport resizes — paints
+/* html carries the theme background too. On iOS the canvas behind the page,
+   exposed around the on-screen keyboard and during viewport resizes, paints
    the ROOT element's background, and an unset one renders as a black slab
    instead of the app surface. */
 html,body{margin:0;height:100%;}
@@ -183,7 +183,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
    so this one does both of its jobs. Its traffic lights are placed at x:18 by
    desktop/main.js and the cluster is 52px wide (three 12px buttons on a 20px
    pitch), so 86px leaves the logo exactly the 16px clear of them that it
-   normally sits from the window edge —
+   normally sits from the window edge.
    tests/desktopWindowChrome.test.ts fails if the two numbers drift apart. And
    the bar is the window's drag handle, because with the native one gone there
    is nothing else to move the window by; everything clickable in it opts back
@@ -200,7 +200,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .app.mac-chrome .titlebar .ny-menu{-webkit-app-region:no-drag;}
 
 .tb-left{grid-column:1;justify-self:start;display:flex;align-items:center;gap:14px;min-width:0;}
-/* Logomark + wordmark — see app/Logo.tsx. Lockup gap ≈ 0.3× the 14px wordmark
+/* Logomark + wordmark, see app/Logo.tsx. Lockup gap ≈ 0.3× the 14px wordmark
    size; the glyph is colored via currentColor through this wrapper. */
 .tb-logo{display:flex;align-items:center;gap:4px;color:var(--accent);}
 .tb-word{font-family:var(--font-display);font-weight:500;font-size:14px;letter-spacing:.005em;color:var(--ink);}
@@ -242,13 +242,13 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 /* ============================== columns ============================== */
 .col{display:flex;flex-direction:column;min-height:0;background:var(--panel);}
 /* min-width:0 lets these flex items shrink below their content's min-content
-   size — without it the inline flex-basis from a resize drag is floored at the
+   size. Without it the inline flex-basis from a resize drag is floored at the
    panel content width, so the panels could grow but never narrow. */
 .col-projects{flex:0 0 var(--col-proj);min-width:0;border-right:1px solid var(--line);background:var(--panel-2);}
 .col-tasks{flex:0 0 var(--col-task);min-width:0;border-right:1px solid var(--line);}
 .col-session{flex:1;min-width:0;background:var(--surface);}
-.col-diffs{flex:1;min-width:0;background:var(--surface);}  /* mobile Diffs tab — full-pane TaskChanges */
-/* mobile project pane — ProjectLanding (recap, Tags, Runbooks, Schedules)
+.col-diffs{flex:1;min-width:0;background:var(--surface);}  /* mobile Diffs tab: full-pane TaskChanges */
+/* mobile project pane: ProjectLanding (recap, Tags, Runbooks, Schedules)
    with a header of its own. Column so the header sits above the scrolling body. */
 .col-project{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--surface);}
 
@@ -266,7 +266,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .wcoach-step-t{font-size:12.5px;font-weight:650;color:var(--ink);}
 .wcoach-step-b{font-size:11.5px;line-height:1.45;color:var(--ink-3);margin-top:1px;}
 
-/* drag handle between columns — a zero-width seam whose grab bar is an absolutely
+/* drag handle between columns: a zero-width seam whose grab bar is an absolutely
    positioned 10px overlay straddling the border, lifted above both neighbors so
    nothing swallows the drag; shows an accent guide on hover/drag */
 .col-resize{flex:0 0 0;align-self:stretch;position:relative;z-index:7;}
@@ -274,7 +274,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .col-resize-bar::before{content:"";position:absolute;top:0;bottom:0;left:4px;width:2px;background:transparent;transition:background .12s;}
 .col-resize-bar:hover::before,.col-resize-bar:active::before{background:var(--accent);}
 
-/* collapsed-panel rail — slim, clickable spine that restores the hidden panel */
+/* collapsed-panel rail: slim, clickable spine that restores the hidden panel */
 .col-rail{flex:0 0 30px;display:flex;flex-direction:column;align-items:center;gap:12px;padding-top:14px;
   background:var(--panel-2);border-right:1px solid var(--line);color:var(--ink-3);transition:background .12s,color .12s;}
 .col-rail.rail-task{background:var(--panel);}
@@ -337,7 +337,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .proj .pcount{display:flex;align-items:center;gap:3px;flex-shrink:0;font-family:var(--mono);font-size:10px;color:var(--ink-3);white-space:nowrap;}
 .proj .pdot{width:7px;height:7px;border-radius:50%;}
 
-/* deprecated area — set-aside projects, collapsed by default at the list's foot */
+/* deprecated area: set-aside projects, collapsed by default at the list's foot */
 .dep-area{margin-top:8px;padding-top:6px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:2px;}
 .dep-head{display:flex;align-items:center;gap:7px;padding:6px 9px;border-radius:var(--r);width:100%;text-align:left;cursor:pointer;color:var(--ink-3);font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;}
 .dep-head:hover{background:var(--panel);color:var(--ink-2);}
@@ -359,7 +359,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .nav-item.active svg{color:var(--accent);}
 .user-chip{display:flex;align-items:center;gap:10px;padding:7px 9px;border-radius:var(--r);width:100%;text-align:left;}
 
-/* settings view — replaces the tasks+session work area */
+/* settings view: replaces the tasks+session work area */
 .settings-nav{flex:0 0 220px;min-width:0;border-right:1px solid var(--line);background:var(--panel-2);padding:10px;gap:2px;}
 .settings-nav-h{padding:6px 9px 10px;font-size:15px;font-weight:700;color:var(--ink);}
 .settings-nav-list{display:flex;flex-direction:column;gap:2px;flex:1;min-height:0;overflow-y:auto;}
@@ -369,7 +369,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .settings-body{padding:20px;max-width:680px;}
 .settings-body code{font-family:var(--mono);font-size:12px;background:var(--surface-2);padding:1px 5px;border-radius:5px;}
 
-/* settings → appearance — theme cards + font pickers (docs/design/handoff/ui/Settings.html) */
+/* settings → appearance: theme cards + font pickers (docs/design/handoff/ui/Settings.html) */
 .ap-h2{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);font-weight:600;margin:0 0 10px;}
 .ap-themes{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;}
 .ap-th{display:block;width:100%;border:1px solid var(--line);border-radius:10px;overflow:hidden;cursor:pointer;background:none;padding:0;text-align:left;font:inherit;color:inherit;transition:border-color .12s,box-shadow .12s;}
@@ -386,7 +386,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .ap-face.on{border-color:var(--accent);}
 .ap-face input{accent-color:var(--accent);}
 /* Clicking the row focuses the radio THROUGH the label, which Chromium counts
-   as keyboard-ish focus — so the global :focus-visible outline boxed the radio
+   as keyboard-ish focus, so the global :focus-visible outline boxed the radio
    on every mouse selection. Keep a focus indicator (design rule: never bare
    outline:none) but move it to the row, as the field-focus treatment. */
 .ap-face input:focus-visible{outline:none;}
@@ -408,7 +408,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .pb-home{display:flex;align-items:center;gap:10px;flex:1;min-width:0;text-align:left;border-radius:var(--r-sm);padding:3px;margin:-3px;cursor:pointer;}
 .pb-home:hover{background:var(--surface-2);}
 /* The project pane's own header shows the same identity chip, but there it is
-   the title of the screen you are already on — nothing to click. */
+   the title of the screen you are already on, with nothing to click. */
 .pb-home.static{cursor:default;}
 .pb-home.static:hover{background:none;}
 .pb-pic{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;font-family:var(--mono);font-weight:700;font-size:15px;color:#fff;flex:0 0 auto;}
@@ -422,7 +422,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .pb-ctx .ctx-txt.empty-ctx{color:var(--ink-4);font-style:italic;}
 .pb-ctx .ctx-edit{font-family:var(--mono);font-size:9.5px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.06em;flex:0 0 auto;display:flex;align-items:center;gap:4px;}
 
-/* base branch vs its remote — only rendered when there's something to say */
+/* base branch vs its remote: only rendered when there's something to say */
 .bb-banner{margin-top:8px;display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:var(--r-sm);font-size:11.5px;font-weight:600;color:var(--blue);background:var(--blue-soft);border:1px solid var(--blue);}
 .bb-banner.warn{color:var(--amber);background:var(--amber-soft);border-color:var(--amber);}
 .bb-banner.quiet{color:var(--ink-3);background:var(--surface-2);border-color:var(--line-2);font-weight:500;}
@@ -458,7 +458,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .task-top{display:flex;align-items:flex-start;gap:9px;}
 .task-top .pick-slot{margin-top:4px;}
 .task-top .pri{margin-top:1px;}
-/* Two lines before the ellipsis — one line of a default-width column rarely
+/* Two lines before the ellipsis: one line of a default-width column rarely
    conveys the task, which is what the title is for. */
 .task .ttitle{flex:1;min-width:0;font-weight:650;font-size:13.5px;letter-spacing:-.01em;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 .task .tdesc{font-size:12px;color:var(--ink-2);margin-top:5px;line-height:1.42;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
@@ -472,7 +472,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .diff-foot{display:flex;align-items:center;gap:8px;margin-top:9px;padding-top:8px;border-top:1px solid var(--line-2);font-family:var(--mono);font-size:11px;color:var(--dim);}
 .diff-branch{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
 /* Shown only when the task is based on something other than the project's
-   default base branch (lib/baseBranch.ts) — otherwise every card repeats "main". */
+   default base branch (lib/baseBranch.ts); otherwise every card repeats "main". */
 .diff-base{flex:0 0 auto;white-space:nowrap;color:var(--blue);}
 .diff-stat{flex:0 0 auto;white-space:nowrap;}
 .diff-stat .a{color:var(--run);}
@@ -480,7 +480,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .diff-spark{flex:0 0 auto;margin-left:auto;display:block;}
 
 /* multi-select (bulk move) ------------------------------------------- */
-/* The card runs the column's full width (matching the suggested tray) — no
+/* The card runs the column's full width (matching the suggested tray), with no
    reserved gutters. The checkbox lives INSIDE the card, stacked over the
    status dot: hovering a pickable row swaps dot → checkbox in place, so
    nothing shifts and no width is spent. */
@@ -492,13 +492,13 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 /* Slightly outset for a usable hit target; the label stops propagation, so a
    miss that lands on it doesn't select the task. */
 .pick-slot .pickbox{position:absolute;inset:-4px;}
-/* Visible on hover (pickable rows only — a mid-turn row keeps its live dot),
-   once picked, or anywhere in a list that has a selection going — so the
+/* Visible on hover (pickable rows only, a mid-turn row keeps its live dot),
+   once picked, or anywhere in a list that has a selection going, so the
    affordance is discoverable without making the list a form. */
 .task-row.picked .pickbox,.sug.picked .pickbox,.col-tasks:has(.pick-bar) .pickbox{opacity:1;}
 .task-row.picked .pick-slot .sdot,.col-tasks:has(.pick-bar) .pick-slot .sdot{opacity:0;}
 /* The hover half lives behind (hover:hover): on a touch screen the first tap
-   IS the hover, and iOS withholds the click when that hover reveals content —
+   IS the hover, and iOS withholds the click when that hover reveals content,
    which turned "tap a task" into "tap it twice" (the checkbox appearing under
    the finger ate the first tap). Picked / selection-in-progress states above
    stay unconditional; on a phone the checkbox is still there to tap at the
@@ -518,16 +518,16 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 /* "blocked by" chip on a task card */
 .blocked-chip{display:inline-flex;align-items:center;gap:5px;margin-top:7px;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:600;color:var(--amber);background:var(--amber-soft);border:1px solid var(--amber);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .blocked-chip svg{flex:0 0 auto;}
-/* "queued to auto-start" — blocked, but armed to launch itself (blue, not amber) */
+/* "queued to auto-start": blocked, but armed to launch itself (blue, not amber) */
 .blocked-chip.auto{color:var(--blue);background:var(--blue-soft);border-color:var(--blue);}
-/* an agent edited this task since you accepted it (app/shell/AgentEdits.tsx) —
+/* an agent edited this task since you accepted it (app/shell/AgentEdits.tsx),
    a real <button>, not a div like its siblings above; the base button{} reset
    already gives it font-family:inherit/cursor:pointer/no chrome. */
 .blocked-chip.changed{color:var(--violet);background:var(--violet-soft);border-color:var(--violet);}
 .blocked-chip.changed:hover{background:color-mix(in oklab, var(--violet) 26%, transparent);}
 
 /* ---------- snoozed tasks (app/shell/snooze.ts) ----------
-   Deliberately the quietest state in the app: a parked task has nothing to say
+   The quietest state in the app: a parked task has nothing to say
    until its deadline, so it recedes (muted ink, reduced opacity) rather than
    taking a signal color the way "needs you" or "blocked" do. It brightens back
    to normal on hover, because it's still a card you can act on. */
@@ -553,17 +553,17 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 @media (hover:hover){.task-row:hover .snz-set,.bcard:hover .snz-set{opacity:1;}}
 .snz-set:hover{color:var(--ink-2);}
 .snz-set svg{width:14px;height:14px;}
-/* Waking stays visible — it's the whole reason a parked row is on screen. */
+/* Waking stays visible: it's why a parked row is on screen. */
 .snz-wake{background:transparent;border:1px solid var(--line);border-radius:var(--r-sm);padding:3px;cursor:pointer;color:var(--amber);display:grid;place-items:center;}
 .snz-wake:hover{border-color:var(--amber);background:var(--amber-soft);}
 .snz-wake svg{width:13px;height:13px;}
 
-/* "Was snoozed" — the unread marker on a card that has come back. */
+/* "Was snoozed": the unread marker on a card that has come back. */
 .snz-chip{display:inline-flex;align-items:center;gap:5px;margin-top:7px;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:600;color:var(--ink-3);background:var(--surface-2);border:1px solid var(--line);}
 .snz-chip svg{width:11px;height:11px;flex:0 0 auto;}
 .bc-chip.snz{margin-top:7px;align-self:flex-start;color:var(--ink-3);}
 
-/* "Ran clean" — a scheduled run that finished unattended with nothing to
+/* "Ran clean": a scheduled run that finished unattended with nothing to
    answer, and the one action that state offers (issue #28). Green like Done
    because it succeeded, outlined rather than filled because it isn't finished
    with until somebody says so. */
@@ -577,8 +577,8 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 /* A live turn that has gone quiet, and the only thing this card can do about it
    (app/shell/IdleStop.tsx). Amber like the activity line it sits under, and
    shaped like that row's other chips rather than like a button, because it is a
-   state of the card first. The AGE is not repeated here — the activity line
-   above already carries it — so the chip is the affordance and, once armed, the
+   state of the card first. The AGE is not repeated here: the activity line
+   above already carries it. The chip is the affordance and, once armed, the
    caveat. Armed it wraps: the caveat is a sentence and truncating it to an
    ellipsis would hide the only reason to hesitate. */
 .idle-chip{display:inline-flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:7px;padding:2px 4px 2px 8px;border-radius:999px;font-size:10.5px;font-weight:600;text-align:left;color:var(--amber);background:var(--amber-soft);border:1px solid var(--amber);max-width:100%;cursor:pointer;}
@@ -633,24 +633,24 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 
 /* status dot */
 .sdot{width:9px;height:9px;border-radius:50%;flex:0 0 auto;position:relative;display:inline-block;}
-.sdot.r{background:var(--ink-4);}                 /* not started — idle/neutral */
+.sdot.r{background:var(--ink-4);}                 /* not started: idle/neutral */
 .sdot.a{background:var(--amber);box-shadow:0 0 7px var(--amber);}  /* in progress (paused) */
 .sdot.g{background:var(--green);box-shadow:var(--glow-green);}     /* done / merged */
-.sdot.h{background:var(--warn);box-shadow:0 0 7px color-mix(in oklab,var(--warn) 55%,transparent);}  /* on hold — paused */
-.sdot.x{background:transparent;border:1.5px solid var(--ink-4);box-sizing:border-box;}  /* cancelled — hollow */
+.sdot.h{background:var(--warn);box-shadow:0 0 7px color-mix(in oklab,var(--warn) 55%,transparent);}  /* on hold: paused */
+.sdot.x{background:transparent;border:1.5px solid var(--ink-4);box-sizing:border-box;}  /* cancelled: hollow */
 .sdot.b{background:var(--accent);box-shadow:var(--glow-blue);}       /* live / working */
-.sdot.bg{background:transparent;border:1.5px solid var(--accent);box-shadow:var(--glow-blue);box-sizing:border-box;}  /* live, lingering on background work — hollow so it reads "held open", not "talking" */
-.sdot.c{background:var(--rev);box-shadow:0 0 7px color-mix(in oklab,var(--rev) 55%,transparent);}     /* needs you — waiting/review, not error */
+.sdot.bg{background:transparent;border:1.5px solid var(--accent);box-shadow:var(--glow-blue);box-sizing:border-box;}  /* live, lingering on background work: hollow so it reads "held open", not "talking" */
+.sdot.c{background:var(--rev);box-shadow:0 0 7px color-mix(in oklab,var(--rev) 55%,transparent);}     /* needs you: waiting/review, not error */
 .sdot.lg{width:12px;height:12px;}
-.sdot.z{background:var(--dim);}  /* snoozed group header — parked, not a real status */
-.sdot.u{background:transparent;border:1.5px solid var(--green);box-sizing:border-box;}  /* ran clean, unread — succeeded, but hollow: nobody has read it */
-/* Small flat variant for group headers (mobile board's status-grouped list) — no glow/pulse at 6px. */
+.sdot.z{background:var(--dim);}  /* snoozed group header: parked, not a real status */
+.sdot.u{background:transparent;border:1.5px solid var(--green);box-sizing:border-box;}  /* ran clean, unread, succeeded, but hollow: nobody has read it */
+/* Small flat variant for group headers (mobile board's status-grouped list): no glow/pulse at 6px. */
 .sdot.sm{width:6px;height:6px;box-shadow:none;}
 .sdot.pulse::after{content:"";position:absolute;inset:0;border-radius:50%;background:inherit;box-shadow:none;animation:ping 1.6s cubic-bezier(0,0,.2,1) infinite;}
 @keyframes ping{0%{transform:scale(1);opacity:.55;}80%,100%{transform:scale(2.4);opacity:0;}}
 
 /* "needs your input" surfacing ---------------------------------------- */
-/* per-task: --rev label + a soft left rail so awaiting cards stand out —
+/* per-task: --rev label + a soft left rail so awaiting cards stand out.
    --rev (not --accent/--blue) so "waiting on you" reads distinctly from a
    session that's actively running, and not the error/--err red either. */
 .slabel.await{color:var(--rev);font-weight:600;}
@@ -661,7 +661,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .task-group-h.needs-you .gcount{background:var(--rev-bg);color:var(--rev);}
 
 /* board (kanban) view -------------------------------------------------- */
-/* Layout ported from the Claude Design "Calandria — Board View" study,
+/* Layout ported from the Claude Design "Calandria - Board View" study,
    rendered entirely with the app's own tokens. */
 /* icon-only list/board toggle in the tasks-column (list mode) header */
 .view-toggle{display:flex;align-items:center;border:1px solid var(--line-2);border-radius:var(--r);overflow:hidden;flex:0 0 auto;}
@@ -689,7 +689,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .board-wrap{flex:1;min-height:0;display:flex;flex-direction:column;}
 .board{flex:1;min-height:0;display:flex;gap:10px;align-items:stretch;overflow-x:auto;overflow-y:hidden;padding:14px 14px 0;}
 /* columns share the workspace width (grow evenly, capped so cards keep a card
-   shape); past the cap — or with many columns — the board scrolls sideways */
+   shape); past the cap, or with many columns, the board scrolls sideways */
 .bcol{flex:1 1 218px;min-width:218px;max-width:340px;display:flex;flex-direction:column;min-height:0;border-radius:var(--r-lg);position:relative;transition:background .15s;}
 /* the Suggested column IS the list's suggestion tray, turned into a column:
    same dashed accent shell, wash, and spark header */
@@ -704,14 +704,14 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .bcol-h .ct.needs-you{color:var(--rev);border-color:var(--rev);}
 .bcol-h .sp{flex:1;}
 .bcol-h .derived{font-family:var(--mono);font-size:8px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-4);border:1px solid var(--line);border-radius:4px;padding:2px 4px;}
-/* 7px colored status dot in the column header, one per column identity —
+/* 7px colored status dot in the column header, one per column identity:
    suggested/idle columns read dim, the rest match the card-level status map. */
 .bcol-dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;background:var(--ink-4);}
 .bcol.k-awaiting .bcol-dot{background:var(--rev);}
 .bcol.k-in_progress .bcol-dot{background:var(--accent);}
 .bcol.k-on_hold .bcol-dot{background:var(--warn);}
 .bcol.k-done .bcol-dot{background:var(--run);}
-/* per-column status rule under the header — solid, in the same colors the
+/* per-column status rule under the header: solid, in the same colors the
    status dots use, so columns read as the list's groups turned sideways */
 .bcol-rule{flex:0 0 auto;height:2px;border-radius:2px;background:var(--line);margin:0 4px 9px;}
 .bcol.k-awaiting .bcol-rule{background:linear-gradient(90deg,var(--rev),color-mix(in oklab,var(--rev) 20%,transparent));}
@@ -745,7 +745,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .bc-act.on{color:var(--accent);}
 .bc-act.need{color:var(--rev);}
 /* A live turn that has produced nothing for a long while (lib/turnActivity.ts).
-   Amber, not red: nothing is wrong yet and nothing has been stopped — it is a
+   Amber, not red: nothing is wrong yet and nothing has been stopped. It is a
    "go and look" cue that must not outshout the "needs you" state above it. */
 .bc-act.idle{color:var(--amber);}
 .idle-note{color:var(--amber);font-style:italic;}
@@ -758,7 +758,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .bc-chip{font-family:var(--mono);font-size:9px;letter-spacing:.04em;color:var(--ink-3);border:1px solid var(--line);border-radius:5px;padding:2.5px 6px;display:flex;align-items:center;gap:5px;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
 .bc-chip.block{color:var(--amber);border-color:var(--amber);background:var(--amber-soft);}
 .bc-chip.autostart{color:var(--blue);border-color:var(--blue);background:var(--blue-soft);}
-/* an agent edited this task since you accepted it — see .blocked-chip.changed */
+/* an agent edited this task since you accepted it: see .blocked-chip.changed */
 .bc-chip.changed{color:var(--violet);border-color:var(--violet);background:var(--violet-soft);}
 .bc-chip.changed:hover{background:color-mix(in oklab, var(--violet) 26%, transparent);}
 .bc-chip svg{width:10px;height:10px;flex:0 0 auto;}
@@ -781,7 +781,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .bsug-acts button.go{background:var(--blue-soft);border-color:var(--blue);color:var(--blue);}
 .bsug-acts button.no{flex:0 0 30px;color:var(--ink-4);}
 /* Start, withheld while the suggestion's blockers are open. Not
-   pointer-events:none — the button's title is the only place the reason is
+   pointer-events:none: the button's title is the only place the reason is
    written, and a tooltip that never appears is the same as no reason. */
 .bsug-acts button:disabled{opacity:.45;cursor:not-allowed;}
 .bsug-acts button.go:disabled:hover{color:var(--blue);border-color:var(--blue);}
@@ -797,7 +797,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .b-showall{margin:2px 2px 0;border:1px dashed var(--line);border-radius:var(--r);padding:9px;text-align:center;font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);background:var(--surface-2);cursor:pointer;flex:0 0 auto;}
 .b-showall:hover{color:var(--ink);border-color:var(--line-strong);}
 .bcard.dragging{opacity:.45;border-style:dashed;}
-/* Withdrawn suggestion — the board's half of the tray treatment above. */
+/* Withdrawn suggestion: the board's half of the tray treatment above. */
 .bcard.withdrawn{opacity:.6;}
 .bcard.withdrawn:hover{opacity:1;}
 .bcard.withdrawn .bc-title{text-decoration:line-through;text-decoration-thickness:1px;color:var(--ink-3);}
@@ -814,14 +814,14 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .bpanel-bar .spacer{flex:1;}
 .bpanel .session-body{flex:1;min-height:0;display:flex;}
 .app.mobile .bcol{flex:0 0 min(78vw,260px);}
-/* toolbar pill — the cross-project count */
+/* toolbar pill: the cross-project count */
 /* nowrap + no-shrink: in a tight titlebar (phones) the flex line otherwise
-   compresses the pill and wraps "N NEED YOU" onto two lines — squished. */
+   compresses the pill and wraps "N NEED YOU" onto two lines, squished. */
 .needs-you-pill{display:inline-flex;align-items:center;gap:8px;height:28px;padding:0 11px;border-radius:999px;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;font-weight:500;color:var(--rev);background:var(--rev-bg);border:1px solid var(--rev-bg);cursor:pointer;transition:filter .12s;white-space:nowrap;flex:0 0 auto;}
 .needs-you-pill:hover{filter:brightness(1.12);}
 .needs-you-pill .ny-dot{width:7px;height:7px;border-radius:50%;background:var(--rev);box-shadow:0 0 10px color-mix(in oklab,var(--rev) 40%,transparent);position:relative;}
 .needs-you-pill .ny-dot::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:1px solid var(--rev);animation:ping 2s ease-out infinite;}
-/* "need you" dropdown — list of awaiting tasks across all projects */
+/* "need you" dropdown: list of awaiting tasks across all projects */
 .ny-menu{max-width:340px;max-height:min(60vh,420px);overflow-y:auto;}
 .ny-empty{padding:14px 14px 16px;font-size:12.5px;color:var(--ink-3);}
 .ny-row{display:flex;align-items:center;gap:10px;width:100%;padding:9px 13px;border:0;background:none;text-align:left;cursor:pointer;}
@@ -833,7 +833,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 /* sidebar per-project badge, pinned to the project glyph */
 .proj-await{position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--rev);color:var(--bg);font-size:10px;font-weight:700;line-height:16px;text-align:center;box-shadow:0 0 0 2px var(--surface);}
 
-/* subscription plan-usage meter (titlebar) — quiet by default, tinted only
+/* subscription plan-usage meter (titlebar): quiet by default, tinted only
    when a window is worth glancing at (≥80% warn, ≥95%/rejected limit) */
 .plan-pill{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 10px;border-radius:999px;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;font-weight:500;color:var(--ink-3);background:none;border:1px solid var(--line);cursor:pointer;transition:filter .12s;}
 .plan-pill:hover{color:var(--ink);border-color:var(--line-2);background:var(--panel);}
@@ -873,7 +873,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .suggest-h .sp{margin-left:auto;font-weight:600;}
 .sug{display:flex;align-items:flex-start;flex-wrap:wrap;gap:7px;padding:9px 13px;border-top:1px solid rgba(194,96,60,.18);}
 /* Actions live on their own line, always: inline, four buttons left the title
-   ~45px in a default-width column — the one thing a suggestion row exists to
+   ~45px in a default-width column, the one thing a suggestion row exists to
    show. (Expanded rows already did this; now every row does.) */
 .sug-acts{display:flex;align-items:center;gap:7px;flex-basis:100%;justify-content:flex-end;}
 .sug .sg-meta{flex:1;min-width:0;text-align:left;padding:0;}
@@ -883,12 +883,12 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 /* The disclosure triangle: a suggestion's brief is the case for accepting it,
    and one clamped line rarely carries it. `.is-spacer` is the same-width stand-in
    a row with nothing to reveal renders instead, so titles stay aligned. Negative
-   margins keep it slim — the title line is still the row's scarcest space. */
+   margins keep it slim: the title line is still the row's scarcest space. */
 .sug-chev{flex:0 0 auto;width:14px;height:16px;margin:0 -3px;display:grid;place-items:center;color:var(--ink-4);transform:rotate(-90deg);transition:transform .15s,color .12s;}
 .sug-chev svg{width:13px;height:13px;}
 .sug-chev:hover{color:var(--accent-ink);}
 .sug.open .sug-chev{transform:none;}
-/* Expanded: the clamps come off (title included — it ellipsises too). */
+/* Expanded: the clamps come off (title included, it ellipsises too). */
 .sug.open .sg-name{display:block;-webkit-line-clamp:unset;line-clamp:unset;overflow:visible;}
 .sug.open .sg-why{-webkit-line-clamp:unset;line-clamp:unset;display:block;}
 .sug-btn{flex:0 0 auto;display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--on-accent);background:var(--accent);padding:5px 9px;border-radius:var(--r-sm);}
@@ -901,7 +901,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .sug-dismiss{flex:0 0 auto;width:22px;height:22px;border-radius:6px;display:grid;place-items:center;color:var(--ink-3);}
 .sug-dismiss:hover{background:rgba(194,96,60,.12);color:var(--accent-ink);}
 /* A suggestion the agent that filed it has withdrawn: still in the tray (the
-   user decides whether to agree), but visibly retracted — struck through and
+   user decides whether to agree), but visibly retracted: struck through and
    faded, with the reason in place of the brief. Full opacity on hover so the
    reason stays readable when they come to act on it. */
 .sug.withdrawn{opacity:.62;}
@@ -914,7 +914,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .empty .e-ic{width:42px;height:42px;margin:0 auto 12px;border-radius:12px;background:var(--surface-2);display:grid;place-items:center;color:var(--ink-4);}
 .empty .e-t{font-family:var(--font-display);font-weight:var(--display-weight);letter-spacing:var(--display-tracking);color:var(--ink);font-size:18px;}
 .empty .e-s{font-size:13px;color:var(--dim);margin-top:5px;line-height:1.5;}
-/* "nothing here yet" — the true empty/first-run states (no projects, no tasks,
+/* "nothing here yet": the true empty/first-run states (no projects, no tasks,
    no task selected), as opposed to a loading or error `.empty` block: dashed
    shell + a bare dim Logo instead of the icon badge, per ui/States.html. */
 .empty.void{border:1px dashed var(--line);border-radius:var(--r-lg);padding:52px 20px;}
@@ -922,15 +922,15 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .empty.void .e-t{font-size:20px;}
 
 /* ============================== session ============================== */
-/* `overflow:hidden` is load-bearing, not tidiness. Both panes in here are flex
-   columns of `flex:0 0 auto` chrome around one scroller, so a body shorter than
-   that chrome cannot shrink it — it OVERFLOWS, and being a plain block that
-   paints outside its box, it lands on top of whatever comes next in the shell
-   column. What comes next is the terminal drawer, and the first thing the
-   overflow covers is the drawer's button bar: the desktop lanes failed as a 30s
-   `locator.click` timeout on Hide with `.tc-bar` named as the interceptor, at
-   the 1022x716 window the hosted runners clamp the shell to. Clipping is what
-   makes "a pane stops where its box stops" true; `.tc-bar` further down is what
+/* `overflow:hidden` here does real work, not tidiness. Both panes in here are
+   flex columns of `flex:0 0 auto` chrome around one scroller, so a body
+   shorter than that chrome cannot shrink it. It OVERFLOWS, and being a plain
+   block that paints outside its box, it lands on top of whatever comes next
+   in the shell column. What comes next is the terminal drawer, and the first
+   thing the overflow covers is the drawer's button bar: the desktop lanes
+   failed as a 30s `locator.click` timeout on Hide with `.tc-bar` named as the
+   interceptor, at the 1022x716 window the hosted runners clamp the shell to.
+   Clipping keeps a pane stopped where its box stops; `.tc-bar` further down
    keeps the clipped part reachable. */
 .session-body{flex:1;min-height:0;display:flex;overflow:hidden;}
 /* A query container so the session header can answer to the PANE's width rather
@@ -939,7 +939,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
    DIFF columns all open leaves the session ~500px, which every viewport
    breakpoint reads as a wide desktop. */
 .session{flex:1;min-height:0;display:flex;flex-direction:column;min-width:0;position:relative;container-type:inline-size;}
-/* Wrapper exists so the nav cluster anchors to the transcript's bottom edge —
+/* Wrapper exists so the nav cluster anchors to the transcript's bottom edge,
    i.e. always just above the composer, however tall the composer grows. */
 .transcript-wrap{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;}
 .msg-nav{position:absolute;right:18px;bottom:12px;z-index:5;display:flex;flex-direction:column;gap:6px;}
@@ -959,7 +959,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 /* Capped, not free: a multi-question ask is tall, and a dock that grows without
    limit would push the transcript it is meant to annotate off the screen. */
 .prompt-dock-in{max-width:var(--text-width);margin:0 auto;padding:14px 28px;max-height:min(46vh,460px);overflow-y:auto;overflow-x:hidden;}
-/* .msg's inter-message gap is dead space here — the dock's padding is the gap. */
+/* .msg's inter-message gap is dead space here: the dock's padding is the gap. */
 .prompt-dock-in .msg{margin-bottom:0;}
 .prompt-dock-in .msg + .msg{margin-top:12px;}
 
@@ -969,7 +969,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
    --col-rail value here is only the SSR/fallback default.
    The min()/max() clamp is NOT decoration: the rail is a fixed track, and so are
    the projects (236px) and tasks (352px) columns beside it, so a pane narrower
-   than their sum has only the transcript left to take the shortfall — down to
+   than their sum has only the transcript left to take the shortfall, down to
    zero width, which reads as an empty session pane. It bit a 1024x768 desktop
    window, where 236 + 352 + 430 left the transcript ~4px. Keep the 360px in step
    with SESS_MAIN_MIN in app/shell/types.ts, which the inline style uses. */
@@ -1033,15 +1033,15 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
    second row the moment it stops fitting, which both grows the header and hides
    the overflow from the rail itself (it would then be measuring against the
    full width). Keeping it on one line makes the rail shrink instead, which is
-   the signal it collapses on. The phone layout re-enables wrapping — there the
+   the signal it collapses on. The phone layout re-enables wrapping; there the
    rail owning row two is the intended shape. */
 .sess-head{flex:0 0 auto;display:flex;align-items:center;gap:12px;flex-wrap:nowrap;min-height:60px;padding:11px 18px;border-bottom:1px solid var(--line);background:var(--surface);}
 /* The title line's floor. The rail is capped by it rather than by a share of
    the header: past this the rail collapses instead of squeezing the task's
-   name, which is the trade we want — the controls have a "More", the name
+   name, which is the trade we want: the controls have a "More", the name
    doesn't. */
 .sess-head .sh-main{min-width:340px;flex:1;}
-/* The breadcrumb also carries the session's IDENTITY — its tags and the agent
+/* The breadcrumb also carries the session's IDENTITY: its tags and the agent
    it runs on (SessionView's crumb comment). One quiet mono line that clips from
    the right rather than wrapping, so the header is always exactly two rows
    tall and the lowest-priority thing on the line is the first to go. */
@@ -1051,7 +1051,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
    absorbs the clipping and squashes to a sliver. */
 .sess-head .crumb .pic{flex:0 0 auto;}
 .sess-head .sh-title{margin-top:2px;font-size:17px;font-weight:700;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-/* The control rail. `flex:0 1 auto` + `min-width:0` is what makes the overflow
+/* The control rail. `flex:0 1 auto` + `min-width:0` makes the overflow
    readable: the rail is its content's width while that fits and is CLIPPED to
    whatever the title line leaves it when it doesn't, so scrollWidth over
    clientWidth is the "doesn't fit" signal useOverflowRail collapses on. Its
@@ -1060,13 +1060,13 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .sess-head .sh-tools{display:flex;align-items:center;gap:7px;flex:0 1 auto;min-width:0;overflow:hidden;}
 .sess-head .sh-tools > *{flex:0 0 auto;}
 /* "More" expanded: the rail stops being one clipped line and wraps the full
-   control set into rows. Same mechanism at every width — this was the phone
+   control set into rows. Same mechanism at every width: this was the phone
    layout before the collapse learned to measure. */
 .sess-head .sh-tools.open{flex-wrap:wrap;justify-content:flex-end;row-gap:7px;overflow:visible;}
 /* Below this a shared row is a bad deal for both halves: the rail's share is
    down to the status chip and a "More", while the title it is protecting has
    already ellipsised. A whole row each fits four or five controls where one
-   cramped row fit two, so give the rail its own — the shape the phone layout
+   cramped row fit two, so give the rail its own row: the shape the phone layout
    has always had, now reached by any pane this narrow, a desktop column
    dragged in included. */
 @container (max-width:900px){
@@ -1078,8 +1078,8 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 }
 
 /* Live PR chip: a link to the GitHub PR opened from this task's branch, plus
-   the state the server keeps fresh (lib/prState.ts) — state word, check rollup
-   and review decision — and a Refresh button, which sits OUTSIDE the anchor
+   the state the server keeps fresh (lib/prState.ts): state word, check rollup
+   and review decision, and a Refresh button, which sits OUTSIDE the anchor
    because a button inside a link is neither valid nor clickable.
 
    It renders in the diff toolbar (`.tc-bar`), not in the session header, so the
@@ -1107,7 +1107,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .pr-refresh:disabled{opacity:.5;cursor:default;}
 .pr-refresh svg{width:12px;height:12px;}
 
-/* "Reclaim" — the landed-to-reclaimed action beside the PR chip (app/shell/ReclaimButton.tsx). */
+/* "Reclaim": the landed-to-reclaimed action beside the PR chip (app/shell/ReclaimButton.tsx). */
 .reclaim-wrap{display:inline-flex;align-items:center;gap:8px;flex:0 0 auto;}
 .reclaim-btn{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 11px;border:1px solid var(--line);border-radius:99px;background:var(--surface-2);color:var(--ink-2);font-size:12px;cursor:pointer;flex:0 0 auto;}
 .reclaim-btn:hover:not(:disabled){border-color:var(--line-strong);color:var(--ink);}
@@ -1119,7 +1119,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 /* cumulative token/cost spend for the task */
 .usage-chip{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 11px;border-radius:99px;border:1px solid var(--line);background:var(--surface-2);font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink-3);white-space:nowrap;flex:0 0 auto;cursor:default;}
 .usage-chip .usage-dot{color:var(--ink-4,var(--ink-3));opacity:.6;}
-/* Cache reads are secondary by design — the headline is fresh tokens. */
+/* Cache reads are secondary by design: the headline is fresh tokens. */
 .usage-chip .usage-cached{opacity:.62;font-weight:500;}
 .psub-cost{color:var(--ink-2);}
 
@@ -1163,9 +1163,9 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .tc-btn:hover:not(:disabled){background:var(--surface-2);}
 .tc-btn:disabled{opacity:.5;cursor:default;}
 .tc-btn.primary{border-color:var(--accent);background:var(--accent);color:var(--on-accent);}
-/* the same button rendered as an <a> — the CI banner's "Open PR" link */
+/* the same button rendered as an <a>: the CI banner's "Open PR" link */
 a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height:1.4;}
-/* Squash & merge PR. Deliberately not .primary: the local "Merge to <base>"
+/* Squash & merge PR. Not .primary: the local "Merge to <base>"
    button next to it already owns that slot, and two accent-filled buttons side
    by side make the toolbar ask twice. This reads as the GitHub-side action. */
 .tc-prmerge:not(:disabled){border-color:var(--green);color:var(--green);}
@@ -1184,7 +1184,7 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .tc-manual code{font-family:var(--mono);background:var(--surface-2);padding:1px 4px;border-radius:3px;}
 /* The trailing 40px is a SPACER, not padding. `min-height:0` lets a flex child
    shrink, but padding is not compressible, so `padding-bottom:40px` on a
-   border-box element is a 40px floor under its used height — and this box is
+   border-box element is a 40px floor under its used height. This box is
    `position:relative`, so once the rail was shorter than that it painted over
    whatever came next in the pane rather than scrolling. On a 1024x768 desktop
    window with the terminal drawer open that was a 15px overhang across the
@@ -1222,7 +1222,7 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 /* The file's diff is ONE horizontal scrollport. Everything inside it is laid
    out against the widest line (.tc-rows/.tc-split are max-content), so a long
    line widens the whole file rather than growing a scrollbar of its own on
-   every row — and row highlights stay full-width across the scrolled area.
+   every row, and row highlights stay full-width across the scrolled area.
    container-type is what lets a review comment stay the width of the VISIBLE
    pane (100cqi) instead of stretching to that max-content width. */
 .tc-hunks{font-family:var(--mono);font-size:12px;line-height:1.75;background:var(--surface);overflow-x:auto;border-radius:0 0 var(--r) var(--r);container-type:inline-size;}
@@ -1231,7 +1231,7 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .dl.add{background:var(--diff-add-bg);color:var(--run);}
 .dl.del{background:var(--diff-del-bg);color:var(--err);}
 .dl.ctx{color:var(--dim);}
-/* dual line-number gutters — the full-file diff viewer only (tc-hunks). Tool-
+/* dual line-number gutters: the full-file diff viewer only (tc-hunks). Tool-
    call/peek diffs elsewhere reuse .dl as a single text row and stay untouched. */
 .tc-hunks .dl{display:flex;padding:0;}
 /* Dimmed via the text colour, NOT opacity: the gutter is sticky, and opacity
@@ -1252,7 +1252,7 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .tc-empty{padding:10px 12px;color:var(--ink-3);font-size:12px;font-family:var(--sans);}
 .tc-bigdiff{display:block;width:100%;padding:10px 12px;border:none;border-radius:0 0 var(--r) var(--r);background:var(--surface);color:var(--ink-3);font-size:12px;font-family:var(--sans);text-align:left;cursor:pointer;}
 .tc-bigdiff:hover{background:var(--surface-2);color:var(--ink);}
-/* Unified/Split toggle in the diff header — a compact pill, distinct from the
+/* Unified/Split toggle in the diff header: a compact pill, distinct from the
    larger form-picker .seg used in Settings/modals. */
 .tc-vseg{display:flex;border:1px solid var(--line);border-radius:var(--r-sm);overflow:hidden;flex:0 0 auto;}
 .tc-vseg button{font-size:11.5px;font-weight:600;padding:5px 12px;border:none;background:none;color:var(--dim);cursor:pointer;font-family:var(--sans);}
@@ -1266,7 +1266,7 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .dl.spacer{background:var(--panel);}
 .dl-no.click{cursor:pointer;}
 .dl-no.click:hover{color:var(--accent-ink);}
-/* Review comment box (composing) / thread (posted) — anchored under the diff
+/* Review comment box (composing) / thread (posted): anchored under the diff
    row it targets, in both view modes. */
 .cmt{margin:6px 14px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;font-family:var(--sans);}
 /* Prose in a scrollport sized to the longest line of code: hold it to the
@@ -1284,13 +1284,13 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .status-ctl svg{width:14px;height:14px;}
 /* Live "which model actually ran" badge inside the model picker control. */
 .model-badge{font-family:var(--mono);font-size:10px;font-weight:600;line-height:1;padding:2px 6px;border-radius:99px;background:var(--accent-soft);color:var(--accent-ink);}
-/* Which agent (Claude Code / Codex …) a task runs under — the driver's brand
+/* Which agent (Claude Code / Codex …) a task runs under: the driver's brand
    mark, left of the title it qualifies, with the name on the tooltip. It is
    always a FIXED, non-shrinking glyph (an unmarked driver gets the generic
    bolt): the title beside it is `flex:1;min-width:0`, so anything that can grow
    here squeezes the title to nothing on a narrow column.
    Colours follow the chat avatar's: Claude wears its clay in both themes, the
-   monochrome Codex mark follows the ink — here at --ink-2, since next to a
+   monochrome Codex mark follows the ink (here at --ink-2), since next to a
    title the mark is metadata and --ink would read as loud as the words it
    qualifies. inline-flex so it sits on the session header's single title LINE
    (which clips with an ellipsis) and still blockifies into a flex item on the
@@ -1329,7 +1329,7 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 /* transcript */
 /* overflow-x is pinned to hidden: overflow-y:auto alone makes the x-axis
    compute to auto, so one over-wide message (a long token, a wide table) let
-   the whole pane pan sideways — worst on a phone, where the bubbles drifted
+   the whole pane pan sideways, worst on a phone, where the bubbles drifted
    off both screen edges. Wide code already scrolls inside its own <pre>. */
 .transcript{flex:1;overflow-y:auto;overflow-x:hidden;padding:26px 0 18px;}
 .tw{max-width:var(--text-width);margin:0 auto;padding:0 28px;}
@@ -1340,7 +1340,7 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
 .msg .who .av{width:18px;height:18px;border-radius:5px;display:grid;place-items:center;color:#fff;font-size:10px;}
 .msg .who .av.you{background:linear-gradient(135deg,#C2603C,#D89A3A);}
 /* Assistant side: the agent's brand mark, drawn bare (no chip) in brand colour
-   and near chip-size. Both marks are fine-detail logos — the Claude burst's
+   and near chip-size. Both marks are fine-detail logos: the Claude burst's
    rays and the Codex knot's loops fall below a pixel inside an 11px glyph on a
    chip and blur into a solid blob, which is what made the old avatar read as a
    plain square. Bare + 16px keeps the detail legible at 1x. Claude wears its
@@ -1465,8 +1465,8 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 
 /* A suggestion card, settled onto the suggest_task call that filed the task
    (app/shell/Transcript.tsx). Sits directly under the tool row it belongs to,
-   so it borrows the permission card's shape — a bordered block with a labelled
-   head — rather than reading as a floating notice. */
+   so it borrows the permission card's shape (a bordered block with a labelled
+   head) rather than reading as a floating notice. */
 .sugcard{margin:6px 0 0 18px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--surface-2);overflow:hidden;}
 .sugcard.open{border-color:var(--accent,var(--line-strong));}
 .sugcard.loading{padding:9px 13px;font-size:11.5px;color:var(--ink-4);display:flex;align-items:center;gap:7px;}
@@ -1528,7 +1528,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .md-mermaid-bad .md-mermaid-svg{opacity:.55;}
 .md-mermaid-err{margin-top:6px;padding:6px 10px;border-radius:var(--r-sm);font-family:var(--mono);font-size:11.5px;line-height:1.45;color:var(--err);background:var(--red-soft);white-space:pre-wrap;overflow-wrap:anywhere;}
 
-/* syntax highlighting (highlight.js token classes — warm palette, dual theme) */
+/* syntax highlighting (highlight.js token classes: warm palette, dual theme) */
 .hljs-comment,.hljs-quote{color:var(--ink-4);font-style:italic;}
 .hljs-keyword,.hljs-selector-tag,.hljs-literal,.hljs-type{color:#9E5BA0;}
 .hljs-string,.hljs-meta-string,.hljs-regexp{color:#5C8C5A;}
@@ -1551,15 +1551,15 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 
 /* system / error notice */
 /* pre-line: provider error text carries its own line breaks (and the recovery
-   notices are appended after a blank line) — collapsing them ran the raw error
+   notices are appended after a blank line); collapsing them ran the raw error
    and the explanation together as one paragraph. */
 /* mono log-excerpt treatment (ui/States.html .elog): dark term bg + an
-   err-mixed border, rather than a flat red-tinted panel — reads as captured
+   err-mixed border, rather than a flat red-tinted panel: reads as captured
    output, not just an alert banner. */
 .msg.system .msg-body{font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--err);background:var(--term);border:1px solid color-mix(in oklab,var(--err) 30%,var(--line));border-radius:var(--r);padding:9px 12px;white-space:pre-line;}
 .msg.system.info .msg-body{color:var(--run);border-color:color-mix(in oklab,var(--run) 30%,var(--line));}
 .msg.system.note .msg-body{color:var(--ink-3);border-color:var(--line-2);}
-/* context-overflow recovery — warning line + one-click /clear */
+/* context-overflow recovery: warning line + one-click /clear */
 .msg.system.overflow .overflow-actions{margin-top:9px;}
 .msg.system.overflow .overflow-actions .btn{font-family:var(--sans);}
 .msg.system.overflow .overflow-actions.queued{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
@@ -1568,7 +1568,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 
 /* Reopened-task sync banner (behind base branch). Plain "needs a sync" is
    informational (--accent); an actual merge conflict is --warn, matching the
-   Board/States "conflict" chip — not --err, which is reserved for a hard
+   Board/States "conflict" chip, not --err, which is reserved for a hard
    failure (agent exited, etc.), not "a rebase away from clean". */
 .sync-banner{display:flex;align-items:center;gap:10px;margin:10px 16px 0;padding:8px 12px;border-radius:var(--r-sm);font-size:12px;font-weight:600;color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent);flex:0 0 auto;}
 .sync-banner.conflict{color:var(--warn);background:var(--amber-soft);border-color:var(--warn);}
@@ -1606,7 +1606,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 /* ---- async-state primitives (spinner · loading note · skeleton · inline error) ---- */
 .spinner{width:15px;height:15px;border-radius:50%;border:2px solid var(--line-strong);border-top-color:var(--accent);animation:wizspin .7s linear infinite;flex:0 0 auto;}
 .load-note{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink-3);padding:14px;}
-/* shimmer bar — size it inline per use; compose several for card/list skeletons */
+/* shimmer bar: size it inline per use; compose several for card/list skeletons */
 @keyframes skel{0%,100%{opacity:.45;}50%{opacity:.95;}}
 .skel{display:block;flex:0 0 auto;background:var(--line);border-radius:5px;animation:skel 1.3s ease-in-out infinite;}
 .skel-list{display:flex;flex-direction:column;gap:6px;}
@@ -1634,7 +1634,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 /* The row bottom-aligns so the send button hugs the last line as the box grows.
    The textarea's vertical padding is sized so ONE line of text stands as tall
    as the send button (21px line + 2×6.5 = 34px desktop; 24px + 2×8 = 40px
-   mobile, see the phone block) — without it the empty-ish textarea bottom-aligns
+   mobile, see the phone block). Without it the empty-ish textarea bottom-aligns
    inside the taller row and the first line of text sits at the bottom of the
    box. scrollHeight includes the padding, so autosize keeps working. */
 .comp-area{display:flex;align-items:flex-end;gap:10px;padding:11px 12px 11px 15px;}
@@ -1664,7 +1664,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .comp-foot .kbd{font-family:var(--mono);font-size:9.5px;border:1px solid var(--line-strong);border-radius:4px;padding:1px 5px;color:var(--ink-3);background:var(--surface);}
 .comp-foot .spacer{flex:1;}
 
-/* image attachments — composer chips + drop state */
+/* image attachments: composer chips + drop state */
 .comp-box.dropping{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
 .attach-row{display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px 0;}
 .attach-chip{position:relative;width:56px;height:56px;border:1px solid var(--line-strong);border-radius:8px;overflow:hidden;background:var(--surface-2);}
@@ -1676,19 +1676,19 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .attach-badge.err{background:var(--red);}
 .attach-x{position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:50%;background:rgba(0,0,0,.65);color:#fff;font-size:12px;line-height:1;display:grid;place-items:center;padding:0;cursor:pointer;}
 .attach-x:hover{background:rgba(0,0,0,.85);}
-/* text-file attachment (a diverted big paste) — a labeled chip, not a square. */
+/* text-file attachment (a diverted big paste): a labeled chip, not a square. */
 .attach-chip.file{width:auto;height:auto;max-width:220px;padding:7px 26px 7px 9px;}
 .attach-file{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:11px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .attach-file svg{flex:none;width:12px;height:12px;opacity:.7;}
 .attach-chip.file.uploading{opacity:.55;}
 
-/* attachments — transcript thumbnails + file chips */
+/* attachments: transcript thumbnails + file chips */
 .msg-attachments{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}
 .msg-attachments img{max-width:240px;max-height:170px;border-radius:8px;border:1px solid var(--line-strong);display:block;box-shadow:var(--sh-1);}
 .msg-attachments .file-chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--ink-2);text-decoration:none;padding:6px 10px;border:1px solid var(--line-strong);border-radius:8px;background:var(--surface-2);}
 .msg-attachments .file-chip:hover{border-color:var(--line-strong);color:var(--ink);}
 .msg-attachments .file-chip svg{width:12px;height:12px;opacity:.7;}
-/* Chips carry the user's own filename now that any type can be attached — cap it rather than let one stretch the row. */
+/* Chips carry the user's own filename now that any type can be attached; cap it rather than let one stretch the row. */
 .msg-attachments .file-chip svg{flex:none;}
 .msg-attachments .file-chip span{max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
@@ -1701,7 +1701,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .slash-item:hover,.slash-item.act{background:var(--surface-2);}
 .slash-item .cmd{font-family:var(--mono);font-size:12.5px;font-weight:700;color:var(--accent-ink);white-space:nowrap;}
 .slash-item .arg{font-family:var(--mono);font-size:11px;color:var(--ink-3);white-space:nowrap;}
-/* Descriptions are the agent's own prose and run long — let one truncate
+/* Descriptions are the agent's own prose and run long; let one truncate
    rather than wrap a row to four lines and push the rest off the list. */
 .slash-item .cd{font-size:11.5px;color:var(--ink-3);margin-left:auto;padding-left:12px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
 
@@ -1711,7 +1711,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
    the header strip's rounded corners) silently ate rows off the bottom of
    "What the session starts with". Nothing in the hero shrinks; the pane
    scrolls instead. Centring then has to be `safe`, or the overflow spills past
-   the scroll origin and the top of the card becomes unreachable — browsers
+   the scroll origin and the top of the card becomes unreachable. Browsers
    that can't parse it drop that one declaration and keep the plain `center`. */
 .hero{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;justify-content:safe center;padding:40px;text-align:center;overflow-y:auto;}
 .hero > *{flex:0 0 auto;max-width:100%;}
@@ -1732,7 +1732,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .hero .h-prompt .hp-list label{display:flex;align-items:center;gap:9px;margin:0;cursor:pointer;}
 .hero .h-prompt .hp-list label.off{cursor:not-allowed;}
 .hero .h-prompt .hp-list input[type=checkbox]{flex:0 0 auto;width:13px;height:13px;margin:0;}
-/* Marker for the rows that carry no choice — same 13px column as the checkbox
+/* Marker for the rows that carry no choice: same 13px column as the checkbox
    above it, so the labels line up, but plainly not a control. */
 .hero .h-prompt .hp-list .hp-fixed{flex:0 0 auto;width:13px;height:13px;display:grid;place-items:center;}
 .hero .h-prompt .hp-list .hp-fixed::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--ink-4);}
@@ -1744,7 +1744,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 @keyframes pop{from{opacity:0;transform:translateY(10px) scale(.98);}to{opacity:1;transform:none;}}
 .modal-h{display:flex;align-items:center;gap:10px;padding:18px 22px 14px;border-bottom:1px solid var(--line);}
 /* Display face, per the type system (handoff/README: Spectral 500 for page +
-   section titles, never below 18px — 20px is the scale step that clears it).
+   section titles, never below 18px (20px is the scale step that clears it)).
    17px/700 tight-tracked body was the pre-revamp heading style. */
 .modal-h .m-title{font-family:var(--font-display);font-size:20px;font-weight:var(--display-weight);letter-spacing:var(--display-tracking);flex:1;}
 .modal-h .m-sub{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
@@ -1755,7 +1755,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .field{margin-bottom:18px;}
 .field:last-child{margin-bottom:0;}
 /* Body-face caps, matching the design language's section headers (.ap-h2 /
-   handoff Settings.html .sec h2) — the mono-caps version was the pre-revamp
+   handoff Settings.html .sec h2): the mono-caps version was the pre-revamp
    style. */
 .field .lab{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);margin-bottom:8px;}
 .field .lab svg{width:13px;height:13px;}
@@ -1775,7 +1775,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 /* Rendered-markdown preview that stands in for a .field textarea (same box). */
 .field .md-preview{width:100%;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--term);padding:11px 13px;overflow-y:auto;font-size:14px;}
 .field .md-preview.empty{color:var(--ink-3);font-style:italic;}
-/* No native spinners — the rest of the app has none, so they read as out of place. */
+/* No native spinners: the rest of the app has none, so they read as out of place. */
 .field input[type=number]{-moz-appearance:textfield;appearance:textfield;}
 .field input[type=number]::-webkit-outer-spin-button,.field input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
 .field input:focus,.field textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
@@ -1784,7 +1784,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 
 /* ---------- agent-edits modal (app/shell/AgentEdits.tsx) ----------
    One block per recorded edit, each with its own field-by-field before/after
-   and its own Revert — deliberately not a single flattened diff, since edits
+   and its own Revert, not a single flattened diff, since edits
    from different agent sessions revert independently. */
 .ae-edit{padding:12px 0;border-bottom:1px solid var(--line);}
 .ae-edit:first-child{padding-top:0;}
@@ -1796,7 +1796,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .ae-row{margin-bottom:10px;}
 .ae-row:last-of-type{margin-bottom:0;}
 .ae-field{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);margin-bottom:4px;}
-/* Two stacked lines rather than a character-level diff — description values can
+/* Two stacked lines rather than a character-level diff: description values can
    run long, so each side clamps to ~6 lines and scrolls instead of pushing the
    modal open. pre-wrap keeps newlines the model actually wrote. */
 .ae-before,.ae-after{font-size:12.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word;max-height:calc(6 * 1.45em);overflow-y:auto;padding:6px 9px;border-radius:var(--r-sm);margin-top:4px;}
@@ -1811,14 +1811,14 @@ button.tpeek-more:hover{color:var(--accent-ink);}
    Close/Keep changes buttons within .modal-f's flex-wrap, without a DOM change
    to Modal itself. */
 .ae-hint{flex:1 0 100%;font-size:11.5px;color:var(--ink-3);line-height:1.45;order:-1;}
-/* The relTime beside the chip's "Changed by agent" label — muted the same way
+/* The relTime beside the chip's "Changed by agent" label, muted the same way
    an activity line's trailing clause is (see .task-foot .activity). */
 .ae-chip-time{opacity:.72;}
 
 .seg{display:flex;gap:6px;}
 .seg button{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;height:40px;border-radius:var(--r);border:1px solid var(--line-strong);background:var(--raise);font-size:13px;font-weight:600;color:var(--ink-2);transition:all .12s;}
 /* A seg that's allowed to wrap sizes its buttons to their labels instead of
-   flex:1 — otherwise the one option pushed to a second row (e.g. "plan" among
+   flex:1, otherwise the one option pushed to a second row (e.g. "plan" among
    six permission modes on a phone) stretches to the full width alone. */
 .seg.wrap{flex-wrap:wrap;}
 .seg.wrap button{flex:0 1 auto;padding:0 13px;}
@@ -1827,7 +1827,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .seg button svg{width:14px;height:14px;}
 .seg button .pdot{width:9px;height:9px;border-radius:50%;}
 /* Rule between a picker's synthetic "Inherit" head and the provider's own
-   options below it — Claude's permission modes include one spelled
+   options below it: Claude's permission modes include one spelled
    "default", which without this reads as a duplicate of the head. */
 .seg-sep{flex:0 0 2px;align-self:center;height:22px;border-radius:2px;background:var(--line-strong);margin:0 7px;}
 
@@ -2005,7 +2005,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .recap-body>:last-child{margin-bottom:0;}
 .recap-foot{display:flex;align-items:center;gap:10px;padding:11px 14px;border-top:1px solid var(--line-2);}
 
-/* schedules card (project landing pane) — read/pause/run-now surface for
+/* schedules card (project landing pane): read/pause/run-now surface for
    recurring prompts; sits below the recap card / empty state. */
 .sched-card,.rb-card{margin:18px 0;display:flex;flex-direction:column;gap:10px;}
 .sched-card h3,.rb-card h3{margin:0;font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);}
@@ -2031,7 +2031,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .sched-header,.rb-header{display:flex;align-items:center;gap:10px;}
 .sched-header .spacer,.rb-header .spacer{flex:1;}
 
-/* the create/edit form — a dashed box distinguishes "not saved yet" from the
+/* the create/edit form: a dashed box distinguishes "not saved yet" from the
    solid-bordered rows above and below it. */
 .sched-form,.rb-form{border:1px dashed var(--line-strong);border-radius:var(--r-lg);background:var(--raise);padding:14px;}
 .sched-form .field select,.sched-form .field input[type=time],.rb-form .field select{
@@ -2045,14 +2045,14 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .sched-preview{display:flex;flex-direction:column;gap:2px;margin:-2px 0 14px;}
 .sched-suggestions,.rb-suggestions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px;}
 .sched-actions,.rb-actions{display:flex;justify-content:flex-end;gap:8px;}
-/* the slash-command check's failure box — stacked (error + suggestions + note),
+/* the slash-command check's failure box: stacked (error + suggestions + note),
    unlike `.sched-alert`'s single icon+text row. A typo catcher, not a hard
    rule, so it reads as a warning rather than blocking anything. */
 .sched-check,.rb-check{margin-top:8px;padding:9px 12px;border-radius:var(--r-sm);font-size:12px;display:flex;flex-direction:column;gap:2px;}
 .sched-check.bad,.rb-check.bad{color:var(--red);background:var(--red-soft);border:1px solid var(--red);}
 
 /* Runbooks (app/shell/Runbooks.tsx) reuse the schedules card's visual
-   language above — they are the same object with and without a clock, so they
+   language above: they are the same object with and without a clock, so they
    must not read as unrelated features. Only what a schedule row has no
    equivalent for lives here. */
 .rb-preview{margin:0;padding:9px 11px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--surface-2);
@@ -2063,7 +2063,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 
 /* Narrow desktops / tablets. The shell already hands both side columns their
    30px spine well above this width (AUTO_COLLAPSE_BELOW in app/shell/types.ts),
-   so this only applies to a column the user re-opened from its spine anyway —
+   so this only applies to a column the user re-opened from its spine anyway,
    which is exactly when the tightening is worth the most. */
 @media (min-width:761px) and (max-width:900px){
   .col-projects{flex-basis:200px;}
@@ -2076,7 +2076,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
    each header; this block makes that pane fill the screen, fattens hit targets
    to a thumb-friendly ~44px, and respects the notch / home-indicator insets. */
 @media (max-width:760px){
-  /* The mounted pane is the only flex child of .body — let it fill the width.
+  /* The mounted pane is the only flex child of .body: let it fill the width.
      Column direction matters only for Settings, which mounts its section nav +
      content together; the other panes mount one child. !important beats the
      inline flex-basis the desktop resize drag writes. */
@@ -2091,22 +2091,22 @@ button.tpeek-more:hover{color:var(--accent-ink);}
      content in one column paint OVER the neighbor (the logo landed on top of
      the plan-usage pill), where flex lays the two groups out sequentially.
      The center omni-search is desktop-only, so nothing needs the middle track.
-     The wordmark goes too — the glyph carries the brand and the freed width is
+     The wordmark goes too: the glyph carries the brand and the freed width is
      what the usage pill + needs-you pill actually need. */
   .app.mobile .titlebar{display:flex;justify-content:space-between;gap:10px;padding-top:env(safe-area-inset-top);height:calc(56px + env(safe-area-inset-top));padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env(safe-area-inset-right));}
   .app.mobile .tb-word{display:none;}
   .app.mobile .tb-logo svg{height:22px;width:auto;}
   .app.mobile .tb-left{flex:0 1 auto;}
   .app.mobile .tb-right{flex:0 1 auto;gap:8px;}
-  /* The plan-usage pill reads as two clean lines — "5h 65% (57m)" over
-     "wk 57%" — instead of one cramped run with the divider dot orphaned
+  /* The plan-usage pill reads as two clean lines: "5h 65% (57m)" over
+     "wk 57%", instead of one cramped run with the divider dot orphaned
      wherever the wrap happened to fall. The taller bar above is what gives
      it (and the 34px needs-you pill) room. */
   .app.mobile .plan-pill{height:auto;min-height:36px;padding:4px 11px;flex-wrap:wrap;justify-content:center;line-height:1.35;text-align:center;}
   .app.mobile .plan-pill .pp-seg{flex:1 1 100%;white-space:nowrap;}
   .app.mobile .plan-pill .pp-div{display:none;}
-  /* Installed to the home screen, iOS 26 paints its own "scroll edge effect" —
-     a progressive blur over the status-bar strip — on top of the page. Its fade
+  /* Installed to the home screen, iOS 26 paints its own "scroll edge effect"
+     (a progressive blur over the status-bar strip) on top of the page. Its fade
      reaches a little past env(safe-area-inset-top), so titlebar icons sitting
      flush under the inset get their tops smeared. Extra clearance keeps the
      interactive row below the fade; only the titlebar's background extends into
@@ -2118,7 +2118,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   .app.mobile .tb-actions{display:none;}
   .app.mobile .needs-you-pill{height:34px;}
 
-  /* Back affordance — a 40px square chevron prepended to the tasks/session header. */
+  /* Back affordance: a 40px square chevron prepended to the tasks/session header. */
   .mobile-back{flex:0 0 auto;width:40px;height:40px;border-radius:var(--r-sm);display:grid;place-items:center;color:var(--ink-2);margin-right:2px;}
   .mobile-back:hover,.mobile-back:active{background:var(--surface-2);color:var(--ink);}
   .mobile-back svg{width:20px;height:20px;}
@@ -2134,7 +2134,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
      of row two. sh-main takes the REMAINDER of row one (basis 0, not 100%) so
      the back chevron sits to the left of the task name instead of alone on its
      own row; min-width:0 lets the ellipsised title actually shrink beside it.
-     The rail still collapses by measurement like everywhere else — the scroll
+     The rail still collapses by measurement like everywhere else; the scroll
      is the floor under it, for when even the pinned items don't fit. */
   .app.mobile .sess-head{flex-wrap:wrap;row-gap:8px;align-items:center;}
   .app.mobile .sh-main{flex:1 1 0;min-width:0;order:1;}
@@ -2147,7 +2147,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   .app.mobile .status-ctl{height:36px;}
 
   /* Composer. The home-indicator inset belongs to whatever is bottom-most, and
-     on a phone that is .mtabbar, which pads for it itself — so the composer must
+     on a phone that is .mtabbar, which pads for it itself, so the composer must
      not add it too. It used to, and on a phone with a home indicator that put
      the inset in twice: ~46px of dead space between the box and the tab bar
      (12px + 34px), the "too much padding below the text box" report. The
@@ -2165,7 +2165,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   .app.mobile .comp-foot{display:none;}
   .app.mobile .send{width:40px;height:40px;}
 
-  /* Ask card options are tap targets — give them room. */
+  /* Ask card options are tap targets: give them room. */
   .app.mobile .ask-opt{padding:10px 13px;}
   .app.mobile .ask-other{padding:11px;font-size:16px;}
 
@@ -2179,14 +2179,14 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   .app.mobile .tc-hunks{overflow-x:auto;-webkit-overflow-scrolling:touch;}
 
   /* Settings: stack the section nav above its content as a horizontal tab rail.
-     The nav item is `width:100%` because on desktop it's a stacked sidebar — in
+     The nav item is `width:100%` because on desktop it's a stacked sidebar; in
      a flex ROW that width is what `flex-basis:auto` resolves to, so every chip
      was a full screen wide and exactly one section was ever visible. Nothing
      hinted the other nine existed. `width:auto` shrinks each to its label so
      3-4 fit at 390px with the next one clipped at the edge, which is the scroll
      affordance; SettingsView scrolls the active chip into view so a deep-linked
      section (or a tap near the edge) isn't left off-screen. The "Settings"
-     heading goes with the foot note — the content pane's own header already
+     heading goes with the foot note: the content pane's own header already
      names the active section, and the row it occupied is worth more here. */
   .app.mobile .settings-nav{flex:0 0 auto !important;border-right:none;border-bottom:1px solid var(--line);padding:8px 0;gap:0;}
   .app.mobile .settings-nav-h{display:none;}
@@ -2198,9 +2198,9 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   .app.mobile .settings-nav-list .nav-item.active{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent);}
   .app.mobile .settings-nav-foot{display:none;}
   /* The head's title + its two buttons don't fit a 390px row, so "Reset to
-     defaults" was wrapping mid-label. The title is the redundant one — the
+     defaults" was wrapping mid-label. The title is the redundant one: the
      active chip directly above already names the section, and the rail keeps it
-     scrolled into view — so drop it and let the buttons keep one line. */
+     scrolled into view, so drop it and let the buttons keep one line. */
   .app.mobile .settings-head{padding:10px 14px;}
   .app.mobile .settings-title{display:none;}
   .app.mobile .settings-head .btn{white-space:nowrap;}
@@ -2216,7 +2216,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
    (z-index 150, see .mterm) paints over it when the Terminals tab is open. */
 .mtabbar{display:flex;flex:0 0 auto;border-top:1px solid var(--line);background:var(--panel);padding-bottom:env(safe-area-inset-bottom);}
 /* While the on-screen keyboard is up (a text field is focused), the tab bar
-   would otherwise ride on top of it — 100dvh shrinks to the visible viewport
+   would otherwise ride on top of it: 100dvh shrinks to the visible viewport
    and the bottom-docked bar lands right above the keys, between them and the
    composer. Hide it for the duration; it returns on blur. Text-type inputs
    only: focusing a checkbox raises no keyboard and must not blink the bar.
@@ -2286,7 +2286,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   .wiz-foot{padding:14px 18px;}
 }
 
-/* ============ insights (usage dashboard — ported from the Claude Design mock) ============ */
+/* ============ insights (usage dashboard, ported from the Claude Design mock) ============ */
 .insights{overflow-y:auto;background:var(--bg);}
 .in-wrap{width:100%;max-width:1440px;margin:0 auto;padding:24px 32px 60px;animation:fadein .25s ease both;}
 .in-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;margin-bottom:22px;}
@@ -2388,11 +2388,11 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .in-pname{font-size:13.5px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .in-pmore{width:100%;text-align:center;font-size:11px;letter-spacing:.06em;color:var(--ink-3);background:var(--bg-2);border:none;padding:12px;cursor:pointer;}
 .in-pmore:hover{color:var(--accent);}
-/* tags leaderboard — the projects table's language with fewer columns (a
+/* tags leaderboard: the projects table's language with fewer columns (a
    tag has no branch, so no lines/last-active), and no click behavior: the
    dashboard filters by project and agent, not by feature. A multi-tagged
    task's spend counts toward each of its tags (lib/store.ts tagUsage), so
-   this column deliberately does not sum to the project total above it. */
+   this column does not sum to the project total above it. */
 .in-gtable{display:flex;flex-direction:column;overflow-x:auto;}
 .in-grow{display:grid;grid-template-columns:1.8fr 1.1fr 1fr .9fr 132px;gap:12px;align-items:center;padding:14px 20px;min-width:640px;font-size:12.5px;border-bottom:1px solid var(--line-2);}
 .in-grow:last-child{border-bottom:none;}
@@ -2412,7 +2412,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 }
 
 /* ============================== document collaboration ============================== */
-/* CollabDoc.tsx — Word-style review of one markdown file: EDIT (source beside
+/* CollabDoc.tsx: Word-style review of one markdown file: EDIT (source beside
    a live render) / COMMENT (select a passage → note). The modal body fills the
    viewport so both panes scroll independently instead of the whole modal. */
 .collab{display:flex;flex-direction:column;height:calc(100vh - 230px);min-height:380px;}
@@ -2475,7 +2475,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 @media (max-width:900px){
   .collab{height:calc(100vh - 200px);}
   /* Stacked: document on top, comments/editor preview below, each its own
-     scroller — a content-sized bottom row clipped the general-comments box. */
+     scroller: a content-sized bottom row clipped the general-comments box. */
   .collab-split,.collab-split:has(.collab-side){grid-template-columns:1fr;grid-template-rows:minmax(0,1.3fr) minmax(0,1fr);}
   .collab-hint{display:none;}
 }
@@ -2497,7 +2497,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .gchip.fold{color:var(--ink-3);border-style:dashed;}
 .gchip.fold.open{border-style:solid;}
 /* The any/all match toggle: only appears with two-or-more chips lit, so it
-   reads as a control over the selection rather than a tag of its own —
+   reads as a control over the selection rather than a tag of its own,
    neutral by default, accented once "all" (the narrower, opt-in reading) is on. */
 .gchip.match{color:var(--ink-4);font-family:var(--mono);}
 .gchip.match.on{background:color-mix(in oklab,var(--accent) 14%,var(--raise));border-color:var(--accent);color:var(--accent);}
@@ -2527,7 +2527,7 @@ button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,tra
 .gs-desc{font-size:12px;color:var(--ink-2);white-space:pre-wrap;}
 /* The "Refresh tag" job band: an indeterminate sweep while the agent reads the
    repo, then the one-line report of what it changed. Indeterminate because the
-   long phase has no measurable fraction — see TagStrip.tsx. */
+   long phase has no measurable fraction: see TagStrip.tsx. */
 .gs-job{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--ink-2);}
 .gs-job.err{color:var(--danger,var(--ink-2));}
 .gs-job-sum{flex:1;min-width:0;white-space:pre-wrap;}
@@ -2554,7 +2554,7 @@ button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,tra
 .gs-desc-in{resize:vertical;}
 .gs-name-in:focus,.gs-desc-in:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
 /* The plan's base branch: a label + monospace field, with the consequence of
-   changing it directly under — how many members are already past the cut and
+   changing it directly under: how many members are already past the cut and
    which take their base from an earlier tag (baseConsequence in TagStrip.tsx). */
 .gs-base{display:flex;align-items:center;gap:8px;}
 .gs-base-lbl{font-size:11.5px;color:var(--ink-3);flex:0 0 auto;}
@@ -2564,7 +2564,7 @@ button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,tra
 .gs-base-badge{font-size:10.5px;color:var(--ink-3);background:var(--surface-2);border:1px solid var(--line-2);padding:1px 6px;border-radius:999px;}
 /* Drift of the tag's base branch from the project default, above both strip
    modes. Warn is the ordinary state of a branch that has fallen behind, not an
-   error — the whole point is that it is surfaced early and fixed in one click. */
+   error: it is surfaced early and fixed in one click. */
 .gs-drift{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-3);}
 .gs-drift.warn .gs-drift-msg{color:var(--amber);}
 .gs-drift.bad .gs-drift-msg{color:var(--red);}
@@ -2576,7 +2576,7 @@ button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,tra
 .gs-sw.none{background:var(--surface-2);}
 .gs-sw.on{box-shadow:0 0 0 2px var(--bg),0 0 0 4px var(--accent);}
 
-/* Tags card on the project landing — the same rows as the chip bar, with room
+/* Tags card on the project landing: the same rows as the chip bar, with room
    for a description and a progress bar. Shares the schedules/runbooks card
    language it sits between. */
 .tags-card{margin:18px 0;display:flex;flex-direction:column;gap:8px;}
@@ -2598,8 +2598,8 @@ button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,tra
    picker in Settings → Run defaults. A select rather than the segmented
    control its neighbours use because Claude Code's catalog runs to a
    dozen-plus entries across three <optgroup>s. Tags is a checkbox list
-   (like Blocked-by) rather than a select — many-to-many needs a set, not one
-   choice — so it only borrows the plain field input styling for its inline
+   (like Blocked-by) rather than a select: many-to-many needs a set, not one
+   choice, so it only borrows the plain field input styling for its inline
    "New tag…" text field. */
 .model-field select{width:100%;max-width:520px;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--raise);padding:11px 13px;font-family:var(--sans);font-size:14px;color:var(--ink);outline:none;transition:border-color .12s,box-shadow .12s;}
 .model-field select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}

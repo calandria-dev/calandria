@@ -44,7 +44,7 @@ function dir(files: string[] = [], mode = 0o644): string {
 const win = { platform: "win32" as const, pathext: DEFAULT_PATHEXT };
 
 describe("binCandidates", () => {
-  it("is the name itself on POSIX — no extension games", () => {
+  it("is the name itself on POSIX, with no extension games", () => {
     expect(binCandidates("codex", { platform: "linux" })).toEqual(["codex"]);
   });
 
@@ -77,7 +77,7 @@ describe("isExecutableFile", () => {
     expect(isExecutableFile(path.join(d, "codex"), "linux")).toBe(true);
   });
 
-  it("accepts any existing file on win32 — X_OK is meaningless there, and the extension carries executability", () => {
+  it("accepts any existing file on win32, since X_OK is meaningless there and the extension carries executability", () => {
     const d = dir(["codex.cmd"]);
     expect(isExecutableFile(path.join(d, "codex.cmd"), "win32")).toBe(true);
   });
@@ -90,7 +90,7 @@ describe("isExecutableFile", () => {
 });
 
 describe("findInDirs", () => {
-  it("finds gh.exe for a bare 'gh' on win32 — the probe-dir miss that made every Windows install invisible", () => {
+  it("finds gh.exe for a bare 'gh' on win32, closing the probe-dir miss that made every Windows install invisible", () => {
     const d = dir(["gh.exe"]);
     expect(findInDirs("gh", [d], win)).toBe(path.join(d, "gh.exe"));
     expect(findInDirs("gh", [d], { platform: "linux" })).toBeNull();
@@ -124,7 +124,7 @@ describe("findOnPath", () => {
     expect(findOnPath("claude", { ...win, pathEnv: [miss, hit].join(";") })).toBe(path.join(hit, "claude.exe"));
   });
 
-  it("does not split a win32 PATH on ':' — a drive letter is not a separator", () => {
+  it("does not split a win32 PATH on ':', since a drive letter is not a separator", () => {
     const hit = dir(["claude.exe"]);
     expect(findOnPath("claude", { ...win, pathEnv: `C:\\Windows;${hit}` })).toBe(path.join(hit, "claude.exe"));
   });
@@ -178,7 +178,7 @@ describe("spawnSpec", () => {
     });
   });
 
-  it("wraps a .cmd shim in cmd.exe — Node refuses to spawn one without a shell (CVE-2024-27980)", () => {
+  it("wraps a .cmd shim in cmd.exe, since Node refuses to spawn one without a shell (CVE-2024-27980)", () => {
     expect(spawnSpec("C:\\x\\codex.cmd", ["mcp", "list", "--json"], { platform: "win32", comspec })).toEqual({
       command: comspec,
       args: ["/d", "/s", "/c", '"C:\\x\\codex.cmd mcp list --json"'],

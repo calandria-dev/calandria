@@ -70,7 +70,7 @@ describe("one-shot model selection", () => {
     expect(claude.draftProjectContext.mock.lastCall?.[2]).toEqual({ model: "opus" });
   });
 
-  it("keeps the tiers independent — setting one leaves the other inheriting", async () => {
+  it("keeps the tiers independent, so setting one leaves the other inheriting", async () => {
     setSetting("job_model_heavy:claude", "opus");
 
     await summarizeProjectRecap(project, "digest", { unattended: false });

@@ -56,7 +56,7 @@ describe("moveTask (store)", () => {
     expect(listTasks(from.id)).toEqual([]);
   });
 
-  it("keeps the transcript-bearing row itself — same id, title, description", () => {
+  it("keeps the transcript-bearing row itself, with the same id, title and description", () => {
     const { to, task } = pair("Identity");
     updateTask(task.id, { description: "the whole point of moving instead of recreating" });
 
@@ -66,7 +66,7 @@ describe("moveTask (store)", () => {
     expect(moved.description).toBe("the whole point of moving instead of recreating");
   });
 
-  it("refuses a started task — its worktree belongs to the old project's repo", () => {
+  it("refuses a started task, since its worktree belongs to the old project's repo", () => {
     const { from, to, task } = pair("Started");
     updateTask(task.id, { started: 1 });
 
@@ -133,7 +133,7 @@ describe("moveTask dependencies", () => {
     expect(getTaskDeps(b.id)).toEqual([a.id]);
   });
 
-  it("clears auto_start on both sides — a blocker-less task can never auto-start", () => {
+  it("clears auto_start on both sides, since a blocker-less task can never auto-start", () => {
     const { from, to, task } = pair("Autostart");
     const blocker = createTask({ project_id: from.id, title: "Blocker" });
     const dependent = createTask({ project_id: from.id, title: "Dependent" });
@@ -211,7 +211,7 @@ describe("moveTask inherited settings", () => {
     expect(moveTask(explicit.id, to.id).task.send_context).toBe(0);
   });
 
-  it("re-derives a value once it matches its project's default — the guess is a guess", () => {
+  it("re-derives a value once it matches its project's default, since the guess is only a guess", () => {
     const off = createProject({ name: "Ctx off" });
     const on = createProject({ name: "Ctx on" });
     updateProject(off.id, { send_context: 0 });
@@ -265,7 +265,7 @@ describe("POST /api/tasks/[id]/move", () => {
     expect(getTask(task.id)?.project_id).toBe(from.id);
   });
 
-  it("409s while a turn is claimed — the launch path claims before it locks", async () => {
+  it("409s while a turn is claimed, since the launch path claims before it locks", async () => {
     const { from, to, task } = pair("Route claimed");
     // POST /messages claims the turn slot before taking the task lock, so the
     // row still reads running=0 while a launch is in flight.

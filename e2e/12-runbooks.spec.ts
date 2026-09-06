@@ -68,8 +68,8 @@ test("a runbook can be saved from the card, then dispatched into a live task", a
   await expect(row).toBeVisible();
   await expect(row.getByText("never run")).toBeVisible();
 
-  // Dispatch. The sheet prefills a dated title; the extras box is what makes
-  // this run different from the saved recipe. Both the row and the sheet have a
+  // Dispatch. The sheet prefills a dated title; the extras box is what sets
+  // this run apart from the saved recipe. Both the row and the sheet have a
   // "Run" button, so the sheet's is scoped to the modal.
   await row.getByRole("button", { name: "Run", exact: true }).click();
   const sheet = page.locator(".modal");
