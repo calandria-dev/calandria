@@ -65,7 +65,7 @@ function PreviewPane({ project }: { project: ProjectRow }) {
         {url ? <a className="btn btn-line" href={url} target="_blank" rel="noopener noreferrer">{Icon.external()} Open live</a> : <button className="btn btn-line" disabled>{Icon.external()} Open live</button>}
         <button className="btn btn-line" onClick={copy} disabled={!url}>{copied ? Icon.check() : Icon.copy()} {copied ? "Copied" : "Copy link"}</button>
       </div>
-      <div className="prev-note">Every project gets a real URL the moment it runs. Open it on your phone, send it to a teammate, no deploy step.</div>
+      <div className="prev-note">Every running project gets a real URL you can open on your phone or share with a teammate. No deploy step.</div>
     </div>
   );
 }
@@ -83,7 +83,7 @@ function ContextPane({ task, sessions, running, onClear, reportsContext }: { tas
   // fraction of an invented number.
   const unknownWindow = !(task.context_window > 0);
   const note = unknownWindow
-    ? "This task runs on a model Calandria can't size — a local or custom endpoint names its own models and doesn't publish their context windows. The token count is real; the percentage would not be."
+    ? "Calandria can't size this model: a local or custom endpoint doesn't publish its context window. The token count shown is real; a percentage wouldn't be."
     : estimated
       ? reportsContext
         ? "Estimated from the last turn's usage report. Measured occupancy arrives with the next turn."
@@ -110,8 +110,8 @@ function ContextPane({ task, sessions, running, onClear, reportsContext }: { tas
               <div className="ctxw-name">Window {s.n} · {current ? "current" : "summarized"}</div>
               <div className="ctxw-desc">
                 {current
-                  ? "Carried the summary forward and resumed. The mission recorder hands off the thread."
-                  : "Condensed to a summary. Task lineage is preserved across the clear."}
+                  ? "Carried the prior summary forward and resumed here."
+                  : "Condensed to a summary when this window closed."}
               </div>
             </div>
           );

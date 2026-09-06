@@ -509,7 +509,7 @@ function RepairWorktree({ msgId, running, onRepair }: { msgId: string; running?:
       <button
         className="btn btn-sm"
         disabled={busy || running}
-        title="Clear the stale lock, prune the stale registration, cut the worktree again, and send the message"
+        title="Repair the worktree and send the message"
         onClick={async () => {
           setBusy(true);
           setErr(null);
@@ -619,7 +619,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
             {limitResume && limitResume.queuedAt === 0 && limitResume.resetAt != null && (
               <div className="overflow-actions">
                 <button className="btn btn-sm" onClick={() => limitResume.onQueue(deferredStartFor(limitResume.resetAt!))} disabled={running}
-                  title="Resume this session on its own once the usage window resets: the queued follow-up if there is one, otherwise a continue prompt">
+                  title="Resume automatically once the usage window resets, with the queued follow-up if there is one, or a continue prompt">
                   {Icon.clock()} Resume when the limit resets ({resetClock(limitResume.resetAt)})
                 </button>
               </div>
