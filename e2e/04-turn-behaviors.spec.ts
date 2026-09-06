@@ -276,3 +276,76 @@ test("a task an agent renames updates the list live, with no reload", async ({ p
   await expect(page.locator(".ttitle").filter({ hasText: "Working title" })).toBeHidden();
   expect((await getTask(request, task.id)).title).toBe("Renamed by the agent");
 });
+
+test("the reply types out live, then the persisted message replaces the bubble", async ({ page, request }) => {
+  // assistant_delta: the one StreamEvent the runner publishes without
+  // persisting. What that has to add up to on screen is a bubble that grows
+  // while the turn runs and a transcript that afterwards holds ONE assistant
+  // row with the whole reply, not one row per fragment, and nothing left
+  // behind if the browser reloads.
+  const REPLY = "streaming one word at a time";
+  const task = await createTask(request, {
+    projectId,
+    title: "Typing",
+    description: `e2e:type=${REPLY}`,
+  });
+  await gotoApp(page);
+  await page.getByText(PROJECT).first().click();
+  await page.getByText("Typing").first().click();
+
+  // Watch before the turn starts: the deltas are live-only, so a viewer that
+  // arrives late legitimately sees nothing.
+  await sendMessage(request, task.id);
+
+  const live = page.locator(".msg.assistant.streaming");
+  await expect(live).toBeVisible({ timeout: 20_000 });
+  // Part-written, and it is the delta text rather than a placeholder.
+  await expect(live).toContainText("streaming");
+
+  // The completed message replaces it: the live bubble goes, the real one stays.
+  await expect(live).toBeHidden({ timeout: 20_000 });
+  await expect(page.getByText(REPLY).first()).toBeVisible();
+
+  await waitForIdle(request, task.id);
+  const settled = await getTask(request, task.id);
+  const replies = settled.messages
+    .filter((m: { role: string }) => m.role === "assistant")
+    .map((m: { content: string }) => m.content);
+  expect(replies).toContain(REPLY);
+  // One row for the whole reply. Six fragments were published; none was stored.
+  expect(replies.filter((c: string) => c.startsWith("streaming"))).toHaveLength(1);
+});
+
+test("a running command's output streams into its tool row's peek", async ({ page, request }) => {
+  // tool_output_delta: the same publish-without-persist rule as assistant_delta,
+  // one row deeper. The proof that it is LIVE rather than a late render is that
+  // the peek is already showing output while the turn is still going: the mock
+  // paces a line every 300ms and only ends the turn after the last one.
+  const LINES = Array.from({ length: 16 }, (_, i) => `line-${String(i + 1).padStart(2, "0")}`);
+  const task = await createTask(request, {
+    projectId,
+    title: "Streaming output",
+    description: `e2e:output=${LINES.join("|")}`,
+  });
+  await gotoApp(page);
+  await page.getByText(PROJECT).first().click();
+  await page.getByText("Streaming output").first().click();
+  await sendMessage(request, task.id);
+
+  const peek = page.locator(".msg-tool .tpeek-pre");
+  await expect(peek).toContainText("line-01", { timeout: 20_000 });
+  // Still mid-command: fifteen more lines are nearly five seconds away, so the
+  // peek grew from the deltas rather than from the settled result.
+  await expect(page.getByText("Mock turn complete")).toBeHidden();
+
+  await waitForIdle(request, task.id);
+  const settled = await getTask(request, task.id);
+  const rows = settled.messages
+    .filter((m: { role: string }) => m.role === "tool")
+    .map((m: { content: string }) => JSON.parse(m.content));
+  const cmd = rows.find((d: { title: string }) => d.title.includes("mock-command"));
+  // One row, holding the whole output. The sixteen fragments left no trace.
+  expect(rows.filter((d: { title: string }) => d.title.includes("mock-command"))).toHaveLength(1);
+  expect(cmd.result).toContain("line-16");
+  expect(settled.messages.filter((m: { content: string }) => m.content === "line-01")).toHaveLength(0);
+});

@@ -163,10 +163,11 @@ already queued. The transcript records that it was sent.
   and nothing lands in your diff. Staged files are swept with the task.
 - **Collaborate on documents:** open a file the agent wrote as a document
   (mermaid fences render as diagrams), edit the text, attach comments to
-  passages, and send it all back as one message. Comments are saved as you
-  go; your edits are either written straight into the task's worktree
-  (default) or sent as a diff for the agent to apply. Open it from the diff
-  or from the Write/Edit card in the transcript.
+  passages, and send it all back as one message. Comments, edits and the
+  general note are all saved as you go, so a reload or closing the modal
+  loses nothing; your edits are either written straight into the task's
+  worktree (default) or sent as a diff for the agent to apply. Open it from
+  the diff or from the Write/Edit card in the transcript.
 - **Task pipelines:** make a task depend on one or more earlier tasks,
   branch work into parallel paths, and start each task automatically when
   its blockers finish.
@@ -235,7 +236,13 @@ Calandria supports **Claude Code**, **OpenAI Codex** and Google's **Antigravity*
 (the CLI behind Gemini) end to end. Choose an agent per task, or connect only the
 one you use. All three work with subscription login; API keys stay optional —
 except in a container, where Antigravity needs one, since its CLI stores its
-token in the OS keyring.
+token in the OS keyring. The same five permission modes apply to every agent:
+a Codex task maps them onto Codex's sandbox and approval policy, its approval
+requests land on the same permission card a Claude prompt does, and a
+sandboxed Codex turn can still commit from its worktree. On a Linux host that
+blocks the user namespaces Codex's sandbox needs, Settings → Agents says so on
+the Codex card with the fix, and the sandboxed modes are refused rather than run
+as turns whose every command fails.
 
 [Agent support, permissions, and usage details](docs/AGENTS.md)
 

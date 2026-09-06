@@ -121,7 +121,7 @@ RUN npm install -g npm@12.0.2 && npm --version
 # login.
 ARG CLAUDE_CODE_VERSION=2.1.260
 ARG CODEX_VERSION=0.153.0
-ARG AGY_VERSION=1.1.26
+ARG AGY_VERSION=1.1.27
 
 # The `claude` CLI: the Agent SDK spawns it, and login state lives in
 # ~/.claude on the volume. Pinned location via CLAUDE_CLI_PATH; updates ship as
@@ -165,17 +165,29 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 # The binary self-updates in the background by default, which would replace
 # this pin mid-turn. AGY_CLI_DISABLE_AUTO_UPDATE below turns that off
 # image-wide, and the driver sets it on every spawn as a second guard.
-ARG AGY_SHA512_AMD64=80f2e7bf1fe0833487975b320b07176b82dd2cc2043b8acb4201b37b86d604af50718400b58af0f41adc68b389640f6ff95362da87a9ef1682b34258e83110b2
-ARG AGY_SHA512_ARM64=332dddb06ab4d901a44cfd4b9b358848230e64a64515a8e79b03822348adac9ce92d54cb4fc5119ef075edfba922820c926dfddf82d3a49f4ecdb6e6704dfc75
+ARG AGY_SHA512_AMD64=793d4b9ea2c08d9a7e50bafa02cfc8c19424bd60d6e83f91408d45f9c6d4ce79a5d576fede5bef164d823abf84f81359a14b4ca665952c47b0a7cfd743bb69c0
+ARG AGY_SHA512_ARM64=ed45f6930785aa4b42f14e07ace1c9d91a94fb76e760f54acbd7d3d3951e1f957fd456a0dae2a3124dd9a3b689bf7afb7c9303a3e4ba95037fc10063424d9bf9
 RUN set -eu; \
     case "$(dpkg --print-architecture)" in \
       amd64) manifest=linux_amd64; sha="${AGY_SHA512_AMD64}" ;; \
       arm64) manifest=linux_arm64; sha="${AGY_SHA512_ARM64}" ;; \
       *) echo "unsupported architecture for the agy CLI: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
+    # Fetched and checked on its OWN, because a network failure here must not be
+    # reported as a stale pin. Written as `url="$(curl … | sed …)"` the status is
+    # the PIPELINE's, which is sed's, and sed exits 0 on empty input — so `set -e`
+    # never saw a dead curl, the empty url fell through to the version guard
+    # below, and the build failed with "manifest no longer serves AGY_VERSION"
+    # and `(got )`, sending the next reader to bump a pin that was fine. Observed
+    # 2026-09-05: curl (35), connection reset, on the amd64 builder while arm64
+    # built the same commit against the same manifest. Retried for the same
+    # reason — it is the one network read in an otherwise hermetic step.
+    manifest_json="$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 --max-time 60 \
+                       "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/${manifest}.json")" \
+      || { echo "could not fetch the agy ${manifest} manifest: NETWORK failure, not a stale AGY_VERSION" >&2; exit 1; }; \
     # The download URL carries an opaque build id after the version, so it is
     # read from the manifest rather than templated from AGY_VERSION alone.
-    url="$(curl -fsSL "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/${manifest}.json" \
+    url="$(printf '%s' "$manifest_json" \
             | sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"; \
     # The manifest always serves the latest build, so a stale pin fails the
     # build here instead of installing a version whose checksum was never reviewed.
@@ -183,7 +195,7 @@ RUN set -eu; \
       *) echo "manifest no longer serves AGY_VERSION=${AGY_VERSION} (got ${url}); bump the ARG and both SHA-512s" >&2; exit 1 ;; \
     esac; \
     workdir="$(mktemp -d)"; \
-    curl -fsSL -o "${workdir}/agy.tar.gz" "$url"; \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "${workdir}/agy.tar.gz" "$url"; \
     echo "${sha}  ${workdir}/agy.tar.gz" | sha512sum -c -; \
     tar -xzf "${workdir}/agy.tar.gz" -C "${workdir}"; \
     install -m 0755 "$(find "${workdir}" -type f -name antigravity | head -1)" /usr/local/bin/agy; \

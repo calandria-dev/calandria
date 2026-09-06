@@ -79,7 +79,7 @@ export interface Task {
   model: string | null; // chosen model alias ("fable"|"opus"|"sonnet"|"haiku"); null = inherit default
   resolved_model: string | null; // model the SDK actually ran last turn (for the badge)
   reasoning: string | null; // thinking preset ("off"|"think"|"think_hard"|"ultrathink"); null = inherit default
-  permission_mode: string | null; // run permission ("acceptEdits"|"plan"); null = bypassPermissions (default)
+  permission_mode: string | null; // run permission ("auto"|"default"|"acceptEdits"|"bypassPermissions"|"plan"); null = the agent's default
   session_id: string | null; // the agent's opaque session/thread id for the current generation
   worktree_path: string; // isolated git worktree this task runs in ("" = runs in repo_path)
   work_branch: string; // the worktree's branch (e.g. "calandria/<id>")
@@ -303,6 +303,20 @@ export interface TaskDocComment {
   sent_to_agent: number;
   anchor_sha: string | null;
   created_at: number;
+}
+
+// The modal-local halves of a document review, TaskDocComment's sibling: one
+// row per (task, file), not one per passage. Holds the Edit tab's text
+// and the General comments note, autosaved so a rail collapse or a reload
+// doesn't lose them, and cleared on Send. `anchor_sha` is the file's blob sha
+// the edit was made against.
+export interface TaskDocDraft {
+  task_id: string;
+  file: string;
+  text: string | null;     // the Edit tab's text; null when the file hasn't been edited
+  general: string;         // the General comments note, "" when empty
+  anchor_sha: string | null; // blob sha of the file the edit was made against
+  updated_at: number;
 }
 
 export interface Session {
@@ -635,6 +649,17 @@ export type StreamEvent =
   | { type: "session"; sessionId: string }
   | { type: "model"; model: string }
   | { type: "assistant"; content: string }
+  // A fragment of the reply as the model produces it, published to whoever is
+  // watching and never persisted: the completed `assistant` message (or, for
+  // reasoning, the "🧠 Thinking" tool row) carries the whole text a moment
+  // later, so a row per fragment would double the transcript and a reload
+  // would replay the typing. A driver that emits none just produces the reply
+  // whole. `id` is the driver's id for the item being typed (a Codex item id,
+  // a Claude message id plus content-block index), so a client can tell one
+  // growing bubble from the next without guessing at boundaries. `kind`
+  // separates the reply from the reasoning summary above it, which land in
+  // different places when they complete.
+  | { type: "assistant_delta"; id: string; kind: "assistant" | "reasoning"; delta: string }
   // `file` is the path a file-writing call touched (Write/Edit, a Codex
   // single-file patch), as the agent spelled it, absolute in practice. The
   // runner resolves it against the task's worktree before persisting, so the
@@ -651,6 +676,17 @@ export type StreamEvent =
   // `cutOff`: the agent CLI answered this call itself and it never reached
   // Calandria (lib/agentToolGuard.mjs); `content` is the driver's rewrite.
   | { type: "tool_result"; id: string; content: string; isError: boolean; peek?: ToolPeek; cutOff?: boolean }
+  // A fragment of a running command's output, `id` being the tool_use id of
+  // the row it belongs to. The second ephemeral event, on the same rule as
+  // `assistant_delta`: published to whoever is watching, never persisted. The
+  // completed call still writes the whole `aggregated_output` through
+  // `tool_result`, which overwrites the peek these grew, so a reload shows the
+  // settled output instead of the incremental build. This is not a
+  // `partial` flag on `tool_result`: that event is a settlement, writing
+  // `result`, `isError` and the final peek, and a consumer that had to tell
+  // the two apart would get it wrong once. A driver that emits none is not
+  // degraded; the output appears when the command finishes.
+  | { type: "tool_output_delta"; id: string; delta: string }
   | { type: "ask"; id: string; questions: AskQuestion[] }
   | { type: "ask_answered"; id: string; answers: AskAnswers }
   | { type: "ask_dismissed"; id: string; dismissal: AskDismissal }

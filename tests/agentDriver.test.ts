@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
+// The codex half of this file mocks @openai/codex-sdk, which only the exec
+// transport drives; the default app-server transport spawns the real CLI
+// (tests/codexAppServer.test.ts points it at a fake). Pinned before any import
+// reads lib/config.ts.
+vi.hoisted(() => {
+  process.env.CODEX_TRANSPORT = "exec";
+});
+
 // Pins the driver contract: a scripted fake driver run through lib/runner.ts
 // must produce the same persistence and publish behavior as any real driver.
 // The fake replaces the Claude driver module, so the registry's

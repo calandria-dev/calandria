@@ -467,7 +467,7 @@ export function init(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_runbooks_project ON runbooks(project_id);
 
     -- A named, project-scoped label a task can carry: the noun a multi-task
-    -- feature was missing (docs/superpowers/specs/2026-08-27-tags-design.md;
+    -- feature was missing (docs/FEATURES.md;
     -- its one-per-task ancestor is the task-grouping spike from 2026-08-24).
     -- Deliberately NOT a task: no session, no worktree, no status of its own.
     -- Status is derived per read from the members (done when every member is
@@ -614,6 +614,23 @@ export function init(db: Database.Database) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_task_doc_comments_task ON task_doc_comments(task_id);
+
+    -- The modal-local halves of a document review, one row per (task, file):
+    -- the Edit tab's text (NULL when the file hasn't been edited) and the
+    -- General comments note. Autosaved by the modal so a rail collapse or a
+    -- reload doesn't lose them, cleared on Send. anchor_sha is the file's
+    -- blob sha the edit was made against; a draft whose anchor no longer
+    -- matches the file is shown as stale rather than restored silently.
+    CREATE TABLE IF NOT EXISTS task_doc_drafts (
+      task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      file        TEXT NOT NULL,
+      text        TEXT,
+      general     TEXT NOT NULL DEFAULT '',
+      anchor_sha  TEXT,
+      updated_at  INTEGER NOT NULL,
+      PRIMARY KEY (task_id, file)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_services_project ON services(project_id);
     CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
     CREATE INDEX IF NOT EXISTS idx_task_deps_task ON task_dependencies(task_id);
@@ -1270,6 +1287,22 @@ export function migrate(db: Database.Database) {
     WHERE m.role IN ('user', 'assistant', 'tool')
     GROUP BY m.task_id, m.generation;
   `);
+
+  // Codex permission modes: "bypassPermissions" now means danger-full-access,
+  // no sandbox. The old meaning, a workspace-write sandbox that never asks,
+  // moved to "acceptEdits" (lib/agents/codex/policy.ts). Every Codex row set
+  // to the old entry is migrated to the key that carries its old meaning,
+  // recorded in settings so a later instance does not re-run this over a row
+  // that has since chosen full access on its own.
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'codex_modes_migrated'").get()) {
+    db.exec(`
+      UPDATE tasks     SET permission_mode = 'acceptEdits' WHERE agent = 'codex' AND permission_mode = 'bypassPermissions';
+      UPDATE runbooks  SET permission_mode = 'acceptEdits' WHERE agent = 'codex' AND permission_mode = 'bypassPermissions';
+      UPDATE schedules SET permission_mode = 'acceptEdits' WHERE agent = 'codex' AND permission_mode = 'bypassPermissions';
+      UPDATE settings  SET value = 'acceptEdits' WHERE key = 'default_permission_mode:codex' AND value = 'bypassPermissions';
+      INSERT INTO settings (key, value) VALUES ('codex_modes_migrated', '1');
+    `);
+  }
 
   // Last, once everything above has actually run: stamp what this build
   // made of the file, so a later build older than this one refuses to open

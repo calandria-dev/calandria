@@ -1602,6 +1602,11 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .typing i:nth-child(2){animation-delay:.18s;}
 .typing i:nth-child(3){animation-delay:.36s;}
 @keyframes typing{0%,60%,100%{opacity:.3;transform:translateY(0);}30%{opacity:1;transform:translateY(-3px);}}
+/* live typing: the assistant_delta bubble, replaced by the persisted message */
+.msg.streaming .stream-caret{display:inline-block;width:2px;height:1em;margin-left:2px;vertical-align:text-bottom;background:var(--accent);animation:caret 1s steps(1) infinite;}
+.msg.streaming .stream-think{color:var(--ink-3);font-style:italic;white-space:pre-wrap;}
+@keyframes caret{0%,50%{opacity:1;}50.01%,100%{opacity:0;}}
+@media (prefers-reduced-motion:reduce){.msg.streaming .stream-caret{animation:none;}}
 
 /* ---- async-state primitives (spinner · loading note · skeleton · inline error) ---- */
 .spinner{width:15px;height:15px;border-radius:50%;border:2px solid var(--line-strong);border-top-color:var(--accent);animation:wizspin .7s linear infinite;flex:0 0 auto;}
@@ -2420,6 +2425,8 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .collab-tabs .rail-tab{display:inline-flex;align-items:center;gap:6px;}
 .collab-tabs .rail-tab svg{width:12px;height:12px;}
 .collab-hint{margin-left:auto;font-size:12px;color:var(--ink-3);}
+.collab-stale{display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:8px 12px;border:1px solid color-mix(in oklab,var(--warn) 50%,var(--line));border-radius:var(--r-sm);background:color-mix(in oklab,var(--warn) 8%,var(--surface));font-size:12.5px;line-height:1.45;}
+.collab-stale span{flex:1;}
 .collab-split{display:grid;grid-template-columns:1fr 1fr;gap:12px;flex:1;min-height:0;}
 .collab-split:has(.collab-side){grid-template-columns:minmax(0,1.6fr) minmax(280px,1fr);}
 .collab-split.collab-solo{grid-template-columns:1fr;}
@@ -2524,7 +2531,20 @@ button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,tra
 .gs-frac{font-size:11px;color:var(--ink-3);}
 .gs-bar{height:4px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
 .gs-bar>span{display:block;height:100%;background:var(--gc,var(--ink-3));transition:width .2s;}
-.gs-desc{font-size:12px;color:var(--ink-2);white-space:pre-wrap;}
+/* The description clamps to three lines, with the rest behind "Show more".
+   Whether the toggle appears is MEASURED in TagStrip.tsx, not assumed from the
+   text's length, which is why this clamps by max-height rather than with the
+   `-webkit-box` / line-clamp pair the cards use: a line-clamped box reports no
+   overflow through scrollHeight, so there would be nothing to measure. The
+   height is exactly three of the line-height below, so the cut lands on a line
+   boundary rather than through the glyphs. */
+.gs-descwrap{display:flex;flex-direction:column;gap:2px;}
+.gs-desc{font-size:12px;line-height:1.45;color:var(--ink-2);white-space:pre-wrap;overflow:hidden;max-height:4.35em;}
+.gs-descwrap.open .gs-desc{max-height:none;overflow:visible;}
+.gs-desc-more{align-self:flex-start;display:flex;align-items:center;gap:3px;font-size:11px;color:var(--ink-3);transition:color .12s;}
+.gs-desc-more svg{width:11px;height:11px;transform:rotate(-90deg);transition:transform .15s;}
+.gs-descwrap.open .gs-desc-more svg{transform:none;}
+.gs-desc-more:hover{color:var(--accent-ink);}
 /* The "Refresh tag" job band: an indeterminate sweep while the agent reads the
    repo, then the one-line report of what it changed. Indeterminate because the
    long phase has no measurable fraction: see TagStrip.tsx. */

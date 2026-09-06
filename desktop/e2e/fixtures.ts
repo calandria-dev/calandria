@@ -206,6 +206,26 @@ function launchArgs(root: string, opts: LaunchOptions): string[] {
   // desktop app shares the lock with the suite, and each would refuse the other.
   args.push(`--user-data-dir=${opts.userDataDir ?? userDataDir(root)}`);
   if (NO_SANDBOX) args.push("--no-sandbox");
+  // The login keychain is a piece of global machine state this suite writes
+  // into and cannot clean up. `safeStorage` keeps one generic-password item
+  // per app name, so every shell the suite launches shares ONE item on the
+  // developer's or runner's real keychain, and macOS gates reading such an
+  // item on the calling binary being named in its ACL, answering a binary
+  // that is not with an authorization dialog.
+  //
+  // On CI that is fatal rather than annoying. The unpackaged pass runs first
+  // and creates the item as `node_modules/electron`; the packaged pass is a
+  // different binary, gets the dialog, and hangs on it forever with nobody
+  // there to click it. `safeStorage` is synchronous, so the main thread never
+  // comes back and the app cannot even quit. `credentialCipher` in main.js no
+  // longer asks unless a credential is actually in play, leaving only the
+  // sign-in spec here.
+  //
+  // `--use-mock-keychain` is Chromium's own answer, and the reason to prefer it
+  // to skipping the spec: OSCrypt still encrypts and decrypts, so the path
+  // stays genuinely under test, it just holds its key in memory instead of in
+  // the OS. Hermetic in exactly the sense the rest of the fixture already is.
+  if (process.platform === "darwin") args.push("--use-mock-keychain");
   return args;
 }
 
@@ -227,7 +247,76 @@ function launchEnv(root: string, port: number, opts: LaunchOptions): Record<stri
   // instanceEnv() removes. The key is deleted here, since the test needs
   // the variable to be absent, not merely empty.
   if (PACKAGED) delete inherited.CALANDRIA_REPO_ROOT;
-  return { ...inherited, ...instanceEnv(root, port), ...(opts.env ?? {}) };
+  return {
+    ...inherited,
+    ...instanceEnv(root, port),
+    // The boot trace `launchShell()` reads when a launch never resolves. Per
+    // instance, and written synchronously by main.js so it survives a main
+    // thread that stopped.
+    CALANDRIA_DESKTOP_LOG_FILE: bootTracePath(root),
+    ...(opts.env ?? {}),
+  };
+}
+
+/** Where a shell launched against `root` writes its synchronous boot trace. */
+function bootTracePath(root: string): string {
+  return path.join(root, "boot-trace.log");
+}
+
+/**
+ * The shell's own account of its boot, read off disk.
+ *
+ * Distinct from `Shell.log`, and the difference is the point: that one starts
+ * at the moment `electron.launch()` resolved and so cannot see the startup
+ * itself. main.js appends this one synchronously, line by line, from its first
+ * line onward.
+ */
+export function bootTrace(shell: Shell): string[] {
+  try {
+    return fs
+      .readFileSync(bootTracePath(shell.root), "utf8")
+      .split(/\r?\n/)
+      .filter((l: string) => l.trim());
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Turn a launch that never resolved into a sentence that names the cause.
+ *
+ * `electron.launch()` yields no process handle until it succeeds, so the
+ * ordinary `shell.log` capture starts too late to see a main process that hung
+ * before its first window. Every spec in the file then fails identically, at
+ * the same 120s, saying only that Playwright gave up, which reads as an
+ * unrelated timeout with no clue to the actual cause. The boot trace is the
+ * app's own account of how far it got; the last line in it is the statement
+ * that did not return.
+ */
+function launchFailure(root: string, err: unknown): Error {
+  const message = err instanceof Error ? err.message : String(err);
+  let trace: string[] = [];
+  try {
+    trace = fs
+      .readFileSync(bootTracePath(root), "utf8")
+      .split(/\r?\n/)
+      .filter((l: string) => l.trim());
+  } catch {
+    // No trace file at all: the binary never got as far as running main.js.
+  }
+  if (!trace.length) {
+    return new Error(
+      `${message}\n\nThe shell wrote no boot trace, so main.js never ran; ` +
+        `suspect the binary itself (signature, missing payload, wrong architecture).`,
+    );
+  }
+  const tail = trace.slice(-12);
+  return new Error(
+    `${message}\n\nThe shell started but never finished booting. Its last line was:\n` +
+      `  ${trace[trace.length - 1]}\n\n` +
+      `Whatever follows that statement in main.js is where it stopped. Last ${tail.length} lines:\n` +
+      tail.map((l) => `  ${l}`).join("\n"),
+  );
 }
 
 /**
@@ -245,13 +334,18 @@ export async function launchShell(name: string, opts: LaunchOptions = {}): Promi
   const port = PORT_BASE + instances * 10;
   const env = launchEnv(root, port, opts);
 
-  const app = await electron.launch({
-    executablePath: shellBinary(),
-    args: launchArgs(root, opts),
-    ...launchOptions(),
-    env,
-    timeout: 120_000,
-  });
+  let app: Awaited<ReturnType<typeof electron.launch>>;
+  try {
+    app = await electron.launch({
+      executablePath: shellBinary(),
+      args: launchArgs(root, opts),
+      ...launchOptions(),
+      env,
+      timeout: 120_000,
+    });
+  } catch (err) {
+    throw launchFailure(root, err);
+  }
 
   const log: string[] = [];
   const proc = app.process();
@@ -261,7 +355,15 @@ export async function launchShell(name: string, opts: LaunchOptions = {}): Promi
     });
   }
 
-  const win = await app.firstWindow({ timeout: 120_000 });
+  // Same diagnostic on this half: `whenReady` opens the window several
+  // statements in, so a chain that stalls before `createWindow()` times out
+  // here rather than above, and is just as mute without the trace.
+  let win: Awaited<ReturnType<typeof app.firstWindow>>;
+  try {
+    win = await app.firstWindow({ timeout: 120_000 });
+  } catch (err) {
+    throw launchFailure(root, err);
+  }
 
   // The first NON-EMPTY url, not the first one. `firstWindow()` resolves as
   // soon as the BrowserWindow object exists, which can be before
@@ -480,6 +582,15 @@ export async function attachShellLog(testInfo: TestInfo, shell: Shell | null | u
   const file = path.join(shell.root, "shell.log");
   fs.writeFileSync(file, [...shell.log, await geometryLine(shell)].join("\n"));
   await testInfo.attach("shell.log", { path: file, contentType: "text/plain" });
+  // The boot trace goes up with it: on a failure that happened during startup
+  // it is the only record of that stretch, and it is written into an instance
+  // root the cleanup reporter keeps only on red runs.
+  const trace = bootTrace(shell);
+  if (trace.length) {
+    const traceFile = path.join(shell.root, "boot-trace.attached.log");
+    fs.writeFileSync(traceFile, trace.join("\n"));
+    await testInfo.attach("boot-trace.log", { path: traceFile, contentType: "text/plain" });
+  }
   await attachScreenshot(testInfo, shell);
 }
 

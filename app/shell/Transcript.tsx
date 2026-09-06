@@ -698,6 +698,24 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     const tone = /^[✓ℹ▶]/.test(m.content) ? "info" : /^[⚠⏰]/.test(m.content) ? "" : "note";
     return <div className={`msg system${tone ? ` ${tone}` : ""}`}><div className="msg-body">{m.content}</div></div>;
   }
+  if (m.streaming) {
+    // The live-typing bubble (useTaskStream's LIVE_MSG_ID): the reply as the
+    // agent writes it, dropped the instant the persisted message lands under
+    // it. Reasoning gets the same collapsed, quiet treatment the "🧠 Thinking"
+    // tool row it becomes has, so the summary doesn't read as the answer.
+    const thinking = m.streaming === "reasoning";
+    return (
+      <div className={`msg assistant streaming${thinking ? " thinking" : ""}`}>
+        {!hideWho && (
+          <div className="who"><Avatar who="cc" agent={agent} /> {thinking ? "Thinking" : "Agent"}</div>
+        )}
+        <div className="msg-body">
+          {thinking ? <div className="stream-think">{m.content}</div> : <Markdown>{m.content}</Markdown>}
+          <span className="stream-caret" aria-hidden />
+        </div>
+      </div>
+    );
+  }
   const isUser = m.role === "user";
   // Only user messages carry attachment markers; assistant text passes through.
   const { text, attachments } = isUser ? splitAttachments(m.content) : { text: m.content, attachments: [] };

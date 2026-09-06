@@ -28,11 +28,33 @@ const CALL_ID = 2;
 /** Total budget for spawn + handshake + answer. */
 const TIMEOUT_MS = 10_000;
 
+/** How long to keep reading notifications after the answer, when asked to. */
+const SETTLE_MS = 750;
+
 export interface AppServerResult {
   /** The JSON-RPC `result`, when the call succeeded. */
   data?: unknown;
   /** Why there is no result: an RPC error message, or a process failure. */
   error?: string;
+  /**
+   * Whether `initialize` was answered. An `error` with this set means the
+   * server started and refused the CALL (not logged in, say); an `error`
+   * without it means nothing ran at all. Only a caller that cares about the
+   * server's startup output rather than the answer needs the distinction.
+   */
+  handshook?: boolean;
+}
+
+export interface AppServerCallOptions {
+  /** Every unsolicited notification the server pushes on the same stream. */
+  onNotification?: (method: string, params: unknown) => void;
+  /**
+   * Keep reading for this long after the answer instead of killing the child
+   * immediately. Notifications are pushed around the responses rather than
+   * before them, so a caller collecting notifications would otherwise race the
+   * server's own startup chatter.
+   */
+  settleMs?: number;
 }
 
 function messageOf(e: unknown): string {
@@ -52,7 +74,11 @@ function stderrTail(s: string): string {
  * Never rejects: every failure comes back as `{ error }` so the caller's
  * backoff policy has one shape to handle.
  */
-export function callAppServer(method: string, params: unknown = {}): Promise<AppServerResult> {
+export function callAppServer(
+  method: string,
+  params: unknown = {},
+  opts: AppServerCallOptions = {},
+): Promise<AppServerResult> {
   return new Promise<AppServerResult>((resolve) => {
     const spec = codexSpawn(["app-server"]);
     let child;
@@ -71,13 +97,16 @@ export function callAppServer(method: string, params: unknown = {}): Promise<App
     }
 
     let settled = false;
+    let handshook = false;
     let stdout = "";
     let stderr = "";
+    let settleTimer: ReturnType<typeof setTimeout> | undefined;
 
     const finish = (r: AppServerResult) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (settleTimer) clearTimeout(settleTimer);
       // Nothing to drain and no shutdown RPC worth waiting on: the one answer
       // we came for is already in hand, and a lingering app-server would
       // outlive the poll.
@@ -86,7 +115,28 @@ export function callAppServer(method: string, params: unknown = {}): Promise<App
       } catch {
         /* already gone */
       }
-      resolve(r);
+      resolve({ ...r, handshook });
+    };
+
+    // The answer is already decided, but a caller that asked for
+    // notifications also needs the server's startup chatter, which arrives
+    // around the responses rather than strictly before them. Hold the child
+    // open a beat longer so the stdout handler keeps feeding onNotification
+    // until the window closes.
+    //
+    // Once armed, `pending` holds that decided result: the child exiting or
+    // the overall timeout during this window resolves the same result
+    // instead of an error about a process that has already finished.
+    let pending: AppServerResult | undefined;
+    const finishAfterSettle = (r: AppServerResult) => {
+      if (settled || pending) return;
+      if (!opts.settleMs) {
+        finish(r);
+        return;
+      }
+      pending = r;
+      clearTimeout(timer);
+      settleTimer = setTimeout(() => finish(r), opts.settleMs);
     };
 
     const timer = setTimeout(() => finish({ error: `codex app-server did not answer ${method} in time` }), TIMEOUT_MS);
@@ -100,9 +150,11 @@ export function callAppServer(method: string, params: unknown = {}): Promise<App
     };
 
     child.on("error", (e: NodeJS.ErrnoException) => {
+      if (pending) return finish(pending);
       finish({ error: e.code === "ENOENT" ? "the codex CLI isn't installed in this workspace" : e.message });
     });
     child.on("exit", () => {
+      if (pending) return finish(pending);
       finish({ error: stderrTail(stderr) || "codex app-server exited without answering" });
     });
     child.stderr?.on("data", (d) => {
@@ -114,7 +166,7 @@ export function callAppServer(method: string, params: unknown = {}): Promise<App
         const line = stdout.slice(0, nl).trim();
         stdout = stdout.slice(nl + 1);
         if (!line) continue;
-        let msg: { id?: unknown; result?: unknown; error?: { message?: unknown } };
+        let msg: { id?: unknown; method?: unknown; params?: unknown; result?: unknown; error?: { message?: unknown } };
         try {
           msg = JSON.parse(line);
         } catch {
@@ -125,14 +177,17 @@ export function callAppServer(method: string, params: unknown = {}): Promise<App
             finish({ error: String(msg.error.message ?? "codex app-server refused the handshake") });
             return;
           }
+          handshook = true;
           send({ jsonrpc: "2.0", method: "initialized", params: {} });
           send({ jsonrpc: "2.0", id: CALL_ID, method, params });
         } else if (msg.id === CALL_ID) {
-          if (msg.error) finish({ error: String(msg.error.message ?? `${method} failed`) });
-          else finish({ data: msg.result });
-          return;
+          if (msg.error) finishAfterSettle({ error: String(msg.error.message ?? `${method} failed`) });
+          else finishAfterSettle({ data: msg.result });
+        } else if (typeof msg.method === "string" && msg.id === undefined) {
+          // An unsolicited notification. Only a caller that asked for them sees
+          // them; everyone else gets the old behavior of ignoring them.
+          opts.onNotification?.(msg.method, msg.params);
         }
-        // Anything else is an unsolicited notification, and is ignored.
       }
     });
 
@@ -143,4 +198,38 @@ export function callAppServer(method: string, params: unknown = {}): Promise<App
 /** The account's current rate-limit snapshot (`GetAccountRateLimitsResponse`). */
 export function readAccountRateLimits(): Promise<AppServerResult> {
   return callAppServer("account/rateLimits/read", {});
+}
+
+export interface ConfigWarningProbe {
+  /** Every `configWarning` summary the server pushed while starting up. */
+  warnings: string[];
+  /** Set when the server never handshook, so the warnings mean nothing. */
+  error: string | null;
+}
+
+/**
+ * Every `configWarning` a fresh `codex app-server` emits at startup.
+ *
+ * These are the CLI's own verdict on its configuration, including whether its
+ * Linux sandbox can be created, and they arrive whether or not an account is
+ * logged in. That makes this a usable, self-contained health check. The RPC
+ * underneath is only a vehicle for the handshake: its answer is discarded,
+ * and an error on it (not logged in, for one) still means the server started
+ * and reported its warnings.
+ */
+export async function readConfigWarnings(): Promise<ConfigWarningProbe> {
+  const warnings: string[] = [];
+  const r = await callAppServer(
+    "account/rateLimits/read",
+    {},
+    {
+      settleMs: SETTLE_MS,
+      onNotification: (method, params) => {
+        if (method !== "configWarning") return;
+        const summary = (params as { summary?: unknown } | undefined)?.summary;
+        if (typeof summary === "string" && summary.trim()) warnings.push(summary.trim());
+      },
+    },
+  );
+  return { warnings, error: r.handshook ? null : (r.error ?? "codex app-server did not start") };
 }

@@ -34,7 +34,11 @@ describe("waitForTree", () => {
       { timeoutMs: 60, intervalMs: 5 }
     );
     expect(alive).toBe(true);
-    expect(Date.now() - started).toBeGreaterThanOrEqual(50);
+    // Half the 60ms window, not 50: an early return is the bug being excluded
+    // and would land on the first 5ms probe, so 30ms separates the two answers
+    // just as well while clearing Windows' ~15.6ms Date.now() granularity. A
+    // lower bound within one tick of its own target is issue #209's shape.
+    expect(Date.now() - started).toBeGreaterThanOrEqual(30);
   });
 
   it("waits for a record to be complete, and hands back the incomplete one on timeout", async () => {

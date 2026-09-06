@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getTask, deleteTaskDocComment } from "@/lib/store";
+import { getTask, deleteTaskDocComment, updateTaskDocComment } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
@@ -14,4 +14,23 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   if (res === "missing") return NextResponse.json({ error: "comment not found" }, { status: 404 });
   if (res === "sent") return NextResponse.json({ error: "a comment already sent to the agent can't be removed" }, { status: 409 });
   return NextResponse.json({ ok: true });
+}
+
+// Rewrite an unsent document comment's body (editing a draft card). The edit
+// half of DELETE's same rule: a comment already sent to the agent is read-only
+// and is refused with 409 rather than silently drifting from what it was told.
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string; cid: string }> }) {
+  const { id, cid } = await params;
+  if (!getTask(id)) return NextResponse.json({ error: "not found" }, { status: 404 });
+
+  const payload = (await req.json().catch(() => null)) as { body?: unknown } | null;
+  if (!payload) return NextResponse.json({ error: "malformed request body" }, { status: 400 });
+
+  const body = String(payload.body ?? "").trim();
+  if (!body) return NextResponse.json({ error: "body is required" }, { status: 400 });
+
+  const res = updateTaskDocComment(id, cid, body);
+  if (res === "missing") return NextResponse.json({ error: "comment not found" }, { status: 404 });
+  if (res === "sent") return NextResponse.json({ error: "a comment already sent to the agent can't be edited" }, { status: 409 });
+  return NextResponse.json({ ok: true, comment: res });
 }

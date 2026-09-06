@@ -701,7 +701,10 @@ export function SessionView({ project, task, tagsById, agents, messages, running
               })}
             </div>
           ))}
-          {running && !awaitingAnswer && (
+          {/* The dots say "something is coming". While a reply is actually
+              typing they are noise below the words themselves, so the live
+              bubble supersedes them and they come back between items. */}
+          {running && !awaitingAnswer && !messages.some((m) => m.streaming) && (
             // A lingering turn isn't "typing": the model stopped talking and
             // the session is held open for run_in_background work. Say so, or
             // the dots promise imminent output that may be minutes away.

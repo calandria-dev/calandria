@@ -1,10 +1,6 @@
-// Tool-permission policy behind the Claude driver's canUseTool gate
-// (lib/agents/claude/driver.ts). Under bypassPermissions the SDK never calls
-// this. Otherwise a call is allowed without a prompt only by the built-in
-// read-only allowlist or a remembered project rule (permission_rules,
-// revocable in Settings); everything else raises a card, like an
-// AskUserQuestion. A stopped turn, an unwatched turn, an expired prompt, and
-// an unparseable answer all deny.
+// Tool-permission policy: the decision logic behind the permission gate every
+// driver parks on (lib/permissionPrompt.ts, called from the Claude driver's
+// canUseTool and from the Codex app-server's approval handlers).
 //
 // Pure and DB-free: no agent SDK, no store (pinned by tests/importGraph.test.ts).
 // The driver parks the turn; the runner persists.

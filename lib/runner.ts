@@ -69,8 +69,8 @@ function isEmptyUsage(u: TurnUsage): boolean {
 // What a scheduled run says for itself when it stopped because there was
 // nobody to approve something, instead of reporting a green "ran". The text
 // names no specific mode: mode labels are provider-native (Claude's
-// "bypassPermissions", Codex's "workspace-write"), so any one name would be
-// wrong for another agent's schedule.
+// "bypassPermissions", Codex's "danger-full-access" or "workspace-write"), so
+// any one name would be wrong for another agent's schedule.
 export const SCHEDULE_UNATTENDED_DETAIL =
   "the agent needed approval and nobody was watching, so it was declined automatically. " +
   "The run may have stopped with the job half done. Use the agent's never-asks permission mode, or start this one by hand.";
@@ -825,6 +825,27 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       } else if (ev.type === "assistant") {
         const m = addMessage(id, gen, "assistant", ev.content);
         publish(id, { ...ev, msgId: m.id, generation: gen, ts: m.created_at });
+      } else if (ev.type === "assistant_delta") {
+        // The one event that is published without being persisted. The
+        // transcript is the record of what the agent SAID, and the `assistant`
+        // branch above writes exactly that text as soon as the item completes;
+        // storing the fragments too would duplicate every reply and make a
+        // reload replay the typing. So this reaches live watchers and nobody
+        // else, and a turn nobody is watching drops it at publish() for free.
+        // It still carries the generation: the transcript groups rows into
+        // sessions by it, and a live bubble without one lands in a session of
+        // its own, ahead of the whole conversation.
+        publish(id, { ...ev, generation: gen });
+      } else if (ev.type === "tool_output_delta") {
+        // The second event on that rule, for a command's output rather than a
+        // reply. It carries the row's DB id so a watcher who joined mid-turn,
+        // whose tool rows came from the snapshot and so have no in-memory
+        // tool_use id, can still find the row to grow, exactly as tool_result
+        // is matched. A fragment for a call we never wrote a row for (a driver
+        // streaming output for something it never announced) has nothing to
+        // reach into and is dropped rather than published.
+        const t = toolMsgs[ev.id];
+        if (t) publish(id, { ...ev, msgId: t.dbId, generation: gen });
       } else if (ev.type === "tool") {
         // A file the call wrote is stored worktree-relative, and only when
         // it is inside the worktree: that's the form the file route takes,

@@ -3,7 +3,15 @@
 //
 // The Claude side (lib/agents/claude/planUsage.ts) gets most of its freshness
 // for free, because every turn's stream carries `rate_limit_event` messages.
-// That trick does not work here:
+// Codex has that half too now, but only on the app-server transport: while a
+// turn runs, the server pushes `account/rateLimits/updated` carrying the same
+// `RateLimitSnapshot` this file otherwise spawns a process to ask for, and
+// ./appServerTurn.ts hands it to `ingestRateLimits` below. The active read
+// still covers an instance with no turn running; a live turn keeps the
+// snapshot fresher through that push.
+//
+// It is not available on the exec transport, which is why the active read
+// stays, for the reasons below:
 //
 //   * The SDK's `ThreadEvent` union is closed at eight members and carries no
 //     rate-limit data (dist/index.d.ts). `turn.completed.usage` is token counts
@@ -132,6 +140,30 @@ export function parseRateLimits(result: unknown): Fetched | null {
   return { at: Date.now(), windows, plan, reached };
 }
 
+/**
+ * The passive half: a `RateLimitSnapshot` pushed by a running app-server turn
+ * (`account/rateLimits/updated`), adopted as the cache the meter reads. The
+ * notification's params and a bare snapshot both parse, since `parseRateLimits`
+ * accepts either shape: the wire form belongs to the CLI, and a protocol
+ * change that stops wrapping the snapshot should still keep metering working.
+ *
+ * This makes the same write `refresh()` makes: a snapshot that arrived for
+ * free is worth the same as one fetched by a paid process call, so it clears
+ * the error and the backoff too, and stamps `at`, which lets
+ * `getCodexPlanUsage()` below skip the active read while the cache stays
+ * fresh. Returns whether anything landed.
+ */
+export function ingestRateLimits(snapshot: unknown): boolean {
+  if (!PLAN_USAGE_ENABLED) return false;
+  const parsed = parseRateLimits(snapshot);
+  if (!parsed) return false;
+  const st = state();
+  st.fetched = parsed;
+  st.lastError = null;
+  st.backoffUntil = 0;
+  return true;
+}
+
 // Is there a ChatGPT login to meter at all? Cheap fs check so an instance that
 // never connected Codex doesn't spawn an app-server every fetch interval
 // forever. Permissive about the file's contents: an auth.json whose shape
@@ -186,6 +218,9 @@ export async function getCodexPlanUsage(): Promise<PlanUsageSnapshot | null> {
   if (!loggedIn && !st.fetched) return null;
 
   const now = Date.now();
+  // The freshness floor is what `ingestRateLimits` rides: a turn that pushed a
+  // snapshot inside the window has already answered this, so no app-server is
+  // spawned. An instance running turns back to back never pays for the read.
   if (loggedIn && now >= st.backoffUntil && now - (st.fetched?.at ?? 0) >= PLAN_USAGE_MIN_FETCH_MS) {
     // Single-flight: concurrent tabs polling at once share one app-server.
     if (!st.inflight) {
@@ -198,9 +233,9 @@ export async function getCodexPlanUsage(): Promise<PlanUsageSnapshot | null> {
 
   const f = st.fetched;
   const windows = (f?.windows ?? []).map((w) => ({ ...w }));
-  // There is no passive telemetry to overlay (see the header), so the status
-  // trio comes from the same read as the windows: `rateLimitReachedType` says
-  // a limit is reached but not which, so the fullest window is named. It is
+  // The status trio comes from the same snapshot as the windows, whichever way
+  // it arrived: `rateLimitReachedType` says a limit is reached but not which,
+  // so the fullest window is named. It is
   // the one that reset unblocks, and the only one whose reset time is worth
   // offering as "turns resume at".
   const binding = f?.reached ? windows.reduce<PlanUsageWindow | null>((a, b) => (a && a.utilization >= b.utilization ? a : b), null) : null;

@@ -317,12 +317,12 @@ export interface GatewayMcpCodexServer {
 
 /**
  * The `mcp_servers.<alias>` entries a Codex turn mounts for its resolved
- * hosted-MCP selection (docs/AGENTS.md). `codex exec` has no approver, so
- * every entry here also carries `default_tools_approval_mode: "approve"`.
- * This function is only ever called by the driver under the task's
- * bypass-equivalent permission mode (see lib/agents/codex/driver.ts), so
- * that auto-approval is scoped to a task that already runs with no
- * approvals asked of it.
+ * hosted-MCP selection (docs/AGENTS.md). Codex gates MCP calls with its own
+ * per-server approval mode, which the turn's approval_policy doesn't reach,
+ * so every entry here also carries `default_tools_approval_mode: "approve"`.
+ * This function is called by the driver under every permission mode but
+ * "plan" (see lib/agents/codex/driver.ts), the read-only mode these tools
+ * would contradict.
  */
 export function gatewayMcpServersForCodex(
   project: Pick<Project, "gateway_mcp"> | null | undefined,

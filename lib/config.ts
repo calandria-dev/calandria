@@ -317,23 +317,22 @@ export const TURN_IDLE_NUDGE_ENABLED = ["1", "on", "true", "yes"].includes(
 export const SHUTDOWN_GRACE_MS = ms(readEnv("CALANDRIA_SHUTDOWN_GRACE_MS"), 5000);
 
 /**
- * The `approval_policy` the Codex driver passes to the CLI for turns and
- * one-shot helpers. Default "never" is the auto-run analog of Claude's
- * bypassPermissions: turns run unattended in isolated worktrees, with nobody
- * in the loop to answer approval prompts. Enterprise-managed Codex deployments
- * can disallow "never"; the CLI then warns and downgrades, and the driver
- * detects that warning and self-heals to "on-request" from the next turn on
- * (see lib/approvalFailure.ts). Set this to "on-request" or "on-failure" to
- * pick an approval-capable policy up front, or to "inherit" to omit the
- * override entirely so ~/.codex/config.toml and the enterprise requirements
- * decide.
+ * The `approval_policy` the Codex driver sends for the permission modes that
+ * never ask (acceptEdits, bypassPermissions, plan) and for the one-shot
+ * helpers. Default "never": the sandbox refuses what it refuses and the model
+ * works around it. Enterprise-managed Codex deployments can disallow "never";
+ * the CLI then warns and downgrades, and the driver detects that warning and
+ * self-heals to "on-request" from the next turn on (see
+ * lib/approvalFailure.ts). On the app-server transport that means the
+ * escalation parks on a permission card instead of failing. Set this to
+ * "on-request" or "on-failure" to pick an approval-capable policy up front,
+ * or to "inherit" to omit the override entirely so ~/.codex/config.toml and
+ * the enterprise requirements decide. The asking modes (auto, default) carry
+ * their own policy and ignore this.
  *
- * "untrusted" (codex's UnlessTrusted) is not accepted: it is the one value
- * that managed requirements allow but that is fatal under the exec transport,
- * since non-interactive runs cannot service approvals, so every
- * non-allowlisted command is rejected ("approval request failed") and the task
- * flails. It maps to "on-request", the closest policy that actually works.
- * Unknown values fall back to "never".
+ * "untrusted" (codex's UnlessTrusted) maps to "on-request": it asks for every
+ * command that isn't on an explicit exec-policy allowlist, a prompt per
+ * command for a task session. Unknown values fall back to "never".
  */
 export const CODEX_APPROVAL_POLICY = (() => {
   const v = String(process.env.CODEX_APPROVAL_POLICY || "never").toLowerCase();
@@ -342,20 +341,64 @@ export const CODEX_APPROVAL_POLICY = (() => {
 })();
 
 /**
- * Whether Codex tasks inherit the MCP servers configured in the user's
- * ~/.codex/config.toml, alongside Calandria's own bridge. Off by default,
- * asymmetric with the Claude driver (which inherits ~/.claude MCP servers);
- * see "Agent MCP inheritance is asymmetric" in lib/agents/CLAUDE.md.
- *
- * The short version: `codex exec` has no approver, so an inherited server's
- * tools are visible to the model but every call comes straight back as
- * `user cancelled MCP tool call`. Mounting them only spends context and turns
- * on tools that cannot work, so the driver disables them per-server. Set to
- * 1/true/on to mount them anyway: the escape hatch for a future CLI that can
- * auto-approve them, or for a user who has set
- * `default_tools_approval_mode = "approve"` on their own servers.
+ * Which codex protocol a task turn runs on. "app-server" (default) drives
+ * `codex app-server`, the CLI's IDE protocol: the server's approval requests
+ * (a command the sandbox refused, a write outside the worktree, a network
+ * grant) come back to Calandria as JSON-RPC requests and park on the same
+ * permission card the Claude driver uses, so the asking modes actually ask.
+ * "exec" drives `codex exec --experimental-json` through @openai/codex-sdk
+ * instead, kept as the escape hatch: it auto-rejects every approval request
+ * inside the CLI (codex-rs exec/src/lib.rs), so under it the asking modes
+ * behave like acceptEdits. Unknown values fall back to "app-server".
  */
-export const CODEX_INHERIT_MCP = ["1", "true", "on"].includes(
+export const CODEX_TRANSPORT = ((): "app-server" | "exec" => {
+  const v = String(process.env.CODEX_TRANSPORT || "").toLowerCase();
+  return v === "exec" ? "exec" : "app-server";
+})();
+
+/**
+ * Extra directories a workspace-write Codex turn may write to, beyond the
+ * task's worktree and the git paths lib/agents/codex/policy.ts grants so a
+ * commit works from a linked worktree. Absolute paths, separated by the
+ * platform's PATH delimiter (":" on POSIX, ";" on Windows); relative entries
+ * are ignored. Empty by default. Full-access and read-only modes ignore it.
+ */
+export const CODEX_WRITABLE_ROOTS = String(process.env.CODEX_WRITABLE_ROOTS || "");
+
+/**
+ * Whether the container is already the sandbox, so Codex should not build one.
+ * Off by default; set it in a deployment where the whole process tree is
+ * confined by something else, such as the published image.
+ *
+ * On, a `workspace-write` turn is sent the app-server's `externalSandbox`
+ * policy instead of `workspaceWrite`, which tells Codex to run commands
+ * unconfined and rely on its caller's boundary. That is the only mode it
+ * covers. `read-only` (plan mode) is left alone: its guarantee is that
+ * nothing is writable, and a container does not provide that, so mapping it
+ * here would turn "propose without editing" into "may edit"
+ * (lib/agents/codex/sandbox.ts). Full-access modes never used a sandbox anyway.
+ *
+ * Only the app-server transport can express this; `codex exec` has no such
+ * `--sandbox` value, so under CODEX_TRANSPORT=exec the knob does nothing.
+ */
+export const CODEX_EXTERNAL_SANDBOX = ["1", "on", "true", "yes"].includes(
+  String(process.env.CODEX_EXTERNAL_SANDBOX || "").toLowerCase(),
+);
+
+/**
+ * Whether Codex tasks inherit the MCP servers configured in the user's
+ * ~/.codex/config.toml, alongside Calandria's own bridge. On by default, the
+ * same as the Claude driver (which inherits ~/.claude MCP servers). See
+ * "Agent MCP inheritance" in lib/agents/CLAUDE.md.
+ *
+ * This used to default off, on the belief that `codex exec` had no approver
+ * and every inherited tool call came back as `user cancelled MCP tool call`
+ * (observed once on codex-cli 0.146.0). Codex tasks do call inherited tools,
+ * so the servers stay mounted. Set to 0/false/off to unmount them per-server
+ * instead (lib/agents/codex/mcp.ts), for a user whose own servers should stay
+ * off task sessions.
+ */
+export const CODEX_INHERIT_MCP = !["0", "false", "off"].includes(
   String(process.env.CODEX_INHERIT_MCP || "").toLowerCase(),
 );
 
@@ -875,8 +918,10 @@ export const PLAN_USAGE_ENABLED = !["0", "off", "false", "no"].includes(
  * cache plus the passive rate-limit telemetry that rides every turn for free.
  *
  * It floors the Codex side too, where the cost is different but no smaller: a
- * throwaway `codex app-server` process per read, since that CLI's turn stream
- * carries no rate-limit telemetry to coast on (lib/agents/codex/planUsage.ts).
+ * throwaway `codex app-server` process per read. There the floor is also what
+ * the passive half rides on: an app-server turn pushes the same snapshot for
+ * free, and a cache inside this window means no process is spawned at all
+ * (lib/agents/codex/planUsage.ts).
  */
 export const PLAN_USAGE_MIN_FETCH_MS = ms(readEnv("CALANDRIA_PLAN_USAGE_MIN_FETCH_MS"), 300_000);
 

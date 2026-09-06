@@ -253,11 +253,11 @@ describe("guardToolHandler's onStart / onSettle hooks", () => {
     expect(started).toBe(4);
     expect(seen.map((s) => s.outcome)).toEqual(["ok", "error", "blank", "timeout"]);
     for (const s of seen) expect(s.ms).toBeGreaterThanOrEqual(0);
-    // The timeout branch reports how long it waited, not zero. One millisecond
-    // of slack: a Node timer fires on the event loop's millisecond clock while
-    // the guard measures with Date.now(), so the two can disagree by a tick
-    // (issue #209).
-    expect(seen[3].ms).toBeGreaterThanOrEqual(19);
+    // The timeout branch reports how long it waited, not zero. Bound at half
+    // the window: a Node timer fires on the event loop's clock while the
+    // guard measures with Date.now(), so the two can disagree by more than a
+    // single tick on some platforms (issue #209).
+    expect(seen[3].ms).toBeGreaterThanOrEqual(10);
   });
 
   it("never lets a throwing observer change the answer", async () => {

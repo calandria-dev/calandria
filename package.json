@@ -1,6 +1,6 @@
 {
   "name": "calandria",
-  "version": "0.8.0",
+  "version": "0.10.0",
   "engines": {
     "node": ">=22"
   },
@@ -29,7 +29,7 @@
     "postinstall": "node scripts/fix-pty.js"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.159",
+    "@anthropic-ai/claude-agent-sdk": "0.3.263",
     "@codemirror/lang-markdown": "^6.5.2",
     "@codemirror/language-data": "^6.5.2",
     "@modelcontextprotocol/sdk": "^1.12.0",

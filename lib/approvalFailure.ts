@@ -1,15 +1,17 @@
 // Detection and recovery constants for the "Codex's approval policy blocked
-// the turn" failure mode. Calandria runs Codex non-interactively via `codex
-// exec`, requesting `approval_policy=never`. Enterprise-managed requirements,
-// or a user's ~/.codex/config.toml with CODEX_APPROVAL_POLICY=inherit, can
-// force an approval-requiring policy instead, and exec mode then has no way
-// to service the resulting approval prompts (every non-allowlisted command
-// fails with "approval request failed"). The Codex driver matches the
-// downgrade warning as a StreamEvent error and switches future turns to the
-// exec-compatible "on-request" policy. This module classifies the failure
-// for lib/runner.ts, which appends APPROVAL_BLOCKED_NOTICE so the UI can
-// render a Retry button. Kept dependency-free so both server and client
-// bundles can import it.
+// the turn" failure mode. It applies only to the exec transport
+// (CODEX_TRANSPORT=exec, or the one-shot helpers): that transport is
+// non-interactive and auto-rejects every approval, so a policy that requires
+// one, forced by enterprise-managed Codex requirements or by a user's own
+// ~/.codex/config.toml with CODEX_APPROVAL_POLICY=inherit, fails every
+// non-allowlisted command instead of the approval_policy=never Calandria
+// requests for the modes that never ask (acceptEdits, bypassPermissions,
+// plan). The Codex driver matches the downgrade warning as a StreamEvent
+// error and switches future turns to the exec-compatible "on-request"
+// policy; the app-server transport instead parks these escalations on a
+// permission card. This module classifies the failure for lib/runner.ts,
+// which appends APPROVAL_BLOCKED_NOTICE so the UI can render a Retry button.
+// Kept dependency-free so both server and client bundles can import it.
 
 /** The CLI's managed-requirements downgrade warning: the approval policy
  *  Calandria asked for was rejected and a stricter one applies. Matched by

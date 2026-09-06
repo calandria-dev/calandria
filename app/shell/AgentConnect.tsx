@@ -102,6 +102,82 @@ export function AgentNudge({ ready, onConnect }: { ready: boolean; onConnect: ()
   );
 }
 
+// The agent's login is fine and its own SANDBOX is not.
+//
+// Codex confines workspace-write and read-only turns with bubblewrap, which
+// needs an unprivileged user namespace. Ubuntu 24.04 denies that by default,
+// so the turn runs, looks normal, and fails every single command. The server
+// records the CLI's startup warning (lib/agents/codex/sandbox.ts) and refuses
+// the affected modes instead of spending a turn on them, so this card is
+// where the user finds out WHY a task won't start.
+//
+// Shown in every state of the card, not just when disconnected, since the
+// normal case is a perfectly connected agent. Never shown in the titlebar's
+// auth banner: "sign in again" is the wrong instruction there, since the fix
+// is a host change made outside Calandria. Check again is what surfaces that
+// fix.
+function AgentSandboxWarning({ agent }: { agent: AgentInfoT }) {
+  const [checking, setChecking] = useState(false);
+  const [fixed, setFixed] = useState(false);
+  const [stillBroken, setStillBroken] = useState<string | null>(null);
+  // Tracks `fixed` in local state so a clean check does not trigger a parent
+  // refetch: the check already cleared the server flag, so the next
+  // /api/agents load agrees on its own. This card is also rendered inside the
+  // setup nudge, where firing the parent's onConnected would advance a wizard
+  // on what is only a host re-check.
+  if (fixed || !agent.sandboxBroken) return null;
+
+  const check = async () => {
+    setChecking(true);
+    setStillBroken(null);
+    // jsend throws on a non-2xx, and this button must never be left spinning:
+    // a route that 500s is one more way to be told nothing.
+    const r = await jsend<{ ok?: boolean; error?: string | null }>(`/api/agents/${agent.id}/sandbox`, "POST", {}).catch(
+      (e: unknown) => ({ ok: false, error: e instanceof Error ? e.message : String(e) }),
+    );
+    setChecking(false);
+    if (r?.ok) {
+      setFixed(true);
+      return;
+    }
+    // Still broken, or the check itself couldn't run. Either way the flag
+    // stands, so say so here rather than leaving the button looking inert.
+    setStillBroken(r?.error || "The sandbox still can't be created.");
+  };
+
+  return (
+    <div className="wiz-connected broken" style={{ marginBottom: 14 }}>
+      <span className="wiz-warn">{Icon.bolt()}</span>
+      <div>
+        <div className="wiz-ok-t">{agent.label}&apos;s sandbox can&apos;t start on this host</div>
+        <div className="hlp" style={{ margin: "3px 0 0" }}>{agent.sandboxBroken.reason}</div>
+        <div className="hlp" style={{ margin: "6px 0 0" }}>
+          Every command in a workspace-write or read-only turn would fail, so those permission modes are
+          refused instead of run. Fix it on the host with one of:
+          <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+            <li>
+              <code>sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0</code> (persist it in{" "}
+              <code>/etc/sysctl.d/</code>)
+            </li>
+            <li>an AppArmor profile that allows <code>bwrap</code> to create user namespaces</li>
+            <li>
+              run the task in <strong>bypassPermissions</strong>, which uses no sandbox at all
+            </li>
+            <li>
+              in a container, set <code>CODEX_EXTERNAL_SANDBOX=1</code> so workspace-write turns rely on the
+              container as the boundary
+            </li>
+          </ul>
+        </div>
+        {stillBroken && <div className="hlp" style={{ margin: "6px 0 0" }}>{stillBroken}</div>}
+        <button className="btn btn-sm" style={{ marginTop: 9 }} onClick={check} disabled={checking}>
+          {checking ? "Checking…" : "Check again"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // Generic "connect an agent" card, driven entirely by the agent-scoped auth
 // routes (/api/agents/[id]/{login,login/code,verify,api-key}) and the driver's
 // capabilities from GET /api/agents. One component serves every agent:
@@ -134,6 +210,8 @@ export function AgentConnect({
   if (agent.connected && agent.authBroken && !reconnect) {
     const budget = agent.authBroken.reason === BUDGET_EXCEEDED_BANNER_REASON;
     return (
+      <>
+      <AgentSandboxWarning agent={agent} />
       <div className="wiz-connected broken">
         <span className="wiz-warn">{Icon.bolt()}</span>
         <div>
@@ -152,12 +230,15 @@ export function AgentConnect({
           )}
         </div>
       </div>
+      </>
     );
   }
 
   // Already connected from a prior run: show the state and a reconnect affordance.
   if (agent.connected && !reconnect) {
     return (
+      <>
+      <AgentSandboxWarning agent={agent} />
       <div className="wiz-connected">
         <span className="wiz-ok">{Icon.check()}</span>
         <div>
@@ -171,11 +252,13 @@ export function AgentConnect({
           </div>
         </div>
       </div>
+      </>
     );
   }
 
   return (
     <div>
+      <AgentSandboxWarning agent={agent} />
       {/* No record, but flagged: the record was dropped because the CLI's
           provider changed under it (lib/agents/connections.ts). Lead with
           why, so the fresh sign-in below reads as the fix and not a regression. */}

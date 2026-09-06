@@ -38,7 +38,7 @@ a dedicated tool only when Bash genuinely cannot do the job"* — and on an Opus
 system prompt additionally carries *"Do not call the AgentTool unless the user requested it"*.
 Both are sensible defaults for a session nobody has told otherwise, both come from the CLI rather
 than from here, and together they are the measured reason a first turn spends 79% of its tool
-calls on Bash and none on `Agent` (`docs/DELEGATION.md`).
+calls on Bash and none on `Agent` (https://github.com/calandria-dev/calandria-notes/blob/main/measurements/DELEGATION.md).
 
 `buildProjectContext()` therefore ends with the block that answers them: bulk collection goes to a
 synchronous subagent past two read-only commands in a row. Three things about it are load-bearing
@@ -54,7 +54,7 @@ One thing to watch on a CLI upgrade: 2.1.240 also carries a `## Delegating to su
 arguing the other way ("subagents multiply cost and time … do not fan out"), gated behind an
 experiment (`CLAUDE_CODE_THISTLE_GREBE`, values `default` / `no_nudges` / `counter_steer`) that is
 not on for us today. If a release ever floors Opus to `counter_steer`, this block is arguing with a
-whole section instead of two lines, and the dispatch rate in `docs/DELEGATION.md` is what to
+whole section instead of two lines, and the dispatch rate in https://github.com/calandria-dev/calandria-notes/blob/main/measurements/DELEGATION.md is what to
 re-measure.
 
 ### Refusals that skip the callback
@@ -353,24 +353,118 @@ is the failure this is built to avoid. `CODEX_CAPABILITIES` became `codexCapabil
 same reason `claudeCapabilities()` is a function — a descriptor frozen at module load would be
 the old hardcoded number under a new name.
 
-**Plan usage is an ACTIVE read here, unlike Claude's.** The titlebar meter is fed for free on
-the Claude side by the `rate_limit_event` messages every turn's stream carries. Codex's turn
-stream carries no equivalent, and this was verified against the shipped CLI rather than
-assumed, because the failure mode is a meter that silently reports nothing: the SDK's
-`ThreadEvent` union is closed at eight members, `turn.completed.usage` is token counts only,
-and the exec JSONL serializer's own field table in the 0.146.0 binary lists no `token_count`
-and no `rate_limits` (older codex builds did emit one; the dotted exec protocol doesn't). Nor
-is it cached on disk — the rollout transcripts under `$CODEX_HOME/sessions` hold no
-rate-limit entry. So `codex/planUsage.ts` reads `account/rateLimits/read` from a throwaway
-`codex app-server` (`codex/appServer.ts`, where the verified JSON-RPC handshake is
-transcribed), behind the same `PLAN_USAGE_MIN_FETCH_MS` floor. Field names come from the
+**Plan usage is fed both ways here, and the passive half only exists on app-server.** The
+titlebar meter is fed for free on the Claude side by the `rate_limit_event` messages every
+turn's stream carries. The app-server transport has the equivalent: while a turn runs the
+server pushes `account/rateLimits/updated` carrying the same `RateLimitSnapshot`, and
+`codex/appServerTurn.ts`'s notification handler hands it to `ingestRateLimits` in
+`codex/planUsage.ts`, which writes the same cache a fetch would. Because that write stamps the
+snapshot's time, `getCodexPlanUsage()`'s existing `PLAN_USAGE_MIN_FETCH_MS` floor is what
+skips the read: an instance running turns back to back never spawns for this at all.
+
+The exec transport carries no such thing, which is why the ACTIVE read stays. That was
+verified against the shipped CLI rather than assumed, because the failure mode is a meter that
+silently reports nothing: the SDK's `ThreadEvent` union is closed at eight members,
+`turn.completed.usage` is token counts only, and the exec JSONL serializer's own field table in
+the 0.146.0 binary lists no `token_count` and no `rate_limits` (older codex builds did emit
+one; the dotted exec protocol doesn't). Nor is it cached on disk — the rollout transcripts
+under `$CODEX_HOME/sessions` hold no rate-limit entry. So `codex/planUsage.ts` also reads
+`account/rateLimits/read` from a throwaway `codex app-server` (`codex/appServer.ts`, where the
+verified JSON-RPC handshake is transcribed), behind that same floor. Field names come from the
 CLI's own `codex app-server generate-json-schema` and are camelCase (`usedPercent`,
 `windowDurationMins`, `resetsAt` in seconds) with windows named by RANK — `primary` /
 `secondary`, not by duration — which is why `PlanUsagePill` matches two id vocabularies.
 
-Enterprise-managed approval requirements can disallow the driver's `approval_policy=never`,
-which the exec transport can't survive. The driver spots the CLI's downgrade warning and
-self-heals to `on-request`, recording the `codex_approval_downgraded` setting.
+### Transport, permission modes and writable roots
+
+A task turn runs on `codex app-server`, the CLI's IDE protocol, not on `codex exec`
+(`CODEX_TRANSPORT`, default `app-server`; `exec` keeps the SDK path). The reason is one line
+in codex-rs `exec/src/lib.rs`: exec mode answers every `ServerRequest` approval with a
+rejection before the host sees it, so under it no permission mode can ask anyone anything,
+and the old picker honestly offered only "workspace-write, never asks" and "read-only".
+On app-server the approval arrives as a JSON-RPC request the turn cannot finish without our
+answer — `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`,
+`item/permissions/requestApproval` — and it is answered by `promptPermission()`
+(`lib/permissionPrompt.ts`), which is not a parallel implementation but the Claude gate itself:
+`canUseTool` calls the same function and the two differ only in how they spell the verdict back
+to their own protocol. So the
+Bash-only `permission_rules`, the attended/unattended deadlines and the scheduled-run
+`interactionPolicy: "deny"` all apply unchanged. `item/tool/requestUserInput`, Codex's native
+question tool, lands on the ask card. The protocol has no approval timeout of its own
+(verified against the 0.153.0 schema), so `waitForPermission`'s deadlines are the only ones.
+
+Three files carry it. `codex/appServerClient.ts` is the transport: framing, id correlation,
+the three kinds of traffic on one pipe (our requests, their notifications, THEIR requests,
+told apart by `method` and `id`), and the SDK's own `--config` flattening so `mcp_servers`
+and `model_providers` overrides mean exactly what they mean on exec. `codex/appServerTurn.ts`
+is one turn: handshake, `thread/start` or `thread/resume` (falling back to a fresh,
+context-seeded thread when the CLI no longer has the old one), `turn/start`, the request
+handlers, `turn/interrupt` on Stop. `codex/appServerEvents.ts` respells v2 items as the exec
+protocol's so `codex/events.ts` maps both transports and the transcript is identical either
+way; it also reads `thread/tokenUsage/updated`, whose `last` is the request's prompt size —
+the context gauge, real on this transport (`reportsContext`) — and whose `total` is the same
+cumulative counter exec reports on `turn.completed`, so `sessions.usage_cum` carries across
+transports. A process per turn, like exec: the CLI persists the thread under `~/.codex`.
+`tests/codexAppServer.test.ts` drives all of it against a fake binary
+(`tests/fixtures/codex/fake-app-server.mjs`) that speaks the protocol.
+
+`codex/policy.ts` is what a permission mode MEANS here, shared by both transports and pinned
+by `tests/codexPolicy.test.ts`: `auto` (the default) is workspace-write with `on-request`
+approvals decided by Codex's own reviewer (`approvals_reviewer: "auto_review"`, accepted by
+`thread/start` on 0.153.0 — the "approve for me" the Claude picker's auto is); `default` is
+the same sandbox with escalations on the card; `acceptEdits` is the sandbox that never asks,
+which is what the old "workspace-write" entry was; `bypassPermissions` is
+`danger-full-access`; `plan` is read-only. A migration in `lib/db.ts` moved every Codex row
+that had chosen the old `bypassPermissions` onto `acceptEdits`, since a stored "sandboxed"
+silently becoming "no sandbox" is not an upgrade anyone asked for. Two things only
+`turn/start` can carry, verified live: the FULL `SandboxPolicy` object with `writableRoots`
+(`thread/start` takes a mode string only), and per-turn `approvalPolicy`.
+
+The writable roots are the bug the user hit first. Under workspace-write the CLI marks the
+cwd's `.git` read-only and, for a linked worktree, resolves the `gitdir:` pointer and protects
+the real gitdir too (codex-rs `protocol/src/permissions.rs`,
+`default_read_only_subpaths_for_writable_root`), while the repo's common `.git` is outside
+every root — so `git add` and `git commit` fail in every sandboxed mode from a Calandria
+worktree. `gitWritableRoots()` grants what a commit writes and nothing more: the task's
+private gitdir and the common dir's `objects/`, `refs/` and `logs/`. Not the common dir
+itself, because a writable `config` lets a sandboxed turn plant a `core.fsmonitor` or
+`hooksPath` that the user's next `git status` in their real checkout runs unsandboxed.
+`CODEX_WRITABLE_ROOTS` adds more. This host's bubblewrap is blocked by Ubuntu's
+unprivileged-userns AppArmor policy, so the roots were verified by reading the CLI's source
+and its own `runtimeWorkspaceRoots` echo rather than by running a sandboxed commit here.
+
+### …and `codex/sandbox.ts` refuses the modes that block can only fail
+
+That blocked bubblewrap is the reason this file exists. On a host that denies unprivileged user
+namespaces, every `workspace-write` and `read-only` turn starts normally, looks normal, and fails
+EVERY command it runs; the model reads that as a repo that rejects all work and spends the turn
+routing around it. The CLI's only signal is a `configWarning` the app-server pushes at startup,
+which `appServerEvents.ts` surfaces as a transcript notice — mid-turn, after the money is spent.
+
+So the warning is promoted to instance state. `sandboxWarningReason()` classifies it, the verdict
+is stored as `agent_sandbox_broken_codex` beside the dead-login flag (a SEPARATE key, since
+reconnecting a working login fixes nothing and the titlebar's "sign in again" would be the wrong
+instruction), and `sandboxRefusal()` fails the turn before it starts, naming the sysctl, the
+AppArmor profile, `bypassPermissions` and `CODEX_EXTERNAL_SANDBOX`. `danger-full-access` is never
+refused, having no sandbox to fail. Three writers, one reader: `probeCodexSandbox()` at connect
+time (the verify route) and from the card's Check again button (`POST /api/agents/[id]/sandbox`,
+behind the optional `AgentDriver.sandboxHealth()`), and the driver's `onWarning` mid-turn. It
+clears on a clean probe and on any app-server turn that reached a `session` and saw no such
+warning — a fresh server's silence is proof, where a turn that died before the server spoke is
+not, which is what the `sawSession` gate is for. The classifier deliberately passes the
+"could not find bubblewrap on PATH" warning, which names its own bundled fallback in the same
+sentence; treating it as fatal would refuse turns that work.
+
+`CODEX_EXTERNAL_SANDBOX` is the container answer: `workspace-write` goes out as the app-server's
+`externalSandbox` policy, so Codex confines nothing and the image is the boundary. It covers that
+one mode. `read-only` is not mapped, because a container is not a read-only filesystem and plan
+mode's whole guarantee is that nothing is writable — quietly turning "propose without editing"
+into "may edit" is the same class of silent breakage this section is about.
+
+Enterprise-managed approval requirements can disallow `approval_policy=never`. The driver
+spots the CLI's downgrade warning and sends `on-request` for the never-asking modes from then
+on, recording the `codex_approval_downgraded` setting; on app-server that means a card
+rather than a failed turn.
 
 A provider override (`lib/agentEnv.ts`, docs/AGENTS.md "Local models") reaches Codex as
 config, not env: `codex/provider.ts` maps the merged turn env's `OPENAI_BASE_URL` onto a
@@ -454,7 +548,7 @@ invocation in this directory carries `AGY_CLI_DISABLE_AUTO_UPDATE=true`, so a se
 swap the binary out mid-turn — or, worse, mid-login, where the code the user is holding is bound
 to the running child. Everything in it is pinned to a recorded capture (`tests/fixtures/gemini/`),
 because the CLI's own documentation describes a different wire format than it emits — the
-corrections are catalogued in `docs/design/gemini-driver.md` under "Settled by the driver".
+corrections are catalogued in `docs/AGENTS.md` under "Settled by the driver".
 
 **Each task runs under its own `HOME`.** `agy` reads MCP servers from exactly one user-global
 file, `~/.gemini/config/mcp_config.json`, and the bridge takes its identity from that entry's env
@@ -514,7 +608,7 @@ carries rate-limit telemetry), so `status` stays null and the data is only as fr
 poll. Each poll is a process spawn, hence the same `PLAN_USAGE_MIN_FETCH_MS` floor and
 single-flight the Claude reader uses, for CPU rather than for a provider's rate limit.
 
-## Agent MCP inheritance is asymmetric
+## Agent MCP inheritance
 
 A **Claude** task session is meant to feel like the user's own `claude` terminal.
 `SETTING_SOURCES` in `claude/driver.ts` is `["user", "project"]`, which gives a session their
@@ -534,27 +628,31 @@ under a name nothing is watching. `tests/claudeSettingSources.test.ts` pins all 
 
 Inheritance grants nothing on its own. Those servers' tools go through `canUseTool` like any
 other call: auto-approved under `bypassPermissions`, classifier-screened under `auto`, a
-permission card otherwise. They're reachable in every mode, which is the substantive difference
-from Codex.
+permission card otherwise.
 
-A **Codex** task gets the Calandria bridge and nothing else, and that isn't free to change. The
+A **Codex** task gets the Calandria bridge plus the user's own servers, by a different route. The
 SDK flattens our `config` into leaf-level `--config mcp_servers.calandria.…` overrides, which
-the CLI merges into `~/.codex/config.toml`, so the user's servers arrive whether we ask or not.
-But `codex exec` has no approver, so their tools are offered to the model and every call returns
-`user cancelled MCP tool call` (verified live on codex-cli 0.146.0). Dangling uncallable tools
-cost context and turns, so `codex/mcp.ts` enumerates them (`codex mcp list --json`, ~30ms,
-best-effort) and unmounts each with `enabled = false`. `default_tools_approval_mode: "approve"`
-stays scoped to our own first-party bridge instead of becoming a global. `CODEX_INHERIT_MCP=1`
-opts back in.
+the CLI merges into `~/.codex/config.toml`, so the user's servers arrive whether we ask or not,
+and `CODEX_INHERIT_MCP` (default on) leaves them mounted. The driver used to unmount them by
+default, on the belief that `codex exec` had no approver and every inherited tool call returned
+`user cancelled MCP tool call` (observed once on codex-cli 0.146.0); Codex tasks do call inherited
+tools, so that default was wrong. `CODEX_INHERIT_MCP=0` is the opt-out: `codex/mcp.ts`
+enumerates the servers (`codex mcp list --json`, ~30ms, best-effort), keeping only each one's
+name and transport TYPE, and overrides each with `enabled = false` plus an inert transport of the
+same kind (`command = "calandria-disabled-mcp-server"` for stdio, `url =
+"https://mcp-disabled.invalid"` for streamable HTTP). The transport is not decoration: Codex
+validates every `mcp_servers` entry before merging plugin-provided definitions, and a bare
+`{ enabled = false }` failed that validation and broke startup for anyone with a plugin server
+(`cua_repl`). The real command, args, env, URL, headers and bearer-token variable are dropped at
+parse time and never reach an override. `default_tools_approval_mode: "approve"` stays scoped to
+our own first-party bridge instead of becoming a global.
 
 Both halves are declared as data on the capability descriptor (`inheritsUserMcpServers`, plus
-the driver's one-line `userMcpServersNote`), so `GET /api/agents` carries the difference instead
-of the UI hardcoding it, and **Settings → Agents states it on each agent's card**
-(`McpInheritance` in `SettingsView.tsx`). "Can this task call my MCP tools" is a reason to pick
-one agent over the other, and it used to be visible only in the API response. Codex's flag is
-`CODEX_INHERIT_MCP` rather than a literal `false` for the same reason: the card renders the
-descriptor verbatim, so a hardcoded no would tell anyone who set the escape hatch the opposite
-of what their turns do.
+the driver's one-line `userMcpServersNote`), so `GET /api/agents` carries the answer instead of
+the UI hardcoding it, and **Settings → Agents states it on each agent's card**
+(`McpInheritance` in `SettingsView.tsx`). Codex's flag is `CODEX_INHERIT_MCP` rather than a
+literal `true` for the same reason: the card renders the descriptor verbatim, so a hardcoded yes
+would tell anyone who opted out the opposite of what their turns do.
 
 ## One-shots isolate capability and inherit config
 

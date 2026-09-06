@@ -162,6 +162,7 @@ picker entry can't quietly resolve to something else.
 
 `canUseTool` is the SDK callback that also has to be present before the CLI will expose
 `AskUserQuestion` at all. It routes every call the SDK doesn't auto-approve through
+**`lib/permissionPrompt.ts`**, the gate the Codex driver shares, and the policy it applies is
 **`lib/permissions.ts`**: a read-only allowlist passes silently unless the CLI flagged a
 `blockedPath`, which forces a prompt; otherwise the check falls through to the project's
 remembered rules, then to a human. A prompt reuses the ask machinery wholesale
@@ -224,9 +225,32 @@ the codex thread id emitted as the `session` event so lineage and resume work un
 `web_search`, `todo_list`, and `reasoning` become `tool` and `tool_result`; and
 `turn.completed` usage becomes tokens plus an estimated `cost_usd`.
 
-Run controls map our permission modes to codex's sandbox/approval policy
-(`bypassPermissions` to workspace-write with approvals-never, `plan` to read-only); reasoning
-presets map to `model_reasoning_effort`. The capability descriptor declares
+Under the app-server transport the CLI also pushes `item/agentMessage/delta` and
+`item/reasoning/summaryTextDelta` while it writes. Those become `assistant_delta`, the one
+StreamEvent the runner publishes without persisting: the completed item still produces the
+`assistant` message (or the "🧠 Thinking" tool row) that the transcript keeps, so the delta only
+ever reaches whoever has the task open, where `app/shell/useTaskStream.ts` grows one client-only
+bubble and drops it as soon as a real row lands under it. The Claude driver emits the same event
+from the SDK's partial messages (`includePartialMessages`), covering text and thinking blocks.
+
+`item/commandExecution/outputDelta` becomes the second such event, `tool_output_delta`. A command's
+output is not a reply, so it grows the peek of the tool row `item/started` already produced rather
+than a bubble: the runner looks the row up in the same `toolMsgs` map `tool_result` uses, attaches
+its DB message id and publishes without persisting, and the client appends into `ToolData.peek`
+through `growOutputPeek()` in `app/shell/format.ts` — a six-line tail with a 500-character bound
+per line, so a build that prints 50k lines never accumulates in React state. The completed item
+still writes the whole `aggregated_output` through `tool_result`, whose peek replaces the live one,
+so a reload shows the settled output instead of replaying the build. The chunks are base64 over the
+raw bytes a pty produced and a multi-byte character can straddle two of them, so the mapper decodes
+through one `TextDecoder` per item in `{ stream: true }` mode rather than per chunk.
+
+This half is Codex-only. The Agent SDK's `SDKToolProgressMessage` carries `elapsed_time_seconds`
+and no output at all, and a live probe over a six-second `Bash` command emitted none of them (nor
+any `local_command_output`), so there is nothing on the Claude side to wire.
+
+`policy.ts` maps the five permission modes to codex's sandbox, approval policy, reviewer and
+writable roots (docs/AGENTS.md has the table); reasoning presets map to
+`model_reasoning_effort`. The capability descriptor declares
 `supportsMcpTools: true`: Calandria's tools reach codex through the portable stdio MCP
 bridge described below, registered per turn with a roughly one-day `tool_timeout_sec` so a
 parked ask survives. It declares `supportsAsks: true` because codex has no native
@@ -236,10 +260,15 @@ blocks until the user answers. It declares `reportsCostUsd: false` and
 estimates the dollar cost per turn from tokens times published API prices for the resolved
 model, and the UI renders those figures with a `~`.
 
-One upstream limitation: the non-interactive CLI cannot pause a turn for command approval,
-so on-request approval modes aren't offered. The only permission modes are workspace-write
-(approvals never) and read-only (plan), labeled with codex's own sandbox-mode names. Auth
-(`auth.ts`) drives `codex login --device-auth` and `codex login status`. The one-shot
+Turns run on `codex app-server` by default (`appServerClient.ts` is the JSON-RPC transport,
+`appServerTurn.ts` the turn, `appServerEvents.ts` the adapter that respells v2 items as the
+exec protocol's so `events.ts` maps both transports). The server's approval requests
+(`item/commandExecution/requestApproval`, `item/fileChange/requestApproval`,
+`item/permissions/requestApproval`) are answered through `lib/permissionPrompt.ts`, which is
+the Claude gate — `canUseTool` calls the same `promptPermission()`, so the rules, the card and
+the `/answer` registry are one implementation — and its `item/tool/requestUserInput`
+through the ask card. `CODEX_TRANSPORT=exec` keeps the SDK's `codex exec` path, which
+auto-rejects approvals inside the CLI. Auth (`auth.ts`) drives `codex login --device-auth` and `codex login status`. The one-shot
 helpers run as `codex exec` one-shots in a read-only sandbox (no writes, no approvals, no
 network), bounded by an item cap, codex's analog of the Claude helpers' `maxTurns`, so a
 runaway helper turn is cut off instead of looping unbounded. The binary path comes from

@@ -199,6 +199,13 @@ export interface Msg {
   generation: number;
   toolId?: string; // tool_use id, for merging the tool_result that arrives later
   ts?: number; // created_at of the persisted row (ms epoch); absent on synthetic ids
+  // Set only on the one client-only row that renders live typing: the bubble
+  // fed by `assistant_delta` while the agent writes. It carries no DB id (the
+  // server never persisted it), it is dropped the moment any real row lands
+  // under it, and a reconnect's snapshot rebuilds the list without it. The
+  // value says whether the text is the reply or the reasoning summary, which
+  // read differently. See useTaskStream's LIVE_MSG_ID.
+  streaming?: "assistant" | "reasoning";
 }
 export interface ProjectSession {
   id: string;
@@ -354,10 +361,15 @@ export type AgentInfoT = {
   connected: boolean;
   account: { email: string | null; plan: string | null; method: "subscription" | "api_key" } | null;
   authBroken?: AgentAuthBrokenT | null;
+  sandboxBroken?: AgentSandboxBrokenT | null;
 };
 // Connected, but its login stopped working mid-flight (see lib/authFailure.ts).
 // `reason` is the provider's own error text; `at` is when it was first seen.
 export type AgentAuthBrokenT = { at: number; reason: string };
+// The agent's own sandbox can't be created on this host, so its sandboxed
+// permission modes would fail every command (lib/agents/codex/sandbox.ts).
+// Separate from authBroken because the fix is a host change, not a sign-in.
+export type AgentSandboxBrokenT = { at: number; reason: string };
 export type AgentsResponseT = { default: string; agents: AgentInfoT[]; utility?: UtilityAgentT; local_base_url?: string; local_endpoint?: EndpointStatusT; gateway_base_url?: string | null; gateway_keys_enabled?: boolean; gateway_mcp_enabled?: boolean; gateway?: GatewayHealthT | null };
 // Which agent actually runs the app's project-scoped internal jobs (recaps,
 // context drafts), resolved connected-first on the server (lib/agents/oneshots).
@@ -393,7 +405,7 @@ export const PLABEL: Record<Priority, string> = { hi: "High", med: "Medium", lo:
 // flags) served by GET /api/agents. The client renders every picker from
 // this data, so a task's controls always match the agent it runs under.
 export interface AgentModelOption { value: string; label: string; sub: string; contextWindow: number; group?: string }
-export interface AgentPickerOption { value: string; label: string; sub: string }
+export interface AgentPickerOption { value: string; label: string; sub: string; unattended?: boolean }
 export interface AgentCapabilities {
   models: AgentModelOption[];
   reasoningOptions: AgentPickerOption[];
@@ -410,7 +422,7 @@ export interface AgentCapabilities {
 // API-PRICE EQUIVALENT, not a charge; "api_key" means it really is billed.
 // Mirrors lib/agents/connections.ts AgentConnection; null when not connected.
 export interface AgentAccount { email: string | null; plan: string | null; method: "subscription" | "api_key" }
-export interface AgentInfo { id: string; label: string; capabilities: AgentCapabilities; authenticated: boolean; account?: AgentAccount | null; authBroken?: AgentAuthBrokenT | null }
+export interface AgentInfo { id: string; label: string; capabilities: AgentCapabilities; authenticated: boolean; account?: AgentAccount | null; authBroken?: AgentAuthBrokenT | null; sandboxBroken?: AgentSandboxBrokenT | null }
 // `local_base_url` is where the project settings' "Local model" preset points
 // by default: the instance's CALANDRIA_LOCAL_MODEL_BASE_URL, served here so
 // the form writes the instance's answer instead of a guess.

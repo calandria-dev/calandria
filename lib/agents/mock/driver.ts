@@ -17,6 +17,8 @@
 //                                   real suggest_task tool uses
 //   e2e:retitle=<title>             rename the running task through the same
 //                                   shared logic the real update_task tool calls
+//   e2e:output=<a>|<b>|<c>          stream a command's output into its tool row's
+//                                   peek one line at a time, then settle the row
 //   e2e:permission=<command>        raise a Bash permission card and park on it
 //   e2e:blocked=<command>           a Bash call the CLI refused on its own, an
 //                                   already-decided card, no buttons, nothing parked
@@ -52,7 +54,7 @@ import {
   blockedReason,
   DENIED_BY_USER,
 } from "@/lib/permissions";
-import { summarizeFailure } from "@/lib/agents/shared";
+import { summarizeFailure, summarizeResult } from "@/lib/agents/shared";
 import { PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS } from "@/lib/config";
 import { MOCK_CAPABILITIES } from "./capabilities";
 
@@ -88,6 +90,9 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 // prompt rather than realistic.
 const ASK_WAIT_MS = 120_000;
 const ASK_POLL_MS = 100;
+// Between two live-typing fragments (e2e:type). Slow enough that a browser can
+// see the bubble part-written, which is the only thing worth asserting about it.
+const TYPE_DELTA_MS = 300;
 
 /**
  * Parse one `e2e:ask=` directive into an AskQuestion.
@@ -357,6 +362,39 @@ export const mockDriver: AgentDriver = {
     // asserts, so a stream event here would mask a broken global path.
     const retitle = instructionText.match(/e2e:retitle=([^\n]+)/)?.[1];
     if (retitle) updateTaskForAgent(task, undefined, { title: retitle.trim() });
+
+    // Live typing. The deltas are published and never persisted, so what a spec
+    // can prove here is exactly what the feature promises: the bubble grows
+    // while the turn runs, and the completed message replaces it with one
+    // assistant row afterwards, not one per fragment.
+    const typed = instructionText.match(/e2e:type=([^\n]+)/)?.[1]?.trim();
+    if (typed) {
+      const id = `mock-msg-${task.id}-g${task.generation}`;
+      for (const word of typed.split(/\s+/)) {
+        yield { type: "assistant_delta", id, kind: "assistant", delta: `${word} ` };
+        await sleep(TYPE_DELTA_MS, signal);
+        if (signal?.aborted) return;
+      }
+      yield { type: "assistant", content: typed };
+    }
+
+    // Live command output. Emits a tool row, streams its output into the row's
+    // peek one fragment at a time, then settles it with the whole thing: the
+    // exact sequence a Codex commandExecution produces, so a spec can prove the
+    // peek grows WHILE the command runs and not only when it finishes.
+    const streamed = instructionText.match(/e2e:output=([^\n]+)/)?.[1]?.trim();
+    if (streamed) {
+      const id = `mock-cmd-${task.id}-g${task.generation}`;
+      const lines = streamed.split("|");
+      yield { type: "tool", id, name: "Bash", title: "\u276f mock-command", detail: "mock-command" };
+      for (const line of lines) {
+        yield { type: "tool_output_delta", id, delta: `${line}\n` };
+        await sleep(TYPE_DELTA_MS, signal);
+        if (signal?.aborted) return;
+      }
+      const whole = `${lines.join("\n")}\n`;
+      yield { type: "tool_result", id, content: whole, isError: false, peek: summarizeResult("output", whole) };
+    }
 
     yield {
       type: "assistant",

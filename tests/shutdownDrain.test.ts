@@ -123,7 +123,11 @@ describe("drainActiveTurns (graceful shutdown)", () => {
 
     const start = Date.now();
     const result = await drainActiveTurns(150);
-    expect(Date.now() - start).toBeLessThan(1000);
+    // Loose on purpose: the proposition is "gives up" versus "hangs until the
+    // 30s test timeout", not "returns in exactly 150ms". A tight upper bound
+    // here would be a load-dependent flake on a busy runner while proving
+    // nothing the loose one doesn't.
+    expect(Date.now() - start).toBeLessThan(5_000);
     expect(result).toEqual({ total: 1, settled: 0 });
     // abortTurn() still ran (the signal was tripped, and the registry entry
     // it deletes synchronously is gone), even though the driver never

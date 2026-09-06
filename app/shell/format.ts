@@ -1,5 +1,5 @@
 // Pure formatting + derivation helpers shared across the shell modules.
-import type { AskQuestion, AskAnswers } from "@/lib/types";
+import type { AskQuestion, AskAnswers, ToolPeek } from "@/lib/types";
 import { contextWindowFor } from "@/lib/contextWindow";
 import type { AgentProvider } from "@/lib/agentEnv";
 import type { Msg, TaskRow, AgentCapabilities, AgentInfo } from "./types";
@@ -573,4 +573,36 @@ export function prTooltip(
   const red = prFailingChecks(task);
   const named = red.length ? `\nfailing: ${red.map((c) => c.name).join(", ")}` : "";
   return `${task.pr_url}\n${bits.join(" · ")} · ${synced}${named}`;
+}
+
+// How much of a still-running command's output a live tool row keeps. Tail-only
+// on purpose: a build that has been going for four minutes is interesting at its
+// end, and `summarizeFailure` already reads a failure tail-first for the same
+// reason. Six matches the settled `summarizeResult("output")` peek, so the row
+// does not visibly resize when the command finishes and the real peek lands.
+export const LIVE_OUTPUT_LINES = 6;
+// And a bound on any ONE of them. A progress bar that never breaks its line, or
+// a minified bundle printed to stdout, would otherwise grow a single string in
+// React state without limit; the tail is the live end of it either way.
+export const LIVE_OUTPUT_LINE_CHARS = 500;
+
+// Grow a live output peek by one fragment. The last kept line is the partial
+// one, since a fragment rarely ends on a line boundary, so a new fragment
+// continues it instead of starting a line of its own. `\r` counts as a break
+// alongside `\n`: a spinner rewrites its line with a bare carriage return, and
+// keeping the last few states of it avoids one line that grows forever. A
+// trailing empty line stays: the next fragment continues it, and
+// `summarizeResult` leaves the same one on a settled peek.
+export function growOutputPeek(peek: ToolPeek | undefined, delta: string): ToolPeek {
+  // Only ever grows a lines peek. Any other kind belongs to a different tool
+  // (a diff, a checklist) and must not be overwritten by a stray fragment.
+  const base = peek?.kind === "lines" ? peek.lines : [];
+  const parts = delta.split(/\r\n|[\r\n]/);
+  const lines = base.length ? base.slice() : [""];
+  lines[lines.length - 1] += parts[0];
+  for (let i = 1; i < parts.length; i++) lines.push(parts[i]);
+  return {
+    kind: "lines",
+    lines: lines.slice(-LIVE_OUTPUT_LINES).map((l) => (l.length > LIVE_OUTPUT_LINE_CHARS ? l.slice(-LIVE_OUTPUT_LINE_CHARS) : l)),
+  };
 }
