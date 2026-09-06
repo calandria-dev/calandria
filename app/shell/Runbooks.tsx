@@ -138,7 +138,7 @@ function RunbookForm({
         <textarea id={`${uid}-prompt`} value={prompt} placeholder="/push-and-watch, or plain instructions"
           onChange={(e) => setPrompt(e.target.value)}
           onBlur={() => void validate(prompt, agent)} />
-        <div className="hlp">Sent as the first message of every task this dispatches, so a slash command expands.</div>
+        <div className="hlp">Sent as the first message of every task this dispatches.</div>
         {checking && <div className="hlp">Checking this project&rsquo;s slash commands…</div>}
         {check && !check.ok && (
           <div className="rb-check bad" role="alert">
@@ -152,8 +152,8 @@ function RunbookForm({
               </div>
             )}
             <div className="rb-note">
-              Save still works. The check reads one session&rsquo;s command list and can be wrong. If it isn&rsquo;t,
-              dispatching will fail rather than report success having done nothing.
+              Save still works even if this check is wrong: it only reads one session&rsquo;s command list. If the
+              command doesn&rsquo;t exist, dispatching will fail with an error, not silently do nothing.
             </div>
           </div>
         )}

@@ -31,7 +31,7 @@ import { DiffFooter } from "./DiffFooter";
 function PickBox({ picked, pickable, onPick }: { picked: boolean; pickable: boolean; onPick: (range: boolean) => void }) {
   return (
     <label className="pickbox" onClick={(e) => e.stopPropagation()}
-      title={pickable ? "Select: shift-click to extend the range" : "A task mid-turn can't be re-filed. Nothing may move a worktree an agent is writing into"}>
+      title={pickable ? "Select: shift-click to extend the range" : "A task mid-turn can't be re-filed"}>
       <input type="checkbox" checked={picked} disabled={!pickable} onChange={() => {}}
         onClick={(e) => { e.stopPropagation(); onPick(e.shiftKey); }} />
     </label>
@@ -621,7 +621,7 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
         <div className="pick-bar">
           <span className="pb-count">{picked.size} selected</span>
           <span className="spacer" />
-          <button className="btn btn-line btn-sm" onClick={() => onBulkTag([...picked])} title="Add or remove tags across every selected task: the quick way to tag a plan an agent filed before the tag existed">
+          <button className="btn btn-line btn-sm" onClick={() => onBulkTag([...picked])} title="Add or remove tags across every selected task">
             {Icon.spark()} Tags…
           </button>
           <button className="btn btn-line btn-sm" onClick={() => onBulkMove([...picked])} title="Re-file every selected task under another project">

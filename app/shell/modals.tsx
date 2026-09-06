@@ -124,7 +124,7 @@ export function TagsField({ tags, value, onChange, onCreate, label = "Tags", hin
         <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => setCreating(true)}>{Icon.plus()} New tag…</button>
       )}
       {err && <ErrNote style={{ marginTop: 8 }}>{err}</ErrNote>}
-      <div className="hlp">Tags filter the list and board, and badge every member. A task can carry several; a tag never spans projects.</div>
+      <div className="hlp">A task can carry several tags. A tag never spans projects.</div>
     </div>
   );
 }
@@ -210,7 +210,7 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
       footer={<>
         <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: !canStart ? "var(--ink-4)" : "var(--ink-2)", cursor: !canStart ? "not-allowed" : "pointer" }}
           title={blocked ? "Can't start now. This task is blocked by unfinished tasks" : !agentReady ? `Connect ${selAgent?.label} to start a session`
-            : gatewayInsecure ? "This gateway is http:// and not loopback. Antigravity's CLI refuses that address — use an https:// gateway, or pick a different agent" : undefined}>
+            : gatewayInsecure ? "This gateway is http:// and not loopback. Antigravity needs an https:// address." : undefined}>
           <input type="checkbox" checked={startNow && canStart} disabled={!canStart} onChange={(e) => setStartNow(e.target.checked)} /> Start session immediately
         </label>
         <span className="spacer" />
@@ -235,8 +235,8 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
       <AgentPicker agents={agents} value={agent} onChange={pickAgent} onConnect={onOpenSetup} />
       {gatewayInsecure && (
         <div className="hlp" style={{ color: "var(--amber)" }}>
-          This gateway is <code className="ctx-mono">http://</code> and not loopback. Antigravity&apos;s CLI refuses a non-loopback plain-HTTP address, so this
-          task would fail every turn — use an <code className="ctx-mono">https://</code> gateway, or pick a different agent.
+          This gateway is <code className="ctx-mono">http://</code> and not loopback. Antigravity needs an{" "}
+          <code className="ctx-mono">https://</code> address. Use a different gateway, or pick a different agent.
         </div>
       )}
       <ModelField options={modelOpts} value={model} onChange={setModel}
@@ -273,9 +273,8 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
       <DepPicker candidates={tasks} value={deps} onChange={setDeps} autoStart={autoStart} onAutoStart={setAutoStart} />
       {unattendedRisk && (
         <div className="hlp" style={{ color: "var(--amber)" }}>
-          This task auto-starts when its blockers clear, which may be while nobody is watching. Any mode but{" "}
-          <strong>{bypassLabel}</strong> parks on a permission card, and an unanswered card declines itself and stops the
-          turn. Pick {bypassLabel} if it needs to run all the way through unattended.
+          This task can auto-start with nobody watching. Any mode but <strong>{bypassLabel}</strong> parks on a
+          permission card that goes unanswered and stops the turn. Pick {bypassLabel} to run it unattended.
         </div>
       )}
     </Modal>
@@ -368,11 +367,10 @@ function BaseBranchField({ task, project }: { task: TaskRow; project?: ProjectRo
         <div className="hlp" style={{ color: "var(--blue)" }}>{note}</div>
       ) : task.started === 1 ? (
         <div className="hlp">
-          Currently {current}. Changing it never rewrites anything: a task that has already committed keeps every commit
-          and is told how far behind the new base it is. One Sync catches it up.
+          Currently {current}. Changing the base branch keeps every commit already made. Run Sync afterward to catch up.
         </div>
       ) : (
-        <div className="hlp">Leave empty to follow the project&rsquo;s default. The worktree is cut from this branch on the first turn.</div>
+        <div className="hlp">Leave empty to use the project&rsquo;s default branch.</div>
       )}
     </div>
   );
@@ -482,14 +480,14 @@ function MoveProjectField({ task, tasks, tags, projects, agents, onMove }: {
             <div className="hlp" style={{ color: unsafe ? "var(--red)" : "var(--amber)", marginTop: 8 }}>
               {preview?.has_worktree ? (
                 <>
-                  This task&rsquo;s git worktree{preview.branch && <> and branch <code>{preview.branch}</code></>} belong to{" "}
-                  {src?.name ?? "its current project"}&rsquo;s repo, so moving deletes them.{" "}
+                  This task&rsquo;s git worktree{preview.branch && <> and branch <code>{preview.branch}</code></>} belongs to{" "}
+                  {src?.name ?? "its current project"}&rsquo;s repo, and moving deletes them.{" "}
                   {unsafe
                     ? `That destroys ${preview.reason}, permanently, with no way back.`
                     : "Nothing is lost: it's clean and everything on it is already in the base branch."}
                 </>
               ) : (
-                <>This task has already run, so it moves as a started task: the next turn cuts a fresh worktree from {dest.name}&rsquo;s repo.</>
+                <>This task has already run. Its next turn will cut a fresh worktree from {dest.name}&rsquo;s repo.</>
               )}{" "}
               The transcript, summaries and cost history come with it; the merge and PR it recorded against{" "}
               {src?.name ?? "the old project"} do not.
@@ -746,8 +744,8 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
             </div>
             {previewErr && (
               <div className="hlp" style={{ color: "var(--red)" }}>
-                Couldn&rsquo;t read what these worktrees hold, so none of them can be discarded from here. A checkbox that
-                can&rsquo;t say what it destroys isn&rsquo;t worth ticking. The rest of the selection still moves.
+                Couldn&rsquo;t read what these worktrees hold. None of them can be discarded from here, but the rest of
+                the selection still moves.
               </div>
             )}
             {unsafeTicked.length > 0 && (
@@ -929,7 +927,7 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
   const gatewayInsecure = (canChangeAgent ? agent : task.agent) === "gemini" && gatewayInsecureForGemini(provider);
   const startWhy = !can ? "A title is required" : blocked ? "Blocked by unfinished tasks. Clear them or drop the dependency first"
     : !agentReady ? `Connect ${selAgent?.label} to start a session`
-    : gatewayInsecure ? "This gateway is http:// and not loopback. Antigravity's CLI refuses that address" : undefined;
+    : gatewayInsecure ? "This gateway is http:// and not loopback. Antigravity needs an https:// address." : undefined;
   const canStartNow = can && !blocked && agentReady && !gatewayInsecure;
   return (
     <Modal title="Edit task" sub="Title + description define the agent's task context" onClose={onClose}
@@ -983,8 +981,8 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
       {canChangeAgent && <AgentPicker agents={agents} value={agent} onChange={setAgent} onConnect={onOpenSetup} />}
       {gatewayInsecure && (
         <div className="hlp" style={{ color: "var(--amber)" }}>
-          This gateway is <code className="ctx-mono">http://</code> and not loopback. Antigravity&apos;s CLI refuses a non-loopback plain-HTTP address, so this
-          task would fail every turn — use an <code className="ctx-mono">https://</code> gateway, or pick a different agent.
+          This gateway is <code className="ctx-mono">http://</code> and not loopback. Antigravity needs an{" "}
+          <code className="ctx-mono">https://</code> address. Use a different gateway, or pick a different agent.
         </div>
       )}
       <ModelField options={modelOpts} value={model} onChange={setModel}
@@ -1048,8 +1046,8 @@ function LandingSeg({ value, onChange, branch }: { value: LandingMode; onChange:
       </div>
       <div className="hlp">
         {value === "pr"
-          ? `${b} is protected, so Merge is rejected. Sessions are told to finish by opening a PR against it.`
-          : `Calandria merges a finished task's branch into ${b} itself. Sessions are told so.`}
+          ? `${b} is protected. Merge is disabled here; sessions open a pull request instead.`
+          : `Calandria merges a finished task's branch into ${b} for you.`}
       </div>
     </div>
   );
@@ -1118,9 +1116,9 @@ function GatewayMcpField({ projectId, value, onChange }: { projectId: string; va
     <div className="field" style={{ marginTop: 14 }}>
       <div className="lab">{Icon.sliders()} Hosted MCP servers</div>
       <div className="hlp" style={{ marginTop: 0, marginBottom: 8 }}>
-        Tools the gateway hosts on the key&apos;s behalf, mounted alongside Calandria&apos;s own on every task&apos;s
-        turns — <code className="ctx-mono">mcp__&lt;alias&gt;__…</code> in the tool list, gated by the ordinary
-        permission prompt unless you trust the server below. Docs: docs/design/litellm.md.
+        Tools the gateway hosts on this key. They appear as{" "}
+        <code className="ctx-mono">mcp__&lt;alias&gt;__…</code> in the tool list, gated by the ordinary permission
+        prompt unless you trust the server below. Docs: docs/design/litellm.md.
       </div>
       {servers === null ? (
         <div className="hlp">Loading…</div>
@@ -1401,7 +1399,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
           Include this context in new agent sessions
         </label>
         {!sendContext && (
-          <div className="hlp">New tasks will start without the saved context (task details and Calandria tools are still included). Each task can override this when it starts.</div>
+          <div className="hlp">New tasks start without the saved context (task details and Calandria tools are still included). Any task can turn it back on when it starts.</div>
         )}
       </div>
       <div style={{ display: "flex", gap: 14 }}>
@@ -1450,8 +1448,8 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
           Reclaim a task&apos;s worktree when its work lands
           <span className="hlp" style={{ display: "block", marginTop: 2 }}>
             {landing === "pr"
-              ? "When its pull request reports merged, catch " + (branch || "the base branch") + " up with origin, remove the task's checkout, delete its local branch and mark it done. Never over unsaved work — that still asks."
-              : "When it merges into " + (branch || "the base branch") + ", remove the task's checkout, delete its local branch and mark it done. Never over unsaved work — that still asks."}
+              ? "When its pull request reports merged, this catches " + (branch || "the base branch") + " up with origin, removes the task's checkout, deletes its local branch, and marks it done. It never touches unsaved work; that still needs your say-so."
+              : "When it merges into " + (branch || "the base branch") + ", this removes the task's checkout, deletes its local branch, and marks it done. It never touches unsaved work; that still needs your say-so."}
           </span>
         </span>
       </label>
@@ -1495,12 +1493,12 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
                 <code className="ctx-mono" style={{ flex: 1, minWidth: 0, alignSelf: "center", overflow: "hidden", textOverflow: "ellipsis" }}>{gatewayUrl}</code>
               ) : (
                 <input type="text" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={providerUrl} placeholder={localDefaultUrl}
-                  title="Base URL of the server. Ollama and LM Studio serve both APIs from one origin; /v1 is added where each CLI needs it."
+                  title="Base URL of the Ollama or LM Studio server."
                   onChange={(e) => setProviderUrl(e.target.value)} />
               )}
               <FreeFormModel value={providerModel} onChange={setProviderModel} suggestions={endpoint.models}
                 style={{ flex: "0 0 190px" }} label="Model" placeholder="model, e.g. qwen3-coder"
-                title="The model every task in this project runs unless the task picks its own. Claude Code's opus/sonnet/haiku aliases resolve to it too. The suggestions are what this server reports; anything it has can be typed." />
+                title="This project's default model. A task can pick its own instead; Claude Code's opus/sonnet/haiku aliases resolve to it too." />
             </div>
             {providerKind === "gateway" && (
               <>
@@ -1512,8 +1510,8 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
                 </div>
                 <div className="hlp">
                   {providerBilling === "subscription"
-                    ? "The CLI keeps its own login and the gateway forwards it, so these turns draw on your Claude plan. The gateway still routes, tags and meters them."
-                    : "The instance's LiteLLM key authenticates and pays, so these turns draw on that key's account rather than your plan. Set the key in Settings → Agents."}
+                    ? "These turns draw on your Claude plan. The gateway still routes, tags and meters them."
+                    : "These turns are billed to the instance's LiteLLM key. Set the key in Settings → Agents."}
                 </div>
                 {agents.gateway_keys_enabled && (
                   <>
@@ -1521,17 +1519,17 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
                       <input type="number" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={gatewayMaxBudget} placeholder="max budget ($, blank = unlimited)"
                         onChange={(e) => setGatewayMaxBudget(e.target.value)} />
                       <input type="text" className="ctx-mono" style={{ flex: "0 0 190px" }} value={gatewayKeyDuration} placeholder="30d"
-                        title="A LiteLLM duration string, e.g. 30d. Blank means the key never auto-expires on LiteLLM's own clock."
+                        title="Key duration, e.g. 30d. Blank means it never expires."
                         onChange={(e) => setGatewayKeyDuration(e.target.value)} />
                     </div>
-                    <div className="hlp">Caps this project&apos;s per-task LiteLLM keys — leave blank for unlimited budget / a key that never auto-expires. Docs: docs/design/litellm.md.</div>
+                    <div className="hlp">Caps this project&apos;s per-task LiteLLM keys. Leave blank for unlimited budget, or a key that never expires. Docs: docs/design/litellm.md.</div>
                   </>
                 )}
               </>
             )}
             {providerKind === "custom" && (
               <input type="text" className="ctx-mono" style={{ marginTop: 8 }} value={providerToken} placeholder="auth token (ollama)"
-                title="Sent as the Anthropic auth token. Ollama and LM Studio require one and ignore its value. The instance's own Anthropic/OpenAI keys are never sent to a custom endpoint."
+                title="Auth token for Ollama or LM Studio. Both require one but ignore its value; your Anthropic/OpenAI keys are never sent here."
                 onChange={(e) => setProviderToken(e.target.value)} />
             )}
             {/* What the server just said, ahead of the advice about what to
@@ -1542,7 +1540,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
               {providerKind === "gateway"
                 ? "Claude Code only for now: a Codex task here reaches the gateway with no credential, and Antigravity ignores the address entirely. Point those tasks at Claude until their gateway support lands. Turns are recorded unpriced."
                 : providerModel.trim()
-                  ? "Turns are not billed as cloud spend. Codex reaches the same server through a provider entry of its own, so ~/.codex/config.toml is left alone."
+                  ? "Turns aren't billed as cloud spend. Codex reaches the same server through its own provider entry; ~/.codex/config.toml is left alone."
                   : "Name a model, or the CLIs will ask the server for their cloud defaults and fail. Codex needs an OpenAI Responses endpoint: Ollama 0.13+ and LM Studio."}
             </div>
           </>

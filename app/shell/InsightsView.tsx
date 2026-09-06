@@ -687,8 +687,8 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
             <div style={{ maxWidth: 460 }}>
               <div className="in-empty-t">No activity yet</div>
               <div className="in-empty-s">
-                Insights fills in as your agents work. Kick off a session and this view will start tracking
-                spend, tokens, tasks shipped, and code merged. All computed locally, nothing leaves this machine.
+                Spend, tokens, and shipped work will show up here once an agent runs. Start a session to begin
+                tracking; everything is computed locally and stays on this machine.
               </div>
             </div>
             <button className="btn btn-accent" onClick={onClose}>Start a session</button>
@@ -841,7 +841,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
                   );
                 })}
                 {jobRows.length === 0 && (
-                  <div className="in-oempty">No Calandria convenience work in this period. Project recaps, session summaries, context drafts, and agent verification count here. Your task chats don&apos;t.</div>
+                  <div className="in-oempty">No Calandria convenience work in this period. This tracks project recaps, session summaries, context drafts, and agent verification, not your task chats.</div>
                 )}
               </div>
             </section>
@@ -863,7 +863,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
               <div className={`in-provtable${hasGatewayCache ? " with-cache-hit" : ""}`}>
                 <div className="in-provhead mono">
                   <span>PROVIDER</span><span>SPEND</span><span>TOKENS</span><span>TASKS</span>
-                  {hasGatewayCache && <span title="Cache reads over input tokens, for turns run through the LiteLLM gateway. Stuck near 0% is prompt caching failing silently in translation.">CACHE HIT</span>}
+                  {hasGatewayCache && <span title="Cache reads over input tokens, for turns run through the LiteLLM gateway. Near 0% usually means prompt caching isn't passing through.">CACHE HIT</span>}
                 </div>
                 {providers.map((p) => (
                   <div key={p.id} className="in-provrow">
