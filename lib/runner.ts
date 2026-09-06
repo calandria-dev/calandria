@@ -819,6 +819,17 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       } else if (ev.type === "assistant") {
         const m = addMessage(id, gen, "assistant", ev.content);
         publish(id, { ...ev, msgId: m.id, generation: gen, ts: m.created_at });
+      } else if (ev.type === "assistant_delta") {
+        // The one event that is published without being persisted. The
+        // transcript is the record of what the agent SAID, and the `assistant`
+        // branch above writes exactly that text as soon as the item completes;
+        // storing the fragments too would duplicate every reply and make a
+        // reload replay the typing. So this reaches live watchers and nobody
+        // else, and a turn nobody is watching drops it at publish() for free.
+        // It still carries the generation: the transcript groups rows into
+        // sessions by it, and a live bubble without one lands in a session of
+        // its own, ahead of the whole conversation.
+        publish(id, { ...ev, generation: gen });
       } else if (ev.type === "tool") {
         // A file the call wrote is stored worktree-RELATIVE, and only when it
         // is inside the worktree: that's the form the file route takes, and a

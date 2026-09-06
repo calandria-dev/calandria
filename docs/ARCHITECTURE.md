@@ -224,6 +224,16 @@ the codex thread id emitted as the `session` event so lineage and resume work un
 `web_search`, `todo_list`, and `reasoning` become `tool` and `tool_result`; and
 `turn.completed` usage becomes tokens plus an estimated `cost_usd`.
 
+Under the app-server transport the CLI also pushes `item/agentMessage/delta` and
+`item/reasoning/summaryTextDelta` while it writes. Those become `assistant_delta`, the one
+StreamEvent the runner publishes without persisting: the completed item still produces the
+`assistant` message (or the "🧠 Thinking" tool row) that the transcript keeps, so the delta only
+ever reaches whoever has the task open, where `app/shell/useTaskStream.ts` grows one client-only
+bubble and drops it as soon as a real row lands under it. The Claude driver emits the same event
+from the SDK's partial messages (`includePartialMessages`), covering text and thinking blocks.
+`item/commandExecution/outputDelta` is deliberately not mapped: a command's output belongs to its
+tool row's peek, which has no live half.
+
 `policy.ts` maps the five permission modes to codex's sandbox, approval policy, reviewer and
 writable roots (docs/AGENTS.md has the table); reasoning presets map to
 `model_reasoning_effort`. The capability descriptor declares

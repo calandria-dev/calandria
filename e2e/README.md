@@ -119,6 +119,7 @@ can be removed to reclaim disk.
   |-|-|
   | `e2e:write=<relpath>:<content>` | write that file in the task worktree |
   | `e2e:sleep=<ms>` | hold the turn open (Stop / queueing tests) |
+  | `e2e:type=<text>` | stream that text as `assistant_delta` fragments, one word every 300ms, then send it as the completed `assistant` message — the live-typing bubble and its replacement |
   | `e2e:fail=<message>` | end the turn with an error event |
   | `e2e:suggest=<title>` | file a suggested task as a real `suggest_task` tool call — tool row, result, then the event — so the transcript's suggestion card is exercised too |
   | `e2e:suggest-into=<project>\|<title>` | file the suggestion into another project (id or name), through the real strict resolver; an unknown ref yields an error event |

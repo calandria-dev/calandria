@@ -40,6 +40,27 @@ describe("app-server item respelling", () => {
     expect(mapNotification("item/completed", { turnId: "t1", item }, st).events).toEqual([{ type: "item.completed", item: { id: "a", type: "agent_message", text: "hi" } }]);
   });
 
+  it("maps agent-message and reasoning deltas, and joins reasoning paragraphs", () => {
+    const st = newAppServerTurnState();
+    st.turnId = "t1";
+    // A delta belongs to no ThreadEvent — it rides `delta`, and the completed
+    // item is still what carries the persisted text.
+    expect(mapNotification("item/agentMessage/delta", { turnId: "t1", itemId: "m", delta: "all " }, st)).toEqual({
+      events: [],
+      delta: { id: "m", kind: "assistant", text: "all " },
+    });
+    // An empty delta is nothing to type; a delta for another turn is not ours.
+    expect(mapNotification("item/agentMessage/delta", { turnId: "t1", itemId: "m", delta: "" }, st).delta).toBeUndefined();
+    expect(mapNotification("item/agentMessage/delta", { turnId: "other", itemId: "m", delta: "x" }, st).delta).toBeUndefined();
+    // Reasoning arrives as indexed paragraphs; the completed item joins them
+    // with newlines, so the live text has to gain the same break.
+    expect(mapNotification("item/reasoning/summaryTextDelta", { turnId: "t1", itemId: "r", summaryIndex: 0, delta: "first" }, st).delta).toEqual({ id: "r", kind: "reasoning", text: "first" });
+    expect(mapNotification("item/reasoning/summaryTextDelta", { turnId: "t1", itemId: "r", summaryIndex: 0, delta: " half" }, st).delta).toEqual({ id: "r", kind: "reasoning", text: " half" });
+    expect(mapNotification("item/reasoning/summaryTextDelta", { turnId: "t1", itemId: "r", summaryIndex: 1, delta: "second" }, st).delta).toEqual({ id: "r", kind: "reasoning", text: "\nsecond" });
+    // Command output is not a reply: it belongs to its tool row, so it stays dropped.
+    expect(mapNotification("item/commandExecution/outputDelta", { turnId: "t1", itemId: "c", chunk: "aGk=" }, st)).toEqual({ events: [] });
+  });
+
   it("reports usage once, on turn end, from the latest total; context from the last request", () => {
     const st = newAppServerTurnState();
     st.turnId = "t1";

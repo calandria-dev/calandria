@@ -6,6 +6,24 @@ import { jget } from "./api";
 import { contextPct } from "./format";
 import type { Msg, ProjectRow, TaskRow } from "./types";
 
+// The id of the one client-only row that renders live typing. A single reserved
+// id, not one per fragment: only ever one thing is being written at a time, and
+// a fixed id makes the row trivial to find and drop. It can never collide with a
+// persisted message id, which the server mints.
+const LIVE_MSG_ID = "__live__";
+
+// Events that put a new row IN the transcript, and therefore supersede the live
+// bubble — most often the completed `assistant` message carrying the very text
+// that was just typed out. Everything else is left alone deliberately: the
+// meters (usage, context) would blink the reply out a beat before its final
+// form arrives, since the Claude driver reports them off the same message the
+// text came in, and the settling events (tool_result, ask_answered,
+// permission_decided) only finish rows that are already on screen.
+const ROW_EVENTS = new Set([
+  "user", "assistant", "tool", "ask", "permission", "permission_denied",
+  "notice", "suggested", "background_resumed", "turn_end",
+]);
+
 // Owns the per-task transcript state (msgsByTask) plus the live SSE consumption:
 // the snapshot-then-tail EventSource and the message mutators that apply each
 // server event. The turn itself runs server-side, detached from any connection.
@@ -27,6 +45,31 @@ export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, s
 
   const appendMsg = (taskId: string, m: Msg) =>
     setMsgsByTask((prev) => ({ ...prev, [taskId]: [...(prev[taskId] ?? []), m] }));
+
+  // Grow the live-typing bubble, or start a new one when the agent moves to a
+  // different item (reasoning → reply, one message → the next). `toolId` holds
+  // the driver's id for what is being typed; the row itself always sits last,
+  // which is where the text is being written.
+  const growLive = (taskId: string, id: string, kind: "assistant" | "reasoning", delta: string, generation: number) =>
+    setMsgsByTask((prev) => {
+      const arr = prev[taskId] ?? [];
+      const last = arr[arr.length - 1];
+      if (last && last.id === LIVE_MSG_ID && last.toolId === id) {
+        return { ...prev, [taskId]: [...arr.slice(0, -1), { ...last, content: last.content + delta }] };
+      }
+      const rest = arr.filter((m) => m.id !== LIVE_MSG_ID);
+      return { ...prev, [taskId]: [...rest, { id: LIVE_MSG_ID, role: "assistant" as const, content: delta, generation, toolId: id, streaming: kind }] };
+    });
+
+  // Retire the live bubble. Returning `prev` unchanged when there is nothing to
+  // drop matters: this runs on every event, and an unchanged state object is
+  // one React bails out of re-rendering.
+  const dropLive = (taskId: string) =>
+    setMsgsByTask((prev) => {
+      const arr = prev[taskId];
+      if (!arr?.some((m) => m.id === LIVE_MSG_ID)) return prev;
+      return { ...prev, [taskId]: arr.filter((m) => m.id !== LIVE_MSG_ID) };
+    });
 
   // Mark an AskUserQuestion message (matched by tool id) as answered. Matches on
   // the id embedded in the content too, so it works for reloaded messages whose
@@ -138,6 +181,11 @@ export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, s
       return;
     }
     const gen = ("generation" in ev ? ev.generation : undefined) ?? 1;
+    if (ev.type === "assistant_delta") {
+      growLive(taskId, ev.id, ev.kind, ev.delta, gen);
+      return;
+    }
+    if (ROW_EVENTS.has(ev.type)) dropLive(taskId);
     if (ev.type === "user") upsertMsg(taskId, { id: ev.msgId, role: "user", content: ev.content, generation: gen, ts: ev.ts });
     else if (ev.type === "queued") upsertMsg(taskId, { id: ev.msgId, role: "queued", content: ev.content, generation: gen, ts: ev.ts });
     else if (ev.type === "dequeued") removeMsg(taskId, ev.msgId);

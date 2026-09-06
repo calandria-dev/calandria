@@ -981,6 +981,10 @@ async function* runTurn(
   let partialFor: string | undefined;
   let partialSeq = 0;
   let partialSent = { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 };
+  // The API message id the `stream_event` deltas below currently belong to.
+  // Paired with the content-block index it makes the id a live bubble is keyed
+  // by, so consecutive text and thinking blocks don't merge into one bubble.
+  let streamingMsgId = "";
   // The held-open input is a real message CHANNEL, not just a latch: the CLI
   // reads stdin for the life of the query, so a message the user sends while
   // the turn lingers can be yielded straight into the open session as a second
@@ -1099,6 +1103,11 @@ async function* runTurn(
       settingSources: SETTING_SOURCES,
       // Permission mode (default bypassPermissions; "plan" proposes without editing).
       permissionMode,
+      // Stream the reply as it is written, so the transcript types instead of
+      // sitting blank for the length of a message. The extra messages are
+      // handled in one branch above and nowhere else — nothing downstream sees
+      // them, since the runner publishes an assistant_delta without persisting.
+      includePartialMessages: true,
       pathToClaudeCodeExecutable: CLAUDE_PATH,
       // The CLI's own stderr, labelled with the task. Headless it is quiet
       // except for what went wrong (a server that failed to connect, a hook
@@ -1321,6 +1330,22 @@ async function* runTurn(
             reason: blockedReason(message.decision_reason, message.message),
             ...(message.agent_id ? { agentId: message.agent_id } : {}),
           });
+        } else if (message.type === "stream_event") {
+          // Live typing, off `includePartialMessages` below. Nothing here is
+          // persisted — the complete `assistant` message arrives a beat later
+          // and is what the transcript keeps — so this is purely the wait made
+          // visible. Subagent deltas are skipped for the same reason their
+          // text is: a sidechain is not this conversation.
+          if (message.parent_tool_use_id == null) {
+            const e = message.event;
+            if (e.type === "message_start") streamingMsgId = e.message.id || `anon-${partialSeq}`;
+            else if (e.type === "content_block_delta") {
+              const id = `${streamingMsgId}:${e.index}`;
+              const d = e.delta;
+              if (d.type === "text_delta" && d.text) queue.push({ type: "assistant_delta", id, kind: "assistant", delta: d.text });
+              else if (d.type === "thinking_delta" && d.thinking) queue.push({ type: "assistant_delta", id, kind: "reasoning", delta: d.thinking });
+            }
+          }
         } else if (message.type === "assistant") {
           // Context-window occupancy: each assistant message carries ITS API
           // request's usage, and the request's input side (fresh + cache read

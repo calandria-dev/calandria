@@ -179,8 +179,14 @@ async function runTurn() {
     return;
   }
 
+  // Reasoning streams as indexed summary paragraphs before the reply does.
+  notify("item/started", { ...base, item: { type: "reasoning", id: "item-r", summary: [], content: [] }, startedAtMs: Date.now() });
+  notify("item/reasoning/summaryTextDelta", { ...base, itemId: "item-r", summaryIndex: 0, delta: "weighing " });
+  notify("item/reasoning/summaryTextDelta", { ...base, itemId: "item-r", summaryIndex: 0, delta: "options" });
+  notify("item/completed", { ...base, item: { type: "reasoning", id: "item-r", summary: ["weighing options"], content: [] }, completedAtMs: Date.now() });
   notify("item/started", { ...base, item: { type: "agentMessage", id: "item-msg", text: "", phase: null }, startedAtMs: Date.now() });
   notify("item/agentMessage/delta", { ...base, itemId: "item-msg", delta: "all " });
+  notify("item/agentMessage/delta", { ...base, itemId: "item-msg", delta: "done" });
   notify("item/completed", { ...base, item: { type: "agentMessage", id: "item-msg", text: "all done", phase: null }, completedAtMs: Date.now() });
   notify("turn/plan/updated", { ...base, explanation: null, plan: [{ step: "run tests", status: "completed" }, { step: "report", status: "inProgress" }] });
   // The server pushes the account's limits mid-turn; the same RateLimitSnapshot
