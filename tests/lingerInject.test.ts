@@ -11,7 +11,9 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 //
 // Measured on claude CLI 2.1.240 / SDK 0.3.159, live, in two rounds (the first
 // is recorded in this feature's commit; the second closed the gap that commit
-// declared, and is why the scripts below are a transcript rather than a guess):
+// declared, and is why the scripts below are a transcript rather than a guess).
+// Re-measured live on claude CLI 2.1.261 / SDK 0.3.263 at the 0.3.263 bump,
+// with the same result, so the contract below survived 104 SDK releases:
 //
 // - A second SDKUserMessage pushed into the held-open iterable after a result
 //   IS accepted and starts a fresh turn on the same session, announced by a
