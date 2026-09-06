@@ -1,0 +1,132 @@
+# Runs the unit suite with the wall clock parked a few minutes before a
+# calendar boundary, weekly. Sibling of test-shuffle.yml: that one varies the
+# ORDER the suite runs in, this one varies the MOMENT it runs at.
+#
+# The class it hunts is real and has already shipped. v0.9.0's tag build went
+# red because three linger suites hardcoded a bare `HH:MM` while
+# `wakeTimeLabel()` (lib/agents/claude/sessionCrons.ts) prefixes a weekday once
+# the fire time lands on a different calendar day, so any run starting within a
+# few minutes of local midnight failed (fixed in PR #225). Nothing in the
+# ordinary path would have caught it: tests/setup.ts pins TZ to UTC and GitHub
+# runners are UTC anyway, so every scheduled run of the suite happens at
+# whatever moment the queue hands it, and a feature PR's green run only proves
+# the diff was fine at that one moment.
+#
+# The release path makes that worse rather than better. One release cycle runs
+# this suite five times on four different SHAs — the squash push to main, the
+# release-please PR, the push of the release commit, and again on the `v*` tag
+# through publish-image.yml's workflow_call — with no vitest retry. So a
+# clock-dependent test has five chances to sink a release and one chance to be
+# caught on the PR that introduced it. This job moves that discovery earlier.
+#
+# Mechanism: libfaketime, LD_PRELOAD'd by the `faketime` wrapper. `-f` passes
+# the timestamp through as a FAKETIME spec, and the leading `@` means "start
+# here and advance at the normal rate" rather than freezing, so timers, test
+# timeouts and elapsed-ms assertions all behave normally while `Date.now()` and
+# `Intl` sit just before the boundary. FAKETIME_DONT_FAKE_MONOTONIC keeps
+# CLOCK_MONOTONIC real, so libuv's timer loop is untouched. The suite is
+# ~4 minutes, so a start 3 minutes out means the boundary is crossed WHILE the
+# suite runs, which is the case that broke: a fire time computed before
+# midnight and a label rendered after it.
+#
+# Every offset is in the future (months, not years), so TLS certificate
+# validity is not an issue; `npm ci` runs on the real clock regardless, outside
+# the wrapper.
+#
+# The one known limitation, because it produced this job's first red and will
+# produce the next one: libfaketime does NOT move filesystem timestamps. It
+# intercepts the clock calls a process makes, while an mtime is written by the
+# kernel, and 0.9.10 does not intercept the `statx` Node reads one back with
+# (NO_FAKE_STAT changes nothing — measured). So a file written during the run
+# looks as old as the offset is large, and any test that writes a file and then
+# asserts on its AGE fails here and nowhere else. That is an artifact, not a
+# find. The suite had exactly one such test (tests/worktree.test.ts's fresh
+# `index.lock`); it now stamps the file with the process's own clock, which is
+# a no-op on a real run and states the intent besides. Fix a new one the same
+# way rather than by shrinking the offset.
+#
+# TZ is pinned to UTC for the STEP because faketime parses its timestamp in the
+# ambient zone, so the `at` values below are UTC instants regardless of what the
+# runner defaults to. The zone the suite itself renders in is a separate knob,
+# CALANDRIA_TEST_TZ, read by tests/setup.ts.
+#
+# Advisory, never a gate — same call as test-shuffle.yml, and for a stronger
+# reason. A red here can mean a genuine latent flake OR a test that is
+# legitimately clock-shaped (the DST leg deliberately runs the suite across a
+# spring-forward gap, and lib/schedule/time.ts has real behavior at that edge).
+# Blocking a push on a job that is expected to occasionally be red for a
+# non-bug would train people to ignore it. It reports on its own schedule and
+# somebody reads it.
+name: Test (hostile clock)
+
+on:
+  schedule:
+    # Wednesday, off the top of the hour and on a different day from
+    # test-shuffle.yml's Monday slot so the two don't contend for runners.
+    - cron: "37 11 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-clock:
+    name: Unit (vitest, ${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      # Each offset is an independent question; one red must not hide the rest.
+      fail-fast: false
+      matrix:
+        include:
+          # Day, month and year boundary in one go — the harshest single
+          # moment, and the one v0.9.0 died on the day-boundary half of.
+          - name: new year's eve
+            tz: UTC
+            at: "@2026-12-31 23:57:00"
+          # Month boundary with a short month, in a non-leap year.
+          - name: end of february
+            tz: UTC
+            at: "@2027-02-28 23:58:00"
+          # Same date, leap year: the boundary is 28 -> 29, not 28 -> 1. A
+          # date helper that adds a day and assumes the month rolls fails here
+          # and nowhere else.
+          - name: leap day eve
+            tz: UTC
+            at: "@2028-02-28 23:58:00"
+          # Non-UTC and not a whole-hour offset (UTC+05:45). Local midnight is
+          # 18:15 UTC, so this leg is hostile in two ways at once: anything
+          # that compares a UTC-derived day key (`toISOString().slice(0, 10)`)
+          # against a local-component one disagrees for most of the day here,
+          # not just at the boundary.
+          - name: kathmandu midnight
+            tz: Asia/Kathmandu
+            at: "@2026-06-30 18:12:00"
+          # Spring forward: 02:00 local does not exist on this date in
+          # Los Angeles, and the gap opens at 10:00 UTC — three minutes into
+          # the run. lib/schedule/time.ts decides both DST edges deliberately
+          # (a nonexistent wall time fires when the gap closes), so this leg
+          # exercises that decision against a clock that really does jump.
+          - name: dst spring forward
+            tz: America/Los_Angeles
+            at: "@2027-03-14 09:57:00"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install libfaketime
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq faketime
+
+      # TZ overrides the UTC default tests/setup.ts pins; see the comment there.
+      - name: Unit suite at ${{ matrix.at }} (${{ matrix.tz }})
+        env:
+          TZ: UTC
+          CALANDRIA_TEST_TZ: ${{ matrix.tz }}
+          FAKETIME_DONT_FAKE_MONOTONIC: "1"
+        run: faketime -f "${{ matrix.at }}" npx vitest run

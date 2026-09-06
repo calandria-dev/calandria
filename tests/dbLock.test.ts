@@ -130,6 +130,11 @@ describe("db boot lock", () => {
     const result = await first;
 
     expect(result.ok).toBe(false);
+    // Zero nominal slack, and safe anyway: `started` is stamped before spawn(),
+    // so this elapsed time is a whole process launch AHEAD of the 600ms the
+    // child then waits on its own clock. Load only pushes it further up, and a
+    // lower bound cannot fail from being slow. Don't "fix" it by tightening
+    // something else here.
     expect(Date.now() - started).toBeGreaterThanOrEqual(600);
   });
 

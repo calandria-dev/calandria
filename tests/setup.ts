@@ -113,6 +113,26 @@ delete process.env.CALANDRIA_TURN_IDLE_NUDGE;
 // credential strip above.
 delete process.env.CODEX_INHERIT_MCP;
 
+// Hermetic clock ZONE, which is not the same thing as a hermetic clock. Node
+// re-reads process.env.TZ for both Date's local-component getters and Intl, so
+// setting it here (before the module graph loads) gives the whole suite one
+// zone instead of the developer's. Without it a failure that only reproduces at
+// UTC+05:45 is unreproducible from a UTC machine, and the CI signal we have is
+// silently narrower than it looks: GitHub runners are UTC, so the suite has
+// only ever been exercised in one zone.
+//
+// UTC on purpose, and it is NOT a fix for the midnight class — UTC has a
+// midnight too, and pinning it moves every developer's run onto the SAME
+// boundary CI already sits on rather than removing the boundary. What it buys
+// is that the boundary is in a known place: a test that is clock-shaped fails
+// identically everywhere instead of only on whoever's laptop is 11 hours off.
+// Varying the zone is a separate, deliberate job (.github/workflows/test-clock.yml),
+// which sets CALANDRIA_TEST_TZ to override this and runs the suite parked
+// before a calendar boundary. That env var is the seam for reproducing such a
+// failure locally; it is test-only, so it is not in lib/config.ts or
+// .env.example.
+process.env.TZ = process.env.CALANDRIA_TEST_TZ || "UTC";
+
 // Hermetic git: pin all config to a file we control so the suite never depends
 // on (or mutates) the user's identity, hooks, signing, or default-branch setup.
 const gitconfig = path.join(root, "gitconfig");

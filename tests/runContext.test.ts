@@ -39,6 +39,10 @@ describe("run context", () => {
       taskId: "t1", id: "ask-1", attendedMs: 60_000, unattendedMs: 45_000,
     });
     expect(result).toEqual({ expired: "unattended" });
-    expect(Date.now() - started).toBeLessThan(2_000);
+    // Discriminates "settled immediately" from "parked on the 45s cap", so any
+    // bound comfortably under 45s does the job. 10s rather than something
+    // tighter because a loaded runner must not be able to fail a test whose
+    // subject is a code path that does no waiting at all.
+    expect(Date.now() - started).toBeLessThan(10_000);
   });
 });
