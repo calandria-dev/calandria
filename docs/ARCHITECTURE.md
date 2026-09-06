@@ -232,8 +232,21 @@ StreamEvent the runner publishes without persisting: the completed item still pr
 ever reaches whoever has the task open, where `app/shell/useTaskStream.ts` grows one client-only
 bubble and drops it as soon as a real row lands under it. The Claude driver emits the same event
 from the SDK's partial messages (`includePartialMessages`), covering text and thinking blocks.
-`item/commandExecution/outputDelta` is deliberately not mapped: a command's output belongs to its
-tool row's peek, which has no live half.
+
+`item/commandExecution/outputDelta` becomes the second such event, `tool_output_delta`. A command's
+output is not a reply, so it grows the peek of the tool row `item/started` already produced rather
+than a bubble: the runner looks the row up in the same `toolMsgs` map `tool_result` uses, attaches
+its DB message id and publishes without persisting, and the client appends into `ToolData.peek`
+through `growOutputPeek()` in `app/shell/format.ts` — a six-line tail with a 500-character bound
+per line, so a build that prints 50k lines never accumulates in React state. The completed item
+still writes the whole `aggregated_output` through `tool_result`, whose peek replaces the live one,
+so a reload shows the settled output instead of replaying the build. The chunks are base64 over the
+raw bytes a pty produced and a multi-byte character can straddle two of them, so the mapper decodes
+through one `TextDecoder` per item in `{ stream: true }` mode rather than per chunk.
+
+This half is Codex-only. The Agent SDK's `SDKToolProgressMessage` carries `elapsed_time_seconds`
+and no output at all, and a live probe over a six-second `Bash` command emitted none of them (nor
+any `local_command_output`), so there is nothing on the Claude side to wire.
 
 `policy.ts` maps the five permission modes to codex's sandbox, approval policy, reviewer and
 writable roots (docs/AGENTS.md has the table); reasoning presets map to

@@ -17,6 +17,8 @@
 //                                   real suggest_task tool uses
 //   e2e:retitle=<title>             rename the RUNNING task through the same
 //                                   shared logic the real update_task tool calls
+//   e2e:output=<a>|<b>|<c>          stream a command's output into its tool row's
+//                                   peek one line at a time, then settle the row
 //   e2e:permission=<command>        raise a Bash permission card and park on it
 //   e2e:blocked=<command>           a Bash call the CLI refused on its own — an
 //                                   already-decided card, no buttons, nothing parked
@@ -52,7 +54,7 @@ import {
   blockedReason,
   DENIED_BY_USER,
 } from "@/lib/permissions";
-import { summarizeFailure } from "@/lib/agents/shared";
+import { summarizeFailure, summarizeResult } from "@/lib/agents/shared";
 import { PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS } from "@/lib/config";
 import { MOCK_CAPABILITIES } from "./capabilities";
 
@@ -374,6 +376,24 @@ export const mockDriver: AgentDriver = {
         if (signal?.aborted) return;
       }
       yield { type: "assistant", content: typed };
+    }
+
+    // Live command output. Emits a tool row, streams its output into the row's
+    // peek one fragment at a time, then settles it with the whole thing — the
+    // exact sequence a Codex commandExecution produces, so a spec can prove the
+    // peek grows WHILE the command runs rather than only when it finishes.
+    const streamed = instructionText.match(/e2e:output=([^\n]+)/)?.[1]?.trim();
+    if (streamed) {
+      const id = `mock-cmd-${task.id}-g${task.generation}`;
+      const lines = streamed.split("|");
+      yield { type: "tool", id, name: "Bash", title: "\u276f mock-command", detail: "mock-command" };
+      for (const line of lines) {
+        yield { type: "tool_output_delta", id, delta: `${line}\n` };
+        await sleep(TYPE_DELTA_MS, signal);
+        if (signal?.aborted) return;
+      }
+      const whole = `${lines.join("\n")}\n`;
+      yield { type: "tool_result", id, content: whole, isError: false, peek: summarizeResult("output", whole) };
     }
 
     yield {

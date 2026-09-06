@@ -659,6 +659,17 @@ export type StreamEvent =
   // `cutOff`: the agent CLI answered this call itself and it never reached
   // Calandria (lib/agentToolGuard.mjs); `content` is the driver's rewrite.
   | { type: "tool_result"; id: string; content: string; isError: boolean; peek?: ToolPeek; cutOff?: boolean }
+  // A fragment of a running command's output, `id` being the tool_use id of
+  // the row it belongs to. The second ephemeral event, on the same rule as
+  // `assistant_delta`: published to whoever is watching, never persisted. The
+  // completed call still writes the whole `aggregated_output` through
+  // `tool_result`, which overwrites the peek these grew, so a reload shows the
+  // settled output rather than replaying the build. Deliberately NOT a
+  // `partial` flag on `tool_result`: that event is a settlement — it writes
+  // `result`, `isError` and the final peek — and a consumer that had to tell
+  // the two apart would get it wrong once. A driver that emits none is not
+  // degraded; the output simply appears when the command finishes.
+  | { type: "tool_output_delta"; id: string; delta: string }
   | { type: "ask"; id: string; questions: AskQuestion[] }
   | { type: "ask_answered"; id: string; answers: AskAnswers }
   | { type: "ask_dismissed"; id: string; dismissal: AskDismissal }

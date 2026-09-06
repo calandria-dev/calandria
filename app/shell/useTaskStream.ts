@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import type { TaskStreamEvent, ToolData, AskAnswers, AskDismissal, PermissionOutcome } from "@/lib/types";
 import { jget } from "./api";
-import { contextPct } from "./format";
+import { contextPct, growOutputPeek } from "./format";
 import type { Msg, ProjectRow, TaskRow } from "./types";
 
 // The id of the one client-only row that renders live typing. A single reserved
@@ -206,6 +206,32 @@ export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, s
             try { const d = JSON.parse(m.content) as ToolData; d.result = ev.content; d.isError = ev.isError; if (ev.peek) d.peek = ev.peek; return { ...m, content: JSON.stringify(d) }; } catch { return m; }
           }),
         };
+      });
+    } else if (ev.type === "tool_output_delta") {
+      // A running command's output, growing the peek of the row already on
+      // screen. Same lookup as tool_result — DB message id first so a row that
+      // arrived in the snapshot still matches, in-memory tool_use id second —
+      // because this reaches INTO a row rather than appending one, and there is
+      // nothing to create if the lookup misses.
+      setMsgsByTask((prev) => {
+        const arr = prev[taskId] ?? [];
+        let hit = false;
+        const next = arr.map((m) => {
+          if (m.role !== "tool" || (m.id !== ev.msgId && m.toolId !== ev.id)) return m;
+          try {
+            const d = JSON.parse(m.content) as ToolData;
+            // The settled result wins: once tool_result has written the whole
+            // output, a straggling fragment must not shrink the peek back to a
+            // six-line tail.
+            if (d.result !== undefined) return m;
+            d.peek = growOutputPeek(d.peek, ev.delta);
+            hit = true;
+            return { ...m, content: JSON.stringify(d) };
+          } catch { return m; }
+        });
+        // Nothing matched: leave the state object alone so React can bail out
+        // of the re-render, the way dropLive does.
+        return hit ? { ...prev, [taskId]: next } : prev;
       });
     } else if (ev.type === "ask") {
       const data: ToolData = { title: "Question for you", ask: { id: ev.id, questions: ev.questions } };

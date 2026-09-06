@@ -830,6 +830,16 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         // sessions by it, and a live bubble without one lands in a session of
         // its own, ahead of the whole conversation.
         publish(id, { ...ev, generation: gen });
+      } else if (ev.type === "tool_output_delta") {
+        // The second event on that rule, for a command's output rather than a
+        // reply. It carries the row's DB id so a watcher who joined mid-turn —
+        // whose tool rows came from the snapshot and so have no in-memory
+        // tool_use id — can still find the row to grow, exactly as tool_result
+        // is matched. A fragment for a call we never wrote a row for (a driver
+        // streaming output for something it never announced) has nothing to
+        // reach into and is dropped rather than published.
+        const t = toolMsgs[ev.id];
+        if (t) publish(id, { ...ev, msgId: t.dbId, generation: gen });
       } else if (ev.type === "tool") {
         // A file the call wrote is stored worktree-RELATIVE, and only when it
         // is inside the worktree: that's the form the file route takes, and a

@@ -62,10 +62,20 @@ export interface AppServerTurnState {
   warned: Set<string>;
   /** Which reasoning-summary paragraph the last delta belonged to; null before any. */
   summaryIndex: number | null;
+  /**
+   * One streaming UTF-8 decoder per command item. `outputDelta` chunks are
+   * base64 over the raw BYTES a pty produced, so a multi-byte character can
+   * straddle two of them (2 bytes of a 3-byte glyph in one chunk, the third in
+   * the next) and decoding each chunk on its own would emit U+FFFD twice where
+   * the output holds one character. A `TextDecoder` in `{ stream: true }` mode
+   * holds the incomplete tail back until the rest arrives. Per item because two
+   * commands can interleave their output within a turn.
+   */
+  decoders: Map<string, TextDecoder>;
 }
 
 export function newAppServerTurnState(): AppServerTurnState {
-  return { turnId: null, total: null, contextTokens: null, warned: new Set(), summaryIndex: null };
+  return { turnId: null, total: null, contextTokens: null, warned: new Set(), summaryIndex: null, decoders: new Map() };
 }
 
 /** What a notification maps to: SDK-shaped events for ./events.ts, plus the few things it has no shape for. */
@@ -86,6 +96,14 @@ export interface Mapped {
    * server's own extra rather than something ./events.ts could map.
    */
   delta?: { id: string; kind: "assistant" | "reasoning"; text: string };
+  /**
+   * A fragment of a running command's output, `id` being the item it belongs
+   * to — which is also the tool_use id of the row already on the transcript,
+   * since ./events.ts keys `tool` events by the item id verbatim. Kept off
+   * `events` for the same reason as `delta`: it grows a row rather than
+   * producing one, and the SDK's ThreadEvent union has no shape for it.
+   */
+  outputDelta?: { id: string; text: string };
 }
 
 const NONE: Mapped = { events: [] };
@@ -108,9 +126,7 @@ export function mapNotification(method: string, params: unknown, state: AppServe
     }
     // Live typing. The item's own `item/completed` still carries the full text
     // and is still what gets persisted, so dropping these costs correctness
-    // nothing — it only costs the wait. `item/commandExecution/outputDelta` is
-    // deliberately not here: a command's output belongs to its tool row's peek,
-    // not to a reply bubble, and that row has no live half yet.
+    // nothing — it only costs the wait.
     case "item/agentMessage/delta":
     case "item/reasoning/summaryTextDelta": {
       if (!forThisTurn(p, state)) return NONE;
@@ -123,6 +139,25 @@ export function mapNotification(method: string, params: unknown, state: AppServe
       const sep = kind === "reasoning" && p.summaryIndex !== state.summaryIndex && state.summaryIndex != null ? "\n" : "";
       if (kind === "reasoning") state.summaryIndex = (p.summaryIndex as number | undefined) ?? 0;
       return { events: [], delta: { id: String(p.itemId ?? ""), kind, text: sep + text } };
+    }
+    // A running command's output, base64 over the bytes the pty produced. It
+    // is not a reply, so it rides `outputDelta` rather than `delta`: it grows
+    // the peek of the tool row `item/started` already put on the transcript,
+    // and `item/completed` still carries the whole `aggregated_output` that
+    // gets persisted over the top.
+    case "item/commandExecution/outputDelta": {
+      if (!forThisTurn(p, state)) return NONE;
+      const chunk = typeof p.chunk === "string" ? p.chunk : "";
+      if (!chunk) return NONE;
+      const id = String(p.itemId ?? "");
+      let dec = state.decoders.get(id);
+      if (!dec) state.decoders.set(id, (dec = new TextDecoder()));
+      // `stream: true` holds back a multi-byte character split across chunks.
+      const text = dec.decode(Buffer.from(chunk, "base64"), { stream: true });
+      // A chunk that was only the first half of one character decodes to
+      // nothing; there is no fragment to publish yet.
+      if (!text) return NONE;
+      return { events: [], outputDelta: { id, text } };
     }
     case "turn/plan/updated": {
       if (!forThisTurn(p, state)) return NONE;
