@@ -744,7 +744,7 @@ async function* runTurn(
   // text natively but a PDF, an archive or a spreadsheet needs a shell tool.
   // Prompt-only: the persisted transcript keeps the bare markers.
   const prompt = /^\[Attached (image|file): .+\]$/m.test(userText)
-    ? `${userText}\n\nEach attachment above is a file staged on disk at that absolute path, outside the worktree. Inspect the ones you need before responding — the Read tool handles images and text; for any other format use whatever shell tooling suits it. Don't assume the contents from the filename.`
+    ? `${userText}\n\nEach attachment above is a file staged on disk at that absolute path, outside the worktree. Inspect the ones you need before responding: the Read tool handles images and text, and any other format needs whatever shell tooling suits it. Don't assume the contents from the filename.`
     : userText;
 
   const permissionMode = permissionModeFor(permission);

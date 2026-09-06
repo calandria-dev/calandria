@@ -16,7 +16,7 @@ describe("projects.landing_mode", () => {
     expect(project.landing_mode).toBe("merge");
     const task = createTask({ project_id: project.id, title: "Do a thing" });
     expect(buildProjectContext(project, task)).toContain(
-      "Base branch: main — this worktree was cut from it, Sync catches up to it, and Merge lands into it."
+      "Base branch: main. This worktree was cut from it, Sync catches up to it, and Merge lands into it."
     );
   });
 
