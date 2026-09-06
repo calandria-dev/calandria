@@ -133,7 +133,7 @@ function AgentsSection({ defaultAgent, appDefaults, setAppDefault, onChanged }: 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
       <div className="hlp" style={{ marginTop: 0 }}>
-        Each task runs as a coding agent. Connect an agent&apos;s subscription login (or API key) once and it becomes selectable for new tasks. {def === "claude" ? "Claude is the default and runs the app's own jobs (summaries, recaps), so keep it connected." : ""}
+        Each task runs as a coding agent. Connect a subscription login or API key once to make it selectable for new tasks. {def === "claude" ? "Claude is the default and runs Calandria's own jobs (summaries, recaps); keep it connected." : ""}
       </div>
       {agents.map((a) => (
         <div key={a.id} className="field" style={{ marginBottom: 0 }}>
@@ -232,7 +232,7 @@ function GatewayCard({ gateway, onChanged }: { gateway: GatewayHealthT; onChange
         {" "}<code className="ctx-mono">CALANDRIA_LITELLM_BASE_URL</code>.
       </div>
       {gateway.database === false && (
-        <div className="hlp">Keys, budgets and spend need LiteLLM&apos;s database. This proxy is running without one, so the card shows liveness, version and model count only.</div>
+        <div className="hlp">Keys, budgets and spend need LiteLLM&apos;s database, which this proxy doesn&apos;t have. The card shows liveness, version and model count only.</div>
       )}
       {gateway.database === true && (
         <div className="hlp">
@@ -245,15 +245,15 @@ function GatewayCard({ gateway, onChanged }: { gateway: GatewayHealthT; onChange
       )}
       {!!gateway.gemini_missing_models?.length && (
         <div className="hlp wiz-warn">
-          {Icon.bolt()} Antigravity uses <code className="ctx-mono">{gateway.gemini_missing_models.join(", ")}</code>, not in this gateway&apos;s catalog.
-          Add {gateway.gemini_missing_models.length === 1 ? "it" : "them"} to LiteLLM&apos;s <code className="ctx-mono">model_list</code>, or an Antigravity turn
-          against this gateway fails with an unhelpful error the moment it makes its side call.
+          {Icon.bolt()} Antigravity uses <code className="ctx-mono">{gateway.gemini_missing_models.join(", ")}</code>, missing from this gateway&apos;s catalog.
+          Add {gateway.gemini_missing_models.length === 1 ? "it" : "them"} to LiteLLM&apos;s <code className="ctx-mono">model_list</code>, or Antigravity turns
+          against this gateway will fail.
         </div>
       )}
       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
         <input type="password" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={key} autoComplete="off"
           placeholder={gateway.has_key ? "a key is set — type a new one to replace it" : "virtual key (sk-…)"}
-          title="The instance's LiteLLM virtual key. Stored 0600 beside the database, never in a project row and never returned to the browser."
+          title="The instance's LiteLLM virtual key, stored 0600 and never sent to the browser."
           onChange={(e) => setKey(e.target.value)} />
         <button className="btn btn-line" disabled={busy || !key.trim()} onClick={() => save(false)}>{Icon.check()} Save key</button>
         {gateway.has_key && <button className="btn btn-ghost" disabled={busy} onClick={() => save(true)}>{Icon.x()} Clear</button>}
@@ -375,9 +375,9 @@ function PermissionRules() {
       <div className="lab">{Icon.check()} Remembered approvals</div>
       <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
         Commands allowed without a prompt: the ones you chose <strong>Always allow</strong> for on a permission
-        card, plus any you add here. They apply to one project and skip the prompt entirely, so revoke anything you
-        no longer want run unattended. A remembered command names a script, not a behaviour: <code>npm test</code>
-        {" "}is whatever the project says it is today.
+        card, plus any you add here. They apply to one project and skip the prompt entirely. Revoke anything you no
+        longer want to run unattended. A remembered command matches by name: <code>npm test</code> runs whatever the
+        project defines that as today.
       </div>
       {projects.length > 0 && (
         <>
@@ -402,11 +402,10 @@ function PermissionRules() {
             </button>
           </div>
           <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-            <strong>And its arguments</strong> remembers only the leading command and subcommand, exactly as the
-            permission card would: <code>git push origin main</code> is stored as <code>git push …</code>, and a line
-            the shell could reinterpret (pipes, <code>$(…)</code>, <code>&amp;&amp;</code>) or one led by a wrapper
-            like <code>sudo</code> can&apos;t be generalized at all. <strong>Exactly</strong> matches that one literal
-            line and nothing else.
+            <strong>And its arguments</strong> remembers only the command and subcommand, the same way the permission
+            card does: <code>git push origin main</code> is stored as <code>git push …</code>. A line with pipes,{" "}
+            <code>$(…)</code>, <code>&amp;&amp;</code>, or a wrapper like <code>sudo</code> can&apos;t be generalized
+            this way. <strong>Exactly</strong> matches only that one literal line.
           </div>
           {error && <ErrNote style={{ marginBottom: 10 }}>{error}</ErrNote>}
           {added && !error && <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>Remembered as <code>{added}</code>.</div>}
@@ -496,7 +495,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
   // pane with, so the copy names it instead. The device list below still
   // shows, and still removes, the phones subscribed elsewhere.
   const pushHelp = push === "desktop_shell"
-    ? "Native notifications are already on: the desktop app raises them itself through your OS, so this window doesn't subscribe to push — that would deliver every event twice. Manage them in your OS notification settings. Push is for phones and other browsers: open Settings there to subscribe one, and it appears in the list here."
+    ? "Native notifications are already on: the desktop app raises them through your OS, so this window doesn't also subscribe to push. Manage them in your OS notification settings. Push is for phones and other browsers: open Settings there to subscribe one, and it appears in the list here."
     : push === "insecure"
     ? "Push needs a secure origin, like every notification does. Reach the instance over https or as localhost."
     : push === "needs_install"
@@ -511,7 +510,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
   const kinds: [string, string, string][] = [
     ["notify_awaiting_input", "A task is waiting for input", "An agent asked a question, needs a tool approved, or ended its turn with the work back in your hands. Either way the task has stopped until you pick it up."],
     ["notify_turn_failed", "A turn failed", "The session died: a dead login, a spent quota, a full context window, or a crash."],
-    ["notify_schedule_failed", "A scheduled run failed", "A schedule fired and got nowhere. Nobody is watching at 08:30, so this is the one failure with no other witness."],
+    ["notify_schedule_failed", "A scheduled run failed", "A schedule fired and got nowhere, with nobody watching to notice otherwise."],
   ];
 
   async function sendTest() {
@@ -559,7 +558,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
             // from a channel the page can't see. The desktop app raises them
             // from outside the window, so it keeps working with this window
             // hidden to the tray.
-            ? "The desktop app handles these itself, so the page's own channel is switched off — that's what stops every event arriving twice. Notifications come through your OS whether or not this window is in front, and clicking one opens the task."
+            ? "The desktop app handles these itself; this page's own channel is switched off to avoid duplicates. Notifications come through your OS whether or not this window is in front, and clicking one opens the task."
             : perm === "insecure"
             ? "Browsers only allow notifications on a secure origin, and this page is plain http. No site setting can change that. Reach the instance over https (a reverse proxy or tunnel, see the self-hosting docs and PUBLIC_BASE_URL) or open it as localhost."
             : perm === "unsupported"
@@ -568,7 +567,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
                 ? "This browser is allowed to show notifications. They appear only when you aren't already looking at the task."
                 : perm === "denied"
                   ? "You've blocked notifications for this site. Calandria can't ask again. Unblock it in your browser's site settings for this address."
-                  : "Allow notifications so Calandria can reach you when this tab isn't in front of you."}
+                  : "Allow notifications to reach you when this tab isn't in front of you."}
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {perm === "default" && (
@@ -626,7 +625,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
       <div className="field">
         <div className="lab">{Icon.list()} What to notify me about</div>
         <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-          Each of these means a task has STOPPED. Finished turns and new suggestions deliberately stay quiet.
+          Each of these means a task has STOPPED. Finished turns and new suggestions stay quiet.
         </div>
         {kinds.map(([key, label, help]) => {
           const kindOn = appDefaults[key] !== "off";
@@ -1043,7 +1042,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                   note={
                     <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
                       Calandria&apos;s own short jobs on {agentLabel(agents, editAgent)}: <strong>/clear</strong> handoff notes and
-                      project recaps. Both are one turn of text in, text out with no tools, so a small model is usually the right call.
+                      project recaps, each one turn of text in and out with no tools.
                     </div>
                   }
                 />
@@ -1054,9 +1053,9 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                   onChange={(m) => setAppDefault(`job_model_heavy:${editAgent}`, m)}
                   note={
                     <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                      The <strong>Refresh with AI</strong> project-context draft and the <strong>Refresh tag</strong> plan check, which
-                      both explore the repository read-only before deciding something durable — context prepended to every new session,
-                      or which of a tag&apos;s tasks have gone stale. Both read an unfamiliar codebase, so accuracy pays here.
+                      The <strong>Refresh with AI</strong> project-context draft and the <strong>Refresh tag</strong> plan check. Both
+                      explore the repository read-only, then produce something durable: context prepended to every new session, or
+                      which of a tag&apos;s tasks have gone stale.
                     </div>
                   }
                 />
@@ -1083,9 +1082,9 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                 <div className="field">
                   <div className="lab">{Icon.lock()} Default permission mode</div>
                   <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                    How tasks run when their own picker is set to <strong>{INHERIT_LABEL}</strong>. Every mode except <strong>{bypassLabel}</strong>
-                    {" "}parks the turn on a permission card for anything it won&rsquo;t auto-approve, including while you&rsquo;re
-                    away, where an unanswered card declines itself. Pick <strong>{bypassLabel}</strong> for work that must never stop to ask.
+                    How tasks run when their own picker is set to <strong>{INHERIT_LABEL}</strong>. Every mode but <strong>{bypassLabel}</strong>
+                    {" "}can park a turn on a permission card that goes unanswered while you&rsquo;re away. Pick <strong>{bypassLabel}</strong> for
+                    work that must run through unattended.
                   </div>
                   <div className="seg wrap" style={{ maxWidth: 520 }}>
                     {permissionOptions(caps, inheritSub).map((p) => (

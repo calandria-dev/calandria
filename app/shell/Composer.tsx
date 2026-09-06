@@ -380,7 +380,7 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
               // input is still open, so the server sends it straight in (see
               // sendToLingeringTurn in lib/runner.ts). Same button, honest label.
               <div className="send-group">
-                {canSend && <button className={`send${lingering ? "" : " queue"}`} onMouseDown={keepFocus} onClick={submit} title={lingering ? "Send now: the session is held open and picks this up as its next turn" : "Queue this follow-up: it'll send when the current turn ends"}>{Icon.send()}</button>}
+                {canSend && <button className={`send${lingering ? "" : " queue"}`} onMouseDown={keepFocus} onClick={submit} title={lingering ? "Send now: it becomes the session's next turn" : "Queue this follow-up: it'll send when the current turn ends"}>{Icon.send()}</button>}
                 <button className="send stop" onMouseDown={keepFocus} onClick={() => { setStopping(true); onStop(); }} disabled={stopping} title={stopping ? "Stopping…" : "Stop the current turn"}>{Icon.stop()}</button>
               </div>
             ) : (
@@ -405,7 +405,7 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
               onChange={(e) => { addFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }}
             />
             {!disabled && (
-              <button className="hint" style={{ cursor: "pointer" }} title="Attach a file of any type (or drag & drop / paste one). It's staged on disk for the agent to open — never inlined into the prompt." onMouseDown={(e) => { e.preventDefault(); fileRef.current?.click(); }}>{Icon.clip()} attach</button>
+              <button className="hint" style={{ cursor: "pointer" }} title="Attach a file, or drag, drop, or paste one. It's saved to disk for the agent to open, not inlined into the prompt." onMouseDown={(e) => { e.preventDefault(); fileRef.current?.click(); }}>{Icon.clip()} attach</button>
             )}
             <button className="hint" style={{ cursor: "pointer" }} onMouseDown={(e) => { e.preventDefault(); onClear(); }}>{Icon.clear()} /clear</button>
           </div>

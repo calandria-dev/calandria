@@ -347,7 +347,7 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoS
         <div className="hero-blocked" title={`Blocked until done: ${blockedBy!.join(", ")}`}>
           {Icon.lock()} <span>Blocked until {blockedBy!.length === 1 ? <strong>{blockedBy![0]}</strong> : `${blockedBy!.length} tasks`} {blockedBy!.length === 1 ? "is" : "are"} done. Edit the task to change its dependencies.</span>
           <button className="btn btn-line btn-sm" onClick={() => onSetAutoStart(true)} disabled={running}
-            title={`Launch this task's first turn by itself once every blocker is done: ${blockedBy!.join(", ")}`}>
+            title={`Starts automatically once every blocker is done: ${blockedBy!.join(", ")}`}>
             {Icon.bolt()} Start when unblocked
           </button>
         </div>
@@ -371,7 +371,7 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoS
          */}
         {!queued && !blocked && resetAt != null && (
           <button className="btn btn-line" style={{ height: 38, padding: "0 16px", fontSize: 14 }} onClick={() => onQueueStart(deferredStartFor(resetAt))} disabled={running}
-            title="Queue this task to start on its own a minute after the usage window resets, no need to come back for it">
+            title="Starts on its own a minute after the usage window resets">
             {Icon.clock()} Start at reset ({resetClock(resetAt)})
           </button>
         )}
@@ -709,7 +709,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
             // the session is held open for run_in_background work. Say so, or
             // the dots promise imminent output that may be minutes away.
             task.background_pending ? (
-              <div className="msg assistant"><div className="who"><Avatar who="cc" agent={task.agent} /> Agent</div><div className="msg-body"><span style={{ color: "var(--ink-2)", fontStyle: "italic" }}>{task.background_note ? `Session held open: ${task.background_note}. It continues on its own when that settles.` : "Working in background: the session stays open and continues when the task finishes."}</span>{idleTurn && <span className="idle-note" title={IDLE_TITLE}> {idleFor(task.idle_since ?? 0)}.</span>}</div></div>
+              <div className="msg assistant"><div className="who"><Avatar who="cc" agent={task.agent} /> Agent</div><div className="msg-body"><span style={{ color: "var(--ink-2)", fontStyle: "italic" }}>{task.background_note ? `Session held open: ${task.background_note}. It resumes automatically.` : "Working in background. The session stays open until the task finishes."}</span>{idleTurn && <span className="idle-note" title={IDLE_TITLE}> {idleFor(task.idle_since ?? 0)}.</span>}</div></div>
             ) : (
               <div className="msg assistant"><div className="who"><Avatar who="cc" agent={task.agent} /> Agent</div><div className="msg-body">{idleTurn
                 // The dots keep promising output. After this long they are the
