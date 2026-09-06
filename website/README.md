@@ -6,6 +6,10 @@ in `.dockerignore` so it never enters the image. `test.yml` and
 `publish-image.yml` ignore `website/**`; `.github/workflows/website.yml` builds
 and deploys it to Cloudflare Pages (project `calandria-dev`, Direct Upload).
 
+A `docs/**` change triggers `website.yml` too, since the Starlight docs site
+reads `../docs/*.md` in place (below). On a pull request that means a build,
+including the link check, that must pass before merge; on `main` it deploys.
+
 ```bash
 npm ci
 npx playwright install --only-shell chromium   # once; build-time mermaid
