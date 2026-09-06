@@ -33,7 +33,7 @@ export interface AgentPickerOption {
   /**
    * For a permission mode: safe for a run nobody watches. The schedule editor
    * drops "auto" and "default" as the modes that ask or inherit, unless the
-   * driver marks its entry this way — Codex's "auto" is decided by the CLI's
+   * driver marks its entry this way. Codex's "auto" is decided by the CLI's
    * own reviewer and never parks on a human.
    */
   unattended?: boolean;
@@ -443,6 +443,6 @@ export interface AgentSandboxHealth {
   ok: boolean;
   /** The agent's own words for what failed, when it isn't ok. */
   reason: string | null;
-  /** The check couldn't run at all — neither healthy nor broken. */
+  /** The check couldn't run at all: neither healthy nor broken. */
   error: string | null;
 }

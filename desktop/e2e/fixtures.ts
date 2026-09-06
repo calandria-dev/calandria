@@ -206,20 +206,20 @@ function launchArgs(root: string, opts: LaunchOptions): string[] {
   // desktop app shares the lock with the suite, and each would refuse the other.
   args.push(`--user-data-dir=${opts.userDataDir ?? userDataDir(root)}`);
   if (NO_SANDBOX) args.push("--no-sandbox");
-  // The login keychain is the last piece of global machine state this suite
-  // still wrote into, and the only one it could not clean up. `safeStorage`
-  // keeps one generic-password item per app name, so every shell the suite
-  // launches shared ONE item on the developer's or runner's real keychain —
-  // and macOS gates reading such an item on the calling binary being named in
-  // its ACL, answering a binary that is not with an authorization dialog.
+  // The login keychain is a piece of global machine state this suite writes
+  // into and cannot clean up. `safeStorage` keeps one generic-password item
+  // per app name, so every shell the suite launches shares ONE item on the
+  // developer's or runner's real keychain, and macOS gates reading such an
+  // item on the calling binary being named in its ACL, answering a binary
+  // that is not with an authorization dialog.
   //
   // On CI that is fatal rather than annoying. The unpackaged pass runs first
   // and creates the item as `node_modules/electron`; the packaged pass is a
   // different binary, gets the dialog, and hangs on it forever with nobody
-  // there to click it — `safeStorage` is synchronous, so the main thread never
-  // comes back and the app cannot even quit (issue #240; the app's own half of
-  // that is `credentialCipher` in main.js, which no longer asks unless a
-  // credential is actually in play, leaving only the sign-in spec here).
+  // there to click it. `safeStorage` is synchronous, so the main thread never
+  // comes back and the app cannot even quit. `credentialCipher` in main.js no
+  // longer asks unless a credential is actually in play, leaving only the
+  // sign-in spec here.
   //
   // `--use-mock-keychain` is Chromium's own answer, and the reason to prefer it
   // to skipping the spec: OSCrypt still encrypts and decrypts, so the path
@@ -251,8 +251,8 @@ function launchEnv(root: string, port: number, opts: LaunchOptions): Record<stri
     ...inherited,
     ...instanceEnv(root, port),
     // The boot trace `launchShell()` reads when a launch never resolves. Per
-    // instance, and written synchronously by main.js, because the whole point
-    // is to survive a main thread that stopped.
+    // instance, and written synchronously by main.js so it survives a main
+    // thread that stopped.
     CALANDRIA_DESKTOP_LOG_FILE: bootTracePath(root),
     ...(opts.env ?? {}),
   };
@@ -288,10 +288,10 @@ export function bootTrace(shell: Shell): string[] {
  * `electron.launch()` yields no process handle until it succeeds, so the
  * ordinary `shell.log` capture starts too late to see a main process that hung
  * before its first window. Every spec in the file then fails identically, at
- * the same 120s, saying only that Playwright gave up — which is how issue #240
- * survived three runs and three days looking like ten unrelated timeouts. The
- * boot trace is the app's own account of how far it got; the last line in it is
- * the statement that did not return.
+ * the same 120s, saying only that Playwright gave up, which reads as an
+ * unrelated timeout with no clue to the actual cause. The boot trace is the
+ * app's own account of how far it got; the last line in it is the statement
+ * that did not return.
  */
 function launchFailure(root: string, err: unknown): Error {
   const message = err instanceof Error ? err.message : String(err);
@@ -306,7 +306,7 @@ function launchFailure(root: string, err: unknown): Error {
   }
   if (!trace.length) {
     return new Error(
-      `${message}\n\nThe shell wrote no boot trace, so main.js never ran — ` +
+      `${message}\n\nThe shell wrote no boot trace, so main.js never ran; ` +
         `suspect the binary itself (signature, missing payload, wrong architecture).`,
     );
   }

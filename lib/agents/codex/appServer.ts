@@ -118,15 +118,15 @@ export function callAppServer(
       resolve({ ...r, handshook });
     };
 
-    // The answer is in hand, but a caller collecting notifications is here for
-    // the server's startup chatter, which is pushed AROUND the responses rather
-    // than strictly before them. Hold the child open a beat longer and let the
-    // stdout handler keep feeding onNotification until the window closes.
+    // The answer is already decided, but a caller that asked for
+    // notifications also needs the server's startup chatter, which arrives
+    // around the responses rather than strictly before them. Hold the child
+    // open a beat longer so the stdout handler keeps feeding onNotification
+    // until the window closes.
     //
-    // Once armed, the answer is decided: anything that would otherwise settle
-    // the promise during the window (the child exiting, the overall timeout)
-    // resolves THIS result rather than an error about a process we are already
-    // done with. `pending` is what makes that possible.
+    // Once armed, `pending` holds that decided result: the child exiting or
+    // the overall timeout during this window resolves the same result
+    // instead of an error about a process that has already finished.
     let pending: AppServerResult | undefined;
     const finishAfterSettle = (r: AppServerResult) => {
       if (settled || pending) return;
@@ -210,12 +210,12 @@ export interface ConfigWarningProbe {
 /**
  * Every `configWarning` a fresh `codex app-server` emits at startup.
  *
- * These are the CLI's own verdict on its configuration — including the one that
- * says its Linux sandbox cannot be created — and they arrive whether or not an
- * account is logged in, which is what makes this a usable health check rather
- * than a second thing to keep in sync with a turn. The RPC underneath is only a
- * vehicle for the handshake: its answer is discarded, and an error on it (not
- * logged in, for one) still means the server started and had its say.
+ * These are the CLI's own verdict on its configuration, including whether its
+ * Linux sandbox can be created, and they arrive whether or not an account is
+ * logged in. That makes this a usable, self-contained health check. The RPC
+ * underneath is only a vehicle for the handshake: its answer is discarded,
+ * and an error on it (not logged in, for one) still means the server started
+ * and reported its warnings.
  */
 export async function readConfigWarnings(): Promise<ConfigWarningProbe> {
   const warnings: string[] = [];

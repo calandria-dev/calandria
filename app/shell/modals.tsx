@@ -1118,7 +1118,7 @@ function GatewayMcpField({ projectId, value, onChange }: { projectId: string; va
       <div className="hlp" style={{ marginTop: 0, marginBottom: 8 }}>
         Tools the gateway hosts on this key. They appear as{" "}
         <code className="ctx-mono">mcp__&lt;alias&gt;__…</code> in the tool list, gated by the ordinary permission
-        prompt unless you trust the server below. Docs: docs/design/litellm.md.
+        prompt unless you trust the server below. Docs: docs/AGENTS.md.
       </div>
       {servers === null ? (
         <div className="hlp">Loading…</div>
@@ -1522,7 +1522,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
                         title="Key duration, e.g. 30d. Blank means it never expires."
                         onChange={(e) => setGatewayKeyDuration(e.target.value)} />
                     </div>
-                    <div className="hlp">Caps this project&apos;s per-task LiteLLM keys. Leave blank for unlimited budget, or a key that never expires. Docs: docs/design/litellm.md.</div>
+                    <div className="hlp">Caps this project&apos;s per-task LiteLLM keys. Leave blank for unlimited budget, or a key that never expires. Docs: docs/AGENTS.md.</div>
                   </>
                 )}
               </>

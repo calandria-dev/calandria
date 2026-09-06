@@ -1029,7 +1029,7 @@ async function* runTurn(
       permissionMode,
       // Stream the reply as it is written, so the transcript types instead of
       // sitting blank for the length of a message. The extra messages are
-      // handled in one branch above and nowhere else — nothing downstream sees
+      // handled in one branch above and nowhere else: nothing downstream sees
       // them, since the runner publishes an assistant_delta without persisting.
       includePartialMessages: true,
       pathToClaudeCodeExecutable: CLAUDE_PATH,
@@ -1254,8 +1254,8 @@ async function* runTurn(
           });
         } else if (message.type === "stream_event") {
           // Live typing, off `includePartialMessages` below. Nothing here is
-          // persisted — the complete `assistant` message arrives a beat later
-          // and is what the transcript keeps — so this is purely the wait made
+          // persisted: the complete `assistant` message arrives a beat later
+          // and is what the transcript keeps, so this is only the wait made
           // visible. Subagent deltas are skipped for the same reason their
           // text is: a sidechain is not this conversation.
           if (message.parent_tool_use_id == null) {

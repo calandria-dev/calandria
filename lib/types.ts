@@ -305,8 +305,8 @@ export interface TaskDocComment {
   created_at: number;
 }
 
-// The modal-local halves of a document review — TaskDocComment's sibling, one
-// row per (task, file) rather than one per passage. Holds the Edit tab's text
+// The modal-local halves of a document review, TaskDocComment's sibling: one
+// row per (task, file), not one per passage. Holds the Edit tab's text
 // and the General comments note, autosaved so a rail collapse or a reload
 // doesn't lose them, and cleared on Send. `anchor_sha` is the file's blob sha
 // the edit was made against.
@@ -681,11 +681,11 @@ export type StreamEvent =
   // `assistant_delta`: published to whoever is watching, never persisted. The
   // completed call still writes the whole `aggregated_output` through
   // `tool_result`, which overwrites the peek these grew, so a reload shows the
-  // settled output rather than replaying the build. Deliberately NOT a
-  // `partial` flag on `tool_result`: that event is a settlement — it writes
-  // `result`, `isError` and the final peek — and a consumer that had to tell
+  // settled output instead of the incremental build. This is not a
+  // `partial` flag on `tool_result`: that event is a settlement, writing
+  // `result`, `isError` and the final peek, and a consumer that had to tell
   // the two apart would get it wrong once. A driver that emits none is not
-  // degraded; the output simply appears when the command finishes.
+  // degraded; the output appears when the command finishes.
   | { type: "tool_output_delta"; id: string; delta: string }
   | { type: "ask"; id: string; questions: AskQuestion[] }
   | { type: "ask_answered"; id: string; answers: AskAnswers }

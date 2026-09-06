@@ -241,9 +241,9 @@ test("the landing card leads back to the chip, and the palette's feed carries ta
 });
 
 // Self-contained: the cases above rename and then delete the seeded tag, so this
-// one mints its own chips. Two of them, rather than one tag re-described
-// mid-test, because the lit chip survives a reload — re-clicking it after one
-// would shut the strip instead of reopening it.
+// one mints its own chips. Two of them, not one tag re-described mid-test,
+// because the lit chip survives a reload: re-clicking it after one would shut
+// the strip instead of reopening it.
 test("a long description is clamped behind Show more, and the short one gets no toggle", async ({ page, request }) => {
   const short = "Move every route onto AuthService.";
   const long = Array.from({ length: 12 }, (_, i) =>
@@ -276,7 +276,7 @@ test("a long description is clamped behind Show more, and the short one gets no 
   const more = wrap.locator(".gs-desc-more");
   await expect(more).toHaveText("Show more");
   await expect(more).toHaveAttribute("aria-expanded", "false");
-  // The whole point: clamped, the element renders shorter than its content.
+  // Clamped, the element renders shorter than its content.
   const clamped = (await wrap.locator(".gs-desc").boundingBox())!.height;
 
   await more.click();
@@ -284,7 +284,7 @@ test("a long description is clamped behind Show more, and the short one gets no 
   await expect(more).toHaveAttribute("aria-expanded", "true");
   expect((await wrap.locator(".gs-desc").boundingBox())!.height).toBeGreaterThan(clamped);
 
-  // And it collapses again — the toggle has to survive its own expansion, which
+  // And it collapses again: the toggle has to survive its own expansion, which
   // takes the clamp off and leaves nothing overflowing to measure.
   await more.click();
   await expect(more).toHaveText("Show more");

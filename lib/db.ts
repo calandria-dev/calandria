@@ -467,7 +467,7 @@ export function init(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_runbooks_project ON runbooks(project_id);
 
     -- A named, project-scoped label a task can carry: the noun a multi-task
-    -- feature was missing (docs/superpowers/specs/2026-08-27-tags-design.md;
+    -- feature was missing (docs/FEATURES.md;
     -- its one-per-task ancestor is the task-grouping spike from 2026-08-24).
     -- Deliberately NOT a task: no session, no worktree, no status of its own.
     -- Status is derived per read from the members (done when every member is

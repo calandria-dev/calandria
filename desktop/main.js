@@ -175,7 +175,7 @@ let quitting = false;
 // underneath it. See instances.js for the file and its invariants.
 let instancesState = null;
 let instance = null;
-// What each instance's last sign-in produced, keyed by instance id — the
+// What each instance's last sign-in produced, keyed by instance id: the
 // SECRET half of `instancesState`, which is why it is a second map and a second
 // file rather than a field on the row (see instance-auth.js). Kept in memory
 // for the process's life so `onBeforeSendHeaders` can answer synchronously:
@@ -196,7 +196,7 @@ const refreshInFlight = new Map();
 let signInFlow = null;
 // Sessions that already have the header-stamping listener attached, by
 // partition name. `onBeforeSendHeaders` replaces rather than appends, so
-// re-arming is harmless — this only keeps the log honest about when it happened.
+// re-arming is harmless; this only keeps the log honest about when it happened.
 const armedSessions = new Set();
 // The live `ssh -L` child for an `ssh` instance, or null. At most one: one
 // window shows one instance, and the forward belongs to the attach rather
@@ -369,10 +369,8 @@ function main() {
     // Before the attach because an instance whose token is still good should go
     // straight to its app instead of bouncing off its proxy and asking again.
     // After the window because this is the first thing in the chain that can
-    // reach the platform keyring, and a keyring is a dependency the shell does
-    // not get to assume answers — see `credentialCipher`. Nothing here is drawn
-    // in the window, so the only thing the old order bought was a chance for
-    // issue #240 to happen with no window on screen to say so.
+    // reach the platform keyring, and a keyring is a dependency the shell
+    // cannot assume will answer. See `credentialCipher`.
     loadCredentialStore();
     for (const inst of instancesState.instances) {
       if (credentials.has(inst.id)) scheduleRefresh(inst);
@@ -442,7 +440,7 @@ function serviceTokenFor(inst) {
 }
 
 /* ------------------------------------------------------------------------- *
- * Instance sign-in — the Electron half. instance-auth.js and oauth.js hold
+ * Instance sign-in: the Electron half. instance-auth.js and oauth.js hold
  * everything that can be decided without a display; this is the part that
  * needs a session, a browser and a window. docs/DESKTOP_APP.md §8.8.
  * ------------------------------------------------------------------------- */
@@ -480,32 +478,31 @@ function probeEncryption() {
  * LAZY, because asking can cost the app. On macOS the keyring is the login
  * keychain, and reading the app's own generic-password item out of it is
  * subject to that item's ACL: a binary the ACL does not list gets an
- * authorization dialog rather than an answer. A signature that changed since
- * the item was written is enough — an ad-hoc-signed build has a new identity
- * every time it is built — and with nobody there to click the dialog, the main
- * thread never comes back. That was issue #240: the packaged app printed one
- * line, stopped, and every spec in the suite timed out at `electron.launch`.
+ * authorization dialog instead of an answer. A signature that changed since
+ * the item was written is enough (an ad-hoc-signed build gets a new identity
+ * on every build), and with nobody there to click the dialog, the main
+ * thread never returns.
  *
- * Moving the call later does not fix that; a blocked main thread blocks the app
- * wherever the call happens to sit. NOT MAKING IT is what fixes it, and the
- * consumers in instance-auth.js are already shaped for it: `loadCredentials`
- * returns before touching a cipher when the file is absent, `decodeEntry`
- * reads `available` only for an entry that is actually encrypted, and
- * `saveCredentials` reads it only when there is a credential to write. So an
- * install with nothing signed in — a first launch, and every hermetic instance
- * desktop/e2e mints — never asks the keyring anything. When something IS
- * stored, the question is asked at the moment its answer matters, which is
- * also the moment a user is in a position to answer a dialog.
+ * Moving the call later does not help: a blocked main thread blocks the app
+ * wherever the call happens to sit. Not making the call at all is what avoids
+ * it, and the consumers in instance-auth.js are already shaped for that:
+ * `loadCredentials` returns before touching a cipher when the file is absent,
+ * `decodeEntry` reads `available` only for an entry that is actually
+ * encrypted, and `saveCredentials` reads it only when there is a credential
+ * to write. So an install with nothing signed in (a first launch, and every
+ * hermetic instance desktop/e2e mints) never asks the keyring anything. Once
+ * something is stored, the question is asked at the moment its answer
+ * matters, which is also the moment a user is in a position to answer a
+ * dialog.
  *
  * The plaintext reporting is untouched by this. `loaded.plain` is derived from
  * the `enc` marker each entry carries, not from the cipher, so
  * `loadCredentialStore` can still say that secrets are on disk in the clear
  * without a keyring having been consulted at all.
  *
- * CACHED, because the answer describes the process, not the call. It was read
- * per call to avoid capturing it at require time, where it is false until the
- * app is ready and, on Linux, says nothing about which keyring backend
- * Chromium will settle on. Both of those are facts about require time. By the
+ * CACHED, because the answer describes the process, not the call. Reading it
+ * at require time would give false: the app is not ready yet, and on Linux
+ * the keyring backend Chromium settles on is not chosen yet either. By the
  * time anything reads this the app is ready and the backend is chosen, so
  * asking twice buys nothing and risks the hang above a second time.
  */
@@ -525,9 +522,9 @@ function credentialCipher() {
  * on disk in the clear.
  *
  * The line is not noise. safeStorage falling back is invisible otherwise, and
- * the fact it is reporting — that a refresh token for a remote server is
- * readable by anything running as this user — is one somebody should be able
- * to discover from the log rather than by opening the file.
+ * the fact it reports, that a refresh token for a remote server is readable
+ * by anything running as this user, is one somebody should be able to
+ * discover from the log without opening the file.
  */
 function loadCredentialStore() {
   const loaded = loadCredentials({ cipher: credentialCipher() });
@@ -536,7 +533,7 @@ function loadCredentialStore() {
   if (loaded.error) console.log(`[shell] could not read ${loaded.path}: ${loaded.error.message || loaded.error}`);
   if (loaded.plain.length) {
     console.log(
-      `[shell] ${loaded.plain.length} stored credential(s) are NOT encrypted — this system has no keyring safeStorage can use (${loaded.path})`,
+      `[shell] ${loaded.plain.length} stored credential(s) are NOT encrypted: this system has no keyring safeStorage can use (${loaded.path})`,
     );
   }
   if (credentials.size) console.log(`[shell] loaded ${credentials.size} stored instance credential(s)`);
@@ -574,9 +571,9 @@ function clearCredential(id) {
  *
  * Scoping by origin is the whole of why this function exists, and it is not
  * tidiness. A partition is one instance's, but the PAGE in it fetches third
- * parties — an avatar, a font, a link preview — and a listener that stamped the
+ * parties (an avatar, a font, a link preview), and a listener that stamped the
  * bearer token on every request out of that session would hand it to each of
- * them. Reusing `subscriberOrigin` so an `ssh` instance is covered by the same
+ * them. Reuses `subscriberOrigin` so an `ssh` instance is covered by the same
  * rule: its origin is whatever local port the forward bound, not its address.
  */
 function authOriginFor(inst) {
@@ -593,18 +590,17 @@ function authHeadersFor(inst) {
  * Stamp the instance's credential on every request its session makes to it.
  *
  * THIS IS HOW THE SIGN-IN REACHES THE APP. A native flow ends holding a token,
- * and a reverse proxy doing forward-auth wants a credential on the request —
+ * and a reverse proxy doing forward-auth needs a credential on the request,
  * so the shell puts it there, on the page load, on the SSE stream, and on the
  * `/pty` WebSocket upgrade, all of which are ordinary HTTP as far as this
- * listener is concerned. Nothing in the renderer knows it happened, which is
- * the point: the web app is unchanged and unaware, exactly as it is when a
- * cookie jar is doing the same job.
+ * listener is concerned. Nothing in the renderer knows it happened: the web
+ * app is unchanged, exactly as it is when a cookie jar is doing the same job.
  *
- * Synchronous, deliberately. `onBeforeSendHeaders` will wait on an async
+ * Synchronous on purpose. `onBeforeSendHeaders` can wait on an async
  * callback, but making every request wait on a possible token renewal turns one
  * expiring credential into a stalled page load. An expired token contributes
  * nothing (instance-auth.js's `authHeaders`), the request 401s, and
- * `attachOrigin` puts the user on the sign-in screen — a slower recovery than
+ * `attachOrigin` puts the user on the sign-in screen, a slower recovery than
  * an inline refresh and a much smaller thing to get wrong.
  */
 function armAuthHeaders(inst) {
@@ -635,10 +631,10 @@ function armAuthHeaders(inst) {
 /**
  * Renew this instance's token, once, however many callers ask at the same time.
  *
- * Single-flight because the three things that notice an expiring credential —
- * the timer, an attach, a failed probe — all fire within a second of each other,
- * and a provider that rotates refresh tokens treats the second request as a
- * replay of a token the first already spent. That does not fail loudly; it
+ * Single-flight because the three things that notice an expiring credential
+ * (the timer, an attach, a failed probe) can all fire within a second of each
+ * other, and a provider that rotates refresh tokens treats the second request
+ * as a replay of a token the first already spent. That produces no error: it
  * revokes the whole grant, and the user is signed out with no explanation.
  */
 async function refreshNow(inst) {
@@ -702,12 +698,12 @@ async function ensureCredential(inst) {
 /**
  * `fetch` for talking to an instance's identity provider.
  *
- * Through the INSTANCE'S session rather than `globalThis.fetch`, for the reason
- * `probeVersion` is: it gets the proxy settings and the TLS trust store the
- * window has, which on a corporate network is the difference between a working
- * discovery read and an unexplained certificate error. Not `credentials:
- * "include"` — the token endpoint is a public-client exchange and has no
- * business seeing this jar's cookies.
+ * Uses the INSTANCE'S session instead of `globalThis.fetch`, for the same
+ * reason `probeVersion` does: it gets the proxy settings and the TLS trust store
+ * the window has, which on a corporate network is the difference between a
+ * working discovery read and an unexplained certificate error. Does not pass
+ * `credentials: "include"`: the token endpoint is a public-client exchange and
+ * has no business seeing this jar's cookies.
  */
 function instanceFetch(inst) {
   const sess = sessionFor(inst);
@@ -717,11 +713,10 @@ function instanceFetch(inst) {
 /**
  * Run the whole sign-in in the user's real browser and keep what comes back.
  *
- * This is the fix. Every step that used to happen in the window happens in the
- * browser instead — one cookie jar, so a passkey, a security key, a phone with
- * a QR code and a TOTP code all behave the way they do on the web, and the
- * session the `state` was minted against is the session that presents the
- * callback. See oauth.js's header for what was measured going wrong.
+ * Every step runs in the browser, in one cookie jar, so a passkey, a security
+ * key, a phone with a QR code and a TOTP code all behave the way they do on
+ * the web, and the session the `state` was minted against is the session that
+ * presents the callback. See oauth.js's header for the reasoning.
  *
  * Resolves `{ ok: true }`, or `{ ok: false, error }` with a sentence for the
  * sign-in screen. Never throws: every failure here is one the user has to be
@@ -1193,7 +1188,7 @@ async function attachOrigin(inst, origin, seq) {
   let probe = await probeVersion(inst, origin);
   if (seq !== attachSeq) return;
   // An instance with a configured sign-in answers a demand for one by RENEWING
-  // its token or running the flow in the browser — never by rendering somebody
+  // its token or running the flow in the browser, never by rendering somebody
   // else's login page in this window. See `resolveSignIn`.
   if (probe.signIn && inst.auth) {
     const resolved = await resolveSignIn(inst, origin, seq);
@@ -1253,12 +1248,12 @@ async function probeVersion(inst, origin) {
   try {
     res = await sessionFor(inst).fetch(`${origin}/api/version`, {
       credentials: "include",
-      // Explicitly, rather than leaving it to the session listener
+      // Set explicitly instead of leaving it to the session listener
       // `armAuthHeaders` installed. The probe is the request that DECIDES
       // whether the user is signed in, so it must not depend on whether
-      // Electron routes a main-process `session.fetch` through webRequest —
-      // which is an implementation detail and would fail silently by answering
-      // "you need to sign in" for a session that was fine.
+      // Electron routes a main-process `session.fetch` through webRequest,
+      // which is an implementation detail and would fail with no error by
+      // answering "you need to sign in" for a session that was fine.
       headers: { ...(authHeadersFor(inst) || {}) },
       signal: AbortSignal.timeout(8000),
     });
@@ -1600,7 +1595,7 @@ async function showSignInPrompt(inst, { error = "" } = {}) {
     sub: configured
       ? describeAuth(inst.auth)
       : "This instance is behind an identity provider. Signing in through your own browser is the only way a " +
-        "passkey, a security key or a code from your phone can be used — this window cannot reach them.",
+        "passkey, a security key or a code from your phone can be used: this window cannot reach them.",
     error,
     buttons,
   });
@@ -1682,7 +1677,7 @@ function maybeOfferNativeSignIn(url) {
   }
   const text =
     `This is ${new URL(url).host}, not ${inst.name}. If this sign-in needs a passkey, a security key or a code ` +
-    "from your phone, it cannot be finished in this window — set up a browser sign-in instead.";
+    "from your phone, it cannot be finished in this window. Set up a browser sign-in instead.";
   const script = `(() => {
     if (document.getElementById("calandria-signin-offer")) return;
     const el = document.createElement("div");
@@ -1918,8 +1913,8 @@ async function signOutOfInstance(id) {
   await clearInstanceSession(target);
   // The partition is only half of it now. A stored token is a credential this
   // process holds outside the cookie jar, and a sign-out that emptied the jar
-  // and left the token would re-authenticate on the very next request — which
-  // is a sign-out button that visibly does nothing.
+  // and left the token would re-authenticate on the very next request, making
+  // the sign-out button visibly do nothing.
   clearCredential(target.id);
   console.log(`[shell] signed out of ${target.name}`);
   // Its stream is about to start failing auth, and its counts are from a
@@ -2169,11 +2164,11 @@ function instanceMenuTemplate() {
 /**
  * The two sign-in verbs for the instance on screen, or nothing for `local`.
  *
- * Here as well as on the sign-in screen because the screen is only reached when
- * the instance turned the app away — and the two moments somebody reaches for
- * this are the one where they want to sign in BEFORE it does (a token they know
- * is about to lapse) and the one where they are already looking at a working
- * app and want to change how it authenticates.
+ * Here as well as on the sign-in screen because the screen is only reached
+ * when the instance turned the app away, and the two moments somebody reaches
+ * for this are the one where they want to sign in BEFORE it does (a token
+ * they know is about to lapse) and the one where they are already looking at
+ * a working app and want to change how it authenticates.
  */
 function instanceSignInMenuItems() {
   const inst = instance;
@@ -2201,9 +2196,9 @@ function instanceSignInMenuItems() {
  * Sign in from the menu, then reload the instance with what it produced.
  *
  * The reload is the point. A sign-in that stored a token and left the page
- * showing whatever it was showing — an error, a login form, a stale app — would
+ * showing whatever it was showing (an error, a login form, a stale app) would
  * look like it had not worked, and every request the page then made would be
- * the first one to carry the new credential without the page knowing why.
+ * the first one to carry the new credential with no visible reason why.
  */
 async function signInFromMenu(id) {
   const inst = findInstance(instancesState, id);

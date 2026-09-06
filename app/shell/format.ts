@@ -587,12 +587,12 @@ export const LIVE_OUTPUT_LINES = 6;
 export const LIVE_OUTPUT_LINE_CHARS = 500;
 
 // Grow a live output peek by one fragment. The last kept line is the partial
-// one — a fragment rarely ends on a line boundary — so a new fragment continues
-// it rather than starting a line of its own. `\r` counts as a break alongside
-// `\n`: a spinner rewrites its line with a bare carriage return, and keeping
-// the last few states of it beats one line that grows forever. A trailing empty
-// line is kept rather than trimmed, both because the next fragment continues it
-// and because `summarizeResult` leaves the same one on a settled peek.
+// one, since a fragment rarely ends on a line boundary, so a new fragment
+// continues it instead of starting a line of its own. `\r` counts as a break
+// alongside `\n`: a spinner rewrites its line with a bare carriage return, and
+// keeping the last few states of it avoids one line that grows forever. A
+// trailing empty line stays: the next fragment continues it, and
+// `summarizeResult` leaves the same one on a settled peek.
 export function growOutputPeek(peek: ToolPeek | undefined, delta: string): ToolPeek {
   // Only ever grows a lines peek. Any other kind belongs to a different tool
   // (a diff, a checklist) and must not be overwritten by a stray fragment.

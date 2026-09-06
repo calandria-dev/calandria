@@ -838,9 +838,9 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         publish(id, { ...ev, generation: gen });
       } else if (ev.type === "tool_output_delta") {
         // The second event on that rule, for a command's output rather than a
-        // reply. It carries the row's DB id so a watcher who joined mid-turn —
+        // reply. It carries the row's DB id so a watcher who joined mid-turn,
         // whose tool rows came from the snapshot and so have no in-memory
-        // tool_use id — can still find the row to grow, exactly as tool_result
+        // tool_use id, can still find the row to grow, exactly as tool_result
         // is matched. A fragment for a call we never wrote a row for (a driver
         // streaming output for something it never announced) has nothing to
         // reach into and is dropped rather than published.

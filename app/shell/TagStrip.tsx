@@ -378,17 +378,18 @@ export function TagStrip({ tag, members, allTags, projectBranch, originTask, onS
   }, [tag.id, tag.name, tag.description, tag.color, tag.base_branch]);
 
   // A tag description is free prose and some run to paragraphs, so the strip
-  // clamps it and puts the rest behind a toggle. Expanding is a reading gesture
-  // rather than a preference, so it isn't persisted and it drops when another
-  // chip is lit — the same call `useExpanded` makes for suggestion rows.
+  // clamps it and puts the rest behind a toggle. Expanding is a reading
+  // gesture: it is not persisted and drops when another chip is lit, matching
+  // the call `useExpanded` makes for suggestion rows.
   useEffect(() => { setDescOpen(false); }, [tag.id]);
 
-  // Whether the clamp actually bites is MEASURED, not guessed from length: the
-  // strip is as wide as the task column, which the user drags, so one sentence
-  // is one line at one width and four at another. A character threshold would
-  // offer "Show more" over text already fully on screen. Skipped while open,
-  // because the clamp is off then and the element can't report an overflow —
-  // measuring there would retract the toggle that collapses it again.
+  // Whether the clamp actually bites is measured directly from the DOM, since
+  // the strip is as wide as the task column, which the user drags, so one
+  // sentence is one line at one width and four at another. A character
+  // threshold would offer "Show more" over text already fully on screen.
+  // Skipped while open, because the clamp is off then and the element has no
+  // overflow to measure: checking would retract the toggle that collapses it
+  // again.
   useEffect(() => {
     const el = descRef.current;
     if (!el || descOpen) return;

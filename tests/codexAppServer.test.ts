@@ -6,10 +6,10 @@ import path from "node:path";
 
 // The Codex app-server transport end to end against a FAKE `codex` binary
 // (tests/fixtures/codex/fake-app-server.mjs) that speaks the v2 JSON-RPC
-// protocol: the handshake, thread start/resume, the turn, and — the point of
-// the transport — the server's approval requests, answered through the same
-// permission card, rules and /answer registry the Claude driver's gate uses.
-// The real driver's runTurn() runs; only the binary is swapped.
+// protocol: the handshake, thread start/resume, the turn, and the server's
+// approval requests, answered through the same permission card, rules and
+// /answer registry the Claude driver's gate uses. The real driver's
+// runTurn() runs; only the binary is swapped.
 
 vi.hoisted(() => {
   process.env.CODEX_TRANSPORT = "app-server";
@@ -133,7 +133,7 @@ describe("codex app-server transport", () => {
 
     // The thread was started with the mode's policy, and the turn with the
     // FULL sandbox policy, writable roots included (thread/start can't carry
-    // them — verified against 0.153.0).
+    // them, verified against 0.153.0).
     expect(logged("thread/start")).toMatchObject({ sandbox: "workspace-write", approvalPolicy: "on-request", approvalsReviewer: "user" });
     const start = logged("turn/start") as { sandboxPolicy: { type: string; writableRoots: string[]; networkAccess: boolean }; input: { type: string; text: string }[] };
     expect(start.sandboxPolicy.type).toBe("workspaceWrite");
@@ -153,9 +153,9 @@ describe("codex app-server transport", () => {
     expect(result.content).toContain('decision="accept"');
     expect((evs.find((e) => e.type === "assistant") as Ev<"assistant">).content).toBe("all done");
     // Live typing: the deltas the CLI pushes while it writes, keyed by the item
-    // they belong to and split reply-from-reasoning. They are an EXTRA — the
-    // completed item above still carries the whole text — and they all arrive
-    // before it, which is the entire point.
+    // they belong to and split reply-from-reasoning. They are extra: the
+    // completed item above still carries the whole text, and all deltas
+    // arrive before it.
     const deltas = evs.filter((e) => e.type === "assistant_delta") as Ev<"assistant_delta">[];
     expect(deltas.filter((d) => d.kind === "reasoning").map((d) => `${d.id}:${d.delta}`)).toEqual(["item-r:weighing ", "item-r:options"]);
     expect(deltas.filter((d) => d.kind === "assistant").map((d) => `${d.id}:${d.delta}`)).toEqual(["item-msg:all ", "item-msg:done"]);
@@ -392,8 +392,8 @@ describe("codex app-server transport", () => {
     // A running command's output follows the same rule, one row deeper: the
     // fragments reached this subscriber carrying the DB id of the tool row they
     // grow (a watcher who joined mid-turn has no in-memory tool_use id to match
-    // on), and what the DB kept is the item's own aggregated_output — none of
-    // the streamed text is anywhere in the transcript.
+    // on), and the DB keeps the item's own aggregated_output. None of the
+    // streamed text is anywhere in the transcript.
     const outs = events.filter((e) => e.type === "tool_output_delta") as Extract<TaskStreamEvent, { type: "tool_output_delta" }>[];
     expect(outs.map((o) => o.delta).join("")).toBe("step 1\nstep 2 café\n");
     const cmdRow = listMessages(task.id).find((m) => m.role === "tool" && (JSON.parse(m.content) as ToolData).title.includes("npm test"));

@@ -152,7 +152,7 @@ test("both menus carry the instance list as a radio group", async () => {
   // active instance here is a remote one. It is the offer of a browser sign-in,
   // and it is the only route to that dialog for somebody who is looking at a
   // working app rather than at the sign-in screen. A `local` instance gets
-  // neither it nor `instance-signin` — see the case below.
+  // neither it nor `instance-signin`, see the case below.
   expect(items.filter((i) => i.type !== "separator").map((i) => i.id)).toEqual([
     "instance-local",
     "instance-a1f3",

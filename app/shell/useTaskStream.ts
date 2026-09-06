@@ -12,12 +12,12 @@ import type { Msg, ProjectRow, TaskRow } from "./types";
 // persisted message id, which the server mints.
 const LIVE_MSG_ID = "__live__";
 
-// Events that put a new row IN the transcript, and therefore supersede the live
-// bubble — most often the completed `assistant` message carrying the very text
-// that was just typed out. Everything else is left alone deliberately: the
-// meters (usage, context) would blink the reply out a beat before its final
-// form arrives, since the Claude driver reports them off the same message the
-// text came in, and the settling events (tool_result, ask_answered,
+// Events that put a new row IN the transcript, and therefore supersede the
+// live bubble: most often the completed `assistant` message carrying the very
+// text that was just typed out. Everything else is left alone: the meters
+// (usage, context) would blink the reply out a beat before its final form
+// arrives, since the Claude driver reports them off the same message the text
+// came in, and the settling events (tool_result, ask_answered,
 // permission_decided) only finish rows that are already on screen.
 const ROW_EVENTS = new Set([
   "user", "assistant", "tool", "ask", "permission", "permission_denied",
@@ -209,9 +209,9 @@ export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, s
       });
     } else if (ev.type === "tool_output_delta") {
       // A running command's output, growing the peek of the row already on
-      // screen. Same lookup as tool_result — DB message id first so a row that
-      // arrived in the snapshot still matches, in-memory tool_use id second —
-      // because this reaches INTO a row rather than appending one, and there is
+      // screen. Same lookup as tool_result: DB message id first so a row that
+      // arrived in the snapshot still matches, in-memory tool_use id second.
+      // This reaches INTO a row instead of appending one, and there is
       // nothing to create if the lookup misses.
       setMsgsByTask((prev) => {
         const arr = prev[taskId] ?? [];

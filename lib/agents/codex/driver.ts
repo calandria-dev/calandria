@@ -61,7 +61,7 @@ export function calandriaMcpConfig(
   project: Project,
   task: Task,
   inherited: Record<string, DisabledMcpServer> = {},
-  // Hosted LiteLLM gateway MCP servers (docs/design/litellm.md, "Mounting, per
+  // Hosted LiteLLM gateway MCP servers (docs/AGENTS.md, "Mounting, per
   // driver") the caller has already decided to mount: a param, not a call in
   // here, for the same pure-function reason `inherited` is. The decision needs
   // the task's resolved permission mode (see runTurn below), which this
@@ -288,7 +288,7 @@ async function* runTurn(
   // Advance the thread's cumulative baseline the moment a turn's usage is
   // mapped, not at the end of the run: a crash (or a Stop) between here and
   // turn end would otherwise make the NEXT turn re-count everything this one
-  // already billed. The session row exists by now — the runner persists it
+  // already billed. The session row exists by now: the runner persists it
   // when it consumes the `session` event yielded first.
   const persistBaseline = () => {
     if (!state.cumDirty) return;
@@ -298,11 +298,11 @@ async function* runTurn(
 
   if (CODEX_TRANSPORT === "app-server") {
     // Every configWarning the server pushes goes to both classifiers: one
-    // decides whether the CLI downgraded our approval policy, the other
+    // decides whether the CLI downgraded the approval policy, the other
     // whether its sandbox is dead. A turn that ends without the second one
     // having fired is proof from a freshly spawned server that the sandbox
-    // works, so it clears the flag — a user who has just fixed their sysctl
-    // doesn't have to find a button.
+    // works, so it clears the flag automatically once a sysctl fix takes
+    // effect, with no button required.
     let sandboxWarned = false;
     let sawSession = false;
     const onWarning = (text: string) => {
@@ -346,10 +346,10 @@ async function* runTurn(
 }
 
 // The exec transport: `codex exec --experimental-json` through
-// @openai/codex-sdk. Approval requests never reach the host — the CLI rejects
-// them itself — so the asking modes are sent the never-asking policy here and
-// behave like acceptEdits; ./policy.ts's writable roots still apply via
-// `--add-dir`, so commits work from a worktree under the sandbox.
+// @openai/codex-sdk. Approval requests never reach the host, since the CLI
+// rejects them itself, so the asking modes are sent the never-asking policy
+// here and behave like acceptEdits; ./policy.ts's writable roots still apply
+// via `--add-dir`, so commits work from a worktree under the sandbox.
 async function* runExecTurn(a: {
   task: Task;
   project: Project;
@@ -371,7 +371,7 @@ async function* runExecTurn(a: {
   const threadOptions: ThreadOptions = {
     workingDirectory: a.cwd,
     // Worktrees are git repos, but non-git projects and the cwd fallback may not
-    // be — skip the check so codex never hard-errors on a missing repo.
+    // be, so skip the check to avoid a hard error on a missing repo.
     skipGitRepoCheck: true,
     sandboxMode: policy.sandbox as SandboxMode,
     ...(approval ? { approvalPolicy: approval as ApprovalMode } : {}),

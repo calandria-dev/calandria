@@ -365,7 +365,7 @@ export const mockDriver: AgentDriver = {
 
     // Live typing. The deltas are published and never persisted, so what a spec
     // can prove here is exactly what the feature promises: the bubble grows
-    // while the turn runs, and the completed message replaces it — one
+    // while the turn runs, and the completed message replaces it with one
     // assistant row afterwards, not one per fragment.
     const typed = instructionText.match(/e2e:type=([^\n]+)/)?.[1]?.trim();
     if (typed) {
@@ -379,9 +379,9 @@ export const mockDriver: AgentDriver = {
     }
 
     // Live command output. Emits a tool row, streams its output into the row's
-    // peek one fragment at a time, then settles it with the whole thing — the
+    // peek one fragment at a time, then settles it with the whole thing: the
     // exact sequence a Codex commandExecution produces, so a spec can prove the
-    // peek grows WHILE the command runs rather than only when it finishes.
+    // peek grows WHILE the command runs and not only when it finishes.
     const streamed = instructionText.match(/e2e:output=([^\n]+)/)?.[1]?.trim();
     if (streamed) {
       const id = `mock-cmd-${task.id}-g${task.generation}`;

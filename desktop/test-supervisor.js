@@ -1881,7 +1881,7 @@ function hold(port) {
   });
 
   /* ----------------------------------------------------------------------- *
-   * oauth.js — the RFC 8252 loopback sign-in flow.
+   * oauth.js: the RFC 8252 loopback sign-in flow.
    * ----------------------------------------------------------------------- */
 
   await test("createPkce returns a base64url verifier and the real S256 challenge of it", async () => {
@@ -2199,7 +2199,7 @@ function hold(port) {
   });
 
   /* ----------------------------------------------------------------------- *
-   * instance-auth.js — the per-instance sign-in config and stored credentials.
+   * instance-auth.js: the per-instance sign-in config and stored credentials.
    * ----------------------------------------------------------------------- */
 
   await test("normalizeAuth: none/null/undefined collapse to null, and a valid oauth block round-trips minus empty fields", async () => {
@@ -2325,7 +2325,7 @@ function hold(port) {
   });
 
   /* ----------------------------------------------------------------------- *
-   * instances.js — the `auth` block on an instance (normalizeState, setInstanceAuth).
+   * instances.js: the `auth` block on an instance (normalizeState, setInstanceAuth).
    * ----------------------------------------------------------------------- */
 
   await test("normalizeState keeps a valid auth block on a url and an ssh instance, and drops a malformed one while keeping the instance", async () => {
@@ -2357,7 +2357,7 @@ function hold(port) {
     state = setInstanceAuth(state, lab.id, null);
     assert.ok(!("auth" in findInstance(state, lab.id)), "null clears the auth block entirely");
 
-    // `local` is refused silently — the same state comes back, unchanged.
+    // `local` is refused: the same state comes back, unchanged.
     assert.equal(setInstanceAuth(state, LOCAL_ID, { kind: "header" }), state);
     // An unknown id is a no-op too.
     assert.equal(setInstanceAuth(state, "nope", { kind: "header" }), state);

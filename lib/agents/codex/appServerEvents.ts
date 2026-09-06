@@ -8,9 +8,10 @@
 // The v2 item shapes are the exec protocol's with different spelling
 // (camelCase, richer status enums, a `diff` on every file change) plus a few
 // kinds exec never surfaces. Types are transcribed from the bindings
-// `codex app-server generate-ts` emits for 0.153.0 — the CLI ships no npm
-// package for them — and kept loose (optional fields, `unknown` payloads)
-// because the binary the instance runs is whatever the user installed.
+// `codex app-server generate-ts` emits for 0.153.0, since the CLI ships no
+// npm package for them, and are kept loose (optional fields, `unknown`
+// payloads) because the binary the instance runs is whatever the user
+// installed.
 
 import type { ThreadEvent, ThreadItem, Usage } from "@openai/codex-sdk";
 
@@ -56,7 +57,7 @@ export interface AppServerTurnState {
   turnId: string | null;
   /** The thread's latest cumulative counters, from thread/tokenUsage/updated. */
   total: Usage | null;
-  /** The last request's prompt size — the context gauge. */
+  /** The last request's prompt size, used for the context gauge. */
   contextTokens: number | null;
   /** Config warnings already surfaced this turn (the CLI repeats them). */
   warned: Set<string>;
@@ -92,15 +93,15 @@ export interface Mapped {
   /**
    * A fragment of the reply, or of the reasoning summary above it, as the
    * model types it. Kept off `events` because the SDK's ThreadEvent union has
-   * no delta shape at all — exec never streamed one — so this is the app
-   * server's own extra rather than something ./events.ts could map.
+   * no delta shape: exec never streamed one, so this is an app-server-only
+   * extra that ./events.ts has no way to map.
    */
   delta?: { id: string; kind: "assistant" | "reasoning"; text: string };
   /**
-   * A fragment of a running command's output, `id` being the item it belongs
-   * to — which is also the tool_use id of the row already on the transcript,
+   * A fragment of a running command's output. `id` is the item it belongs
+   * to, which is also the tool_use id of the row already on the transcript,
    * since ./events.ts keys `tool` events by the item id verbatim. Kept off
-   * `events` for the same reason as `delta`: it grows a row rather than
+   * `events` for the same reason as `delta`: it grows a row instead of
    * producing one, and the SDK's ThreadEvent union has no shape for it.
    */
   outputDelta?: { id: string; text: string };
@@ -125,8 +126,8 @@ export function mapNotification(method: string, params: unknown, state: AppServe
       return { events: [{ type: method === "item/started" ? "item.started" : "item.completed", item } as ThreadEvent] };
     }
     // Live typing. The item's own `item/completed` still carries the full text
-    // and is still what gets persisted, so dropping these costs correctness
-    // nothing — it only costs the wait.
+    // and is still what gets persisted, so dropping these costs no
+    // correctness, only the wait.
     case "item/agentMessage/delta":
     case "item/reasoning/summaryTextDelta": {
       if (!forThisTurn(p, state)) return NONE;
@@ -199,7 +200,7 @@ export function mapNotification(method: string, params: unknown, state: AppServe
     }
     case "error": {
       if (!forThisTurn(p, state)) return NONE;
-      // `willRetry` is a transient the CLI is already retrying — say nothing.
+      // `willRetry` is a transient the CLI is already retrying, so it produces no event.
       if (p.willRetry) return NONE;
       const err = p.error as { message?: string } | undefined;
       return { events: [{ type: "error", message: err?.message || "Codex reported an error" }], warning: err?.message };
@@ -337,6 +338,6 @@ export function unwrapShellCommand(command: string): string {
   const m = /^(?:\S*\/)?(?:zsh|bash|sh|fish|dash)\s+-l?c\s+(['"])([\s\S]*)\1\s*$/.exec(command.trim());
   if (!m) return command;
   const inner = m[2];
-  // A single-quoted body can't contain a quote except as '\'' — undo that.
+  // A single-quoted body can only contain a quote escaped as '\''; undo that.
   return (m[1] === "'" ? inner.replace(/'\\''/g, "'") : inner).trim() || command;
 }

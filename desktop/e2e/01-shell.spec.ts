@@ -402,15 +402,14 @@ test("the boot chain finishes, and does not consult the keyring to do it", async
   // issue #240 pinned on every lane rather than only the one that broke.
   //
   // `safeStorage.isEncryptionAvailable()` is a synchronous call with no bound
-  // on it — on macOS a keychain item whose ACL does not list the calling binary
+  // on it. On macOS a keychain item whose ACL does not list the calling binary
   // answers with an authorization dialog instead of a value, and a packaged
   // build with nobody at the machine hangs there forever. This instance has
   // nothing signed in, so nothing should have needed an answer.
   //
   // Asserted HERE, in the shared file, so the lane that catches a regression is
-  // the Linux one — which runs on every push to main and on any pull request
-  // carrying `e2e`. The lane that PAYS for one is macOS, which runs only on the
-  // weekly schedule, a dispatch, or the `macos` label, and so found this three
-  // days and three runs late.
+  // the Linux one, which runs on every push to main and on any pull request
+  // carrying `e2e`. The lane that pays for one is macOS, which runs only on the
+  // weekly schedule, a dispatch, or the `macos` label.
   expect(trace.filter((l) => l.startsWith("[shell] keyring:"))).toEqual([]);
 });

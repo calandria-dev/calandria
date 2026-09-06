@@ -105,24 +105,26 @@ export function AgentNudge({ ready, onConnect }: { ready: boolean; onConnect: ()
 // The agent's login is fine and its own SANDBOX is not.
 //
 // Codex confines workspace-write and read-only turns with bubblewrap, which
-// needs an unprivileged user namespace; Ubuntu 24.04 denies that by default and
-// the result is a turn that runs, looks normal, and fails every single command.
-// The server records the CLI's startup warning (lib/agents/codex/sandbox.ts)
-// and refuses the affected modes rather than spending a turn on them, so this
-// card is where the user finds out WHY a task won't start.
+// needs an unprivileged user namespace. Ubuntu 24.04 denies that by default,
+// so the turn runs, looks normal, and fails every single command. The server
+// records the CLI's startup warning (lib/agents/codex/sandbox.ts) and refuses
+// the affected modes instead of spending a turn on them, so this card is
+// where the user finds out WHY a task won't start.
 //
-// Shown in every state of the card, not only the disconnected one, because the
-// normal case is a perfectly connected agent — and never in the titlebar's auth
-// banner, whose "sign in again" would be the wrong instruction: the fix is a
-// host change made outside Calandria, which is what Check again is for.
+// Shown in every state of the card, not just when disconnected, since the
+// normal case is a perfectly connected agent. Never shown in the titlebar's
+// auth banner: "sign in again" is the wrong instruction there, since the fix
+// is a host change made outside Calandria. Check again is what surfaces that
+// fix.
 function AgentSandboxWarning({ agent }: { agent: AgentInfoT }) {
   const [checking, setChecking] = useState(false);
   const [fixed, setFixed] = useState(false);
   const [stillBroken, setStillBroken] = useState<string | null>(null);
-  // `fixed` rather than a parent refetch: a clean check has already cleared the
-  // server flag, so the next /api/agents load agrees on its own — and this card
-  // is also rendered inside the setup nudge, where firing the parent's
-  // onConnected would advance a wizard on what is only a host re-check.
+  // Tracks `fixed` in local state so a clean check does not trigger a parent
+  // refetch: the check already cleared the server flag, so the next
+  // /api/agents load agrees on its own. This card is also rendered inside the
+  // setup nudge, where firing the parent's onConnected would advance a wizard
+  // on what is only a host re-check.
   if (fixed || !agent.sandboxBroken) return null;
 
   const check = async () => {

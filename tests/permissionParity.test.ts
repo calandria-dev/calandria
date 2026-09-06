@@ -14,7 +14,7 @@ import path from "node:path";
 //
 // Both REAL drivers run; only the transports are faked. The Claude Agent SDK is
 // mocked, and `codex` is tests/fixtures/codex/fake-app-server.mjs, whose
-// `command` scenario asks to run `npm test` — the same command handed to the
+// `command` scenario asks to run `npm test`, the same command handed to the
 // Claude gate below.
 
 const { queryMock } = vi.hoisted(() => {
@@ -161,8 +161,8 @@ describe("the two drivers decide the same call the same way", () => {
 
     const fromCodex = card(codexEvents)!;
     const fromClaude = card(events)!;
-    // Description is caller-supplied (the CLI's own reason) and deliberately
-    // differs; everything the gate itself derives must not.
+    // Description is caller-supplied (the CLI's own reason) and is expected to
+    // differ; everything the gate itself derives must not.
     expect(fromClaude.tool).toBe(fromCodex.tool);
     expect(fromClaude.title).toBe(fromCodex.title);
     expect(fromClaude.detail).toBe(fromCodex.detail);

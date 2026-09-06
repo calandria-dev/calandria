@@ -144,14 +144,14 @@ export function parseRateLimits(result: unknown): Fetched | null {
  * The passive half: a `RateLimitSnapshot` pushed by a running app-server turn
  * (`account/rateLimits/updated`), adopted as the cache the meter reads. The
  * notification's params and a bare snapshot both parse, since `parseRateLimits`
- * accepts either shape — the wire form belongs to the CLI, and a protocol that
- * stops wrapping should keep metering rather than silently stop.
+ * accepts either shape: the wire form belongs to the CLI, and a protocol
+ * change that stops wrapping the snapshot should still keep metering working.
  *
- * This is the same write `refresh()` makes, deliberately: a snapshot that
- * arrived for free is not worth less than one we paid a process for, so it
- * clears the error and the backoff too, and it stamps `at`, which is what makes
- * `getCodexPlanUsage()` below skip the active read while it stays fresh.
- * Returns whether anything landed.
+ * This makes the same write `refresh()` makes: a snapshot that arrived for
+ * free is worth the same as one fetched by a paid process call, so it clears
+ * the error and the backoff too, and stamps `at`, which lets
+ * `getCodexPlanUsage()` below skip the active read while the cache stays
+ * fresh. Returns whether anything landed.
  */
 export function ingestRateLimits(snapshot: unknown): boolean {
   if (!PLAN_USAGE_ENABLED) return false;

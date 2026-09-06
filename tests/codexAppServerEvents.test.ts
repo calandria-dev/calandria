@@ -43,8 +43,8 @@ describe("app-server item respelling", () => {
   it("maps agent-message and reasoning deltas, and joins reasoning paragraphs", () => {
     const st = newAppServerTurnState();
     st.turnId = "t1";
-    // A delta belongs to no ThreadEvent — it rides `delta`, and the completed
-    // item is still what carries the persisted text.
+    // A delta belongs to no ThreadEvent, it rides `delta`. The completed
+    // item still carries the persisted text.
     expect(mapNotification("item/agentMessage/delta", { turnId: "t1", itemId: "m", delta: "all " }, st)).toEqual({
       events: [],
       delta: { id: "m", kind: "assistant", text: "all " },

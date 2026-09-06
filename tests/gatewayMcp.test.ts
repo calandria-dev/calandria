@@ -83,7 +83,7 @@ describe("gatewayMcpCatalog", () => {
     expect(catalog.servers[0].needs_browser_signin).toBe(true);
   });
 
-  it("does not flag oauth2 client_credentials, headless per docs/design/litellm.md", async () => {
+  it("does not flag oauth2 client_credentials, headless per docs/AGENTS.md", async () => {
     gw = await startFakeGateway({ mcpServers: [{ alias: "svc", auth_type: "oauth2_client_credentials" }] });
     const catalog = await gatewayMcpCatalog(gw.url, "");
     expect(catalog.servers[0].needs_browser_signin).toBe(false);

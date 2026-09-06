@@ -59,7 +59,7 @@ const ID_RE = /^[a-z0-9]{1,32}$/;
  * repaired NARROWLY: a malformed sign-in config drops the sign-in config, not
  * the instance. Losing the whole row would take the server's address with it,
  * and the address is the part the user cannot reconstruct from memory. What is
- * left is an instance that signs in the old way — in the window — which is a
+ * left is an instance that signs in the old way, in the window, which is a
  * working app rather than a missing one. instance-auth.js's `normalizeAuth`
  * holds the actual rules; this is only the decision about what a failure costs.
  */

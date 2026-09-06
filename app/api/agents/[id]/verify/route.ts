@@ -17,13 +17,13 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
   const status = await driver.authStatus();
   const turn = await driver.verify();
-  // Connect time is the one moment we know the user is looking at this agent's
-  // card, which makes it the right place to pay for a process spawn and ask
-  // whether the agent's SANDBOX works too — a separate fact from the login, and
-  // one whose only other signal is a warning buried in a turn that has already
+  // Connect time is when the user is looking at this agent's card, so it is
+  // the right place to pay for a process spawn and check whether the agent's
+  // SANDBOX works too. This is a separate fact from the login, and the only
+  // other way to learn it is a warning buried in a turn that has already
   // failed every command it ran (lib/agents/codex/sandbox.ts). The verdict is
-  // recorded by the driver and read back on GET /api/agents; a failure here is
-  // never a failed verify, because a broken sandbox doesn't invalidate a login.
+  // recorded by the driver and read back on GET /api/agents. A failure here
+  // is not a failed verify: a broken sandbox does not invalidate a login.
   const sandbox = driver.sandboxHealth ? await driver.sandboxHealth().catch(() => null) : null;
 
   // The turn is the real proof (it can pass even when `status` is terse, e.g. on

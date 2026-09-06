@@ -11,7 +11,7 @@ import path from "node:path";
 // What it proves that the fake can't: the CLI accepts the thread and turn
 // parameters this driver sends (sandbox policy with writable roots, approval
 // policy, approvals reviewer), streams a real turn through the adapter, and
-// — under `default` — raises an approval the card can answer. The prompt asks
+// under `default` raises an approval the card can answer. The prompt asks
 // for one shell command that the workspace-write sandbox refuses, so the
 // model has to request an escalation.
 

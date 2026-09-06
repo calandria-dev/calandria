@@ -49,8 +49,8 @@ const MarkdownEditor = dynamic(() => import("./MarkdownEditor"), { ssr: false, l
 type Tab = "edit" | "comment";
 // A selection the user just made in the rendered view, before it's a comment.
 type Pending = { quote: string; heading: string | null; top: number; left: number };
-// The compose box: a new comment on a passage, or — with `id` — an existing
-// draft being rewritten in place.
+// The compose box: a new comment on a passage, or, when `id` is set, an
+// existing draft being rewritten in place.
 type Composing = { quote: string; heading: string | null; id?: string };
 
 const HIGHLIGHT_NAME = "collab-comments";
@@ -196,11 +196,11 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
     fileReq
       .then((j) => { if (!dead) { setOriginal(j.content ?? ""); setSha(j.sha ?? null); setText(j.content ?? ""); } })
       .catch((e) => { if (!dead) setError(e instanceof Error ? e.message : String(e)); });
-    // The saved edit + general note, applied once the file is here too: the
+    // The saved edit and general note, applied once the file is here too: the
     // general note is restored as-is, the edited text only when the file is
     // still the one it was made against. A failure here leaves draftLoaded
-    // false, which also stops this session's edits from being saved — better
-    // than saving over a draft that couldn't be read.
+    // false, which also stops this session's edits from being saved, so a
+    // read failure never gets overwritten by a fresh save.
     const draftReq = fetch(`${draftApi}?file=${encodeURIComponent(file)}`, { cache: "no-store" })
       .then((r) => readJson<{ draft?: TaskDocDraft | null }>(r));
     Promise.all([fileReq.catch(() => null), draftReq])

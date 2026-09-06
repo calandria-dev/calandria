@@ -548,7 +548,7 @@ invocation in this directory carries `AGY_CLI_DISABLE_AUTO_UPDATE=true`, so a se
 swap the binary out mid-turn — or, worse, mid-login, where the code the user is holding is bound
 to the running child. Everything in it is pinned to a recorded capture (`tests/fixtures/gemini/`),
 because the CLI's own documentation describes a different wire format than it emits — the
-corrections are catalogued in `docs/design/gemini-driver.md` under "Settled by the driver".
+corrections are catalogued in `docs/AGENTS.md` under "Settled by the driver".
 
 **Each task runs under its own `HOME`.** `agy` reads MCP servers from exactly one user-global
 file, `~/.gemini/config/mcp_config.json`, and the bridge takes its identity from that entry's env

@@ -368,14 +368,14 @@ export const CODEX_WRITABLE_ROOTS = String(process.env.CODEX_WRITABLE_ROOTS || "
 /**
  * Whether the container is already the sandbox, so Codex should not build one.
  * Off by default; set it in a deployment where the whole process tree is
- * confined by something else — the published image is the case it exists for.
+ * confined by something else, such as the published image.
  *
  * On, a `workspace-write` turn is sent the app-server's `externalSandbox`
  * policy instead of `workspaceWrite`, which tells Codex to run commands
  * unconfined and rely on its caller's boundary. That is the only mode it
- * covers. `read-only` (plan mode) is left alone on purpose: its entire
- * guarantee is that nothing is writable, and a container does not provide that
- * — mapping it here would turn "propose without editing" into "may edit"
+ * covers. `read-only` (plan mode) is left alone: its guarantee is that
+ * nothing is writable, and a container does not provide that, so mapping it
+ * here would turn "propose without editing" into "may edit"
  * (lib/agents/codex/sandbox.ts). Full-access modes never used a sandbox anyway.
  *
  * Only the app-server transport can express this; `codex exec` has no such
@@ -388,7 +388,7 @@ export const CODEX_EXTERNAL_SANDBOX = ["1", "on", "true", "yes"].includes(
 /**
  * Whether Codex tasks inherit the MCP servers configured in the user's
  * ~/.codex/config.toml, alongside Calandria's own bridge. On by default, the
- * same as the Claude driver (which inherits ~/.claude MCP servers) — see
+ * same as the Claude driver (which inherits ~/.claude MCP servers). See
  * "Agent MCP inheritance" in lib/agents/CLAUDE.md.
  *
  * This used to default off, on the belief that `codex exec` had no approver
@@ -919,7 +919,7 @@ export const PLAN_USAGE_ENABLED = !["0", "off", "false", "no"].includes(
  *
  * It floors the Codex side too, where the cost is different but no smaller: a
  * throwaway `codex app-server` process per read. There the floor is also what
- * the passive half rides — an app-server turn pushes the same snapshot for
+ * the passive half rides on: an app-server turn pushes the same snapshot for
  * free, and a cache inside this window means no process is spawned at all
  * (lib/agents/codex/planUsage.ts).
  */

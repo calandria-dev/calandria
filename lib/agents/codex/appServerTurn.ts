@@ -1,13 +1,13 @@
 // One Codex turn over `codex app-server`: spawn, handshake, start or resume
 // the thread, start the turn, stream its notifications into StreamEvents, and
-// answer the server's requests — which is the whole reason this transport
-// exists. Under `codex exec` (./driver.ts's other transport) an approval
-// request is auto-rejected inside the CLI before the host ever sees it; here
-// it arrives as a JSON-RPC request the turn cannot finish without our answer,
-// and the answer comes from the same permission card and /answer route the
-// Claude driver's canUseTool gate parks on — literally the same gate, since
-// both call promptPermission() (../../permissionPrompt.ts) and differ only in
-// how they spell the answer back to their own protocol.
+// answer the server's requests, the reason this transport exists. Under
+// `codex exec` (./driver.ts's other transport) an approval request is
+// auto-rejected inside the CLI before the host ever sees it; here it arrives
+// as a JSON-RPC request the turn cannot finish without an answer, and the
+// answer comes from the same permission card and /answer route the Claude
+// driver's canUseTool gate parks on: the same gate, since both call
+// promptPermission() (../../permissionPrompt.ts) and differ only in how they
+// spell the answer back to their own protocol.
 //
 // The process lives exactly one turn, like the exec transport's: a thread is
 // persisted by the CLI under ~/.codex, so `thread/resume` on the next turn

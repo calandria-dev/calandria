@@ -121,7 +121,7 @@ delete process.env.CODEX_INHERIT_MCP;
 // silently narrower than it looks: GitHub runners are UTC, so the suite has
 // only ever been exercised in one zone.
 //
-// UTC on purpose, and it is NOT a fix for the midnight class — UTC has a
+// UTC on purpose, and it is not a fix for the midnight class: UTC has a
 // midnight too, and pinning it moves every developer's run onto the SAME
 // boundary CI already sits on rather than removing the boundary. What it buys
 // is that the boundary is in a known place: a test that is clock-shaped fails

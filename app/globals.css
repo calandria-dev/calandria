@@ -1602,7 +1602,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .typing i:nth-child(2){animation-delay:.18s;}
 .typing i:nth-child(3){animation-delay:.36s;}
 @keyframes typing{0%,60%,100%{opacity:.3;transform:translateY(0);}30%{opacity:1;transform:translateY(-3px);}}
-/* live typing — the assistant_delta bubble, replaced by the persisted message */
+/* live typing: the assistant_delta bubble, replaced by the persisted message */
 .msg.streaming .stream-caret{display:inline-block;width:2px;height:1em;margin-left:2px;vertical-align:text-bottom;background:var(--accent);animation:caret 1s steps(1) infinite;}
 .msg.streaming .stream-think{color:var(--ink-3);font-style:italic;white-space:pre-wrap;}
 @keyframes caret{0%,50%{opacity:1;}50.01%,100%{opacity:0;}}

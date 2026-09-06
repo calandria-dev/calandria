@@ -281,7 +281,7 @@ test("the reply types out live, then the persisted message replaces the bubble",
   // assistant_delta: the one StreamEvent the runner publishes without
   // persisting. What that has to add up to on screen is a bubble that grows
   // while the turn runs and a transcript that afterwards holds ONE assistant
-  // row with the whole reply — not one row per fragment, and nothing left
+  // row with the whole reply, not one row per fragment, and nothing left
   // behind if the browser reloads.
   const REPLY = "streaming one word at a time";
   const task = await createTask(request, {
@@ -319,7 +319,7 @@ test("the reply types out live, then the persisted message replaces the bubble",
 test("a running command's output streams into its tool row's peek", async ({ page, request }) => {
   // tool_output_delta: the same publish-without-persist rule as assistant_delta,
   // one row deeper. The proof that it is LIVE rather than a late render is that
-  // the peek is already showing output while the turn is still going — the mock
+  // the peek is already showing output while the turn is still going: the mock
   // paces a line every 300ms and only ends the turn after the last one.
   const LINES = Array.from({ length: 16 }, (_, i) => `line-${String(i + 1).padStart(2, "0")}`);
   const task = await createTask(request, {

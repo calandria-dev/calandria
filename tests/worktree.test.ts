@@ -263,12 +263,11 @@ describe("repairWorktree", () => {
     const lock = path.join(dir, ".git", "index.lock");
     fs.writeFileSync(lock, "");
     // Stamp it with OUR clock, not the kernel's. The two agree on any ordinary
-    // run, so this is a no-op there — but the staleness check reads Date.now()
+    // run, so this is a no-op there, but the staleness check reads Date.now()
     // and the mtime a write leaves behind comes from the kernel, and under a
     // faked clock (.github/workflows/test-clock.yml) those are different
-    // clocks. A lock written this instant then reads as months old and the
-    // repair prunes what this case exists to prove it leaves alone. Saying
-    // "fresh as of the clock the code under test reads" is what was meant.
+    // clocks. A lock written this instant would then read as months old and
+    // get pruned by the repair this case exists to prove leaves it alone.
     const justNow = new Date();
     fs.utimesSync(lock, justNow, justNow);
     const taskId = uid();

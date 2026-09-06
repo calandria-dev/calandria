@@ -1,8 +1,8 @@
 // One permission card, one policy, every driver.
 //
-// The DECISION half of the gate — the read-only allowlist, the project's
+// The DECISION half of the gate (the read-only allowlist, the project's
 // remembered rules, the card that parks the turn on the user through
-// lib/asks.ts and the /answer route, and what "always allow" records — existed
+// lib/asks.ts and the /answer route, and what "always allow" records) existed
 // twice: inside the Claude driver's canUseTool and again in the Codex
 // app-server's approval handlers. Two copies of one policy drift, so both now
 // call promptPermission() and only translate its verdict into the answer their
@@ -15,7 +15,7 @@
 // answer to hand back.
 //
 // Policy itself lives in lib/permissions.ts, which is pure. This module adds
-// the two things a real prompt needs and that file deliberately refuses: the
+// the two things a real prompt needs that stay out of that file: the
 // store (reading and minting rules) and the turn's event queue.
 
 import type { DiffLine, PermissionOutcome, PermissionRequest, PermissionScopeOffer, StreamEvent } from "./types";
@@ -82,7 +82,7 @@ export type PromptDecision =
 /**
  * Decide one tool call. Resolves "allow" without a card when the tool is
  * read-only or a remembered rule covers it; otherwise publishes the card,
- * waits, and settles it. Every non-answer path denies — a stopped turn, an
+ * waits, and settles it. Every non-answer path denies: a stopped turn, an
  * unwatched one, an expired prompt and an unparseable answer all fail closed.
  * The returned message (on deny) is what the model should be told.
  */
@@ -94,8 +94,8 @@ export async function promptPermission(ctx: PromptContext, spec: PromptSpec): Pr
   // revokes mid-turn has to stop applying just as fast.
   if (!spec.blockedPath && allowedByRules(listPermissionRules(ctx.projectId), spec.tool, spec.input)) return auto;
 
-  // Only now — a prompted session runs this gate on every Read and Grep, and
-  // the card's rendering is not free.
+  // Build the card lazily: a prompted session runs this gate on every Read
+  // and Grep, and the card's rendering is not free.
   let card: ReturnType<typeof describePermission> | undefined;
   const described = () => (card ??= describePermission(spec.tool, spec.input));
   const scope = spec.scope ?? scopeOfferFor(spec.tool, spec.input) ?? spec.scopeFallback;
