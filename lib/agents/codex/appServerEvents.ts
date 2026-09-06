@@ -60,10 +60,12 @@ export interface AppServerTurnState {
   contextTokens: number | null;
   /** Config warnings already surfaced this turn (the CLI repeats them). */
   warned: Set<string>;
+  /** Which reasoning-summary paragraph the last delta belonged to; null before any. */
+  summaryIndex: number | null;
 }
 
 export function newAppServerTurnState(): AppServerTurnState {
-  return { turnId: null, total: null, contextTokens: null, warned: new Set() };
+  return { turnId: null, total: null, contextTokens: null, warned: new Set(), summaryIndex: null };
 }
 
 /** What a notification maps to: SDK-shaped events for ./events.ts, plus the few things it has no shape for. */
@@ -77,6 +79,13 @@ export interface Mapped {
   warning?: string;
   /** A fresh context-size reading for the gauge. */
   contextTokens?: number;
+  /**
+   * A fragment of the reply, or of the reasoning summary above it, as the
+   * model types it. Kept off `events` because the SDK's ThreadEvent union has
+   * no delta shape at all — exec never streamed one — so this is the app
+   * server's own extra rather than something ./events.ts could map.
+   */
+  delta?: { id: string; kind: "assistant" | "reasoning"; text: string };
 }
 
 const NONE: Mapped = { events: [] };
@@ -96,6 +105,24 @@ export function mapNotification(method: string, params: unknown, state: AppServe
       const item = toSdkItem(p.item as V2Item);
       if (!item) return NONE;
       return { events: [{ type: method === "item/started" ? "item.started" : "item.completed", item } as ThreadEvent] };
+    }
+    // Live typing. The item's own `item/completed` still carries the full text
+    // and is still what gets persisted, so dropping these costs correctness
+    // nothing — it only costs the wait. `item/commandExecution/outputDelta` is
+    // deliberately not here: a command's output belongs to its tool row's peek,
+    // not to a reply bubble, and that row has no live half yet.
+    case "item/agentMessage/delta":
+    case "item/reasoning/summaryTextDelta": {
+      if (!forThisTurn(p, state)) return NONE;
+      const text = String(p.delta ?? "");
+      if (!text) return NONE;
+      const kind = method === "item/agentMessage/delta" ? "assistant" : "reasoning";
+      // A reasoning summary arrives as several indexed paragraphs which the
+      // completed item joins with newlines; keep the same seam live so the
+      // bubble doesn't run two thoughts together.
+      const sep = kind === "reasoning" && p.summaryIndex !== state.summaryIndex && state.summaryIndex != null ? "\n" : "";
+      if (kind === "reasoning") state.summaryIndex = (p.summaryIndex as number | undefined) ?? 0;
+      return { events: [], delta: { id: String(p.itemId ?? ""), kind, text: sep + text } };
     }
     case "turn/plan/updated": {
       if (!forThisTurn(p, state)) return NONE;

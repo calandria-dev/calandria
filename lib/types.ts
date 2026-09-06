@@ -632,6 +632,18 @@ export type StreamEvent =
   | { type: "session"; sessionId: string }
   | { type: "model"; model: string }
   | { type: "assistant"; content: string }
+  // A fragment of the reply as the model produces it. Published to whoever is
+  // watching right now and NEVER persisted: the completed `assistant` message
+  // (or, for reasoning, the "🧠 Thinking" tool row) carries the whole text a
+  // moment later, so a row per fragment would double the transcript and a
+  // reload would replay the typing. A driver that emits none is not degraded —
+  // the reply simply appears whole, which is what every driver did before.
+  // `id` is the driver's id for the item being typed (a Codex item id, a
+  // Claude message id plus content-block index), so a client can tell one
+  // growing bubble from the next without guessing at boundaries. `kind`
+  // separates the reply from the reasoning summary above it, which land in
+  // different places when they complete.
+  | { type: "assistant_delta"; id: string; kind: "assistant" | "reasoning"; delta: string }
   // `file` is the path a file-WRITING call touched (Write/Edit, a Codex
   // single-file patch), as the agent spelled it — absolute in practice. The
   // runner resolves it against the task's worktree before persisting, so the

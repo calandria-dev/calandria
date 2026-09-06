@@ -88,6 +88,9 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 // prompt rather than realistic.
 const ASK_WAIT_MS = 120_000;
 const ASK_POLL_MS = 100;
+// Between two live-typing fragments (e2e:type). Slow enough that a browser can
+// see the bubble part-written, which is the only thing worth asserting about it.
+const TYPE_DELTA_MS = 300;
 
 /**
  * Parse one `e2e:ask=` directive into an AskQuestion.
@@ -357,6 +360,21 @@ export const mockDriver: AgentDriver = {
     // asserts, so a stream event here would mask a broken global path.
     const retitle = instructionText.match(/e2e:retitle=([^\n]+)/)?.[1];
     if (retitle) updateTaskForAgent(task, undefined, { title: retitle.trim() });
+
+    // Live typing. The deltas are published and never persisted, so what a spec
+    // can prove here is exactly what the feature promises: the bubble grows
+    // while the turn runs, and the completed message replaces it — one
+    // assistant row afterwards, not one per fragment.
+    const typed = instructionText.match(/e2e:type=([^\n]+)/)?.[1]?.trim();
+    if (typed) {
+      const id = `mock-msg-${task.id}-g${task.generation}`;
+      for (const word of typed.split(/\s+/)) {
+        yield { type: "assistant_delta", id, kind: "assistant", delta: `${word} ` };
+        await sleep(TYPE_DELTA_MS, signal);
+        if (signal?.aborted) return;
+      }
+      yield { type: "assistant", content: typed };
+    }
 
     yield {
       type: "assistant",

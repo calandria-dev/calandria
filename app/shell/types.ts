@@ -199,6 +199,13 @@ export interface Msg {
   generation: number;
   toolId?: string; // tool_use id, for merging the tool_result that arrives later
   ts?: number; // created_at of the persisted row (ms epoch); absent on synthetic ids
+  // Set only on the one client-only row that renders live typing: the bubble
+  // fed by `assistant_delta` while the agent writes. It carries no DB id (the
+  // server never persisted it), it is dropped the moment any real row lands
+  // under it, and a reconnect's snapshot rebuilds the list without it. The
+  // value says whether the text is the reply or the reasoning summary, which
+  // read differently. See useTaskStream's LIVE_MSG_ID.
+  streaming?: "assistant" | "reasoning";
 }
 export interface ProjectSession {
   id: string;

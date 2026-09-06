@@ -87,6 +87,10 @@ export async function* runAppServerTurn(args: AppServerTurnArgs): AsyncGenerator
     if (method === "account/rateLimits/updated") ingestRateLimits(params);
     const mapped = mapNotification(method, params, tstate);
     for (const ev of mapped.events) for (const out of mapThreadEvent(ev, state)) push(out);
+    // Live typing, straight onto the queue: the runner publishes it without
+    // persisting, so it costs the transcript nothing and reaches whoever has
+    // the task open right now (../../types.ts, StreamEvent.assistant_delta).
+    if (mapped.delta) push({ type: "assistant_delta", id: mapped.delta.id, kind: mapped.delta.kind, delta: mapped.delta.text });
     if (mapped.contextTokens != null) push({ type: "context", tokens: mapped.contextTokens });
     if (mapped.notice) push({ type: "notice", content: mapped.notice });
     if (mapped.warning) args.onWarning?.(mapped.warning);

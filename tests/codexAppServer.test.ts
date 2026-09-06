@@ -152,6 +152,14 @@ describe("codex app-server transport", () => {
     expect(result.isError).toBe(false);
     expect(result.content).toContain('decision="accept"');
     expect((evs.find((e) => e.type === "assistant") as Ev<"assistant">).content).toBe("all done");
+    // Live typing: the deltas the CLI pushes while it writes, keyed by the item
+    // they belong to and split reply-from-reasoning. They are an EXTRA — the
+    // completed item above still carries the whole text — and they all arrive
+    // before it, which is the entire point.
+    const deltas = evs.filter((e) => e.type === "assistant_delta") as Ev<"assistant_delta">[];
+    expect(deltas.filter((d) => d.kind === "reasoning").map((d) => `${d.id}:${d.delta}`)).toEqual(["item-r:weighing ", "item-r:options"]);
+    expect(deltas.filter((d) => d.kind === "assistant").map((d) => `${d.id}:${d.delta}`)).toEqual(["item-msg:all ", "item-msg:done"]);
+    expect(evs.findIndex((e) => e.type === "assistant_delta")).toBeLessThan(evs.findIndex((e) => e.type === "assistant"));
     expect(tools.find((t) => t.peek?.kind === "todos")?.peek).toMatchObject({ kind: "todos", items: [{ text: "run tests", status: "completed" }, { text: "report", status: "pending" }] });
 
     // Usage is the thread total netted into disjoint buckets; the context
@@ -373,5 +381,13 @@ describe("codex app-server transport", () => {
     expect(getTask(task.id)?.session_id).toBe("thread-fake-1");
     expect(events.some((e) => e.type === "permission_decided")).toBe(true);
     expect(decision()).toBe('"accept"');
+    // Live typing is PUBLISHED and never PERSISTED. The fragments reached this
+    // subscriber carrying the turn's generation (without one the transcript
+    // groups the bubble into a session of its own, ahead of the conversation),
+    // and what the DB kept is one assistant row holding the whole reply.
+    const deltas = events.filter((e) => e.type === "assistant_delta") as Extract<TaskStreamEvent, { type: "assistant_delta" }>[];
+    expect(deltas.map((d) => d.delta).join("")).toContain("all done");
+    expect(deltas.every((d) => d.generation === task.generation)).toBe(true);
+    expect(listMessages(task.id).filter((m) => m.role === "assistant").map((m) => m.content)).toEqual(["all done"]);
   });
 });
