@@ -28,7 +28,7 @@ export function idleFor(since: number, now: number = Date.now()): string {
 
 /** The tooltip, spelled out once so every surface says the same thing. */
 export const IDLE_TITLE =
-  "The turn is still live but has produced nothing for a while — no output, no tool call. Often a wait on something that already finished. Nothing has been stopped: open it and decide, or press Stop.";
+  "The turn is still live but has produced nothing for a while: no output, no tool call. Often a wait on something that already finished. Nothing has been stopped: open it and decide, or press Stop.";
 
 /**
  * Re-render on a one-minute heartbeat while `on`. The age of an idle turn

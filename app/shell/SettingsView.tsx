@@ -238,7 +238,7 @@ function GatewayCard({ gateway, onChanged }: { gateway: GatewayHealthT; onChange
         <div className="hlp">
           {gateway.max_budget == null
             ? `Spend so far: $${gateway.spend?.toFixed(2) ?? "0.00"} (no budget set on this key).`
-            : `Spend: $${gateway.spend?.toFixed(2) ?? "0.00"} of a $${gateway.max_budget.toFixed(2)} budget${gateway.spend != null && gateway.spend >= gateway.max_budget ? " — exhausted" : ""}.`}
+            : `Spend: $${gateway.spend?.toFixed(2) ?? "0.00"} of a $${gateway.max_budget.toFixed(2)} budget${gateway.spend != null && gateway.spend >= gateway.max_budget ? ", exhausted" : ""}.`}
           {gateway.budget_reset_at && ` Resets ${new Date(gateway.budget_reset_at).toLocaleString()}.`}
           {!!gateway.key_models?.length && ` Allowed models: ${gateway.key_models.join(", ")}.`}
         </div>
@@ -252,7 +252,7 @@ function GatewayCard({ gateway, onChanged }: { gateway: GatewayHealthT; onChange
       )}
       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
         <input type="password" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={key} autoComplete="off"
-          placeholder={gateway.has_key ? "a key is set — type a new one to replace it" : "virtual key (sk-…)"}
+          placeholder={gateway.has_key ? "a key is set, type a new one to replace it" : "virtual key (sk-…)"}
           title="The instance's LiteLLM virtual key, stored 0600 and never sent to the browser."
           onChange={(e) => setKey(e.target.value)} />
         <button className="btn btn-line" disabled={busy || !key.trim()} onClick={() => save(false)}>{Icon.check()} Save key</button>

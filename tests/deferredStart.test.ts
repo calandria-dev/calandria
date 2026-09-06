@@ -106,7 +106,7 @@ describe("listDueDeferredStarts (selection rules)", () => {
   });
 });
 
-describe("sweepDeferredStarts — a never-started task", () => {
+describe("sweepDeferredStarts, a never-started task", () => {
   it("launches its first turn like Start session would, then consumes the deadline", async () => {
     const { task } = queued();
     const events = await busEventsFor(task.id, () => sweepDeferredStarts());
@@ -140,7 +140,7 @@ describe("sweepDeferredStarts — a never-started task", () => {
     expect(getTask(task.id)!.start_at).toBeGreaterThan(0);
   });
 
-  it("won't start a task another task still blocks — it drops the deadline and says why", async () => {
+  it("won't start a task another task still blocks, dropping the deadline and saying why", async () => {
     const { project, task } = queued();
     const blocker = createTask({ project_id: project.id, title: "first" });
     setTaskDeps(task.id, [blocker.id]);
@@ -151,7 +151,7 @@ describe("sweepDeferredStarts — a never-started task", () => {
     expect(systemLines(task.id)).toEqual([expect.stringContaining("still blocked")]);
   });
 
-  it("won't start into a project with no working directory — same drop, different reason", async () => {
+  it("won't start into a project with no working directory, the same drop for a different reason", async () => {
     const project = makeProject("");
     const task = createTask({ project_id: project.id, title: "nowhere" });
     updateTask(task.id, { start_at: Date.now() - 1 });
@@ -162,7 +162,7 @@ describe("sweepDeferredStarts — a never-started task", () => {
   });
 });
 
-describe("sweepDeferredStarts — a started task", () => {
+describe("sweepDeferredStarts, a started task", () => {
   it("resumes with the oldest parked follow-up, popping it from the queue", async () => {
     const { task } = queued({ started: 1, status: "in_progress" });
     addPendingMessage(task.id, task.generation, "first queued");

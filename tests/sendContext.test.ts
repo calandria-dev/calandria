@@ -3,7 +3,7 @@ import { createProject, createTask, getTask, updateProject, updateTask } from "@
 import { buildProjectContext } from "@/lib/agents/shared";
 
 describe("send_context (saved project context in sessions)", () => {
-  it("defaults on for projects and tasks — the historic always-included behavior", () => {
+  it("defaults on for projects and tasks, the historic always-included behavior", () => {
     const project = createProject({ name: "Ctx defaults", context: "We build widgets." });
     expect(project.send_context).toBe(1);
     const task = createTask({ project_id: project.id, title: "Do a thing" });
@@ -21,7 +21,7 @@ describe("send_context (saved project context in sessions)", () => {
     expect(loud.send_context).toBe(1);
   });
 
-  it("omits only the saved context block — task details and tool instructions stay", () => {
+  it("omits only the saved context block: task details and tool instructions stay", () => {
     const project = createProject({ name: "Ctx trimmed", context: "Stack: Next.js, SQLite." });
     const task = createTask({ project_id: project.id, title: "Add a button", description: "A red one." });
     updateTask(task.id, { send_context: 0 });

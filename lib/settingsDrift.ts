@@ -128,10 +128,10 @@ export function settingsDriftNotice(changes: SettingsChange[]): string {
   const one = changes.length === 1;
   return (
     `⚠ This task's agent settings changed since its last turn: ${listFiles(changes)}. ` +
-    `${one ? "That file is" : "Those files are"} re-read from disk at the start of every turn — ` +
+    `${one ? "That file is" : "Those files are"} re-read from disk at the start of every turn: ` +
     `hooks in ${one ? "it" : "them"} run shell commands outside the permission gate, ` +
     `permissions.allow entries approve tool calls without one, and env reaches every subprocess a ` +
-    `tool spawns — so this turn is held until you approve the change.`
+    `tool spawns. This turn is held until you approve the change.`
   );
 }
 
@@ -188,7 +188,7 @@ export function settingsDriftRequest(
     detail: oversize
       .map((c) =>
         c.oversize
-          ? `${c.file} is ${c.size.toLocaleString()} bytes — too large to diff here. Read it in the Changes tab before approving.`
+          ? `${c.file} is ${c.size.toLocaleString()} bytes, too large to diff here. Read it in the Changes tab before approving.`
           : `${c.file} can't be diffed: the version this task last ran under was too large to keep a copy of. Read the file in the Changes tab before approving.`
       )
       .join("\n"),
@@ -212,7 +212,7 @@ export function settingsBlockedError(
     return `${what}, and the approval card expired unanswered. Send again to be asked once more.`;
   return (
     `${what}, and nobody was watching to approve it. An unattended run never adopts new agent ` +
-    `settings on its own — hooks and permission-allow rules in that file would run outside the ` +
+    `settings on its own: hooks and permission-allow rules in that file would run outside the ` +
     `permission gate. Review the change and start this one by hand.`
   );
 }

@@ -18,7 +18,7 @@ const maskLabel = (mask: number) =>
 
 /** "tomorrow 08:30" beats an ISO string when you're deciding whether to trust it. */
 function whenLabel(ms: number, timezone: string): string {
-  if (!ms) return "—";
+  if (!ms) return "–";
   const now = new Date();
   const then = new Date(ms);
   const day = new Intl.DateTimeFormat(undefined, { timeZone: timezone, weekday: "short", month: "short", day: "numeric" }).format(then);
@@ -556,14 +556,14 @@ export function Schedules({ project, agents }: { project: ProjectRow; agents: Ag
             <div className="sched-head">
               <strong>{s.name}</strong>
               <span className="sched-spec">
-                {/* Zone deliberately omitted, as it is for a weekly row: the
-                    next-fire line beside this one already carries zoneSuffix. */}
+                {/* Zone omitted, as for a weekly row: the next-fire line beside
+                    this one already carries zoneSuffix. */}
                 {s.once_date
                   ? `Once on ${s.once_date} at ${s.time_of_day}`
                   : `${maskLabel(s.days_mask)} at ${s.time_of_day}`}
               </span>
               <span className="sched-next">
-                {spent ? "Ran — one-time" : s.enabled ? `next ${whenLabel(s.next_fire_at, s.timezone)}${zoneSuffix(s.timezone)}` : "paused"}
+                {spent ? "Ran, one-time" : s.enabled ? `next ${whenLabel(s.next_fire_at, s.timezone)}${zoneSuffix(s.timezone)}` : "paused"}
               </span>
               <button
                 className="btn btn-line btn-sm"

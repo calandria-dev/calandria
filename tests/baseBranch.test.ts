@@ -115,7 +115,7 @@ describe("pin at the cut", () => {
   });
 });
 
-describe("retargetTaskBase — refusals", () => {
+describe("retargetTaskBase: refusals", () => {
   it("refuses a name git could never use", async () => {
     const fx = await fixture({ cut: true });
     const r = await retarget(fx, "--upload-pack=evil");
@@ -124,7 +124,7 @@ describe("retargetTaskBase — refusals", () => {
     expect(fx.reload().base_branch).toBe("main");
   });
 
-  it("refuses a branch that is nowhere — naming both places it looked", async () => {
+  it("refuses a branch that is nowhere, naming both places it looked", async () => {
     const { repo, colleague } = await makeRepoWithOrigin();
     void colleague;
     const fx = await fixture({ repo, cut: true });
@@ -183,7 +183,7 @@ describe("retargetTaskBase — refusals", () => {
   });
 });
 
-describe("retargetTaskBase — reconciliation", () => {
+describe("retargetTaskBase: reconciliation", () => {
   it("writes the row and nothing else when there is no worktree yet", async () => {
     const fx = await fixture();
     await git(fx.repo, "branch", "release");

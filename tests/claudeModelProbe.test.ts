@@ -122,7 +122,7 @@ describe("the catalog overlay", () => {
     expect(row(models, "opusplan").sub).toBe("claude-sonnet-5");
   });
 
-  it("leaves the labels alone — '(latest)' is still true", () => {
+  it("leaves the labels alone: '(latest)' is still true", () => {
     const models = subscriptionModels(MEASURED);
     for (const m of CLAUDE_CAPABILITIES.models) expect(row(models, m.value).label).toBe(m.label);
   });

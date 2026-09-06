@@ -233,10 +233,10 @@ describe("naming guard (Operator -> Calandria)", () => {
       strays,
       strays.length
         ? `Unallowed orch/operator reference(s):\n\n  ${strays.join("\n  ")}\n\n` +
-            `Calandria is not called Operator and has no "orch" anything. Rename it — or, if ` +
+            `Calandria is not called Operator and has no "orch" anything. Rename it, or, if ` +
             `it is attribution, the ORCH_* alias table, or a pre-rename on-disk/localStorage ` +
             `name, add it to ALLOWED in tests/naming.test.ts with a comment saying which. ` +
-            `("operator" the ordinary noun needs no entry — but a line reported here says ` +
+            `("operator" the ordinary noun needs no entry, but a line reported here says ` +
             `something else guarded as well, so read the whole line.)`
         : undefined
     ).toEqual([]);
@@ -256,7 +256,7 @@ describe("naming guard (Operator -> Calandria)", () => {
     expect(dead, `ALLOWED entries that no longer match anything: ${dead.join(", ")}`).toEqual([]);
   });
 
-  it("catches a stray (sanity — the matcher is not vacuous)", () => {
+  it("catches a stray (sanity check: the matcher is not vacuous)", () => {
     // The exact shape a regression takes: a plain sentence in a live file.
     const line = "// hand it to the orchestrator and let it run";
     expect(TERMS.test(line)).toBe(true);

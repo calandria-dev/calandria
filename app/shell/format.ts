@@ -35,7 +35,7 @@ export function fmtCost(n: number): string {
  */
 export function fmtCostTotal(costUsd: number, unpricedTurns: number): string {
   if (unpricedTurns <= 0) return fmtCost(costUsd);
-  if (costUsd <= 0) return "—";
+  if (costUsd <= 0) return "–";
   return `${fmtCost(costUsd)}+`;
 }
 
@@ -113,7 +113,7 @@ export function costDisplay(agent: AgentInfo | undefined, provider?: AgentProvid
   // list price of a model that didn't run. So there is no figure, and the
   // tooltip says why.
   if (provider && provider.kind !== "cloud") {
-    return { show: false, approx: false, note: `ran on ${provider.host}, not the vendor's API — no cost to report` };
+    return { show: false, approx: false, note: `ran on ${provider.host}, not the vendor's API, so there is no cost to report` };
   }
   const caps = agent?.capabilities;
   const estimated = caps?.costIsEstimated === true;
@@ -166,8 +166,8 @@ export function usageTooltip(split: UsageSplit, costUsd: number, cost: CostDispl
   if (unpricedTurns > 0) {
     const turns = `${n(unpricedTurns)} turn${unpricedTurns === 1 ? "" : "s"}`;
     lines.push(costUsd > 0
-      ? `${turns} ran against a custom endpoint with no price set — the figure above covers only the rest`
-      : `${turns} ran against a custom endpoint with no price set, so there is no cost to show — unknown, not $0.00`);
+      ? `${turns} ran against a custom endpoint with no price set. The figure above covers only the rest`
+      : `${turns} ran against a custom endpoint with no price set, so there is no cost to show: unknown, not $0.00`);
   }
   return lines.join("\n");
 }

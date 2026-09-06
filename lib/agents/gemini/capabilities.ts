@@ -81,13 +81,13 @@ export const GEMINI_CAPABILITIES: AgentCapabilities = {
   supportsMcpTools: true,
   // ...and ONLY those. The CLI reads MCP servers from exactly one user-global
   // file, and the driver replaces that file per task to give the bridge its own
-  // CALANDRIA_TASK_ID. That substitution is what makes parallel tasks possible,
-  // and it necessarily hides whatever the user configured globally.
+  // CALANDRIA_TASK_ID. That substitution makes parallel tasks possible, and it
+  // necessarily hides whatever the user configured globally.
   inheritsUserMcpServers: false,
   userMcpServersNote:
     "The MCP servers in your ~/.gemini/config/mcp_config.json are not mounted. " +
     "Antigravity reads MCP config from that one global file, so each task is given its own copy " +
-    "containing only Calandria's bridge — that is what lets tasks run in parallel without " +
+    "containing only Calandria's bridge, so tasks run in parallel without " +
     "stealing each other's identity.",
   // The hosted-gateway selection (projects.gateway_mcp) is a separate mount
   // from the note above, with its own caveat: the CLI's policy engine splits a

@@ -129,7 +129,7 @@ async function clearGeneration(id: string, task: Task, project: Project, gen: nu
   // fresh generation, with enough of the text to retype it from.
   if (dropped.length) {
     const note =
-      `ℹ ${dropped.length} queued message${dropped.length === 1 ? "" : "s"} discarded by /clear — ` +
+      `ℹ ${dropped.length} queued message${dropped.length === 1 ? "" : "s"} discarded by /clear: ` +
       `${dropped.length === 1 ? "it was" : "they were"} lined up behind the context that just went away. ` +
       `Send ${dropped.length === 1 ? "it" : "them"} again if still wanted:\n` +
       dropped.map((p) => `• ${clip(p.content)}`).join("\n");

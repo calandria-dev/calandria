@@ -106,7 +106,7 @@ describe("usage-limit recovery", () => {
     // time it folded in from rate_limit_event), not a throw.
     runTurnMock.mockImplementation(async function* () {
       yield { type: "session", sessionId: "sess-2" };
-      yield { type: "error", content: `${LIMIT_HIT} — resets at 7/30/2026, 3:00:00 PM` };
+      yield { type: "error", content: `${LIMIT_HIT}, resets at 7/30/2026, 3:00:00 PM` };
       yield { type: "done", sessionId: "sess-2" };
     });
 
@@ -121,11 +121,11 @@ describe("usage-limit recovery", () => {
   });
 });
 
-describe("isUsageLimit — spent-quota detection", () => {
+describe("isUsageLimit: spent-quota detection", () => {
   it("matches the Claude subscription signatures", () => {
     expect(isUsageLimit(LIMIT_HIT)).toBe(true);
     expect(isUsageLimit("5-hour limit reached ∙ resets 3pm")).toBe(true);
-    expect(isUsageLimit("Weekly limit reached — resets Thursday")).toBe(true);
+    expect(isUsageLimit("Weekly limit reached, resets Thursday")).toBe(true);
     expect(isUsageLimit("You've hit your usage limit. Upgrade to continue.")).toBe(true);
   });
 

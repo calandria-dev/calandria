@@ -182,8 +182,8 @@ describe("the pre-turn settings gate", () => {
     const card = cardOf(events)!;
     expect(card.request.kind).toBe("settings");
     expect(card.request.title).toContain(".claude/settings.json");
-    // The diff is what makes the card answerable: "something changed" is not
-    // a thing anyone can approve.
+    // The diff makes the card answerable: "something changed" is not a thing
+    // anyone can approve.
     expect(card.request.diff?.some((l) => l.sign === "+" && l.text.includes("curl evil.example"))).toBe(true);
     // Stated in the transcript too, so the fact survives a card nobody answers.
     expect(textOf(events, "notice")).toContain(".claude/settings.json");

@@ -90,7 +90,7 @@ beforeEach(() => {
 });
 
 describe("resolving a turn's model", () => {
-  it("sends nothing when neither the task nor Settings chose — the CLI's own default keeps winning", async () => {
+  it("sends nothing when neither the task nor Settings chose, so the CLI's own default keeps winning", async () => {
     expect(await claudeModel(null, null)).toBeUndefined();
     const codex = await codexModel(null, null);
     expect(codex.asked).toBeUndefined();
@@ -113,7 +113,7 @@ describe("resolving a turn's model", () => {
     expect(codex.asked).toBe("gpt-5.6-sol");
   });
 
-  it("keeps the default agent-scoped — one agent's default never leaks onto the other", async () => {
+  it("keeps the default agent-scoped: one agent's default never leaks onto the other", async () => {
     // A model id names one provider's catalog: "opus" is a value Codex could
     // never run, so there is no un-suffixed key to read.
     setSetting("default_model:claude", "opus");
@@ -123,7 +123,7 @@ describe("resolving a turn's model", () => {
   });
 });
 
-describe("PATCH /api/settings — the default-model key", () => {
+describe("PATCH /api/settings: the default-model key", () => {
   const patch = async (body: Record<string, string | null>) =>
     (await (await patchSettings(new Request("http://test/api/settings", {
       method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
@@ -140,7 +140,7 @@ describe("PATCH /api/settings — the default-model key", () => {
   });
 });
 
-describe("POST /api/tasks — model at creation", () => {
+describe("POST /api/tasks: model at creation", () => {
   const post = async (body: Record<string, unknown>) => {
     const res = await createTaskRoute(new Request("http://test/api/tasks", {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),

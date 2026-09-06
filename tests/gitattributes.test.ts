@@ -97,7 +97,7 @@ describe(".gitattributes pins LF line endings", () => {
     const unpinned = files.filter((f) => f.attrs !== "text=auto eol=lf").map((f) => f.file);
     expect(
       unpinned,
-      "these tracked paths no longer resolve to `text=auto eol=lf`, so what a Windows checkout writes to disk is back to depending on that machine's `core.autocrlf` — restore the line in .gitattributes",
+      "these tracked paths no longer resolve to `text=auto eol=lf`, so what a Windows checkout writes to disk is back to depending on that machine's `core.autocrlf`. Restore the line in .gitattributes",
     ).toEqual([]);
   });
 
@@ -112,7 +112,7 @@ describe(".gitattributes pins LF line endings", () => {
     const binary = files.filter((f) => f.index === "-text");
     expect(
       binary.length,
-      "no tracked file is detected as binary any more — either the images left the repo, or `text=auto` was hardened into a bare `text`",
+      "no tracked file is detected as binary any more; either the images left the repo, or `text=auto` was hardened into a bare `text`",
     ).toBeGreaterThan(0);
     const converted = binary.filter((f) => f.worktree !== "-text").map((f) => f.file);
     expect(
@@ -131,7 +131,7 @@ describe(".gitattributes pins LF line endings", () => {
     const dirty = files.filter((f) => f.index === "crlf" || f.index === "mixed");
     expect(
       dirty.map((f) => `${f.file} (i/${f.index})`),
-      "these were committed with CRLF, so a Linux checkout gets carriage returns git will never strip — run `git add --renormalize` on them and commit",
+      "these were committed with CRLF, so a Linux checkout gets carriage returns git will never strip. Run `git add --renormalize` on them and commit",
     ).toEqual([]);
   });
 });

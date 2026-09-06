@@ -69,7 +69,7 @@ describe.skipIf(IS_WIN)("writeSecretFile on POSIX", () => {
     expect(calls).toEqual([]);
   });
 
-  it("swallows a chmod failure — the create-time mode already applied", () => {
+  it("swallows a chmod failure, since the create-time mode already applied", () => {
     // POSIX chmod is a backstop over a mode writeFileSync already set, so it
     // must not fail a good save.
     expect(() => restrictSecretFile(path.join(dir, "gone", "key"), { platform: "darwin" })).not.toThrow();

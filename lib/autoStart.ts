@@ -141,8 +141,8 @@ export async function launchInitialTurn(taskId: string, note: string, admit: (fr
   // task blocked-but-startable; the user gets the route's error when they try.
   if (!project || !project.repo_path.trim()) return false;
   // Atomically claim the turn slot. Occupied means a turn is already live
-  // (e.g. the user pressed Start in the same instant): nothing to do. Claimed
-  // before the first await: the claim is what makes a concurrent launch a
+  // (e.g. the user pressed Start in the same instant): nothing to do. The
+  // claim happens before the first await, so a concurrent launch becomes a
   // no-op instead of a double turn, and tests/autoStart.ts reads its
   // synchronous absence as proof that no launch is in flight at all.
   const controller = claimTurn(taskId);

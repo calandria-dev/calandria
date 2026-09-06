@@ -146,7 +146,7 @@ test("the traffic lights land on the app's own titlebar row", async ({}, testInf
   const topRow = hits.find((h) => h.name === "past the lights")!;
   expect(
     topRow.stack.length,
-    `nothing but html/body is laid out at (100, 23) — the window has a dead band across its top: ${JSON.stringify(topRow.stack)}`
+    `nothing but html/body is laid out at (100, 23): the window has a dead band across its top: ${JSON.stringify(topRow.stack)}`
   ).toBeGreaterThan(2);
 });
 
@@ -180,7 +180,7 @@ test("the page reserves the traffic lights' corner and is draggable", async () =
   // The whole feature hangs off this one class, so it is asserted before
   // anything it turns on: without it every check below reads as "no padding,
   // no drag region" and the diagnosis would be the CSS rather than the UA.
-  expect(chrome.macChrome, "the shell's own UA token never reached the page — isMacDesktopShell() said no").toBe(true);
+  expect(chrome.macChrome, "the shell's own UA token never reached the page; isMacDesktopShell() said no").toBe(true);
 
   // The bar starts at the very top of the window (hiddenInset gave it those
   // rows) and its content starts clear of the buttons: 18 + 52 = 70 is the
@@ -188,7 +188,7 @@ test("the page reserves the traffic lights' corner and is draggable", async () =
   expect(chrome.barTop).toBe(0);
   expect(
     chrome.logoLeft,
-    "the Calandria logo is underneath the traffic lights — the titlebar's left inset is too small"
+    "the Calandria logo is underneath the traffic lights: the titlebar's left inset is too small"
   ).toBeGreaterThanOrEqual(70);
 
   // And the bar moves the window, because nothing else can. A button inside a
@@ -226,14 +226,14 @@ test("the menubar's submenus carry the roles the system shortcuts come from", as
   // text, which is why `{ role: "editMenu" }` is in main.js.
   expect(
     missing(menus.editmenu, ["undo", "redo", "cut", "copy", "paste", "select"]),
-    `Edit menu is incomplete — Cmd+C/V/A come from these roles. Menu was ${JSON.stringify(menus.editmenu)}`
+    `Edit menu is incomplete: Cmd+C/V/A come from these roles. Menu was ${JSON.stringify(menus.editmenu)}`
   ).toEqual([]);
 
   // The application menu is macOS's own: Cmd+Q, Cmd+H and About live nowhere
   // else, and `{ role: "appMenu" }` is added only on darwin.
   expect(
     missing(menus.appmenu, ["about", "hide", "quit"]),
-    `application menu is incomplete — Cmd+Q and Cmd+H have nowhere to come from. Menu was ${JSON.stringify(menus.appmenu)}`
+    `application menu is incomplete: Cmd+Q and Cmd+H have nowhere to come from. Menu was ${JSON.stringify(menus.appmenu)}`
   ).toEqual([]);
 
   // Cmd+M. `close` is checked against the file menu instead: on darwin

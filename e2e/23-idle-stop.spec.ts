@@ -92,7 +92,7 @@ test("the board card carries the same control", async ({ page, request }) => {
   await expect.poll(async () => (await getTask(request, task.id)).running, { timeout: 15_000 }).toBe(0);
 });
 
-test("the session offers no second Stop — the composer's is the one", async ({ page, request }) => {
+test("the session offers no second Stop; the composer's is the one", async ({ page, request }) => {
   const task = await idleTurn(request, `Quiet session ${uid()}`);
 
   await gotoApp(page);

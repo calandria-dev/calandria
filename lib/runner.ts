@@ -571,9 +571,9 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // Spend reported per API request rather than per segment (`partial` usage
   // events, see StreamEvent), held here instead of written: a full report
   // covers the same requests, so these are dropped when one arrives and only
-  // flushed by the finally when none did. This is what makes a stopped turn
-  // record its actual spend: the segment it died inside had no result
-  // message, so its tool calls would otherwise leave no ledger row at all.
+  // flushed by the finally when none did. That lets a stopped turn record its
+  // actual spend: the segment it died inside had no result message, so its
+  // tool calls would otherwise leave no ledger row at all.
   const provisional = { cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 };
   // Of the usage reports folded into `spent`, how many carried no price at
   // all (a custom base URL, see the usage branch below). `spent.cost_usd` is
@@ -796,9 +796,9 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // version bump.
     for await (const ev of driver.runTurn(task, project, userText, abortController, hooks)) {
       // This turn is producing something, whatever it is. One Map write,
-      // before the branch ladder, so nothing added below can forget to do
-      // it; it is what makes the gaps between these events the signal the
-      // idle mark is derived from (lib/turnActivity.ts).
+      // before the branch ladder, so nothing added below can skip it; the
+      // gaps between these writes are the signal the idle mark is derived
+      // from (lib/turnActivity.ts).
       markTurnActivity(id);
       // Persist first, then publish enriched with the DB message id, so a
       // snapshot taken at any instant plus the live tail never loses an
@@ -1104,8 +1104,8 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         // figure until refetch.
         publish(id, { ...ev, usage: { ...ev.usage, cost_usd: cost ?? 0 }, unpriced: cost === null });
       } else if (ev.type === "context") {
-        // Measured occupancy, persisted as it arrives (not at turn end) so a
-        // Stop or a crash mid-turn doesn't lose what the window actually
+        // Context-window occupancy, persisted as it arrives (not at turn end)
+        // so a Stop or a crash mid-turn doesn't lose what the window actually
         // holds. Generation-guarded like the settle in finally: a /clear
         // that raced this turn has reset the row for a fresh window, and a
         // late report from the old session must not land on it.
@@ -1309,9 +1309,9 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       // indistinguishable from live work and never moved by anything, so
       // every firing would leave one more permanent "In progress" row
       // behind. A turn the settings gate refused never opened a session, so
-      // the clause below flags it deliberately: it is precisely the case
-      // that needs a person, since the way out is reading a diff and
-      // deciding, which is what the "N need you" pill is for. This includes
+      // the clause below flags it too: it is exactly the case that needs a
+      // person, since the way out is reading a diff and deciding, which the
+      // "N need you" pill exists for. This includes
       // the scheduled case, where the alternative is a run that refused
       // itself at 08:30 and said so only in a ledger nobody opens.
       updateTask(id, {

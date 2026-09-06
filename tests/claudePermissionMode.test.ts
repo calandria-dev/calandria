@@ -68,7 +68,7 @@ beforeEach(() => {
 });
 
 describe("which permission modes the driver offers", () => {
-  it("honors exactly the modes the picker offers — no entry that silently means something else", async () => {
+  it("honors exactly the modes the picker offers, with no entry that silently means something else", async () => {
     // Every mode the capability list offers must survive the round trip to
     // the SDK unchanged, since an unrecognized value falls back to the
     // default.
@@ -91,7 +91,7 @@ describe("which permission modes the driver offers", () => {
     ]);
   });
 
-  it("labels every mode with Anthropic's own spelling, and never 'Inherit' — the picker's head owns that word", () => {
+  it("labels every mode with Anthropic's own spelling, and never 'Inherit', since the picker's head owns that word", () => {
     // Provider-native labels: the picker shows exactly the strings
     // `--permission-mode` takes, so label equals value for every entry,
     // including the mode Anthropic spells "default". Calandria's synthetic
@@ -187,7 +187,7 @@ describe("what each mode does to the gate", () => {
     return { result, events };
   }
 
-  it("blanket-allows under bypassPermissions — the gate is never consulted", async () => {
+  it("blanket-allows under bypassPermissions, since the gate is never consulted", async () => {
     // Not just "allows": bypassPermissions must short-circuit BEFORE any card,
     // because the SDK never calls the callback in that mode anyway.
     const { result, events } = await gate("bypassPermissions", "Bash", { command: "rm -rf /tmp/x" });

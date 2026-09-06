@@ -3,7 +3,7 @@ import { landingSelection, selectionToPersist } from "../app/shell/persist";
 
 const P = (...ids: string[]) => ids.map((id) => ({ id }));
 
-describe("persist — a restart lands on the last project, not the first", () => {
+describe("persist: a restart lands on the last project, not the first", () => {
   it("prefers the remembered project over the first in the list", () => {
     const land = landingSelection(P("a", "b", "c"), {}, { selProj: "c" });
     expect(land.proj).toBe("c");
@@ -48,7 +48,7 @@ describe("persist — a restart lands on the last project, not the first", () =>
   });
 });
 
-describe("persist — a pre-boot write must not erase the remembered selection", () => {
+describe("persist: a pre-boot write must not erase the remembered selection", () => {
   const stored = { selProj: "c", selTask: "t1" };
 
   it("re-writes what is on disk while boot is still in flight", () => {

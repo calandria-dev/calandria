@@ -128,7 +128,7 @@ describe("schedules API", () => {
   });
 });
 
-describe("schedules API — run now", () => {
+describe("schedules API: run now", () => {
   let pid = "";
   let scheduleId = "";
 
@@ -190,7 +190,7 @@ describe("schedules API — run now", () => {
   });
 });
 
-describe("schedules API — validate", () => {
+describe("schedules API: validate", () => {
   let pid = "";
   beforeEach(() => { pid = createProject({ name: `api-validate-${Math.random().toString(36).slice(2)}` }).id; });
 

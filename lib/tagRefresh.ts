@@ -101,7 +101,7 @@ function memberState(t: Task): string {
   if (t.status === "cancelled") return t.withdrawn_reason ? "withdrawn" : "cancelled";
   if (t.status === "done") return "done";
   if (t.running === 1) return "a session is running in it RIGHT NOW";
-  if (t.started === 1) return "started — it has a checkout and possibly a diff";
+  if (t.started === 1) return "started: it has a checkout and possibly a diff";
   if (t.suggested === 1) return "an unreviewed suggestion, still in the tray";
   return "accepted, not started";
 }
@@ -115,7 +115,7 @@ function memberState(t: Task): string {
 export async function buildTagDigest(project: Project, tag: Tag, members: Task[]): Promise<string> {
   const lines: string[] = [];
   lines.push(`Tag: ${tag.name}`);
-  lines.push(`Saved description (may be stale): ${tag.description || "(none — write one)"}`);
+  lines.push(`Saved description (may be stale): ${tag.description || "(none, write one)"}`);
   if (tag.base_branch) lines.push(`Plan base branch: ${tag.base_branch}`);
   lines.push("");
   lines.push(`Members, in plan order (${members.length}):`);
@@ -128,7 +128,7 @@ export async function buildTagDigest(project: Project, tag: Tag, members: Task[]
     lines.push(`description:`);
     lines.push(clip(m.description || "(none)", 3000));
   });
-  if (!members.length) lines.push("(none — nothing carries this tag)");
+  if (!members.length) lines.push("(none, nothing carries this tag)");
 
   const repo = project.repo_path;
   if (repo && (await isGitRepo(repo).catch(() => false))) {
@@ -198,7 +198,7 @@ export function applyTagPlan(tag: Tag, members: Task[], plan: TagPlan, actor: Ag
       }
       if (member.running === 1 || member.started === 1 || member.status === "done" || member.status === "cancelled") {
         // Started (or already settled): report, don't touch.
-        if (member.status !== "done" && member.status !== "cancelled") out.flagged.push(`${member.title} — ${reason}`);
+        if (member.status !== "done" && member.status !== "cancelled") out.flagged.push(`${member.title}: ${reason}`);
         continue;
       }
       if (isInertSuggestion(member)) {
@@ -206,14 +206,13 @@ export function applyTagPlan(tag: Tag, members: Task[], plan: TagPlan, actor: Ag
         if (r.task) {
           out.retired++;
           if (r.autoStartDependents) cleared.push(member.id);
-        } else out.flagged.push(`${member.title} — ${reason}`);
+        } else out.flagged.push(`${member.title}: ${reason}`);
         continue;
       }
       // Accepted but never started: no checkout, no diff, nothing to lose. The
       // withdraw tool's gate protects work an agent shouldn't retract unasked,
       // which doesn't apply to the user's own button, so cancel it here and
-      // record the status move as an agent edit, which is what makes it
-      // revertable.
+      // record the status move as an agent edit so it can be reverted.
       const before = member.status;
       const updated = updateTask(member.id, { status: "cancelled", withdrawn_reason: reason, awaiting_input: 0 });
       if (!updated) continue;
@@ -266,10 +265,10 @@ function summarize(o: TagRefreshOutcome): string {
   if (o.descriptionRewritten) parts.push("description rewritten");
   if (o.reworded) parts.push(`${o.reworded} task${o.reworded === 1 ? "" : "s"} reworded`);
   if (o.retired) parts.push(`${o.retired} retired`);
-  const head = parts.length ? `${parts.join(" · ")}. Every task change is revertable from its "Changed by agent" chip.` : "Nothing needed changing — the plan still matches the code.";
+  const head = parts.length ? `${parts.join(" · ")}. Every task change is revertable from its "Changed by agent" chip.` : "Nothing needed changing. The plan still matches the code.";
   if (!o.flagged.length) return head;
   const which = o.flagged.map((f) => `· ${f}`).join("\n");
-  return `${head}\nLooks already handled, but has work in it — left alone for you to judge:\n${which}`;
+  return `${head}\nLooks already handled, but has work in it, left alone for you to judge:\n${which}`;
 }
 
 // The run itself, detached. Persists whatever it reaches, so a client

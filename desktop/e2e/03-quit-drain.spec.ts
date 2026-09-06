@@ -122,7 +122,7 @@ test("the in-flight turn was settled rather than cut off mid-write", async () =>
     expect(row!.started).toBe(1);
     expect(
       row!.running,
-      `the turn was still marked running after the shell exited (quit took ${quitMs}ms) — ` +
+      `the turn was still marked running after the shell exited (quit took ${quitMs}ms); ` +
         "before-quit returned before server.js finished draining"
     ).toBe(0);
   } finally {
@@ -130,7 +130,7 @@ test("the in-flight turn was settled rather than cut off mid-write", async () =>
   }
 });
 
-test("closing the window hides it where there is a tray, quits where there is not — and drains either way", async () => {
+test("closing the window hides it where there is a tray, quits where there is not, and drains either way", async () => {
   // Two claims in one instance, since the second only means anything after
   // the first: closing the window no longer quits (the server keeps running
   // with the turn in flight), and quitting afterwards puts the window back

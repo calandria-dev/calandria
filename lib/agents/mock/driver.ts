@@ -132,7 +132,7 @@ const MOCK_COMMANDS = [
   { name: "mock-echo", description: "echo the arguments back", argumentHint: "<text>" },
   { name: "mock-status", description: "report mock agent status" },
   { name: "mock-plugin:mock-deploy", description: "deploy from the mock plugin", aliases: ["mock-deploy"] },
-  { name: "clear", description: "the agent's own clear — Calandria's must win" },
+  { name: "clear", description: "the agent's own clear; Calandria's must win" },
   { name: "__mock-internal", description: "internal, never offered" },
 ];
 
@@ -213,7 +213,7 @@ export const mockDriver: AgentDriver = {
           }
           yield { type: "permission_decided", id, outcome: { decision, remembered, note: note || undefined } };
           if (decision === "deny") {
-            yield { type: "assistant", content: `Skipped \`${gated}\` — ${note || DENIED_BY_USER}` };
+            yield { type: "assistant", content: `Skipped \`${gated}\`: ${note || DENIED_BY_USER}` };
             yield { type: "done", sessionId };
             return;
           }
@@ -273,7 +273,7 @@ export const mockDriver: AgentDriver = {
       yield { type: "tool", id, title: described.title, detail: described.detail };
       yield { type: "permission_denied", id, tool: "Bash", reasonType: "classifier", reason: blockedReason(undefined, message) };
       yield { type: "tool_result", id, content: message, isError: true };
-      yield { type: "assistant", content: `Skipped \`${blocked}\` — Claude Code refused it.` };
+      yield { type: "assistant", content: `Skipped \`${blocked}\`: Claude Code refused it.` };
       yield { type: "done", sessionId };
       return;
     }

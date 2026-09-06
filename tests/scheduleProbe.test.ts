@@ -207,7 +207,7 @@ describe("the fire-time command probe", () => {
     }
   });
 
-  it("a stalled probe cannot wedge the sweep — the next tick still fires", async () => {
+  it("a stalled probe cannot wedge the sweep: the next tick still fires", async () => {
     // End to end: if the read below never returns, tickSchedules() never
     // clears `ticking` and every schedule on the instance stops firing until
     // the process restarts.

@@ -49,7 +49,7 @@ function mockCli(run: (stop: () => Promise<void>) => AsyncGenerator<unknown>): v
   });
 }
 
-const CLI_TEXT = `${CLI_INTERRUPTED_TOOL_RESULT}. It may or may not have completed on the server — verify before assuming it succeeded, and retry if needed.`;
+const CLI_TEXT = `${CLI_INTERRUPTED_TOOL_RESULT}. It may or may not have completed on the server. Verify before assuming it succeeded, and retry if needed.`;
 const SUGGEST = "mcp__calandria__suggest_task";
 
 const init = { type: "system", subtype: "init", session_id: "sess-1" };

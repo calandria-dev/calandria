@@ -251,7 +251,7 @@ describe("blobSha", () => {
     const dir = tmpDir("blobsha-");
     await git(dir, "init", "-b", "main");
     const abs = path.join(dir, "notes.md");
-    fs.writeFileSync(abs, "café — naïve\n", "utf8");
+    fs.writeFileSync(abs, "café, naïve\n", "utf8");
     const expected = (await git(dir, "hash-object", abs)).trim();
     expect(blobSha(fs.readFileSync(abs))).toBe(expected);
   });

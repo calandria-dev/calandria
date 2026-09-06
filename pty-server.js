@@ -99,10 +99,10 @@ const SHELL = resolveShell();
 // project plus all SSE streams. Log loudly and keep running instead of
 // exiting; each occurrence is still a bug to fix at its call site.
 process.on("unhandledRejection", (reason) => {
-  log.error("UNHANDLED REJECTION (kept alive — investigate)", { err: reason });
+  log.error("UNHANDLED REJECTION (kept alive, investigate)", { err: reason });
 });
 process.on("uncaughtException", (err) => {
-  log.error("UNCAUGHT EXCEPTION (kept alive — investigate)", { err });
+  log.error("UNCAUGHT EXCEPTION (kept alive, investigate)", { err });
 });
 
 const server = http.createServer((_req, res) => {
@@ -130,13 +130,13 @@ const wss = new WebSocketServer({
         // non-loopback peer reached PTY_PORT directly.
         const peer = info.req.socket?.remoteAddress;
         if (!localOrigin.isLoopbackPeer(peer)) {
-          log.warn("rejected connection — peer is not loopback", { peer });
+          log.warn("rejected connection: peer is not loopback", { peer });
           return callback(false, 401, "Unauthorized");
         }
         const headers = { host: info.req.headers.host, origin: info.origin };
         if (!origin.originAuthEnabled()) {
           const allowed = localOrigin.localWebSocketRequestAllowed(headers);
-          if (!allowed) log.warn("rejected connection — origin not allowed in local mode", { origin: info.origin || "(none)" });
+          if (!allowed) log.warn("rejected connection: origin not allowed in local mode", { origin: info.origin || "(none)" });
           return callback(allowed);
         }
         // Access mode: same two checks the app makes. Same-origin proves the
@@ -144,13 +144,13 @@ const wss = new WebSocketServer({
         // SameSite=None); the assertion proves who it is. server.js forwards
         // the upgrade's headers verbatim, so both are here.
         if (!localOrigin.sameOriginWebSocketRequestAllowed(headers)) {
-          log.warn("rejected connection — origin does not match host", { origin: info.origin || "(none)", host: headers.host || "(none)" });
+          log.warn("rejected connection: origin does not match host", { origin: info.origin || "(none)", host: headers.host || "(none)" });
           return callback(false, 401, "Unauthorized");
         }
         try {
           await origin.verifyOriginNodeRequest(info.req);
         } catch (err) {
-          log.warn("rejected connection — no valid Access assertion", { err: err?.message || err });
+          log.warn("rejected connection: no valid Access assertion", { err: err?.message || err });
           return callback(false, 401, "Unauthorized");
         }
         callback(true);
@@ -224,7 +224,7 @@ wss.on("connection", (ws, req) => {
 // lib/env-keys.mjs (CALANDRIA_ALLOW_API_KEY_ENV opts in).
 import("./lib/env-keys.mjs").then((envKeys) => {
   for (const name of envKeys.stripInheritedAgentKeys()) {
-    log.warn(`WARN: ${name} was set in the environment — unsetting it (CALANDRIA_ALLOW_API_KEY_ENV=1 to keep).`);
+    log.warn(`WARN: ${name} was set in the environment, unsetting it (CALANDRIA_ALLOW_API_KEY_ENV=1 to keep).`);
   }
   server.listen(PORT, HOST, () => {
     log.info(`listening on ws://${HOST}:${PORT}`);

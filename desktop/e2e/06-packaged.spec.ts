@@ -74,7 +74,7 @@ test.afterAll(async () => {
 });
 
 test("the app booted from its own payload, with no CALANDRIA_REPO_ROOT and no checkout in reach", async () => {
-  expect(facts.packaged, "electron says this is not a packaged app — CALANDRIA_TEST_BIN is pointing at a dev build").toBe(
+  expect(facts.packaged, "electron says this is not a packaged app; CALANDRIA_TEST_BIN is pointing at a dev build").toBe(
     true
   );
   // The absence is the subject: with this set, nothing below would be evidence
@@ -161,11 +161,11 @@ test("the OS sandbox is live here, or this lane is the one that admits it isn't"
     // CI's `electron-builder --dir` output: nothing installed the SUID bit
     // and nothing installed a profile, so the suite passes --no-sandbox and
     // every process shares one namespace. Asserted rather than tolerated,
-    // since this is what makes this lane's green conditional on a flag no
-    // user ever sets.
+    // since this lane's green result is conditional on a flag no user ever
+    // sets.
     expect(suidRoot, "the unpacked artifact has a SUID chrome-sandbox: set CALANDRIA_DESKTOP_SANDBOX=1").toBe(false);
     expect(facts.noSandboxSwitch).toBe(true);
-    expect(isolated, "this artifact IS sandboxed — it should be run without --no-sandbox").toHaveLength(0);
+    expect(isolated, "this artifact is sandboxed; it should be run without --no-sandbox").toHaveLength(0);
   }
 });
 

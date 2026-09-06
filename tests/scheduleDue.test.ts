@@ -70,7 +70,7 @@ describe("adjudicate, one-time schedules", () => {
     expect(getSchedule(s.id)!.enabled).toBe(0);
   });
 
-  it("walks no backlog — there is only ever the one slot", () => {
+  it("walks no backlog, since there is only ever the one slot", () => {
     const s = makeOnce();
     const slot = s.next_fire_at;
     // Late but inside a generous window: fires as catch_up, and the missed-slot

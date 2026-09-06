@@ -226,8 +226,8 @@ describe("import-graph layering (async-external poisoning)", () => {
         expect(
           trail,
           trail && `${entry} reaches ${sdk} via:\n  ${trail.join("\n  → ")}\n` +
-            `ESM externals compile to async modules under Turbopack and break sync route entries — ` +
-            `import capability data from lib/agents/capabilities.ts instead of the driver registry.`
+            `ESM externals compile to async modules under Turbopack and break sync route entries. ` +
+            `Import capability data from lib/agents/capabilities.ts instead of the driver registry.`
         ).toBeUndefined();
       }
     });
@@ -259,8 +259,8 @@ describe("import-graph layering (async-external poisoning)", () => {
       expect(
         trail,
         trail && `lib/agents/registry.ts reaches ${launcher} via:\n  ${trail.join("\n  → ")}\n` +
-          `That closes a cycle back into the async graph. A dynamic import() hides the symptom but ` +
-          `not the cycle — take what you need as an injected callback (TurnHooks in ` +
+          `That closes a cycle back into the async graph. A dynamic import() hides the symptom, ` +
+          `not the cycle. Take what you need as an injected callback (TurnHooks in ` +
           `lib/agents/types.ts), the way the driver's tool callbacks report a cleared blocker.`
       ).toBeUndefined();
     }

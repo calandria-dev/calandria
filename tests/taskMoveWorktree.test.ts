@@ -113,7 +113,7 @@ describe("moving a started task by discarding its worktree", () => {
     // The checkout is gone from disk AND from the old repo's registry.
     expect(fs.existsSync(wt.path)).toBe(false);
     await expect(git(fromRepo, "rev-parse", "--verify", `refs/heads/${wt.branch}`)).rejects.toThrow();
-    // …and off the row, which is what makes the next turn cut a fresh one.
+    // The row is cleared too, so the next turn cuts a fresh worktree.
     expect(getTask(task.id)).toMatchObject({ worktree_path: "", work_branch: "", base_sha: "" });
     // Reported, so the caller can say what it cost instead of leaving the user
     // to notice.
@@ -137,7 +137,7 @@ describe("moving a started task by discarding its worktree", () => {
     expect(getProjectUsage(to.id).cost_usd).toBeCloseTo(1.25);
   });
 
-  it("clears the state that described the old repo — session, merge, PR", async () => {
+  it("clears the state that described the old repo: session, merge, PR", async () => {
     const { to, fromRepo, task, wt } = await startedTask("StaleState");
     await landIt(fromRepo, wt);
     updateTask(task.id, { merged_at: Date.now(), pr_url: "https://github.com/old/repo/pull/7" });
@@ -348,7 +348,7 @@ describe("what the next turn cuts", () => {
 });
 
 describe("a branch that outlived its worktree", () => {
-  it("is deleted too — the pruned-but-kept shape", async () => {
+  it("is deleted too, the pruned-but-kept shape", async () => {
     const { to, fromRepo, task, wt } = await startedTask("BranchOnly");
     await landIt(fromRepo, wt);
     // What "prune merged worktrees" leaves behind: disk reclaimed, branch kept

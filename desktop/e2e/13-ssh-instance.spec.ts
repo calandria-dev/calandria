@@ -59,7 +59,7 @@ const SSH_OK = sshIsUsable();
 test.describe.configure({ mode: "serial" });
 test.skip(
   !SSH_OK,
-  `no key-based ssh to ${SSH_HOST} on this box — the transport is covered by desktop/test-supervisor.js instead`,
+  `no key-based ssh to ${SSH_HOST} on this box; the transport is covered by desktop/test-supervisor.js instead`,
 );
 
 const NAME = "Build box";

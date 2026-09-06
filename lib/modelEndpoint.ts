@@ -52,7 +52,7 @@ const unreachable = (base_url: string, error: string): EndpointModels => ({ base
 function reason(e: unknown): string {
   const code = (e as { cause?: { code?: unknown } } | null | undefined)?.cause?.code;
   if (typeof code === "string") {
-    if (code === "ECONNREFUSED") return "connection refused — is the server running?";
+    if (code === "ECONNREFUSED") return "connection refused: is the server running?";
     if (code === "ENOTFOUND" || code === "EAI_AGAIN") return "host not found";
     if (code === "ECONNRESET") return "connection reset";
     return code;

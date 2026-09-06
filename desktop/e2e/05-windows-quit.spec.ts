@@ -147,7 +147,7 @@ test.describe("Windows process termination", () => {
     const orphansAtKill = pids.filter(alive);
     console.log(
       `[spec] taskkill /F left ${orphansAtKill.length} of 2 sidecars running` +
-        (orphansAtKill.length ? ` (pids ${orphansAtKill.join(", ")}) — /T is what reaps them` : "")
+        (orphansAtKill.length ? ` (pids ${orphansAtKill.join(", ")}), reaped below by /T` : "")
     );
 
     // `quitShell`'s backstop, run here as the cleanup it also is: an orphan
@@ -329,7 +329,7 @@ function sidecarPids(electronPid: number): Sidecars {
       r.stderr ? `stderr: ${r.stderr}` : null,
       raw ? `stdout: ${raw.slice(0, 2000)}` : "stdout: (empty)",
       ...rows.map(
-        (row) => `  child ${row.ProcessId} ${row.Name ?? "?"} — ${row.CommandLine ?? "(no command line)"}`
+        (row) => `  child ${row.ProcessId} ${row.Name ?? "?"}: ${row.CommandLine ?? "(no command line)"}`
       ),
     ]
       .filter((line): line is string => !!line)

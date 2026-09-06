@@ -113,7 +113,7 @@ describe("GET /api/projects/[id]/models", () => {
   });
 });
 
-describe("GET /api/projects/[id]/models — gateway", () => {
+describe("GET /api/projects/[id]/models: gateway", () => {
   let gw: FakeGateway;
   afterEach(async () => {
     await gw?.close();

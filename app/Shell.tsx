@@ -633,7 +633,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
                     (CALANDRIA_INSTANCE_NAME), so two tabs open on two servers
                     are told apart on sight. Unnamed instances keep "fleet". */}
                 <span className="cz" title={instanceName || undefined}>{instanceName || "fleet"}</span><span className="cs">/</span>
-                <span className="cn">{o.view === "insights" ? "insights" : project ? project.name : "—"}</span>
+                <span className="cn">{o.view === "insights" ? "insights" : project ? project.name : "–"}</span>
               </div>
             </>
           )}

@@ -129,7 +129,7 @@ function certificateQualifier(identity) {
     if (qualifier === "") {
       throw new Error(
         `CALANDRIA_MAC_SIGN_IDENTITY is "${identity}", a certificate type with no name after it. Set it to ` +
-          'the full certificate name, e.g. "Developer ID Application: Example (AB12CD34EF)" — the CN that ' +
+          'the full certificate name, e.g. "Developer ID Application: Example (AB12CD34EF)", the CN that ' +
           "`security find-identity -v -p codesigning` prints."
       );
     }

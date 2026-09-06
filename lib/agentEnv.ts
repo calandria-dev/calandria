@@ -306,8 +306,8 @@ export function agentTurnEnv(
  *   layer while its own `Authorization` header carries whatever the billing
  *   mode below put there. `ANTHROPIC_CUSTOM_HEADERS` is the CLI's only knob
  *   for it.
- * - `x-litellm-tags` is what makes LiteLLM's own spend views break down by
- *   project and task without Calandria writing anything.
+ * - `x-litellm-tags` lets LiteLLM's own spend views break down by project and
+ *   task without Calandria writing anything.
  * - Billing `key` sends the gateway key as `ANTHROPIC_AUTH_TOKEN`, so the turn
  *   bills that key's account. Billing `subscription` sets NO credential
  *   variable: the CLI keeps its own `/login` and the gateway forwards it

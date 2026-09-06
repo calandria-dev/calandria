@@ -60,7 +60,7 @@ test("the boot screen streams supervisor logs, then hands off to the app", async
   expect(shell.bootScreen.spinner, "the boot screen showed no spinner").toBe(true);
   expect(
     shell.bootScreen.logWidth,
-    "the log pane is back on screen — the boot screen is meant to be a spinner"
+    "the log pane is back on screen, but the boot screen should show a spinner"
   ).toBeLessThanOrEqual(2);
   expect(shell.origin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
   expect(shell.win.url().startsWith(shell.origin)).toBe(true);
@@ -158,7 +158,7 @@ test("the permission handler denies everything, notifications included", async (
     requested: await Notification.requestPermission(),
     checked: Notification.permission,
   }));
-  expect(notifications.requested, "the renderer must not also raise notifications — main.js owns that channel").toBe(
+  expect(notifications.requested, "the renderer must not also raise notifications; main.js owns that channel").toBe(
     "denied"
   );
   expect(notifications.checked, "app/shell/useNotifications.ts reads THIS, and stands down only on 'denied'").toBe(

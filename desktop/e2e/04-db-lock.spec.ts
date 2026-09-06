@@ -102,8 +102,7 @@ test('a held database reads as "another Calandria is already running"', async ()
 
   expect(dialogs).toHaveLength(1);
   // The dialog title reads "Calandria stopped": the shell classified this as
-  // a sidecar that exited on purpose, which is what makes the wording below
-  // reachable at all.
+  // a sidecar that exited on purpose, so the wording checked below is reachable.
   expect(dialogs[0].title).toBe("Calandria stopped");
   expect(dialogs[0].detail).toMatch(/[Aa]nother Calandria (instance )?is already running/);
   // The crash wording, and the log tail that goes with it, must not be what

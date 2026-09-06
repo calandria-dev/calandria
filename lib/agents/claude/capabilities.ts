@@ -51,8 +51,8 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
     // which version you meant regardless of what the installed CLI knows. An id
     // the CLI doesn't recognize logs `[claude-code:unrecognized_model]` and
     // passes through unchanged, so the turn still runs and bills under that id;
-    // a genuinely bogus id errors instead, which is what makes an unrecognized
-    // pin a pass-through rather than a silent fallback.
+    // a genuinely bogus id errors instead, so an unrecognized pin is a
+    // pass-through rather than a silent fallback.
     { value: "claude-fable-5-1", label: "Fable 5.1", sub: "newest Fable · 1M context", contextWindow: M1, group: "Latest" },
     { value: "fable", label: "Fable (latest)", sub: "most capable · 1M context", contextWindow: M1, group: "Latest" },
     { value: "opus", label: "Opus (latest)", sub: "everyday complex work", contextWindow: K200, group: "Latest" },

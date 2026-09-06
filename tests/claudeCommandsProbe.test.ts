@@ -111,7 +111,7 @@ describe("the claude command probe", () => {
     expect(queryMock).toHaveBeenCalledTimes(1);
   });
 
-  it("dedupes concurrent asks — several tabs opening one task spawn one CLI", async () => {
+  it("dedupes concurrent asks, so several tabs opening one task spawn one CLI", async () => {
     answer([{ name: "simplify" }]);
     const dir = cwd();
     const all = await Promise.all([
@@ -142,7 +142,7 @@ describe("the claude command probe", () => {
     expect(await listClaudeCommands(cwd(), SETTING_SOURCES)).toBeNull();
   });
 
-  it("does not cache a failure — the next ask retries", async () => {
+  it("does not cache a failure, so the next ask retries", async () => {
     const dir = cwd();
     fail();
     expect(await listClaudeCommands(dir, SETTING_SOURCES)).toBeNull();

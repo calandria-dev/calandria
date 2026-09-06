@@ -271,7 +271,7 @@ export function DepPicker({ candidates, value, onChange, autoStart, onAutoStart 
               <input type="checkbox" checked={value.includes(c.id)} onChange={() => toggle(c.id)} />
               <StatusDot status={c.status} />
               <span className="dep-title">{c.title}</span>
-              {c.suggested ? <span className="dep-sugg" title="Still in the Suggested tray — it blocks until it's accepted and finished, dismissed, or unticked here">Suggested</span> : null}
+              {c.suggested ? <span className="dep-sugg" title="Still in the Suggested tray. It blocks until it's accepted and finished, dismissed, or unticked here">Suggested</span> : null}
               <span className="dep-status">{SLABEL[c.status]}</span>
             </label>
           ))}

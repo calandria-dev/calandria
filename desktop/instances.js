@@ -367,7 +367,7 @@ function windowTitle(instance) {
 function instanceMenuItems(state) {
   return state.instances.map((i) => ({
     id: i.id,
-    label: i.kind === "local" ? i.name : `${i.name} — ${i.kind === "ssh" ? i.ssh.host : new URL(i.url).host}`,
+    label: i.kind === "local" ? i.name : `${i.name} (${i.kind === "ssh" ? i.ssh.host : new URL(i.url).host})`,
     checked: i.id === state.active,
   }));
 }

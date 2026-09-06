@@ -157,7 +157,7 @@ export function takeAskOutcome(taskId: string, id: string): string | null {
 //
 // The marker is not an answer: the transcript must not claim the user picked
 // something they never picked.
-export const ASK_INTERRUPTED_NOTE = "Not answered — the turn was stopped before an answer arrived.";
-export const ASK_RESTARTED_NOTE = "Not answered — the app restarted before an answer arrived.";
+export const ASK_INTERRUPTED_NOTE = "Not answered: the turn was stopped before an answer arrived.";
+export const ASK_RESTARTED_NOTE = "Not answered: the app restarted before an answer arrived.";
 /** What the MODEL is told when its question was torn down (a tool result, not a card). */
 export const ASK_DISMISSED_REPLY = "The user dismissed the question without answering.";

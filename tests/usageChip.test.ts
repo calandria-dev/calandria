@@ -113,7 +113,7 @@ describe("costDisplay", () => {
     expect(sub.note).toContain("your plan");
   });
 
-  it("still shows a cost when the bundle hasn't loaded — but claims nothing about a plan", () => {
+  it("still shows a cost when the bundle hasn't loaded, but claims nothing about a plan", () => {
     expect(costDisplay(undefined)).toEqual({ show: true, approx: false, note: "" });
   });
 

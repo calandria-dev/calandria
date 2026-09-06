@@ -38,7 +38,7 @@ beforeEach(() => {
   });
 });
 
-describe("POST /messages — blocked-by gate on manual start", () => {
+describe("POST /messages, blocked-by gate on manual start", () => {
   it("refuses the first turn while a blocker is open", async () => {
     const project = makeProject();
     const blocker = createTask({ project_id: project.id, title: "Do the prerequisite thing" });

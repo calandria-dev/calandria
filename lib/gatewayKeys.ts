@@ -42,7 +42,7 @@ const warned = (store.__calandriaGatewayKeyWarned ??= new Set());
 function warnOnce(kind: string, detail: string): void {
   if (warned.has(kind)) return;
   warned.add(kind);
-  console.warn(`[gatewayKeys] ${kind}: ${detail} — falling back to the instance key`);
+  console.warn(`[gatewayKeys] ${kind}: ${detail}, falling back to the instance key`);
 }
 function clearWarned(kind: string): void {
   warned.delete(kind);

@@ -73,7 +73,7 @@ describe("retention predicate", () => {
     expect(prunableTaskIds(NOW - 180 * DAY, NOW)).toEqual([id]);
   });
 
-  it("takes a cancelled task too — terminal is not just 'done'", () => {
+  it("takes a cancelled task too, since terminal is not just 'done'", () => {
     const t = createTask({ project_id: pid, title: "abandoned" });
     updateTask(t.id, { status: "cancelled" });
     age(t.id, YEAR);
@@ -96,7 +96,7 @@ describe("retention predicate", () => {
     expect(prunableTaskIds(NOW - 180 * DAY, NOW)).toEqual([]);
   });
 
-  it("dates from updated_at, not created_at — a long task finished recently stays", () => {
+  it("dates from updated_at, not created_at, so a long task finished recently stays", () => {
     const id = coldDone(pid);
     getDb().prepare("UPDATE tasks SET created_at = ?, updated_at = ? WHERE id = ?")
       .run(NOW - 3 * YEAR, NOW - 10 * DAY, id);
@@ -116,7 +116,7 @@ describe("retention predicate", () => {
     expect(prunableTaskIds(NOW - 180 * DAY, NOW)).toEqual([]);
   });
 
-  it("leaves a clean scheduled run nobody has read — the mark sits over the status", () => {
+  it("leaves a clean scheduled run nobody has read, since the mark sits over the status", () => {
     const id = coldDone(pid);
     getDb().prepare("UPDATE tasks SET unread_run_at = ? WHERE id = ?").run(NOW - YEAR, id);
     expect(prunableTaskIds(NOW - 180 * DAY, NOW)).toEqual([]);
@@ -224,7 +224,7 @@ describe("retention sweep", () => {
     expect(second.task_merges).toBe(1);
   });
 
-  it("prunes internal_usage by row age — it has no task to hang a lifecycle on", () => {
+  it("prunes internal_usage by row age, since it has no task to hang a lifecycle on", () => {
     internal(NOW - 500 * DAY);
     internal(NOW - 10 * DAY);
     const res = sweepRetention(NOW, { transcriptMs: 0, usageMs: 400 * DAY });

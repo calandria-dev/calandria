@@ -130,7 +130,7 @@ describe("schedule store", () => {
     expect(resumed.next_fire_at).toBeGreaterThan(Date.now());
   });
 
-  it("claims an occurrence exactly once — the durable claim", () => {
+  it("claims an occurrence exactly once, the durable claim", () => {
     const s = schedule(pid);
     const slot = at("2026-08-12T15:30:00Z");
     const first = claimRun(s.id, slot, "scheduled");

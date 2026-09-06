@@ -22,7 +22,7 @@ test.beforeAll(async ({ request }) => {
   await ensureOnboarded(request);
   const project = await createProject(request, { name: PROJECT, repoPath: makeFixtureRepo("header-rail") });
   projectId = project.id;
-  const res = await request.post(`/api/projects/${projectId}/tags`, { data: { name: "Bugs — Miscellaneous", color: "#C2603C" } });
+  const res = await request.post(`/api/projects/${projectId}/tags`, { data: { name: "Bugs: Miscellaneous", color: "#C2603C" } });
   expect(res.status()).toBe(201);
   const tagId = (await res.json()).id as string;
   const task = await createTask(request, { projectId, title: TITLE });

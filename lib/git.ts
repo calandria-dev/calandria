@@ -91,10 +91,10 @@ export const legacyBranchForTask = (taskId: string) => `orch/${taskId}`;
 
 /**
  * The branch a task already has in this repo, under either spelling, or null
- * when it has none. This is what makes a reattach a reattach: ensureWorktree
- * is the only place that derives a branch name rather than reading it off the
- * row, and it runs on every self-heal (a pruned merged worktree, a lost
- * checkout, a task moved between projects). It must check both spellings:
+ * when it has none. This is what a reattach reuses: ensureWorktree is the
+ * only place that derives a branch name rather than reading it off the row,
+ * and it runs on every self-heal (a pruned merged worktree, a lost checkout,
+ * a task moved between projects). It must check both spellings:
  * deriving only the new one for an existing task would cut a fresh empty
  * `calandria/<id>` beside the task's real work on `orch/<id>`, and callers
  * would persist that empty branch onto the row.
@@ -666,7 +666,7 @@ const PROTECTED_REJECTION =
  * Both paths say the same thing so they don't read as two different problems.
  */
 export function prRequiredMessage(baseBranch: string): string {
-  return `${baseBranch} requires a pull request — open a PR instead`;
+  return `${baseBranch} requires a pull request, open a PR instead`;
 }
 
 // A push moves more data than a fetch of one branch, so it gets the same
@@ -2300,7 +2300,7 @@ export async function syncBranchFrom(input: { repoPath: string; branch: string; 
     const againstTip = await baseStartPoint(repoPath, from);
     if (!againstTip) return syncRefusal(branch, from, `${from} doesn't exist in this repo`);
     const drift = await branchDriftStatus(repoPath, branch, againstTip);
-    if (!drift.exists) return syncRefusal(branch, from, `${branch} doesn't exist in this repo — nothing to sync`);
+    if (!drift.exists) return syncRefusal(branch, from, `${branch} doesn't exist in this repo, nothing to sync`);
     if (drift.unknown) return syncRefusal(branch, from, `couldn't compare ${branch} with ${from} (shallow clone?)`);
     const counts = { behind: drift.behind, ahead: drift.ahead };
     if (drift.behind === 0) return { ok: true, branch, from, alreadyCurrent: true, ...counts };

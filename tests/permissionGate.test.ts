@@ -247,7 +247,7 @@ describe("a refusal the CLI made without a card", () => {
     expect(listMessages(task.id).some((m) => m.role === "system")).toBe(false);
   });
 
-  it("never parks the task on the user mid-turn — the decision is already made", async () => {
+  it("never parks the task on the user mid-turn, since the decision is already made", async () => {
     // The distinction that matters against an ordinary `permission`: this card
     // has no buttons, so flagging "Needs your input" while the turn is still
     // running would wedge the row on something nobody can ever answer. Checked

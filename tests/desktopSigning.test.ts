@@ -73,8 +73,8 @@ describe("macOS signing policy", () => {
   it("stays ad-hoc even with a certificate in the environment, because the identity decides", () => {
     // CSC_LINK is how electron-builder imports a .p12. macCodeSign.findIdentity
     // takes the configured qualifier ahead of anything in the keychain, so
-    // identity "-" wins, which is what makes the test lane safe to run on a
-    // pull request. Opting in is CALANDRIA_MAC_SIGN_IDENTITY, nothing else.
+    // identity "-" wins, keeping the test lane safe to run on a pull request.
+    // Opting in is CALANDRIA_MAC_SIGN_IDENTITY, nothing else.
     const mac = macSigning({ CSC_LINK: "https://example.invalid/cert.p12", CSC_KEY_PASSWORD: "hunter2" });
     expect(mac.signed).toBe(false);
     expect(mac.identity).toBe("-");
@@ -131,7 +131,7 @@ describe("macOS signing policy", () => {
     );
   });
 
-  it("refuses to sign without notarizing — a signed, un-notarized build is still refused on download", () => {
+  it("refuses to sign without notarizing, since a signed, un-notarized build is still refused on download", () => {
     expect(() => macSigning({ CALANDRIA_MAC_SIGN_IDENTITY: IDENTITY })).toThrow(/no notarization credentials/i);
     // A lone APPLE_TEAM_ID is not a credential set; it must not read as one.
     expect(() => macSigning({ CALANDRIA_MAC_SIGN_IDENTITY: IDENTITY, APPLE_TEAM_ID: "AB12CD34EF" })).toThrow(

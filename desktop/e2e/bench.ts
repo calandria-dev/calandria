@@ -61,7 +61,7 @@ export function sessionBusAddress(): string {
     );
   }
   cachedBusAddress = fs.readFileSync(SESSION_BUS_FILE, "utf8").trim();
-  if (!cachedBusAddress) throw new Error(`${SESSION_BUS_FILE} is empty — the session did not publish a bus address.`);
+  if (!cachedBusAddress) throw new Error(`${SESSION_BUS_FILE} is empty: the session did not publish a bus address.`);
   return cachedBusAddress;
 }
 
@@ -134,7 +134,7 @@ export function assertBenchSession(requires: BenchCapability[]): void {
     const label = BENCH_CHECKS[cap];
     if (out.includes(`ok    ${label}`)) continue;
     if (out.includes(`FAIL  ${label}`)) missing.push(label);
-    else throw new Error(`${BENCH_CHECK} reported no line for "${label}" — has the script changed?\n${out}`);
+    else throw new Error(`${BENCH_CHECK} reported no line for "${label}": has the script changed?\n${out}`);
   }
   if (missing.length) {
     throw new Error(
@@ -407,8 +407,8 @@ export function registeredTrayItems(): TrayItem[] {
         `org.kde.StatusNotifierWatcher has no owner: the session's status-notifier host went away ` +
           `after the session check passed. Measured on the bench (2026-08-28, xfce4-panel 4.18.4, ` +
           `Electron 44): the panel's built-in \`systray\` plugin CRASHES when Electron registers its ` +
-          `status icon — "Plugin systray-6 has been automatically restarted after crash" in the ` +
-          `session log — and the shell's icon is gone with it. That is a bench-provisioning defect, ` +
+          `status icon ("Plugin systray-6 has been automatically restarted after crash" in the ` +
+          `session log), and the shell's icon is gone with it. That is a bench-provisioning defect, ` +
           `not a shell regression: the session needs a status-notifier host that survives a ` +
           `Chromium-shaped item. docs/DESKTOP_E2E.md §5.`
       );

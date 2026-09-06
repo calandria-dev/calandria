@@ -46,7 +46,7 @@ describe("projects.landing_mode", () => {
     expect(ctx).toContain("(The project's default is main.)");
   });
 
-  it("can be chosen at creation — detection at project create has nowhere else to land it", () => {
+  it("can be chosen at creation, since detection at project create has nowhere else to land it", () => {
     expect(createProject({ name: "Born protected", landing_mode: "pr" }).landing_mode).toBe("pr");
   });
 

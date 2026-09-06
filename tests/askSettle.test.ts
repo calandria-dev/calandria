@@ -163,7 +163,7 @@ describe("ask cards through the runner", () => {
 // runner's turn state) survives a restart, so an ask a live turn left parked
 // is settled from the DB, the same policy as the permission card's.
 describe("settleOpenCards", () => {
-  it("dismisses an unanswered ask, leaves an answered one alone, and settles a permission card too — idempotently", async () => {
+  it("dismisses an unanswered ask, leaves an answered one alone, and settles a permission card too, idempotently", async () => {
     const project = createProject({ name: "RestartProj", repo_path: "" });
     const task = createTask({ project_id: project.id, title: "Restart task", description: "" });
 

@@ -183,7 +183,7 @@ describe("passive rate_limit_event overlay", () => {
     expect(snap?.statusWindow).toBe("seven_day");
   });
 
-  it("a representative-only event (no utilization — the below-threshold case) sets status without touching windows", async () => {
+  it("a representative-only event (no utilization, the below-threshold case) sets status without touching windows", async () => {
     writeCreds();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(usageResponse(PAYLOAD)));
     await getClaudePlanUsage();

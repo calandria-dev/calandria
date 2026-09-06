@@ -32,7 +32,7 @@ const DOWNGRADE =
 const EXEC_REJECTIONS = [
   'command execution approval is not supported in exec mode for thread 019ff714-aaaa-bbbb-cccc-dddddddddddd',
   'exec_command failed for session 1: Rejected("approval request failed")',
-  "approval policy is UnlessTrusted; reject command — you cannot ask for escalated permissions if the " +
+  "approval policy is UnlessTrusted; reject command: you cannot ask for escalated permissions if the " +
     "approval policy is UnlessTrusted",
 ];
 

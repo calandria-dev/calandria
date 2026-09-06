@@ -147,8 +147,8 @@ export function codexCapabilities(): AgentCapabilities {
     // (lib/agents/codex/driver.ts).
     gatewayMcpNote:
       "Hosted LiteLLM-gateway MCP servers mount only under the workspace-write permission mode, " +
-      "never plan, and every tool they offer is auto-approved for the task the moment it mounts — " +
-      "codex exec has nobody to ask.",
+      "never plan, and every tool they offer is auto-approved for the task the moment it mounts, " +
+      "since codex exec has nobody to ask.",
     // ChatGPT-plan auth reports tokens only, with no billed dollar figure, so
     // the cost the driver emits is an estimate (tokens × published API prices
     // for the resolved model). The descriptor stays honest: reportsCostUsd is

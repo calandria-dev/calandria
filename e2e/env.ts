@@ -4,7 +4,7 @@
 // inherit. Everything the app persists (SQLite, worktrees, cloned/seeded repos)
 // lands under this root, so an e2e run never touches ~/.calandria or the
 // developer's real projects, and every run starts from a truly fresh instance,
-// which is what makes the onboarding spec deterministic.
+// which makes the onboarding spec deterministic.
 //
 // Removing it again is e2e/cleanup-reporter.ts's job, and only on a green run:
 // a failure's DB and worktrees are the post-mortem.

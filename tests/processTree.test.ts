@@ -48,7 +48,7 @@ const thrower = (calls: { file: string; args: string[] }[]) => (file: string, ar
 };
 
 describe("processTree: win32 rules (mocked platform)", () => {
-  it("has no process groups — so no detached spawn, and no SIGKILL escalation", () => {
+  it("has no process groups, so no detached spawn and no SIGKILL escalation", () => {
     expect(hasProcessGroups("win32")).toBe(false);
     expect(hasProcessGroups("linux")).toBe(true);
     expect(hasProcessGroups("darwin")).toBe(true);
@@ -116,7 +116,7 @@ describe("processTree: win32 rules (mocked platform)", () => {
     expect(treeMatchesCommand(4242, cmd, { platform: "win32", exec: recorder("\r\n").exec })).toBe(false);
   });
 
-  it("answers 'no' when it cannot find out — leaving an orphan beats killing a stranger", () => {
+  it("answers 'no' when it cannot find out, since leaving an orphan beats killing a stranger", () => {
     const calls: { file: string; args: string[] }[] = [];
     expect(treeMatchesCommand(4242, "npm run dev", { platform: "win32", exec: thrower(calls) })).toBe(false);
     expect(treeAlive(4242, { platform: "win32", exec: thrower(calls) })).toBe(false);
@@ -167,7 +167,7 @@ describe("processTree: POSIX", () => {
     expect(treeAlive(pid)).toBe(false);
   });
 
-  onPosix("SIGTERM is a real signal here — the tree gets a chance to exit cleanly", async () => {
+  onPosix("SIGTERM is a real signal here, so the tree gets a chance to exit cleanly", async () => {
     const { proc, pid } = spawnService();
     await settle();
     const exited = new Promise<void>((r) => proc.once("exit", () => r()));

@@ -34,7 +34,7 @@ async function cut(repo: string, taskId: string, base: string) {
 }
 
 describe("set_base_branch", () => {
-  it("retargets the caller's OWN row mid-turn — the case the tool exists for", async () => {
+  it("retargets the caller's OWN row mid-turn, the case the tool exists for", async () => {
     const { repo, project, caller } = await board();
     await cut(repo, caller.id, "main");
     // A live turn in the caller's own session has `running` set and the turn
@@ -70,7 +70,7 @@ describe("set_base_branch", () => {
     expect(listAgentEdits(other.id)).toEqual([]);
   });
 
-  it("refuses a task in another project — a branch name means nothing there", async () => {
+  it("refuses a task in another project, since a branch name means nothing there", async () => {
     const { project, caller } = await board();
     const elsewhere = createProject({ name: `elsewhere-${uid()}`, repo_path: await makeRepo(), branch: "main" });
     const foreign = createTask({ project_id: elsewhere.id, title: "Foreign", description: "" });
@@ -254,7 +254,7 @@ describe("update_tag", () => {
     expect(getTag(a.id)).toMatchObject({ name: "Auth migration", description: "keep me" });
   });
 
-  it("resolves strictly — a near-miss is a refusal, never a new tag", () => {
+  it("resolves strictly: a near-miss is a refusal, never a new tag", () => {
     const project = createProject({ name: `tag-strict-${uid()}` });
     createTag({ project_id: project.id, name: "Auth migration" });
 
@@ -286,7 +286,7 @@ describe("update_tag", () => {
     expect(badColor.text).toContain("color must be one of");
   });
 
-  it("accepts a branch that does not exist yet — it is a default for cuts not yet made", () => {
+  it("accepts a branch that does not exist yet, since it is a default for cuts not yet made", () => {
     const project = createProject({ name: `tag-future-${uid()}`, repo_path: "", branch: "main" });
     const tag = createTag({ project_id: project.id, name: "Release 3.2" });
     // The integration branch a plan is ABOUT to create must be settable now;
