@@ -259,7 +259,57 @@ function launchEnv(root: string, port: number, opts: LaunchOptions): Record<stri
   // exactly the crutch instanceEnv() drops. Deleted rather than overwritten:
   // "absent" is the state under test.
   if (PACKAGED) delete inherited.CALANDRIA_REPO_ROOT;
-  return { ...inherited, ...instanceEnv(root, port), ...(opts.env ?? {}) };
+  return {
+    ...inherited,
+    ...instanceEnv(root, port),
+    // The boot trace `launchShell()` reads when a launch never resolves. Per
+    // instance, and written synchronously by main.js, because the whole point
+    // is to survive a main thread that stopped.
+    CALANDRIA_DESKTOP_LOG_FILE: bootTracePath(root),
+    ...(opts.env ?? {}),
+  };
+}
+
+/** Where a shell launched against `root` writes its synchronous boot trace. */
+function bootTracePath(root: string): string {
+  return path.join(root, "boot-trace.log");
+}
+
+/**
+ * Turn a launch that never resolved into a sentence that names the cause.
+ *
+ * `electron.launch()` yields no process handle until it succeeds, so the
+ * ordinary `shell.log` capture starts too late to see a main process that hung
+ * before its first window. Every spec in the file then fails identically, at
+ * the same 120s, saying only that Playwright gave up — which is how issue #240
+ * survived three runs and three days looking like ten unrelated timeouts. The
+ * boot trace is the app's own account of how far it got; the last line in it is
+ * the statement that did not return.
+ */
+function launchFailure(root: string, err: unknown): Error {
+  const message = err instanceof Error ? err.message : String(err);
+  let trace: string[] = [];
+  try {
+    trace = fs
+      .readFileSync(bootTracePath(root), "utf8")
+      .split(/\r?\n/)
+      .filter((l) => l.trim());
+  } catch {
+    // No trace file at all: the binary never got as far as running main.js.
+  }
+  if (!trace.length) {
+    return new Error(
+      `${message}\n\nThe shell wrote no boot trace, so main.js never ran — ` +
+        `suspect the binary itself (signature, missing payload, wrong architecture).`,
+    );
+  }
+  const tail = trace.slice(-12);
+  return new Error(
+    `${message}\n\nThe shell started but never finished booting. Its last line was:\n` +
+      `  ${trace[trace.length - 1]}\n\n` +
+      `Whatever follows that statement in main.js is where it stopped. Last ${tail.length} lines:\n` +
+      tail.map((l) => `  ${l}`).join("\n"),
+  );
 }
 
 /**
@@ -276,13 +326,18 @@ export async function launchShell(name: string, opts: LaunchOptions = {}): Promi
   const port = PORT_BASE + instances * 10;
   const env = launchEnv(root, port, opts);
 
-  const app = await electron.launch({
-    executablePath: shellBinary(),
-    args: launchArgs(root, opts),
-    ...launchOptions(),
-    env,
-    timeout: 120_000,
-  });
+  let app: Awaited<ReturnType<typeof electron.launch>>;
+  try {
+    app = await electron.launch({
+      executablePath: shellBinary(),
+      args: launchArgs(root, opts),
+      ...launchOptions(),
+      env,
+      timeout: 120_000,
+    });
+  } catch (err) {
+    throw launchFailure(root, err);
+  }
 
   const log: string[] = [];
   const proc = app.process();
@@ -292,7 +347,15 @@ export async function launchShell(name: string, opts: LaunchOptions = {}): Promi
     });
   }
 
-  const win = await app.firstWindow({ timeout: 120_000 });
+  // Same diagnostic on this half: `whenReady` opens the window several
+  // statements in, so a chain that stalls before `createWindow()` times out
+  // here rather than above, and is just as mute without the trace.
+  let win: Awaited<ReturnType<typeof app.firstWindow>>;
+  try {
+    win = await app.firstWindow({ timeout: 120_000 });
+  } catch (err) {
+    throw launchFailure(root, err);
+  }
 
   // The FIRST NON-EMPTY url, not the first one. `firstWindow()` resolves as soon
   // as the BrowserWindow object exists, which can be before `main.js`'s

@@ -37,6 +37,7 @@ const {
 } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
+const util = require("node:util");
 const { execFile } = require("node:child_process");
 const log = require("electron-log/main");
 const { Supervisor, preferredPorts } = require("./supervisor");
@@ -122,6 +123,35 @@ const {
 log.transports.console.format = "{text}";
 log.transports.file.maxSize = 5 * 1024 * 1024;
 Object.assign(console, log.functions);
+
+// A second, SYNCHRONOUS copy of the same lines, to a file the caller names.
+//
+// This exists for one failure the two transports above cannot record: a main
+// process that stops making progress before its first window exists. Playwright
+// hands back no process handle until `_electron.launch()` resolves, so
+// desktop/e2e captures stdout only from that moment on, and electron-log's file
+// transport buffers its writes through the event loop — the very thing a
+// blocked main thread stops turning. Ten identical `electron.launch: Timeout
+// 120000ms exceeded` failures with no app output between them is what issue
+// #240 cost three days to read; `appendFileSync` per line is what makes the
+// next one name itself.
+//
+// Off unless CALANDRIA_DESKTOP_LOG_FILE is set, and per-line sync I/O is why:
+// this is a diagnostic channel for the suite, not a third transport for users.
+if (process.env.CALANDRIA_DESKTOP_LOG_FILE) {
+  const traceFile = process.env.CALANDRIA_DESKTOP_LOG_FILE;
+  for (const level of ["log", "info", "warn", "error"]) {
+    const inner = console[level].bind(console);
+    console[level] = (...args) => {
+      try {
+        fs.appendFileSync(traceFile, `${util.format(...args)}\n`);
+      } catch {
+        // A diagnostic that can refuse to launch the app is worse than none.
+      }
+      inner(...args);
+    };
+  }
+}
 
 // Where the server payload lives — the thing supervisor.js runs `node server.js`
 // out of. Packaged, it is extraResources sitting NEXT TO the asar, not inside
@@ -443,9 +473,17 @@ function serviceTokenFor(inst) {
  */
 function credentialCipher() {
   const available = (() => {
+    // Both lines, every time, because the interesting outcome is neither a
+    // value nor a throw: `isEncryptionAvailable()` is a synchronous call into
+    // the platform keyring, and a keyring that never answers takes the main
+    // thread with it. Only the missing SECOND line says so (issue #240).
+    console.log("[shell] keyring: asking safeStorage whether encryption is available");
     try {
-      return safeStorage.isEncryptionAvailable();
-    } catch {
+      const answer = safeStorage.isEncryptionAvailable();
+      console.log(`[shell] keyring: safeStorage encryption is ${answer ? "available" : "NOT available"}`);
+      return answer;
+    } catch (err) {
+      console.log(`[shell] keyring: safeStorage refused the question: ${err?.message || err}`);
       return false;
     }
   })();
