@@ -104,11 +104,11 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitc
   // The base branch's history was rewritten out from under this task, or the
   // local base ref is itself out of step with its remote. Either way the
   // ahead/behind numbers below describe a comparison against history that no
-  // longer exists upstream, and the ordinary Sync — a merge of base into work —
+  // longer exists upstream, and the ordinary Sync (a merge of base into work)
   // is the wrong move: it reconciles two copies of the same commits under
   // different SHAs and conflicts in every file the rewrite touched. So this
-  // states the situation and the command that replays cleanly, and deliberately
-  // offers no one-click action; there is no safe generic one.
+  // states the situation and the command that replays cleanly, and offers no
+  // one-click action, because there is no safe generic one.
   // A base that IS the project default already has BaseBranchBanner reporting its
   // remote divergence above the task list, so repeating it here is noise. The gap
   // this covers is a task on a base of its OWN (a tag's integration branch, a
@@ -120,7 +120,7 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitc
       ? `git rebase --onto ${st.baseBranch} ${st.baseSha.slice(0, 12)} ${st.workBranch}`
       : "";
     const msg = st.baseRewritten
-      ? `${st.baseBranch} was rewritten since this task was cut — syncing would merge two copies of the same work`
+      ? `${st.baseBranch} was rewritten since this task was cut. Syncing would merge two copies of the same work`
       : `${st.baseBranch} and ${st.baseRemote?.label ?? "its remote"} have diverged: ${st.baseRemote?.ahead ?? 0} here, ${st.baseRemote?.behind ?? 0} there`;
     const hint = st.baseRewritten
       ? `The commit this task was cut from is no longer in ${st.baseBranch}'s history. A sync merges base into this branch, which reconciles the pre-rewrite and post-rewrite copies of the same commits and can conflict in every file they touched. Rebase instead:\n\n${rebaseCmd}`

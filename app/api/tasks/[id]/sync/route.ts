@@ -33,8 +33,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   // How the task's OWN base branch stands against its remote. The project banner
   // does this for `project.branch` only, so a task based on an integration branch
-  // had nothing watching origin for it: a force-push there left the local ref —
-  // and therefore every number above — describing history that no longer exists
+  // had nothing watching origin for it. A force-push there leaves the local ref,
+  // and therefore every number above, describing history that no longer exists
   // upstream. Best-effort and cooldown-coalesced, exactly as the project route
   // does it; a repo with no remote reports hasRemote: false and nothing renders.
   await fetchBase(project.repo_path, baseBranch).catch(() => {});

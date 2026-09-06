@@ -77,7 +77,7 @@ describe("a task whose base branch is rewritten upstream", () => {
 
     // And a fetch does not change it: fetchBase only writes the tracking ref.
     // Forced, because ensureWorktree's own fetch a moment ago left the per-repo
-    // cooldown warm — which is itself a way the rewrite stays unseen.
+    // cooldown warm, which is itself a way the rewrite stays unseen.
     await fetchBase(repo, "integration", { force: true });
     const after = await worktreeSyncStatus({
       repoPath: repo,
@@ -96,11 +96,11 @@ describe("a task whose base branch is rewritten upstream", () => {
     expect(remote.diverged).toBe(true);
   });
 
-  it("still reports baseRewritten: false while the local base ref hasn't moved — the remote comparison is what catches this variant", async () => {
+  it("still reports baseRewritten: false while the local base ref hasn't moved, so the remote comparison is what catches this variant", async () => {
     const { repo, colleague, wt, preRewriteTip } = await cutTaskFromIntegration();
     await rebaseAndForcePush(colleague);
 
-    // No `git fetch` / no local ref update — same starting point as the first
+    // No `git fetch` and no local ref update, so the same starting point as the first
     // test. baseSha is still an ancestor of the (unmoved) local integration,
     // so the ancestry test alone has nothing to flag.
     const st = await worktreeSyncStatus({
@@ -149,7 +149,7 @@ describe("a task whose base branch is rewritten upstream", () => {
     expect(ff).toBe(false);
   });
 
-  it("reports baseRewritten: false for an ordinary forward-moving base — the regression guard against firing on normal movement", async () => {
+  it("reports baseRewritten: false for an ordinary forward-moving base, the regression guard against firing on normal movement", async () => {
     const { repo, colleague, wt, preRewriteTip } = await cutTaskFromIntegration();
 
     // A colleague pushes a new commit onto integration with no rewrite at all.
