@@ -376,8 +376,9 @@ wants to read it directly; and `attachShellLog()` uploads it as `boot-trace.log`
 on a failing test. `main.js` logs `[shell] boot complete` as the last statement
 of its `app.whenReady()` chain, which `01-shell.spec.ts` asserts arrived, along
 with the absence of any `[shell] keyring:` line on an instance with
-nothing signed in — pinning issue #240 on every pull request instead of behind
-the bench's `macos` label. This is not a third log for users: per-line
+nothing signed in — moving the lane that catches a repeat of issue #240 onto
+Linux, which runs on every push to main and on an `e2e`-labelled pull request,
+rather than macOS, which waits for the weekly schedule or a `macos` label. This is not a third log for users: per-line
 synchronous I/O is exactly why it stays opt-in.
 
 **Self-hosted runners on a public repo are a security decision, not a

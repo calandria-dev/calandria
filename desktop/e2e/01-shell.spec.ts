@@ -411,8 +411,12 @@ test("the boot chain finishes, and does not consult the keyring to do it", async
   // on it — on macOS a keychain item whose ACL does not list the calling binary
   // answers with an authorization dialog instead of a value, and a packaged
   // build with nobody at the machine hangs there forever. This instance has
-  // nothing signed in, so nothing should have needed an answer. The lane that
-  // catches a regression here is Linux, on every pull request; the lane that
-  // pays for one is macOS, on a label, three days later.
+  // nothing signed in, so nothing should have needed an answer.
+  //
+  // Asserted HERE, in the shared file, so the lane that catches a regression is
+  // the Linux one — which runs on every push to main and on any pull request
+  // carrying `e2e`. The lane that PAYS for one is macOS, which runs only on the
+  // weekly schedule, a dispatch, or the `macos` label, and so found this three
+  // days and three runs late.
   expect(trace.filter((l) => l.startsWith("[shell] keyring:"))).toEqual([]);
 });
