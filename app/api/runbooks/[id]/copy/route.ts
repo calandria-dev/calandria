@@ -6,10 +6,10 @@ import { copyRunbook, getRunbook } from "@/lib/runbooks/store";
 export const dynamic = "force-dynamic";
 
 /**
- * Duplicate a runbook into another project. An independent row, not a shared
- * reference: projects have different repos, different agents connected and
- * different command registries, so a link would silently mean something else at
- * the far end.
+ * Duplicate a runbook into another project as an independent row. Projects
+ * have different repos, different connected agents and different command
+ * registries, so a shared reference would resolve differently in the other
+ * project.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

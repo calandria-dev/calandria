@@ -1,40 +1,25 @@
-// Per-task HOME for Antigravity turns — how each task gets its own MCP bridge
+// Per-task HOME for Antigravity turns: how each task gets its own MCP bridge
 // entry without tasks trampling each other.
 //
-// THE PROBLEM. `agy` reads MCP servers from exactly ONE place: the user-global
+// `agy` reads MCP servers from exactly one place, the user-global
 // `~/.gemini/config/mcp_config.json`. The Calandria bridge takes its task
 // identity from that entry's env (CALANDRIA_TASK_ID, read by
 // scripts/calandria-mcp.mjs), so a single global file cannot serve parallel
-// tasks — whichever task wrote last would own every other task's suggest_task,
-// create_pr and ask_user calls.
+// tasks: whichever task wrote last would own every other task's
+// suggest_task, create_pr and ask_user calls. The CLI's workspace
+// customization roots (`.agents/` and similar) work for skills, rules and
+// hooks but not for MCP servers, so the fix is to point HOME at a per-task
+// directory: the CLI then reads `$HOME/.gemini/config/mcp_config.json`,
+// which is ours alone.
 //
-// WHAT WAS RULED OUT, by experiment against agy 1.1.22 rather than by reading:
-//
-//   - A workspace customization root. The CLI's own embedded docs say `.agents/`
-//     in the repo may carry `mcp_config.json`, and that is how skills, rules and
-//     hooks work — but it is NOT true of MCP servers. A config placed at
-//     `.agents/`, `.agent/`, `_agents/`, `_agent/`, `.gemini/`,
-//     `.gemini/config/`, `.antigravity/` and the repo root, all at once, left
-//     the model answering "NO MCP". Only the global file is read.
-//   - Teaching the bridge to take the task id from argv. One global entry has
-//     one argv, so it has the same problem.
-//
-// WHAT WORKS. Point HOME at a per-task directory. The CLI then reads
-// `$HOME/.gemini/config/mcp_config.json`, which is ours alone. Two wrinkles,
-// both measured and both handled below:
-//
-//   1. A bare per-task HOME LOSES THE LOGIN — the CLI re-prompts for OAuth. So
-//      the token is not purely in the D-Bus keyring as the spike concluded;
-//      something under `~/.gemini/antigravity-cli` gates it. Symlinking that one
-//      directory back to the real home restores authentication while leaving
-//      `config/` private. (Verified: same prompt, same worktree, auth intact and
-//      the bridge visible, with the task's own CALANDRIA_TASK_ID coming back
-//      through a get_task call.)
-//   2. HOME is inherited by every shell command the agent runs, so a naive
-//      override would take away ~/.gitconfig, ~/.ssh and the rest — an agent
-//      that cannot set a committer identity or reach a remote. The overlay below
-//      symlinks every entry of the real home across, so tools see what they
-//      normally would, and only `.gemini` is substituted.
+// Two wrinkles follow from that, both handled below. A bare per-task HOME
+// loses the login (the CLI re-prompts for OAuth), because something under
+// `~/.gemini/antigravity-cli` gates authentication beyond the D-Bus keyring;
+// symlinking that one directory back to the real home restores it while
+// leaving `config/` private. And HOME is inherited by every shell command
+// the agent runs, so a naive override would take away `~/.gitconfig`,
+// `~/.ssh` and the rest; the overlay below symlinks every other entry of the
+// real home across, substituting only `.gemini`.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -59,9 +44,9 @@ export interface TaskHome {
 }
 
 /**
- * Mirror the real home into `taskHome` as symlinks, so shell commands the agent
- * runs still find ~/.gitconfig, ~/.ssh, ~/.npmrc and everything else. `.gemini`
- * is skipped — that is the whole point of the overlay.
+ * Mirror the real home into `taskHome` as symlinks, so shell commands the
+ * agent runs still find ~/.gitconfig, ~/.ssh, ~/.npmrc and everything else.
+ * `.gemini` is skipped, since that is what the overlay exists to substitute.
  *
  * Best-effort per entry: an unreadable or racing entry must not take the turn
  * down, and a missing symlink costs at most one tool that can't find its config.
@@ -95,7 +80,7 @@ function overlayRealHome(realHome: string, taskHome: string): void {
  * Prepare (and refresh) the task's private HOME, returning it plus the working
  * directory the turn should run in.
  *
- * Called once per turn rather than once per task: the bridge entry carries the
+ * Called once per turn, not once per task: the bridge entry carries the
  * landing mode, the instance's base URL and its service token, all of which can
  * change between turns while the worktree persists.
  */
@@ -106,7 +91,7 @@ export function prepareTaskHome(project: Project, task: Task): TaskHome {
   fs.mkdirSync(configDir, { recursive: true });
 
   // Share the login. Recreated if it is missing or dangling, so a home that
-  // outlived a reinstall heals instead of silently asking the user to log in.
+  // outlived a reinstall heals instead of forcing the user to log in again.
   const authLink = path.join(home, GEMINI_DIR, AUTH_DIR);
   const authTarget = path.join(realHome, GEMINI_DIR, AUTH_DIR);
   try {
@@ -127,11 +112,11 @@ export function prepareTaskHome(project: Project, task: Task): TaskHome {
     JSON.stringify(bridgeConfig(project, task), null, 2) + "\n"
   );
 
-  // The gateway kind needs `{"modelProvider":"gemini"}` before `agy` will read
-  // GEMINI_API_KEY at all (docs/design/litellm.md, "Antigravity driver",
-  // measured against agy 1.1.24). This is the one real, shared settings.json
-  // (see writeModelProviderSetting), the same file the API-key connect card
-  // writes — there is no per-task HOME for it, unlike the MCP config above.
+  // The gateway kind needs `{"modelProvider":"gemini"}` before `agy` will
+  // read GEMINI_API_KEY at all (docs/AGENTS.md). This is the one real, shared
+  // settings.json (see writeModelProviderSetting), the same file the API-key
+  // connect card writes; there is no per-task HOME for it, unlike the MCP
+  // config above.
   if (taskProvider(project, task).kind === "gateway") writeModelProviderSetting(true);
 
   return { home, cwd: task.worktree_path || project.repo_path || process.cwd() };

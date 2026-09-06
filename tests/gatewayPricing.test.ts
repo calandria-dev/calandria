@@ -3,7 +3,7 @@ import { recordGatewayRates, estimateCostUsd, clearGatewayRates } from "@/lib/ga
 
 // lib/gatewayPricing.ts prices a gateway turn from the rate table the last
 // catalog probe left behind (lib/gatewayModels.ts calls recordGatewayRates()
-// on every successful /model/info read) — never a network call of its own.
+// on every successful /model/info read); it makes no network call of its own.
 
 afterEach(() => clearGatewayRates());
 
@@ -40,7 +40,7 @@ describe("estimateCostUsd", () => {
     expect(cost).toBeCloseTo(100 * 0.000002 + 100 * 0.00001, 10);
   });
 
-  it("a fresh probe replaces the table wholesale — a dropped model stops pricing", () => {
+  it("a fresh probe replaces the table wholesale, so a dropped model stops pricing", () => {
     recordGatewayRates([{ model_name: "old-model", input_cost_per_token: 0.000001, output_cost_per_token: 0.000001, cache_read_input_token_cost: null, cache_creation_input_token_cost: null }]);
     expect(estimateCostUsd("old-model", { input_tokens: 10, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 })).not.toBeNull();
     recordGatewayRates([{ model_name: "new-model", input_cost_per_token: 0.000001, output_cost_per_token: 0.000001, cache_read_input_token_cost: null, cache_creation_input_token_cost: null }]);

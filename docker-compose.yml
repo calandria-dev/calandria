@@ -1,20 +1,20 @@
-# One Calandria instance = one user = one compose project (-p), one
-# container, one named home volume, one bridge network. NEVER share an
-# instance between users — the app is single-user and the integrated terminal
+# One Calandria instance is one user, one compose project (-p), one
+# container, one named home volume, one bridge network. Never share an
+# instance between users: the app is single-user and the integrated terminal
 # is a full shell.
 #
 #   CALANDRIA_USER=alice CALANDRIA_PORT=10001 PUBLIC_BASE_URL=https://alice.example.com \
 #     docker compose -p calandria-alice up -d --build
 #
-# The app port is published on the HOST's loopback only; put your own
+# The app port is published on the host's loopback only; put your own
 # authenticated tunnel or reverse proxy in front before exposing it anywhere.
 #
 # The compose-level knobs below were renamed CALANDRIA_* in the same pass that
 # renamed the app's own env vars. Unlike the app's, these have no old-name
 # fallback: compose interpolates them itself and offers no aliasing, so an
-# existing `ORCH_USER=… docker compose up` now fails loudly on the required
-# ones rather than starting a second, empty instance. The resource NAMES it
-# creates (`orch-u-<user>-home`, `-net`) deliberately did NOT change — see
+# existing `ORCH_USER=... docker compose up` now fails loudly on the required
+# ones instead of starting a second, empty instance. The resource names it
+# creates (`orch-u-<user>-home`, `-net`) did not change; see
 # docs/SELF_HOSTING.md, "Upgrading from ORCH_* names".
 services:
   calandria:
@@ -27,22 +27,22 @@ services:
     image: ${CALANDRIA_IMAGE:-calandria:latest}
     container_name: orch-u-${CALANDRIA_USER:?set CALANDRIA_USER (e.g. alice)}
     restart: unless-stopped
-    # gVisor: untrusted-user containers should run on a userspace kernel
-    # (runsc), so the full shell + bypassPermissions agent inside never talk to
-    # the host kernel directly. Local dev (Docker Desktop / colima have no
-    # runsc): CALANDRIA_RUNTIME=runc docker compose ... — runc is NOT an acceptable
-    # runtime for untrusted users in production.
+    # gVisor: untrusted-user containers run on a userspace kernel (runsc), so
+    # the full shell and bypassPermissions agent inside never talk to the host
+    # kernel directly. Local dev, where Docker Desktop and colima have no
+    # runsc: CALANDRIA_RUNTIME=runc docker compose ... . runc is not an
+    # acceptable runtime for untrusted users in production.
     runtime: ${CALANDRIA_RUNTIME:-runsc}
-    # Resource caps: enough to run a Next.js dev server + a build + an agent
+    # Resource caps: enough to run a Next.js dev server, a build, and an agent
     # turn together without OOM, while one runaway container can't starve the
-    # host. swap is pinned equal to memory (no thrash onto host disk).
+    # host. Swap is pinned equal to memory so nothing thrashes onto host disk.
     cpus: ${CALANDRIA_CPUS:-2}
     mem_limit: ${CALANDRIA_MEM:-4g}
     memswap_limit: ${CALANDRIA_MEM:-4g}
     pids_limit: 1024
     # Attack-surface hardening. The image runs everything as uid 1000 and
     # needs no capabilities; no-new-privileges blocks setuid re-escalation;
-    # the rootfs is immutable — all writes land on the home volume or this
+    # the rootfs is immutable, so all writes land on the home volume or this
     # size-capped /tmp tmpfs (tmpfs pages count toward mem_limit).
     cap_drop:
       - ALL
@@ -62,23 +62,23 @@ services:
       GIT_USER_NAME: ${GIT_USER_NAME:-}
       GIT_USER_EMAIL: ${GIT_USER_EMAIL:-}
       # Origin-side Cloudflare Access enforcement (lib/cf-access.mjs). Both
-      # must be set in production — without them the origin trusts everyone
-      # who reaches the published port.
+      # must be set in production, or the origin trusts everyone who reaches
+      # the published port.
       CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
       CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
-      # Shared secret for a health probe / monitor to read /api/version
+      # Shared secret for a health probe or monitor to read /api/version
       # without an Access JWT (x-service-token header). Optional: with
       # CF_ACCESS_* set and this empty, docker/entrypoint.sh mints a per-boot
       # one so the container's own probes still authenticate. Set it when
-      # something OUTSIDE the container needs to poll.
+      # something outside the container needs to poll.
       SERVICE_TOKEN: ${SERVICE_TOKEN:-}
-      # Fleet-wide READ token: an optional second secret, shared by every box,
-      # accepted on /api/instance/usage and /api/version only — so a dashboard
+      # Fleet-wide read token: an optional second secret, shared by every box,
+      # accepted on /api/instance/usage and /api/version only, so a dashboard
       # can poll many instances without learning each one's private
       # SERVICE_TOKEN. Never accepted on the mutating routes.
       CALANDRIA_FLEET_TOKEN: ${CALANDRIA_FLEET_TOKEN:-${ORCH_FLEET_TOKEN:-}}
-      # Feature flags (lib/features.ts). Managed Services + public service
-      # hostnames; empty = off (self-host/local default).
+      # Feature flags (lib/features.ts): Managed Services and public service
+      # hostnames. Empty means off, the self-host/local default.
       CALANDRIA_FEATURE_SERVICES: ${CALANDRIA_FEATURE_SERVICES:-${ORCH_FEATURE_SERVICES:-}}
     ports:
       - "127.0.0.1:${CALANDRIA_PORT:?set CALANDRIA_PORT (e.g. 10001)}:3000"
@@ -92,9 +92,9 @@ networks:
     name: orch-u-${CALANDRIA_USER}-net
 
 volumes:
-  # The volume NAME is deliberately unchanged by the Calandria rename: it is a
-  # storage id, and renaming it would orphan every existing instance's database,
-  # projects and logins behind a name nothing mounts any more. Only the mount
-  # PATH moved (/home/orch -> /home/calandria), which a named volume follows.
+  # The volume name is unchanged by the Calandria rename: it is a storage id,
+  # and renaming it would orphan every existing instance's database, projects
+  # and logins behind a name nothing mounts anymore. Only the mount path moved
+  # (/home/orch -> /home/calandria), which a named volume follows.
   home:
     name: orch-u-${CALANDRIA_USER}-home

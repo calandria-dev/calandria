@@ -1,6 +1,6 @@
 // Wire shapes shared by the push routes and the Settings device list.
 // Import-free so a client component can `import type` it without dragging the
-// DB in — same rule as lib/notifications/types.ts.
+// DB in, the same rule as lib/notifications/types.ts.
 
 /** What the browser hands us from PushManager.subscribe().toJSON(). */
 export interface PushSubscriptionJson {
@@ -14,8 +14,8 @@ export interface PushDevice {
   id: string;
   /** Client-supplied ("iPhone · Safari"); the server only trims it. */
   label: string;
-  /** The push service's host, e.g. web.push.apple.com — the one honest hint
-   *  about which device this is when the label is generic. */
+  /** The push service's host, e.g. web.push.apple.com. The best hint at
+   *  which device this is when the label is generic. */
   service: string;
   created_at: number;
   last_seen_at: number;
@@ -27,8 +27,8 @@ export interface PushDevice {
 
 /**
  * The message a push carries: the server-composed notification, verbatim, plus
- * the URL the service worker opens on click. The worker renders exactly this
- * and invents nothing — see public/sw.js.
+ * the URL the service worker opens on click. The worker renders this
+ * unmodified; see public/sw.js.
  */
 export interface PushMessage {
   id: string;

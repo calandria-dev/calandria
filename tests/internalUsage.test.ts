@@ -59,9 +59,9 @@ describe("internal agent usage", () => {
   });
 
   it("records the model the driver says it RAN, not the one the setting asked for", async () => {
-    // The whole point: a tier setting can only report what was requested, and
-    // the interesting case is it being unset — the job then inherits the
-    // driver's own default and only the driver can name it.
+    // A tier setting can only report what was requested. When it's unset,
+    // the job inherits the driver's own default, and only the driver can
+    // name it.
     oneShot.mockResolvedValue({ text: "draft", usage: USAGE, model: "claude-opus-5" });
     setSetting("job_model_heavy:claude", "sonnet");
     const project = createProject({ name: "Reported" });
@@ -80,8 +80,8 @@ describe("internal agent usage", () => {
     expect(getDb().prepare("SELECT model FROM internal_usage WHERE project_id = ?").get(asked.id))
       .toMatchObject({ model: "sonnet" });
 
-    // Nothing set and nothing reported: the row says it doesn't know rather
-    // than naming a default it would only be guessing at.
+    // When nothing is set and nothing is reported, the row records null
+    // instead of a guessed default.
     setSetting("job_model_heavy:claude", null);
     const inherited = createProject({ name: "Inherited" });
     await draftProjectContext(inherited, "digest");
@@ -150,10 +150,10 @@ describe("internal agent usage", () => {
     });
   });
 
-  // InstanceUsage extends UsageTotals, so the rollup PROMISES this field. Its
-  // query is hand-written rather than sharing sumUsage(), which is exactly how
-  // a new column gets declared in the type and never selected — undefined at
-  // runtime under a signature saying number.
+  // InstanceUsage extends UsageTotals, so the rollup must populate this
+  // field. Its query is hand-written instead of sharing sumUsage(), so a new
+  // column can be declared in the type and never selected, returning
+  // undefined at runtime under a signature that says number.
   it("carries sidechain tokens in the instance rollup, not just the per-task one", () => {
     const project = createProject({ name: "Sidechains" });
     const task = createTask({ project_id: project.id, title: "Task", description: "" });

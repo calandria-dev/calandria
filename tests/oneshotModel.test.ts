@@ -1,10 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OneShotOptions } from "../lib/agents/types";
 
-// Both drivers are stubbed down to the one-shot helpers so the assertions are
-// about ROUTING (which key each job reads, off which agent) rather than about
-// what a real CLI does with a model id. The codex stub deliberately omits
-// summarizeTranscript, which is what exercises the fall-back-to-utility path.
+// Both drivers are stubbed down to the one-shot helpers, so the assertions
+// test ROUTING: which key each job reads, off which agent. The codex stub
+// omits summarizeTranscript, which exercises the fall-back-to-utility path.
 const claude = vi.hoisted(() => ({
   summarizeTranscript: vi.fn(async (_t: string, _p: unknown, _o?: OneShotOptions) => ({ text: "HANDOFF" })),
   draftProjectContext: vi.fn(async (_p: unknown, _d: string, _o?: OneShotOptions) => ({ text: "DRAFT" })),
@@ -71,7 +70,7 @@ describe("one-shot model selection", () => {
     expect(claude.draftProjectContext.mock.lastCall?.[2]).toEqual({ model: "opus" });
   });
 
-  it("keeps the tiers independent — setting one leaves the other inheriting", async () => {
+  it("keeps the tiers independent, so setting one leaves the other inheriting", async () => {
     setSetting("job_model_heavy:claude", "opus");
 
     await summarizeProjectRecap(project, "digest", { unattended: false });

@@ -8,11 +8,11 @@ export const maxDuration = 60;
 // Re-check whether the agent's own sandbox can be created on this host, and
 // record the answer (lib/agents/codex/sandbox.ts).
 //
-// The check exists as a button because its fix is a HOST change — a sysctl, an
-// AppArmor profile, a reboot — made outside Calandria, with nothing to tell the
-// app about it. Without this the only ways back are re-verifying a login that
-// was never broken, or spending a turn to find out. A turn does clear the flag
-// on its own when the sandbox works again; this is the way to find out first.
+// The fix for a broken sandbox is a host change (a sysctl, an AppArmor
+// profile, a reboot) made outside Calandria, so nothing tells the app when it
+// happens. This button lets the user find out without re-verifying a working
+// login or spending a full turn. A turn clears the flag on its own once the
+// sandbox works again.
 //
 // GET reads the recorded verdict without spawning anything, so the card can
 // render before anyone presses the button.

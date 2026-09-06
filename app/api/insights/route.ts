@@ -10,10 +10,10 @@ export const dynamic = "force-dynamic";
 // filter locally without refetching. See InsightsData in lib/store.ts.
 const WINDOW_DAYS = 180;
 
-/** The host `task_usage.provider` records for a gateway turn — the same
- *  `new URL(...).host` lib/agentEnv.ts's `describeProvider()` computes — so
- *  the cache-hit query matches the exact string a gateway turn wrote. "" when
- *  no gateway is configured. */
+/** The host `task_usage.provider` records for a gateway turn: the same
+ *  `new URL(...).host` that lib/agentEnv.ts's `describeProvider()` computes,
+ *  so the cache-hit query matches the exact string a gateway turn wrote. ""
+ *  when no gateway is configured. */
 function gatewayHost(): string {
   if (!LITELLM_BASE_URL) return "";
   try {

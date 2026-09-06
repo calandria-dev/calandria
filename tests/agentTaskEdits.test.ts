@@ -1,8 +1,7 @@
-// The "changed since you accepted it" audit trail: what update_task now
-// records when it writes to a row the OLD ownership gate would have refused
-// (see the block comment above updateTaskForAgent in lib/agentTools.ts). The
-// recording rule is precise on purpose — only a write the old policy would
-// have refused counts, so an edit to the caller's own row or to an unreviewed
+// Pins the "changed since you accepted it" audit trail update_task records
+// when it writes to a row a stricter ownership gate would otherwise refuse
+// (see the block comment above updateTaskForAgent in lib/agentTools.ts). Only
+// such a write counts: an edit to the caller's own row or to an unreviewed
 // tray suggestion (both always allowed) leaves no trace and no chip.
 import { describe, it, expect } from "vitest";
 import { NextRequest } from "next/server";
@@ -67,7 +66,7 @@ describe("update_task records an edit exactly when the old ownership gate would 
     expect(getTask(target.id)!.agent_edited_at).toBe(0);
   });
 
-  it("edits an inert tray suggestion and records NOTHING — that write was always allowed", () => {
+  it("edits an inert tray suggestion and records nothing, since that write was always allowed", () => {
     const project = createProject({ name: "Edits-Inert" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
     const inert = createSuggestedTask(project, { title: "Proposed", description: "" }).task!;
@@ -106,7 +105,7 @@ describe("GET /api/tasks/[id]/agent-edits", () => {
   });
 });
 
-describe("POST /api/tasks/[id]/agent-edits — revert and ack", () => {
+describe("POST /api/tasks/[id]/agent-edits, revert and ack", () => {
   it("revert restores title, description, priority and status", async () => {
     const project = createProject({ name: "Edits-Revert-Scalar" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
@@ -125,7 +124,7 @@ describe("POST /api/tasks/[id]/agent-edits — revert and ack", () => {
     const json = (await res.json()) as { task: { title: string; description: string; priority: string; status: string }; edits: TaskAgentEdit[] };
     expect(json.task).toMatchObject({ title: "Original", description: "old", priority: "med", status: "not_started" });
     expect(getTask(target.id)).toMatchObject({ title: "Original", description: "old", priority: "med", status: "not_started" });
-    // The one outstanding edit was just reverted — the chip clears with it.
+    // The one outstanding edit was just reverted, so the chip clears with it.
     expect(getTask(target.id)!.agent_edited_at).toBe(0);
     expect(json.edits[0].reverted_at).toBeGreaterThan(0);
   });
@@ -164,7 +163,7 @@ describe("POST /api/tasks/[id]/agent-edits — revert and ack", () => {
     expect(getTaskTagIds(target.id)).toEqual([tagB.id]);
     const edit = listAgentEdits(target.id)[0];
 
-    // tagA — the one the revert would restore — is gone by the time it runs.
+    // tagA, the tag the revert would restore, is gone by the time it runs.
     deleteTag(tagA.id);
 
     const res = await postEdits(target.id, { action: "revert", edit_id: edit.id });
@@ -191,7 +190,7 @@ describe("POST /api/tasks/[id]/agent-edits — revert and ack", () => {
     const ackRes = await postEdits(target2.id, { action: "ack" });
     expect(ackRes.status).toBe(200);
     expect(getTask(target2.id)!.agent_edited_at).toBe(0);
-    // Ack doesn't revert — the agent's write stands.
+    // Ack doesn't revert: the agent's write stands.
     expect(getTask(target2.id)!.title).toBe("T2-renamed");
     // History is untouched: the edit is still there, still unreverted.
     const edits2 = listAgentEdits(target2.id);

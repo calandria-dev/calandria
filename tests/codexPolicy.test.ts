@@ -17,10 +17,10 @@ import {
 import { codexCapabilities } from "@/lib/agents/codex/capabilities";
 
 // What each permission mode means to Codex (lib/agents/codex/policy.ts):
-// the sandbox, the approval policy, who answers, and — the part the user hit
-// first — the writable roots that let a commit work from a linked worktree
-// under workspace-write, since the CLI marks a worktree's real gitdir
-// read-only and the common dir sits outside every root.
+// the sandbox, the approval policy, who answers, and the writable roots
+// that let a commit work from a linked worktree under workspace-write,
+// since the CLI marks a worktree's real gitdir read-only and the common
+// dir sits outside every root.
 
 const tmp: string[] = [];
 afterEach(() => {
@@ -86,7 +86,7 @@ describe("codex permission modes", () => {
 });
 
 describe("writable roots for a linked worktree", () => {
-  it("grants the private gitdir and the common dir's objects, refs and logs — never the common dir itself", () => {
+  it("grants the private gitdir and the common dir's objects, refs and logs, but not the common dir itself", () => {
     const { repo, wt } = worktreeFixture();
     const roots = gitWritableRoots(wt);
     const common = path.join(repo, ".git");

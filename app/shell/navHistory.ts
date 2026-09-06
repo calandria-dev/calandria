@@ -4,14 +4,14 @@
 //
 // Why a "trap" instead of one-entry-per-level: the live task list re-selects the
 // open task on every background refresh, so selTask churns null↔id constantly.
-// Any scheme that pushes a history entry when the selection gets *deeper* turns
-// that churn into a pile of duplicate session entries, and Back can never escape
-// them (the original "back acts very strange / does nothing" bug on prod).
+// Any scheme that pushes a history entry when the selection gets deeper turns
+// that churn into a pile of duplicate session entries, and Back can never
+// escape them.
 //
-// Instead we keep at most ONE "trap" entry on top whenever a detail pane is open.
-// Arming is keyed on the BOOLEAN "is a pane open" (isDeep), which selTask churn
-// does not change — so churn only ever rewrites the current entry's URL, never
-// adds entries. Back consumes the trap; the app then closes exactly one level
+// At most ONE "trap" entry sits on top whenever a detail pane is open. Arming
+// is keyed on the BOOLEAN "is a pane open" (isDeep), which selTask churn does
+// not change, so churn only ever rewrites the current entry's URL and never
+// adds entries. Back consumes the trap, the app then closes exactly one level
 // (closeOneLevel) and re-arms, so Back walks session → tasks → projects → exit
 // (or project home → tasks → projects → exit).
 import type { View } from "./types";
@@ -24,13 +24,13 @@ export interface NavSel {
    * navigation level, not a derived state: on a phone it is the ONLY way to
    * reach those cards, so Back must close it before it closes the project, and
    * a refresh must land back on it. It only ever coexists with `proj` and never
-   * with `task` (selecting a task drops the intent — useShell).
+   * with `task` (selecting a task drops the intent, see useShell).
    */
   home: boolean;
   view: View;
 }
 
-// Minimal slice of window.history this logic needs — lets tests pass a fake.
+// Minimal slice of window.history this logic needs, so tests can pass a fake.
 export interface HistoryLike {
   readonly state: unknown;
   pushState(state: unknown, unused: string, url: string): void;
@@ -49,23 +49,24 @@ export function selectionUrl(sel: NavSel, pathname: string): string {
 }
 
 // Deeper than the projects list? i.e. a detail pane (a project's task list, an
-// open task, or settings) is showing and Back should close it rather than leave.
+// open task, or settings) is showing, and Back should close it instead of
+// leaving the app.
 export const isDeep = (sel: NavSel): boolean => !!sel.proj || sel.view === "settings" || sel.view === "insights";
 
 export const trapArmed = (h: HistoryLike): boolean =>
   !!(h.state && (h.state as { trap?: unknown }).trap);
 
 // The app's own Back affordances ("Back to projects", "Back to tasks"). Whether
-// a press must go through the browser is a fact about the history RIGHT NOW,
+// a press must go through the browser is a fact about the history right now,
 // not about whether the effect that arms the trap has had its turn yet: the
 // trap is pushed by a passive effect, one paint after the pane it guards is on
-// screen and tappable, and pressing Back inside that gap used to call
-// history.back() against a history with no trap on it — a no-op on a fresh tab,
-// or leaving the app on one with a page behind it, in both cases without
-// closing the pane (issue #104, the phone leg). So: armed, pop it, and the
-// popstate handler closes the level as it does for the device button; not
-// armed, close the level directly, and the effect then reconciles the URL to
-// the shallower selection with nothing to arm.
+// screen and tappable. Pressing Back inside that gap must not call
+// history.back() against a history with no trap on it, which would be a no-op
+// on a fresh tab, or would leave the app on one with a page behind it, in both
+// cases without closing the pane. So: armed, pop it, and the popstate handler
+// closes the level as it does for the device button; not armed, close the
+// level directly, and the effect then reconciles the URL to the shallower
+// selection with nothing to arm.
 export function backOneLevel(h: HistoryLike, sel: NavSel, apply: (next: NavSel) => void): "history" | "state" {
   if (trapArmed(h)) { h.back(); return "history"; }
   apply(closeOneLevel(sel));
@@ -74,7 +75,7 @@ export function backOneLevel(h: HistoryLike, sel: NavSel, apply: (next: NavSel) 
 
 // Keep the URL mirrored to the current selection (so a refresh lands back where
 // you were) and, when `armTrap`, ensure exactly one trap entry sits on top while
-// a pane is open. armTrap is the caller's "is mobile" gate — on desktop all
+// a pane is open. armTrap is the caller's "is mobile" gate: on desktop all
 // columns are visible at once, so Back should not hijack to close a panel.
 export function reconcileHistory(h: HistoryLike, pathname: string, sel: NavSel, armTrap: boolean): void {
   const url = selectionUrl(sel, pathname);
@@ -83,8 +84,8 @@ export function reconcileHistory(h: HistoryLike, pathname: string, sel: NavSel, 
     // Entering a detail pane from a non-trap entry: arm the single trap.
     h.pushState({ trap: true }, "", url);
   } else {
-    // Already armed (pane open — incl. selTask churn), or shallow/desktop: just
-    // mirror the URL onto the current entry, preserving the trap flag.
+    // Already armed (pane open, including selTask churn), or shallow/desktop:
+    // just mirror the URL onto the current entry, preserving the trap flag.
     h.replaceState({ trap: armed }, "", url);
   }
 }

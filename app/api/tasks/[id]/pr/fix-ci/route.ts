@@ -8,20 +8,20 @@ import { CI_LOG_TAIL_LINES } from "@/lib/config";
 export const dynamic = "force-dynamic";
 export const maxDuration = 180;
 
-// The "Fix CI" button behind a red PR chip. It COMPOSES the prompt and hands it
+// The "Fix CI" button behind a red PR chip. It composes the prompt and hands it
 // back; the client sends it as an ordinary message on the task's own session,
 // exactly as "Fix with AI" does with /merge/prepare's conflict prompt. Two
-// reasons that split is worth keeping rather than starting the turn here:
-// the transcript should show the user's message the way any other turn does,
-// and the client is what switches the view to the chat so the fix streams in
-// live rather than behind a spinner on the chip.
+// reasons keep that split instead of starting the turn here: the transcript
+// should show the user's message the way any other turn does, and the client
+// is what switches the view to the chat so the fix streams in live instead
+// of behind a spinner on the chip.
 //
-// This one DOES hold its request across the network, unlike the refresh
-// triggers. It is a click on a button labelled with what it's about to do, the
-// gh calls are bounded (one `pr view`, one `run view --log-failed` per red
-// check, each with a timeout), and the alternative — a detached job the client
-// polls for a prompt it needs before it can do anything — is machinery for a
-// wait the user is already expecting.
+// This one holds its request across the network, unlike the refresh triggers.
+// It is a click on a button labelled with what it's about to do, the gh calls
+// are bounded (one `pr view`, one `run view --log-failed` per red check, each
+// with a timeout), and the alternative, a detached job the client polls for a
+// prompt it needs before it can do anything, is machinery for a wait the user
+// is already expecting.
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const task = getTask(id);
@@ -33,9 +33,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
   // Ask GitHub before spending a turn. The chip can be up to one sweep stale,
   // and seeding a session with a failure somebody already fixed is worse than a
-  // second of latency on a click. A refresh we can't do (no network, dead gh)
-  // is not fatal — we fall through to the stored snapshot, which is the same
-  // thing the user is looking at.
+  // second of latency on a click. A refresh that cannot complete (no network,
+  // dead gh) is not fatal: this falls through to the stored snapshot, which is
+  // the same thing the user is looking at.
   await refreshPrState(id, { force: true }).catch(() => {});
   const fresh = getTask(id) ?? task;
 
@@ -52,17 +52,17 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       { status: 409 }
     );
 
-  // gh resolves the repo from the origin remote, so the PROJECT's checkout is
-  // the right cwd — the same choice lib/prState.ts makes, and for the same
-  // reason: a task's worktree is reclaimable while its PR still matters.
+  // gh resolves the repo from the origin remote, so the project's checkout is
+  // the right cwd. lib/prState.ts makes the same choice for the same reason: a
+  // task's worktree is reclaimable while its PR still matters.
   const project = getProject(fresh.project_id);
   const cwd = project?.repo_path || fresh.worktree_path;
   if (!cwd) return NextResponse.json({ error: "no repository to read the run log from" }, { status: 400 });
 
   // Sequential: each is a subprocess and a network call, and a matrix that went
   // red eight ways should not fork eight gh processes at once. Failures are
-  // recorded, never thrown — the prompt is still worth sending with the job
-  // NAME alone, which is more than the user had before.
+  // recorded, not thrown: the prompt is still worth sending with the job name
+  // alone, which is more than the user had before.
   const failures: CiFailure[] = [];
   for (const check of red) {
     const log = await fetchCheckLog(cwd, check.url, CI_LOG_TAIL_LINES);

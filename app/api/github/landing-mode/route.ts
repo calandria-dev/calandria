@@ -6,16 +6,16 @@ export const dynamic = "force-dynamic";
 
 /**
  * Probe a repository's base branch for a pull-request requirement, so the
- * project settings form can PRESELECT the right landing mode.
+ * project settings form can preselect the right landing mode.
  *
- * Deliberately keyed by repo path + branch rather than by project id: the New
- * project dialog needs the same answer before any project row exists. Passing a
- * `project` id instead is the convenience form for the settings dialog, which
- * has one; naming both is fine and the explicit path/branch win.
+ * Keyed by repo path + branch, not by project id: the New project dialog
+ * needs the same answer before any project row exists. A `project` id is
+ * also accepted as a convenience for the settings dialog, which has one;
+ * naming both is fine and the explicit path/branch wins.
  *
- * This route never WRITES landing_mode. Detection preselects a control the user
- * still has to save, which is what keeps it from overriding a deliberate choice
- * (a repo can require PRs while the person wants a task's work merged locally
+ * This route never writes landing_mode. Detection preselects a control the
+ * user still has to save, so it never overrides a choice already made (a
+ * repo can require PRs while the person wants a task's work merged locally
  * into a staging branch, and only they know that).
  */
 export async function POST(req: Request) {

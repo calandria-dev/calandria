@@ -1,23 +1,23 @@
-// Antigravity plan usage — the quota meters behind the titlebar pill.
+// Antigravity plan usage: the quota meters behind the titlebar pill.
 //
-// The CLI answers this itself: `agy -p "/usage" --output-format json` returns a
-// structured `command.data` payload (groups of models, each with a weekly and a
-// 5-hour bucket carrying `remaining_fraction` and `reset_time`) and, measured,
-// spends nothing doing it — the run reports `num_turns: 0` and zero tokens, so
-// this is a read rather than a turn. That makes it the counterpart of Claude's
-// usage endpoint (lib/agents/claude/planUsage.ts), with two differences:
+// The CLI answers this itself: `agy -p "/usage" --output-format json` returns
+// a structured `command.data` payload (groups of models, each with a weekly
+// and a 5-hour bucket carrying `remaining_fraction` and `reset_time`) and
+// spends nothing doing it: the run reports `num_turns: 0` and zero tokens, so
+// this is a read, not a turn. That makes it the counterpart of Claude's usage
+// endpoint (lib/agents/claude/planUsage.ts), with two differences:
 //
-//   - There is no PASSIVE half. Nothing in the turn stream carries rate-limit
+//   - There is no passive half. Nothing in the turn stream carries rate-limit
 //     telemetry, so `status`/`statusWindow` stay null and the snapshot is only
 //     ever as fresh as the last poll.
-//   - The fetch is a process spawn, not an HTTP call — a second or two — so the
-//     same floor (PLAN_USAGE_MIN_FETCH_MS) matters for CPU rather than for a
-//     provider's rate limit, and the poll is single-flighted for the same
-//     reason: several tabs asking at once must not spawn several CLIs.
+//   - The fetch is a process spawn, not an HTTP call, taking a second or two,
+//     so the same floor (PLAN_USAGE_MIN_FETCH_MS) matters for CPU instead of
+//     for a provider's rate limit, and the poll is single-flighted for the
+//     same reason: several tabs asking at once must not spawn several CLIs.
 //
-// The CLI reports REMAINING fraction where the snapshot wants percent SPENT, so
-// the conversion happens here and nothing downstream has to know which way
-// round a given provider phrases its quota.
+// The CLI reports remaining fraction where the snapshot wants percent spent,
+// so the conversion happens here and nothing downstream has to know which
+// way round a given provider phrases its quota.
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -49,7 +49,7 @@ function state(): State {
   return g.__calandriaGeminiPlanUsage;
 }
 
-/** Tests only — the state is process-global and tests must not share it. */
+/** Tests only. The state is process-global and tests must not share it. */
 export function resetGeminiPlanUsageForTests(): void {
   g.__calandriaGeminiPlanUsage = undefined;
 }
@@ -57,13 +57,13 @@ export function resetGeminiPlanUsageForTests(): void {
 const clampPct = (n: number) => Math.max(0, Math.min(100, n));
 
 /**
- * `/usage`'s payload → the windows the meter renders. Shape (captured live):
+ * `/usage`'s payload mapped to the windows the meter renders. Shape:
  * `command.data.groups[] = { name, buckets[] }`, each bucket
  * `{ id, name, window: "weekly" | "5h", remaining_fraction, reset_time }`.
  *
  * Every group is kept, not just Gemini's: an Antigravity subscription meters
- * the Claude and GPT models it also serves on a SEPARATE pair of limits, and a
- * task pointed at one of those spends that pair. Labels mirror Claude's
+ * the Claude and GPT models it also serves on a separate pair of limits, and
+ * a task pointed at one of those spends that pair. Labels mirror Claude's
  * ("Current session (…)" / "Current week (…)") so one popover reads as one
  * feature, and `kind` is what the pill and lib/usageReset.ts pick by, since
  * the ids are the provider's own.
@@ -85,7 +85,7 @@ export function parseUsagePayload(data: unknown): PlanUsageWindow[] {
       windows.push({
         id: typeof b.id === "string" && b.id ? b.id : `${groupName ?? "group"}:${String(b.window ?? windows.length)}`,
         label: groupName ? `${period} (${groupName})` : period,
-        // The CLI reports what is LEFT; the meter shows what is spent.
+        // The CLI reports what is left; the meter shows what is spent.
         utilization: clampPct((1 - b.remaining_fraction) * 100),
         resetsAt: Number.isFinite(reset) ? reset : null,
         kind,
@@ -123,8 +123,8 @@ async function refreshFromCli(): Promise<void> {
 
 /**
  * Current Antigravity quota, refetched only when the floor and backoff allow.
- * Null when the feature is off or nothing has ever been read — the UI hides
- * the meter entirely rather than showing an empty one.
+ * Null when the feature is off or nothing has ever been read; the UI hides
+ * the meter entirely instead of showing an empty one.
  */
 export async function getGeminiPlanUsage(): Promise<PlanUsageSnapshot | null> {
   if (!PLAN_USAGE_ENABLED) return null;
@@ -148,7 +148,7 @@ export async function getGeminiPlanUsage(): Promise<PlanUsageSnapshot | null> {
     available: st.fetched.windows.length > 0,
     reason: st.lastError,
     // The CLI names no tier on any no-quota command, so the popover title is
-    // the agent's own name rather than an invented plan.
+    // the agent's own name instead of an invented plan.
     plan: null,
     windows: st.fetched.windows.map((w) => ({ ...w })),
     // No passive signal exists on this agent's stream (see the header).

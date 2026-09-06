@@ -1,6 +1,6 @@
 // Estimated dollar cost for Antigravity (Gemini) turns. The CLI reports token
-// counts only — `result.usage` carries no dollar figure and the subscription
-// draws quota rather than billing per turn — so spend is estimated as token
+// counts only: `result.usage` carries no dollar figure and the subscription
+// draws quota instead of billing per turn, so spend is estimated as token
 // counts × Google's published API prices for the resolved model, the same
 // "API-equivalent" framing the Codex driver uses (./ ../codex/pricing.ts).
 // The estimate flows into the ordinary usage pipeline (task_usage.cost_usd) and
@@ -8,9 +8,9 @@
 
 import type { TurnUsage } from "../../types";
 
-// Google tiers the Pro models by PROMPT SIZE: prompts over 200k tokens bill at
+// Google tiers the Pro models by prompt size: prompts over 200k tokens bill at
 // a higher rate on every bucket. The Flash models have no such split, so their
-// rows repeat one price in both slots rather than carrying a special case.
+// rows repeat one price in both slots instead of carrying a special case.
 const LARGE_PROMPT_TOKENS = 200_000;
 
 interface Price {
@@ -26,31 +26,31 @@ interface Row {
   /** Price for prompts above it; identical to `small` where Google doesn't tier. */
   large: Price;
   /**
-   * Introductory pricing that ends on a date. Google is running the 3.7/3.6
-   * Flash line at half price "through Dec 31 2026", after which `small`/`large`
-   * above (the standard rate) applies. Encoded rather than hardcoded to the
-   * promo so the estimate doesn't silently halve every turn from 2027 on.
+   * Introductory pricing that ends on a date. Google runs the 3.7/3.6 Flash
+   * line at half price through the promo's end date, after which
+   * `small`/`large` above (the standard rate) applies. The end date is
+   * encoded as data instead of hardcoded into the promo rate, so the estimate
+   * doesn't keep halving every turn once the promo ends.
    */
   promoUntil?: { endsAtMs: number; small: Price; large: Price };
 }
 
-// 2027-01-01T00:00:00Z — when the 3.7/3.6 Flash introductory rate lapses.
+// When the 3.7/3.6 Flash introductory rate lapses.
 const PROMO_END_MS = Date.UTC(2027, 0, 1);
 
-// Published API prices in USD per 1M tokens, verified 2026-09-01 against
-// ai.google.dev/gemini-api/docs/pricing and cloud.google.com's Agent Platform
-// pricing page (both stamped 2026-09-01). Cached input is Google's flat 90%
-// discount on input across every model in the catalog.
+// Published API prices in USD per 1M tokens, from ai.google.dev/gemini-api/docs/pricing
+// and cloud.google.com's Agent Platform pricing page. Cached input is Google's
+// flat 90% discount on input across every model in the catalog.
 //
-// Matched by LONGEST PREFIX, so dated/suffixed ids hit their family row — keep
-// more-specific prefixes above shorter ones ("gemini-3.5-flash-lite" MUST sit
+// Matched by longest prefix, so dated/suffixed ids hit their family row: keep
+// more-specific prefixes above shorter ones ("gemini-3.5-flash-lite" must sit
 // above "gemini-3.5-flash", and the bare "gemini" catch-all stays last).
 // Retired models keep their rows: a historical turn prices against the model it
 // actually ran on, even once the picker stops offering it.
 //
-// Two things NOT priced here, both deliberate. Context-cache STORAGE is billed
-// per token-hour ($4.50/1M tok-hr on Pro, $1.00 on Flash) and the CLI reports
-// no cache lifetime, so there is nothing to multiply. And the audio input rate
+// Two things are not priced here. Context-cache storage is billed per
+// token-hour ($4.50/1M tok-hr on Pro, $1.00 on Flash) and the CLI reports no
+// cache lifetime, so there is nothing to multiply. The audio input rate
 // (higher on the 2.5/3.1 Flash rows) is ignored because a coding turn's input
 // is text; the text rate is the one every turn actually pays.
 const PRICES: Row[] = [
@@ -90,9 +90,9 @@ const PRICES: Row[] = [
     large: { input: 0.25, cachedInput: 0.025, output: 1.5 },
   },
   {
-    // The only Pro model in the 3.x line as of 2026-09-01, and still Preview:
-    // there is no `gemini-3.1-pro` GA slug. The bare prefix covers both the
-    // plain id and the `-customtools` variant.
+    // The only Pro model in the 3.x line, and still Preview: there is no
+    // `gemini-3.1-pro` GA slug. The bare prefix covers both the plain id and
+    // the `-customtools` variant.
     prefix: "gemini-3.1-pro",
     small: { input: 2.0, cachedInput: 0.2, output: 12.0 },
     large: { input: 4.0, cachedInput: 0.4, output: 18.0 },
@@ -114,16 +114,16 @@ const PRICES: Row[] = [
   },
   // Catch-all, and the fallback for a model that matches no prefix at all.
   //
-  // Two real populations land here, both deliberately. `gemini-3.8-flash-*` is
-  // what `agy models` serves by default, and Google has not published prices for
-  // the 3.8 line — inventing one would put a fabricated number on every turn, so
-  // it estimates at the 3.5 Flash rate instead. And the Antigravity catalog is
-  // not Gemini-only: it also serves `claude-sonnet-4-6`, `claude-opus-4-6-thinking`
-  // and `gpt-oss-120b-medium`, which don't start with "gemini" and so reach this
-  // row through the `??` fallback below rather than by prefix.
+  // Two populations land here. `gemini-3.8-flash-*` is what `agy models`
+  // serves by default, and Google has not published prices for the 3.8 line,
+  // so it estimates at the 3.5 Flash rate instead of inventing a number. And
+  // the Antigravity catalog is not Gemini-only: it also serves
+  // `claude-sonnet-4-6`, `claude-opus-4-6-thinking` and `gpt-oss-120b-medium`,
+  // which don't start with "gemini" and so reach this row through the `??`
+  // fallback below instead of by prefix.
   //
   // Both cases are honest under costIsEstimated: the subscription draws quota
-  // rather than billing per token, so every figure this file produces is an
+  // instead of billing per token, so every figure this file produces is an
   // API-equivalent approximation, not an invoice.
   {
     prefix: "gemini",
@@ -137,11 +137,10 @@ const PRICES: Row[] = [
  * driver then omits `--model` entirely and the CLI runs its default). Used to
  * resolve pricing and the resolved-model badge.
  *
- * Measured on a signed-in host: `agy models` lists this first and the
- * interactive CLI's status bar reads "Gemini 3.8 Flash · high". Note the
- * REASONING EFFORT IS PART OF THE SLUG in this catalog — there is no bare
- * `gemini-3.8-flash` — which is why ./capabilities.ts offers no separate
- * reasoning picker.
+ * On a signed-in host, `agy models` lists this first and the interactive
+ * CLI's status bar reads "Gemini 3.8 Flash · high". Reasoning effort is part
+ * of the slug in this catalog (there is no bare `gemini-3.8-flash`), which is
+ * why ./capabilities.ts offers no separate reasoning picker.
  */
 export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash-high";
 
@@ -157,14 +156,15 @@ function priceFor(model: string, promptTokens: number, atMs: number): Price {
 }
 
 /**
- * Estimate the dollar cost of one turn from its token counts. Takes the buckets
- * in the app's DISJOINT form (what ./usage.ts emits, matching Claude's):
- * `input_tokens` is fresh prompt only, cache reads counted separately.
+ * Estimate the dollar cost of one turn from its token counts. Takes the
+ * buckets in the app's disjoint form (what ./usage.ts emits, matching
+ * Claude's): `input_tokens` is fresh prompt only, cache reads counted
+ * separately.
  *
- * The Pro tier boundary is decided on the whole PROMPT — fresh input plus what
- * was served from cache — because that is what Google measures, not the fresh
- * remainder after a cache hit. `atMs` is injectable so the promo-rate boundary
- * is testable without waiting for 2027.
+ * The Pro tier boundary is decided on the whole prompt (fresh input plus what
+ * was served from cache), because that is what Google measures, not the
+ * fresh remainder after a cache hit. `atMs` is injectable so the promo-rate
+ * boundary is testable without waiting for the promo's end date to arrive.
  */
 export function estimateCostUsd(
   model: string,

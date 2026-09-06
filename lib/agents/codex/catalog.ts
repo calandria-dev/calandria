@@ -1,9 +1,9 @@
 // What the local codex CLI would actually do, read off its own on-disk state:
 // the per-account model catalog it fetches at startup, plus the two top-level
-// keys in ~/.codex/config.toml that override it. Two facts come out — the
-// context window a turn gets, and which model a turn runs when nothing picks
-// one — and both were hardcoded before, wrongly for anyone whose account or
-// config disagreed with the constant.
+// keys in ~/.codex/config.toml that override it. Two facts come out of this:
+// the context window a turn gets, and which model a turn runs when nothing
+// picks one. A hardcoded constant for either is wrong for any account or
+// config that disagrees with it.
 //
 // SDK-free by contract: node:fs / node:os / node:path only. ./capabilities.ts
 // and ./pricing.ts are both pinned SDK-free (tests/importGraph.test.ts) and
@@ -13,11 +13,11 @@
 // one and a wrong price is worse than both. Missing file (fresh install, a
 // container with no ~/.codex mounted), unparseable JSON, an unrecognised shape
 // from a future client_version, a field of the wrong type: every one of them
-// yields "we don't know", and the caller keeps its own constant.
+// yields "unknown", and the caller keeps its own constant.
 //
-// The reads are SYNC on purpose. getCapabilities() in lib/agents/capabilities.ts
-// is synchronous and sits on the request path (taskContextWindow in
-// lib/store.ts), so this is a read-through against a cache, never an await —
+// The reads are sync. getCapabilities() in lib/agents/capabilities.ts is
+// synchronous and sits on the request path (taskContextWindow in
+// lib/store.ts), so this is a read-through against a cache, never an await:
 // the same shape lastGatewayModelCatalog() keeps for the Claude descriptor.
 
 import fs from "node:fs";
@@ -25,21 +25,21 @@ import os from "node:os";
 import path from "node:path";
 
 /** How long one read of ~/.codex serves. The CLI refetches its catalog per
- *  process start, so nothing here changes on a scale this misses; the window is
- *  about not stat-ing the disk once per rendered task row. */
+ *  process start, so nothing here changes on a scale this misses; the window
+ *  exists so the disk isn't stat-ed once per rendered task row. */
 const CACHE_MS = 60_000;
 
 export interface CodexCatalogEntry {
   slug: string;
-  /** What a turn on this model actually gets. 272000 for every entry in a
-   *  0.153.0 catalog, but per-slug in the file, so read per-slug. */
+  /** What a turn on this model actually gets. The same number for every entry
+   *  in a current catalog, but per-slug in the file, so read per-slug. */
   contextWindow: number | null;
   /** A CEILING, not a window: the most `model_context_window` may raise this
-   *  model to. Never report it as the window — it over-reports every task that
+   *  model to. Never report it as the window; it over-reports every task that
    *  never set the override. */
   maxContextWindow: number | null;
-  /** The CLI compacts at this percentage of the window, so it is the usable
-   *  part. 95 today, which is why the gauge was ~5% optimistic. */
+  /** The CLI compacts at this percentage of the window, so it marks the
+   *  usable part; the rest of the nominal window overstates the gauge. */
   effectivePercent: number | null;
   /** "list" or "hide". We only read it to skip hidden entries when picking the
    *  default; the model LIST itself stays hand-maintained in ./capabilities.ts. */
@@ -51,12 +51,12 @@ export interface CodexCatalogEntry {
 
 export interface CodexLocalCatalog {
   entries: CodexCatalogEntry[];
-  /** Top-level `model` from config.toml — the user's own default, which beats
+  /** Top-level `model` from config.toml: the user's own default, which beats
    *  the catalog's ranking. */
   model: string | null;
   /** Top-level `model_context_window` from config.toml, the knob that makes
-   *  reading any of this worthwhile: the catalog alone reports the same 272000
-   *  we already hardcoded. */
+   *  reading any of this worthwhile: the catalog alone reports the same
+   *  number already hardcoded as the fallback. */
   windowOverride: number | null;
 }
 
@@ -73,8 +73,8 @@ function num(v: unknown): number | null {
 }
 
 // `{fetched_at, etag, client_version, models: [...]}`. Anything that isn't an
-// array of objects with a string slug is a shape we don't recognise, and an
-// unrecognised shape is the same answer as no file.
+// array of objects with a string slug is a shape this doesn't recognise, and
+// an unrecognised shape is the same answer as no file.
 function readModelsCache(dir: string): CodexCatalogEntry[] {
   let raw: unknown;
   try {
@@ -102,16 +102,16 @@ function readModelsCache(dir: string): CodexCatalogEntry[] {
   return out;
 }
 
-// A line reader for two top-level scalars, not a TOML parser — the repo has no
+// A line reader for two top-level scalars, not a TOML parser: the repo has no
 // TOML dependency and this needs `model` and `model_context_window`, both of
 // which codex documents as top-level keys.
 //
-// It stops at the first `[table]` header, which is the important part. A
-// `[profiles.foo]` block sets those same keys for a profile that only applies
-// when that profile is selected, and we don't model profile selection; reading
-// one would apply somebody's occasional profile to every turn. Same for
-// `[model_providers.*]`. Not reading a profile override just leaves the fallback
-// in place, which is the failure this file is built to make safe.
+// It stops at the first `[table]` header. A `[profiles.foo]` block sets those
+// same keys for a profile that only applies when that profile is selected,
+// and profile selection isn't modeled here; reading one would apply
+// somebody's occasional profile to every turn. Same for
+// `[model_providers.*]`. Not reading a profile override just leaves the
+// fallback in place, which is the failure this file is built to make safe.
 function readConfigToml(dir: string): { model: string | null; windowOverride: number | null } {
   let text: string;
   try {
@@ -131,7 +131,7 @@ function readConfigToml(dir: string): { model: string | null; windowOverride: nu
     const value = s.slice(eq + 1).trim();
     if (key === "model") {
       // Anchored at the opening quote, so a trailing `# comment` needs no
-      // stripping and can't eat a `#` that is inside the string.
+      // stripping and can't eat a `#` that appears inside the string.
       const q = /^"([^"]*)"|^'([^']*)'/.exec(value);
       const v = q ? (q[1] ?? q[2] ?? "") : "";
       if (v) model = v;
@@ -163,13 +163,12 @@ export function codexLocalCatalog(): CodexLocalCatalog {
 
 /**
  * The model a codex turn runs when nothing picks one: the user's own
- * `model` from config.toml, else the lowest-`priority` LISTED entry in the
+ * `model` from config.toml, else the lowest-`priority` listed entry in the
  * account catalog, else `fallback`.
  *
  * The fallback matters as much as the lookup. With no catalog on disk the CLI
  * uses the one compiled into its binary, so the right answer there is
- * DEFAULT_CODEX_MODEL — which is exactly what the CLI itself falls back to,
- * not a guess standing in for one.
+ * DEFAULT_CODEX_MODEL, which is exactly what the CLI itself falls back to.
  */
 export function codexDefaultModel(fallback: string): string {
   const cat = codexLocalCatalog();
@@ -190,9 +189,9 @@ export function codexDefaultModel(fallback: string): string {
  * applies them:
  *
  *   1. the catalog's `context_window` for the slug, else `fallback`;
- *   2. replaced outright by config.toml's `model_context_window` if set —
- *      that knob is why parsing any of this pays, since the catalog alone
- *      reports the 272000 already hardcoded;
+ *   2. replaced outright by config.toml's `model_context_window` if set,
+ *      which is the knob that makes parsing any of this pay off, since the
+ *      catalog alone reports the same number already hardcoded as fallback;
  *   3. clamped to the slug's `max_context_window`, the ceiling the override
  *      cannot exceed;
  *   4. scaled to `effective_context_window_percent`, the point the CLI

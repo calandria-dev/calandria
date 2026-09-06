@@ -6,9 +6,9 @@ export const dynamic = "force-dynamic";
 
 // Poll target for the stdio MCP bridge's ask_user tool: returns the settled
 // outcome of an ask started via the sibling endpoint, or pending while the user
-// is still deciding. Instant check + client-side sleep (no long-held request —
-// undici's default header timeout would kill a multi-minute hold anyway).
-// Outcomes are take-once (lib/asks.ts), which is safe on the loopback hop.
+// is still deciding. Instant check plus client-side sleep, no long-held request:
+// undici's default header timeout would kill a multi-minute hold.
+// Outcomes are take-once (lib/asks.ts), safe on the loopback hop.
 export async function POST(req: NextRequest) {
   let body: { taskId?: string; askId?: string };
   try {

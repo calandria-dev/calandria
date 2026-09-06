@@ -3,7 +3,7 @@
 // The client half of local-model endpoints: one hook that asks the server what
 // a project's endpoint reports, and the one place the answer is put into words.
 //
-// The browser never probes the endpoint itself — it is loopback on the machine
+// The browser never probes the endpoint itself: it is loopback on the machine
 // the server runs on (lib/modelEndpoint.ts says why at length), so every read
 // goes through GET /api/projects/[id]/models.
 
@@ -21,7 +21,7 @@ export interface EndpointModelsState {
   data: EndpointModelsT | null; // null until the first answer arrives
   loading: boolean;
   /** Model ids to suggest. Empty for a cloud project, or an endpoint that is
-   *  down — in both cases the field stays free-form with no list. */
+   *  down, in both cases the field stays free-form with no list. */
   models: string[];
 }
 
@@ -48,7 +48,7 @@ export function useEndpointModels(projectId: string | null | undefined, baseUrl:
       jget<EndpointModelsT>(url)
         .then((r) => { if (seq.current === mine) { setData(r); setLoading(false); } })
         // A failed request is an unreachable endpoint as far as the picker is
-        // concerned; it renders the reason rather than swallowing it.
+        // concerned, so it renders the reason.
         .catch((e: unknown) => {
           if (seq.current !== mine) return;
           setData({ ...EMPTY, base_url: baseUrl, error: e instanceof Error ? e.message : "couldn't ask the server" });
@@ -73,7 +73,7 @@ function serverName(api: EndpointModelsT["api"]): string {
  * New-task dialog so the three can't describe the same endpoint differently:
  *
  *   "Ollama at localhost:11434: reachable, 4 models"
- *   "No server at localhost:11434: connection refused — is the server running?"
+ *   "No server at localhost:11434: connection refused, is the server running?"
  */
 export function endpointSummary(e: EndpointStatusT | EndpointModelsT | null | undefined, loading = false): string {
   if (loading && !e) return "Checking the endpoint…";

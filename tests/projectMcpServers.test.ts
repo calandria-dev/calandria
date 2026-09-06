@@ -3,11 +3,11 @@ import { GET, POST } from "@/app/api/projects/[id]/mcp-servers/route";
 import { createProject, listPermissionRules } from "@/lib/store";
 import { startFakeGateway, type FakeGateway } from "./fakeGateway";
 
-// GET/POST /api/projects/[id]/mcp-servers — the project-scoped route behind
-// the settings picker (docs/design/litellm.md, "Hosted MCP servers"):
-// GET <gateway>/v1/mcp/server + GET <gateway>/mcp-rest/tools/list merged with
-// which aliases this project already trusts, and POST minting a "trust this
-// server" permission_rules row.
+// GET/POST /api/projects/[id]/mcp-servers is the project-scoped route behind
+// the settings picker (docs/AGENTS.md, "Hosted MCP servers"). GET merges
+// <gateway>/v1/mcp/server and <gateway>/mcp-rest/tools/list with which
+// aliases this project already trusts; POST mints a "trust this server"
+// permission_rules row.
 
 let gw: FakeGateway | null = null;
 let savedBase: string | undefined;
@@ -34,7 +34,7 @@ const getReq = (id: string, qs = "") => GET(new Request(`http://test/api/project
 const postReq = (id: string, body: unknown) =>
   POST(new Request(`http://test/api/projects/${id}/mcp-servers`, { method: "POST", body: JSON.stringify(body) }), { params: Promise.resolve({ id }) });
 
-describe("GET — catalog", () => {
+describe("GET: catalog", () => {
   it("answers 'not enabled' with no gateway configured, rather than 404 or an error", async () => {
     delete process.env.CALANDRIA_LITELLM_BASE_URL;
     const project = createProject({ name: "no-gateway" });
@@ -89,7 +89,7 @@ describe("GET — catalog", () => {
   });
 });
 
-describe("POST — trust this server", () => {
+describe("POST: trust this server", () => {
   it("mints a mcp_server permission_rules row for the alias", async () => {
     gw = await startFakeGateway({ mcpServers: [{ alias: "demo" }] });
     pointAtGateway(gw.url);
@@ -103,7 +103,7 @@ describe("POST — trust this server", () => {
     ]);
   });
 
-  it("is idempotent — trusting the same alias twice stores one row", async () => {
+  it("is idempotent, so trusting the same alias twice stores one row", async () => {
     gw = await startFakeGateway({ mcpServers: [{ alias: "demo" }] });
     pointAtGateway(gw.url);
     const project = createProject({ name: "idempotent" });

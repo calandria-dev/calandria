@@ -1,34 +1,26 @@
-// The Antigravity (Gemini) event normalizer — pure functions turning `agy`'s
+// The Antigravity (Gemini) event normalizer: pure functions turning `agy`'s
 // `--output-format stream-json` NDJSON into the agent-agnostic StreamEvent
 // contract (lib/types.ts). Kept out of driver.ts so it can be unit-tested
 // against the recorded fixtures in tests/fixtures/gemini/ without spawning the
 // CLI, exactly as the Codex normalizer is.
 //
-// EVERYTHING HERE IS PINNED TO A REAL CAPTURE (2026-09-02, agy 1.1.22), not to
-// the vendor's prose, because the two disagree on nearly every detail. Each
-// line is one envelope carrying BOTH a tag and a payload key:
+// Each line is one envelope carrying both a tag and a payload key:
 //
 //   {"event":"init","conversation_id":"…","init":{cwd,tools,permission_mode}}
 //   {"event":"step_update","step_update":{conversation_id,step_index,state,step_type,…}}
 //   {"event":"result","result":{conversation_id,status,response,usage,num_turns}}
 //
-// Four things the spike's design doc got wrong, all corrected below:
-//
-//  1. `step_type` values are lowercase snake_case — `user_input`,
-//     `agent_response`, `tool`, `system_message` — NOT the uppercase
-//     CORTEX_STEP_TYPE_* enum names in the binary. There is no PLANNER_RESPONSE
-//     and no MCP_TOOL step.
-//  2. An MCP call is an ORDINARY tool step whose `tool_name` is the CLI's own
-//     dispatcher, `call_mcp_tool`. The server and tool the model actually
-//     invoked live in `tool_info.parameters.ServerName` / `.ToolName`. Reading
-//     `tool_info.name` would label every Calandria tool call "call_mcp_tool"
-//     and lib/suggestionCard.ts would never match a suggest_task.
-//  3. `result.usage` is CUMULATIVE over the whole conversation, not per turn.
-//     Measured: a 2-turn conversation reported 61357 input tokens, exactly the
-//     sum of its four steps' reports (14765+15287+15494+15811). So this driver
-//     needs the same persisted baseline the Codex driver keeps.
-//  4. The conversation id is on `init` (top level of the envelope), so a turn
-//     that dies before its terminal event still leaves a resumable session.
+// `step_type` values are lowercase snake_case (`user_input`, `agent_response`,
+// `tool`, `system_message`), not the uppercase CORTEX_STEP_TYPE_* enum names
+// the binary uses internally. An MCP call is an ordinary tool step whose
+// `tool_name` is the CLI's dispatcher, `call_mcp_tool`; the server and tool
+// the model actually invoked live in `tool_info.parameters.ServerName` /
+// `.ToolName`, since `tool_info.name` alone would label every Calandria call
+// "call_mcp_tool". `result.usage` is cumulative over the whole conversation,
+// not per turn, so this driver keeps the same persisted baseline the Codex
+// driver keeps. The conversation id is on `init` at the top level of the
+// envelope, so a turn that dies before its terminal event still leaves a
+// resumable session.
 //
 // Steps arrive ACTIVE → DONE with a `step_index` that keeps counting across
 // resumed turns. The runner keys tool messages by id, so exactly one `tool`
@@ -43,8 +35,8 @@ import { BRIDGE_SERVER_NAME } from "./mcp";
 
 // ---------- the CLI's wire shapes ----------
 // Every field is optional: this is a binary the user installed, which may be
-// older or newer than this driver, and a missing field must degrade rather than
-// throw mid-turn.
+// older or newer than this driver, and a missing field must degrade instead
+// of throwing mid-turn.
 
 /** `call_mcp_tool`'s parameters, which is where an MCP call's real identity lives. */
 export interface AgyMcpParams {
@@ -54,10 +46,10 @@ export interface AgyMcpParams {
 }
 
 export interface AgyToolInfo {
-  /** The CLI's own tool name — for an MCP call this is "call_mcp_tool". */
+  /** The CLI's own tool name; for an MCP call this is "call_mcp_tool". */
   name?: string;
   parameters?: unknown;
-  /** Present on DONE. Often a SUMMARY rather than the payload ("1 lines, 146 bytes"). */
+  /** Present on DONE. Often a summary, not the payload ("1 lines, 146 bytes"). */
   output?: string;
   /** Set when the CLI refused the call. A soft denial does not change the exit
    *  code, so this is the only in-band signal that a tool never ran. */
@@ -120,9 +112,9 @@ const asObj = (v: unknown): Record<string, unknown> =>
 /**
  * Decode one parsed NDJSON line.
  *
- * The measured framing carries a redundant `event` tag beside the payload key;
- * either alone is enough to classify, so a CLI that drops one keeps working.
- * Anything unrecognized is `unknown` and drops — the right default for a
+ * The framing carries a redundant `event` tag beside the payload key; either
+ * alone is enough to classify, so a CLI that drops one keeps working.
+ * Anything unrecognized is `unknown` and drops, the right default for a
  * vocabulary the vendor calls closed but keeps extending.
  */
 export function classify(line: unknown): AgyEvent {
@@ -132,7 +124,7 @@ export function classify(line: unknown): AgyEvent {
 
   if (o.init || tag === "init") {
     const init = (o.init ? asObj(o.init) : o) as AgyInit;
-    // Measured at the TOP level of the envelope, not inside `init`.
+    // At the top level of the envelope, not inside `init`.
     const conv = typeof o.conversation_id === "string" ? o.conversation_id : null;
     return { kind: "init", init, conversationId: conv };
   }
@@ -145,11 +137,11 @@ export function classify(line: unknown): AgyEvent {
   return { kind: "unknown" };
 }
 
-// ---------- step vocabulary (measured) ----------
+// ---------- step vocabulary ----------
 
 const STEP_PROSE = "agent_response";
 const STEP_TOOL = "tool";
-/** Echoes of our own prompt and the CLI's internal notes — nothing to render. */
+/** Echoes of our own prompt and the CLI's internal notes, nothing to render. */
 const DROPPED_STEPS = new Set(["user_input", "system_message", "checkpoint", "task_boundary", "brain_update", "ephemeral_message"]);
 
 /** The CLI's dispatcher for every MCP call. */
@@ -183,7 +175,7 @@ const isDone = (state: string | undefined): boolean => (state || "").toUpperCase
 // ---------- cumulative usage ----------
 
 /** The conversation's running totals, as `result.usage` reports them. Persisted
- *  per conversation (sessions.usage_cum) so the NEXT turn can subtract them. */
+ *  per conversation (sessions.usage_cum) so the next turn can subtract them. */
 export interface GeminiCum {
   input: number;
   output: number;
@@ -217,9 +209,9 @@ const diffCum = (cur: GeminiCum, prev: GeminiCum): GeminiCum => ({
 // ---------- per-turn state ----------
 
 /**
- * Threaded through every event of one turn and mutated in place. A fresh object
- * per turn, seeded with the conversation's persisted usage baseline — see
- * newState().
+ * Threaded through every event of one turn and mutated in place. A fresh
+ * object per turn, seeded with the conversation's persisted usage baseline;
+ * see newState().
  */
 export interface GeminiMapState {
   emittedTool: Set<string>;
@@ -230,7 +222,7 @@ export interface GeminiMapState {
   cumDirty: boolean;
   /** Prose already emitted from a step, so `result.response` doesn't repeat it. */
   saidSomething: boolean;
-  /** Whether the terminal `result` arrived — and with it the `done` event. A
+  /** Whether the terminal `result` arrived, and with it the `done` event. A
    *  turn killed before it never gets one, so the driver emits the fallback. */
   sawResult: boolean;
 }
@@ -251,12 +243,12 @@ export function newState(model: string = DEFAULT_GEMINI_MODEL, cum: GeminiCum = 
 /**
  * Map one parsed NDJSON line to zero or more StreamEvents.
  *
- * `aborted` says whether OUR abort fired. The CLI reports a cancelled run as
- * CANCELED/INTERRUPTED, which is a deliberate teardown when we asked for it and
- * a real failure when we didn't — and it really does arrive unasked, because
- * that is also the status a turn gets when the CLI auto-denies a tool it cannot
- * prompt about (measured). Swallowing it unconditionally would render a
- * permission failure as a silent success.
+ * `aborted` says whether our own abort fired. The CLI reports a cancelled run
+ * as CANCELED/INTERRUPTED, which is expected teardown when we asked for it and
+ * a real failure when we didn't. It also arrives unasked, because that is also
+ * the status a turn gets when the CLI auto-denies a tool it cannot prompt
+ * about. Swallowing it unconditionally would render a permission failure as a
+ * success with no error shown.
  */
 export function mapAgyEvent(line: unknown, state: GeminiMapState, aborted = false): StreamEvent[] {
   const ev = classify(line);
@@ -300,11 +292,11 @@ function mapStep(step: AgyStepUpdate, state: GeminiMapState): StreamEvent[] {
   return [];
 }
 
-// Prose streams as `text_delta` and is accumulated until the step settles, then
-// emitted as ONE assistant message — the transcript stores whole messages, not
-// deltas. Most agent_response steps carry no text at all (they are the model's
-// tool-planning turns), which is why an empty one emits nothing rather than a
-// blank bubble.
+// Prose streams as `text_delta` and is accumulated until the step settles,
+// then emitted as one assistant message: the transcript stores whole
+// messages, not deltas. Most agent_response steps carry no text at all (they
+// are the model's tool-planning turns), so an empty one emits nothing instead
+// of a blank bubble.
 function mapProse(step: AgyStepUpdate, state: GeminiMapState): StreamEvent[] {
   const key = stepKey(step);
   if (step.text_delta) state.prose.set(key, (state.prose.get(key) ?? "") + step.text_delta);
@@ -334,9 +326,10 @@ function mapTool(step: AgyStepUpdate, state: GeminiMapState): StreamEvent[] {
   const mcp = mcpIdentity(info);
 
   // ask_user is rendered as an interactive card published directly by the
-  // internal ask-user endpoint (lib/agentTools.startAskUser) — suppress the
-  // generic tool line so the question isn't shown twice. Mirrors the Codex
-  // driver, and the Claude driver skipping AskUserQuestion tool_use blocks.
+  // internal ask-user endpoint (lib/agentTools.startAskUser), so the generic
+  // tool line is suppressed to avoid showing the question twice. Mirrors the
+  // Codex driver, and the Claude driver skipping AskUserQuestion tool_use
+  // blocks.
   if (mcp && mcp.tool === "ask_user" && (!mcp.server || mcp.server === BRIDGE_SERVER_NAME)) return [];
 
   const key = stepKey(step);
@@ -348,10 +341,10 @@ function mapTool(step: AgyStepUpdate, state: GeminiMapState): StreamEvent[] {
     out.push({
       type: "tool",
       id: key,
-      // What CODE matches on, as opposed to the human-facing title.
-      // lib/suggestionCard.ts finds a suggest_task call by SUBSTRING precisely
-      // because each driver spells it differently, so the bare tool name has to
-      // survive — hence the MCP identity rather than "call_mcp_tool".
+      // What code matches on, as opposed to the human-facing title.
+      // lib/suggestionCard.ts finds a suggest_task call by substring, because
+      // each driver spells it differently, so the bare tool name has to
+      // survive: hence the MCP identity instead of "call_mcp_tool".
       name: mcp ? `${mcp.server || BRIDGE_SERVER_NAME}__${mcp.tool}` : cliName || undefined,
       title: title(cliName, mcp, info),
       detail: clip(params),
@@ -401,7 +394,7 @@ function title(cliName: string, mcp: { server: string; tool: string } | null, in
   return headline ? `${icon} ${label}: ${firstLine(headline)}` : `${icon} ${label}`;
 }
 
-/** The path a file-WRITING call touched, so the transcript card can open it in
+/** The path a file-writing call touched, so the transcript card can open it in
  *  collaboration mode. Only for calls that actually write. */
 function writtenFile(cliName: string, info: AgyToolInfo): string | undefined {
   if (!["write_to_file", "replace_file_content", "multi_replace_file_content", "sed_file", "notebook_edit"].includes(cliName)) {
@@ -441,8 +434,8 @@ function mapResult(result: AgyResult, state: GeminiMapState, aborted: boolean): 
   state.sawResult = true;
   if (result.conversation_id) state.conversationId = result.conversation_id;
 
-  // `result.usage` accumulates over the WHOLE conversation, so subtract the
-  // baseline the previous turn left behind — the StreamEvent contract is
+  // `result.usage` accumulates over the whole conversation, so subtract the
+  // baseline the previous turn left behind: the StreamEvent contract is
   // per-turn (the runner adds each usage event to the task's running spend).
   if (result.usage) {
     const cur = toCum(result.usage);
@@ -463,16 +456,16 @@ function mapResult(result: AgyResult, state: GeminiMapState, aborted: boolean): 
     });
   }
 
-  // The final answer lands here rather than in a step whenever the CLI didn't
-  // stream it — emitted only if no step already said it, so the transcript
+  // The final answer lands here instead of in a step whenever the CLI didn't
+  // stream it. Emitted only if no step already said it, so the transcript
   // doesn't show the same reply twice.
   const response = (result.response || "").trim();
   if (response && !state.saidSomething) out.push({ type: "assistant", content: response });
 
   if (status === "CANCELED" || status === "INTERRUPTED") {
-    // Our own Stop killed it: deliberate teardown, and the partial transcript is
-    // already persisted by the runner. Unasked, it is a real failure — measured,
-    // this is also what a turn reports when the CLI auto-denies a tool it has
+    // Our own Stop killed it: expected teardown, and the partial transcript
+    // is already persisted by the runner. Unasked, it is a real failure: this
+    // is also what a turn reports when the CLI auto-denies a tool it has
     // nobody to prompt about, and calling that a success would hide the fact
     // that the work never happened.
     if (!aborted) out.push({ type: "error", content: result.error || `The agent stopped early (${status.toLowerCase()})` });

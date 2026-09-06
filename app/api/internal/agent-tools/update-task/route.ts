@@ -7,23 +7,25 @@ import type { Priority, Status } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-// Internal endpoint behind the `update_task` tool for the stdio MCP bridge
-// (scripts/calandria-mcp.mjs) — the same write the Claude driver mounts in-process.
-// Auth is the per-instance SERVICE_TOKEN (middleware.ts, isAgentToolPath).
+// Internal endpoint behind the `update_task` tool for the stdio MCP
+// bridge (scripts/calandria-mcp.mjs): the same write the Claude driver
+// mounts in-process. Auth is the per-instance SERVICE_TOKEN (middleware.ts,
+// isAgentToolPath).
 //
-// Two ids, and the difference between them is the whole blast-radius story:
+// Two ids carry different trust levels:
 //
-//   body.taskId  the CALLER. CALANDRIA_TASK_ID, injected into the bridge's env by
-//                lib/agents/codex/driver.ts — never a field the model can set.
-//   body.task    the TARGET the MODEL named, and therefore untrusted. Optional;
-//                omitted means "my own row".
+//   body.taskId  the caller. CALANDRIA_TASK_ID, injected into the bridge's
+//                env by lib/agents/codex/driver.ts, never a field the model
+//                can set.
+//   body.task    the target the model named, and therefore untrusted.
+//                Optional; omitted means "my own row".
 //
-// This is the path where the model, not the server, picks what gets written, so
-// the endpoint hands both to updateTaskForAgent and enforces nothing itself.
-// That function owns the policy (any task, in any project, refused only while
-// it has a turn running right now) along with field validation and the refusal
-// to accept "cancelled", and it is shared with the in-process server, so the
-// two can't drift.
+// This is the path where the model, not the server, picks what gets
+// written, so the endpoint hands both to updateTaskForAgent and enforces
+// nothing itself. That function owns the policy (any task, in any project,
+// refused only while it has a turn running right now) along with field
+// validation and the refusal to accept "cancelled", and it is shared with
+// the in-process server, so the two can't drift.
 export async function POST(req: NextRequest) {
   let body: { taskId?: string; task?: string; title?: string; description?: string; priority?: Priority; status?: Status; blocked_by?: string[]; tags?: string[] };
   try {
@@ -45,25 +47,26 @@ export async function POST(req: NextRequest) {
     // edges alone" and `[]` means "clear them", so a malformed value must not
     // arrive as the second one.
     blocked_by: Array.isArray(body.blocked_by) ? body.blocked_by : undefined,
-    // Same shape rule as blocked_by: only a real string is forwarded, because
-    // `undefined` means "leave the tags alone" and [] means "clear them" — a
-    // malformed value must not arrive as the second one.
+    // Same shape rule as blocked_by: only a real array is forwarded,
+    // because `undefined` means "leave the tags alone" and [] means "clear
+    // them", so a malformed value must not arrive as the second one.
     tags: Array.isArray(body.tags) ? body.tags : undefined,
   });
-  // 400, not 404: the caller's row exists (we just read it), and the request
-  // either named a value the tool won't write or aimed at a row it may not
-  // touch. `error` is what the bridge shows the agent as the tool's failure
-  // text, which is what tells it how to retry — including the refusal that
+  // 400, not 404: the caller's row exists (just read above), and the
+  // request either named a value the tool won't write or aimed at a row it
+  // may not touch. `error` is what the bridge shows the agent as the tool's
+  // failure text, which tells it how to retry, including the refusal that
   // explains why somebody else's task is off limits.
   if (!updated) return NextResponse.json({ error: text }, { status: 400 });
 
-  // Marking a task done may have cleared the last blocker some auto-start
-  // dependent was waiting on. Fired against `updated.id` — the TARGET, which
-  // isn't necessarily the caller. Fire-and-forget, exactly as PATCH
-  // /api/tasks/[id] does it: the launch runs detached and must never delay this
-  // response.
-  // Fired here rather than inside updateTaskForAgent because lib/autoStart reaches
-  // the agent SDKs and lib/agentTools is pinned SDK-free (tests/importGraph).
+  // Marking a task done may have cleared the last blocker some
+  // auto-start dependent was waiting on. Fired against `updated.id`, the
+  // target, which isn't necessarily the caller. Fire-and-forget, the same
+  // way PATCH /api/tasks/[id] does it: the launch runs detached and must
+  // never delay this response.
+  // Fired here instead of inside updateTaskForAgent because lib/autoStart
+  // reaches the agent SDKs and lib/agentTools is pinned SDK-free
+  // (tests/importGraph).
   if (autoStartDependents) maybeAutoStartDependents(updated.id);
 
   return NextResponse.json({ ok: true, id: updated.id, title: updated.title, status: updated.status, text });

@@ -1,5 +1,5 @@
-// The DECISION half of the ticker: given a schedule and the time, decide
-// whether this occurrence fires, was missed, or is skipped — and claim it.
+// The decision half of the ticker: given a schedule and the time, decide
+// whether this occurrence fires, was missed, or is skipped, and claim it.
 // DB + time math only, no runner and no SDK, so every branch is testable
 // without launching an agent.
 
@@ -22,11 +22,11 @@ export const catchUpWindow = (schedule: Schedule): number =>
 
 /**
  * Adjudicate one schedule at `now`. `isBusy` reports whether this schedule's
- * previous run is still live (real turn liveness — NOT task.status, which stays
- * "in progress" long after a turn ends).
+ * previous run is still live: real turn liveness, not task.status, which stays
+ * "in progress" long after a turn ends.
  *
- * Every elapsed slot is consumed in ONE call: down from Friday to Monday, the
- * Friday slot is recorded missed and Monday's fires — the caller never has to
+ * Every elapsed slot is consumed in one call: down from Friday to Monday, the
+ * Friday slot is recorded missed and Monday's fires. The caller never has to
  * tick repeatedly to drain a backlog, and a week offline can never produce a
  * week of firings.
  */
@@ -40,15 +40,15 @@ export function adjudicate(schedule: Schedule, now: number, isBusy: (scheduleId:
   const window = catchUpWindow(fresh);
 
   // Walk the backlog. Everything but the newest due slot is missed by
-  // definition — we are never going to run Friday's job on Monday. dstAdjusted
-  // tracks the CURRENT `slot`'s own adjustment, not the next slot's: seeded from
-  // the resolution that produced `slot` itself, then re-seeded each time `slot`
+  // definition: Friday's job never runs on Monday. dstAdjusted tracks the
+  // current `slot`'s own adjustment, not the next slot's: seeded from the
+  // resolution that produced `slot` itself, then re-seeded each time `slot`
   // advances.
   let slot = fresh.next_fire_at;
   let dstAdjusted = nextFireAt(specOf(fresh), slot - 1)?.dstAdjusted ?? "";
   for (let guard = 0; guard < 1000; guard++) {
     const upcoming = nextFireAt(specOf(fresh), slot);
-    // Null is a one-time schedule with nothing after this slot — there is no
+    // Null is a one-time schedule with nothing after this slot: there is no
     // backlog to walk, and `slot` is already the occurrence to adjudicate.
     if (!upcoming || upcoming.ms > now) break;
     recordMissedRun(fresh.id, slot, "the app was not running at this time");
@@ -56,8 +56,8 @@ export function adjudicate(schedule: Schedule, now: number, isBusy: (scheduleId:
     dstAdjusted = upcoming.dstAdjusted;
   }
   // `slot` is now the newest slot that is due, and the loop above recorded the
-  // rest. Move the schedule on FIRST, so a crash between here and the launch
-  // costs one run rather than wedging the schedule on a slot forever.
+  // rest. Move the schedule on first, so a crash between here and the launch
+  // costs one run instead of wedging the schedule on a slot forever.
   advanceNextFire(fresh.id, slot);
 
   const lateBy = now - slot;
@@ -68,8 +68,8 @@ export function adjudicate(schedule: Schedule, now: number, isBusy: (scheduleId:
     return { kind: "missed" };
   }
 
-  // One wedged turn must not silently swallow every future occurrence, so the
-  // skip is recorded and the schedule still advances.
+  // One wedged turn must not swallow every future occurrence without a trace,
+  // so the skip is recorded and the schedule still advances.
   if (isBusy(fresh.id)) {
     recordSkippedRun(fresh.id, slot, "the previous run of this schedule was still going");
     return { kind: "skipped" };
@@ -77,7 +77,7 @@ export function adjudicate(schedule: Schedule, now: number, isBusy: (scheduleId:
 
   const trigger = lateBy > 60_000 ? "catch_up" : "scheduled";
   const run = claimRun(fresh.id, slot, trigger, dstAdjusted);
-  // Null means another tick claimed this exact slot first — the unique index
+  // Null means another tick claimed this exact slot first: the unique index
   // doing its job. Not an error, and not ours to run.
   return run ? { kind: "fire", run } : { kind: "none" };
 }

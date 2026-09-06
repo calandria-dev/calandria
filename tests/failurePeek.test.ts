@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { summarizeFailure, clipKeepTail } from "@/lib/agents/shared";
 
-// A failed tool result is explained at its END: the CLI prefixes "Exit code N"
+// A failed tool result is explained at its end: the CLI prefixes "Exit code N"
 // and the shell appends stderr after stdout. Both the peek and the clip have
 // to keep that tail, or a long failed command renders as good-looking output
-// under a red ✗ with nothing that says why (the "error banner" bug).
+// under a red ✗ with nothing that says why.
 
 describe("summarizeFailure", () => {
   it("lifts the Claude CLI's exit line into the label and peeks the last lines", () => {

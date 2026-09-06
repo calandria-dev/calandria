@@ -1,13 +1,13 @@
 // Document collaboration passage comments (task_doc_comments) are persisted
-// the moment they're added — the CollabDoc modal's twin of the Changes tab's
-// line comments (tests/collab.test.ts covers the packet/quote-location half;
-// this file covers storage and the routes). Two things are pinned that a
-// naive CRUD wrapper would get wrong:
-//   - a SENT comment is read-only server-side: deleteTaskDocComment refuses
+// the moment they're added: the CollabDoc modal's counterpart to the Changes
+// tab's line comments (tests/collab.test.ts covers the packet/quote-location
+// half; this file covers storage and the routes). Two things are pinned that
+// a naive CRUD wrapper would get wrong:
+//   - a sent comment is read-only server-side: deleteTaskDocComment refuses
 //     it (returns "sent" instead of deleting), and markTaskDocCommentsSent
 //     only flips rows that are still unsent, so re-sending is a no-op count.
-//   - the anchor is the FILE's git blob sha (stamped by the caller from the
-//     file route's `sha`), not the worktree HEAD — this file only checks that
+//   - the anchor is the file's git blob sha (stamped by the caller from the
+//     file route's `sha`), not the worktree HEAD. This file only checks that
 //     the value round-trips (blobSha itself is pinned in tests/collab.test.ts).
 import { describe, it, expect } from "vitest";
 import {
@@ -54,11 +54,11 @@ describe("store: task_doc_comments", () => {
     const theirs = addTaskDocComment(other.id, "docs/a.md", "q", null, "b", null);
 
     const flipped = markTaskDocCommentsSent(task.id, [mine.id, theirs.id]);
-    expect(flipped).toBe(1); // theirs is skipped — it belongs to another task
+    expect(flipped).toBe(1); // theirs is skipped: it belongs to another task
     expect(listTaskDocComments(task.id)[0].sent_to_agent).toBe(1);
     expect(listTaskDocComments(other.id)[0].sent_to_agent).toBe(0); // untouched
 
-    // Calling again with the same ids changes nothing — already sent.
+    // Calling again with the same ids changes nothing: already sent.
     expect(markTaskDocCommentsSent(task.id, [mine.id, theirs.id])).toBe(0);
   });
 

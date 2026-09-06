@@ -56,7 +56,7 @@ const sel = (proj: string | null, task: string | null, view: NavSel["view"] = "w
 /** The project-home pane: a project open, no task, the home intent held. */
 const home = (proj: string): NavSel => ({ proj, task: null, home: true, view: "workspace" });
 
-describe("navHistory — mobile Back via single trap entry", () => {
+describe("navHistory: mobile Back via single trap entry", () => {
   it("deep-link to a task: Back steps session → tasks → projects → exit", () => {
     const h = new FakeHistory("/app?project=NB&task=O02");
     const ref = { sel: sel("NB", "O02") };
@@ -120,7 +120,7 @@ describe("navHistory — mobile Back via single trap entry", () => {
     expect(pressBack(h, ref)).toBe("tasks");  // settings → workspace (project still open)
   });
 
-  it("desktop (armTrap=false) never pushes a trap — Back is not hijacked", () => {
+  it("desktop (armTrap=false) never pushes a trap, so Back is not hijacked", () => {
     const h = new FakeHistory("/app");
     reconcileHistory(h, PATH, sel(null, null), false);
     reconcileHistory(h, PATH, sel("P", null), false);
@@ -130,8 +130,8 @@ describe("navHistory — mobile Back via single trap entry", () => {
   });
 
   // The project home is the only mount point for Runbooks and Schedules, and on
-  // a phone it is a pane of its own rather than "no task selected" — so it has
-  // to be a Back level, or the one press that should return to the task list
+  // a phone it is a pane of its own, not just "no task selected". So it has to
+  // be a Back level, or the one press that should return to the task list
   // would drop the whole project instead.
   it("project home: Back steps project → tasks → projects → exit", () => {
     const h = new FakeHistory("/app");
@@ -147,8 +147,8 @@ describe("navHistory — mobile Back via single trap entry", () => {
   });
 
   it("opening a task from the project home leaves no home level behind", () => {
-    // A runbook dispatch selects the task it minted, which drops the intent —
-    // one Back must then land on the task list, not back on the cards.
+    // A runbook dispatch selects the task it minted, which drops the intent,
+    // so one Back must then land on the task list, not back on the cards.
     const h = new FakeHistory("/app");
     const ref = { sel: sel(null, null) };
     settle(h, ref.sel);
@@ -186,7 +186,7 @@ describe("navHistory — mobile Back via single trap entry", () => {
     expect(selectionUrl(sel("P", null, "settings"), "/app")).toBe("?project=P&view=settings");
     expect(selectionUrl(home("P"), "/app")).toBe("?project=P&home=1");
     // home never travels without a project, and a selected task supersedes it
-    // (selecting one drops the intent) — so neither combination is mirrored.
+    // (selecting one drops the intent), so neither combination is mirrored.
     expect(selectionUrl({ proj: null, task: null, home: true, view: "workspace" }, "/app")).toBe("/app");
     expect(selectionUrl({ proj: "P", task: "T", home: true, view: "workspace" }, "/app")).toBe("?project=P&task=T");
   });
@@ -194,9 +194,9 @@ describe("navHistory — mobile Back via single trap entry", () => {
 
 // The on-screen Back buttons ("Back to projects", "Back to tasks") go through
 // backOneLevel. Pressing one is the same as the device button when the trap is
-// armed, and must still close the pane when it isn't — the trap is armed by a
+// armed, and must still close the pane when it isn't. The trap is armed by a
 // passive effect one paint after the button is tappable.
-describe("navHistory — the in-app Back button acts on the history it finds", () => {
+describe("navHistory: the in-app Back button acts on the history it finds", () => {
   // The button's press: what the shell's goBack does, minus React.
   function pressButton(h: FakeHistory, ref: { sel: NavSel }): { via: "history" | "state"; pane: string } {
     const via = backOneLevel(h, ref.sel, (next) => { ref.sel = next; });
@@ -207,7 +207,7 @@ describe("navHistory — the in-app Back button acts on the history it finds", (
     return { via, pane: paneOf(ref.sel) };
   }
 
-  it("with the trap armed, pops it — so the device button and the on-screen one leave the same history", () => {
+  it("with the trap armed, pops it, so the device button and the on-screen one leave the same history", () => {
     const h = new FakeHistory("/app");
     const ref = { sel: sel("P", "T") };
     settle(h, ref.sel);

@@ -23,10 +23,11 @@ import type { AgentInfoT, AgentsResponseT, EndpointStatusT, GatewayHealthT } fro
 import type { PermissionMatchKind, PermissionRule } from "@/lib/types";
 
 // Account / session panel. Shows who's signed in to this instance and a Logout
-// control — but only when an origin provider is actually gating the box (first-
-// party control-plane session or Cloudflare Access). In open local dev there's
-// no session to end, so the panel says so and hides the button. The redirect
-// target is provider-specific and decided server-side (see /api/auth/logout).
+// control, shown only when an origin provider is actually gating the box
+// (first-party control-plane session or Cloudflare Access). In open local dev
+// there's no session to end, so the panel says so and hides the button. The
+// redirect target is provider-specific and decided server-side (see
+// /api/auth/logout).
 function AccountSection() {
   const [state, setState] = useState<
     { provider: string; signedIn: boolean; email: string | null } | null
@@ -132,7 +133,7 @@ function AgentsSection({ defaultAgent, appDefaults, setAppDefault, onChanged }: 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
       <div className="hlp" style={{ marginTop: 0 }}>
-        Each task runs as a coding agent. Connect an agent&apos;s subscription login (or API key) once and it becomes selectable for new tasks. {def === "claude" ? "Claude is the default and runs the app's own jobs (summaries, recaps), so keep it connected." : ""}
+        Each task runs as a coding agent. Connect a subscription login or API key once to make it selectable for new tasks. {def === "claude" ? "Claude is the default and runs Calandria's own jobs (summaries, recaps); keep it connected." : ""}
       </div>
       {agents.map((a) => (
         <div key={a.id} className="field" style={{ marginBottom: 0 }}>
@@ -140,9 +141,9 @@ function AgentsSection({ defaultAgent, appDefaults, setAppDefault, onChanged }: 
             {Icon.spark()} {a.label}
             {a.id === def && <span className="opt">(default)</span>}
             {a.authBroken
-              // Its login died (still on record) or its record was dropped for a
-              // provider change — either way a green check here would contradict
-              // the card below it (and the titlebar banner).
+              // Its login died (still on record) or its record was dropped for
+              // a provider change. Either way a green check here would
+              // contradict the card below it (and the titlebar banner).
               ? <span className="wiz-warn" style={{ marginLeft: "auto" }} title="Needs reconnecting">{Icon.bolt()}</span>
               : a.connected && <span className="wiz-ok" style={{ marginLeft: "auto" }}>{Icon.check()}</span>}
           </div>
@@ -191,7 +192,7 @@ function AgentsSection({ defaultAgent, appDefaults, setAppDefault, onChanged }: 
 // is set, which is also what puts the Gateway preset in a project's settings.
 //
 // The three facts come from lib/gatewayHealth.ts. `database: false` is the
-// no-Postgres 500 from /key/info, and it is stated rather than shown as blank
+// no-Postgres 500 from /key/info, and it is stated instead of shown as blank
 // rows: every key, budget and spend feature on a LiteLLM proxy needs that
 // database, so a card that just omitted them would read like a bug.
 function GatewayCard({ gateway, onChanged }: { gateway: GatewayHealthT; onChanged: () => void }) {
@@ -231,28 +232,28 @@ function GatewayCard({ gateway, onChanged }: { gateway: GatewayHealthT; onChange
         {" "}<code className="ctx-mono">CALANDRIA_LITELLM_BASE_URL</code>.
       </div>
       {gateway.database === false && (
-        <div className="hlp">Keys, budgets and spend need LiteLLM&apos;s database. This proxy is running without one, so the card shows liveness, version and model count only.</div>
+        <div className="hlp">Keys, budgets and spend need LiteLLM&apos;s database, which this proxy doesn&apos;t have. The card shows liveness, version and model count only.</div>
       )}
       {gateway.database === true && (
         <div className="hlp">
           {gateway.max_budget == null
             ? `Spend so far: $${gateway.spend?.toFixed(2) ?? "0.00"} (no budget set on this key).`
-            : `Spend: $${gateway.spend?.toFixed(2) ?? "0.00"} of a $${gateway.max_budget.toFixed(2)} budget${gateway.spend != null && gateway.spend >= gateway.max_budget ? " — exhausted" : ""}.`}
+            : `Spend: $${gateway.spend?.toFixed(2) ?? "0.00"} of a $${gateway.max_budget.toFixed(2)} budget${gateway.spend != null && gateway.spend >= gateway.max_budget ? ", exhausted" : ""}.`}
           {gateway.budget_reset_at && ` Resets ${new Date(gateway.budget_reset_at).toLocaleString()}.`}
           {!!gateway.key_models?.length && ` Allowed models: ${gateway.key_models.join(", ")}.`}
         </div>
       )}
       {!!gateway.gemini_missing_models?.length && (
         <div className="hlp wiz-warn">
-          {Icon.bolt()} Antigravity uses <code className="ctx-mono">{gateway.gemini_missing_models.join(", ")}</code>, not in this gateway&apos;s catalog.
-          Add {gateway.gemini_missing_models.length === 1 ? "it" : "them"} to LiteLLM&apos;s <code className="ctx-mono">model_list</code>, or an Antigravity turn
-          against this gateway fails with an unhelpful error the moment it makes its side call.
+          {Icon.bolt()} Antigravity uses <code className="ctx-mono">{gateway.gemini_missing_models.join(", ")}</code>, missing from this gateway&apos;s catalog.
+          Add {gateway.gemini_missing_models.length === 1 ? "it" : "them"} to LiteLLM&apos;s <code className="ctx-mono">model_list</code>, or Antigravity turns
+          against this gateway will fail.
         </div>
       )}
       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
         <input type="password" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={key} autoComplete="off"
-          placeholder={gateway.has_key ? "a key is set — type a new one to replace it" : "virtual key (sk-…)"}
-          title="The instance's LiteLLM virtual key. Stored 0600 beside the database, never in a project row and never returned to the browser."
+          placeholder={gateway.has_key ? "a key is set, type a new one to replace it" : "virtual key (sk-…)"}
+          title="The instance's LiteLLM virtual key, stored 0600 and never sent to the browser."
           onChange={(e) => setKey(e.target.value)} />
         <button className="btn btn-line" disabled={busy || !key.trim()} onClick={() => save(false)}>{Icon.check()} Save key</button>
         {gateway.has_key && <button className="btn btn-ghost" disabled={busy} onClick={() => save(true)}>{Icon.x()} Clear</button>}
@@ -267,13 +268,13 @@ function GatewayCard({ gateway, onChanged }: { gateway: GatewayHealthT; onChange
 }
 
 // Whether a task on this agent can use the MCP servers the user configured for
-// its own CLI — the one capability difference between the agents that changes
-// what a task can DO, rather than how its controls look. A Claude task reaches
-// the tools in ~/.claude; an otherwise-identical Codex task reaches only
-// Calandria's, so it's worth knowing before choosing an agent for a task. Both
-// the verdict and the explanation come from the driver's descriptor
-// (lib/agents/types.ts AgentCapabilities), never from the agent's id: a third
-// agent states its own position here with no edit to this file.
+// its own CLI. This capability difference changes what a task can do, not just
+// how its controls look. A Claude task reaches the tools in ~/.claude; an
+// otherwise-identical Codex task reaches only Calandria's, so it's worth
+// knowing before choosing an agent for a task. Both the verdict and the
+// explanation come from the driver's descriptor (lib/agents/types.ts
+// AgentCapabilities), never from the agent's id, so a third agent states its
+// own position here with no edit to this file.
 function McpInheritance({ agent }: { agent: AgentInfoT }) {
   const { inheritsUserMcpServers: inherits, userMcpServersNote: note, gatewayMcpNote } = agent.capabilities;
   return (
@@ -287,12 +288,12 @@ function McpInheritance({ agent }: { agent: AgentInfoT }) {
   );
 }
 
-// The EFFECTIVE utility agent, resolved connected-first by the server
+// The effective utility agent, resolved connected-first by the server
 // (lib/agents/oneshots.ts). The buttons above show what's *configured*; this
-// line shows what will actually run — they diverge whenever the configured
-// agent isn't connected, and silently picking a different agent would be a
-// worse surprise than saying so. When nothing is connected at all, internal
-// jobs can't run, so this says that instead of naming a stand-in.
+// line shows what will actually run. They diverge whenever the configured
+// agent isn't connected, and picking a different agent without saying so
+// would be a worse surprise. When nothing is connected at all, internal jobs
+// can't run, so this says that instead of naming a stand-in.
 function UtilityEffective({ agents }: { agents: AgentsBundle }) {
   const u = agents.utility;
   if (!u) return null;
@@ -314,10 +315,10 @@ function UtilityEffective({ agents }: { agents: AgentsBundle }) {
 // The "always allow" answers given to tool-permission prompts (lib/permissions.ts),
 // with a revoke on each, plus a row to add one WITHOUT waiting for a prompt.
 // A grant nobody can find is a grant nobody can take back, so this list is the
-// other half of the "Always allow" button — without it, one click in a
-// transcript is permanent and invisible. The add row is the other direction:
-// "always allow" was the only way to mint a rule, so pre-approving `npm test`
-// for a project cost you one prompt in one task first — and an auto-started
+// other half of the "Always allow" button; without it, one click in a
+// transcript is permanent and invisible. The add row covers the other case:
+// with "always allow" as the only way to mint a rule, pre-approving `npm test`
+// for a project required one prompt in one task first, and an auto-started
 // unattended turn declines that prompt before anyone can answer it.
 //
 // The form can't grant more than the card can. It sends the command the user
@@ -357,8 +358,8 @@ function PermissionRules() {
       const { rule } = await jsend<{ rule: PermissionRule & { project_name: string } }>(
         "/api/settings/permissions", "POST", { project_id: projectId, command, match_kind: kind }
       );
-      // The stored rule, not the typed line — say so whenever they differ, so a
-      // narrowed prefix isn't a silent surprise the next time it doesn't match.
+      // The stored rule, not the typed line: say so whenever they differ, so a
+      // narrowed prefix doesn't come as a surprise the next time it doesn't match.
       setAdded(rule.match_kind === "bash_prefix" ? `${rule.value} …` : rule.value);
       setCommand("");
       setRules((prev) => [rule, ...(prev ?? []).filter((r) => r.id !== rule.id)]);
@@ -374,9 +375,9 @@ function PermissionRules() {
       <div className="lab">{Icon.check()} Remembered approvals</div>
       <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
         Commands allowed without a prompt: the ones you chose <strong>Always allow</strong> for on a permission
-        card, plus any you add here. They apply to one project and skip the prompt entirely, so revoke anything you
-        no longer want run unattended. A remembered command names a script, not a behaviour: <code>npm test</code>
-        {" "}is whatever the project says it is today.
+        card, plus any you add here. They apply to one project and skip the prompt entirely. Revoke anything you no
+        longer want to run unattended. A remembered command matches by name: <code>npm test</code> runs whatever the
+        project defines that as today.
       </div>
       {projects.length > 0 && (
         <>
@@ -401,11 +402,10 @@ function PermissionRules() {
             </button>
           </div>
           <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-            <strong>And its arguments</strong> remembers only the leading command and subcommand, exactly as the
-            permission card would: <code>git push origin main</code> is stored as <code>git push …</code>, and a line
-            the shell could reinterpret (pipes, <code>$(…)</code>, <code>&amp;&amp;</code>) or one led by a wrapper
-            like <code>sudo</code> can&apos;t be generalized at all. <strong>Exactly</strong> matches that one literal
-            line and nothing else.
+            <strong>And its arguments</strong> remembers only the command and subcommand, the same way the permission
+            card does: <code>git push origin main</code> is stored as <code>git push …</code>. A line with pipes,{" "}
+            <code>$(…)</code>, <code>&amp;&amp;</code>, or a wrapper like <code>sudo</code> can&apos;t be generalized
+            this way. <strong>Exactly</strong> matches only that one literal line.
           </div>
           {error && <ErrNote style={{ marginBottom: 10 }}>{error}</ErrNote>}
           {added && !error && <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>Remembered as <code>{added}</code>.</div>}
@@ -431,11 +431,11 @@ function PermissionRules() {
   );
 }
 
-// Browser notifications. The permission grant is per-DEVICE and owned by the
-// browser, so it is read live from Notification.permission rather than stored;
+// Browser notifications. The permission grant is per-device and owned by the
+// browser, so it is read live from Notification.permission instead of stored;
 // everything else is server-side policy the webhook channel will inherit.
 // Copy here is written to make sense whether or not the user saw the
-// onboarding nudge (Welcome.tsx) that already offers this same grant — it
+// onboarding nudge (Welcome.tsx) that already offers this same grant: it
 // neither assumes this is their first time nor references that earlier step.
 function NotificationSettings({ appDefaults, setAppDefault }: {
   appDefaults: Record<string, string>;
@@ -459,7 +459,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
   useEffect(() => {
     setPush(pushSupport());
     loadDevices().catch((e) => setPushErr(e instanceof Error ? e.message : String(e)));
-    // The re-sync also answers "is this browser subscribed?" — it returns the
+    // The re-sync also answers "is this browser subscribed?": it returns the
     // row the browser's subscription upserted into, or null.
     syncPushSubscription().then((d) => { setThisDevice(d?.id ?? null); if (d) void loadDevices(); }).catch(() => {});
   }, []);
@@ -488,14 +488,14 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
     }
   }
   // `desktop_shell` mirrors the Browser/Desktop notifications block above: the
-  // shell denies the page's notification permission on purpose and raises
-  // native toasts itself, so the subscribe button is withheld rather than left
-  // to fail with a "browser site settings" hint the shell has no page for. The
-  // shell exposes no bridge (no preload, by design), so there is nothing to
-  // open the OS notification pane with — the copy names it instead. The device
-  // list below still shows, and still removes, the phones subscribed elsewhere.
+  // shell denies the page's notification permission and raises native toasts
+  // itself, so the subscribe button is withheld instead of left to fail with a
+  // "browser site settings" hint the shell has no page for. The shell exposes
+  // no bridge (no preload), so there is nothing to open the OS notification
+  // pane with, so the copy names it instead. The device list below still
+  // shows, and still removes, the phones subscribed elsewhere.
   const pushHelp = push === "desktop_shell"
-    ? "Native notifications are already on: the desktop app raises them itself through your OS, so this window doesn't subscribe to push — that would deliver every event twice. Manage them in your OS notification settings. Push is for phones and other browsers: open Settings there to subscribe one, and it appears in the list here."
+    ? "Native notifications are already on: the desktop app raises them through your OS, so this window doesn't also subscribe to push. Manage them in your OS notification settings. Push is for phones and other browsers: open Settings there to subscribe one, and it appears in the list here."
     : push === "insecure"
     ? "Push needs a secure origin, like every notification does. Reach the instance over https or as localhost."
     : push === "needs_install"
@@ -510,7 +510,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
   const kinds: [string, string, string][] = [
     ["notify_awaiting_input", "A task is waiting for input", "An agent asked a question, needs a tool approved, or ended its turn with the work back in your hands. Either way the task has stopped until you pick it up."],
     ["notify_turn_failed", "A turn failed", "The session died: a dead login, a spent quota, a full context window, or a crash."],
-    ["notify_schedule_failed", "A scheduled run failed", "A schedule fired and got nowhere. Nobody is watching at 08:30, so this is the one failure with no other witness."],
+    ["notify_schedule_failed", "A scheduled run failed", "A schedule fired and got nowhere, with nobody watching to notice otherwise."],
   ];
 
   async function sendTest() {
@@ -551,14 +551,14 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
         <div className="lab">{Icon.bolt()} {perm === "desktop_shell" ? "Desktop notifications" : "Browser notifications"}</div>
         <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
           {perm === "desktop_shell"
-            // The page's own channel really is switched off in here, and saying
-            // so plainly is the point: read straight off Notification.permission
-            // this card used to report "blocked", sending the user hunting for a
-            // browser site setting that doesn't exist in the shell — while OS
-            // notifications were arriving the whole time from a channel the page
-            // can't see. The desktop app raises them from outside the window, so
-            // it keeps working with this window hidden to the tray.
-            ? "The desktop app handles these itself, so the page's own channel is switched off — that's what stops every event arriving twice. Notifications come through your OS whether or not this window is in front, and clicking one opens the task."
+            // The page's own channel really is switched off here. Reading
+            // straight off Notification.permission would report "blocked",
+            // sending the user hunting for a browser site setting that doesn't
+            // exist in the shell, while OS notifications arrive the whole time
+            // from a channel the page can't see. The desktop app raises them
+            // from outside the window, so it keeps working with this window
+            // hidden to the tray.
+            ? "The desktop app handles these itself; this page's own channel is switched off to avoid duplicates. Notifications come through your OS whether or not this window is in front, and clicking one opens the task."
             : perm === "insecure"
             ? "Browsers only allow notifications on a secure origin, and this page is plain http. No site setting can change that. Reach the instance over https (a reverse proxy or tunnel, see the self-hosting docs and PUBLIC_BASE_URL) or open it as localhost."
             : perm === "unsupported"
@@ -567,7 +567,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
                 ? "This browser is allowed to show notifications. They appear only when you aren't already looking at the task."
                 : perm === "denied"
                   ? "You've blocked notifications for this site. Calandria can't ask again. Unblock it in your browser's site settings for this address."
-                  : "Allow notifications so Calandria can reach you when this tab isn't in front of you."}
+                  : "Allow notifications to reach you when this tab isn't in front of you."}
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {perm === "default" && (
@@ -625,7 +625,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
       <div className="field">
         <div className="lab">{Icon.list()} What to notify me about</div>
         <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-          Each of these means a task has STOPPED. Finished turns and new suggestions deliberately stay quiet.
+          Each of these means a task has STOPPED. Finished turns and new suggestions stay quiet.
         </div>
         {kinds.map(([key, label, help]) => {
           const kindOn = appDefaults[key] !== "off";
@@ -651,10 +651,10 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
   );
 }
 
-// Static preview colors for each palette's dark variant — the design-system
+// Static preview colors for each palette's dark variant: the design-system
 // values from docs/design/handoff/styles.css, hardcoded here since the swatch
 // has to show every theme at once regardless of which one is currently active
-// (CSS custom properties only expose the LIVE theme, not the other three).
+// (CSS custom properties only expose the live theme, not the other three).
 const PALETTE_PREVIEW: { id: Palette; label: string; bg: string; accent: string; ink: string }[] = [
   { id: "cherenkov", label: "Cherenkov", bg: "#081217", accent: "#45cabb", ink: "#d5e4ea" },
   { id: "heavywater", label: "Heavy water", bg: "#0d1414", accent: "#dd7f68", ink: "#dce7e4" },
@@ -666,7 +666,7 @@ const PROMPT_SAMPLE = "Refactor the auth flow to use refresh tokens.";
 
 // The "Appearance" section: theme cards, mode, and the code/prompt font pickers
 // (docs/design/handoff/ui/Settings.html). Density + text-width stay in the
-// AppearancePanel popover only — no home for them here yet, and duplicating a
+// AppearancePanel popover only: no home for them here yet, and duplicating a
 // setter across two surfaces just invites drift.
 function AppearanceSection({ appearance, setAppearance }: {
   appearance: Appearance;
@@ -674,9 +674,9 @@ function AppearanceSection({ appearance, setAppearance }: {
 }) {
   // Chromium (and kin) treat focus that arrives through a wrapping <label>
   // click as :focus-visible, so a mouse selection left the radio wearing a
-  // keyboard focus ring. CSS can't tell those apart, so a REAL pointer click
+  // keyboard focus ring. CSS can't tell those apart, so a real pointer click
   // (e.detail > 0; keyboard-synthesized clicks are 0) drops focus after the
-  // change lands — keyboard focus and its row treatment stay untouched.
+  // change lands. Keyboard focus and its row treatment stay untouched.
   const unfocusOnPointer = (e: React.MouseEvent<HTMLLabelElement>) => {
     if (e.detail > 0) e.currentTarget.querySelector("input")?.blur();
   };
@@ -754,8 +754,8 @@ function AppearanceSection({ appearance, setAppearance }: {
 
 // The settings surface is a two-pane view that replaces the work area: a category
 // nav (left) + the active section's content (right). Sections are data-driven so
-// growing settings is adding an entry here + a branch in renderSection — no layout
-// work. Today there's one section; appearance/models/integrations slot in later.
+// growing settings is adding an entry here plus a branch in renderSection, with
+// no layout work.
 const SETTINGS_SECTIONS: { id: string; label: string; icon: () => React.ReactNode }[] = [
   { id: "general", label: "General", icon: Icon.gear },
   { id: "appearance", label: "Appearance", icon: Icon.sliders },
@@ -802,7 +802,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   // by. Agent-scoped like the model default above, and for the same reason.
   const lightJobModel = appDefaults[`job_model_light:${editAgent}`] ?? null;
   const heavyJobModel = appDefaults[`job_model_heavy:${editAgent}`] ?? null;
-  // What the agent being edited calls its never-asks mode — the labels are the
+  // What the agent being edited calls its never-asks mode. The labels are the
   // provider's own vocabulary (Claude: "bypassPermissions", Codex:
   // "danger-full-access"), so the help copy resolves the name per agent instead of
   // hardcoding one.
@@ -838,7 +838,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   // A recorded model id belongs to one agent's catalog, and the row doesn't say
   // which, so try every connected agent and fall back to the raw id.
   // modelLabel() falls back to the raw id, so "it returned something" is not a
-  // hit — take the first agent whose catalog actually names the model.
+  // hit: take the first agent whose catalog actually names the model.
   const labelModel = (m: string) =>
     agents.agents.map((a) => modelLabel(m, capsFor(agents, a.id))).find((l) => l && l !== m) || m;
   const usageLine = (label: string, usage = recapUsage) =>
@@ -860,7 +860,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   const clampTokens = (n: number) => Math.max(1000, Math.round(n));
   const active = SETTINGS_SECTIONS.find((s) => s.id === section) ?? SETTINGS_SECTIONS[0];
   // On a phone the nav is a horizontal rail (see globals.css), so a section
-  // past the third one — or a deep link straight into `initialSection` — starts
+  // past the third one, or a deep link straight into `initialSection`, starts
   // scrolled off the right edge with no sign it's selected. Pull it back into
   // view. `nearest` on both axes makes this a no-op for the desktop sidebar,
   // where every entry already fits.
@@ -1042,7 +1042,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                   note={
                     <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
                       Calandria&apos;s own short jobs on {agentLabel(agents, editAgent)}: <strong>/clear</strong> handoff notes and
-                      project recaps. Both are one turn of text in, text out with no tools, so a small model is usually the right call.
+                      project recaps, each one turn of text in and out with no tools.
                     </div>
                   }
                 />
@@ -1053,9 +1053,9 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                   onChange={(m) => setAppDefault(`job_model_heavy:${editAgent}`, m)}
                   note={
                     <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                      The <strong>Refresh with AI</strong> project-context draft and the <strong>Refresh tag</strong> plan check, which
-                      both explore the repository read-only before deciding something durable — context prepended to every new session,
-                      or which of a tag&apos;s tasks have gone stale. Both read an unfamiliar codebase, so accuracy pays here.
+                      The <strong>Refresh with AI</strong> project-context draft and the <strong>Refresh tag</strong> plan check. Both
+                      explore the repository read-only, then produce something durable: context prepended to every new session, or
+                      which of a tag&apos;s tasks have gone stale.
                     </div>
                   }
                 />
@@ -1082,9 +1082,9 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                 <div className="field">
                   <div className="lab">{Icon.lock()} Default permission mode</div>
                   <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                    How tasks run when their own picker is set to <strong>{INHERIT_LABEL}</strong>. Every mode except <strong>{bypassLabel}</strong>
-                    {" "}parks the turn on a permission card for anything it won&rsquo;t auto-approve, including while you&rsquo;re
-                    away, where an unanswered card declines itself. Pick <strong>{bypassLabel}</strong> for work that must never stop to ask.
+                    How tasks run when their own picker is set to <strong>{INHERIT_LABEL}</strong>. Every mode but <strong>{bypassLabel}</strong>
+                    {" "}can park a turn on a permission card that goes unanswered while you&rsquo;re away. Pick <strong>{bypassLabel}</strong> for
+                    work that must run through unattended.
                   </div>
                   <div className="seg wrap" style={{ maxWidth: 520 }}>
                     {permissionOptions(caps, inheritSub).map((p) => (
@@ -1096,7 +1096,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                         >
                           {p.label}
                         </button>
-                        {/* Rule after the inherit head — Claude's own list has a
+                        {/* Rule after the inherit head: Claude's own list has a
                             mode spelled "default" right below it. */}
                         {p.value === null && <span className="seg-sep" aria-hidden />}
                       </Fragment>

@@ -1,15 +1,13 @@
-/* scripts/backup.mjs — the WAL-safe hot backup.
+/* Tests scripts/backup.mjs, the WAL-safe hot backup.
  *
- * The property worth a test is the one a reviewer cannot see by reading the
- * script and an operator cannot see by running it: that the snapshot contains
- * writes which are still only in the write-ahead log. A `cp calandria.db`
- * backup passes every casual check — the file opens, the schema is there, most
- * of the data is there — and loses exactly the most recent work. So the first
- * case below writes rows, leaves them uncheckpointed, and asserts BOTH halves:
- * the snapshot has them and a raw copy of the same `.db` file does not.
+ * The snapshot must contain writes that are still only in the write-ahead
+ * log. A plain `cp calandria.db` backup opens and has a schema, but drops
+ * the most recent writes; the first case below writes uncheckpointed rows
+ * and asserts the snapshot has them while a raw copy of the same file does
+ * not.
  *
- * Everything runs the real script as a subprocess, because its whole job is to
- * resolve paths from the environment (lib/storage.mjs) and shell out to tar.
+ * Tests run the real script as a subprocess, since it resolves paths from
+ * the environment (lib/storage.mjs) and shells out to tar.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
@@ -26,16 +24,14 @@ let openDb: Database.Database | null = null;
 
 /* Teardown owns the fixture's connection, not the test body.
  *
- * Every case here holds a mid-WAL database open on purpose, and a case that
- * FAILS never reaches the close at its end. POSIX doesn't care — an open file
- * unlinks fine — so on Linux the leaked handle is invisible. Windows refuses
- * with EBUSY, so one failed assertion became two red results: the assertion and
- * an `unlink ...\data\calandria.db` from this hook (issue #53). Closing here
- * means a red test reports its own reason and nothing else.
+ * Each case holds a mid-WAL database open, and a failing case never reaches
+ * the close at its end. POSIX allows unlinking an open file, but Windows
+ * refuses with EBUSY (issue #53), so this hook closes the handle before
+ * removing the directory, keeping a failing assertion the only red result.
  *
- * The removal is then tolerant for the handles we DON'T hold, the same shape as
- * tests/setup.ts: a Defender scan or an indexer on a freshly written tree is not
- * worth failing a passing test over, and the directory is under %TEMP%. */
+ * Removal tolerates handles it doesn't hold, matching tests/setup.ts: a
+ * scanner or indexer on a freshly written temp directory must not fail an
+ * otherwise passing test. */
 afterEach(() => {
   try {
     if (openDb?.open) openDb.close();
@@ -59,16 +55,16 @@ type Fixture = {
   dbPath: string;
   home: string;
   worktrees: string;
-  /** Held open on purpose: closing the last connection checkpoints the WAL.
+  /** Held open: closing the last connection checkpoints the WAL.
    *  Closed by the afterEach above, so a failing case still lets go of it. */
   db: Database.Database;
 };
 
 /**
  * A data directory shaped like a real one: a WAL database, the uploads tree and
- * VAPID key that live beside it, the boot lock's pure-mutex pair, and — by
- * default — the worktrees dir nested inside it, which is where it lands with
- * both variables unset (`~/.calandria/worktrees` under `~/.calandria`).
+ * VAPID key beside it, the boot lock's mutex pair, and, by default, the
+ * worktrees dir nested inside it, matching where it lands with both variables
+ * unset (`~/.calandria/worktrees` under `~/.calandria`).
  */
 function fixture(dbFile = "calandria.db", rows = 40): Fixture {
   const base = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), "calandria-backup-"));
@@ -91,8 +87,8 @@ function fixture(dbFile = "calandria.db", rows = 40): Fixture {
   fs.writeFileSync(path.join(dbDir, "uploads", "task-1", "shot.png"), "not really a png");
   fs.writeFileSync(path.join(dbDir, "vapid.json"), '{"privateKey":"x"}');
   fs.writeFileSync(path.join(dbDir, "anthropic-api-key"), "sk-secret");
-  // The lock pair the app holds while it runs. Disposable by design, and the
-  // backup must not carry it: restoring one would be restoring a claim.
+  // The lock pair the app holds while running. The backup must not carry it:
+  // restoring one would restore a stale claim.
   fs.writeFileSync(path.join(dbDir, "calandria.lock.db"), "");
   fs.writeFileSync(path.join(dbDir, "calandria.lock.json"), '{"pid":1}');
 
@@ -126,13 +122,11 @@ function run(f: Fixture, args: string[], extraEnv: Record<string, string> = {}) 
 
 /** The archive's member paths, relative to the backup directory inside it.
  *
- *  Through `outputLines`, not `split("\n")`: `tar.exe` on Windows is a native
- *  binary and ends every entry with CRLF, which left a `\r` on each member and
- *  failed every assertion here (issue #53). The leading `filter(Boolean)` went
- *  with it — it was dropping the blank the trailing newline produces, but also
- *  KEEPING the archive's own root directory entry as a lone truthy `"\r"`. The
- *  filter that remains is the one that means something: the root entry maps to
- *  the empty string once its prefix is stripped. */
+ *  Uses `outputLines`, not `split("\n")`: `tar.exe` on Windows ends every
+ *  entry with CRLF, so a plain split leaves a trailing `\r` on each member
+ *  (issue #53). The final `filter(Boolean)` drops the blank the trailing
+ *  newline produces and the root directory entry, which maps to the empty
+ *  string once its prefix is stripped. */
 function listArchive(archive: string): string[] {
   const res = spawnSync("tar", ["-tzf", path.basename(archive)], {
     cwd: path.dirname(archive),
@@ -173,7 +167,7 @@ const notesOrNull = (file: string) => {
 describe("scripts/backup.mjs", () => {
   it("captures writes that are still only in the WAL, which a file copy loses", () => {
     const f = fixture();
-    // Sanity: the fixture really is mid-WAL, i.e. this test is testing something.
+    // Confirms the fixture is mid-WAL before asserting on it.
     expect(fs.existsSync(`${f.dbPath}-wal`)).toBe(true);
 
     const res = run(f, []);
@@ -182,14 +176,13 @@ describe("scripts/backup.mjs", () => {
     const dir = extract(res.produced);
     expect(notes(path.join(dir, "db", "calandria.db"))).toBe(40);
 
-    // The comparison that makes the point: the same moment, copied naively.
-    // On this fixture the CREATE TABLE is itself still in the log, so the copy
-    // doesn't have fewer rows — it has no table. Either way it isn't a backup.
+    // A naive copy of the same moment: the CREATE TABLE is itself still in
+    // the log, so the copy has no table at all. Either way it isn't a backup.
     const naive = path.join(f.root, "naive.db");
     fs.copyFileSync(f.dbPath, naive);
     expect(notesOrNull(naive)).not.toBe(40);
 
-    // And the snapshot needs no sidecars — VACUUM INTO writes a checkpointed file.
+    // The snapshot needs no sidecars: VACUUM INTO writes a checkpointed file.
     expect(fs.existsSync(path.join(dir, "db", "calandria.db-wal"))).toBe(false);
   });
 
@@ -207,8 +200,8 @@ describe("scripts/backup.mjs", () => {
     expect(members).toContain("agent-login/home/.claude/.credentials.json");
     expect(members).toContain("agent-login/home/.codex/auth.json");
 
-    // No raw SQLite file, no lock, and no worktrees — the last one nested inside
-    // the database directory, which is the default layout.
+    // No raw SQLite file, no lock, and no worktrees; the last one is nested
+    // inside the database directory in the default layout.
     expect(members.some((m) => m.startsWith("db-dir/") && /\.db(-wal|-shm)?$/.test(m))).toBe(false);
     expect(members.some((m) => m.includes("lock"))).toBe(false);
     expect(members.some((m) => m.startsWith("worktrees"))).toBe(false);

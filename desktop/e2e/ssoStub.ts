@@ -34,7 +34,7 @@ export type SsoStub = {
 const CLIENT_ID = "calandria-desktop";
 
 /**
- * Start the pair. `token` may be pinned by the caller — case 5 (a `header`-kind
+ * Start the pair. `token` may be pinned by the caller: case 5 (a `header`-kind
  * instance) pre-seeds a credential file with a bearer value and needs the app
  * server to check for that exact value, never running the oauth half at all.
  */
@@ -72,8 +72,8 @@ export function startSsoStub(token = `the-access-token-${crypto.randomBytes(4).t
       }
       const code = crypto.randomBytes(6).toString("hex");
       codes.set(code, { challenge, redirect });
-      // The browser's half of the flow, and the whole point of the fix: the
-      // redirect goes to the app's loopback port, not back into a webview.
+      // The browser's half of the flow: the redirect goes to the app's
+      // loopback port, not back into a webview.
       res.writeHead(302, { location: `${redirect}?code=${code}&state=${state}` });
       res.end();
       return;
@@ -125,7 +125,7 @@ export function startSsoStub(token = `the-access-token-${crypto.randomBytes(4).t
     note(`${req.method} ${req.url} auth=${ok ? "ok" : auth ? "wrong" : "none"}`);
     if (!ok) {
       // What an outpost does to an unauthenticated request: redirect to the
-      // login page, which answers 200 with HTML — the shape `probeVersion`
+      // login page, which answers 200 with HTML, the shape `probeVersion`
       // reads as "a sign-in is needed" rather than as a dead server.
       res.writeHead(302, { location: `http://127.0.0.1:${idpPort}/login` });
       res.end();

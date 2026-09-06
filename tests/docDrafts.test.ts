@@ -1,5 +1,5 @@
 // Document collaboration drafts (task_doc_drafts) are the modal-local halves
-// of a review — one row per (task, file) holding the Edit tab's text and the
+// of a review: one row per (task, file) holding the Edit tab's text and the
 // General comments note, TaskDocComment's sibling for the parts that aren't
 // per-passage. Two things are pinned that a naive upsert wouldn't get right:
 //   - an empty draft (no edit, blank note) is DELETED rather than stored, so
@@ -111,7 +111,7 @@ describe("routes: /api/tasks/[id]/doc-draft", () => {
     expect(res.status).toBe(200);
     const j = await res.json();
     expect(j.draft.text).toBe("x");
-    expect(j.draft.anchor_sha).toBeNull(); // not 40 lowercase hex — dropped
+    expect(j.draft.anchor_sha).toBeNull(); // not 40 lowercase hex, so dropped
 
     const res2 = await PUT(
       new Request(`http://x/api/tasks/${task.id}/doc-draft`, {

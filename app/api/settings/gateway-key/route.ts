@@ -21,7 +21,7 @@ function state() {
 
 export async function POST(req: Request) {
   if (!LITELLM_BASE_URL) {
-    return NextResponse.json({ error: "no gateway is configured — set CALANDRIA_LITELLM_BASE_URL first" }, { status: 400 });
+    return NextResponse.json({ error: "no gateway is configured, set CALANDRIA_LITELLM_BASE_URL first" }, { status: 400 });
   }
   const { key } = (await req.json().catch(() => ({}))) as { key?: string };
   if (!key || !key.trim()) return NextResponse.json({ error: "missing key" }, { status: 400 });

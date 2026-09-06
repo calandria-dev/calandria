@@ -1,4 +1,4 @@
-// The Calandria MCP bridge entry for an Antigravity turn — pure data, so tests
+// The Calandria MCP bridge entry for an Antigravity turn: pure data, so tests
 // can assert on it without touching disk. Where the file it goes into lives,
 // and how each task gets its own, is ./home.ts.
 
@@ -10,7 +10,7 @@ import { gatewayMcpServersForGemini, type GatewayMcpGeminiServer } from "../../g
  * The bridge's server name. The CLI dispatches MCP calls through its own
  * `call_mcp_tool` and reports this in `tool_info.parameters.ServerName`, which
  * ./events.ts recombines into the tool name lib/suggestionCard.ts matches as a
- * SUBSTRING — so it must stay in step with the Codex driver's spelling.
+ * substring, so it must stay in step with the Codex driver's spelling.
  */
 export const BRIDGE_SERVER_NAME = "calandria";
 
@@ -25,21 +25,17 @@ export interface GeminiMcpConfig {
 }
 
 /**
- * The `mcp_config.json` body mounting Calandria's stdio bridge for ONE task,
+ * The `mcp_config.json` body mounting Calandria's stdio bridge for one task,
  * plus any hosted LiteLLM gateway MCP servers the project/task selected
- * (docs/design/litellm.md, "Mounting, per driver"). Unlike Codex, mounting
- * these needs no permission-mode gate: `agy` decides tool approval from its
- * own settings/CLI flags rather than per-MCP-server config, so there's
- * nothing here for a read-only mode to leave dangling.
+ * (docs/AGENTS.md). Unlike Codex, mounting these needs no permission-mode
+ * gate: `agy` decides tool approval from its own settings and CLI flags
+ * instead of per-MCP-server config (the driver allow-lists the bridge there,
+ * see ./driver.ts), so there's nothing here for a read-only mode to leave
+ * dangling.
  *
- * `command` is the absolute node binary (process.execPath) so the spawn doesn't
- * depend on PATH surviving into the MCP subprocess — the same reasoning as the
- * Codex driver's config.
- *
- * There is no per-server approval knob to set here, unlike Codex's
- * `default_tools_approval_mode`: `agy` decides tool permissions from its own
- * settings and CLI flags, so the driver allow-lists the bridge there instead
- * (see ./driver.ts).
+ * `command` is the absolute node binary (process.execPath) so the spawn
+ * doesn't depend on PATH surviving into the MCP subprocess, the same
+ * reasoning as the Codex driver's config.
  */
 export function bridgeConfig(project: Project, task: Task): GeminiMcpConfig {
   return {

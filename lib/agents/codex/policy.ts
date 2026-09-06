@@ -9,7 +9,7 @@
 //
 // The five keys are the cross-agent vocabulary tasks, runbooks, schedules and
 // app defaults persist (tasks.permission_mode), each mapped to the nearest
-// Codex analog rather than to a Claude-shaped meaning:
+// Codex analog instead of a Claude-shaped meaning:
 //
 //   auto               workspace-write, approvals on request, Codex's own
 //                      reviewer decides them (approvals_reviewer=auto_review):
@@ -27,18 +27,18 @@
 //
 // The writable roots are the part the picker never showed and the user ran
 // into first: workspace-write makes the cwd writable but marks its `.git`
-// read-only — and for a WORKTREE, whose `.git` is a pointer file, the CLI
-// resolves the pointer and protects the real gitdir too (codex-rs
+// read-only. For a WORKTREE, whose `.git` is a pointer file, the CLI resolves
+// the pointer and protects the real gitdir too (codex-rs
 // protocol/src/permissions.rs, default_read_only_subpaths_for_writable_root),
 // while the repo's common `.git` sits outside every root anyway. So `git add`
 // and `git commit` fail inside a Calandria worktree under every sandboxed
-// mode, which for a task whose whole job is to commit is not a sandbox but a
-// wall. gitWritableRoots() grants exactly what a commit writes — the task's
-// private gitdir (index, HEAD, its reflog) and the common dir's objects, refs
-// and logs — and not the common dir itself, so hooks/, config and info/ keep
-// Codex's protection: a writable config would let a sandboxed turn plant a
-// core.fsmonitor or hooksPath that the user's next `git status` in their real
-// checkout runs unsandboxed.
+// mode, which blocks a task whose whole job is to commit. gitWritableRoots()
+// grants exactly what a commit writes: the task's private gitdir (index,
+// HEAD, its reflog) and the common dir's objects, refs and logs, and not the
+// common dir itself, so hooks/, config and info/ keep Codex's protection. A
+// writable config would let a sandboxed turn plant a core.fsmonitor or
+// hooksPath that runs unsandboxed the next time the user runs `git status`
+// in their real checkout.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -114,9 +114,9 @@ export function codexRunPolicy(
 
 /**
  * The app-server `SandboxPolicy` object for a resolved policy (turn/start's
- * `sandboxPolicy`). `external` says the caller is already confined — see
+ * `sandboxPolicy`). `external` says the caller is already confined; see
  * CODEX_EXTERNAL_SANDBOX in lib/config.ts for which modes may claim that and
- * why read-only may not. Passed in rather than read here so this stays the
+ * why read-only may not. Passed in instead of read here so this stays the
  * pure mapping the tests can drive both ways.
  */
 export function sandboxPolicyObject(p: CodexRunPolicy, external = false):

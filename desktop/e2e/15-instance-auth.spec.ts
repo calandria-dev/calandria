@@ -1,10 +1,10 @@
-/* Native instance sign-in — desktop/oauth.js, desktop/instance-auth.js and the
+/* Native instance sign-in: desktop/oauth.js, desktop/instance-auth.js and the
  * "Instance sign-in" section of desktop/main.js. See oauth.js's header for why
  * this exists: a passkey or a security key cannot be used from inside the
  * shell's own window, so a configured (`auth: { kind: "oauth", … }`) instance
  * never renders its identity provider's login page there at all. It shows
- * signin.html, and pressing its button runs the RFC 8252 flow — PKCE S256,
- * loopback redirect on 127.0.0.1 — in the user's real browser instead.
+ * signin.html, and pressing its button runs the RFC 8252 flow (PKCE S256,
+ * loopback redirect on 127.0.0.1) in the user's real browser instead.
  *
  * `desktop/e2e/ssoStub.ts` is the fake forward-auth proxy and OIDC provider
  * this drives the flow against.
@@ -13,10 +13,9 @@
  * (the same move 01-shell.spec.ts makes to prove external links leave the
  * window) so the authorize URL is recorded instead of opened, and this process
  * then fetches it with redirects followed, which lands on the app's loopback
- * receiver exactly as a real browser would. An earlier version put an
- * `xdg-open` shim on PATH, which is a Linux-only interception: Windows resolves
- * `openExternal` through ShellExecute and never consults it, so the flow simply
- * never came back and the spec failed there and only there.
+ * receiver exactly as a real browser would. `openExternal` on Windows resolves
+ * through ShellExecute, so an `xdg-open` PATH shim only intercepts on Linux and
+ * must not be relied on cross-platform.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -158,7 +157,7 @@ test("the token is scoped and stored, never in instances.json", async () => {
 test("no third party sees the instance's bearer token", async () => {
   // The stub app's own page embeds an <img> pointing at the IDP's origin
   // (ssoStub.ts). The window's session stamps the credential on requests to
-  // the instance's own origin only (armAuthHeaders, main.js) — a listener
+  // the instance's own origin only (armAuthHeaders, main.js); a listener
   // that stamped every request in the partition would leak it here.
   await expect
     .poll(() => stub.log.some((l) => l.startsWith("GET /asset auth=")), { timeout: 15_000 })
@@ -178,10 +177,9 @@ test("signing out clears the stored credential", async () => {
   const signOut = dialog.getByRole("button", { name: "Sign out" });
   await signOut.waitFor({ timeout: 15_000 });
   // THIS CLICK DESTROYS THE PAGE IT IS ISSUED IN. Resolving the dialog's
-  // injected promise is what closes the modal (`openInstanceDialog` answers
-  // from `closed`, not from the click), so Playwright's post-click wait races
-  // the window teardown and loses on a slow runner — measured green on the dev
-  // pass and red on the packaged one, in the same job, with
+  // injected promise closes the modal (`openInstanceDialog` answers from
+  // `closed`, not from the click), so Playwright's post-click wait can race
+  // the window teardown and lose on a slow runner, failing with
   // "Target page, context or browser has been closed".
   //
   // The click is therefore fire-and-forget, and what the test asserts on is the

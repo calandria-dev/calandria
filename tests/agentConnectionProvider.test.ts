@@ -1,13 +1,12 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 
-// Issue #38: a Claude connection is verified against ONE backend (Anthropic,
-// Vertex, Bedrock), and Claude Code picks its backend from config the user can
-// flip under a running instance. The record therefore carries the provider it
-// was verified against, and a record that no longer matches the CLI's current
-// provider reads as not connected, is dropped, and raises the same instance-wide
-// flag a dead login raises (lib/agents/connections.ts). tests/setup.ts pins
-// CLAUDE_CONFIG_DIR to an empty dir and unsets the provider flags, so the
-// process env alone decides what configuredProvider() reports here.
+// Pins that a Claude connection is verified against one backend (Anthropic,
+// Vertex, Bedrock), and that a record no longer matching the CLI's current
+// backend reads as not connected, is dropped, and raises the same
+// instance-wide flag a dead login raises (lib/agents/connections.ts). Issue
+// #38. tests/setup.ts pins CLAUDE_CONFIG_DIR to an empty dir and unsets the
+// provider flags, so the process env alone decides what configuredProvider()
+// reports here.
 
 import { setSetting, getSetting } from "../lib/store";
 import {
@@ -88,8 +87,9 @@ describe("agent connection provider (issue #38)", () => {
       expect(isAgentConnected("claude")).toBe(false);
     });
 
-    // The record is gone — it proves nothing about Vertex — and the dead-login
-    // flag names both backends so the banner and the connect card say why.
+    // The record is gone, since it proves nothing about Vertex, and the
+    // dead-login flag names both backends so the banner and the connect card
+    // say why.
     expect(getSetting("agent_conn_claude")).toBeNull();
     const broken = getAgentAuthBroken("claude");
     expect(broken).not.toBeNull();
@@ -99,7 +99,7 @@ describe("agent connection provider (issue #38)", () => {
     // Exactly the event the runner publishes for a dead login.
     expect(events).toEqual([{ type: "agent_auth", agent: "claude", broken: true, reason: broken!.reason }]);
 
-    // Re-reads (every GET /api/agents) stay quiet: no second announcement.
+    // Re-reads (every GET /api/agents) raise no second announcement.
     const again = captureAuthEvents(() => {
       expect(isAgentConnected("claude")).toBe(false);
       expect(getAgentConnection("claude")).toBeNull();

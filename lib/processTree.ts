@@ -1,33 +1,29 @@
-// Killing a spawned command AND everything it started, portably.
+// Kills a spawned command and everything it started, on POSIX and win32.
 //
-// A managed service (lib/services.ts) is spawned with `shell: true`, so the pid
-// we hold is never the process that matters: on POSIX it's `/bin/sh -c <cmd>`
-// with the real server below it, on Windows it's `cmd.exe /d /s /c <cmd>` with
-// `npm.cmd` and then `node.exe` below THAT. Killing that pid alone orphans the
-// server and leaves the port held, which is exactly the failure the boot reaper
-// exists to prevent. The two operating systems answer "kill the whole tree"
-// with unrelated primitives:
+// A managed service (lib/services.ts) is spawned with `shell: true`, so the
+// held pid is a shell wrapper (`/bin/sh -c <cmd>` on POSIX, `cmd.exe /d /s /c
+// <cmd>` on Windows) with the real server one or two processes below it.
+// Killing only that pid orphans the server and leaves its port held.
 //
-//   * POSIX — the child leads its own process group (`detached: true`), so a
+//   * POSIX: the child leads its own process group (`detached: true`), so a
 //     negative pid signals every descendant at once, and SIGTERM-then-SIGKILL
 //     gives the server a chance to shut down cleanly first.
-//   * win32 — there are no process groups (`detached: true` there means "new
-//     console", which is why we don't set it), and no graceful tree signal
-//     exists at all. `taskkill /T /F` walks the parent/child chain and
-//     TerminateProcess-es each one, so the two-phase escalation collapses into
-//     a single forced kill.
+//   * win32: there are no process groups (`detached: true` there means "new
+//     console", so it is not set), and no graceful tree signal exists.
+//     `taskkill /T /F` walks the parent/child chain and terminates each one,
+//     so the escalation collapses into a single forced kill.
 //
-// The recycled-pid guard splits the same way. A pid persisted by a server that
-// was `kill -9`'d may belong to something unrelated by the next boot, so before
-// reaping anything we ask whether that pid still carries the service's command
-// line — `ps` on POSIX, a `Win32_Process` CommandLine lookup on win32. When we
-// can't find out (no `ps`, no PowerShell), the answer is NO: leaving an orphan
-// is recoverable, killing a stranger's process is not.
+// The recycled-pid guard follows the same split. A pid persisted by a server
+// killed with SIGKILL may belong to something unrelated by the next boot, so
+// reaping first checks whether that pid still carries the service's command
+// line: `ps` on POSIX, a `Win32_Process` CommandLine lookup on win32. When
+// that check can't run (no `ps`, no PowerShell), the answer is treated as no:
+// an orphan can be cleaned up later, killing an unrelated process cannot.
 //
-// SDK-free and dependency-free (node:child_process only), and every function
-// takes its platform — and, for the win32 paths, its command runner — as
-// arguments, so the Windows branches are unit-testable from the Linux/macOS
-// suite. See docs/WINDOWS.md §2.
+// Dependency-free (node:child_process only). Every function takes its
+// platform, and the win32 paths their command runner, as arguments, so the
+// Windows branches are unit-testable from the Linux/macOS suite. See
+// docs/WINDOWS.md §2.
 
 import { execFileSync } from "node:child_process";
 
@@ -39,7 +35,7 @@ export interface ProcessTreeOptions {
   platform?: NodeJS.Platform;
   /**
    * Runs a command and returns its stdout; throws on a nonzero exit. Injected
-   * by tests. Only the win32 branches use it — POSIX signals directly.
+   * by tests. Only the win32 branches use it; POSIX signals directly.
    */
   exec?: (file: string, args: string[]) => string;
 }
@@ -57,9 +53,9 @@ export function hasProcessGroups(platform?: NodeJS.Platform): boolean {
   return !isWin(platform);
 }
 
-// Windows-only helpers below run at boot or at stop time, never per request, so
-// a blocking call is fine — and the exit hook that calls killTree can't await
-// anything anyway ('exit' handlers are sync by contract).
+// The Windows-only helpers below run at boot or at stop time, never per
+// request, so a blocking call is fine. The exit hook that calls killTree also
+// can't await anything, since 'exit' handlers are sync by contract.
 function runner(opts: ProcessTreeOptions): (file: string, args: string[]) => string {
   return (
     opts.exec ??
@@ -79,7 +75,7 @@ function usablePid(pid: number): boolean {
  * back to killing the direct child.
  *
  * `signal` is honored on POSIX and ignored on win32, where the only tree kill
- * is forced — see the header.
+ * is forced.
  */
 export function killTree(pid: number, signal: TreeSignal, opts: ProcessTreeOptions = {}): boolean {
   if (!usablePid(pid)) return false;
@@ -92,8 +88,9 @@ export function killTree(pid: number, signal: TreeSignal, opts: ProcessTreeOptio
     }
   }
   try {
-    // /T = the process and its descendants, /F = TerminateProcess rather than a
-    // WM_CLOSE nobody in this tree has a message loop to receive.
+    // /T targets the process and its descendants. /F forces the kill via
+    // TerminateProcess: nothing in this tree runs a message loop to handle
+    // WM_CLOSE.
     runner(opts)("taskkill", ["/pid", String(pid), "/T", "/F"]);
     return true;
   } catch {
@@ -102,9 +99,9 @@ export function killTree(pid: number, signal: TreeSignal, opts: ProcessTreeOptio
 }
 
 /**
- * Is anything in `pid`'s tree still running? Used to poll for death after a
- * kill, so it has to be cheap: `tasklist` filtered to the one pid, not the
- * command-line lookup below.
+ * Reports whether anything in `pid`'s tree is still running. Used to poll for
+ * death after a kill, so it stays cheap: `tasklist` filtered to the single
+ * pid, without the command-line lookup below.
  */
 export function treeAlive(pid: number, opts: ProcessTreeOptions = {}): boolean {
   if (!usablePid(pid)) return false;
@@ -117,9 +114,9 @@ export function treeAlive(pid: number, opts: ProcessTreeOptions = {}): boolean {
     }
   }
   try {
-    // tasklist exits 0 with "INFO: No tasks are running…" on no match, so the
-    // output is what answers, not the exit code. A csv row starts
-    // "image","pid",… — the quoted pid can't collide with a memory figure.
+    // tasklist exits 0 even with no match ("INFO: No tasks are running..."),
+    // so the match is read from the output text. A csv row starts
+    // "image","pid",...; the quoted pid can't collide with a memory figure.
     const out = runner(opts)("tasklist", ["/fi", `PID eq ${pid}`, "/nh", "/fo", "csv"]);
     return out.includes(`"${pid}"`);
   } catch {
@@ -128,19 +125,18 @@ export function treeAlive(pid: number, opts: ProcessTreeOptions = {}): boolean {
 }
 
 /**
- * Does `pid` still lead a live tree that looks like the service we spawned?
- * The recycled-pid guard: after a crash the pid could belong to something
- * unrelated, and killing that would be worse than leaving an orphan, so both
- * halves must hold — the tree is alive AND some process in it still carries the
- * configured command line.
+ * Reports whether `pid` still leads a live tree that looks like the spawned
+ * service. This is the recycled-pid guard: after a crash the pid could belong
+ * to something unrelated, and killing that would be worse than leaving an
+ * orphan, so both conditions must hold: the tree is alive, and some process
+ * in it still carries the configured command line.
  *
  * POSIX asks `ps` for every process's group and command (`shell: true` spawns
- * `sh -c <command>`, and every descendant shares the group). win32 has no `ps`
- * and no groups, but it doesn't need the membership scan: the pid we persisted
- * IS the `cmd.exe /d /s /c "<command>"` wrapper, so its own command line
- * contains the service's verbatim. PowerShell is the way to read it that
- * survives `wmic`'s removal in current Windows builds; it costs a few hundred
- * ms, paid once per managed row at boot.
+ * `sh -c <command>`, and every descendant shares the group). win32 has no
+ * `ps` and no groups, but needs no membership scan either: the persisted pid
+ * is the `cmd.exe /d /s /c "<command>"` wrapper itself, so its own command
+ * line contains the service's command verbatim. PowerShell reads it and
+ * still works on Windows builds that removed `wmic`.
  */
 export function treeMatchesCommand(pid: number, command: string, opts: ProcessTreeOptions = {}): boolean {
   if (!usablePid(pid)) return false;

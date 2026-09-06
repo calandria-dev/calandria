@@ -1,9 +1,8 @@
-// The shared line emitter (lib/log.mjs). Pins the two things a log format is
-// for: that the DEFAULT output is byte-for-byte the bracket form this app has
-// always printed (nobody's grep breaks on upgrade), and that the json form is
-// actually parseable — including for the values an error path realistically
-// hands a logger, which is where a naive JSON.stringify turns "report this
-// failure" into a second, uncaught one.
+// The shared line emitter (lib/log.mjs). Pins two invariants: the default
+// output is byte-for-byte the bracket form this app prints, so an existing
+// grep does not break on upgrade, and the json form is parseable, including
+// for the values an error path hands a logger, where a naive
+// JSON.stringify can turn a failure report into a second, uncaught one.
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { createLogger, formatLogLine, resolveLogFormat } from "@/lib/log.mjs";
@@ -28,7 +27,7 @@ describe("resolveLogFormat", () => {
     expect(resolveLogFormat({ CALANDRIA_LOG_FORMAT: "jsonl" })).toBe("text");
   });
 
-  it("never reads the deprecated ORCH_ spelling — this knob is new", () => {
+  it("never reads the deprecated ORCH_ spelling, since this knob is new", () => {
     // lib/env.mjs's alias table exists to keep PRE-RENAME names resolving. A
     // knob born after the rename that answered to ORCH_* would be born
     // deprecated, so this one is read straight off the environment.
@@ -65,7 +64,7 @@ describe("text format (the default)", () => {
     expect(line).toBe("[runner] turn failed task=abc");
   });
 
-  it("renders an Error as its stack — what console.error(msg, err) already printed", () => {
+  it("renders an Error as its stack, matching what console.error(msg, err) already printed", () => {
     const err = new Error("boom");
     const line = formatLogLine({ level: "error", component: "runner", msg: "crashed", ts: TS, fields: { err } }, "text");
     expect(line).toContain("[runner] crashed err=");
@@ -92,7 +91,7 @@ describe("json format", () => {
 
   it("keeps the envelope keys for itself", () => {
     // A field named `level` would otherwise rewrite the severity a collector
-    // routes on — the one thing a call site must not be able to do by accident.
+    // routes on, which a call site must not be able to do by accident.
     const line = formatLogLine(
       { level: "warn", component: "server", msg: "hi", ts: TS, fields: { level: "info", component: "nope", msg: "x" } },
       "json",
@@ -113,9 +112,9 @@ describe("json format", () => {
   });
 
   it("survives a circular value instead of throwing inside the failure handler", () => {
-    // server.js hands process.on("unhandledRejection") its raw reason, which is
-    // whatever the rejected promise was holding. A throw HERE would take out
-    // the handler whose whole job is to keep the process alive.
+    // server.js hands process.on("unhandledRejection") its raw reason, which
+    // is whatever the rejected promise was holding. A throw here would take
+    // out the handler that exists to keep the process alive.
     const circular: Record<string, unknown> = { a: 1 };
     circular.self = circular;
     const line = formatLogLine(
@@ -136,8 +135,8 @@ describe("createLogger", () => {
     log.info("tick", { due: 2 });
     expect(info.mock.calls[0][0]).toBe("[scheduler] tick due=2");
 
-    // Same logger instance, format flipped underneath it — this is what makes
-    // the knob work for a module graph that loaded before the env was read.
+    // Same logger instance, format flipped underneath it: the knob works for
+    // a module graph that loaded before the env was read.
     process.env.CALANDRIA_LOG_FORMAT = "json";
     log.warn("slow", { ms: 90 });
     log.error("dead");

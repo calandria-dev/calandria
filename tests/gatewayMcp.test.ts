@@ -12,10 +12,10 @@ import {
 } from "../lib/gatewayMcp";
 import { startFakeGateway, type FakeGateway } from "./fakeGateway";
 
-// Hosted MCP servers from the LiteLLM gateway (docs/design/litellm.md,
-// "Hosted MCP servers"): the selection JSON round-trip, the catalog +
+// Hosted MCP servers from the LiteLLM gateway (docs/AGENTS.md,
+// "Hosted MCP servers"): the selection JSON round-trip, the catalog and
 // tool-preview probe, the mount health probe (400 on a wrong key, read from
-// the body rather than the status), and the mcpServers a turn mounts.
+// the body, not the status), and the mcpServers a turn mounts.
 
 describe("parseGatewayMcp / serializeGatewayMcp", () => {
   it("parses a JSON array string, trimming and deduplicating aliases", () => {
@@ -83,7 +83,7 @@ describe("gatewayMcpCatalog", () => {
     expect(catalog.servers[0].needs_browser_signin).toBe(true);
   });
 
-  it("does not flag oauth2 client_credentials — headless per docs/design/litellm.md", async () => {
+  it("does not flag oauth2 client_credentials, headless per docs/AGENTS.md", async () => {
     gw = await startFakeGateway({ mcpServers: [{ alias: "svc", auth_type: "oauth2_client_credentials" }] });
     const catalog = await gatewayMcpCatalog(gw.url, "");
     expect(catalog.servers[0].needs_browser_signin).toBe(false);
@@ -133,7 +133,7 @@ describe("gatewayMcpServersFor", () => {
   it("mounts one http entry per resolved alias, keyed by alias, with the litellm header and never Authorization", () => {
     const out = gatewayMcpServersFor({ gateway_mcp: JSON.stringify(["demo", "search"]) }, { gateway_mcp: null, gateway_key: "" }, "http://gw.example");
     expect(Object.keys(out).sort()).toEqual(["demo", "search"]);
-    // No key configured anywhere — no headers at all, not an empty Bearer.
+    // No key configured anywhere, so no headers at all, not an empty Bearer.
     expect(out.demo).toEqual({ type: "http", url: "http://gw.example/demo/mcp" });
   });
 
@@ -177,11 +177,11 @@ describe("gatewayMcpServersFor", () => {
   });
 });
 
-// The fake gateway's own JSON-RPC surface on /<alias>/mcp — initialize,
-// notifications/initialized, tools/list, tools/call — the shapes named in
-// docs/design/litellm.md's spike appendix, exercised directly (not just
-// through probeGatewayMcpMount) so a bug in the double itself can't hide
-// behind every other test that only calls tools/list.
+// The fake gateway's own JSON-RPC surface on /<alias>/mcp: initialize,
+// notifications/initialized, tools/list, tools/call, the shapes named in
+// docs/AGENTS.md's appendix. Exercised directly, not only through
+// probeGatewayMcpMount, so a bug in the double itself is not hidden behind
+// every other test that only calls tools/list.
 describe("fake gateway JSON-RPC mount", () => {
   let gw: FakeGateway | null = null;
   afterEach(async () => {
@@ -247,7 +247,7 @@ describe("fake gateway JSON-RPC mount", () => {
   });
 });
 
-describe("gatewayMcpServersFor — CALANDRIA_LITELLM_MCP gate", () => {
+describe("gatewayMcpServersFor: CALANDRIA_LITELLM_MCP gate", () => {
   let savedFlag: string | undefined;
   beforeEach(() => {
     savedFlag = process.env.CALANDRIA_LITELLM_MCP;
@@ -266,12 +266,12 @@ describe("gatewayMcpServersFor — CALANDRIA_LITELLM_MCP gate", () => {
   });
 });
 
-// Codex mounting (docs/design/litellm.md, "Mounting, per driver"): the same
-// URL/key resolution as Claude's gatewayMcpServersFor, but codex's own shape
-// (`url` + `http_headers`, never `Authorization`) and every entry carrying
-// default_tools_approval_mode: "approve" — codex exec has no approver, so a
+// Codex mounting (docs/AGENTS.md, "Mounting, per driver"): the same URL/key
+// resolution as Claude's gatewayMcpServersFor, but codex's own shape (`url` +
+// `http_headers`, never `Authorization`) and every entry carrying
+// default_tools_approval_mode: "approve". codex exec has no approver, so a
 // mounted server's tools must be pre-approved or every call comes back
-// cancelled. The permission-mode GATE on whether this function is even
+// cancelled. The permission-mode gate on whether this function is even
 // called lives in lib/agents/codex/driver.ts (gatewayMcpForPermission),
 // pinned in tests/codexMcpBridge.test.ts.
 describe("gatewayMcpServersForCodex", () => {
@@ -299,7 +299,7 @@ describe("gatewayMcpServersForCodex", () => {
 });
 
 // Antigravity mounting: httpUrl + headers (the shape lib/agents/gemini/mcp.ts's
-// GeminiMcpConfig union accepts), keyed by the alias slugified to hyphens —
+// GeminiMcpConfig union accepts), keyed by the alias slugified to hyphens.
 // Gemini CLI's policy engine splits a tool name on the first underscore after
 // `mcp_`, so an alias with one breaks a wildcard rule for it.
 describe("gatewayMcpServersForGemini", () => {

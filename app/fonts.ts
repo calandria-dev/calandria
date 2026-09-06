@@ -1,6 +1,5 @@
-// Self-hosted Google Fonts via next/font — downloaded once at build time and
-// served from this instance, no runtime CDN request (see app/layout.tsx,
-// which used to <link> fonts.googleapis.com directly). Each font exposes a
+// Self-hosted Google Fonts via next/font: downloaded once at build time and
+// served from this instance, no runtime CDN request. Each font exposes a
 // CSS custom property (its `variable`) that the token layer in globals.css
 // and the per-font metadata in shell/types.ts both point at.
 import {
@@ -39,7 +38,7 @@ export const jetbrainsMono = JetBrains_Mono({
 });
 
 // User-selectable code/terminal alternates (Settings → Appearance, once that
-// picker lands — see shell/types.ts MonoFontId).
+// picker lands; see shell/types.ts MonoFontId).
 export const firaCode = Fira_Code({
   subsets: ["latin"],
   weight: ["400", "500"],
@@ -79,7 +78,7 @@ export const atkinsonNext = Atkinson_Hyperlegible_Next({
   display: "swap",
 });
 
-// All .variable classNames joined — applied together to <html> in layout.tsx
+// All .variable classNames joined, applied together to <html> in layout.tsx
 // so every --nf-* custom property is available globally regardless of which
 // font is actually selected in Appearance.
 export const fontVariables = [

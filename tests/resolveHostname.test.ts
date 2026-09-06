@@ -1,15 +1,15 @@
 /* The bind-address rule.
  *
- * Every case passes env EXPLICITLY. That is the point: the bug being pinned is
- * ambient environment deciding the bind address, so a test that read
- * process.env would be able to reproduce the bug and still pass.
+ * Every case passes env explicitly. The invariant is that ambient environment
+ * must not decide the bind address, so a test that read process.env instead
+ * would mask a violation and still pass.
  */
 import { describe, expect, it } from "vitest";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { resolveHostname, hostnameMigrationWarning, DEFAULT_HOSTNAME } = require("../lib/resolveHostname");
 
 describe("resolveHostname", () => {
-  it("defaults to loopback with nothing set — an unauthenticated shell must not reach the network", () => {
+  it("defaults to loopback with nothing set, since an unauthenticated shell must not reach the network", () => {
     expect(resolveHostname({})).toBe("127.0.0.1");
     expect(DEFAULT_HOSTNAME).toBe("127.0.0.1");
   });
@@ -50,7 +50,7 @@ describe("hostnameMigrationWarning", () => {
     expect(w).toContain("CALANDRIA_HOSTNAME=0.0.0.0");
   });
 
-  it("stays silent for an injected machine name — that would fire on every Fedora boot", () => {
+  it("stays silent for an injected machine name, which would otherwise fire on every Fedora boot", () => {
     expect(hostnameMigrationWarning({ HOSTNAME: "my-laptop" })).toBeNull();
     expect(hostnameMigrationWarning({ HOSTNAME: "3f2a1b9c4d5e" })).toBeNull();
   });

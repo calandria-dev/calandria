@@ -7,29 +7,27 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 // Internal endpoint behind the `move_task` tool for the stdio MCP bridge
-// (scripts/calandria-mcp.mjs) — the same re-parenting the Claude driver mounts
+// (scripts/calandria-mcp.mjs), the same re-parenting the Claude driver mounts
 // in-process. Auth is the per-instance SERVICE_TOKEN (middleware.ts,
 // isAgentToolPath).
 //
 // The same two-id split every agent-tool endpoint makes:
 //
-//   body.taskId  the CALLER. CALANDRIA_TASK_ID, injected into the bridge's env by
-//                lib/agents/codex/driver.ts — never a field the model can set.
+//   body.taskId  the CALLER. CALANDRIA_TASK_ID, injected into the bridge's env
+//                by lib/agents/codex/driver.ts, never a field the model can set.
 //   body.tasks   the TARGETS the MODEL named, and therefore untrusted. Every
 //                rule about which of them may move lives in
-//                lib/agentTools.moveTasksForAgent → lib/taskMove.ts, shared with
-//                the two user-facing move routes.
+//                lib/agentTools.moveTasksForAgent -> lib/taskMove.ts, shared
+//                with the two user-facing move routes.
 //
-// There is deliberately NO discard acknowledgement in this body. The bulk route
-// takes those as lists of ids because each discarded worktree is a separate
-// irreversible answer; an agent-facing verb must not become the shortcut past
-// that question, so a started task is refused here and the user answers from
-// the board.
+// This body has no discard acknowledgement. The bulk route takes those as
+// lists of ids because each discarded worktree is a separate irreversible
+// answer; a started task is refused here and the user answers from the board.
 //
-// 400 rather than 404 on a refusal: the caller's row exists (we just read it),
-// and what failed is the destination or the whole selection. Per-task refusals
-// are not failures at all — they come back inside `text`, which is what the
-// bridge shows the agent.
+// A refusal here is 400: the caller's row exists (we just read it), and what
+// failed is the destination or the whole selection. Per-task refusals are not
+// failures at all: they come back inside `text`, which is what the bridge
+// shows the agent.
 export async function POST(req: NextRequest) {
   let body: { taskId?: string; tasks?: unknown; project?: unknown };
   try {
@@ -46,9 +44,10 @@ export async function POST(req: NextRequest) {
   const project = typeof body.project === "string" ? body.project : "";
 
   const { ok, moved, text } = await moveTasksForAgent(caller, tasks, project);
-  // `ok` rather than a zero count: a selection of entirely started tasks moves
-  // nothing and is still a well-formed answer naming each refusal, which the
-  // agent must read as a result rather than as a broken call.
+  // `ok` reports whether the request was valid, not the moved count. A
+  // selection of entirely started tasks can move nothing and still be a
+  // well-formed answer: each refusal is named in `text` for the agent to read
+  // as a result.
   if (!ok) return NextResponse.json({ error: text }, { status: 400 });
   return NextResponse.json({ ok: true, moved: moved.map((t) => t.id), text });
 }

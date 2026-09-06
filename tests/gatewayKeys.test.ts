@@ -5,19 +5,19 @@ import { startFakeGateway, type FakeGateway } from "./fakeGateway";
 import type { Project, Task } from "../lib/types";
 
 // Per-task LiteLLM virtual keys and exact spend reconciliation
-// (docs/design/litellm.md, "Per-task virtual keys"; lib/gatewayKeys.ts).
+// (docs/AGENTS.md, "Per-task virtual keys"; lib/gatewayKeys.ts).
 //
-// gatewayKeysEnabled() / ensureTaskGatewayKey() / deleteTaskGatewayKey() /
-// sweepPrunableGatewayKeys() / reconcileTaskGatewaySpend() all read
-// lib/config.ts's LITELLM_ADMIN_KEY, a const resolved at IMPORT time from
-// CALANDRIA_LITELLM_ADMIN_KEY — unlike lib/agentEnv.ts's gatewayBaseUrl(),
-// which re-reads CALANDRIA_LITELLM_BASE_URL live on every call. So changing
-// the admin key between tests needs a module reset before re-importing
+// gatewayKeysEnabled(), ensureTaskGatewayKey(), deleteTaskGatewayKey(),
+// sweepPrunableGatewayKeys() and reconcileTaskGatewaySpend() all read
+// lib/config.ts's LITELLM_ADMIN_KEY, a const resolved at import time from
+// CALANDRIA_LITELLM_ADMIN_KEY. lib/agentEnv.ts's gatewayBaseUrl() instead
+// re-reads CALANDRIA_LITELLM_BASE_URL live on every call. Changing the admin
+// key between tests needs a module reset before re-importing
 // lib/gatewayKeys.ts, the same recipe tests/storageDefaults.test.ts's
 // bootStore() uses for its own import-time config. getDb() memoizes the
-// connection on globalThis, so resetting the module graph doesn't open a
-// second database or lose fixture rows created through the top-level (never
-// reset) lib/store.ts import.
+// connection on globalThis, so resetting the module graph does not open a
+// second database or lose fixture rows created through the top-level
+// lib/store.ts import, which is never reset.
 const ADMIN_KEY = "test-admin-key";
 
 async function loadGatewayKeys(opts: { adminKey?: string; baseUrl?: string } = {}) {
@@ -38,10 +38,10 @@ beforeEach(() => {
   savedAdmin = process.env.CALANDRIA_LITELLM_ADMIN_KEY;
   savedBase = process.env.CALANDRIA_LITELLM_BASE_URL;
   // gatewayKeys.ts warns at most once per instance-wide `warned` Set kept on
-  // globalThis (see its warnOnce/clearWarned) — that set survives a module
-  // reset on purpose, so a genuinely fixed instance logs again if it breaks a
-  // second time. Silence the actual console noise here; a couple of tests
-  // assert on the message directly via the spy.
+  // globalThis (see its warnOnce/clearWarned). That set survives a module
+  // reset, so a fixed instance still logs again if it breaks a second time.
+  // Console noise is silenced here; a couple of tests assert on the message
+  // directly via the spy.
   warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 
@@ -58,13 +58,13 @@ afterEach(async () => {
 });
 
 /** A project whose turns run against the fake gateway (ANTHROPIC_BASE_URL ==
- *  the gateway's own origin) — taskProvider() then reports kind "gateway". */
+ *  the gateway's own origin), so taskProvider() reports kind "gateway". */
 async function gatewayProject(): Promise<Project> {
   const project = createProject({ name: `gw-${Math.random().toString(36).slice(2)}` });
   return updateProject(project.id, { agent_env: JSON.stringify({ ANTHROPIC_BASE_URL: gw!.url }) })!;
 }
 
-/** A project with no provider override at all — taskProvider() reports "cloud". */
+/** A project with no provider override at all; taskProvider() reports "cloud". */
 function cloudProject(): Project {
   return createProject({ name: `cloud-${Math.random().toString(36).slice(2)}` });
 }
