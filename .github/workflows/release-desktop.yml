@@ -721,6 +721,50 @@ jobs:
           # Sorted so the file is stable across reruns and across whichever
           # platform finished first.
           cat fragments/SHA256SUMS-*.txt | sort -k2 > SHA256SUMS.txt
+
+          # GITHUB RENAMES ASSETS ON UPLOAD AND THE MANIFEST DOES NOT KNOW.
+          # The checksums are taken in desktop/dist, where electron-builder names
+          # the NSIS installer `Calandria Setup 0.10.0.exe`; the release serves
+          # that as `Calandria-Setup-0.10.0.exe`. So every release back to at
+          # least v0.9.0 shipped a SHA256SUMS.txt whose Windows line names a file
+          # nobody can download. `sha256sum -c` calls it missing, and with the
+          # `--ignore-missing` these notes recommend it says OK having verified
+          # nothing, which is the worse half of the bug.
+          #
+          # Reconciled against what the release actually serves rather than by
+          # applying a substitution rule of our own, which would need revisiting
+          # the next time GitHub picks a different replacement character. The
+          # comparison normalises every non-alphanumeric to the same thing on
+          # both sides, so it holds whichever one it picks.
+          gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' > assets.txt
+          norm() { printf '%s' "$1" | tr -c 'A-Za-z0-9' '-'; }
+
+          : > SHA256SUMS.reconciled
+          while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            # `<hash>  <name>` for text mode, `<hash> *<name>` for binary. The
+            # Windows leg emits the latter and `sha256sum -c` reads both.
+            hash=${line:0:64}
+            sep=${line:64:2}
+            name=${line:66}
+            want=$(norm "$name")
+            # awk rather than a shell loop over assets.txt: under `set -e` an
+            # assignment from a command substitution takes the substitution's
+            # exit status, and a loop whose final comparison does not match ends
+            # non-zero, so the step died on its first artifact.
+            match=$(awk -v want="$want" '
+              { normalised = $0; gsub(/[^A-Za-z0-9]/, "-", normalised) }
+              normalised == want { print }
+            ' assets.txt)
+            found=$(printf '%s\n' "$match" | grep -c . || true)
+            if [ "$found" != "1" ]; then
+              echo "::error::SHA256SUMS.txt names '${name}', which matches ${found} of the assets on ${GITHUB_REF_NAME}. A manifest naming a file the release does not serve verifies nothing. Assets: $(tr '\n' ' ' < assets.txt)"
+              exit 1
+            fi
+            printf '%s%s%s\n' "$hash" "$sep" "$match" >> SHA256SUMS.reconciled
+          done < SHA256SUMS.txt
+          mv SHA256SUMS.reconciled SHA256SUMS.txt
+
           cat SHA256SUMS.txt
           # --clobber so a rerun of this job replaces the manifest rather than
           # failing on an asset that already exists. This is the ONLY thing this
@@ -758,10 +802,40 @@ jobs:
             echo "sha256sum -c SHA256SUMS.txt --ignore-missing   # shasum -a 256 -c on macOS"
             echo '```'
             echo
-            echo "macOS ships \`.dmg\` for people and \`.zip\` for the updater — both hold the same app."
-            echo "Windows ships an NSIS installer that installs per-user, and a zip for anyone who would"
-            echo "rather unpack a folder. Linux ships \`.deb\` and \`.AppImage\`. Every platform is x64"
-            echo "except macOS, which is Apple silicon (arm64)."
+            # SAID PER PLATFORM, BECAUSE A LEG CAN FAIL AND THIS JOB STILL RUNS.
+            # The `!cancelled()` above is deliberate — two artifacts and an
+            # honest note beat no release notes at all — but this paragraph
+            # described all three unconditionally, so v0.10.0, whose macOS leg
+            # died before it produced anything, shipped notes promising a `.dmg`
+            # and a `.zip` that are not attached. Release notes that advertise a
+            # download the release does not have are worse than a gap the reader
+            # can see. Each sentence now depends on the fragment its leg uploads,
+            # which exists only once that leg has something to checksum.
+            if [ -f fragments/signing-mac.md ]; then
+              echo "macOS ships \`.dmg\` for people and \`.zip\` for the updater — both hold the same app."
+            fi
+            if [ -f fragments/signing-win.md ]; then
+              echo "Windows ships an NSIS installer that installs per-user, and a zip for anyone who would"
+              echo "rather unpack a folder."
+            fi
+            if [ -f fragments/signing-linux.md ]; then
+              echo "Linux ships \`.deb\` and \`.AppImage\`."
+            fi
+            if [ -f fragments/signing-mac.md ]; then
+              echo "Every platform is x64 except macOS, which is Apple silicon (arm64)."
+            else
+              echo "Everything here is x64."
+            fi
+
+            missing=""
+            for p in mac win linux; do
+              [ -f "fragments/signing-$p.md" ] || missing="${missing} ${p}"
+            done
+            if [ -n "$missing" ]; then
+              echo
+              echo "> **Missing from this release:**${missing}. That platform's build did not complete,"
+              echo "> so it has no artifacts here. A later release carries them."
+            fi
           } >> notes.md
 
           gh release edit "$GITHUB_REF_NAME" --notes-file notes.md
