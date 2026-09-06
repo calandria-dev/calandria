@@ -1369,9 +1369,14 @@ v0.9.0 otherwise untouched.
 
 **Remove it when a fixed version is pinned.** The script recognises the patched
 shape and no-ops with a message saying so, so the bump that makes it unnecessary
-does not also make it a failure. It only hard-fails on macOS, where signing
-actually happens; elsewhere an unrecognised file is a warning, so a shape change
-cannot take the Linux and Windows artifacts down with it.
+does not also make it a failure.
+
+**It never fails an install.** It runs from `postinstall`, so exiting non-zero
+would stop `npm install` in `desktop/` for everybody: the Linux and Windows
+release legs, which do not sign, and anyone who only wants to run the app. An
+unrecognised file is a warning naming the error it expects to see later. That
+error is loud and specific when it arrives, which is a better trade than
+breaking every install the day upstream reorganises a file.
 
 ### 6.5 The release lane
 

@@ -89,20 +89,28 @@ function replaceOnce(source, from, to) {
   return source.slice(0, first) + to + source.slice(first + from.length);
 }
 
-// Only macOS signs, so only macOS may fail. On Linux and Windows an unrecognized
-// file is worth saying out loud and nothing more: failing there would take two
-// artifacts that build fine down with the one that does not, which is the whole
-// reason the release matrix runs fail-fast: false.
+// NEVER FAILS AN INSTALL, ON ANY PLATFORM. This runs from `postinstall`, so a
+// throw here would stop `npm install` in desktop/ for everybody — including the
+// Linux and Windows release legs, which do not sign and are not affected, and a
+// developer who only wants to run the app. The release matrix goes to some
+// trouble (fail-fast: false) to stop one platform's problem taking the other
+// two's artifacts down; a dependency-install script that exits non-zero would
+// undo that from underneath it.
+//
+// The failure this trades away is not silent. An unpatched macOS build fails at
+// the "Package and publish" step with the SecKeychainUnlock error quoted above,
+// which is loud, specific, and now documented in docs/DESKTOP_APP.md §6.4.1.
+// Losing three hours of a tagged run to a message that names its own cause is a
+// better trade than breaking `npm install` for everyone the day upstream
+// reorganizes a file.
 function giveUp(reason) {
-  const message =
-    `${reason}. app-builder-lib's macCodeSign.js is not the shape this patch was ` +
-    `written against — re-check electron-userland/electron-builder#10066 and ` +
-    `whether the installed version already carries the fix from #10172.`;
-  if (process.platform === "darwin") {
-    console.error(`patch-electron-builder-keychain: ${message}`);
-    process.exit(1);
-  }
-  console.warn(`patch-electron-builder-keychain: ${message} Not darwin; continuing.`);
+  console.warn(
+    `patch-electron-builder-keychain: ${reason}. app-builder-lib's macCodeSign.js ` +
+      `is not the shape this patch was written against, so macOS signing may fail ` +
+      `with "SecKeychainUnlock: The user name or passphrase you entered is not ` +
+      `correct" — re-check electron-userland/electron-builder#10066 and whether ` +
+      `the installed version already carries the fix from #10172. Continuing.`
+  );
   process.exit(0);
 }
 
