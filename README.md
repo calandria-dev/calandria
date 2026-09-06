@@ -163,10 +163,11 @@ already queued. The transcript records that it was sent.
   and nothing lands in your diff. Staged files are swept with the task.
 - **Collaborate on documents:** open a file the agent wrote as a document
   (mermaid fences render as diagrams), edit the text, attach comments to
-  passages, and send it all back as one message. Comments are saved as you
-  go; your edits are either written straight into the task's worktree
-  (default) or sent as a diff for the agent to apply. Open it from the diff
-  or from the Write/Edit card in the transcript.
+  passages, and send it all back as one message. Comments, edits and the
+  general note are all saved as you go, so a reload or closing the modal
+  loses nothing; your edits are either written straight into the task's
+  worktree (default) or sent as a diff for the agent to apply. Open it from
+  the diff or from the Write/Edit card in the transcript.
 - **Task pipelines:** make a task depend on one or more earlier tasks,
   branch work into parallel paths, and start each task automatically when
   its blockers finish.

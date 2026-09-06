@@ -7,7 +7,7 @@ import { Markdown } from "../Markdown";
 import { Modal } from "./Modal";
 import { Skel, ErrNote } from "./shared";
 import { buildCollabPacket, isMarkdownPath, locateQuote, DEFAULT_COLLAB_EDIT_MODE, type CollabEditMode } from "@/lib/collab";
-import type { TaskDocComment } from "@/lib/types";
+import type { TaskDocComment, TaskDocDraft } from "@/lib/types";
 
 // Document collaboration mode — a Word-style review of one file the agent
 // touched. Two tabs over ONE document state: EDIT (source editor beside a live
@@ -20,16 +20,22 @@ import type { TaskDocComment } from "@/lib/types";
 // location, and hands it to the same onSend chat uses — so it queues behind a
 // running turn like any message.
 //
-// Passage comments are PERSISTED (task_doc_comments, via /api/tasks/[id]/
-// doc-comments) the moment they're added, the way the Changes tab's line
-// comments are: TaskChanges remounts on every rail collapse and tab switch,
-// which unmounts this modal, so an in-progress review has to live on the
-// server to survive it. Each row carries the file's blob sha as loaded
-// (anchor_sha) — sent comments whose anchor still matches are listed read-only
-// against the document; sent ones whose anchor doesn't are "outdated". Unsent
-// drafts stay live either way (the user decides whether they still apply) and
-// are what Send folds into the packet. Edits and the general box are still
-// modal-only.
+// Everything a review consists of is PERSISTED, because TaskChanges remounts
+// on every rail collapse and tab switch, which unmounts this modal, so an
+// in-progress review has to live on the server to survive it. Passage
+// comments go to task_doc_comments (via /api/tasks/[id]/doc-comments) the
+// moment they're added, the way the Changes tab's line comments are. The
+// other two halves — the Edit tab's text and the General comments note — are
+// one draft row per (task, file) in task_doc_drafts (/api/tasks/[id]/
+// doc-draft), autosaved on change (debounced, flushed on unmount) and cleared
+// by Send. Both carry the file's blob sha as loaded (anchor_sha). For a sent
+// comment a matching anchor means it's listed read-only against the document
+// and a moved-on one means "outdated"; unsent drafts stay live either way
+// (the user decides whether they still apply) and are what Send folds into
+// the packet. For the edit draft the anchor decides whether the text is
+// restored into the editor or offered back as STALE — the file changed since
+// the edit was made, so putting the old version in the editor silently would
+// hide what changed, and the user picks restore or discard instead.
 //
 // Edits reach the file one of two ways (`CollabEditMode`). "direct" — the
 // default — writes the edited text into the worktree first (POST
@@ -56,11 +62,17 @@ const MarkdownEditor = dynamic(() => import("./MarkdownEditor"), { ssr: false, l
 type Tab = "edit" | "comment";
 // A selection the user just made in the rendered view, before it's a comment.
 type Pending = { quote: string; heading: string | null; top: number; left: number };
+// The compose box: a new comment on a passage, or — with `id` — an existing
+// draft being rewritten in place.
+type Composing = { quote: string; heading: string | null; id?: string };
 
 const HIGHLIGHT_NAME = "collab-comments";
 const SENT_HIGHLIGHT_NAME = "collab-comments-sent";
 const ACTIVE_HIGHLIGHT_NAME = "collab-comment-active";
 const HIGHLIGHT_NAMES = [HIGHLIGHT_NAME, SENT_HIGHLIGHT_NAME, ACTIVE_HIGHLIGHT_NAME];
+
+// How long a keystroke waits for the next one before the draft is saved.
+const DRAFT_SAVE_MS = 600;
 
 // Nearest heading above a range in the rendered DOM: walk up to the block that
 // contains the selection start, then back through its siblings.
@@ -136,6 +148,13 @@ async function readJson<T>(r: Response): Promise<T & { error?: string }> {
   return j;
 }
 
+// The PUT body for the draft route, also used as the identity of "what the
+// server has": the autosave compares the serialized payload against the last
+// one it confirmed, so a no-op change (type a letter, delete it) sends nothing.
+function draftPayload(file: string, text: string | null, general: string, anchorSha: string | null): string {
+  return JSON.stringify({ file, text, general, anchorSha });
+}
+
 export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }: {
   taskId: string;
   file: string;
@@ -145,7 +164,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
   onWritten?: () => void; // the file on disk changed under the Changes tab — refetch the diff
 }) {
   const [original, setOriginal] = useState<string | null>(null);
-  const [sha, setSha] = useState<string | null>(null); // blob sha of `original` — the anchor new comments get
+  const [sha, setSha] = useState<string | null>(null); // blob sha of `original` — the anchor new comments and the draft get
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("comment");
@@ -154,7 +173,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
   const [busy, setBusy] = useState(false);
   const [general, setGeneral] = useState("");
   const [pending, setPending] = useState<Pending | null>(null);
-  const [composing, setComposing] = useState<{ quote: string; heading: string | null } | null>(null);
+  const [composing, setComposing] = useState<Composing | null>(null);
   const [draft, setDraft] = useState("");
   const [active, setActive] = useState<string | null>(null);
   const [showOutdated, setShowOutdated] = useState(false);
@@ -164,18 +183,55 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
   // step failed (marking drafts sent) doesn't write again — the second write
   // would be refused as stale, since `original` is still what the modal loaded.
   const [written, setWritten] = useState<string | null>(null);
+  // The persisted edit draft. `draftLoaded` gates the autosave: until the
+  // server's copy has been read there is nothing to compare against, and
+  // saving a clean modal over an unread draft would delete it. `syncedKey` is
+  // the payload the server is known to hold; `staleDraft` is a saved edit
+  // whose anchor no longer matches the file, parked until the user decides.
+  const [draftLoaded, setDraftLoaded] = useState(false);
+  const [syncedKey, setSyncedKey] = useState<string | null>(null);
+  const [staleDraft, setStaleDraft] = useState<TaskDocDraft | null>(null);
+  const [draftErr, setDraftErr] = useState<string | null>(null);
+  const pendingSaveRef = useRef<string | null>(null); // the payload waiting for the debounce or a retry
+  const saveChainRef = useRef<Promise<void>>(Promise.resolve()); // PUTs run one at a time, so a slow one can't land over a newer one
+  const stopSavingRef = useRef(false); // set once Send has cleared the draft: nothing after that may recreate it
   const docRef = useRef<HTMLDivElement>(null);
   const dark = typeof document !== "undefined" && document.documentElement.dataset.mode !== "light";
   const markdown = isMarkdownPath(file);
 
   const api = `/api/tasks/${taskId}/doc-comments`;
+  const draftApi = `/api/tasks/${taskId}/doc-draft`;
 
   useEffect(() => {
     let dead = false;
-    fetch(`/api/tasks/${taskId}/file?path=${encodeURIComponent(file)}`, { cache: "no-store" })
-      .then((r) => readJson<{ content?: string; sha?: string }>(r))
+    const fileReq = fetch(`/api/tasks/${taskId}/file?path=${encodeURIComponent(file)}`, { cache: "no-store" })
+      .then((r) => readJson<{ content?: string; sha?: string }>(r));
+    fileReq
       .then((j) => { if (!dead) { setOriginal(j.content ?? ""); setSha(j.sha ?? null); setText(j.content ?? ""); } })
       .catch((e) => { if (!dead) setError(e instanceof Error ? e.message : String(e)); });
+    // The saved edit + general note, applied once the file is here too: the
+    // general note is restored as-is, the edited text only when the file is
+    // still the one it was made against. A failure here leaves draftLoaded
+    // false, which also stops this session's edits from being saved — better
+    // than saving over a draft that couldn't be read.
+    const draftReq = fetch(`${draftApi}?file=${encodeURIComponent(file)}`, { cache: "no-store" })
+      .then((r) => readJson<{ draft?: TaskDocDraft | null }>(r));
+    Promise.all([fileReq.catch(() => null), draftReq])
+      .then(([f, d]) => {
+        if (dead || !f) return;
+        const fileSha = f.sha ?? null;
+        const saved = d.draft ?? null;
+        if (saved) {
+          setGeneral(saved.general);
+          if (saved.text !== null && saved.anchor_sha === fileSha) setText(saved.text);
+          else if (saved.text !== null) setStaleDraft(saved);
+          setSyncedKey(draftPayload(file, saved.text, saved.general, saved.anchor_sha));
+        } else {
+          setSyncedKey(draftPayload(file, null, "", fileSha));
+        }
+        setDraftLoaded(true);
+      })
+      .catch((e) => { if (!dead) setDraftErr(`Couldn't load your saved edits: ${e instanceof Error ? e.message : String(e)}`); });
     // The persisted review, loaded beside the document. A failure here is
     // shown in the side pane rather than blocking the document: the user can
     // still read and edit, they just can't trust the comment list.
@@ -184,7 +240,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
       .then((j) => { if (!dead) setComments(j.comments ?? []); })
       .catch((e) => { if (!dead) setCommentErr(`Couldn't load saved comments: ${e instanceof Error ? e.message : String(e)}`); });
     return () => { dead = true; };
-  }, [taskId, file, api]);
+  }, [taskId, file, api, draftApi]);
 
   // Three buckets. Drafts are what Send folds into the packet, whatever their
   // anchor; a sent comment is read-only and, once the file's content has moved
@@ -213,16 +269,76 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
     setSendError(null);
     try { localStorage.setItem(EDIT_MODE_KEY, m); } catch { /* private browsing, etc. */ }
   };
-  // Comments are saved as they're added, so only the modal-local halves —
-  // edits and the general box — can be lost by closing.
   const dirty = edited || general.trim().length > 0;
 
-  // Closing with unsent work asks once; the scrim, Escape and Cancel all go
-  // through here.
+  // Autosave of the edit + general note. What the server should hold right
+  // now, as the PUT body; when it differs from what it's known to hold, a
+  // debounced save is scheduled. Suspended while a stale draft is parked (the
+  // editor shows the current file then, and saving that would overwrite the
+  // very edits the banner is asking about) and once Send has cleared the row.
+  const payloadKey = useMemo(
+    () => (original === null ? null : draftPayload(file, text !== original ? text : null, general, sha)),
+    [file, original, text, general, sha]
+  );
+  const flushDraft = useCallback((keepalive = false) => {
+    const run = async () => {
+      const body = pendingSaveRef.current;
+      if (!body || stopSavingRef.current) return;
+      try {
+        const r = await fetch(draftApi, { method: "PUT", headers: { "Content-Type": "application/json" }, body, keepalive });
+        await readJson(r);
+        if (pendingSaveRef.current === body) pendingSaveRef.current = null;
+        setSyncedKey(body);
+        setDraftErr(null);
+      } catch (e) {
+        setDraftErr(`Couldn't save your edits: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    };
+    saveChainRef.current = saveChainRef.current.then(run, run);
+    return saveChainRef.current;
+  }, [draftApi]);
+  useEffect(() => {
+    if (!draftLoaded || payloadKey === null || staleDraft || stopSavingRef.current) return;
+    if (payloadKey === syncedKey) { pendingSaveRef.current = null; return; }
+    pendingSaveRef.current = payloadKey;
+    const t = setTimeout(() => { void flushDraft(); }, DRAFT_SAVE_MS);
+    return () => clearTimeout(t);
+  }, [draftLoaded, payloadKey, syncedKey, staleDraft, flushDraft]);
+  // The modal unmounts under the user (rail collapse, tab switch, Escape)
+  // more often than it waits out a debounce, so whatever is still pending
+  // goes out on the way down; keepalive lets the request outlive a tab close.
+  useEffect(() => () => { if (pendingSaveRef.current && !stopSavingRef.current) void flushDraft(true); }, [flushDraft]);
+  const saveState: "saved" | "saving" | "failed" | null =
+    !dirty || !draftLoaded || staleDraft ? null : draftErr ? "failed" : payloadKey === syncedKey ? "saved" : "saving";
+
+  const restoreStale = () => {
+    if (!staleDraft || staleDraft.text === null) return;
+    if (edited && !window.confirm("Replace what you've typed with your saved edits?")) return;
+    setText(staleDraft.text);
+    setStaleDraft(null);
+    setTab("edit");
+  };
+  const discardStale = () => setStaleDraft(null); // the autosave then records the file as unedited
+  const discardDraft = () => {
+    if (original === null) return;
+    if (!window.confirm("Discard your unsent edits and general note? Passage comments are kept.")) return;
+    setText(original);
+    setGeneral("");
+  };
+
+  const commentBodyOf = (id: string) => comments.find((c) => c.id === id)?.body ?? "";
+  // Closing loses only what isn't on the server: a comment still in the
+  // compose box, and the edit draft if saving it failed. Everything else is
+  // saved as it's typed, so the scrim, Escape and Cancel just close.
   const close = useCallback(() => {
-    if (dirty && !window.confirm("Discard your unsent edits? Passage comments are saved.")) return;
+    const losing: string[] = [];
+    if (composing && draft.trim() && !(composing.id && draft.trim() === commentBodyOf(composing.id))) {
+      losing.push(composing.id ? "your changes to the comment" : "the comment you're writing");
+    }
+    if (dirty && (draftErr || !draftLoaded) && !staleDraft) losing.push("your unsent edits, which couldn't be saved");
+    if (losing.length && !window.confirm(`Discard ${losing.join(" and ")}? Everything else is saved.`)) return;
     onClose();
-  }, [dirty, onClose]);
+  }, [composing, draft, comments, dirty, draftErr, draftLoaded, staleDraft, onClose]);
 
   // Selection → "Add comment" affordance. Runs on mouseup/keyup inside the
   // rendered view; anything collapsed or outside it clears the affordance.
@@ -244,35 +360,67 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
     });
   }, []);
 
-  const startComment = () => {
-    if (!pending) return;
-    setComposing({ quote: pending.quote, heading: pending.heading });
-    setDraft("");
-    setPending(null);
-    window.getSelection()?.removeAllRanges();
-  };
-  const addComment = async () => {
-    if (!composing || !draft.trim() || busy) return;
+  // Save the compose box: a new comment is POSTed, an edited draft PATCHed.
+  // Returns whether the box is now clear, so a caller about to reuse it knows.
+  const saveComment = async (): Promise<boolean> => {
+    if (!composing || busy) return false;
+    const body = draft.trim();
+    if (!body) return false;
+    if (composing.id && body === commentBodyOf(composing.id)) { setComposing(null); setDraft(""); return true; }
     setBusy(true);
     setCommentErr(null);
     try {
-      const r = await fetch(api, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ file, quote: composing.quote, heading: composing.heading, body: draft.trim(), anchorSha: sha }),
-      });
-      const j = await readJson<{ comment?: TaskDocComment }>(r);
-      if (j.comment) setComments((cs) => [...cs, j.comment as TaskDocComment]);
+      if (composing.id) {
+        const id = composing.id;
+        const r = await fetch(`${api}/${encodeURIComponent(id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ body }),
+        });
+        const j = await readJson<{ comment?: TaskDocComment }>(r);
+        if (j.comment) setComments((cs) => cs.map((c) => (c.id === id ? (j.comment as TaskDocComment) : c)));
+      } else {
+        const r = await fetch(api, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ file, quote: composing.quote, heading: composing.heading, body, anchorSha: sha }),
+        });
+        const j = await readJson<{ comment?: TaskDocComment }>(r);
+        if (j.comment) setComments((cs) => [...cs, j.comment as TaskDocComment]);
+      }
       setComposing(null);
       setDraft("");
+      return true;
     } catch (e) {
       setCommentErr(`Couldn't save the comment: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
     } finally {
       setBusy(false);
     }
   };
+  // Open the compose box on a passage. A comment already being written there
+  // is SAVED first rather than dropped: a typed note the user forgot to press
+  // Add on is still a note. If that save fails the box stays as it was, with
+  // the error beside it, so nothing is lost either way.
+  const openCompose = async (next: Composing, body: string) => {
+    if (composing && draft.trim() && !(await saveComment())) return;
+    setComposing(next);
+    setDraft(body);
+  };
+  const startComment = () => {
+    if (!pending) return;
+    const { quote, heading } = pending;
+    setPending(null);
+    window.getSelection()?.removeAllRanges();
+    void openCompose({ quote, heading }, "");
+  };
+  const editComment = (c: TaskDocComment) => {
+    if (composing?.id === c.id) return;
+    void openCompose({ quote: c.quote, heading: c.heading, id: c.id }, c.body);
+  };
   const remove = async (id: string) => {
     setCommentErr(null);
+    if (composing?.id === id) { setComposing(null); setDraft(""); }
     try {
       const r = await fetch(`${api}/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (r.status === 404) { setComments((cs) => cs.filter((c) => c.id !== id)); return; } // already gone — same outcome
@@ -318,14 +466,16 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
     el?.scrollIntoView({ block: "center", behavior: "smooth" });
   };
 
-  // Send, in three steps whose order matters. (1) In direct mode, write the
-  // edited text into the worktree — the server can refuse (live turn, file
-  // changed since load), and a refusal must leave the review exactly as it
-  // was: nothing marked, nothing sent. (2) Flip every draft to sent BEFORE
-  // handing the packet to chat: if the mark fails the packet isn't sent and
-  // the drafts stay drafts, so nothing reaches the agent that the record
-  // doesn't show; the reverse order could send a review and then leave it
-  // re-sendable. (3) The packet itself.
+  // Send, in steps whose order matters. (1) In direct mode, write the edited
+  // text into the worktree — the server can refuse (live turn, file changed
+  // since load), and a refusal must leave the review exactly as it was:
+  // nothing marked, nothing sent. (2) Flip every draft to sent BEFORE handing
+  // the packet to chat: if the mark fails the packet isn't sent and the
+  // drafts stay drafts, so nothing reaches the agent that the record doesn't
+  // show; the reverse order could send a review and then leave it
+  // re-sendable. (3) Clear the edit draft, after any save still in flight,
+  // and stop the autosave for good so the unmount flush can't put it back.
+  // (4) The packet itself.
   const send = async () => {
     if (!packet || busy || original === null) return;
     setBusy(true);
@@ -358,6 +508,13 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
         });
         await readJson(r);
       }
+      stopSavingRef.current = true;
+      pendingSaveRef.current = null;
+      await saveChainRef.current;
+      // Best effort: the packet is what matters, and a draft this leaves
+      // behind restores as no change (direct) or as the edits just sent
+      // (patch), which the user can discard.
+      await fetch(`${draftApi}?file=${encodeURIComponent(file)}`, { method: "DELETE" }).catch(() => undefined);
       onSend(packet);
       onClose();
     } catch (e) {
@@ -371,11 +528,13 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
     edited ? "edited" : null,
     drafts.length ? `${drafts.length} comment${drafts.length === 1 ? "" : "s"}` : null,
     general.trim() ? "general note" : null,
+    saveState === "saved" ? "saved" : saveState === "saving" ? "saving…" : saveState === "failed" ? "not saved" : null,
   ].filter(Boolean).join(" · ");
+  const footerErr = sendError ?? draftErr;
 
   // One comment card. Drafts are numbered (the packet numbers them the same
-  // way) and removable; sent ones are read-only, tagged, and — when the
-  // document has changed since — dimmed as outdated.
+  // way), editable and removable; sent ones are read-only, tagged, and — when
+  // the document has changed since — dimmed as outdated.
   const card = (c: TaskDocComment, i: number | null, variant: "draft" | "sent" | "outdated") => {
     const missing = variant === "draft" && locateQuote(text, c.quote) === null;
     return (
@@ -397,7 +556,10 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
           )}
           <span style={{ flex: 1 }} />
           {variant === "draft" && (
-            <button className="collab-c-x" title="Remove comment" onClick={(e) => { e.stopPropagation(); remove(c.id); }}>{Icon.x()}</button>
+            <>
+              <button className="collab-c-x" title="Edit comment" aria-label="Edit comment" onClick={(e) => { e.stopPropagation(); editComment(c); }}>{Icon.edit()}</button>
+              <button className="collab-c-x" title="Remove comment" aria-label="Remove comment" onClick={(e) => { e.stopPropagation(); remove(c.id); }}>{Icon.x()}</button>
+            </>
           )}
         </div>
         <div className="collab-quote">{c.quote}</div>
@@ -414,7 +576,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
       width={1180}
       footer={
         <>
-          <span className="collab-status">{sendError ? <span className="collab-send-err">{sendError}</span> : status || "No changes yet. Edit the text or select a passage to comment."}</span>
+          <span className="collab-status">{footerErr ? <span className="collab-send-err">{footerErr}</span> : status || "No changes yet. Edit the text or select a passage to comment."}</span>
           <span className="spacer" />
           {edited && (
             <label className="collab-mode" title={running ? "The agent is working, so the worktree is its to write; your edits go as a patch until the turn ends." : "How your edits reach the file"}>
@@ -425,12 +587,24 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
               </select>
             </label>
           )}
+          {dirty && (
+            <button className="btn btn-line" onClick={discardDraft} disabled={busy} title="Throw away your unsent edits and general note; passage comments are kept.">Discard edits</button>
+          )}
           <button className="btn btn-line" onClick={close} disabled={busy}>Cancel</button>
           <button className="btn btn-accent" onClick={send} disabled={!packet || busy}>{Icon.send()} {busy ? "Sending…" : "Send to agent"}</button>
         </>
       }
     >
       <div className="collab">
+        {staleDraft && (
+          <div className="collab-stale" role="status">
+            <span>
+              You have unsent edits to this file from before it last changed. Restore them to keep working on your version (what changed since is only in the file on disk), or discard them.
+            </span>
+            <button className="tc-btn" onClick={discardStale}>Discard them</button>
+            <button className="tc-btn primary" onClick={restoreStale}>Restore edits</button>
+          </div>
+        )}
         <div className="collab-tabs">
           <button className={`rail-tab ${tab === "edit" ? "on" : ""}`} onClick={() => setTab("edit")}>{Icon.edit()} EDIT</button>
           <button className={`rail-tab ${tab === "comment" ? "on" : ""}`} onClick={() => setTab("comment")}>{Icon.doc()} COMMENT</button>
@@ -476,6 +650,12 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
               {commentErr && <ErrNote>{commentErr}</ErrNote>}
               {composing && (
                 <div className="collab-compose">
+                  {composing.id && (
+                    <div className="collab-c-h">
+                      <span className="collab-c-tag">{Icon.edit()} editing</span>
+                      {composing.heading && <span className="collab-c-where">{composing.heading}</span>}
+                    </div>
+                  )}
                   <div className="collab-quote">{composing.quote}</div>
                   <textarea
                     autoFocus
@@ -483,11 +663,11 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
                     onChange={(e) => setDraft(e.target.value)}
                     placeholder="What should change here?"
                     rows={3}
-                    onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) addComment(); }}
+                    onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) saveComment(); }}
                   />
                   <div className="collab-compose-a">
-                    <button className="tc-btn" onClick={() => setComposing(null)}>Cancel</button>
-                    <button className="tc-btn primary" onClick={addComment} disabled={busy || !draft.trim()}>Add</button>
+                    <button className="tc-btn" onClick={() => { setComposing(null); setDraft(""); }}>Cancel</button>
+                    <button className="tc-btn primary" onClick={saveComment} disabled={busy || !draft.trim()}>{composing.id ? "Save" : "Add"}</button>
                   </div>
                 </div>
               )}

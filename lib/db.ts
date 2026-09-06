@@ -613,6 +613,23 @@ export function init(db: Database.Database) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_task_doc_comments_task ON task_doc_comments(task_id);
+
+    -- The modal-local halves of a document review, one row per (task, file):
+    -- the Edit tab's text (NULL when the file hasn't been edited) and the
+    -- General comments note. Autosaved by the modal so a rail collapse or a
+    -- reload doesn't lose them, cleared on Send. anchor_sha is the file's
+    -- blob sha the edit was made against; a draft whose anchor no longer
+    -- matches the file is shown as stale rather than restored silently.
+    CREATE TABLE IF NOT EXISTS task_doc_drafts (
+      task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      file        TEXT NOT NULL,
+      text        TEXT,
+      general     TEXT NOT NULL DEFAULT '',
+      anchor_sha  TEXT,
+      updated_at  INTEGER NOT NULL,
+      PRIMARY KEY (task_id, file)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_services_project ON services(project_id);
     CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
     CREATE INDEX IF NOT EXISTS idx_task_deps_task ON task_dependencies(task_id);

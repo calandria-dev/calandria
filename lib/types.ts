@@ -306,6 +306,20 @@ export interface TaskDocComment {
   created_at: number;
 }
 
+// The modal-local halves of a document review — TaskDocComment's sibling, one
+// row per (task, file) rather than one per passage. Holds the Edit tab's text
+// and the General comments note, autosaved so a rail collapse or a reload
+// doesn't lose them, and cleared on Send. `anchor_sha` is the file's blob sha
+// the edit was made against.
+export interface TaskDocDraft {
+  task_id: string;
+  file: string;
+  text: string | null;     // the Edit tab's text; null when the file hasn't been edited
+  general: string;         // the General comments note, "" when empty
+  anchor_sha: string | null; // blob sha of the file the edit was made against
+  updated_at: number;
+}
+
 export interface Session {
   id: string;
   project_id: string;
