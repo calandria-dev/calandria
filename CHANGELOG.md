@@ -8,6 +8,17 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.10.0](https://github.com/calandria-dev/calandria/compare/v0.9.0...v0.10.0) (2026-09-06)
+
+
+### Features
+
+* **agents:** stream assistant and reasoning deltas as live typing ([#236](https://github.com/calandria-dev/calandria/issues/236)) ([57b5f0f](https://github.com/calandria-dev/calandria/commit/57b5f0fac87f58247674ee2c7087fddaaf2493e4))
+* **codex:** app-server transport with real permission modes and approval cards ([#231](https://github.com/calandria-dev/calandria/issues/231)) ([eb9301b](https://github.com/calandria-dev/calandria/commit/eb9301b9db08cd3a565224df0d8478535f0eed82))
+* **codex:** feed app-server rate-limit notifications into the plan-usage meter ([#234](https://github.com/calandria-dev/calandria/issues/234)) ([504073e](https://github.com/calandria-dev/calandria/commit/504073ea90c4e1bbd6ae51054ecb613973751104))
+* **codex:** report sandbox health on the connect card and refuse broken sandboxed modes ([#235](https://github.com/calandria-dev/calandria/issues/235)) ([97739b8](https://github.com/calandria-dev/calandria/commit/97739b828f8e40f6e75af9973c546c8559db138a))
+* **codex:** stream command output into the live tool row ([#238](https://github.com/calandria-dev/calandria/issues/238)) ([e15ec2b](https://github.com/calandria-dev/calandria/commit/e15ec2b8f5eb7af3c86b7500357bb013efaecd27))
+
 ## [0.9.0](https://github.com/calandria-dev/calandria/compare/v0.8.0...v0.9.0) (2026-09-04)
 
 
