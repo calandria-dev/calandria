@@ -5,7 +5,9 @@
 // request is auto-rejected inside the CLI before the host ever sees it; here
 // it arrives as a JSON-RPC request the turn cannot finish without our answer,
 // and the answer comes from the same permission card and /answer route the
-// Claude driver's canUseTool gate parks on (./permissionPrompt.ts).
+// Claude driver's canUseTool gate parks on — literally the same gate, since
+// both call promptPermission() (../../permissionPrompt.ts) and differ only in
+// how they spell the answer back to their own protocol.
 //
 // The process lives exactly one turn, like the exec transport's: a thread is
 // persisted by the CLI under ~/.codex, so `thread/resume` on the next turn
@@ -18,8 +20,7 @@ import { AppServerClient, flattenConfigOverrides, type ConfigObject } from "./ap
 import { mapNotification, newAppServerTurnState, diffLinesOf, unwrapShellCommand, type V2Item } from "./appServerEvents";
 import { mapThreadEvent, type CodexMapState } from "./events";
 import { makeQueue } from "../shared";
-import { describePermission } from "../../permissions";
-import { promptPermission, type PromptDecision } from "./permissionPrompt";
+import { promptPermission, type PromptDecision } from "../../permissionPrompt";
 import { ingestRateLimits } from "./planUsage";
 import { sandboxPolicyObject, type CodexRunPolicy } from "./policy";
 import { usesExternalSandbox } from "./sandbox";
@@ -153,15 +154,14 @@ export async function* runAppServerTurn(args: AppServerTurnArgs): AsyncGenerator
           if (d.kind === "allow" && d.always && amend) return { decision: { applyNetworkPolicyAmendment: { network_policy_amendment: amend } } };
           return { decision: toApproval(d) };
         }
-        const described = describePermission("Bash", { command });
+        // No title or detail: an ordinary command is exactly what the gate's
+        // own card renders, so let it, and the two drivers describe one
+        // command identically.
         const d = await promptPermission(promptCtx, {
           id,
           tool: "Bash",
           input: { command },
-          title: described.title,
-          detail: described.detail,
           description: reason ?? (p.kind === "writeStdin" ? "Wants to write to the running command's stdin" : undefined),
-          diff: described.diff,
         });
         return { decision: toApproval(d) };
       }

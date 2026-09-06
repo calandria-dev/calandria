@@ -20,14 +20,12 @@ import type {
   TurnUsage,
   Priority,
   Status as TaskStatus,
-  PermissionOutcome,
-  PermissionRequest,
 } from "../../types";
 import type { AgentDriver, OneShotOptions, OneShotResult, TurnHooks } from "../types";
 import { claudeCapabilities } from "./capabilities";
 import { listClaudeCommands, recordMcpPrompts } from "./commands";
 import { getClaudePlanUsage, recordClaudeRateLimit } from "./planUsage";
-import { getSetting, listPermissionRules, addPermissionRule } from "../../store";
+import { getSetting } from "../../store";
 import { registerTurnInput, unregisterTurnInput, type TurnInputHandle } from "../../turnInput";
 import {
   createSuggestedTask,
@@ -51,20 +49,8 @@ import { createPrForAgent } from "../../prTools";
 import { createRunbookForAgent, listRunbooksForAgent, updateRunbookForAgent } from "../../runbookTools";
 import { publishGlobal } from "../../events";
 import { waitForAnswer, ASK_DISMISSED_REPLY, ASK_INTERRUPTED_NOTE } from "../../asks";
-import {
-  allowedByRules,
-  blockedReason,
-  denyMessage,
-  describePermission,
-  isAlwaysAllowed,
-  parseDecision,
-  promptDeadline,
-  scopeOfferFor,
-  waitForPermission,
-  DENIED_BY_USER,
-  DENIED_TIMED_OUT,
-  DENIED_UNATTENDED,
-} from "../../permissions";
+import { blockedReason } from "../../permissions";
+import { promptPermission, type PromptDecision } from "../../permissionPrompt";
 import {
   AGENT_TOOL_TIMEOUT_MS,
   BACKGROUND_LINGER_ENABLED,
@@ -72,8 +58,6 @@ import {
   CLAUDE_CLI_PATH as CLAUDE_PATH,
   CLAUDE_DEBUG_DIR,
   CLAUDE_TOOL_TRANSPORT,
-  PERMISSION_PROMPT_TIMEOUT_MS,
-  PERMISSION_UNATTENDED_MS,
 } from "../../config";
 import { guardToolHandler, isCalandriaToolName, isCliInterruptedToolResult, toolCutoffNotice, toolInterruptedMessage } from "../../agentToolGuard.mjs";
 import { logAgentToolArrival, logAgentToolOutcome, type AgentToolOutcome } from "../../agentToolLog";
@@ -796,94 +780,55 @@ async function* runTurn(
   // covered by a remembered project rule pass silently; anything else parks the
   // turn on a card the user answers, through the very same registry + /answer
   // route an AskUserQuestion uses (lib/permissions.ts).
+  // The gate is lib/permissionPrompt.ts, the same one the Codex driver's
+  // approval handlers call. Everything below is the translation to and from
+  // the SDK's own shapes: the mode (bypassPermissions never consults the
+  // callback at all), the pieces of the card only the CLI can supply, and the
+  // PermissionResult it wants back.
   const canUseTool: CanUseTool = async (toolName, input, opts) => {
     const allow = (): PermissionResult => ({ behavior: "allow" as const, updatedInput: input });
     if (permissionMode === "bypassPermissions") return allow();
-    // `blockedPath` is the CLI saying this call reaches somewhere it shouldn't
-    // (outside the worktree, typically) — the one case the read-only allowlist
-    // must NOT swallow, since it's the CLI's own warning.
-    if (isAlwaysAllowed(toolName, opts.blockedPath)) return allow();
-    // Re-read the rules per call, not per turn: an "always allow" answered
-    // earlier in THIS turn has to take effect immediately, and a rule the user
-    // revokes mid-turn has to stop applying just as fast.
-    if (!opts.blockedPath && allowedByRules(listPermissionRules(project.id), toolName, input)) return allow();
-
-    const described = describePermission(toolName, input);
     // NAMESPACED, not the bare toolUseID: the runner keys its transcript rows
     // by tool_use id, and the model's own tool_use block for this very call
     // carries the same id — an un-prefixed key would let the two rows clobber
     // each other and land the decision on the wrong card.
     const id = `perm:${opts.toolUseID || `${sessionId ?? "x"}-${permSeq++}`}`;
-    // Durable rules are Bash-only (see lib/permissions.ts). For everything else
-    // the CLI's own `suggestions` payload is offered instead: it stops the
-    // re-asking for the rest of THIS session and is never persisted.
-    const scope = scopeOfferFor(toolName, input)
-      ?? (opts.suggestions?.length ? { scope: "session" as const, value: toolName, label: "Don't ask again this session" } : undefined);
-    const request: PermissionRequest = {
-      id,
-      tool: toolName,
-      // The CLI renders its own prompt sentence ("Claude wants to run …") and
-      // knows things we can't see from the input alone, so prefer it; fall back
-      // to the same title the transcript would give the tool call.
-      title: opts.title?.trim() || described.title,
-      detail: described.detail,
-      description: opts.blockedPath
-        ? `Reaches outside the task's working directory: ${opts.blockedPath}`
-        : opts.description?.trim() || opts.decisionReason?.trim() || undefined,
-      diff: described.diff,
-      scope,
-      expiresAt: promptDeadline(PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS, task.id),
-    };
-    queue.push({ type: "permission", request });
-    const settle = (outcome: PermissionOutcome) => queue.push({ type: "permission_decided", id, outcome });
-
     // Two signals matter: the turn's (Stop) and the SDK's per-request one — a
     // cancelled control request must stop being answerable even if the turn
     // itself lives on.
     const linked = linkSignals(abortController?.signal, opts.signal);
-    let waited;
+    let decided: PromptDecision;
     try {
-      waited = await waitForPermission({
-        taskId: task.id,
-        id,
-        signal: linked.signal,
-        attendedMs: PERMISSION_PROMPT_TIMEOUT_MS,
-        unattendedMs: PERMISSION_UNATTENDED_MS,
-      });
+      decided = await promptPermission(
+        { taskId: task.id, projectId: project.id, push: (ev) => queue.push(ev), signal: linked.signal },
+        {
+          id,
+          tool: toolName,
+          input,
+          // The CLI renders its own prompt sentence ("Claude wants to run …")
+          // and knows things we can't see from the input alone, so prefer it;
+          // the gate falls back to the title the transcript would give the call.
+          title: opts.title,
+          description: opts.description?.trim() || opts.decisionReason?.trim() || undefined,
+          blockedPath: opts.blockedPath,
+          // Durable rules are Bash-only (see lib/permissions.ts). For
+          // everything else the CLI's own `suggestions` payload is offered
+          // instead: it stops the re-asking for the rest of THIS session and is
+          // never persisted.
+          scopeFallback: opts.suggestions?.length
+            ? { scope: "session" as const, value: toolName, label: "Don't ask again this session" }
+            : undefined,
+        }
+      );
     } finally {
       linked.dispose();
     }
 
-    // Every non-answer path denies — the gate fails CLOSED, so a stopped,
-    // unwatched, or expired turn can never leak an unapproved tool call.
-    if ("aborted" in waited) {
-      const note = "The session was stopped before this was approved.";
-      settle({ decision: "deny", auto: true, reason: "interrupted", note });
-      return { behavior: "deny", message: note };
-    }
-    if ("expired" in waited) {
-      const note = waited.expired === "unattended" ? DENIED_UNATTENDED : DENIED_TIMED_OUT;
-      settle({ decision: "deny", auto: true, reason: waited.expired, note });
-      return { behavior: "deny", message: denyMessage(request.title, note) };
-    }
-
-    const { decision, note } = parseDecision(waited.answers);
-    if (decision === "deny") {
-      settle({ decision, note: note || undefined });
-      return { behavior: "deny", message: denyMessage(request.title, note || DENIED_BY_USER) };
-    }
-    let remembered: string | undefined;
-    if (decision === "allow_always" && scope?.scope === "project" && scope.match_kind) {
-      addPermissionRule({ project_id: project.id, tool: toolName, match_kind: scope.match_kind, value: scope.value });
-      remembered = scope.label;
-    } else if (decision === "allow_always" && scope?.scope === "session") {
-      remembered = scope.label;
-    }
-    settle({ decision, remembered });
+    if (decided.kind === "deny") return { behavior: "deny", message: decided.message };
     // `suggestions` is the CLI's own "stop asking for this in this session"
     // payload. Handing it back on an always-allow covers what our project rules
     // deliberately can't: non-Bash tools, and path grants we don't model.
-    return decision === "allow_always" && opts.suggestions?.length
+    return decided.always && opts.suggestions?.length
       ? { behavior: "allow", updatedInput: input, updatedPermissions: opts.suggestions }
       : allow();
   };
