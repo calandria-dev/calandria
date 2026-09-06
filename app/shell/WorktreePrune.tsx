@@ -17,15 +17,15 @@ interface Candidate {
   status: string;
   sizeBytes: number;
   running: boolean;
-  unsafe: boolean; // dirty or ahead — removing it would lose work
+  unsafe: boolean; // dirty or ahead: removing it would lose work
   unsafeReason: string | null;
   canDiscard: boolean; // Done tasks may be explicitly destroyed even when unsafe
 }
 interface PruneList {
   candidates: Candidate[];
   totalBytes: number;
-  // The whole worktrees directory, not just the reclaimable share — including
-  // the checkouts of tasks still in flight, which this panel cannot offer.
+  // The whole worktrees directory, including the checkouts of tasks still in
+  // flight, which this panel cannot offer to reclaim.
   disk: { dir: string; bytes: number; warnBytes: number; over: boolean };
 }
 interface PruneResult {
@@ -247,7 +247,7 @@ export function WorktreePrune() {
         )}
       </div>
 
-      {/* Future opt-in — the automated path isn't built yet, so it's shown disabled
+      {/* Future opt-in. The automated path isn't built yet, so it's shown disabled
           to reserve the slot without implying it works. */}
       <div className="field">
         <div className="lab">{Icon.clock()} Auto-prune</div>

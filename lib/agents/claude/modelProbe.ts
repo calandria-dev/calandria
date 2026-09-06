@@ -1,51 +1,43 @@
 // Asking the installed CLI what a family alias resolves to.
 //
-// The picker can say WHO resolves "Opus (latest)" — the CLI, at turn time — but
-// not WHAT to. On Vertex it can: the mapping is ANTHROPIC_DEFAULT_*_MODEL and
-// ./provider.ts just reads it, which is why vertexModels() puts the resolved id
-// in each alias row's subtitle. The subscription path has no such file. The
-// answer lives inside the CLI's own catalog.
+// The picker can say who resolves "Opus (latest)" (the CLI, at turn time), but
+// not what to. On Vertex it can: the mapping is ANTHROPIC_DEFAULT_*_MODEL and
+// ./provider.ts reads it directly, which is why vertexModels() puts the
+// resolved id in each alias row's subtitle. The subscription path has no such
+// file; the answer lives inside the CLI's own catalog.
 //
-// It is still READABLE, and reading it costs no API call:
+// It is still readable, and reading it costs no API call:
 //
 //   claude -p --bare --model <value> --output-format stream-json --verbose \
 //     --no-session-persistence "hi"
 //
 // prints a `system`/`init` line carrying the resolved `model` and the
-// `claude_code_version` that resolved it, BEFORE any request goes out. Measured
-// on 2.1.257: fable → claude-fable-5-1, opus → claude-opus-5, sonnet →
-// claude-sonnet-5, haiku → claude-haiku-4-5-20251001, opusplan →
-// claude-sonnet-5, opus[1m] → claude-opus-5[1m].
+// `claude_code_version` that resolved it, before any request goes out.
 //
-// Two independent reasons the probe cannot spend anything, because one would be
-// a promise and this one has to be a fact:
+// Two independent reasons the probe cannot spend anything:
 //
 //  - `--bare` reads Anthropic auth strictly from ANTHROPIC_API_KEY or an
 //    apiKeyHelper supplied via `--settings`. OAuth and the keychain are never
 //    read, so the user's subscription login is not in the process at all. It
-//    also skips hooks, plugin sync, auto-memory and CLAUDE.md discovery — the
-//    probe must not fire the user's SessionStart hooks, which it did before this
-//    flag was added (measured: two hooks ran, and one of them blocked past the
-//    two-minute mark, so the init line never arrived).
+//    also skips hooks, plugin sync, auto-memory and CLAUDE.md discovery, so the
+//    probe cannot fire the user's SessionStart hooks.
 //  - ANTHROPIC_BASE_URL is pointed at a dead loopback port. Resolution happens
 //    before the first request, proven by the init line still arriving with the
 //    API unreachable.
 //
 // The child is killed the moment the init line is read; it does not run a turn.
 //
-// What it DOES cost is a full CLI spawn at ~100% CPU, ~3.4s per value, so ~17s
-// for the five aliases cold. That is why nothing here is on a request path:
-// claudeCapabilities() is synchronous and read per request (GET /api/agents, and
+// What it does cost is a full CLI spawn at close to 100% CPU, several seconds
+// per value. That is why nothing here is on a request path: claudeCapabilities()
+// is synchronous and read per request (GET /api/agents, and
 // modelContextWindow() from inside getTaskContext()), so this runs detached and
 // leaves its answer in ./modelIds.ts for the descriptor to read. Every failure
-// is silent — no `claude` on PATH (the Docker image ships one, a bare install
-// may not), a probe that times out, a CLI that stops printing the field — and
-// leaves the static catalog exactly as written.
+// is silent (no `claude` on PATH, a probe that times out, a CLI that stops
+// printing the field) and leaves the static catalog exactly as written.
 //
-// Keyed by CLI version because the resolution moves with it: `fable` billed
-// `claude-fable-5-0` on 2.1.252 and `claude-fable-5-1` on 2.1.257. `claude
-// --version` is ~15ms warm against the ~17s sweep it guards, the same trade
-// codexCliVersion() makes in ../codex/providerCheck.ts.
+// Keyed by CLI version because the resolution moves with it. `claude --version`
+// is cheap against the sweep it guards, the same trade codexCliVersion() makes
+// in ../codex/providerCheck.ts.
 
 import { execFile, spawn } from "node:child_process";
 import os from "node:os";
@@ -59,11 +51,11 @@ import { resolvedModelIds, setResolvedModelIds, type ResolvedModelIds } from "./
 const run = promisify(execFile);
 
 /**
- * The alias values that get their own spawn. The `[1m]` picker rows are NOT
+ * The alias values that get their own spawn. The `[1m]` picker rows are not
  * here: `opus[1m]` resolves to the `[1m]` spelling of whatever `opus` resolves
- * to (measured: claude-opus-5[1m]), so the descriptor derives them from these
- * five the same way vertexModels() derives them from the env mapping. Three
- * fewer spawns for an answer we already have.
+ * to, so the descriptor derives them from these five the same way
+ * vertexModels() derives them from the env mapping. Three fewer spawns for an
+ * answer already available.
  */
 export const PROBE_ALIASES = ["fable", "opus", "sonnet", "haiku", "opusplan"] as const;
 
@@ -101,8 +93,8 @@ export interface ProbeReading {
 /**
  * The resolved id for one `--model` value, read off the init line. Null for
  * every failure: a missing binary, a timeout, an exit before the line, a CLI
- * that no longer prints the field. This is a picker subtitle — there is nothing
- * it is worth blocking or shouting about.
+ * that no longer prints the field. This is a picker subtitle, so nothing here
+ * is worth blocking on or raising an error about.
  */
 export async function probeModelId(value: string, bin?: string): Promise<ProbeReading | null> {
   const s = spec(
@@ -137,9 +129,8 @@ export async function probeModelId(value: string, bin?: string): Promise<ProbeRe
       if (done) return;
       done = true;
       clearTimeout(timer);
-      // The CLI does NOT exit on its own here — with the API unreachable it sits
-      // retrying (measured: still alive past two minutes) — so the kill is the
-      // normal path out, not the error path.
+      // The CLI does not exit on its own here: with the API unreachable it sits
+      // retrying, so the kill is the normal path out, not the error path.
       child.kill();
       resolve(reading);
     };
@@ -202,7 +193,7 @@ function readStored(): ResolvedModelIds | null {
   }
 }
 
-// The in-process guard. Not a cache — ./modelIds.ts holds the answer; this only
+// The in-process guard. Not a cache: ./modelIds.ts holds the answer, this only
 // stops concurrent sweeps and per-request version spawns.
 const guard = (globalThis as { __calandriaClaudeModelProbe?: { at: number; running: boolean } });
 const state = (guard.__calandriaClaudeModelProbe ??= { at: 0, running: false });
@@ -210,28 +201,28 @@ const state = (guard.__calandriaClaudeModelProbe ??= { at: 0, running: false });
 /** Run the sweep now, ignoring the recheck window. Returns what it settled on. */
 export async function probeClaudeModelIds(): Promise<ResolvedModelIds | null> {
   const version = await claudeCliVersion();
-  if (!version) return null; // no CLI to ask — keep the static catalog
+  if (!version) return null; // no CLI to ask, keep the static catalog
 
-  // A remembered answer from this same CLI is the whole point of version-keying:
-  // a restart costs one ~15ms spawn instead of the ~17s sweep.
+  // A remembered answer from this same CLI is what version-keying buys: a
+  // restart costs one cheap version spawn instead of the full sweep.
   const known = resolvedModelIds() ?? readStored();
   if (known?.version === version) {
     setResolvedModelIds(known);
     return known;
   }
 
-  // Sequentially, never in parallel: each spawn is a CLI at ~100% CPU, and five
-  // at once on a small box would be felt by whatever turns are running.
+  // Sequentially, never in parallel: each spawn is a CLI near full CPU, and
+  // five at once on a small box would be felt by whatever turns are running.
   const ids: Record<string, string> = {};
   for (const alias of PROBE_ALIASES) {
     const reading = await probeModelId(alias);
     if (reading) ids[alias] = reading.model;
   }
-  // Nothing answered at all — no CLI worth asking, or a spelling it no longer
-  // prints — so cache nothing and let the next recheck try again. A PARTIAL
+  // Nothing answered at all: no CLI worth asking, or a spelling it no longer
+  // prints, so cache nothing and let the next recheck try again. A partial
   // answer is taken as this CLI's answer and not retried: the likeliest reason
-  // one alias is missing is that this CLI doesn't have that family, and the cost
-  // of being wrong is one row keeping its static subtitle.
+  // one alias is missing is that this CLI doesn't have that family, and the
+  // cost of being wrong is one row keeping its static subtitle.
   if (Object.keys(ids).length === 0) return null;
 
   const next: ResolvedModelIds = { version, ids };
@@ -246,13 +237,14 @@ export async function probeClaudeModelIds(): Promise<ResolvedModelIds | null> {
 
 /**
  * Kick the probe off if it is worth kicking off, and return immediately. Called
- * from GET /api/agents — the request that renders the picker — because that is
- * where the answer is wanted and lazily is the only way to pay for it: probing
- * at boot would spend ~17s of CPU on every instance, including the ones whose
- * users never open a model picker.
+ * from GET /api/agents, the request that renders the picker, because that is
+ * where the answer is wanted, and lazily is the only way to pay for it: probing
+ * at boot would spend CPU on every instance, including the ones whose users
+ * never open a model picker.
  *
- * Nothing awaits this. The picker renders from whatever is cached NOW; the first
- * load after a CLI upgrade shows the static catalog and the next one shows ids.
+ * Nothing awaits this. The picker renders from whatever is cached now; the
+ * first load after a CLI upgrade shows the static catalog and the next one
+ * shows ids.
  */
 export function ensureClaudeModelIds(): void {
   if (!CLAUDE_MODEL_PROBE) return;
@@ -270,7 +262,7 @@ export function ensureClaudeModelIds(): void {
     });
 }
 
-/** Forget the persisted answer and the recheck window — the suite's reset. */
+/** Forget the persisted answer and the recheck window, for the suite's reset. */
 export function clearClaudeModelIdCache(): void {
   state.at = 0;
   state.running = false;

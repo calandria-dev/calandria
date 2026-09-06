@@ -1,10 +1,9 @@
 /* The pty sidecar's own gate, exercised against the real process.
  *
- * tests/sameOrigin.test.ts pins the RULE; this pins the WIRING — that
- * pty-server.js actually consults it before spawning a shell. Worth a real
- * process because the failure mode is silent and total: an unguarded sidecar
- * hands a shell to anyone who completes a handshake, and every unit test in the
- * world still passes.
+ * tests/sameOrigin.test.ts pins the rule; this pins the wiring: that
+ * pty-server.js consults it before spawning a shell. This runs against a real
+ * process because an unguarded sidecar hands a shell to anyone who completes
+ * a handshake, and no unit test would catch that.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -20,8 +19,8 @@ let sidecar: ChildProcess;
 
 /**
  * Resolve to the handshake outcome: "open" (shell granted) or the refusal.
- * An accepted handshake spawns a REAL shell, so wait for the socket to finish
- * closing before resolving — the sidecar kills the pty on 'close', and
+ * An accepted handshake spawns a real shell, so this waits for the socket to
+ * finish closing before resolving. The sidecar kills the pty on 'close', and
  * resolving early lets afterAll tear the process down first, orphaning shells.
  */
 function connect(origin?: string, port = PORT, host?: string): Promise<string> {
@@ -44,16 +43,17 @@ beforeAll(async () => {
   // Own the whole tree: the sidecar's accepted connections are real pty
   // children, and killing only the parent would orphan them onto the
   // developer's machine. On POSIX that means its own process group; win32 has
-  // none, and killChildTree() knows the difference (lib/processTree.ts).
+  // none, and killChildTree() handles the difference (lib/processTree.ts).
   sidecar = spawn(process.execPath, [path.join(ROOT, "pty-server.js")], {
     cwd: ROOT,
-    // The knob, not $SHELL: this file needs A shell, not a POSIX one, and
-    // $SHELL is only the sidecar's fallback (tests/platform.ts).
+    // The CALANDRIA_PTY_SHELL knob picks the shell here; $SHELL is only the
+    // sidecar's fallback (tests/platform.ts), and this file needs a shell
+    // that actually exists.
     env: { ...process.env, PTY_PORT: String(PORT), PTY_HOST: "127.0.0.1", CALANDRIA_PTY_SHELL: TEST_SHELL },
     stdio: "ignore",
     detached: DETACHED,
   });
-  // Wait for the listener rather than sleeping a fixed amount.
+  // Poll for the listener instead of sleeping a fixed amount.
   const deadline = Date.now() + 15_000;
   for (;;) {
     const outcome = await connect("http://127.0.0.1:" + PORT);
@@ -80,26 +80,21 @@ describe("pty sidecar handshake", () => {
     expect(await connect(`http://127.0.0.1:${PORT}`)).toBe("open");
   });
 
-  // Stricter than the HTTP gate on purpose, and worth pinning because it is a
-  // deliberate asymmetry someone will otherwise "fix" later: HTTP lets an
-  // absent Origin through (curl, health probes, the MCP bridge all omit it),
-  // but /pty is an interactive shell and every browser sends Origin on a
-  // WebSocket handshake. So the only callers this turns away are non-browsers,
-  // which have no business opening a terminal.
+  // Stricter than the HTTP gate: HTTP allows an absent Origin (curl, health
+  // probes, the MCP bridge all omit it), but /pty is an interactive shell and
+  // every browser sends Origin on a WebSocket handshake, so only non-browser
+  // callers are turned away here.
   it("refuses a handshake with no Origin at all", async () => {
     expect(await connect(undefined)).toBe("rejected:401");
   });
 });
 
-/* The same wiring under Cloudflare Access, where the sidecar must apply a
- * DIFFERENT policy — see tests/localOrigin.test.ts for the rule itself.
+/* The same wiring under Cloudflare Access, where the sidecar applies a
+ * different policy: see tests/localOrigin.test.ts for the rule itself.
  *
- * We can't mint a real assertion here (that needs the team's signing keys), so
- * every handshake below is refused. What's worth pinning is WHICH check refused
- * it, because the bug this replaced was a refusal by the wrong one: the sidecar
- * applied local mode's Host allowlist, the tunnel hostname was never in it, and
- * the terminal was dead on any Access deployment with PUBLIC_BASE_URL empty.
- * So we read the sidecar's own log line.
+ * No real assertion can be minted here (that needs the team's signing keys),
+ * so every handshake below is refused. What matters is which check refused
+ * it, so each case also reads the sidecar's own log line.
  */
 describe("pty sidecar handshake under Cloudflare Access", () => {
   let accessSidecar: ChildProcess;
@@ -128,7 +123,7 @@ describe("pty sidecar handshake under Cloudflare Access", () => {
         // assertion is rejected before any JWKS fetch.
         CF_ACCESS_TEAM_DOMAIN: "example-team.cloudflareaccess.com",
         CF_ACCESS_AUD: "test-aud",
-        // Deliberately empty — the documented default, and the whole point.
+        // Empty is the documented default.
         PUBLIC_BASE_URL: "",
         CALANDRIA_ALLOWED_ORIGINS: "",
       },
@@ -154,9 +149,9 @@ describe("pty sidecar handshake under Cloudflare Access", () => {
   });
 
   it("stops rejecting the tunnel hostname for being unlisted", async () => {
-    // THE regression. Same-origin against a hostname in no allowlist now gets
-    // past the origin gate and fails on the missing assertion instead — which
-    // is the check that should be deciding in this mode.
+    // Same-origin against a hostname in no allowlist passes the origin gate
+    // and fails on the missing assertion instead, which is the check that
+    // should decide in this mode.
     const reason = await refusalReason("https://calandria.example.com", "calandria.example.com");
     expect(reason).toContain("rejected:401");
     expect(reason).toContain("no valid Access assertion");

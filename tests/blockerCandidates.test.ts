@@ -1,15 +1,13 @@
 /**
  * The "Blocked by" picker's candidate list.
  *
- * A blocker gates whether a dependent may START, and `blocks()` in
- * lib/autoStart.ts treats done AND cancelled as terminal. So offering a
- * terminal task as a blocker is offering an edge that is inert the moment it
- * is drawn — the picker leaves them out rather than showing a choice that
- * means nothing.
+ * A blocker gates whether a dependent may start, and `blocks()` in
+ * lib/autoStart.ts treats done and cancelled as terminal, so the picker
+ * excludes terminal tasks: offering one as a blocker would draw an edge
+ * that is already inert.
  *
- * The one exception is an edge that ALREADY exists: a blocker the user picked
- * while it was live and which has since finished must stay on screen, or the
- * only way to remove it would be gone.
+ * The exception is an edge that already exists: a blocker picked while
+ * live and since finished stays on screen so it can still be removed.
  */
 import { describe, it, expect } from "vitest";
 import { blockerCandidates, alphabetical, isTerminal, isBlocking, blockerTitles } from "@/app/shell/format";
@@ -17,7 +15,7 @@ import type { TaskRow } from "@/app/shell/types";
 
 const row = (id: string, title: string, status: TaskRow["status"]) =>
   ({ id, title, status }) as TaskRow;
-/** A task still sitting in the Suggested tray — nobody has agreed to do it yet. */
+/** A task still sitting in the Suggested tray, not yet accepted. */
 const sugg = (id: string, title: string, status: TaskRow["status"] = "not_started") =>
   ({ id, title, status, suggested: 1 }) as TaskRow;
 
@@ -64,10 +62,10 @@ describe("blockerCandidates", () => {
     expect(blockerCandidates([row("d", "Done thing", "done")], [])).toEqual([]);
   });
 
-  // Issue #46. A suggestion isn't a choice — waiting on work nobody has agreed
-  // to do is not something the picker should invite — but an edge already drawn
-  // onto one (an agent's `blocked_by`, which never checks `suggested`) blocks
-  // for real, so it has to be listed or it can never be removed.
+  // Issue #46. A suggestion isn't an accepted choice, so the picker excludes
+  // it by default. An edge that already points at one (an agent's
+  // `blocked_by`, which never checks `suggested`) still blocks for real, so
+  // it stays listed to remain removable.
   it("doesn't offer an unreviewed suggestion as a fresh choice", () => {
     const ids = blockerCandidates([row("n", "Marmot migration", "not_started"), sugg("s", "Proposed step")], []).map((t) => t.id);
     expect(ids).toEqual(["n"]);

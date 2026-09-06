@@ -1,36 +1,23 @@
 /* How the shell proves who it is to an instance that is behind something.
  *
- * THE SEAM. `instances.js` says WHERE a server is; this says how to be let in
- * to it. Both halves are plain data and file IO with no `electron` require, for
- * the reason supervisor.js and env-file.js are: the risky parts have to be
- * verifiable from `node desktop/test-supervisor.js` on a box with no display.
+ * `instances.js` says where a server is; this file says how to get let in.
+ * Both are plain data and file IO with no `electron` require, so this logic
+ * is testable from `node desktop/test-supervisor.js` on a box with no display.
  *
- * TWO KINDS, and neither of them is a login the window performs.
+ * Two kinds. `oauth` runs the RFC 8252 flow in oauth.js in the user's real
+ * browser and yields a bearer token, renewed from a refresh token without
+ * asking again. `header` sends a credential the user already has (an app
+ * password, a Cloudflare Access service token, a PAT) verbatim; it is the
+ * only option when the thing in front of the instance speaks no OIDC. Both
+ * produce request headers, which main.js stamps on every request the
+ * instance's session makes: page loads, SSE and WebSocket upgrades. Nothing
+ * about Calandria's own two auth modes changes; this is a client talking to
+ * whatever is in front of them.
  *
- *   `oauth`  — the RFC 8252 flow in oauth.js. The user signs in with their real
- *              browser, in one cookie jar, so a passkey or a security key works
- *              exactly as it does on the web; what comes back to the app is a
- *              bearer token, renewed from a refresh token without asking again.
- *   `header` — a credential the user already has, sent verbatim. An authentik
- *              app password, a Cloudflare Access service token's two headers, a
- *              PAT for whatever is out front. Weakest on revocation, strongest
- *              on "works this afternoon", and the only option when the thing in
- *              front of the instance speaks no OIDC.
- *
- * WHAT BOTH PRODUCE IS THE SAME THING: request headers. That is the whole of
- * how this reaches the app. A reverse proxy doing forward-auth wants a session
- * cookie OR an Authorization header, and a cookie is the one a native app
- * cannot obtain outside its own window — so the app obtains the other one and
- * main.js stamps it on every request the instance's session makes, page loads,
- * SSE and WebSocket upgrades alike. Nothing about Calandria's own two auth
- * modes changes; this is a client talking to whatever is in front of them.
- *
- * WHERE THE SECRETS LIVE. Not in instances.json. That file is documented as
- * hand-editable and is written in the clear on every change; a refresh token in
- * it would be a credential in a config file the user is invited to open. They
- * go in `credentials.json` beside it, encrypted with Electron's safeStorage
- * when the platform has a keyring to back it, and 0600 with a `plain` marker
- * and a logged line when it does not — see `saveCredentials`.
+ * Secrets never go in instances.json, which is hand-editable and written in
+ * the clear. They live in `credentials.json` beside it, encrypted with
+ * Electron's safeStorage where a keyring is available, or written 0600 with
+ * a `plain` marker and a logged line otherwise; see `saveCredentials`.
  */
 "use strict";
 
@@ -74,7 +61,7 @@ const REFUSED_HEADERS = new Set([
 const HEADER_NAME_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 /* ------------------------------------------------------------------------- *
- * The per-instance auth CONFIG — the non-secret half, saved in instances.json.
+ * The per-instance auth config: the non-secret half, saved in instances.json.
  * ------------------------------------------------------------------------- */
 
 /**
@@ -129,7 +116,7 @@ function describeAuth(auth) {
 }
 
 /* ------------------------------------------------------------------------- *
- * Header credentials — the `header` kind's secret, typed as text.
+ * Header credentials: the `header` kind's secret, typed as text.
  * ------------------------------------------------------------------------- */
 
 /**
@@ -141,8 +128,8 @@ function describeAuth(auth) {
  * `CF-Access-Client-Secret`). One field that takes both beats a form that
  * takes one and a follow-up issue for the other.
  *
- * Throws on anything it will not send, naming the line — a credential that is
- * silently dropped here surfaces as an unexplained 403 an hour later.
+ * Throws on anything it will not send, naming the line. A credential dropped
+ * here would otherwise surface as an unexplained 403 later.
  */
 function parseHeaderLines(text) {
   const headers = {};
@@ -156,7 +143,7 @@ function parseHeaderLines(text) {
     const value = trimmed.slice(at + 1).trim();
     if (!HEADER_NAME_RE.test(name)) throw new Error(`"${name}" is not a valid header name.`);
     if (REFUSED_HEADERS.has(name.toLowerCase())) {
-      throw new Error(`This app will not send a ${name} header — it is part of how the request is framed or checked.`);
+      throw new Error(`This app will not send a ${name} header: it is part of how the request is framed or checked.`);
     }
     if (!value) throw new Error(`The ${name} header has no value.`);
     // A header value is bytes on a wire. Anything that could end the line early
@@ -178,7 +165,7 @@ function formatHeaderLines(headers) {
 }
 
 /* ------------------------------------------------------------------------- *
- * Credentials — what a sign-in produced.
+ * Credentials: what a sign-in produced.
  * ------------------------------------------------------------------------- */
 
 /** Is this credential past its usable life? A credential with no expiry never is. */
@@ -242,10 +229,9 @@ function credentialsFilePath(env = process.env) {
 /**
  * A cipher that does nothing, for a platform with no keyring and for the tests.
  *
- * Named rather than implied, because `available: false` is what makes
- * `saveCredentials` write the `plain` marker and what makes main.js log that it
- * did — a fallback that looked identical to the encrypted path would be a
- * refresh token in a readable file with nothing said about it.
+ * `available: false` drives `saveCredentials` to write the `plain` marker and
+ * main.js to log it, so a refresh token stored in the clear is always flagged
+ * instead of looking like it went through the encrypted path.
  */
 const NO_CIPHER = { available: false, encrypt: null, decrypt: null };
 
@@ -268,8 +254,8 @@ function decodeEntry(entry, cipher) {
  * and an unreadable one must not stop the app, so both come back empty.
  *
  * Returns `{ path, found, credentials: Map<instanceId, credential>, plain }`,
- * where `plain` names the instances whose secrets are on disk in the clear —
- * the caller logs it, because it is a fact about the user's machine they should
+ * where `plain` names the instances whose secrets are on disk in the clear.
+ * The caller logs it, since it is a fact about the user's machine they should
  * be able to find out without reading the file.
  */
 function loadCredentials({ env = process.env, file = null, cipher = NO_CIPHER } = {}) {
@@ -300,7 +286,7 @@ function loadCredentials({ env = process.env, file = null, cipher = NO_CIPHER } 
  * refresh token is world-readable, and the rename is what publishes it.
  *
  * Encryption is best-effort by design. safeStorage needs a keyring, and there
- * are real installs without one — a headless Linux box, a session started
+ * are real installs without one: a headless Linux box, a session started
  * outside a desktop environment. Refusing to persist there would mean a browser
  * sign-in on every launch, which is exactly the friction that pushes people
  * back to leaving an instance unauthenticated. So it falls back, marks what it

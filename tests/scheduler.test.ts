@@ -33,11 +33,11 @@ describe("scheduler", () => {
   beforeEach(() => {
     started.length = 0;
     promptCheck = { ok: true };
-    // The preflight checks whether THIS schedule's agent is connected, and
-    // never falls back — every schedule in this file runs the default agent
+    // The preflight checks whether THIS schedule's agent is connected and
+    // never falls back. Every schedule in this file runs the default agent
     // ("claude"), so the hermetic test environment (tests/setup.ts strips
-    // credentials) needs an explicit connection record or every case would
-    // fall into the "agent is not connected" branch instead of exercising the
+    // credentials) needs an explicit connection record, or every case falls
+    // into the "agent is not connected" branch instead of exercising the
     // launch. Mirrors tests/agentFallback.test.ts's `connect()` helper.
     setAgentConnection("claude", { method: "subscription", email: null, plan: null });
   });
@@ -105,7 +105,7 @@ describe("scheduler", () => {
     getDb().prepare("UPDATE schedules SET next_fire_at = ? WHERE id = ?").run(Date.now() - 1_000, s.id);
     // Orphan the schedule: delete its project without cascading the delete onto
     // the schedule row itself (schedules.project_id is ON DELETE CASCADE), so
-    // fireSchedule's own `!project` guard — not the FK — is what's under test.
+    // it's fireSchedule's own `!project` guard under test, not the FK.
     getDb().pragma("foreign_keys = OFF");
     getDb().prepare("DELETE FROM projects WHERE id = ?").run(p.id);
     getDb().pragma("foreign_keys = ON");
@@ -122,8 +122,8 @@ describe("scheduler", () => {
   it("refuses to mint a doomed task when its agent is not connected, and never falls back", async () => {
     const p = await projectWithRepo();
     // "codex" is a real registered agent id, but only "claude" is connected in
-    // beforeEach — so this exercises isAgentConnected(schedule.agent) failing
-    // for THIS agent specifically, with nothing to silently fall back to.
+    // beforeEach, so this exercises isAgentConnected(schedule.agent) failing
+    // for THIS agent specifically, with no fallback.
     const s = createSchedule({
       project_id: p.id, name: "n", prompt: "go", agent: "codex",
       days_mask: 127, time_of_day: "08:30", timezone: "America/Los_Angeles",
@@ -169,17 +169,15 @@ describe("scheduler", () => {
     expect(run.status).toBe("failed");
     expect(run.detail).toContain("/jira-tasks"); // the suggestion, so it's fixable
     // Proves the check runs BEFORE minting, not just that startTurn was never
-    // called — a regression that moved this check to fire after createTask
-    // would otherwise pass this test unnoticed.
+    // called: a check that fires after createTask would still pass this test.
     expect(listTasks(p.id).filter((t) => t.schedule_id === s.id)).toHaveLength(0);
     expect(started).toHaveLength(0);
   });
 
   it("titles the minted task on the SCHEDULE's clock, not UTC", async () => {
-    // The single most visible artifact of the whole feature. toISOString() gave
-    // an 08:30 America/Los_Angeles job a task called "… — 2026-08-14 15:30",
-    // which is the feature contradicting, in its own output, the one thing it
-    // is fastidious about. Tests run on a UTC host, exactly like the container.
+    // Pins the title to the schedule's own timezone, not UTC:
+    // toISOString() would render an 08:30 America/Los_Angeles job under its
+    // UTC clock time. Tests run on a UTC host, like the container.
     const p = await projectWithRepo();
     const s = createSchedule({
       project_id: p.id, name: "Morning triage", prompt: "go",
@@ -194,17 +192,14 @@ describe("scheduler", () => {
   });
 
   it("clears lastError on a clean sweep instead of crying wolf forever", async () => {
-    // The banner said "the last scheduler tick failed" for the rest of the
-    // process's life after ONE transient failure, while every schedule kept
-    // firing correctly. An alarm that never goes off is one the user learns to
-    // scroll past — the same disease as a schedule that cries wolf every
-    // morning, which this feature explicitly refuses to have.
+    // A stale banner from one transient failure must not persist for the rest
+    // of the process's life while every schedule keeps firing correctly.
     const p = await projectWithRepo();
     const bad = createSchedule({
       project_id: p.id, name: "Broken zone", prompt: "go",
       days_mask: 127, time_of_day: "08:30", timezone: "America/Los_Angeles",
     });
-    // A timezone that no longer resolves — adjudication throws on this row and
+    // A timezone that no longer resolves: adjudication throws on this row, and
     // the sweep must survive it, named.
     getDb().prepare("UPDATE schedules SET timezone = 'Mars/Olympus', next_fire_at = ? WHERE id = ?")
       .run(Date.now() - 1_000, bad.id);
@@ -231,7 +226,7 @@ describe("scheduler", () => {
     });
     claimRun(s.id, Date.now() - 86_400_000, "scheduled");
     // Two DISTINCT due slots: both ticks below adjudicate the slot they find in
-    // next_fire_at, and the unique claim is (schedule, scheduled_for) — reusing
+    // next_fire_at, and the unique claim is (schedule, scheduled_for). Reusing
     // one instant would make the second tick collide with the skip row the
     // first one wrote, and pass this test for the wrong reason.
     getDb().prepare("UPDATE schedules SET next_fire_at = ? WHERE id = ?").run(Date.now() - 120_000, s.id);

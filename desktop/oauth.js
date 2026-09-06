@@ -1,34 +1,24 @@
 /* The OAuth half of instance sign-in: RFC 8252, run in the user's real browser.
  *
- * WHY THIS EXISTS. The shell used to sign in the only way a browser can — load
- * the origin, let whatever identity provider stands in front of it render its
- * login page in the window, and wait for the cookie. That works for a password
- * form and it does not work for a passkey. Electron has no WebAuthn
- * implementation, so an authenticator lives in the system browser's credential
- * manager or a password-manager extension, neither of which this window can
- * reach. Providers know that, so their login page HANDS OFF: it navigates the
- * SYSTEM browser to the ceremony and expects the callback to come back to the
- * session that started the flow.
+ * The window and the system browser are separate cookie jars. A login page
+ * that hands off to the system browser, which is the only way a passkey or
+ * security key can be used since Electron has no WebAuthn implementation,
+ * never delivers a usable session back to the window: the callback carries a
+ * session the state was never minted against, and the proxy rejects it. See
+ * docs/DESKTOP_APP.md §8.8.
  *
- * It does not come back to that session. The window and the browser are two
- * cookie jars, so the callback arrives carrying a session the state was never
- * minted against, and the proxy rejects it — measured against an authentik
- * forward-auth outpost as `mismatched session ID` followed by HTTP 400, and
- * then, on the retry that finally worked in the browser, a burst of requests
- * from the window that still had no cookie. Even a SUCCESSFUL browser login
- * does not reach the app. See docs/DESKTOP_APP.md §8.8.
+ * The fix is the native-app pattern the RFC was written for: the whole flow
+ * runs in the system browser, in one cookie jar, so passkeys, security keys,
+ * TOTP and conditional mediation all behave exactly as they do on the web.
+ * What comes back to the app is a token, delivered to a loopback redirect
+ * this process is listening on, and instance-auth.js turns that into the
+ * header every later request carries.
  *
- * The fix is the native-app pattern the RFC was written for: the WHOLE flow
- * happens in the system browser, in one cookie jar, so passkeys, security keys,
- * TOTP and conditional mediation all behave exactly as they do on the web. What
- * comes back to the app is not a cookie but a token, delivered to a loopback
- * redirect this process is listening on, and instance-auth.js turns that into
- * the header every later request carries.
- *
- * NO ELECTRON HERE, and no `fetch` of its own — the caller injects one, which
- * is how main.js makes these requests through the INSTANCE'S session (its proxy
- * settings and its TLS trust store) while `node desktop/test-supervisor.js`
- * drives the same code against a stub on a box with no display.
+ * No Electron here, and no `fetch` of its own: the caller injects one, which
+ * is how main.js makes these requests through the instance's own session
+ * (its proxy settings and TLS trust store) while
+ * `node desktop/test-supervisor.js` drives the same code against a stub on a
+ * box with no display.
  */
 "use strict";
 
@@ -57,7 +47,7 @@ function base64url(buf) {
  * Not optional and not configurable. A public client has no secret, so the
  * authorization code is the whole credential in flight, and the loopback
  * redirect it comes back to is reachable by every other process on this
- * machine. PKCE is what makes an intercepted code useless.
+ * machine. PKCE makes an intercepted code useless.
  */
 function createPkce(randomBytes = crypto.randomBytes) {
   const verifier = base64url(randomBytes(32));
@@ -65,7 +55,7 @@ function createPkce(randomBytes = crypto.randomBytes) {
   return { verifier, challenge, method: "S256" };
 }
 
-/** The `state` parameter — CSRF protection for the callback, compared constant-time. */
+/** The `state` parameter: CSRF protection for the callback, compared constant-time. */
 function createState(randomBytes = crypto.randomBytes) {
   return base64url(randomBytes(16));
 }
@@ -85,8 +75,8 @@ function secretEquals(a, b) {
  * providers print on their own application page and re-deriving it from the
  * issuer would be a second chance to get it wrong. Anything else is an issuer
  * and gets the well-known path appended, which is the OIDC Discovery rule and
- * what authentik, Keycloak, Okta and Auth0 all serve — deliberately NOT RFC
- * 8414's insert-before-the-path form, which none of them answer on.
+ * what authentik, Keycloak, Okta and Auth0 all serve, not RFC 8414's
+ * insert-before-the-path form, which none of them answer on.
  */
 function discoveryUrl(issuer) {
   const raw = String(issuer ?? "").trim();
@@ -115,7 +105,7 @@ async function readJson(res) {
   try {
     return JSON.parse(text);
   } catch {
-    // A login page, an error page, an nginx default — anything but the document
+    // A login page, an error page, an nginx default: anything but the document
     // asked for. Quoting the first line of it beats "unexpected token <".
     const head = text.trim().split("\n")[0]?.slice(0, 120) || "an empty body";
     throw new Error(`answered with something that is not JSON (${head})`);
@@ -175,9 +165,9 @@ async function discover(issuer, { fetchImpl = globalThis.fetch, timeoutMs = DEFA
 /**
  * The URL to open in the user's browser.
  *
- * `prompt` is deliberately absent: whether to re-prompt is the provider's
- * policy, and forcing it would make every launch a fresh passkey ceremony on
- * an instance whose session is still good.
+ * `prompt` is omitted: whether to re-prompt is the provider's policy, and
+ * forcing it would make every launch a fresh passkey ceremony on an instance
+ * whose session is still good.
  */
 function authorizeUrl({ authorizationEndpoint, clientId, redirectUri, scope, state, challenge, audience }) {
   const u = new URL(authorizationEndpoint);
@@ -211,7 +201,7 @@ function parseCallback(query, expectedState) {
   const error = params.get("error");
   if (error) {
     const detail = params.get("error_description") || params.get("error_uri") || "";
-    throw new Error(`The identity provider refused the sign-in: ${error}${detail ? ` — ${detail}` : ""}`);
+    throw new Error(`The identity provider refused the sign-in: ${error}${detail ? `: ${detail}` : ""}`);
   }
   const code = params.get("code");
   if (!code) throw new Error("The sign-in came back without an authorization code.");
@@ -242,7 +232,7 @@ async function tokenRequest(tokenEndpoint, params, { fetchImpl = globalThis.fetc
     // RFC 6749 §5.2 gives an error body even on a 400, and it is the only thing
     // that says WHICH of the six things was wrong.
     const code = doc?.error ? String(doc.error) : `HTTP ${res.status}`;
-    const detail = doc?.error_description ? ` — ${doc.error_description}` : "";
+    const detail = doc?.error_description ? `: ${doc.error_description}` : "";
     throw new Error(`The token endpoint refused the request: ${code}${detail}`);
   }
   return doc;
@@ -313,12 +303,12 @@ h1{font-size:17px;font-weight:600;margin:0}p{color:#8b939c;font-size:13px;margin
  * `port` is the escape hatch for a provider that insists on an exact redirect
  * URI rather than a pattern.
  *
- * ONE-SHOT, and narrow on purpose. It answers one path, only GET, only from a
- * loopback peer, and it stops the moment it has an answer — this is a hole in
- * the local machine's port space that holds an authorization code, so the
- * window in which it exists is the security property. The `state` check in
- * `parseCallback` is what makes a request from another local process useless;
- * this is what makes the window short.
+ * One-shot and narrow: it answers one path, only GET, only from a loopback
+ * peer, and it stops the moment it has an answer. This is a hole in the local
+ * machine's port space that holds an authorization code, so the window in
+ * which it exists is the security property; the `state` check in
+ * `parseCallback` covers a guessed port, and closing immediately keeps that
+ * window short.
  */
 class LoopbackReceiver {
   constructor({ port = 0, path = "/callback", timeoutMs = DEFAULT_LOGIN_TIMEOUT_MS } = {}) {

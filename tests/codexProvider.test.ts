@@ -51,10 +51,10 @@ describe("codexProviderConfig", () => {
   });
 });
 
-// The gateway half (docs/design/litellm.md, "Codex driver"). A LiteLLM proxy is
-// the same Responses-wire mapping with three additions — a key the CLI reads
-// from a named variable, the tag header LiteLLM attributes spend by, and an id
-// of its own so a verdict earned against a local endpoint can't cover it.
+// The gateway half (docs/AGENTS.md, "Codex driver"). A LiteLLM proxy is the
+// same Responses-wire mapping with three additions: a key the CLI reads from
+// a named variable, the tag header LiteLLM attributes spend by, and an id of
+// its own so a verdict earned against a local endpoint cannot cover it.
 
 const GATEWAY = "http://gw.example:4000";
 
@@ -77,7 +77,7 @@ describe("codexProviderConfig through the gateway", () => {
     });
   });
 
-  it("names the key VARIABLE rather than carrying its value — the documented Codex footgun", () => {
+  it("names the key VARIABLE rather than carrying its value, the documented Codex footgun", () => {
     const out = codexProviderConfig({ OPENAI_BASE_URL: `${GATEWAY}/v1`, CALANDRIA_GATEWAY_KEY: "sk-secret" }, GATEWAY);
     const entry = entryOf(out, CODEX_GATEWAY_PROVIDER_ID);
     expect(entry.env_key).toBe("CALANDRIA_GATEWAY_KEY");
@@ -129,7 +129,7 @@ describe("agentTurnEnv gateway key injection for Codex", () => {
     expect(entry.http_headers).toEqual({ "x-litellm-tags": "calandria,project:p1,task:t1,agent:codex" });
   });
 
-  it("keys Codex in both billing modes — `requires_openai_auth` is deliberately unimplemented", () => {
+  it("keys Codex in both billing modes: `requires_openai_auth` is not implemented", () => {
     const env = agentTurnEnv(
       { ...gatewayProject("subscription"), id: "p1" },
       { agent_env: "", id: "t1", agent: "codex" },

@@ -1,4 +1,4 @@
-// Codex / ChatGPT plan usage — the Codex half of the titlebar session/week
+// Codex / ChatGPT plan usage: the Codex half of the titlebar session/week
 // meter, the same PlanUsageSnapshot the Claude driver serves.
 //
 // The Claude side (lib/agents/claude/planUsage.ts) gets most of its freshness
@@ -6,34 +6,30 @@
 // Codex has that half too now, but only on the app-server transport: while a
 // turn runs, the server pushes `account/rateLimits/updated` carrying the same
 // `RateLimitSnapshot` this file otherwise spawns a process to ask for, and
-// ./appServerTurn.ts hands it to `ingestRateLimits` below. That leaves the
-// active read as the floor for an instance with no turn running rather than
-// the only source.
+// ./appServerTurn.ts hands it to `ingestRateLimits` below. The active read
+// still covers an instance with no turn running; a live turn keeps the
+// snapshot fresher through that push.
 //
-// It is NOT available on the exec transport, which is why the active read
-// stays. VERIFIED against codex-cli 0.146.0 / @openai/codex-sdk 0.146.0, since
-// this is exactly the kind of assumption that reads fine and then meters
-// nothing:
+// It is not available on the exec transport, which is why the active read
+// stays, for the reasons below:
 //
-//   * The SDK's `ThreadEvent` union is CLOSED at eight members and carries no
+//   * The SDK's `ThreadEvent` union is closed at eight members and carries no
 //     rate-limit data (dist/index.d.ts). `turn.completed.usage` is token counts
-//     only — input/cached_input/cache_write/output/reasoning — which is what
+//     only (input/cached_input/cache_write/output/reasoning), which is what
 //     ./usage.ts already bills against.
-//   * That is the CLI's doing, not the SDK's: `dist/index.js` JSON.parses and
-//     yields every line unfiltered, and the exec JSONL serializer's own field
-//     table in the shipped binary lists its whole vocabulary —
-//     `thread.started turn.started turn.completed turn.failed item.started
-//     item.updated item.completed` — with no `token_count` and no
-//     `rate_limits` anywhere in it. Older codex builds emitted a legacy
-//     `token_count` event carrying `rate_limits`; 0.146.0's dotted exec
-//     protocol does not.
+//   * That is the CLI's doing, not the SDK's: the exec JSONL serializer's own
+//     field table lists its whole vocabulary (`thread.started turn.started
+//     turn.completed turn.failed item.started item.updated item.completed`)
+//     with no `token_count` and no `rate_limits` anywhere in it. Older codex
+//     builds emitted a legacy `token_count` event carrying `rate_limits`; the
+//     current dotted exec protocol does not.
 //   * Nor is it cached anywhere on disk to read passively: the CLI's rollout
 //     transcripts under `$CODEX_HOME/sessions` record `session_meta` /
 //     `event_msg` / `response_item` / `world_state` / `turn_context` and no
 //     rate-limit entry, and `state_5.sqlite` holds threads, not limits.
 //
-// So the ACTIVE read remains, floored the same way Claude's usage endpoint is:
-// `codex app-server`'s `account/rateLimits/read` (./appServer.ts, where the
+// So this half is an active read, floored the same way Claude's usage endpoint
+// is: `codex app-server`'s `account/rateLimits/read` (./appServer.ts, where the
 // verified handshake is transcribed). Field names come from the CLI's own
 // generated schema (`codex app-server generate-json-schema`), which is camelCase
 // and differs from the snake_case legacy event shape: a `RateLimitSnapshot` of
@@ -42,7 +38,7 @@
 //
 // Instance-wide on globalThis for the same reasons as the Claude side: one
 // ChatGPT login per instance means one snapshot, shared by every route chunk
-// and surviving dev HMR. No credential is ever read or forwarded here — the
+// and surviving dev HMR. No credential is ever read or forwarded here; the
 // CLI holds the login and answers about it.
 
 import fs from "node:fs";
@@ -54,15 +50,16 @@ import { hasOpenAiKey } from "../../openai-key";
 import { readAccountRateLimits } from "./appServer";
 
 // After a failed read, wait at least this long before spawning another
-// app-server — separate from the success floor so a broken CLI isn't respawned
-// at the poll rate, but recovery doesn't wait out a full success interval.
+// app-server. Kept separate from the success floor so a broken CLI isn't
+// respawned at the poll rate, but recovery doesn't wait out a full success
+// interval.
 const ERROR_BACKOFF_MS = 60_000;
 
 interface Fetched {
   at: number;
   windows: PlanUsageWindow[];
   plan: string | null;
-  /** The account is currently OVER a limit (rateLimitReachedType/spendControl). */
+  /** The account is currently over a limit (rateLimitReachedType/spendControl). */
   reached: boolean;
 }
 
@@ -85,14 +82,14 @@ function state(): State {
   return global.__calandriaCodexPlanUsage;
 }
 
-/** Tests only — the state is process-global and tests must not share it. */
+/** Tests only: the state is process-global and tests must not share it. */
 export function resetCodexPlanUsageStateForTests(): void {
   global.__calandriaCodexPlanUsage = undefined;
 }
 
 // `resetsAt` is an int64 with no unit in the schema; the neighbouring reset-credit
 // fields are documented as "Unix timestamp in seconds", so treat it as seconds
-// while tolerating milliseconds — the same heuristic the Claude side uses.
+// while tolerating milliseconds, the same heuristic the Claude side uses.
 function toEpochMs(v: unknown): number | null {
   if (typeof v === "number" && Number.isFinite(v)) return v > 1e12 ? v : v * 1000;
   return null;
@@ -100,8 +97,8 @@ function toEpochMs(v: unknown): number | null {
 
 const clampPct = (n: number) => Math.max(0, Math.min(100, n));
 
-// The app-server names its windows by RANK (which limit binds first), not by
-// duration, so the label states the duration it actually reported rather than
+// The app-server names its windows by rank (which limit binds first), not by
+// duration, so the label states the duration it actually reported instead of
 // assuming the plan's shape. In practice primary is the ~5h session and
 // secondary the week, which is what the ids are matched on client-side.
 function windowLabel(kind: "primary" | "secondary", mins: number | null): string {
@@ -121,13 +118,13 @@ function windowFrom(kind: "primary" | "secondary", raw: unknown): PlanUsageWindo
 }
 
 /**
- * `GetAccountRateLimitsResponse` → the rows the meter renders. The response
- * wraps the snapshot in `rateLimits` (the schema's "backward-compatible
+ * `GetAccountRateLimitsResponse` mapped to the rows the meter renders. The
+ * response wraps the snapshot in `rateLimits` (the schema's "backward-compatible
  * single-bucket view"); a bare snapshot is accepted too, so a future protocol
- * that hands one over directly still meters instead of silently showing
- * nothing. `rateLimitsByLimitId` is deliberately ignored: the multi-bucket
- * view is the same numbers keyed by metered limit, and one plan's meter should
- * not fan out into a row per bucket.
+ * that hands one over directly still meters instead of showing nothing.
+ * `rateLimitsByLimitId` is ignored: the multi-bucket view is the same numbers
+ * keyed by metered limit, and one plan's meter should not fan out into a row
+ * per bucket.
  */
 export function parseRateLimits(result: unknown): Fetched | null {
   if (!result || typeof result !== "object") return null;
@@ -136,8 +133,8 @@ export function parseRateLimits(result: unknown): Fetched | null {
   const snap = raw as { primary?: unknown; secondary?: unknown; planType?: unknown; rateLimitReachedType?: unknown; spendControlReached?: unknown };
 
   const windows = [windowFrom("primary", snap.primary), windowFrom("secondary", snap.secondary)].filter((w): w is PlanUsageWindow => w != null);
-  // "unknown" is the schema's own placeholder for "we couldn't tell", which is
-  // not a plan name worth printing in the popover title.
+  // "unknown" is the schema's own placeholder for an indeterminate plan, and
+  // isn't worth printing in the popover title.
   const plan = typeof snap.planType === "string" && snap.planType && snap.planType !== "unknown" ? snap.planType : null;
   const reached = typeof snap.rateLimitReachedType === "string" && !!snap.rateLimitReachedType ? true : snap.spendControlReached === true;
   return { at: Date.now(), windows, plan, reached };
@@ -147,14 +144,14 @@ export function parseRateLimits(result: unknown): Fetched | null {
  * The passive half: a `RateLimitSnapshot` pushed by a running app-server turn
  * (`account/rateLimits/updated`), adopted as the cache the meter reads. The
  * notification's params and a bare snapshot both parse, since `parseRateLimits`
- * accepts either shape — the wire form belongs to the CLI, and a protocol that
- * stops wrapping should keep metering rather than silently stop.
+ * accepts either shape: the wire form belongs to the CLI, and a protocol
+ * change that stops wrapping the snapshot should still keep metering working.
  *
- * This is the same write `refresh()` makes, deliberately: a snapshot that
- * arrived for free is not worth less than one we paid a process for, so it
- * clears the error and the backoff too, and it stamps `at`, which is what makes
- * `getCodexPlanUsage()` below skip the active read while it stays fresh.
- * Returns whether anything landed.
+ * This makes the same write `refresh()` makes: a snapshot that arrived for
+ * free is worth the same as one fetched by a paid process call, so it clears
+ * the error and the backoff too, and stamps `at`, which lets
+ * `getCodexPlanUsage()` below skip the active read while the cache stays
+ * fresh. Returns whether anything landed.
  */
 export function ingestRateLimits(snapshot: unknown): boolean {
   if (!PLAN_USAGE_ENABLED) return false;
@@ -169,9 +166,9 @@ export function ingestRateLimits(snapshot: unknown): boolean {
 
 // Is there a ChatGPT login to meter at all? Cheap fs check so an instance that
 // never connected Codex doesn't spawn an app-server every fetch interval
-// forever. Deliberately PERMISSIVE about the file's contents — an auth.json
-// whose shape we don't recognize proceeds to the RPC, which is the authority
-// and answers "authentication required" for itself.
+// forever. Permissive about the file's contents: an auth.json whose shape
+// isn't recognized still proceeds to the RPC, which is the authority and
+// answers "authentication required" for itself.
 function hasChatgptLogin(): boolean {
   const dir = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
   try {
@@ -180,7 +177,7 @@ function hasChatgptLogin(): boolean {
     if ("tokens" in raw) return !!(raw as { tokens?: unknown }).tokens;
     return true;
   } catch {
-    // No file (never logged in) or unreadable JSON — nothing to meter.
+    // No file (never logged in) or unreadable JSON: nothing to meter.
     return false;
   }
 }
@@ -208,12 +205,12 @@ async function refresh(): Promise<void> {
  * Current Codex plan usage, re-reading only when the floor and backoff allow.
  * Returns null when the feature is off, when an OpenAI API key is what the
  * codex children actually bill (no plan to meter), or when there is no ChatGPT
- * login at all — the UI then shows no Codex pill.
+ * login at all; the UI then shows no Codex pill.
  */
 export async function getCodexPlanUsage(): Promise<PlanUsageSnapshot | null> {
   if (!PLAN_USAGE_ENABLED) return null;
-  // Key check BEFORE the login file, matching codexStatus's precedence: a key
-  // in the env is what the codex children bill whatever ~/.codex says (issue #4).
+  // Key check before the login file, matching codexStatus's precedence: a key
+  // in the env is what the codex children bill whatever ~/.codex says.
   if (hasOpenAiKey()) return null;
 
   const st = state();
@@ -237,8 +234,8 @@ export async function getCodexPlanUsage(): Promise<PlanUsageSnapshot | null> {
   const f = st.fetched;
   const windows = (f?.windows ?? []).map((w) => ({ ...w }));
   // The status trio comes from the same snapshot as the windows, whichever way
-  // it arrived: `rateLimitReachedType` says A limit is reached but not WHICH,
-  // so the fullest window is named — it is
+  // it arrived: `rateLimitReachedType` says a limit is reached but not which,
+  // so the fullest window is named. It is
   // the one that reset unblocks, and the only one whose reset time is worth
   // offering as "turns resume at".
   const binding = f?.reached ? windows.reduce<PlanUsageWindow | null>((a, b) => (a && a.utilization >= b.utilization ? a : b), null) : null;

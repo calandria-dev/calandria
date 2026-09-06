@@ -1,6 +1,6 @@
 // The client-side half of tool_output_delta: growing a running command's peek
 // one fragment at a time. Pure, so it is tested here rather than in the
-// browser — what the e2e proves is that the row on screen actually grows.
+// browser. The e2e proves that the row on screen actually grows.
 import { describe, it, expect } from "vitest";
 import { growOutputPeek, LIVE_OUTPUT_LINES, LIVE_OUTPUT_LINE_CHARS } from "@/app/shell/format";
 import type { ToolPeek } from "@/lib/types";

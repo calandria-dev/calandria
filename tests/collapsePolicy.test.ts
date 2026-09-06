@@ -8,7 +8,7 @@ const AT_1440: ShedSet = NOTHING_SHED;
 const AT_1024: ShedSet = { proj: true, task: true, rail: false };
 const AT_800: ShedSet = { proj: true, task: true, rail: true };
 
-describe("collapsePolicy — an override is good at the shed set it was granted under", () => {
+describe("collapsePolicy: an override is good at the shed set it was granted under", () => {
   it("sheds what the width implies, and a spine click reopens it there", () => {
     const p = applyShed(INITIAL_POLICY, AT_1024);
     expect(isCollapsed(p, "proj", false)).toBe(true);
@@ -27,8 +27,8 @@ describe("collapsePolicy — an override is good at the shed set it was granted 
 
   it("leaving the width and coming back forgets the override, even when nothing rendered in between", () => {
     // 1024 → reopen both → 1440 → 1024, applied back to back the way two
-    // matchMedia change events land in one batch. The effect-based version
-    // needed a commit at 1440 to notice the change; this needs nothing.
+    // matchMedia change events land in one batch. No commit at 1440 is needed
+    // to notice the change.
     let p = applyShed(INITIAL_POLICY, AT_1024);
     p = applyOverride(applyOverride(p, "proj", true), "task", true);
     p = applyShed(applyShed(p, AT_1440), AT_1024);
@@ -37,7 +37,7 @@ describe("collapsePolicy — an override is good at the shed set it was granted 
     expect(p.reopened).toEqual({});
   });
 
-  it("narrowing further drops the override too — the shed set is different", () => {
+  it("narrowing further drops the override too, since the shed set is different", () => {
     let p = applyOverride(applyShed(INITIAL_POLICY, AT_1024), "proj", true);
     p = applyShed(p, AT_800);
     expect(isCollapsed(p, "proj", false)).toBe(true);

@@ -12,9 +12,9 @@ export const dynamic = "force-dynamic";
 // The Web Push subscription surface behind Settings → Notifications. Plain
 // same-origin credentialed fetches from the app (and from the service worker's
 // pushsubscriptionchange re-post), so they pass middleware's gate the way every
-// other /api call does — under Cloudflare Access the session cookie rides along,
-// and the Origin header matches Host. No service-token path: nothing outside
-// the browser ever calls these.
+// other /api call does: under Cloudflare Access the session cookie rides
+// along, and the Origin header matches Host. No service-token path: nothing
+// outside the browser ever calls these.
 
 /** The VAPID public key the browser subscribes under, plus every known device. */
 export async function GET() {
@@ -52,7 +52,7 @@ export async function POST(req: Request) {
   });
 }
 
-/** Forget this browser's subscription (by endpoint — the browser knows no id). */
+/** Forget this browser's subscription (by endpoint, since the browser knows no id). */
 export async function DELETE(req: Request) {
   return jsonGuard("push/unsubscribe", async () => {
     const body = (await req.json().catch(() => null)) as { endpoint?: unknown } | null;

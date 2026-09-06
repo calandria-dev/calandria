@@ -1,20 +1,16 @@
 // Which MCP servers a Codex run mounts.
 //
 // The Claude driver inherits the user's own MCP servers (settingSources in
-// lib/agents/claude/driver.ts). Codex inherits them too, and by a different
-// mechanism: the @openai/codex-sdk `config` object is flattened into LEAF-level
-// `--config mcp_servers.calandria.command="…"` overrides, and the codex CLI
-// merges those into ~/.codex/config.toml rather than replacing the table. So the
-// user's servers arrive whether we ask for them or not, and Calandria mounts
-// them by default (CODEX_INHERIT_MCP in lib/config.ts).
+// lib/agents/claude/driver.ts). Codex inherits them too, by a different
+// mechanism: the @openai/codex-sdk `config` object is flattened into
+// leaf-level `--config mcp_servers.calandria.command="…"` overrides, and the
+// codex CLI merges those into ~/.codex/config.toml rather than replacing the
+// table. So the user's servers arrive whether we ask for them or not, and
+// Calandria mounts them by default (CODEX_INHERIT_MCP in lib/config.ts).
 //
-// An earlier version of this driver unmounted every inherited server by
-// default, on the belief that `codex exec` had no approver and so every MCP
-// tool call came back as `user cancelled MCP tool call` (observed once on
-// codex-cli 0.146.0 with a probe server). That belief was wrong as a default:
-// Codex tasks do call inherited tools. The disable path is kept as an OPT-OUT
-// (CODEX_INHERIT_MCP=0) for a user whose servers should stay off the task, and
-// "Agent MCP inheritance" in lib/agents/CLAUDE.md is the product-level
+// Codex tasks do call inherited tools, so the disable path is kept as an
+// opt-out (CODEX_INHERIT_MCP=0) for a user whose servers should stay off the
+// task. "Agent MCP inheritance" in lib/agents/CLAUDE.md is the product-level
 // statement.
 //
 // A disable override is not just `enabled = false`. Codex validates every
@@ -30,7 +26,7 @@
 // The binary itself is resolved by ./bin.ts rather than spawned as a bare
 // "codex": that name resolves nowhere on native Windows, where npm installs a
 // `codex.cmd` shim, and the best-effort contract below would have turned that
-// into a permanent silent regression.
+// into a permanent regression with nothing logged to catch it.
 //
 // SDK-free on purpose (child_process + config only) so it can be unit-tested
 // without @openai/codex-sdk.
@@ -42,9 +38,9 @@ import { codexSpawn } from "./bin";
 
 const run = promisify(execFile);
 
-// The name our own bridge is mounted under. Never disabled, and never treated
-// as an inherited server even if the user happens to have one by that name —
-// our leaf overrides would land on top of theirs either way.
+// The name the bridge is mounted under. Never disabled, and never treated as
+// an inherited server even if the user happens to have one by that name: the
+// leaf overrides land on top of theirs either way.
 export const CALANDRIA_SERVER = "calandria";
 
 // The inert transports a disabled override carries. Neither resolves: the
@@ -57,7 +53,7 @@ export const DISABLED_HTTP_URL = "https://mcp-disabled.invalid";
 // One segment of a `--config` dotted path is a TOML bare key. The SDK builds
 // those paths by string concatenation with no quoting, so a server named
 // `foo.bar` or `foo bar` would address the wrong table (or fail to parse).
-// Rather than emit a broken override we skip such a name — it stays mounted,
+// Rather than emit a broken override such a name is skipped; it stays mounted,
 // which is exactly the pre-existing behavior, and is vanishingly rare.
 const BARE_KEY = /^[A-Za-z0-9_-]+$/;
 
@@ -66,7 +62,7 @@ export type McpTransportType = "stdio" | "streamable_http";
 
 /**
  * What this module keeps from a `codex mcp list --json` entry: the name and
- * the transport KIND, nothing else. The command, args, env, cwd, URL, headers
+ * the transport kind, nothing else. The command, args, env, cwd, URL, headers
  * and bearer-token variable the CLI also prints are dropped at parse time so
  * they can never reach an override.
  */
@@ -89,7 +85,7 @@ export type DisabledMcpServer =
  * runs for minutes.
  *
  * Best-effort by contract: any failure (CLI missing, malformed JSON, timeout)
- * degrades to an empty list, which leaves the user's servers mounted — the
+ * degrades to an empty list, which leaves the user's servers mounted: the
  * default, never a failed turn.
  */
 export async function listUserMcpServers(): Promise<UserMcpServer[]> {
@@ -103,7 +99,7 @@ export async function listUserMcpServers(): Promise<UserMcpServer[]> {
     return parseMcpList(stdout);
   } catch (e) {
     // ENOENT here just means codex isn't installed, which the auth surface
-    // already reports far more usefully; anything else is worth a line.
+    // already reports more usefully; anything else is worth a line.
     if ((e as { code?: string }).code !== "ENOENT") {
       console.warn(`[codex] could not enumerate MCP servers, leaving the user's mounted: ${(e as Error).message}`);
     }

@@ -3,9 +3,9 @@
  * Split out of instances.js when instance-auth.js needed it too: that module
  * holds `normalizeAuth`, which instances.js calls on every load, and it writes
  * `credentials.json` NEXT TO `instances.json`, which means it needs this. Left
- * where it was, the two files would require each other in a cycle — which Node
- * tolerates by handing one of them a half-built exports object, and which is a
- * genuinely awful bug to find later.
+ * where it was, the two files would require each other in a cycle, which Node
+ * tolerates by handing one of them a half-built exports object: a genuinely
+ * awful bug to find later.
  *
  * `instances.js` re-exports `instancesFilePath` unchanged, so nothing that
  * imports it has to know this file exists.

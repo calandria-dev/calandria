@@ -14,12 +14,11 @@ import {
 import { subscribeGlobal, type BusEvent } from "@/lib/events";
 import { claimTurn, unregisterTurn } from "@/lib/abort";
 
-// Moving a task between projects: the one path that changes project_id after
-// creation. A task's project used to be fixed, so a misfiled task meant delete
-// + recreate — losing its transcript. What the move has to get right: refuse
-// once the task owns a worktree (it was cut from the OLD project's repo),
-// renumber the per-project position, reconcile the values inherited from the
-// old project, and clear the dependency edges that can't span projects.
+// Moving a task between projects changes project_id after creation. The move
+// must refuse once the task owns a worktree, since it was cut from the old
+// project's repo, renumber the per-project position, reconcile values
+// inherited from the old project, and clear dependency edges that can't span
+// projects.
 
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 
@@ -44,19 +43,20 @@ describe("moveTask (store)", () => {
     const { task: moved } = moveTask(task.id, to.id);
 
     expect(moved.project_id).toBe(to.id);
-    // Position is per-project (MAX+1 within the project) — a stale 0 would
-    // collide with the destination's first task. It isn't a render order any
-    // more (listTasks sorts by recency), but it stays per-project.
+    // Position is per-project (MAX+1 within the project); a stale 0 would
+    // collide with the destination's first task. listTasks sorts by recency,
+    // so position no longer drives render order, but it still counts up per
+    // project.
     expect(moved.position).toBe(2);
     // Membership only: the tray's order is recency (tests/taskOrder.test.ts
     // owns that), and every row here is written within the same millisecond,
-    // so asserting a sequence would pin the machine's speed rather than the
-    // move.
+    // so asserting a sequence would pin the machine's speed instead of the
+    // move behavior.
     expect(listTasks(to.id).map((t) => t.title).sort()).toEqual(["Already here", "Also here", "Misfiled"]);
     expect(listTasks(from.id)).toEqual([]);
   });
 
-  it("keeps the transcript-bearing row itself — same id, title, description", () => {
+  it("keeps the transcript-bearing row itself, with the same id, title and description", () => {
     const { to, task } = pair("Identity");
     updateTask(task.id, { description: "the whole point of moving instead of recreating" });
 
@@ -66,7 +66,7 @@ describe("moveTask (store)", () => {
     expect(moved.description).toBe("the whole point of moving instead of recreating");
   });
 
-  it("refuses a started task — its worktree belongs to the old project's repo", () => {
+  it("refuses a started task, since its worktree belongs to the old project's repo", () => {
     const { from, to, task } = pair("Started");
     updateTask(task.id, { started: 1 });
 
@@ -112,7 +112,7 @@ describe("moveTask dependencies", () => {
     const result = moveTask(task.id, to.id);
 
     // Edges can't span projects (setTaskDeps enforces it), and nothing else
-    // revalidates them — so the move clears every edge touching this task.
+    // revalidates them, so the move clears every edge touching this task.
     expect(result.dropped_blockers).toEqual([blocker.id]);
     expect(result.dropped_dependents).toEqual([dependent.id]);
     expect(getTaskDeps(task.id)).toEqual([]);
@@ -133,7 +133,7 @@ describe("moveTask dependencies", () => {
     expect(getTaskDeps(b.id)).toEqual([a.id]);
   });
 
-  it("clears auto_start on both sides — a blocker-less task can never auto-start", () => {
+  it("clears auto_start on both sides, since a blocker-less task can never auto-start", () => {
     const { from, to, task } = pair("Autostart");
     const blocker = createTask({ project_id: from.id, title: "Blocker" });
     const dependent = createTask({ project_id: from.id, title: "Dependent" });
@@ -144,8 +144,8 @@ describe("moveTask dependencies", () => {
 
     moveTask(task.id, to.id);
 
-    // lib/autoStart.ts only ever selects through task_dependencies, so an
-    // opt-in with no blockers left is a flag that can never fire.
+    // lib/autoStart.ts selects only through task_dependencies, so an opt-in
+    // with no blockers left is a flag that can never fire.
     expect(getTask(task.id)?.auto_start).toBe(0);
     expect(getTask(dependent.id)?.auto_start).toBe(0);
   });
@@ -192,8 +192,8 @@ describe("moveTask inherited settings", () => {
 
     const { task: moved } = moveTask(task.id, to.id);
 
-    // It differs from the source project's default, so it reads as a choice —
-    // and the run controls that go with it survive.
+    // It differs from the source project's default, so it reads as an
+    // explicit choice, and the run controls that go with it survive.
     expect(moved.agent).toBe("codex");
     expect(moved.reasoning).toBe("high");
   });
@@ -206,20 +206,20 @@ describe("moveTask inherited settings", () => {
     const explicit = createTask({ project_id: from.id, title: "Explicit ctx", send_context: false });
 
     expect(moveTask(inherited.id, to.id).task.send_context).toBe(0);
-    // 0 while the source project says 1 — an opt-out the user must have made,
+    // 0 while the source project says 1, an opt-out the user must have made,
     // so it survives even though the destination would have derived the same.
     expect(moveTask(explicit.id, to.id).task.send_context).toBe(0);
   });
 
-  it("re-derives a value once it matches its project's default — the guess is a guess", () => {
+  it("re-derives a value once it matches its project's default, since the guess is only a guess", () => {
     const off = createProject({ name: "Ctx off" });
     const on = createProject({ name: "Ctx on" });
     updateProject(off.id, { send_context: 0 });
     // Opted out inside a project that defaults to opted out: the column can no
     // longer say whether the user chose it. Moving into a send_context=1
-    // project reads it as inherited and flips it. This is the acknowledged
-    // limit of deriving provenance from a single bit — the UI previews the
-    // outcome before the move, and the task-level toggle undoes it.
+    // project reads it as inherited and flips it. This is a limit of deriving
+    // provenance from a single bit; the UI previews the outcome before the
+    // move, and the task-level toggle undoes it.
     const task = createTask({ project_id: off.id, title: "Ambiguous", send_context: false });
 
     expect(moveTask(task.id, on.id).task.send_context).toBe(1);
@@ -249,8 +249,8 @@ describe("POST /api/tasks/[id]/move", () => {
     } finally {
       unsub();
     }
-    // One shape on the wire for one task and for eleven — a single move is just
-    // the batch event with one-element lists (see tests/taskMoveBulk.test.ts).
+    // One shape on the wire for one task and for eleven: a single move is the
+    // batch event with one-element lists (see tests/taskMoveBulk.test.ts).
     expect(seen).toEqual([[task.id, { type: "tasks_moved", taskIds: [task.id], fromProjectIds: [from.id], toProjectId: to.id }]]);
   });
 
@@ -265,7 +265,7 @@ describe("POST /api/tasks/[id]/move", () => {
     expect(getTask(task.id)?.project_id).toBe(from.id);
   });
 
-  it("409s while a turn is claimed — the launch path claims before it locks", async () => {
+  it("409s while a turn is claimed, since the launch path claims before it locks", async () => {
     const { from, to, task } = pair("Route claimed");
     // POST /messages claims the turn slot before taking the task lock, so the
     // row still reads running=0 while a launch is in flight.

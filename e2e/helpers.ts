@@ -1,6 +1,6 @@
 // Shared helpers for the e2e specs. API-level setup (projects, tasks, turns)
-// goes through the same REST routes the UI uses — helpers exist so a spec that
-// is ABOUT merging doesn't have to click through onboarding + project + task
+// goes through the same REST routes the UI uses, so a spec that is about
+// merging doesn't have to click through onboarding, project creation and task
 // creation first; those flows get their own UI-driven specs.
 
 import { execFileSync } from "node:child_process";
@@ -12,7 +12,7 @@ import { FIXTURES_DIR, GIT_ENV } from "./env";
 /**
  * Open the app with the optional first-run nudges pre-dismissed (the "Add
  * another agent" and welcome-coach modals scrim the whole UI and would
- * intercept every click). Onboarding itself is NOT bypassed here — 01-onboarding
+ * intercept every click). Onboarding itself is not bypassed here: 01-onboarding
  * covers the wizard; everything else calls ensureOnboarded() in beforeAll.
  */
 export async function gotoApp(page: Page): Promise<void> {
@@ -51,7 +51,7 @@ export function makeFixtureRepo(name: string): string {
 /**
  * Make sure the instance is past first-run: mock agent verified (persists the
  * connection record) and onboarding marked complete (adopts mock as the app's
- * default agent). Idempotent — lets every spec after 01-onboarding run standalone.
+ * default agent). Idempotent, so every spec after 01-onboarding can run standalone.
  */
 export async function ensureOnboarded(request: APIRequestContext): Promise<void> {
   const verify = await request.post("/api/agents/mock/verify");
@@ -72,7 +72,7 @@ export async function createProject(
 }
 
 // `suggested` files the row straight into the tray the way an agent's
-// suggest_task does — the tray's own behaviors don't need a turn to run first.
+// suggest_task does, so the tray's own behaviors don't need a turn to run first.
 export async function createTask(
   request: APIRequestContext,
   opts: { projectId: string; title: string; description?: string; suggested?: boolean }

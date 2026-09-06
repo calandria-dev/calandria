@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 //
 // `taskId` is the calling session's own task, which is both the default target
 // (an agent re-reading the brief it was started with) and what flags the row as
-// `current`. `task` overrides it to read some other row — reads are inert, so
+// `current`. `task` overrides it to read some other row. Reads are inert, so
 // they aren't scoped the way `update_task`'s writes are.
 export async function POST(req: NextRequest) {
   let body: { taskId?: string; task?: string };

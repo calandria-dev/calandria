@@ -1,18 +1,16 @@
 // Context-window sizing for the gauge, shared by the server
 // (lib/agents/capabilities.ts modelContextWindow) and the client
 // (app/shell/format.ts contextWindowOf) so the live SSE update and the
-// persisted number can't disagree. Pure; no imports — the client bundles it.
+// persisted number agree. Pure, no imports, so the client can bundle it.
 //
-// Two misses, two answers (issue #39):
+// Two misses, two answers:
 //   - model == null: the driver picks its own model, so approximate with the
-//     WIDEST window the agent offers — the gauge must not over-report fullness
-//     for a session that may well be running the 1M variant.
-//   - model set but not in the catalog: an id we can't size. Widest-on-miss
-//     here would size any unrecognised 200k model at 1M and show a fifth of
-//     its real fullness right up to the context overflow — the gauge least
-//     trustworthy exactly when it matters. So err the other way: the NARROWEST
-//     catalog entry, which over-reports fullness and nudges a /clear early
-//     rather than late.
+//     WIDEST window the agent offers, since the session may be running the
+//     1M variant.
+//   - model set but not in the catalog: an id that can't be sized. Sizing an
+//     unrecognized 200k model at 1M would show a fifth of its real fullness
+//     right up to context overflow, so this case uses the NARROWEST catalog
+//     entry instead, which over-reports fullness and nudges a /clear early.
 //   - an empty catalog (a driver with no model list): a conservative constant.
 
 export const DEFAULT_CONTEXT_WINDOW = 200_000;

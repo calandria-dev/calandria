@@ -6,7 +6,7 @@ import { parseStagedFile, servedType } from "@/lib/uploadTypes";
 
 export const dynamic = "force-dynamic";
 
-// Server-generated names only — this is the traversal guard, so both segments
+// Server-generated names only: this is the traversal guard, so both segments
 // are validated before touching the fs. parseStagedFile() owns the filename
 // half (see lib/uploadTypes.ts: a staged name can hold exactly one dot, so
 // there is no `..` to hunt for).
@@ -18,8 +18,8 @@ const SAFE_SEGMENT = /^[A-Za-z0-9_-]+$/;
  * Uploads accept any file type, so this route decides what a browser is allowed
  * to do with one: images get their real type, known text formats are previewed
  * as text/plain, and everything else is an opaque download. Nothing is ever
- * served as active content — `nosniff` on every response means even an `.html`
- * or `.svg` attachment renders as source rather than executing on this origin.
+ * served as active content: `nosniff` on every response means even an `.html`
+ * or `.svg` attachment renders as source instead of executing on this origin.
  */
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string; file: string }> }) {
   const { id, file } = await params;
@@ -37,7 +37,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     headers: {
       "Content-Type": contentType,
       "X-Content-Type-Options": "nosniff",
-      // Filenames are unique and never rewritten — cache hard.
+      // Filenames are unique and never rewritten, so cache hard.
       "Cache-Control": "private, max-age=31536000, immutable",
       ...(download ? { "Content-Disposition": `attachment; filename="${file}"` } : {}),
     },

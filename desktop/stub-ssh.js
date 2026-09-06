@@ -1,15 +1,15 @@
-/* A fake `ssh` for desktop/test-supervisor.js — the same idea as stub-server.js.
+/* A fake `ssh` for desktop/test-supervisor.js, the same idea as stub-server.js.
  *
  * ssh-tunnel.js is a supervisor for somebody else's process, so the half worth
  * testing is what it does when that process misbehaves: refuses the key, comes
- * up and then dies, comes up and never listens. A real sshd cannot be asked for
- * those on demand (and a box with no sshd cannot be asked for anything), so the
- * tests point CALANDRIA_SSH at this and script the misbehaviour.
+ * up and then dies, comes up and never listens. A real sshd cannot be asked
+ * for those on demand, and a box with no sshd cannot be asked for anything,
+ * so the tests point CALANDRIA_SSH at this and script the misbehaviour.
  *
- * It really does forward: `up` opens a TCP proxy from the local end of the `-L`
- * argument to the remote end, so a test can put a real HTTP server behind it and
- * check that the tunnel's URL reaches it, which is the one thing a stub that
- * only printed things could not show.
+ * It really does forward: `up` opens a TCP proxy from the local end of the
+ * `-L` argument to the remote end, so a test can put a real HTTP server
+ * behind it and check that the tunnel's URL reaches it. A stub that only
+ * printed things could not show that.
  *
  * Driven entirely by env, so the launcher script the test writes can stay two
  * lines:

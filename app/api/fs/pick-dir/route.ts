@@ -8,13 +8,13 @@ export const dynamic = "force-dynamic";
 // Opens the OS-native "choose folder" dialog so the user gets real Finder
 // features (search, ⌘⇧N new folder, sidebar favorites, iCloud/network volumes)
 // instead of our hand-rolled in-app browser. The dialog renders on the machine
-// running this server — which, for this local-first app, is the user's own Mac.
+// running this server, which for this local-first app is the user's own Mac.
 //
 // Returns one of:
-//   { path }            — a folder was chosen
-//   { canceled: true }  — the user dismissed the dialog
-//   { unsupported: true}— no native dialog available (non-macOS / headless);
-//                         the client falls back to the in-app FolderPicker.
+//   { path }             a folder was chosen
+//   { canceled: true }   the user dismissed the dialog
+//   { unsupported: true} no native dialog available (non-macOS / headless);
+//                        the client falls back to the in-app FolderPicker.
 
 function run(cmd: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {

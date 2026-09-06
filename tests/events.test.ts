@@ -1,8 +1,8 @@
 // The in-process event bus (lib/events.ts): per-task channels plus the
 // wildcard/global channel behind GET /api/events. The invariants that matter:
 // a global listener sees every task's publishes (with the task id attached),
-// unsubscribing detaches cleanly, and one throwing subscriber — per-task or
-// global — never breaks delivery to the others or to the turn publishing.
+// unsubscribing detaches cleanly, and one throwing subscriber, per-task or
+// global, never breaks delivery to the others or to the turn publishing.
 import { describe, it, expect } from "vitest";
 import { subscribe, subscribeGlobal, publish, publishGlobal, type BusEvent } from "@/lib/events";
 import type { TaskStreamEvent } from "@/lib/types";
@@ -60,7 +60,7 @@ describe("event bus global channel", () => {
         { type: "task_updated" },
         { type: "task_deleted", projectId: "p", awaiting_count: 2 },
       ]);
-      // Mutation facts are not transcript detail — the /messages stream never sees them.
+      // Mutation facts are not transcript detail: the /messages stream never sees them.
       expect(taskSeen).toEqual([]);
     } finally {
       for (const u of unsubs) u();

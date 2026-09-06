@@ -1,13 +1,12 @@
 // Re-filing a task that has ALREADY RUN, through the Edit-task modal. The
-// unstarted case is 06; this one is about the part that used to be a flat
-// refusal — the task holds a git worktree cut from the wrong repo, and the only
-// way it moves is by throwing that checkout away.
+// unstarted case is 06; here the task holds a git worktree cut from the wrong
+// repo, and it can only move by discarding that checkout.
 //
 // The server rules (the two acknowledgements, the live-turn refusal, the child
-// rows that follow the task) are pinned by tests/taskMoveWorktree.test.ts. What
-// this covers is that the UI names the cost before it asks, that confirming
-// really does move the row and reclaim the worktree, and that the next turn
-// comes back in the DESTINATION repo — which is the whole reason to discard it.
+// rows that follow the task) are pinned by tests/taskMoveWorktree.test.ts. This
+// covers that the UI names the cost before it asks, that confirming moves the
+// row and reclaims the worktree, and that the next turn runs in the
+// DESTINATION repo, which is the reason to discard the checkout.
 
 import { expect, test } from "@playwright/test";
 import fs from "node:fs";
@@ -31,8 +30,8 @@ let toRepo = "";
 
 test.beforeAll(async ({ request }) => {
   // A real turn: the mock agent commits its work, so the task lands with a
-  // worktree, a branch, and a commit main never took — the unsafe case, and the
-  // one worth walking through, since it's the one that can lose something.
+  // worktree, a branch, and a commit main never took. This is the unsafe case,
+  // since it can lose work.
   const ran = await runTaskToCompletion(request, { name: FROM, title: TITLE });
   taskId = ran.task.id;
   expect(ran.task.worktree_path).toBeTruthy();
@@ -51,7 +50,7 @@ test("a started task moves once its worktree is explicitly discarded", async ({ 
   await page.getByRole("button", { name: "Edit", exact: true }).click();
   await page.locator(".dep-row").filter({ hasText: TO }).click();
 
-  // The cost, named before anything is asked for: this worktree carries a
+  // States the cost before asking for confirmation: this worktree carries a
   // commit the base branch never took.
   const warning = page.locator(".hlp").filter({ hasText: /moving deletes them/ });
   await expect(warning).toBeVisible();
@@ -83,7 +82,7 @@ test("its next turn runs in the destination repo", async ({ request }) => {
 
   expect(settled.worktree_path).toBeTruthy();
   expect(fs.existsSync(`${settled.worktree_path}/landed-here.txt`)).toBe(true);
-  // The fresh worktree is linked to the destination's repo — the old project's
-  // README is nowhere in it, the new one's is.
+  // The fresh worktree is linked to the destination's repo. The old project's
+  // README is nowhere in it; the new one's is.
   expect(fs.readFileSync(`${settled.worktree_path}/README.md`, "utf8")).toContain("started-to");
 });

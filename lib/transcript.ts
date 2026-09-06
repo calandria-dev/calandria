@@ -1,11 +1,11 @@
 // Building a summarizable transcript from a task's message log.
 //
 // After an oversized session (a giant paste, or a long conversation that ran
-// into the context limit), the raw transcript can be many MB — so feeding it
+// into the context limit), the raw transcript can be many MB, so feeding it
 // verbatim to summarizeTranscript() would itself hit "prompt is too long",
 // leaving /clear with no handoff summary. buildClippedTranscript keeps the
 // transcript small enough to summarize while preserving what matters: the
-// head + tail of each message (a paste's opening and closing lines are the
+// head and tail of each message (a paste's opening and closing lines are the
 // informative bits) and the most recent messages overall (the tail carries
 // the freshest context for the summary).
 
@@ -38,8 +38,8 @@ export function buildClippedTranscript(
   totalMax = 150_000
 ): string {
   const lines = msgs.map((m) => `${m.role.toUpperCase()}: ${clipMessage(m.content, perMessageMax)}`);
-  // Keep the most recent messages: walk from the end, adding lines until the
-  // running length would exceed the cap.
+  // Keep the most recent messages by walking from the end, adding lines until
+  // the running length would exceed the cap.
   const kept: string[] = [];
   let used = 0;
   const SEP = "\n\n";

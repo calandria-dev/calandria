@@ -53,11 +53,10 @@ test("a turn parks on a permission card and continues once it's allowed once", a
   await openTask(page, "Ask before running");
   const card = page.locator(".perm").first();
   await expect(card).toBeVisible();
-  // The card shows the command being authorized, not just the tool name.
+  // The card shows the exact command being authorized, including arguments.
   await expect(card.locator(".perm-pre")).toContainText("npm run lint");
-  // And it is DOCKED below the transcript rather than sitting in it. Inline, a
-  // card is at the mercy of whatever streams in after it — one subagent
-  // returning a screenful scrolls the thing the turn is parked on off the top.
+  // The card docks below the transcript instead of appearing inline, so
+  // output streamed in after it cannot scroll the card out of view.
   await expect(page.locator(".prompt-dock .perm")).toBeVisible();
 
   await card.getByRole("button", { name: "Allow once" }).click();
@@ -66,7 +65,7 @@ test("a turn parks on a permission card and continues once it's allowed once", a
   // Decided, so it belongs back in the transcript where it happened.
   await expect(page.locator(".prompt-dock")).toHaveCount(0);
   const settled = await waitForIdle(request, task.id);
-  expect(settled.awaiting_input).toBe(1); // turn ended — ordinary "your move"
+  expect(settled.awaiting_input).toBe(1); // turn ended: an ordinary "your move" state
   expect(settled.running).toBe(0);
 });
 
@@ -104,8 +103,8 @@ test("'Always allow' remembers the command, skips the next prompt, and is revoca
 
   await openTask(page, "Remember this one");
   const card = page.locator(".perm").first();
-  // The button names the exact rule it will store — `npm test`, not the whole
-  // line — so nobody grants more than they read.
+  // The button names the exact rule it will store, `npm test` instead of the
+  // whole line, so nobody grants more than they read.
   const always = card.getByRole("button", { name: /Always allow `npm test …`/ });
   await expect(always).toBeVisible();
   await always.click();
@@ -135,9 +134,9 @@ test("'Always allow' remembers the command, skips the next prompt, and is revoca
 });
 
 test("a rule added in Settings pre-approves a command no prompt was ever raised for", async ({ page, request }) => {
-  // The gap the add row closes: without it, pre-approving costs one prompt in
-  // one task first — and an auto-started unattended turn declines that prompt
-  // before anyone sees it.
+  // Without this, pre-approving a command costs one prompt in one task first,
+  // and an auto-started unattended turn declines that prompt before anyone
+  // sees it.
   await gotoApp(page);
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("button", { name: "Run defaults" }).click();
@@ -146,15 +145,16 @@ test("a rule added in Settings pre-approves a command no prompt was ever raised 
   await expect(add).toBeVisible();
   await add.getByTitle("Which project this applies to").selectOption({ label: PROJECT });
 
-  // A prefix the policy refuses is an error, not a narrower rule nobody asked
-  // for — the whole reason the form routes through bashPrefixOf().
+  // A prefix the policy refuses returns an error instead of narrowing to a
+  // rule nobody asked for. The form routes through bashPrefixOf() to enforce
+  // this.
   await add.locator("input").fill("sudo yarn lint");
   await add.getByRole("button", { name: "Allow" }).click();
   await expect(page.locator(".err-note")).toContainText("runs whatever its arguments say");
   expect((await (await request.get("/api/settings/permissions")).json())
     .rules.some((r: { value: string }) => r.value.startsWith("sudo"))).toBe(false);
 
-  // And an acceptable one stores the GENERALIZED prefix, said out loud.
+  // An acceptable prefix stores the generalized rule and displays it.
   await add.locator("input").fill("yarn lint --fix src");
   await add.getByRole("button", { name: "Allow" }).click();
   await expect(page.locator(".perm-rules")).toContainText("yarn lint …");
@@ -164,7 +164,7 @@ test("a rule added in Settings pre-approves a command no prompt was ever raised 
   const rule = listed.rules.find((r: { value: string; project_name: string }) => r.value === "yarn lint" && r.project_name === PROJECT);
   expect(rule).toMatchObject({ tool: "Bash", match_kind: "bash_prefix" });
 
-  // The gate honors it on a turn that never asked anybody anything.
+  // The gate applies the stored rule automatically; the turn never raises a prompt.
   const task = await createTask(request, {
     projectId,
     title: "Covered before it ran",
@@ -176,9 +176,9 @@ test("a rule added in Settings pre-approves a command no prompt was ever raised 
 });
 
 test("a call Claude Code refuses on its own lands as a decided card on that call", async ({ page, request }) => {
-  // No canUseTool, no buttons, nothing parked on the user — but the model just
-  // lost a tool call, and the only other trace is an is_error tool_result that
-  // reads exactly like the command ran and failed. The card is what stops that.
+  // No canUseTool call happens and nothing parks on the user, but the model
+  // still loses the tool call. Without this card the only trace would be an
+  // is_error tool_result indistinguishable from an ordinary failed command.
   const task = await createTask(request, {
     projectId,
     title: "Refused outright",
@@ -200,8 +200,8 @@ test("a call Claude Code refuses on its own lands as a decided card on that call
   await expect(card).toContainText("has been denied");
   await expect(card).not.toContainText("IMPORTANT");
   await expect(card).toContainText("Change this task's permission mode");
-  // Nothing to press: the decision was made before the transcript ever saw it.
+  // Nothing to press: the decision was made before the transcript recorded it.
   await expect(card.getByRole("button")).toHaveCount(0);
-  // One card, not a card plus a loose notice repeating it.
+  // Exactly one card, with no separate notice repeating it.
   await expect(page.locator(".perm")).toHaveCount(1);
 });

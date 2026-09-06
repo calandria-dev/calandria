@@ -1,36 +1,20 @@
-// The handful of numbers a Prometheus scrape needs (issue #16 item 3).
+// The numbers a Prometheus scrape needs, emitted as hand-rolled text
+// exposition. The surface is small and the format is a documented
+// plain-text contract, so no client library is needed.
 //
-// Deliberately hand-rolled text exposition rather than a client library: the
-// whole surface is ~8 series, the format is a documented plain-text contract,
-// and prom-client would add a dependency (plus a default-metrics collector
-// nobody asked for) to serialize numbers this file already has in hand.
+// Three sources, three lifetimes: counters (turn starts/outcomes, updated
+// from lib/runner.ts at the same call sites that log the lifecycle lines, so
+// the two can't disagree; kept on globalThis and reset when the process
+// restarts, alongside `calandria_process_start_time_seconds` so a dashboard
+// can see the restart that reset them), live active-turn count (read from
+// lib/abort.ts's registry, correct even after a crash, unlike task.running
+// in SQLite), and on-disk/DB sizes and the schedule ledger, computed at
+// scrape time. The worktrees directory size is a full `du` of every task
+// checkout, so it sits behind a TTL cache.
 //
-// Three sources, three different lifetimes, and the difference matters when you
-// write an alert against them:
-//
-//   counters   Turn starts and outcomes, incremented from lib/runner.ts at the
-//              same two call sites that emit the lifecycle log lines — one
-//              rule, so a `turn failed` line and a failed-turn increment can
-//              never disagree. They live on globalThis (the app's convention
-//              for state that must survive dev HMR) and therefore RESET WHEN
-//              THE PROCESS DOES, which is exactly what a Prometheus counter
-//              means; `calandria_process_start_time_seconds` is exported
-//              alongside so a dashboard can see the restart that reset them.
-//   live       Active turns, read from lib/abort.ts's registry — the same
-//              source the shutdown drain and the idle daemon trust, and the
-//              only one that is right after a crash (task.running in SQLite
-//              can be stale; a process-local Map cannot).
-//   on disk /  Sizes and the schedule ledger, computed AT SCRAPE TIME because
-//   in the DB  nothing else in the app is watching them. The DB files are three
-//              stats and are taken fresh every scrape; the worktrees directory
-//              is a full `du` of every task checkout on the box, so it sits
-//              behind a TTL cache — a 15s scrape interval must not walk every
-//              node_modules on the instance four times a minute.
-//
-// SDK-free and pinned by tests/importGraph.test.ts: this is imported by
-// lib/runner.ts AND by a route entry, so it must never grow a path to an agent
-// SDK. Capability data comes from lib/agents/capabilities.ts if agent ids are
-// ever needed here — never lib/agents/registry.ts.
+// SDK-free and pinned by tests/importGraph.test.ts: imported by lib/runner.ts
+// and by a route entry, so it must never gain a path to an agent SDK. Agent
+// ids come from lib/agents/capabilities.ts, never lib/agents/registry.ts.
 
 import fs from "node:fs";
 import pkg from "@/package.json";
@@ -41,11 +25,10 @@ import { worktreeDiskUsage } from "@/lib/git";
 import { SCHEDULE_RUN_STATUSES, runCountsByStatus } from "@/lib/schedule/store";
 
 /**
- * How a turn ended. The SAME ladder the runner's second lifecycle line uses and
- * the same one the schedule ledger settles with — imported BY the runner so the
- * two can't drift into a state where the logs say `ok` and the counter says
- * `failed` for one turn. `interrupted` means the agent session never opened, so
- * the turn produced nothing.
+ * How a turn ended, matching the ladder in the runner's lifecycle log line and
+ * the schedule ledger's settle status. Imported by the runner so a log line and
+ * this counter can't disagree. `interrupted` means the agent session never
+ * opened, so the turn produced nothing.
  */
 export type TurnOutcome = "ok" | "failed" | "stopped" | "interrupted";
 
@@ -57,15 +40,15 @@ interface SizeCache {
 }
 
 interface MetricsState {
-  /** When this process's counters started counting — the reset marker. */
+  /** When this process's counters started counting. */
   startedAt: number;
   turnsStarted: number;
   turnsFinished: Record<TurnOutcome, number>;
   /** Last completed worktrees-dir measurement, however old. */
   worktrees: SizeCache | null;
   /** The in-flight measurement, so concurrent scrapes share one `du`. Resolves
-   *  null only when it failed and there is no earlier measurement to fall back
-   *  on — the one case the gauge is left off the scrape entirely. */
+   *  null only when it failed with no earlier measurement to fall back on,
+   *  the one case the gauge is left off the scrape entirely. */
   worktreesScan: Promise<number | null> | null;
 }
 
@@ -97,7 +80,7 @@ export function countTurnFinished(outcome: TurnOutcome): void {
   state().turnsFinished[outcome]++;
 }
 
-/** Counters only, for tests — the rendered output is the real contract. */
+/** Counters only, for tests; the rendered output is the real contract. */
 export function turnCounters(): { started: number; finished: Record<TurnOutcome, number> } {
   const s = state();
   return { started: s.turnsStarted, finished: { ...s.turnsFinished } };
@@ -111,11 +94,10 @@ export function resetMetricsForTest(): void {
 }
 
 /**
- * Cold-start budget for the worktrees walk. Not an env knob because only the
- * FIRST scrape after a restart can ever wait on it — every later one is served
- * from the cache (stale if need be) while the scan runs on its own. A `du` that
- * blows through this leaves the series off that one response rather than
- * holding the connection until Prometheus times the scrape out itself.
+ * Cold-start budget for the worktrees walk. Not an env knob: only the first
+ * scrape after a restart can wait on it, since later scrapes are served from
+ * cache while the scan runs in the background. A `du` that exceeds this drops
+ * the series from that one response instead of holding the connection open.
  */
 const SCAN_DEADLINE_MS = 5000;
 
@@ -127,12 +109,13 @@ async function worktreesSizeBytes(): Promise<number | null> {
   if (cached && Date.now() - cached.at < METRICS_SIZE_TTL_MS) return cached.bytes;
 
   if (!s.worktreesScan) {
-    // worktreeDiskUsage() is `du -sk` on POSIX (a subprocess, so the event loop
-    // keeps serving turns while it walks) and an fs walk on win32, where there
-    // is no du. It swallows its own failures; the catch here is for a rejection
-    // it doesn't anticipate, which must not become an unhandled rejection on a
-    // metrics scrape — and which falls back to the last good measurement rather
-    // than to 0, since "we couldn't look" is not "there's nothing there".
+    // worktreeDiskUsage() runs `du -sk` on POSIX (a subprocess, so the event
+    // loop keeps serving turns while it walks) and an fs walk on win32, where
+    // there is no du. It catches its own failures; the catch here covers an
+    // unanticipated rejection, which must not surface as an unhandled
+    // rejection on a metrics scrape. Falls back to the last good measurement
+    // instead of 0, since a failed measurement is not evidence of an empty
+    // directory.
     s.worktreesScan = worktreeDiskUsage(WORKTREES_DIR)
       .then((bytes) => {
         state().worktrees = { bytes, at: Date.now() };
@@ -173,15 +156,15 @@ function esc(value: string): string {
 }
 
 /**
- * The whole scrape response, in Prometheus text exposition format (one metric
- * per HELP/TYPE block, values as plain numbers, trailing newline).
+ * The whole scrape response, in Prometheus text exposition format: one metric
+ * per HELP/TYPE block, values as plain numbers, trailing newline.
  *
- * Every label set a metric can take is emitted on every scrape, INCLUDING the
- * ones sitting at zero. An absent series is not the same as a zero one to
- * anything downstream: `rate(...{outcome="failed"}[5m])` on a series that only
- * appears once something has failed produces no data — so an alert on it stays
- * silent, and a graph starts at the first failure instead of showing the flat
- * line that preceded it.
+ * Every label set a metric can take is emitted on every scrape, including the
+ * ones at zero. An absent series is not the same as a zero one:
+ * `rate(...{outcome="failed"}[5m])` on a series that only appears once
+ * something has failed produces no data, so an alert on it stays silent and a
+ * graph starts at the first failure instead of showing the flat line that
+ * preceded it.
  */
 export async function renderMetrics(): Promise<string> {
   const counters = state();
@@ -238,10 +221,10 @@ export async function renderMetrics(): Promise<string> {
     ],
   );
 
-  // Omitted rather than zeroed when the first measurement hasn't landed yet: a
-  // disk gauge that reads 0 for the first scrape after every restart would
-  // resolve a firing "worktrees are eating the disk" alert without anything
-  // having been reclaimed.
+  // Omitted, not zeroed, when the first measurement hasn't landed yet. A disk
+  // gauge reading 0 on the first scrape after a restart would resolve a
+  // firing "worktrees are eating the disk" alert without anything having been
+  // reclaimed.
   if (worktrees !== null) {
     metric(
       "calandria_worktrees_size_bytes",

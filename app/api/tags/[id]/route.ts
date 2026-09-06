@@ -15,14 +15,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
 /**
  * Rename, describe, recolor, or set the base branch a whole plan is cut from.
- * Membership is NOT here — that's a task edit (PATCH /api/tasks/[id] tag_ids).
+ * Membership is not here: that's a task edit (PATCH /api/tasks/[id] tag_ids).
  *
- * `base_branch` is validated as a branch-SHAPED string and nothing more: unlike
+ * `base_branch` is validated as a branch-shaped string and nothing more. Unlike
  * `POST /api/tasks/[id]/base-branch` this touches no git, because a tag has no
- * worktree to reconcile and its members may be in any state. It is a default for
- * cuts that haven't happened yet, so a branch that doesn't exist *yet* — the
- * integration branch the plan is about to create — must be settable now. The
- * name check is what stops `--upload-pack=evil` reaching a `git` argv later.
+ * worktree to reconcile and its members may be in any state. It is a default
+ * for cuts that haven't happened yet, so a branch that doesn't exist yet, such
+ * as the integration branch the plan is about to create, must be settable now.
+ * The name check is what stops `--upload-pack=evil` reaching a `git` argv
+ * later.
  */
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -65,10 +66,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 }
 
 /**
- * Hard delete. The tasks carrying the tag are UNTAGGED (task_tags is ON DELETE
- * CASCADE), never deleted, and each keeps whatever OTHER tags it had — which is
- * the difference from the one-container-per-task version of this feature: a
- * deleted tag takes exactly one label off a task, not its whole membership.
+ * Hard delete. The tasks carrying the tag are untagged (task_tags is ON DELETE
+ * CASCADE), never deleted, and each keeps whatever other tags it had: a deleted
+ * tag removes exactly one label from a task, not its whole membership.
  */
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

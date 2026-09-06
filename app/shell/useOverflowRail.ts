@@ -6,33 +6,34 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "re
  * Progressive collapse for a one-line control rail (the session header's
  * `.sh-tools`).
  *
- * A single breakpoint can't answer this. The pane the rail sits in runs from a
- * 390px phone through a dragged-narrow middle column to a full-width desktop,
- * and the rail's own content changes width with it (a PR chip appears, a model
- * label goes from "Inherit" to "Claude Opus 4.6 (1M)"). So the rail measures
- * itself: everything renders, and the caller drops its lowest-priority items
- * one at a time — behind a "More" toggle — until what's left fits.
+ * The pane the rail sits in ranges from a 390px phone to a full-width
+ * desktop, and the rail's own content changes width with it (a PR chip
+ * appears, a model label changes length), so a single breakpoint cannot
+ * cover it. The rail measures itself instead: everything renders, and the
+ * caller drops its lowest-priority items one at a time, behind a "More"
+ * toggle, until what is left fits.
  *
  * Returns how many of the caller's `droppable` items must come off the rail.
  *
- * Two properties matter and neither is free:
+ * Two properties matter:
  *
  * - **It converges.** Hiding an item changes the layout, which re-runs the
  *   measurement, which may hide another. The effect re-runs on the count it
  *   just set, so the walk happens across renders and stops at the first fit.
- * - **It doesn't oscillate.** Growing back can't key on "there's slack now",
- *   because the slack exists *because* something is hidden — restoring it would
- *   overflow, hide it again, and flicker forever. Instead every failure records
- *   the HOST width it happened at (`failAt`), and an item comes back only once
- *   the host is genuinely wider than that. The host is the rail's parent rather
- *   than the rail itself: a rail that hugs its content reports the same width
- *   whether the pane has 10px of room left or 500px.
+ * - **It does not oscillate.** Growing back cannot key on "there is slack
+ *   now", because the slack exists because something is hidden: restoring it
+ *   would overflow, hide it again, and flicker. Instead every failure records
+ *   the HOST width it happened at (`failAt`), and an item comes back only
+ *   once the host is wider than that. The host is the rail's parent, not the
+ *   rail itself: a rail that hugs its content reports the same width whether
+ *   the pane has 10px of room left or 500px.
  *
- * `signature` is the caller's summary of what it is rendering — the rendered
- * labels, not the values behind them, so it moves when the rail's width can.
+ * `signature` is the caller's summary of what it is rendering: the rendered
+ * labels, not the values behind them, so it changes only when the rail's
+ * width can.
  *
- * `enabled` is false while the rail is expanded into wrapped rows, where there
- * is no overflow to read and the answer would collapse to zero.
+ * `enabled` is false while the rail is expanded into wrapped rows, where
+ * there is no overflow to read and the answer would collapse to zero.
  */
 export function useOverflowRail(
   ref: RefObject<HTMLElement | null>,
@@ -47,12 +48,12 @@ export function useOverflowRail(
   const failAt = useRef(new Map<number, number>());
 
   // A new signature retires every recorded width, since they describe a rail
-  // that no longer exists. It does NOT reset the count: dropping back to "show
+  // that no longer exists. It does not reset the count: dropping back to "show
   // everything" and re-collapsing would paint one overflowing frame, and this
-  // fires whenever a label changes — the usage chip's own numbers move mid-turn.
-  // Clearing the record is enough, because growing back is what the record
-  // gates; the walk below then re-converges from where it is, one item per
-  // measurement, without the DOM ever being seen mid-walk.
+  // fires whenever a label changes, including the usage chip's own numbers
+  // moving mid-turn. Clearing the record is enough, because growing back is
+  // what the record gates; the walk below then re-converges from where it is,
+  // one item per measurement, without the DOM ever being seen mid-walk.
   useEffect(() => {
     failAt.current.clear();
     if (hiddenRef.current > droppable) {

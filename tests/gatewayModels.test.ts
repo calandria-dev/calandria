@@ -30,7 +30,7 @@ function entry(over: Partial<GatewayModelInfo> = {}): GatewayModelInfo {
   };
 }
 
-describe("gatewayModelOptions — mapping", () => {
+describe("gatewayModelOptions, mapping", () => {
   it("maps value/contextWindow/group and folds provider + price into sub", () => {
     const [opt] = gatewayModelOptions([entry()], "claude");
     expect(opt.value).toBe("claude-sonnet-4-5");
@@ -141,7 +141,7 @@ describe("gatewayModelCatalog probe + cache", () => {
     expect(catalog.reachable).toBe(true);
     expect(catalog.models.map((m) => m.model_name)).toEqual(["claude-sonnet-4-5"]);
     expect(lastGatewayModelCatalog(gw.url)?.map((m) => m.model_name)).toEqual(["claude-sonnet-4-5"]);
-    // The same probe already primed the estimator — no separate wiring needed.
+    // The same probe already primed the estimator, so no separate wiring is needed.
     expect(estimateCostUsd("claude-sonnet-4-5", { input_tokens: 100, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 })).not.toBeNull();
   });
 

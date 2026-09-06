@@ -1,19 +1,15 @@
-// Antigravity (Gemini) auth — status, the guided Google OAuth login, verify,
+// Antigravity (Gemini) auth: status, the guided Google OAuth login, verify,
 // and the API-key fallback. The counterpart to lib/agents/codex/auth.ts.
 //
-// WHY THIS DRIVES A PTY. The obvious headless flow — `agy -p "/help"` with
-// stdin held open — prints the authorize URL and then hard-fails after exactly
-// 61 seconds ("Error: authentication timed out"), measured. That window is not
-// configurable by any flag or env var, and it is far too short for the real
-// round trip this login needs: read the card, open Google in a browser, consent,
-// copy the code back. The paste field would be dead before most users reached
-// it, and because the code is bound to that child's PKCE verifier, respawning to
-// get a fresh window invalidates the code the user is holding.
-//
-// The INTERACTIVE CLI has no such timeout — measured alive and accepting a
-// pasted code many minutes after printing its URL. So the login runs the real
-// CLI under a pty, answers its one menu prompt, scrapes the URL, and writes the
-// code when the user submits it. That is the only shape of this flow that works.
+// This login runs the real CLI under a pty rather than headless. The headless
+// flow (`agy -p "/help"` with stdin held open) prints the authorize URL and
+// hard-fails after a 61-second timeout that is not configurable by any flag or
+// env var, too short for the real round trip: read the card, open Google in a
+// browser, consent, copy the code back. The authorization code is bound to the
+// child process's PKCE verifier, so respawning for a fresh window invalidates
+// any code the user is holding. The interactive CLI has no such timeout, so the
+// login spawns it under a pty, answers its one menu prompt, scrapes the URL,
+// and writes the code when the user submits it.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -39,13 +35,13 @@ const SIGNED_OUT = /please sign in|not logged into antigravity|authentication re
 // ---------- status ----------
 
 /**
- * Is the CLI signed in? `agy models` is the cheapest probe — it spends no
- * quota — but note two measured traps it has to work around:
+ * Is the CLI signed in? `agy models` is the cheapest probe: it spends no
+ * quota. Two things it has to work around:
  *
- *   - It takes NO `--output-format` flag, despite the spike's notes. Passing one
- *     makes it exit with a usage error, so the output is parsed as the TSV
- *     (`slug<TAB>label`) it actually prints.
- *   - It exits 0 EITHER WAY. A signed-out CLI prints "Error: Please sign in to
+ *   - It takes no `--output-format` flag. Passing one makes it exit with a
+ *     usage error, so the output is parsed as the TSV (`slug<TAB>label`) it
+ *     actually prints.
+ *   - It exits 0 either way. A signed-out CLI prints "Error: Please sign in to
  *     view available models." and still returns success, so the exit code says
  *     nothing and the text is the only signal.
  */
@@ -64,8 +60,8 @@ export async function geminiStatus(): Promise<AgentAuthStatus> {
   return {
     authenticated: true,
     method: hasApiKey() ? "api key" : "google account",
-    // The CLI exposes neither on any no-quota command; the connect card renders
-    // "signed in" without them rather than inventing values.
+    // The CLI exposes neither on any no-quota command, so the connect card
+    // renders "signed in" without them.
     email: null,
     plan: null,
     error: null,
@@ -73,16 +69,15 @@ export async function geminiStatus(): Promise<AgentAuthStatus> {
 }
 
 /**
- * The model slugs `agy models` reports right now — the same probe
- * `geminiStatus()` uses, spent no quota either way. Used by the gateway
- * health card to check the CLI's own models (side-call model included; the
+ * The model slugs `agy models` reports right now, using the same probe
+ * `geminiStatus()` uses and spending no quota. Used by the gateway health
+ * card to check the CLI's own models (side-call model included; the
  * flash-lite the CLI calls on every turn is an ordinary selectable entry
- * here, per docs/design/litellm.md's "Antigravity CLI" measurement) against
- * the gateway's catalog — a model missing there fails the turn deep inside
- * `agy` with an opaque "Agent execution terminated due to error". Null for
- * "couldn't find out" (signed out, no binary, empty output), which the
- * health check reads as "nothing to compare, say nothing" rather than "every
- * model is missing".
+ * here, per docs/AGENTS.md) against the gateway's catalog: a model missing
+ * there fails the turn deep inside `agy` with an opaque "Agent execution
+ * terminated due to error". Returns null when the status couldn't be
+ * determined (signed out, no binary, empty output); the health check reads
+ * null as "nothing to compare" rather than "every model is missing".
  */
 export async function agyModelSlugs(): Promise<string[] | null> {
   const out = await runAgy(["models"], 60_000);
@@ -104,9 +99,9 @@ export function modelSlugs(stdout: string): string[] {
 // ---------- verify ----------
 
 /**
- * Prove the connection end-to-end by running a real (tiny) turn. Costs one
- * request, which is the point: `agy models` can succeed on a token that the
- * model backend then refuses.
+ * Prove the connection end-to-end by running a real, tiny turn. `agy models`
+ * can succeed on a token that the model backend then refuses, so this costs
+ * one request to catch that case.
  */
 export async function verifyGeminiTurn(): Promise<AgentVerifyResult> {
   const out = await runAgy(["-p", "Reply with exactly: OK", "--output-format", "json"], 180_000);
@@ -156,8 +151,8 @@ interface LoginState {
 const g = globalThis as unknown as { __calandriaGeminiLogin?: LoginState };
 
 /** How long a started-but-unfinished login is kept alive before it is reaped.
- *  Generous because the whole reason for the pty is that the CLI's own 60s
- *  window is too short for a human. */
+ *  Set well above the CLI's own ~60s window, which is too short for a human
+ *  to complete the OAuth round trip. */
 const LOGIN_REAP_MS = 30 * 60 * 1000;
 
 const AUTH_URL = /https:\/\/accounts\.google\.com\/o\/oauth2\/auth\?[^\s"']+/;
@@ -165,9 +160,9 @@ const AUTH_URL = /https:\/\/accounts\.google\.com\/o\/oauth2\/auth\?[^\s"']+/;
 /** What the CLI prints when a code was refused or its window closed. */
 const AUTH_FAILED = /authentication (?:failed|timed out)/i;
 
-/** Exported so a test can pin the wording: this message is the only signal that
- *  a still-running login child will never finish, and the connect card's
- *  "Start again" recovery hangs off it. */
+/** Exported so a test can pin the wording. This message is the only signal
+ *  that a still-running login child will never finish; the connect card's
+ *  "Start again" recovery depends on it. */
 export function isAuthFailure(cliOutput: string): boolean {
   return AUTH_FAILED.test(cliOutput);
 }
@@ -182,8 +177,8 @@ export function stripAnsi(s: string): string {
 
 /**
  * Pull the authorize URL out of the CLI's terminal output. The TUI prints it
- * twice — once plain and once inside an OSC 8 hyperlink — and wraps it across
- * lines, so the LONGEST match is the intact one.
+ * twice, once plain and once inside an OSC 8 hyperlink, and wraps it across
+ * lines, so the longest match is the intact one.
  */
 export function findAuthUrl(text: string): string | null {
   const clean = stripAnsi(text);
@@ -216,9 +211,9 @@ export function cancelGeminiLogin(): void {
  * Start the guided login: spawn the interactive CLI under a pty, select
  * "Google OAuth" from its one menu, and surface the authorize URL.
  *
- * node-pty is required lazily. It is a native module and a serverExternalPackage,
- * and it is only ever needed by this one flow — a static import would put it in
- * the graph of every turn.
+ * node-pty is imported lazily. It is a native module and a serverExternalPackage
+ * needed only by this flow; a static import would put it in the graph of every
+ * turn.
  */
 export async function startGeminiLogin(): Promise<AgentLoginSession> {
   cancelGeminiLogin();
@@ -278,13 +273,12 @@ export async function startGeminiLogin(): Promise<AgentLoginSession> {
     if (/successfully authenticated|welcome to antigravity/i.test(clean) && session.status !== "error") {
       session.status = "success";
     }
-    // The CLI reports a refused or expired code by printing this and RETURNING
-    // TO ITS PROMPT — it doesn't exit — so without watching for it the card
-    // would sit on a dead paste box until the 30-minute reaper. The failure is
-    // routine rather than exceptional: the authorize URL is only good for the
-    // provider's own 60-second window, which is not configurable, and the code
-    // is bound to this child's PKCE verifier, so the only recovery is the
-    // fresh child "Start again" spawns.
+    // The CLI reports a refused or expired code by printing this and
+    // returning to its prompt instead of exiting, so without watching for it
+    // the card would sit on a dead paste box until the 30-minute reaper. The
+    // authorize URL is only good for the provider's own 60-second window,
+    // which is not configurable, and the code is bound to this child's PKCE
+    // verifier, so the only recovery is the fresh child "Start again" spawns.
     if (session.status !== "success" && isAuthFailure(clean)) {
       session.status = "error";
       session.error = session.error || "The sign-in failed or timed out. Start again for a fresh link.";
@@ -311,8 +305,8 @@ export async function startGeminiLogin(): Promise<AgentLoginSession> {
 
 /**
  * Hand the CLI the authorization code the user copied out of Google's callback
- * page. The code is bound to THIS child's PKCE verifier, which is why the
- * process is kept alive rather than respawned per attempt.
+ * page. The code is bound to this child's PKCE verifier, so the process stays
+ * alive instead of being respawned per attempt.
  */
 export async function submitGeminiCode(code: string): Promise<AgentLoginSession> {
   const st = g.__calandriaGeminiLogin;
@@ -339,12 +333,12 @@ export async function submitGeminiCode(code: string): Promise<AgentLoginSession>
   st.write(`${trimmed}\r`);
 
   // Signing in, then the CLI's first-run onboarding, take a few seconds. Poll
-  // the status the data handler maintains rather than guessing a fixed delay.
+  // the status the data handler maintains instead of using a fixed delay.
   await waitFor(() => session.status === "success" || session.status === "error", 60_000);
 
   if (session.status === "submitting") {
-    // The CLI accepted the paste but hasn't confirmed yet. Fall back to the
-    // authoritative check rather than reporting a failure that didn't happen:
+    // The CLI accepted the paste but hasn't confirmed yet. Check the
+    // authoritative status instead of reporting a failure that didn't happen:
     // the token is written to disk before the TUI finishes its onboarding
     // screens, so `agy models` can already succeed here.
     const status = await geminiStatus();
@@ -363,23 +357,23 @@ export async function submitGeminiCode(code: string): Promise<AgentLoginSession>
 
 /**
  * The container path. `agy` keeps OAuth tokens in the D-Bus Secret Service and
- * the published image ships no D-Bus, so a subscription login cannot be
- * completed there; an API key can. Setting one also writes
- * `{"modelProvider":"gemini"}` into the CLI's settings, which is what makes it
- * read GEMINI_API_KEY instead of looking for a token.
+ * the published image ships no D-Bus, so a subscription login cannot complete
+ * there; an API key can. Setting one also writes
+ * `{"modelProvider":"gemini"}` into the CLI's settings, which makes it read
+ * GEMINI_API_KEY instead of looking for a token.
  */
 const API_KEY_SETTING = "gemini_api_key";
 const SETTINGS_REL = path.join(".gemini", "antigravity-cli", "settings.json");
 
 /**
  * Merge `modelProvider` into the CLI's settings without discarding what's
- * already there. Always the REAL home, never a per-task one: a gateway turn
- * (./home.ts) writes here too, and its per-task HOME only symlinks this
- * directory back to the real one once it already exists (for the login) —
- * writing through a dangling symlink to a directory that was never created
- * fails outright (measured), where writing the real path directly just
- * creates it. Either caller lands on the one shared file `agy` actually
- * reads, which is the point: there is no per-task divergence to preserve.
+ * already there. Always writes the real home, never a per-task one: a
+ * gateway turn (./home.ts) writes here too, and its per-task HOME only
+ * symlinks this directory back to the real one once it already exists (for
+ * the login). Writing through a dangling symlink to a directory that was
+ * never created fails outright, while writing the real path directly
+ * creates it. Both callers land on the one shared file `agy` actually reads;
+ * there is no per-task divergence to preserve.
  */
 export function writeModelProviderSetting(useKey: boolean): void {
   const file = path.join(os.homedir(), SETTINGS_REL);
@@ -387,7 +381,7 @@ export function writeModelProviderSetting(useKey: boolean): void {
   try {
     current = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
   } catch {
-    // Missing or unparseable: start from empty rather than refusing to write.
+    // Missing or unparseable: start from empty instead of refusing to write.
   }
   if (useKey) current.modelProvider = "gemini";
   else delete current.modelProvider;
@@ -421,7 +415,7 @@ export const geminiApiKey: AgentApiKeyAuth = {
 };
 
 /** Apply a persisted key to the environment a turn will inherit. Never
- *  overwrites a key already there — a gateway turn's `GEMINI_API_KEY`
+ *  overwrites a key already there: a gateway turn's `GEMINI_API_KEY`
  *  (lib/agentEnv.ts) is composed before this runs and must win over the
  *  user's own stored personal key. */
 export function applyStoredApiKey(env: Record<string, string>): Record<string, string> {

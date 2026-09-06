@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-// The ask_user bridge flow (lib/agentTools.startAskUser): persists + publishes
-// the same interactive ask card the Claude driver's hook produces, parks a
-// detached waiter on lib/asks.ts, and settles a poll-able outcome the stdio MCP
-// bridge's wait endpoint hands back to the agent.
+// The ask_user bridge flow (lib/agentTools.startAskUser): persists and
+// publishes the same interactive ask card the Claude driver's hook produces,
+// parks a detached waiter on lib/asks.ts, and settles a poll-able outcome the
+// stdio MCP bridge's wait endpoint hands back to the agent.
 
 import { createProject, createTask, getTask, listMessages } from "../lib/store";
 import { startAskUser } from "../lib/agentTools";
@@ -74,17 +74,17 @@ describe("startAskUser", () => {
       const { askId } = startAskUser(getTask(task.id)!, QUESTIONS);
       abortTurn(task.id);
 
-      // takeAskOutcome is take-once, so poll it directly rather than sleeping
-      // then reading separately — the successful poll IS the one real read.
+      // takeAskOutcome is take-once. Poll it directly instead of sleeping
+      // then reading separately: the successful poll is the one real read.
       await vi.waitFor(() => expect(takeAskOutcome(task.id, askId)).toMatch(/dismissed/));
-      // The parked waiter is gone — answering now reports nothing waiting, the
-      // /answer route's resume-as-normal-reply fallback.
+      // The parked waiter is gone, so answering now reports nothing waiting:
+      // the /answer route's resume-as-normal-reply fallback.
       expect(submitAnswer(task.id, askId, [["Option A"]])).toBe(false);
 
-      // The dismissal isn't just the bridge's poll-once outcome text — it's
-      // recorded on the persisted transcript row too, the same way a Stopped
-      // permission card is, so a reload doesn't show live option buttons for a
-      // question nobody can ever answer.
+      // The dismissal is recorded on the persisted transcript row, the same
+      // way a Stopped permission card is, so it survives beyond the bridge's
+      // poll-once outcome text. A reload shows no live option buttons for a
+      // question nobody can answer.
       const row = JSON.parse(listMessages(task.id).find((m) => m.role === "tool")!.content) as ToolData;
       expect(row.ask?.dismissed).toEqual({ reason: "interrupted", note: ASK_INTERRUPTED_NOTE });
       expect(row.ask?.answers).toBeUndefined();

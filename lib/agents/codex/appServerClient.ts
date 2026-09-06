@@ -1,28 +1,28 @@
 // A long-lived `codex app-server` JSON-RPC connection over stdio, the
 // transport a Codex turn runs on (lib/agents/codex/driver.ts).
 //
-// ./appServer.ts spawns a throwaway process per question and is right for the
-// one thing it asks (the account's rate limits). A turn is the opposite shape:
-// one process that outlives every message, three kinds of traffic on the same
-// two pipes, and no way to tell them apart except by the envelope —
+// ./appServer.ts spawns a throwaway process per question and suits the one
+// thing it asks (the account's rate limits). A turn is the opposite shape:
+// one process that outlives every message, with three kinds of traffic on
+// the same two pipes, distinguished only by the envelope:
 //
 //   * our REQUESTS, answered by a message carrying our numeric `id`;
 //   * the server's NOTIFICATIONS (`method`, no `id`), the item stream a turn
 //     renders from;
 //   * the server's REQUESTS (`method` AND `id`), which the turn cannot finish
-//     without us answering: every approval prompt is one of these, and an
-//     unanswered one parks the model forever, because the protocol has no
+//     without an answer: every approval prompt is one of these, and an
+//     unanswered one parks the model indefinitely, since the protocol has no
 //     approval timeout of its own (verified against the 0.153.0 schema).
 //
 // This module owns the framing and correlation and nothing else. What each
 // notification means, and how a server request gets its answer, is the
-// driver's business — handed in as callbacks so this stays a pure transport
+// driver's concern, handed in as callbacks so this stays a pure transport
 // that a fake binary can be pointed at (tests/codexAppServer.test.ts).
 //
 // Wire facts, carried over from ./appServer.ts (verified live on 0.146.0 and
 // again on 0.153.0): responses carry no `jsonrpc` field, so correlation is by
 // `id` alone; unsolicited notifications interleave with responses from the
-// first byte; a log line on stdout is possible and is skipped rather than
+// first byte; a log line on stdout is possible and is skipped instead of
 // treated as a protocol error.
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -38,8 +38,8 @@ export interface AppServerHandlers {
   onNotification: (method: string, params: unknown) => void;
   /**
    * A server → client request. Resolve with the result to send back, or
-   * throw to answer with a JSON-RPC error (the server treats that as a
-   * refusal — for an approval, the same as declining).
+   * throw to answer with a JSON-RPC error; for an approval, the server
+   * treats that the same as declining.
    */
   onRequest: (method: string, params: unknown) => Promise<unknown>;
   /** The process ended (any reason). `stderrTail` is the last of its stderr. */
@@ -53,10 +53,10 @@ export interface AppServerSpawnOptions {
   configOverrides?: string[];
   /**
    * Override the binary (tests point this at a fake). Default: CODEX_CLI_PATH,
-   * else `codex` on PATH. Either way it goes through spawnSpec: on win32 an
-   * npm-installed codex — and the test fake — is a `.cmd` shim, which Node
-   * refuses to spawn without a shell (`spawn EINVAL`), so lib/binPath wraps
-   * it in cmd.exe with the argv quoted piece by piece.
+   * else `codex` on PATH. Either way it goes through spawnSpec: on win32,
+   * both an npm-installed codex and the test fake are `.cmd` shims, which
+   * Node refuses to spawn without a shell (`spawn EINVAL`), so lib/binPath
+   * wraps it in cmd.exe with the argv quoted piece by piece.
    */
   bin?: string;
 }
@@ -164,12 +164,12 @@ export class AppServerClient {
 
   /**
    * Stop the process. POSIX: SIGTERM first so the CLI can flush its rollout,
-   * then SIGKILL if it lingers. win32: the whole tree at once, forced —
-   * the direct child is cmd.exe wrapping a `.cmd` shim, and killing it alone
-   * leaves the CLI behind it running (measured on the Windows CI runner: the
-   * fake's node process kept the worktree as its cwd until the suite gave up
-   * removing it). `taskkill /T` walks the parent chain, so it has to run
-   * while the parent is still alive, which is why it isn't an escalation.
+   * then SIGKILL if it lingers. On win32 the whole tree is killed at once,
+   * since the direct child is cmd.exe wrapping a `.cmd` shim: killing only
+   * that leaves the CLI process running behind it (on the Windows CI runner,
+   * the fake's node process kept the worktree as its cwd until the suite gave
+   * up removing it). `taskkill /T` walks the parent chain, so it must run
+   * while the parent is still alive, which is why this isn't an escalation.
    * Idempotent.
    */
   close(graceMs = 1500): void {
@@ -274,7 +274,7 @@ export class AppServerClient {
 // The same rendering @openai/codex-sdk does for its `config` option (verified
 // against its dist/index.js at 0.146.0): a nested object becomes dotted keys,
 // each leaf a TOML literal, and every entry lands as one `-c key=value` on the
-// app-server command line — so the mcp_servers / model_providers overrides the
+// app-server command line. So the mcp_servers / model_providers overrides the
 // exec transport already relies on mean exactly the same thing here.
 
 export type ConfigObject = { [key: string]: ConfigValue };

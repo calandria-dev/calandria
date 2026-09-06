@@ -3,37 +3,36 @@
 // The feature is small; the way it can go wrong is not. This app supervises
 // long-running agent turns, so an update that restarts the process is an update
 // that can destroy work in flight. desktop/main.js already drains those turns on
-// quit — `before-quit` prevents the default, POSTs /api/instance/drain, stops
-// the sidecars, and only then exits — and the entire risk in adding an updater
-// is that the restart takes some other route to the same exit.
+// quit: `before-quit` prevents the default, POSTs /api/instance/drain, stops
+// the sidecars, and only then exits. The risk in adding an updater is that the
+// restart takes some other route to the same exit.
 //
 // electron-updater makes that easy to get wrong by default: `autoInstallOnAppQuit`
 // is true out of the box and installs from an `app.on("quit")` handler, which
-// fires AFTER our `before-quit` has finished draining and called `app.exit(0)`.
+// fires after our `before-quit` has finished draining and called `app.exit(0)`.
 // So the shipped default is one that either skips the install silently or runs
 // it over turns that were still settling.
 //
-// Five things are pinned here:
-//   1. `quitAction()` — the predicate the drain consults at its very end. An
+// Six things are pinned here:
+//   1. `quitAction()`, the predicate the drain consults at its very end. An
 //      install happens only on an explicit request against a real download.
-//   2. desktop/main.js turns `autoInstallOnAppQuit` off, and the ONLY
+//   2. desktop/main.js turns `autoInstallOnAppQuit` off, and the only
 //      `quitAndInstall` call site in the file is inside the drain's tail.
 //   3. A Linux install that is not an AppImage never reaches electron-updater at
 //      all, because on that path the module installs with `sudo dpkg -i`.
 //   4. `electron-updater` is a production dependency, which is the only reason
 //      electron-builder packs it (desktop/electron-builder.cjs's `files` list
 //      cannot and does not).
-//   5. The user-facing strings — the restart prompt and the menu labels — say
-//      what actually happens, including that in-flight turns are STOPPED.
+//   5. The user-facing strings (the restart prompt and the menu labels) say
+//      what actually happens, including that in-flight turns are stopped.
 //   6. The drain's tail does not kill the install it just started. With
 //      autoInstallOnAppQuit off, MacUpdater hands the zip to Squirrel.Mac only
-//      INSIDE quitAndInstall(), so the fetch, extract and signature check all
-//      run after the drain — and a fixed 10s exit there (which is what shipped)
-//      took the app down mid-install every time. The watchdog is now staged on
-//      Squirrel's own progress, and a failure is written down for the next
-//      launch to report.
-//   7. A macOS install that can never update — ad-hoc signed, running from the
-//      DMG, or translocated — is told so at boot from `codesign` and the bundle
+//      inside quitAndInstall(), so the fetch, extract and signature check all
+//      run after the drain. A fixed short exit there took the app down
+//      mid-install; the watchdog is now staged on Squirrel's own progress, and
+//      a failure is written down for the next launch to report.
+//   7. A macOS install that can never update (ad-hoc signed, running from the
+//      DMG, or translocated) is told so at boot from `codesign` and the bundle
 //      path, not discovered on the way out of the process.
 
 import fs from "node:fs";
@@ -46,9 +45,9 @@ const DESKTOP = path.join(ROOT, "desktop");
 
 // Same trick as tests/desktopSigning.test.ts and tests/desktopPayload.test.ts:
 // desktop/ has its own package tree, so this is loaded by absolute path rather
-// than through "@/*". desktop/updater.js is deliberately dependency-free,
-// Electron-free CommonJS for exactly this reason — it is pure policy, and every
-// effect lives in main.js.
+// than through "@/*". desktop/updater.js is dependency-free, Electron-free
+// CommonJS for exactly this reason: it is pure policy, and every effect lives
+// in main.js.
 const require = createRequire(import.meta.url);
 
 type Env = Record<string, string | undefined>;
@@ -97,7 +96,7 @@ const updater = require(path.join(DESKTOP, "updater.js")) as {
 };
 
 // The structural assertions below read main.js as text, so they have to read
-// the CODE and not the prose around it — desktop/main.js is heavily commented,
+// the code and not the prose around it: desktop/main.js is heavily commented,
 // and several of those comments name the very calls being counted ("never
 // `updater.quitAndInstall()` directly", "`app.quit()`, never `app.exit()`").
 // Block comments and whole-line `//` comments go; a `//` mid-line is left alone
@@ -143,7 +142,7 @@ describe("desktop/main.js routes the restart through the drain", () => {
     expect(mainSource).not.toMatch(/autoInstallOnAppQuit\s*=\s*true/);
   });
 
-  // One call site, and it is in finishQuit() — which the before-quit handler
+  // One call site, and it is in finishQuit(), which the before-quit handler
   // calls from its `finally`, after `await supervisor.stop()`. If a second
   // appears, it is by definition a path that skipped the drain.
   it("has exactly one quitAndInstall call site, inside the drain's tail", () => {
@@ -166,7 +165,7 @@ describe("desktop/main.js routes the restart through the drain", () => {
     expect(handler).toContain("await supervisor.stop()");
     expect(handler).toContain("finishQuit()");
     // The old unconditional exit is gone from this handler. finishQuit() still
-    // exits — it is the "exit" arm of quitAction — but it is now the one place
+    // exits (it is the "exit" arm of quitAction), but it is now the one place
     // that decides.
     expect(handler).not.toMatch(/app\.exit\(0\)/);
   });
@@ -207,13 +206,13 @@ describe("the drain's tail waits for the install it started", () => {
     mainSource.indexOf("function armInstallWatchdog("),
   );
 
-  // The shipped bug. MacUpdater.quitAndInstall() (electron-updater 6.8.9) is
-  // where Squirrel.Mac is FIRST told to fetch the zip when autoInstallOnAppQuit
-  // is off — electron-updater's own "update-downloaded" only means the zip is
-  // in its cache and a local proxy is up. So after quitAndInstall() the whole
-  // fetch + extract + signature verification of a ~200 MB bundle still lies
-  // ahead, and a 10s app.exit(0) landed in the middle of it: the app quit and
-  // relaunched unchanged, exactly as reported, signed build or not.
+  // MacUpdater.quitAndInstall() (electron-updater 6.8.9) is where Squirrel.Mac
+  // is first told to fetch the zip when autoInstallOnAppQuit is off;
+  // electron-updater's own "update-downloaded" only means the zip is in its
+  // cache and a local proxy is up. So after quitAndInstall() the whole fetch,
+  // extract and signature verification of the bundle still lies ahead, and a
+  // fixed short app.exit(0) could land in the middle of it: the app would quit
+  // and relaunch unchanged, signed build or not.
   it("does not arm a fixed short exit around quitAndInstall", () => {
     expect(finishQuit).not.toHaveLength(0);
     expect(finishQuit).not.toMatch(/INSTALL_FALLBACK_MS/);
@@ -228,7 +227,7 @@ describe("the drain's tail waits for the install it started", () => {
     for (const event of ["checking-for-update", "update-available", "update-downloaded", "before-quit-for-update"]) {
       expect(finishQuit).toContain(`"${event}"`);
     }
-    // And it never calls the native install itself — MacUpdater does that when
+    // And it never calls the native install itself; MacUpdater does that when
     // Squirrel is done. A second call site here would be the drain racing it.
     expect((mainSource.match(/\.quitAndInstall\(/g) ?? []).length).toBe(1);
   });
@@ -255,14 +254,14 @@ describe("the drain's tail waits for the install it started", () => {
   });
 
   // The failure lands after the tray is gone and the window is on its way out,
-  // so it is written down and the next launch says it — naming the log,
-  // because the updater's own trace is the thing a bug report needs.
+  // so it is written down and the next launch reports it, naming the log,
+  // because the updater's own trace is what a bug report needs.
   it("writes a failed install down and reports it on the next launch", () => {
     expect(finishQuit).toContain("recordInstallFailure(");
     // `afterAttach()` is what boot became when the shell learned to attach to
-    // instances other than the local one (docs/DESKTOP_APP.md §8): it is the
+    // instances other than the local one (docs/DESKTOP_APP.md): it is the
     // tail every attach runs once a server has answered, and the updater is
-    // armed there — once per process, since it updates the SHELL rather than
+    // armed there, once per process, since it updates the shell rather than
     // whichever server is on screen.
     const attached = mainSource.slice(
       mainSource.indexOf("async function afterAttach("),
@@ -330,10 +329,10 @@ describe("a macOS install that can never update is told so at boot", () => {
   });
 
   // Squirrel.Mac refuses an app whose signature it cannot read, and with
-  // autoInstallOnAppQuit off it first looks inside quitAndInstall() — after the
-  // drain, where nothing can show the refusal. Every build from before the lane
-  // signed (and every local dist:mac, which defaults to ad-hoc) is one of these,
-  // and the message says which and what to do instead.
+  // autoInstallOnAppQuit off it first looks inside quitAndInstall(), after the
+  // drain, where nothing can show the refusal. Every build from before the
+  // lane signed (and every local dist:mac, which defaults to ad-hoc) is one of
+  // these, and the message says which and what to do instead.
   it("refuses an ad-hoc or unsigned build, naming the date and the way out", () => {
     for (const signature of ["adhoc", "unsigned"]) {
       const d = mac({ bundlePath: "/Applications/Calandria.app", signature });
@@ -429,7 +428,7 @@ describe("which installs may update themselves", () => {
   // getter answers that marker with a DebUpdater whose install path is
   // `sudo dpkg -i`, falling back to `apt install --allow-unauthenticated`.
   // There is no allowUnverifiedLinuxPackages setting to turn that off (checked
-  // against electron-builder 26.15.3 and electron-updater 6.8.9 — it exists in
+  // against electron-builder 26.15.3 and electron-updater 6.8.9, it exists in
   // neither), so the only way to make it deliberate is to stay off that path.
   it("refuses to update a Linux install that is not an AppImage", () => {
     const d = packaged({}, "linux", null);
@@ -446,7 +445,7 @@ describe("which installs may update themselves", () => {
   });
 
   // Env-driven, per the repo convention, and documented in .env.example.
-  // Default on is safe only because "on" means check and download — never
+  // Default on is safe only because "on" means check and download, never
   // install.
   it("is on unless CALANDRIA_DESKTOP_AUTO_UPDATE turns it off", () => {
     expect(updater.autoUpdateEnabled({})).toBe(true);
@@ -534,7 +533,7 @@ describe("what the restart prompt tells the user it will cost", () => {
     expect(updater.parseActiveTurns("calandria_tasks_total 41\n")).toBe(null);
     expect(updater.parseActiveTurns("")).toBe(null);
     expect(updater.parseActiveTurns(undefined)).toBe(null);
-    // A metric whose NAME merely starts the same must not be mistaken for it.
+    // A metric whose name merely starts the same must not be mistaken for it.
     expect(updater.parseActiveTurns("calandria_turns_active_total 7\n")).toBe(null);
   });
 
@@ -559,7 +558,7 @@ describe("update errors", () => {
   // Squirrel.Mac verifies the signature of the downloaded bundle and refuses an
   // app whose own signature it cannot read, so an unsigned or ad-hoc macOS
   // build can never auto-update. That is a property of the build, not a
-  // transient — main.js stops the six-hourly retry on a fatal verdict.
+  // transient, so main.js stops the six-hourly retry on a fatal verdict.
   it("treats an unreadable code signature as fatal for the session", () => {
     const v = updater.classifyUpdaterError(new Error("Could not get code signature for running application"));
     expect(v.fatal).toBe(true);
@@ -567,8 +566,8 @@ describe("update errors", () => {
     expect(v.message).toContain(updater.RELEASES_URL);
   });
 
-  // A fatal verdict on an AUTOMATIC check used to be a console.log line, in a
-  // terminal no packaged app was launched from. It is now an OS notification.
+  // A fatal verdict on an automatic check is announced as an OS notification,
+  // not only logged, since no packaged app is launched from a terminal.
   it("is announced by main.js on an automatic check, not only a manual one", () => {
     const startUpdater = mainSource.slice(
       mainSource.indexOf("async function startUpdater()"),
@@ -600,9 +599,9 @@ describe("electron-updater and electron-log have to actually be in the package",
 
   // app-builder-lib collects production dependencies through a mechanism
   // entirely separate from the `files` globs, and splices `!**/node_modules/**`
-  // into those globs unconditionally — so naming it in `files` would do nothing
+  // into those globs unconditionally, so naming it in `files` would do nothing
   // and moving it to devDependencies would ship a shell that throws on the
-  // require the moment a packaged build reaches startUpdater() — or, for
+  // require the moment a packaged build reaches startUpdater(), or for
   // electron-log, on the require at the top of main.js, before the window.
   it.each(["electron-updater", "electron-log"])("%s is a production dependency, not a dev one", (name) => {
     expect(pkg.dependencies?.[name]).toBeTruthy();
@@ -615,10 +614,9 @@ describe("electron-updater and electron-log have to actually be in the package",
     expect(entry.dev).toBeFalsy();
   });
 
-  // The log file is the whole point of the dependency: the one place an
-  // install that fails on the way out of the process leaves a trace. stdout
-  // has to stay as it was, because desktop/e2e reads `[shell] …` lines off it
-  // with startsWith.
+  // The log file is where an install that fails on the way out of the process
+  // leaves a trace. stdout has to stay as it was, because desktop/e2e reads
+  // `[shell] …` lines off it with startsWith.
   it("routes console output into the log file without changing stdout", () => {
     expect(mainSource).toContain('require("electron-log/main")');
     expect(mainSource).toContain("Object.assign(console, log.functions)");
@@ -627,9 +625,9 @@ describe("electron-updater and electron-log have to actually be in the package",
   });
 
   // The feed the client reads is produced by the release lane's `--publish`,
-  // not by any code here. If this block ever goes, the updater silently finds
-  // nothing forever — which is why tests/desktopRelease.test.ts pins it too,
-  // and why it is worth restating from the consumer's side.
+  // not by any code here. If this block ever goes, the updater finds nothing
+  // forever, which is why tests/desktopRelease.test.ts pins it too, and why it
+  // is worth restating from the consumer's side.
   it("has a publish provider to read a feed from", () => {
     const configPath = path.join(DESKTOP, "electron-builder.cjs");
     delete require.cache[configPath];

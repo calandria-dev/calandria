@@ -1,12 +1,12 @@
 import { getSetting, setSetting } from "../store";
 import { publish } from "../events";
 // SDK-free (fs + env only), the same file capabilities.ts reads the catalog
-// corrections from — see the note in claude/provider.ts.
+// corrections from; see the note in claude/provider.ts.
 import { configuredProvider, type ClaudeProvider } from "./claude/provider";
-// capabilities.ts, not registry.ts, on purpose: this module only enumerates and
-// validates agent IDS — it never drives an agent — and importing the registry
-// would drag both agent SDKs into every consumer's graph (the async-external
-// poisoning documented in capabilities.ts). Staying SDK-free is what lets
+// capabilities.ts, not registry.ts: this module only enumerates and validates
+// agent ids, it never drives an agent, and importing the registry would drag
+// both agent SDKs into every consumer's graph (the async-external poisoning
+// documented in capabilities.ts). Staying SDK-free is what lets
 // lib/agentTools.ts resolve a connected agent without poisoning the internal
 // agent-tools routes. Pinned by tests/importGraph.test.ts.
 import { listAgentIds, isAgentId, DEFAULT_AGENT } from "./capabilities";
@@ -21,21 +21,21 @@ import { listAgentIds, isAgentId, DEFAULT_AGENT } from "./capabilities";
 //
 // Stored as "method|email|plan|provider" (same compact encoding as
 // onboarding_account), where method is "subscription" | "api_key" and provider
-// is the backend the verify ran against. An absent key = not connected.
+// is the backend the verify ran against. An absent key means not connected.
 //
-// The provider field is what makes the record honest across a config change
-// (issue #38). A verify proves "this login works against THIS backend": an OAuth
-// session proves nothing about Vertex, and Vertex ADC proves nothing about
-// Bedrock. Claude Code picks its backend from ~/.claude/settings.json and the
-// env, which the user can flip under a running instance, so a record verified
-// against one provider must not keep reading "connected" once the CLI routes
-// elsewhere — every turn would fail against a login that no longer applies,
-// with nothing in the UI saying why. A record whose provider doesn't match the
-// CLI's current one is therefore read as NOT connected, cleared, and flagged the
-// way a dead login is, so the titlebar banner explains it and Reconnect writes
-// a record against the new provider. Rows written before the field existed
-// carry no provider and are read as "anthropic", the only backend that path
-// ever verified; an instance that has been on Anthropic all along never notices.
+// The provider field keeps the record honest across a config change. A verify
+// proves that a login works against one backend: an OAuth session proves
+// nothing about Vertex, and Vertex ADC proves nothing about Bedrock. Claude
+// Code picks its backend from ~/.claude/settings.json and the env, which the
+// user can flip under a running instance, so a record verified against one
+// provider must not keep reading "connected" once the CLI routes elsewhere;
+// every turn would fail against a login that no longer applies, with nothing in
+// the UI saying why. A record whose provider doesn't match the CLI's current
+// one is therefore read as not connected, cleared, and flagged the way a dead
+// login is, so the titlebar banner explains it and Reconnect writes a record
+// against the new provider. Rows written before the field existed carry no
+// provider and are read as "anthropic", the only backend that path ever
+// verified, so an instance that has been on Anthropic all along never notices.
 
 export type AgentConnMethod = "subscription" | "api_key";
 
@@ -54,7 +54,8 @@ export interface AgentConnection {
 const key = (agentId: string) => `agent_conn_${agentId}`;
 
 // The agent whose backend the CLI config selects. DEFAULT_AGENT happens to be
-// the same id, but that is the app's default, not "the agent with providers".
+// the same id, but that names the app's default, a separate fact from which
+// agent has providers.
 const CLAUDE_AGENT = "claude";
 
 const PROVIDERS: readonly ClaudeProvider[] = ["anthropic", "vertex", "bedrock"];
@@ -97,11 +98,11 @@ const PROVIDER_LABEL: Record<ClaudeProvider, string> = {
 
 /**
  * The record was verified against one backend and the CLI now routes through
- * another. Drop the record (it proves nothing about the new backend) and raise
- * the same instance-wide flag a dead login raises, so the banner shows in every
- * tab and the connect card leads with the reason. Deliberately NOT
- * `clearAgentConnection()`, which clears the flag: that is the user
- * disconnecting on purpose, and this is the opposite. Idempotent — the flag
+ * another. Drop the record, since it proves nothing about the new backend, and
+ * raise the same instance-wide flag a dead login raises, so the banner shows in
+ * every tab and the connect card leads with the reason. Not
+ * `clearAgentConnection()`, which clears the flag: that call is for the user
+ * disconnecting on purpose, and this is the opposite. Idempotent: the flag
  * records the first sighting only and the event is published once per outage,
  * so a legacy onboarding-only record (nothing to delete) re-read on every
  * `/api/agents` doesn't re-announce.
@@ -120,17 +121,18 @@ function invalidateForProvider(agentId: string, stored: AgentConnProvider, curre
   }
 }
 
-// Pre-seam instances recorded their first-run Claude connection only in the
-// onboarding keys (agent_conn_claude didn't exist yet, and is only re-written on
-// the next login/verify). Treat that record as a live Claude connection so
-// connected-first resolution and the /api/agents `connected` flag never regress
-// a legacy instance that has been running Claude turns all along.
+// Instances from before this seam existed recorded their first-run Claude
+// connection only in the onboarding keys (agent_conn_claude didn't exist yet,
+// and is only re-written on the next login/verify). Treat that record as a live
+// Claude connection so connected-first resolution and the /api/agents
+// `connected` flag never regress a legacy instance that has been running
+// Claude turns all along.
 function legacyClaudeConnection(): AgentConnection | null {
   const method = getSetting("onboarding_method");
   if (method !== "subscription" && method !== "api_key") return null;
   const acct = getSetting("onboarding_account");
   const [email, plan] = acct ? acct.split("|") : [null, null];
-  // Pre-seam verifies only ever ran the plain Anthropic path.
+  // Verifies from before this seam existed only ever ran the plain Anthropic path.
   return { method, email: email || null, plan: plan || null, provider: "anthropic" };
 }
 
@@ -146,10 +148,10 @@ export function firstConnectedAgent(): string | null {
 }
 
 /**
- * Resolve the first CONNECTED agent from an ordered preference list (unknown ids
- * and unconnected agents are skipped), falling back to any connected agent at
- * all. Returns null only when no agent is connected — callers turn that into an
- * actionable "connect an agent" error rather than driving a dead CLI.
+ * Resolve the first connected agent from an ordered preference list (unknown
+ * ids and unconnected agents are skipped), falling back to any connected agent
+ * at all. Returns null only when no agent is connected; callers turn that into
+ * an actionable "connect an agent" error instead of driving a dead CLI.
  */
 export function resolveConnectedAgent(preferred: (string | null | undefined)[]): string | null {
   for (const id of preferred) {
@@ -159,15 +161,15 @@ export function resolveConnectedAgent(preferred: (string | null | undefined)[]):
 }
 
 /**
- * Record a working connection. The provider is stamped HERE from the CLI's
- * current config rather than taken from the caller, because every caller is a
- * login / verify / api-key route that just proved the login against whatever
- * backend the CLI is configured for right now — that is the fact worth keeping.
+ * Record a working connection. The provider is stamped here from the CLI's
+ * current config, not taken from the caller, because every caller is a login /
+ * verify / api-key route that just proved the login against whatever backend
+ * the CLI is configured for right now, and that is the fact worth keeping.
  */
 export function setAgentConnection(agentId: string, conn: Omit<AgentConnection, "provider">): void {
   const provider = currentConnectionProvider(agentId) ?? "";
   setSetting(key(agentId), `${conn.method}|${conn.email ?? ""}|${conn.plan ?? ""}|${provider}`);
-  // A fresh login / verify / api-key save IS the repair — never leave a stale
+  // A fresh login / verify / api-key save is the repair; never leave a stale
   // "reconnect me" banner up after the user just did.
   clearAgentAuthBroken(agentId);
 }
@@ -175,17 +177,17 @@ export function setAgentConnection(agentId: string, conn: Omit<AgentConnection, 
 export function clearAgentConnection(agentId: string): void {
   setSetting(key(agentId), null);
   // Disconnected on purpose: the agent now reads as "not connected", which the
-  // UI already explains — a broken-connection banner on top would be noise.
+  // UI already explains, so a broken-connection banner on top would be noise.
   clearAgentAuthBroken(agentId);
 }
 
-// ---------- broken-connection flag (credentials died AFTER connecting) ----------
+// ---------- broken-connection flag (credentials died after connecting) ----------
 // `agent_conn_<id>` says "this agent was wired up"; it can't say "and it just
-// stopped working". An expired OAuth session leaves the connection record intact
-// while every turn fails, so the runner records the failure here
+// stopped working". An expired OAuth session leaves the connection record
+// intact while every turn fails, so the runner records the failure here
 // (lib/runner.ts, classified by lib/authFailure.ts) and the app surfaces it
 // instance-wide instead of only inside the task that happened to run first.
-// Stored as "<epoch ms>|<reason>" — reason may itself contain "|", so only the
+// Stored as "<epoch ms>|<reason>"; reason may itself contain "|", so only the
 // first separator is split on. Cleared by any successful turn or reconnect.
 
 export interface AgentAuthBroken {
@@ -206,9 +208,9 @@ export function getAgentAuthBroken(agentId: string): AgentAuthBroken | null {
 }
 
 /**
- * Record that this agent's credentials are dead. Returns true only the FIRST
- * time (the flag was previously clear), so callers can publish/announce once per
- * outage rather than on every failing turn — the `at` timestamp is preserved
+ * Record that this agent's credentials are dead. Returns true only the first
+ * time (the flag was previously clear), so callers can publish or announce once
+ * per outage instead of on every failing turn. The `at` timestamp is preserved
  * across repeats so the banner can say how long it's been broken.
  */
 export function markAgentAuthBroken(agentId: string, reason: string, at: number): boolean {

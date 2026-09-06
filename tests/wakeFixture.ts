@@ -8,10 +8,9 @@ import { nextCronFire, wakeTimeLabel } from "@/lib/agents/claude/sessionCrons";
  * rather than formatted as bare `HH:MM` here, because `wakeTimeLabel` prefixes
  * a weekday for a fire time that lands on a different calendar day than `now`.
  * Three suites hardcoded `HH:MM`, so any run that started within N minutes of
- * local midnight got `"Sat 00:03"` and failed — which is exactly what sank the
- * v0.9.0 tag build at 23:58 UTC. Formatting itself is pinned on a frozen clock
- * in `tests/sessionCrons.test.ts`; these suites only care that the notice names
- * THIS wakeup.
+ * local midnight got `"Sat 00:03"` and failed. Formatting itself is pinned on
+ * a frozen clock in `tests/sessionCrons.test.ts`; these suites only care that
+ * the notice names THIS wakeup.
  */
 export function oneShotIn(minutes: number, opts: { id?: string; prompt?: string } = {}): {
   cron: { id: string; schedule: string; recurring: false; prompt: string };

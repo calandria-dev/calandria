@@ -6,19 +6,19 @@
 // (`kernel.apparmor_restrict_unprivileged_userns=1`), and the failure is as
 // quiet as it is total: the turn starts, the model works, and every single
 // command it runs fails. Nothing in the transcript says why. The one signal is
-// a `configWarning` notification the `codex app-server` pushes when it starts —
-// "Codex's Linux sandbox uses bubblewrap and needs access to create user
-// namespaces." — which lib/agents/codex/appServerEvents.ts already surfaces as
-// a transcript notice, once, mid-turn, after the user has already spent a turn
-// finding out.
+// a `configWarning` notification the `codex app-server` pushes when it
+// starts: "Codex's Linux sandbox uses bubblewrap and needs access to create
+// user namespaces." lib/agents/codex/appServerEvents.ts already surfaces
+// that as a transcript notice, once, mid-turn, after the user has already
+// spent a turn finding out.
 //
 // So the warning is promoted to a piece of instance state, recorded next to the
 // dead-login flag (`agent_sandbox_broken_codex`, lib/agents/connections.ts) and
 // read in two places: the Settings → Agents card, which shows it with the fix,
 // and the driver, which REFUSES a sandboxed turn instead of running one that
-// cannot work. Refusing is the point — a turn that fails every command still
-// bills, still writes a transcript, and still looks to the model like a repo
-// that mysteriously rejects every edit.
+// cannot work: a turn that fails every command still bills, still writes a
+// transcript, and still looks to the model like a repo that mysteriously
+// rejects every edit.
 //
 // Three warnings, three verdicts:
 //
@@ -49,8 +49,8 @@ const BENIGN = /could not find bubblewrap on PATH/i;
 
 /**
  * The reason text to record for a `configWarning` summary, or null when the
- * warning says nothing about the sandbox being unable to start. Deliberately
- * returns the CLI's own words: the card pairs them with our fix, and a
+ * warning does not describe the sandbox being unable to start. Returns the
+ * CLI's own words on purpose: the card pairs them with the fix, and a
  * paraphrase would go stale the next time the CLI rewords its warning.
  */
 export function sandboxWarningReason(summary: string): string | null {
@@ -81,7 +81,7 @@ export interface CodexSandboxHealth {
   ok: boolean;
   /** The CLI's warning, when it isn't ok. */
   reason: string | null;
-  /** The probe could not reach the CLI at all — neither healthy nor broken. */
+  /** The probe could not reach the CLI at all: neither healthy nor broken. */
   error: string | null;
 }
 
@@ -135,13 +135,14 @@ export function noteCodexSandboxHealthy(): void {
  * Whether this sandbox mode is one the container already provides, so Codex
  * should be told not to build its own (`externalSandbox`).
  *
- * `workspace-write` only. Under `externalSandbox` Codex applies no isolation of
- * its own, which is a true description of a container for the write case — the
- * image is the boundary and the worktree is inside it — and a false one for
- * `read-only`, where the whole guarantee IS that nothing is writable. Mapping
- * plan mode to it would quietly turn "propose without editing" into "may edit",
- * which is the same class of silent breakage this module exists to stop. A
- * read-only turn on a host with no working sandbox is refused instead.
+ * `workspace-write` only. Under `externalSandbox` Codex applies no isolation
+ * of its own. That is a true description of a container for the write case,
+ * where the image is the boundary and the worktree is inside it, but a false
+ * one for `read-only`, where the whole guarantee is that nothing is
+ * writable. Mapping plan mode to it would turn "propose without editing"
+ * into "may edit" with no visible change, the same class of hidden breakage
+ * this module exists to stop. A read-only turn on a host with no working
+ * sandbox is refused instead.
  */
 export function usesExternalSandbox(sandbox: CodexSandboxMode): boolean {
   return CODEX_EXTERNAL_SANDBOX && sandbox === "workspace-write";
@@ -150,7 +151,7 @@ export function usesExternalSandbox(sandbox: CodexSandboxMode): boolean {
 /**
  * The message to fail a turn with, or null to let it run. `danger-full-access`
  * never uses the sandbox and external-sandbox modes never build one, so both
- * run on a host where bubblewrap is dead — which is exactly what the hint
+ * run on a host where bubblewrap is dead, which is exactly what the hint
  * offers as the escape.
  */
 export function sandboxRefusal(sandbox: CodexSandboxMode): string | null {

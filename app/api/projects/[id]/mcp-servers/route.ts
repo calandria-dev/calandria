@@ -9,21 +9,21 @@ import { LITELLM_MCP } from "@/lib/config";
 export const dynamic = "force-dynamic";
 
 /**
- * The gateway's hosted MCP servers, project-scoped (docs/design/litellm.md,
+ * The gateway's hosted MCP servers, project-scoped (docs/AGENTS.md,
  * "Hosted MCP servers"): GET <gateway>/v1/mcp/server plus a tool-name preview
  * from GET <gateway>/mcp-rest/tools/list, merged with which aliases this
  * project has already trusted (a remembered `mcp_server` permission_rules
  * row) so the picker can show "Trusted" without a second round trip.
  *
  * Disabled instance-wide by CALANDRIA_LITELLM_MCP, or when no gateway is
- * configured at all — both answer the same "not enabled" shape rather than a
+ * configured at all: both answer the same "not enabled" shape instead of a
  * 404, since the picker asks unconditionally and reads `enabled` either way,
  * the same contract GET /api/projects/[id]/models keeps for a cloud project.
  *
  * `?probe=<alias>` runs a live mount check instead of the catalog: a JSON-RPC
  * tools/list against `<gateway>/<alias>/mcp` with the instance key. A wrong
- * key answers HTTP 400 (measured), so probeGatewayMcpMount reads the response
- * body rather than trusting the status.
+ * key can answer HTTP 400, so probeGatewayMcpMount reads the response body
+ * instead of trusting the status.
  */
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -58,12 +58,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 }
 
 /**
- * "Trust this server" — mints a remembered `mcp__<alias>__*` permission rule
+ * "Trust this server": mints a remembered `mcp__<alias>__*` permission rule
  * through the same permission_rules path a Bash prefix uses
  * (lib/permissions.ts), so it shows in Settings → Run defaults and can be
- * revoked there. One-way on purpose: the picker only ever mints, matching the
- * card's own "Always allow" — revocation is Settings' job, not a second path
- * here that could quietly undo it.
+ * revoked there. One-way: the picker only ever mints, matching the card's own
+ * "Always allow". Revocation is Settings' job, not a second path here.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

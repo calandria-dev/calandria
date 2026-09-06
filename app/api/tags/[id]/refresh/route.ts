@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 // "Refresh tag" runs as a DETACHED background job (see lib/tagRefresh.ts): the
 // agent reads the repo, judges the plan's tasks against it, and this process
 // applies what it may. The state lives on the tags row, so the bar survives
-// lighting a different chip, switching project, or reloading the tab — the
+// lighting a different chip, switching project, or reloading the tab. The
 // client polls GET while it runs and reconnects to a job it never started.
 //
 // Unlike the project context draft there is nothing to accept: the edits are

@@ -1,11 +1,7 @@
 // The composer's "/" menu, in the real UI against the mock agent's fixed
-// command set (MOCK_COMMANDS in lib/agents/mock/driver.ts).
-//
-// The bug this covers: the menu was a hardcoded one-element array, so the only
-// discoverable command was /clear even though the agent expanded dozens. These
-// assert the menu now shows what the DRIVER reports, that the filtering policy
-// holds at the UI boundary, and that the keyboard path works — a list this long
-// is unusable mouse-only.
+// command set (MOCK_COMMANDS in lib/agents/mock/driver.ts). Covers that the
+// menu shows what the driver reports, that the filtering policy holds at the
+// UI boundary, and that the keyboard path works for a long command list.
 
 import { expect, test } from "@playwright/test";
 import {
@@ -50,7 +46,7 @@ test("typing / lists the agent's own commands, not just /clear", async ({ page }
 
   const menu = page.locator(".slash");
   await expect(menu).toBeVisible();
-  // Calandria's own command AND the driver's — the whole point.
+  // Calandria's own command and the driver's both appear.
   await expect(menu.getByText("/clear", { exact: true })).toBeVisible();
   await expect(menu.getByText("/mock-echo", { exact: true })).toBeVisible();
   await expect(menu.getByText("/mock-status", { exact: true })).toBeVisible();
@@ -64,22 +60,22 @@ test("the agent's own /clear and internal commands are filtered out", async ({ p
   await box.fill("/");
   const menu = page.locator(".slash");
   await expect(menu).toBeVisible();
-  // Exactly one /clear row — Calandria's, not the agent's duplicate.
+  // Exactly one /clear row: Calandria's, not the agent's duplicate.
   await expect(menu.getByText("/clear", { exact: true })).toHaveCount(1);
   await expect(menu.getByText("/__mock-internal", { exact: true })).toHaveCount(0);
 });
 
 test("filtering matches aliases and completes with the keyboard", async ({ page }) => {
   const box = await composer(page);
-  // "mock-deploy" is only an ALIAS of mock-plugin:mock-deploy — matching on it
-  // is what stops a namespaced command from being unfindable.
+  // "mock-deploy" is only an alias of mock-plugin:mock-deploy; matching on it
+  // keeps a namespaced command findable.
   await box.fill("/mock-deploy");
   const menu = page.locator(".slash");
   await expect(menu).toBeVisible();
   await expect(menu.locator(".slash-item")).toHaveCount(1);
 
   // Enter completes the highlighted row into the box (canonical name, trailing
-  // space for arguments) rather than sending.
+  // space for arguments) instead of sending.
   await box.press("Enter");
   await expect(box).toHaveValue("/mock-plugin:mock-deploy ");
   await expect(menu).toBeHidden();
@@ -100,20 +96,19 @@ test("arrow keys move the highlight and Tab commits it", async ({ page }) => {
 
 test("a fully typed command still sends as a message", async ({ page }) => {
   const box = await composer(page);
-  // /mock-status takes no arguments and is typed in full, so Enter acts rather
-  // than re-completing — the behavior /clear has always had.
+  // /mock-status takes no arguments and is typed in full, so Enter sends it
+  // instead of re-completing, the same behavior /clear has.
   await box.fill("/mock-status");
   await box.press("Enter");
   await expect(box).toHaveValue("");
-  // It leaves as an ordinary user message, which is exactly how a slash command
-  // reaches the agent — the CLI expands it on the far side.
+  // It leaves as an ordinary user message: a slash command reaches the agent
+  // by having the CLI expand it on the far side.
   await expect(page.locator(".msg.user", { hasText: "/mock-status" })).toBeVisible({ timeout: 20_000 });
 });
 
 // Geometry, here because this file already has a repliable composer on screen.
-// The empty box used to be sized by autosize's scrollHeight measurement, which
-// in Chromium counts the PLACEHOLDER — so an empty composer stood three or four
-// placeholder lines tall and snapped to one on the first keystroke.
+// Pins that an empty composer's height matches its typed height, since
+// autosize's scrollHeight measurement in Chromium counts the placeholder text.
 test("the empty composer is one line tall and doesn't snap on the first keystroke", async ({ page }) => {
   const box = await composer(page);
   const height = async () => (await box.boundingBox())!.height;

@@ -155,7 +155,7 @@ describe("service registry persistence", () => {
     await restoreServices();
     const after = listServices(project).find((s) => s.name === "calc");
     expect(after).toBeDefined();
-    expect(after!.status).toBe("stopped"); // we don't own the process — never auto-started
+    expect(after!.status).toBe("stopped"); // the process is not owned, so it is never auto-started
     expect(after!.slug).toBe("calc"); // identity survived: same URL when re-registered
     const again = exposeService(project, "calc", 5173);
     expect(again.slug).toBe("calc");
@@ -206,13 +206,11 @@ describe("service registry persistence", () => {
     wipeRegistry();
     await restoreServices();
 
-    // Polled rather than sampled once (issue #99). `restoreServices()` awaits
-    // its own work, but on win32 the kill it issued is `taskkill /T /F`, which
-    // returns once the request is made and not once the tree is gone — so a
-    // single probe here was asserting on the instant the OS happened to finish,
-    // and intermittently lost that race on the Windows unit lane. The claim is
-    // unchanged: the orphan IS reaped, and a tree that never dies still fails
-    // below.
+    // Polled, not sampled once (issue #99): `restoreServices()` awaits its own
+    // work, but on win32 the kill it issued is `taskkill /T /F`, which returns
+    // once the request is made, not once the tree is gone. The claim under
+    // test is that the orphan IS reaped, and a tree that never dies still
+    // fails below.
     const orphanAlive = await waitForTree(
       () => treeAlive(oldPid),
       (alive) => !alive

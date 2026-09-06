@@ -1,21 +1,20 @@
-/* scripts/start.mjs — the `npm start` launcher that replaced `concurrently -k`.
+/* scripts/start.mjs is the `npm start` launcher.
  *
  * It exists so Ctrl+C reaches server.js's own SIGINT handler and its graceful
- * drain gets to finish (docs/WINDOWS.md §8: concurrently kills through
- * tree-kill, whose win32 branch is an unconditional `taskkill /T /F`, so the
- * drain lost a race it could not win). The property under test is therefore
- * "the launcher relays the signal and then WAITS", which is invisible to a
- * unit test of any single function — so this runs the real script against stub
- * entrypoints in a temp cwd. The launcher resolves `server.js` / `pty-server.js`
- * cwd-relative for exactly that reason.
+ * drain finishes: killing through a process-tree kill can force-terminate
+ * children before the drain completes. The property under test is "the
+ * launcher relays the signal and then waits", which a unit test of any single
+ * function cannot show, so this runs the real script against stub
+ * entrypoints in a temp cwd. The launcher resolves `server.js` and
+ * `pty-server.js` cwd-relative for that reason.
  *
- * Windows' console-signal path can't be exercised from here — there is no way
+ * Windows' console-signal path cannot be exercised from here: there is no way
  * to deliver a CTRL_C_EVENT to another process from Node, and `child.kill()`
- * there is a TerminateProcess for every signal name, so nothing downstream can
- * observe WHICH signal it got. A Windows run therefore keeps the half that is
- * still meaningful (the lifetime contract: first exit wins, the survivor comes
- * down with it, the launcher reports the first child's code) and skips the
- * relay assertions; `expectSignalled` and `onPosix` mark each place.
+ * there is a TerminateProcess for every signal name, so nothing downstream
+ * can observe which signal it got. A Windows run keeps the half that is
+ * still meaningful (the lifetime contract: first exit wins, the survivor
+ * comes down with it, the launcher reports the first child's code) and skips
+ * the relay assertions; `expectSignalled` and `onPosix` mark each place.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -83,8 +82,8 @@ async function waitForFile(file: string, timeoutMs = 10_000): Promise<void> {
 /**
  * Assert a stub recorded the signal it was asked to shut down on. A no-op on
  * Windows, where every `child.kill()` is a TerminateProcess and no handler
- * runs — the marker file is never written, and asserting on it would only pin
- * the platform, not the launcher.
+ * runs: the marker file is never written, so asserting on it would test
+ * nothing about the launcher.
  */
 function expectSignalled(file: string, signal: string): void {
   if (IS_WIN) return;
@@ -97,9 +96,9 @@ function exitOf(child: ChildProcess): Promise<{ code: number | null; signal: str
 
 describe("npm start launcher", () => {
   // POSIX-only: `process.kill(pid, "SIGINT")` at another process is not a
-  // deliverable signal on Windows — it terminates the target outright, so there
-  // is no relay to observe. The console path that replaces it is documented in
-  // docs/WINDOWS.md §8 and can only be checked on a real Windows console.
+  // deliverable signal on Windows. It terminates the target outright, so
+  // there is no relay to observe. The console path Windows uses instead can
+  // only be checked on a real Windows console.
   onPosix("relays SIGINT to both children and waits for a slow drain to finish", async () => {
     const cwd = fixture(
       // 400ms stands in for drainActiveTurns(): long enough that a launcher
@@ -111,8 +110,8 @@ describe("npm start launcher", () => {
     await waitForFile(path.join(cwd, "app.signal.up"));
     await waitForFile(path.join(cwd, "pty.signal.up"));
 
-    // Signal the LAUNCHER only — not the process group — so the assertion is
-    // about forwarding rather than about the shell that would broadcast it.
+    // Signal the launcher only, not the process group: this tests forwarding,
+    // not what a shell would broadcast to the whole group.
     process.kill(child.pid!, "SIGINT");
     const { code } = await exitOf(child);
 

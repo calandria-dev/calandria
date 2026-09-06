@@ -1,20 +1,21 @@
-// Routing for the "internal" one-shot jobs — the turns that run OUTSIDE the
-// main chat: /clear handoff summaries, project recaps, and context drafts.
+// Routing for the "internal" one-shot jobs: the turns that run outside the
+// main chat, /clear handoff summaries, project recaps, and context drafts.
 // Every such job resolves its driver here instead of calling getDriver()
 // directly, so the two policies below live in one place.
 //
 // Two policies:
-//   - TASK-scoped one-shots follow the TASK's own agent, so the work (and the
-//     token cost) lands on the login the task runs on — a Codex task's /clear
+//   - Task-scoped one-shots follow the task's own agent, so the work (and the
+//     token cost) lands on the login the task runs on: a Codex task's /clear
 //     handoff note is written by Codex, counted against the Codex login.
 //     summarizeTranscript is the only task-scoped helper.
-//   - PROJECT-scoped one-shots (context draft, recap) aren't tied to any single
-//     task's agent, so they run on the configured UTILITY agent (the
+//   - Project-scoped one-shots (context draft, recap) aren't tied to any single
+//     task's agent, so they run on the configured utility agent (the
 //     `utility_agent` app setting, default "claude").
 //
-// Either way, if the chosen driver doesn't implement a given helper, we fall
-// back to the utility agent's implementation — a new driver can ship runTurn()
-// alone and still get working /clear summaries, recaps, and context drafts.
+// Either way, if the chosen driver doesn't implement a given helper, it falls
+// back to the utility agent's implementation, so a new driver can ship
+// runTurn() alone and still get working /clear summaries, recaps, and context
+// drafts.
 
 import { getDriver, listDrivers, DEFAULT_AGENT } from "./registry";
 import { resolveConnectedAgent } from "./connections";
@@ -27,17 +28,17 @@ import { backgroundJobsEnabled } from "../backgroundJobs";
 type OneShotKey = "summarizeTranscript" | "draftProjectContext" | "summarizeProjectRecap" | "planTagRefresh";
 
 /**
- * Which model a one-shot runs on, in two tiers rather than one knob per job.
+ * Which model a one-shot runs on, in two tiers instead of one knob per job.
  *
- * The jobs really do split by difficulty, and the split is visible in the
- * drivers themselves: the LIGHT ones are text in → text out, no tools, one turn
+ * The jobs split by difficulty, and the split is visible in the drivers
+ * themselves: the light ones are text in, text out, no tools, one turn
  * (Claude's TEXT_ONE_SHOT, Codex's ONESHOT_MAX_ITEMS_TEXT = 20), while the
- * HEAVY one explores the repo read-only over as many as 40 / 120 items to write
+ * heavy one explores the repo read-only over as many as 40 / 120 items to write
  * a project brief. Condensing a transcript is what a small model is for;
- * reading an unfamiliar codebase accurately is not.
+ * reading an unfamiliar codebase accurately needs a stronger one.
  *
- * Two tiers, not three-and-a-picker-per-job: a per-job knob would be four
- * settings that almost everyone sets to two values.
+ * Two tiers, not a picker per job: a per-job knob would be four settings that
+ * almost everyone sets to two values.
  */
 export type OneShotTier = "light" | "heavy";
 
@@ -49,38 +50,37 @@ const JOB_TIER: Record<OneShotKey, OneShotTier> = {
 };
 
 /**
- * The tier settings are AGENT-SCOPED ("job_model_light:<agent>"), exactly like
+ * The tier settings are agent-scoped ("job_model_light:<agent>"), exactly like
  * `default_model:<agent>` and for the same reason: a model id names one
- * provider's catalog. It's scoped to the agent that ACTUALLY runs the job, so a
+ * provider's catalog. It's scoped to the agent that actually runs the job, so a
  * Codex task's /clear note reads the Codex key even while recaps run on Claude.
  *
- * Unset is the default and means what the app did before this setting existed:
- * pass no model and inherit the driver's own (Claude Code's configured default,
- * or the codex CLI's).
+ * Unset is the default and means pass no model, inheriting the driver's own
+ * (Claude Code's configured default, or the codex CLI's).
  */
 export function oneShotModel(agent: string, job: OneShotKey): string | null {
   return getSetting(`job_model_${JOB_TIER[job]}:${agent}`);
 }
 
 export interface UtilityAgent {
-  /** The agent that will actually run project-scoped one-shots; null when NOTHING is connected. */
+  /** The agent that will actually run project-scoped one-shots; null when nothing is connected. */
   id: string | null;
-  /** What the settings asked for — `utility_agent`, else the app default, else the built-in. */
+  /** What the settings asked for: `utility_agent`, else the app default, else the built-in. */
   configured: string;
-  /** True when `configured` isn't connected and we fell through to another agent. */
+  /** True when `configured` isn't connected and resolution fell through to another agent. */
   fallback: boolean;
 }
 
 /**
- * Resolve the utility agent WITHOUT constructing a driver, so read-only callers
+ * Resolve the utility agent without constructing a driver, so read-only callers
  * (GET /api/agents, which feeds the Settings "effective utility agent" line) can
  * report the fallback without the no-agent-connected throw that utilityDriver()
  * owes its callers.
  *
  * Connected-first: the `utility_agent` setting wins when that agent is actually
- * connected, then the app default agent, then the built-in default, then ANY
- * connected agent — so a Codex-only instance gets working recaps/context drafts
- * without ever touching the setting.
+ * connected, then the app default agent, then the built-in default, then any
+ * connected agent, so a Codex-only instance gets working recaps and context
+ * drafts without ever touching the setting.
  */
 export function resolveUtilityAgent(): UtilityAgent {
   const preferred = [getSetting("utility_agent"), getSetting("default_agent"), DEFAULT_AGENT];
@@ -91,9 +91,9 @@ export function resolveUtilityAgent(): UtilityAgent {
 
 /**
  * The agent that runs project-scoped one-shots and backstops any task whose
- * driver doesn't implement a given helper. When no agent is connected at all we
- * throw an actionable error instead of driving a dead CLI into a cryptic
- * failure — the message is what the UI shows (the refresh job persists it to
+ * driver doesn't implement a given helper. When no agent is connected at all
+ * this throws an actionable error instead of driving a dead CLI into a cryptic
+ * failure. The message is what the UI shows (the refresh job persists it to
  * refresh_error), so it names the fix.
  */
 export function utilityDriver(): AgentDriver {
@@ -105,9 +105,10 @@ export function utilityDriver(): AgentDriver {
   );
 }
 
-// Resolve the DRIVER that will run `key`: the preferred one when it implements
-// the helper, else the utility agent as backstop. Returning the driver (not just
-// the function) is what lets `run` report which agent actually did the work.
+// Resolve the driver that will run `key`: the preferred one when it implements
+// the helper, else the utility agent as backstop. Returning the driver, not
+// just the function, is what lets `run` report which agent actually did the
+// work.
 function resolveFor<K extends OneShotKey>(preferred: AgentDriver, key: K): AgentDriver {
   if (preferred[key]) return preferred;
   const util = utilityDriver();
@@ -115,11 +116,11 @@ function resolveFor<K extends OneShotKey>(preferred: AgentDriver, key: K): Agent
   return util;
 }
 
-// Every one-shot funnels through here so addInternalUsage records WHICH agent
-// actually ran each internal job. Both fallback paths (a Codex-only instance running
-// recaps the settings still point at Claude for, and a driver leaning on the
-// utility agent for a helper it doesn't implement) are invisible otherwise —
-// `fallback: true` is how we see them in the wild.
+// Every one-shot funnels through here so addInternalUsage records which agent
+// actually ran each internal job. Both fallback paths (a Codex-only instance
+// running recaps the settings still point at Claude for, and a driver leaning
+// on the utility agent for a helper it doesn't implement) are otherwise
+// invisible; `fallback: true` is how they show up.
 //
 // The helpers are plain functions (they don't close over `this`), so invoking
 // the resolved reference directly is safe.
@@ -136,8 +137,8 @@ async function run<K extends OneShotKey>(
   }
   const started = Date.now();
   let agent: string | null = null;
-  // What we ASKED for, which is null whenever the tier is unset. Kept for the
-  // failure path and as the backstop when the driver can't report what ran.
+  // What was asked for, null whenever the tier is unset. Kept for the failure
+  // path and as the backstop when the driver can't report what ran.
   let requestedModel: string | null = null;
   try {
     const driver = resolveFor(preferred(), job);
@@ -147,8 +148,8 @@ async function run<K extends OneShotKey>(
     // the requested agent's model id doesn't belong to.
     requestedModel = oneShotModel(agent, job);
     const raw = await invoke(driver[job] as NonNullable<AgentDriver[K]>, { model: requestedModel });
-    // Keep older third-party/test drivers from breaking at runtime while the
-    // TypeScript contract moves them to OneShotResult.
+    // Keeps older third-party or test drivers from breaking at runtime while
+    // the TypeScript contract moves them to OneShotResult.
     const result: OneShotResult = typeof raw === "string" ? { text: raw } : raw;
     const ms = Date.now() - started;
     const usage = result.usage;
@@ -161,8 +162,8 @@ async function run<K extends OneShotKey>(
     });
     return result.text;
   } catch (e) {
-    // agent stays null when resolution itself failed (nothing connected) — that
-    // distinction is the whole point of tracking failures too.
+    // agent stays null when resolution itself failed (nothing connected), which
+    // is a distinction worth keeping when tracking failures too.
     const ms = Date.now() - started;
     const recordedAgent = agent ?? requested;
     addInternalUsage({
@@ -175,11 +176,11 @@ async function run<K extends OneShotKey>(
 }
 
 // The wrappers are async so utilityDriver()'s no-agent-connected throw always
-// surfaces as a REJECTED PROMISE, never a synchronous throw — callers uniformly
-// handle failures with .catch()/try-await (the refresh job persists it to
+// surfaces as a rejected promise, never a synchronous throw. Callers uniformly
+// handle failures with .catch() or try/await (the refresh job persists it to
 // refresh_error, the recap sweep skips the project).
 
-/** /clear handoff note — TASK-scoped (the task's agent, else the utility agent). */
+/** /clear handoff note, task-scoped (the task's agent, else the utility agent). */
 export async function summarizeTranscript(task: Task, transcript: string, project: Project): Promise<string> {
   const own = getDriver(task.agent);
   return run("summarizeTranscript", own.id, () => own, (impl, opts) => impl(transcript, project, opts), {
@@ -188,7 +189,7 @@ export async function summarizeTranscript(task: Task, transcript: string, projec
   });
 }
 
-/** Project-context draft ("Refresh with AI") — PROJECT-scoped (utility agent). */
+/** Project-context draft ("Refresh with AI"), project-scoped (utility agent). */
 export async function draftProjectContext(project: Project, digest: string): Promise<string> {
   return run("draftProjectContext", resolveUtilityAgent().configured, utilityDriver, (impl, opts) => impl(project, digest, opts), {
     project_id: project.id,
@@ -196,9 +197,9 @@ export async function draftProjectContext(project: Project, digest: string): Pro
 }
 
 /**
- * Tag freshness check ("Refresh tag") — PROJECT-scoped (utility agent).
+ * Tag freshness check ("Refresh tag"), project-scoped (utility agent).
  *
- * Attended, so it is NOT gated on `background_jobs`: like the context draft
+ * Attended, so it is not gated on `background_jobs`: like the context draft
  * above, the user pressed a button and is watching a bar. The gate governs work
  * nobody asked for.
  */
@@ -208,7 +209,7 @@ export async function planTagRefresh(project: Project, digest: string): Promise<
   });
 }
 
-/** "Where you left off" recap — PROJECT-scoped (utility agent). */
+/** "Where you left off" recap, project-scoped (utility agent). */
 export async function summarizeProjectRecap(
   project: Project,
   digest: string,

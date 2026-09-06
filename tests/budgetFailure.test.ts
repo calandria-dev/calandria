@@ -5,11 +5,10 @@ import { isPromptTooLong } from "@/lib/promptLimits";
 import { isUsageLimit } from "@/lib/usageLimit";
 import { isApprovalBlocked } from "@/lib/approvalFailure";
 
-// Real-shaped fixtures for the two ways LiteLLM reports a spent budget
-// (lib/budgetFailure.ts's own comment, citing docs/design/litellm.md,
-// "Attribution, budgets and failures"):
-//   - a proxy-level rejection (key/user/team budget), which embeds a JSON
-//     body fragment carrying `"type": "budget_exceeded"`;
+// Real-shaped fixtures for the two ways LiteLLM reports a spent budget (see
+// docs/AGENTS.md, "Attribution, budgets and failures"):
+//   - a proxy-level rejection (key/user/team budget), embedding a JSON body
+//     fragment carrying `"type": "budget_exceeded"`;
 //   - the end-user budget check's own exception class prefix.
 const PROXY_REJECTION =
   'API Error: 400 Budget has been exceeded! Current cost: 12.5, Max budget: 10.0 ' +
@@ -33,7 +32,7 @@ const DOWNGRADE =
 const EXEC_REJECTIONS = [
   'command execution approval is not supported in exec mode for thread 019ff714-aaaa-bbbb-cccc-dddddddddddd',
   'exec_command failed for session 1: Rejected("approval request failed")',
-  "approval policy is UnlessTrusted; reject command — you cannot ask for escalated permissions if the " +
+  "approval policy is UnlessTrusted; reject command: you cannot ask for escalated permissions if the " +
     "approval policy is UnlessTrusted",
 ];
 
@@ -87,8 +86,8 @@ describe("BUDGET_EXCEEDED_NOTICE", () => {
 });
 
 describe("BUDGET_EXCEEDED_BANNER_REASON", () => {
-  // Load-bearing: app/shell/AgentConnect.tsx matches this string verbatim to
-  // swap in budget-specific banner copy instead of "Reconnect".
+  // app/shell/AgentConnect.tsx matches this string verbatim to swap in
+  // budget-specific banner copy instead of "Reconnect".
   it("is non-empty, mentions budget, and doesn't claim to reconnect anything", () => {
     expect(BUDGET_EXCEEDED_BANNER_REASON.length).toBeGreaterThan(0);
     expect(BUDGET_EXCEEDED_BANNER_REASON.toLowerCase()).toContain("budget");

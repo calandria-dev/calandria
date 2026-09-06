@@ -1,47 +1,36 @@
 /**
  * Suggestions, rendered where they were made.
  *
- * `suggest_task` files a task into the Suggested tray, and until now that tray
- * was the only place it appeared: the user watching the transcript saw a tool
- * call go by with no artifact, and had to leave the session to find out what
- * had been proposed. This module is the small amount of shared policy that lets
- * the transcript settle a SUGGESTION CARD onto the call that filed it — exactly
- * how an already-decided permission card settles onto the row of the call it
- * killed (lib/runner.ts, `permission_denied`), rather than floating a notice
- * beside it.
+ * `suggest_task` files a task into the Suggested tray. This module settles a
+ * SUGGESTION CARD onto the tool call that filed it, the way an
+ * already-decided permission card settles onto its call (lib/runner.ts,
+ * `permission_denied`).
  *
- * What is persisted onto the row is only the pair of ids. Everything the card
- * SHOWS — title, priority, blockers, the project it landed in, and above all
- * whether it is still startable — is re-read from the task row on every render
- * (GET /api/tasks/[id]/suggestion). That is the whole reason the payload is
- * this thin: a transcript is durable, the task it points at is not, and a card
- * that froze "Start" into the transcript would still be offering it after the
- * task had been started, accepted, withdrawn or hard-deleted.
+ * Only the pair of ids is persisted on the row; everything the card shows
+ * (title, priority, blockers, project, startability) is re-read from the
+ * task row on every render (GET /api/tasks/[id]/suggestion), so it can't show
+ * a stale "Start" after the task changes state.
  *
- * SDK-free (store + types only) and pinned as such by tests/importGraph.test.ts:
- * it is reached from the internal agent-tools route, which is a sync-compiled
- * route entry.
+ * SDK-free (store + types only), pinned by tests/importGraph.test.ts.
  */
 
 import { recentToolMessages, updateMessage } from "@/lib/store";
 import type { ToolData } from "@/lib/types";
 
-/** Which ids the card needs; see the note above on why it's only these two. */
+/** The two ids a suggestion card needs. */
 export interface SuggestionRef {
   taskId: string;
-  /** The project the task was FILED INTO — suggest_task can target any project. */
+  /** The project the task was filed into; suggest_task can target any project. */
   projectId: string;
 }
 
 /**
- * Is this the agent's name for a suggest_task call?
+ * Whether `name` is a driver's spelling of the suggest_task tool.
  *
- * Matched as a substring because every driver spells the same tool differently
- * and all of them are correct: the Claude driver mounts it in-process as
- * `mcp__calandria__suggest_task`, the stdio bridge arrives as
- * `calandria__suggest_task`, and a future driver may prefix it again. The name
- * is matched rather than the title, which is written for a human and is free to
- * be re-worded.
+ * Matched as a substring because each driver prefixes the tool differently:
+ * the Claude driver mounts it in-process as `mcp__calandria__suggest_task`,
+ * the stdio bridge arrives as `calandria__suggest_task`. The name is matched
+ * instead of the title, which is human-written prose free to be reworded.
  */
 export function isSuggestTaskTool(name: string | undefined): boolean {
   return !!name && name.includes("suggest_task");
@@ -54,17 +43,17 @@ export function withSuggestion(data: ToolData, ref: SuggestionRef): ToolData {
 
 /**
  * Settle a suggestion onto the most recent unclaimed suggest_task tool row of
- * `taskId`, returning the message id it landed on (null = no such row).
+ * `taskId`, returning the message id it landed on (null if there is no such
+ * row).
  *
- * Only the stdio-bridge path needs this. A turn running through the runner has
- * its own tool rows in memory and settles there, which also keeps the runner's
- * later `tool_result` write from clobbering a row this function had patched
- * behind its back. The bridge has no such handle: a Codex session's MCP client
- * calls the internal endpoint directly, so the only correlation available is
- * "the newest suggest_task call on this task that hasn't got a card yet".
+ * Only the stdio-bridge path needs this. A turn running through the runner
+ * keeps its own tool rows in memory and settles there directly. A Codex
+ * session's MCP client calls the internal endpoint out of band, with no
+ * tool_use id, so the only correlation available is the newest suggest_task
+ * call on this task without a card yet.
  *
- * Newest-first with a claimed-row skip is what makes a parallel batch of
- * suggestions land one card each rather than stacking on the first row.
+ * Newest-first with a claimed-row skip lands a parallel batch of suggestions
+ * one card each instead of stacking them on the first row.
  */
 export function attachSuggestionToCall(taskId: string, ref: SuggestionRef): string | null {
   for (const m of recentToolMessages(taskId)) {

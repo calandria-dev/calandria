@@ -1,8 +1,8 @@
 // The pending-ask registry (lib/asks.ts): one assistant message can carry
-// several AskUserQuestion tool_uses, so a task may have multiple asks parked at
-// once. Each must stay independently answerable — the P1 this guards against
-// was a one-entry-per-task registry where the second ask silently orphaned the
-// first hook's promise, deadlocking the turn until the 24h hook timeout.
+// several AskUserQuestion tool_uses, so a task may have multiple asks parked
+// at once. Each stays independently answerable; a one-entry-per-task
+// registry would let a second ask orphan the first hook's promise and
+// deadlock the turn until the hook timeout.
 import { describe, it, expect } from "vitest";
 import { waitForAnswer, submitAnswer, cancelAsk } from "@/lib/asks";
 import type { AskQuestion } from "@/lib/types";
@@ -36,7 +36,7 @@ describe("asks registry", () => {
     // Registering the second must not orphan the first.
     expect(await settled(p1)).toBe(false);
 
-    // Answer in reverse order — each resolves with its own answers.
+    // Answer in reverse order: each resolves with its own answers.
     expect(submitAnswer("t2", "a2", [["no"]])).toBe(true);
     await expect(p2).resolves.toEqual([["no"]]);
     expect(await settled(p1)).toBe(false);
@@ -44,7 +44,7 @@ describe("asks registry", () => {
     expect(submitAnswer("t2", "a1", [["yes"]])).toBe(true);
     await expect(p1).resolves.toEqual([["yes"]]);
 
-    // Both consumed — nothing left to answer.
+    // Both consumed: nothing left to answer.
     expect(submitAnswer("t2", "a1", [["yes"]])).toBe(false);
     expect(submitAnswer("t2", "a2", [["no"]])).toBe(false);
   });
@@ -68,7 +68,7 @@ describe("asks registry", () => {
     await expect(p1).rejects.toThrow("aborted");
     await expect(p2).rejects.toThrow("aborted");
 
-    // Registry is clean — late answers fall through to the resume path.
+    // Registry is clean: late answers fall through to the resume path.
     expect(submitAnswer("t3", "a1", [["yes"]])).toBe(false);
     expect(submitAnswer("t3", "a2", [["yes"]])).toBe(false);
   });
@@ -85,7 +85,7 @@ describe("asks registry", () => {
     const p = waitForAnswer("t6", "a1", q("still there?"));
     expect(cancelAsk("t6", "a1", "permission expired")).toBe(true);
     await expect(p).rejects.toThrow("permission expired");
-    // Nothing left parked — a late answer falls through to the resume path.
+    // Nothing left parked: a late answer falls through to the resume path.
     expect(cancelAsk("t6", "a1", "again")).toBe(false);
     expect(submitAnswer("t6", "a1", [["yes"]])).toBe(false);
   });

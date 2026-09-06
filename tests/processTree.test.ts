@@ -2,15 +2,15 @@
  *
  * Two halves, and only one of them can be run for real from this suite:
  *
- *   - POSIX is exercised against actual processes — a `sh -c` wrapper with a
+ *   - POSIX is exercised against actual processes: a `sh -c` wrapper with a
  *     real grandchild under it, which is the shape every managed service has
  *     (lib/services.ts spawns with shell:true). What's pinned is that the
- *     GRANDCHILD dies too: killing the pid we hold would leave the dev server
- *     holding the port, which is the whole reason this module exists.
+ *     GRANDCHILD dies too, since killing the pid we hold would leave the dev
+ *     server holding the port.
  *   - win32 has no process groups and no `ps`, so its branches are driven
- *     through the injected `exec` hook with `platform: "win32"` — the argv
- *     handed to taskkill/tasklist/PowerShell is the contract, and it's the part
- *     a Windows CI lane will later confirm end to end.
+ *     through the injected `exec` hook with `platform: "win32"`. The argv
+ *     handed to taskkill/tasklist/PowerShell is the contract, and it's the
+ *     part a Windows CI lane will later confirm end to end.
  *
  * See docs/WINDOWS.md §2.
  */
@@ -48,7 +48,7 @@ const thrower = (calls: { file: string; args: string[] }[]) => (file: string, ar
 };
 
 describe("processTree: win32 rules (mocked platform)", () => {
-  it("has no process groups — so no detached spawn, and no SIGKILL escalation", () => {
+  it("has no process groups, so no detached spawn and no SIGKILL escalation", () => {
     expect(hasProcessGroups("win32")).toBe(false);
     expect(hasProcessGroups("linux")).toBe(true);
     expect(hasProcessGroups("darwin")).toBe(true);
@@ -105,18 +105,18 @@ describe("processTree: win32 rules (mocked platform)", () => {
         ],
       },
     ]);
-    // No double quote reaches the argument — Node's win32 escaping and
+    // No double quote reaches the argument: Node's win32 escaping and
     // PowerShell's re-parsing disagree about those.
     expect(ours.calls[0].args.join(" ")).not.toContain('"');
 
     // The pid was recycled by something else: same pid, different command line.
     const stranger = recorder("C:\\WINDOWS\\system32\\svchost.exe -k netsvcs\r\n");
     expect(treeMatchesCommand(4242, cmd, { platform: "win32", exec: stranger.exec })).toBe(false);
-    // Dead pid → empty output → no match (and never a kill).
+    // Dead pid: empty output, no match (and never a kill).
     expect(treeMatchesCommand(4242, cmd, { platform: "win32", exec: recorder("\r\n").exec })).toBe(false);
   });
 
-  it("answers 'no' when it cannot find out — leaving an orphan beats killing a stranger", () => {
+  it("answers 'no' when it cannot find out, since leaving an orphan beats killing a stranger", () => {
     const calls: { file: string; args: string[] }[] = [];
     expect(treeMatchesCommand(4242, "npm run dev", { platform: "win32", exec: thrower(calls) })).toBe(false);
     expect(treeAlive(4242, { platform: "win32", exec: thrower(calls) })).toBe(false);
@@ -167,7 +167,7 @@ describe("processTree: POSIX", () => {
     expect(treeAlive(pid)).toBe(false);
   });
 
-  onPosix("SIGTERM is a real signal here — the tree gets a chance to exit cleanly", async () => {
+  onPosix("SIGTERM is a real signal here, so the tree gets a chance to exit cleanly", async () => {
     const { proc, pid } = spawnService();
     await settle();
     const exited = new Promise<void>((r) => proc.once("exit", () => r()));

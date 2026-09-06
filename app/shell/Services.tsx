@@ -12,7 +12,7 @@ const STATUS_LABEL: Record<ServiceStatus, string> = {
   stopped: "Stopped", starting: "Starting…", running: "Running", exited: "Exited", errored: "Error",
 };
 
-// Status dot class — green running, amber starting, red errored, grey otherwise.
+// Status dot class: green running, amber starting, red errored, grey otherwise.
 function dotClass(s: ServiceStatus): string {
   if (s === "running") return "g";
   if (s === "starting") return "a";
@@ -198,7 +198,7 @@ export function ServicesDrawer({
 
   const current = selected ? logs[selected] ?? [] : [];
   // Supervisor-level failure (port conflict, spawn failure) for the selected
-  // service — shown as a banner over the logs, not buried in them.
+  // service, shown as a banner over the logs instead of buried in them.
   const selectedError = selected ? services.find((s) => s.name === selected)?.error ?? null : null;
 
   return (
