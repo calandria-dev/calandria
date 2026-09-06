@@ -4,767 +4,786 @@ title: "Features"
 
 # Features
 
-Calandria is a control room for running coding-agent work across repositories. This page
-contains the longer feature inventory kept out of the project README.
+Calandria runs many coding-agent sessions in parallel, each as its own task with its own git
+worktree, branch, and transcript. This page is the detailed feature reference; the README has
+the quick overview.
 
-## Parallel work without collisions
+## Running tasks in parallel
 
-Each task runs in its own git worktree and branch, with an independent Claude Code, Codex or
-Antigravity session. Projects and tasks share one workspace, so you can run many sessions
-without mixing their files, terminals, or transcripts.
+**What it is:** every task runs in its own git worktree and branch, with its own Claude Code,
+Codex, or Antigravity session. Tasks in the same or different projects never share files,
+terminals, or transcripts.
 
-The cross-project **Needs you** signal identifies sessions waiting for input. Turns run on
-the server and their events are persisted, so reloading the page or sleeping your laptop
-doesn't lose the transcript. You can queue follow-ups while a turn is running.
+**How to use it:**
 
-## Context that survives the task
+1. Create a task from a project. Calandria cuts a fresh worktree and branch for it before the
+   first turn starts.
+2. Watch the **Needs you** indicator for any task, in any project, that is waiting on you: the
+   titlebar pill, its dropdown, the project badge, and the board's **Needs input** column all
+   show it.
+3. Send a message to a task while its turn is still running. It queues and sends once the
+   current turn ends.
+4. Reload the page, close the tab, or let your laptop sleep. Turns run on the server and every
+   event is saved as it happens, so the transcript is exactly where you left it.
 
-Each project has reusable context that gets injected into new tasks. **Refresh with AI**
-redrafts that context from the repository. You can turn off context injection for an
-individual project or task if you want a leaner session.
+## Project context and long conversations
 
-A task is a lineage of agent sessions. `/clear` summarizes the current conversation and
-starts a clean context window seeded with that summary, so long-running work doesn't turn
-into one unbounded prompt.
+**What it is:** a project can carry reusable context that every new task starts with, and a
+task's conversation can be condensed and continued indefinitely instead of growing into one
+unbounded prompt.
 
-Typing `/` in the composer opens the command menu. It lists the commands the task's own
-agent actually expands: your skills, plugin commands, and the `.claude/commands` in the
-checked-out repo, discovered live from the agent, so a command you install shows up without
-a Calandria release. An MCP server's prompts (`/mcp__server__prompt`) show up too, once the
-task has run at least one turn (reading them without spawning your whole MCP fleet isn't
-possible before that, so Calandria collects them from the task's own sessions instead).
-Arrow keys move the highlight, Enter or Tab completes it, and a command typed in full sends
-as usual. Calandria's own `/clear` heads the list; the agent's same-named command is hidden
-so the name only means one thing, and so are the run-control commands (`/model`, `/effort`,
-`/fast`), which have their own pickers.
+**How to use it:**
 
-## Review and delivery
+1. Click **Context** at the top of a project's task list to open the **Project context**
+   dialog.
+2. Write or paste background the agent should know for every task in this project (stack,
+   conventions, constraints).
+3. Click **Refresh with AI** to have the agent read the repository and redraft that context for
+   you. Click **Preview** first to render the current context instead of editing it.
+4. Uncheck **Include this context in new agent sessions** to stop sending it to new tasks in
+   this project. Each task can override this: uncheck **Send saved project context to the
+   agent** in the New task dialog to opt that one task out on its own.
+5. Type `/clear` in a running task's composer to end the current session, summarize it, and
+   start a fresh context window seeded with that summary. A task is a lineage of sessions this
+   way: each `/clear` starts the next generation seeded with every prior summary.
+6. Type `/` in the composer to open the command menu. It lists the commands your skills, your
+   plugins, and the `.claude/commands` in the checked-out repo actually expand, read live from
+   the agent, so installing a command makes it appear with no Calandria update needed. An MCP
+   server's prompts (`/mcp__server__prompt`) appear too, once the task has run at least one
+   turn. Arrow keys move the highlight, Enter or Tab completes it, and typing a command in full
+   sends it as usual.
 
-Calandria puts the task conversation and git diff side by side. From there you can:
+**What it does not do:**
 
-- review every changed file before it reaches the base branch;
-- sync a stale task branch;
-- merge with one click;
-- ask the agent to resolve conflicts;
-- create a GitHub pull request; or
-- squash-merge that pull request without leaving the app.
+- The command menu hides the agent's own `/clear` in favor of Calandria's, and hides the
+  run-control commands (`/model`, `/effort`, `/fast`), which have their own pickers instead.
+- An MCP server's prompts cannot be listed until the task has run at least one turn, because
+  reading them without spawning your whole MCP fleet isn't possible before that.
+
+## Reviewing and merging changes
+
+**What it is:** the Changes tab puts the task's git diff beside its conversation, so you can
+review, sync, merge, or open a pull request without leaving the app.
+
+**How to use it:**
+
+1. Open a task and switch to the Changes tab (part of the DIFF / PREVIEW / CONTEXT rail) to
+   review every changed file next to the session that produced it.
+2. Use the tab's buttons to sync a stale task branch, merge with one click, ask the agent to
+   resolve conflicts, create a GitHub pull request, or squash-merge that pull request.
 
 ![Diff review beside the agent session](images/changes.png)
 
-Once a task has a PR, the diff view's toolbar carries a live chip: the PR number, whether it
-is open, merged or closed, how its checks are doing, and the review decision. It sits with the
-diff rather than in the session header so the PR's state and the buttons that act on it are in
-one place, which matters most on a phone, where the diff and the chat are separate views.
-Calandria keeps that current by re-reading the PR from GitHub (`gh pr view`) in the background
-— when the PR is created, when you open the task, when you press the chip's Refresh button,
-and on a timer while the PR is still open. Nothing polls from the browser: a change reaches
-every open tab over the same event stream every other lifecycle fact uses. A merged or closed
-PR is never re-read, and a sweep is skipped entirely when no tab is open, so the cost is
-bounded by open work rather than by how many PRs the instance has ever opened.
-`CALANDRIA_PR_POLL_MS=0` turns the timer off and leaves the other three triggers.
+Once a task has a PR, the diff view's toolbar shows a live chip: the PR number, whether it is
+open, merged, or closed, how its checks are doing, and the review decision. Calandria refreshes
+it in the background (running `gh pr view`) when the PR is created, when you open the task, when
+you press the chip's **Refresh** button, and on a timer while the PR stays open. A merged or
+closed PR is never re-read.
 
-**A red PR is treated as work that needs you.** When the check rollup on a task's open PR
-goes failing, the task is raised into the same cross-project **Needs you** inbox a parked
-question lands in — the titlebar pill, the dropdown, the project badge, the board's
-Needs-input column — even though no turn is parked and the task may already be marked done.
-That last case is the one this exists for: a session verifies locally, ends, GitHub disagrees
-half an hour later, and nothing on screen says so. A snooze silences it like anything else in
-that inbox, and a PR that merges or closes drops out of it.
+| Setting | Default | Effect |
+|-|-|-|
+| `CALANDRIA_PR_POLL_MS` | `300000` (5 min) | How often an open PR's chip refreshes on a timer. Set to `0` to turn the timer off; the other three refresh triggers still fire. |
 
-The session says which check broke and links its run, so the answer isn't a trip to the
-Actions tab. Beside that is **Fix CI**, the CI twin of the conflict resolver's *Fix with AI*:
-it re-checks GitHub (so a check somebody already fixed doesn't cost a turn), reads the tail of
-the failing job's log with `gh run view --log-failed`, and starts a turn in that task's own
-session seeded with both. The fix streams into the transcript like any other work.
-`CALANDRIA_CI_LOG_TAIL_LINES` sets how much log it carries.
+If a task's open PR starts failing its checks, the task is raised into the same **Needs you**
+inbox a parked question uses, even if no turn is running and the task is already marked done. A
+snooze silences it like anything else in that inbox, and it clears when the PR merges or closes.
+The session's own transcript names which check broke and links its run.
 
-Worktrees for merged or finished tasks can be reclaimed from Settings. Discarding unmerged
-work requires an explicit permanent-discard confirmation.
+Beside that, **Fix CI** re-checks GitHub, reads the tail of the failing job's log with
+`gh run view --log-failed`, and starts a turn in the task's own session with both. The fix
+streams into the transcript like any other work.
 
-#### Squash & merge from the rail
+| Setting | Default | Effect |
+|-|-|-|
+| `CALANDRIA_CI_LOG_TAIL_LINES` | `200` | How many lines of the failing job's log Fix CI reads into the prompt. |
 
-Once the PR is open, green and approved, landing it is one button on the diff rail:
-`gh pr merge --squash --auto --delete-branch`, run through the same `gh` the Create PR button
-uses. `--auto` is the point. Where the repo has auto-merge enabled and required checks
-configured, the click **queues** the merge and GitHub lands it the moment CI goes green, so
-there is no tab to babysit. A repo with auto-merge switched off — or a PR with nothing left
-to wait for — falls back to a plain `--squash`, and the result says which of the two you got:
-"GitHub will squash-merge this as soon as its requirements are met" is a different promise
-from "squash-merged".
+### Squash and merge from the rail
 
-The button is enabled off GitHub's own answer, not optimistically. It is disabled, and says
-why, when the PR is a draft, already merged, closed, conflicting with its base, or has
-failing checks; a merge waiting on a required review or a still-running check is exactly what
-`--auto` is for, so those stay clickable. The route re-runs the same check against a fresh
-`gh pr view` before it acts, so a build that went red while the rail was on screen is refused
-rather than merged, and it refuses outright while the task has a turn running — the agent may
-be pushing more commits into the branch the PR is built from. Only the local branch is kept:
-`--delete-branch` removes the branch on GitHub, while the task's own branch stays, because a
-checkout is regenerable and a branch is the task's diff.
+**What it is:** once a PR is open, green, and approved, one button lands it.
 
-It is a **user** action and only a user action. There is no agent tool for it and no
-scheduled path, deliberately: `.github/CLAUDE.md` holds this repo's own agents to merging
-only on an explicit human answer, and a POST an agent could reach would be that gate's back
-door. After a successful merge the route does no cleanup of its own — it forces the PR-state
-refresh that records the merge and leaves the worktree to the reclaim path.
+**How to use it:**
 
-#### Reclaiming the worktree when the work lands
+1. Click **Squash & merge PR** on the diff rail. It runs
+   `gh pr merge --squash --auto --delete-branch` through the same `gh` login the Create PR
+   button uses.
+2. If the repository has auto-merge enabled and required checks configured, the click queues
+   the merge: GitHub lands it the moment CI goes green, and the result tells you it is queued,
+   not yet merged.
+3. Otherwise it falls back to a plain squash merge immediately.
 
-A merged PR is a definitive signal that a task's checkout is disposable, so the session header
-grows a **Reclaim** button the moment the work lands — whether GitHub merged the pull request
-or Calandria merged the branch locally. One click does the whole tail: fast-forward the local
-base branch from origin, remove the worktree, delete the **local** branch (the remote one went
-with the merge: landing the PR from Calandria passes `--delete-branch`, while a PR merged on
-github.com instead needs the repository's `delete_branch_on_merge`, which is off by default)
-and mark the task done.
+The button reflects GitHub's own answer, not an optimistic guess: it is disabled, with a reason
+shown, when the PR is a draft, already merged, closed, conflicting with its base, or has failing
+checks. A PR only waiting on a required review or a still-running check stays clickable, since
+that is what `--auto` is for. Calandria re-checks the PR against GitHub right before merging, so
+a build that went red while you had the tab open is refused, not merged, and the button also
+refuses while the task has a turn running, since the agent may still be pushing commits.
 
-Project settings has a **Reclaim a task's worktree when its work lands** checkbox that has the
-server do it by itself. It is off by default and per project, because an unattended reclaim
-deletes a local branch.
+**What it does not do:**
 
-Nothing is ever discarded silently. Uncommitted edits in the checkout stop both paths, and so
-do commits the remote never received — those were not in what GitHub merged, whatever the
-merge strategy did to the rest. The automatic path reports and leaves the checkout alone
-(nobody is there to acknowledge anything); the button offers the same permanent-discard
-confirmation a task move does, naming exactly what would be destroyed. A branch that is merely
-"ahead" after a squash merge is not treated as unsaved work — every squash-merged branch looks
-that way, and refusing on it would mean the feature never fires.
+- Only the local branch is removed. `--delete-branch` removes the branch on GitHub; the task's
+  own local branch stays until you reclaim the worktree.
+- Merging is a user action and only a user action. There is no agent tool or scheduled path for
+  it.
 
-Worktrees for merged or finished tasks can also be reclaimed in bulk from Settings → Storage.
-Discarding unmerged work there requires the same explicit permanent-discard confirmation.
+### Reclaiming the worktree when the work lands
+
+**What it is:** once a task's work has landed, whether GitHub merged the pull request or
+Calandria merged the branch locally, its checkout is disposable and Calandria can clean it up.
+
+**How to use it:**
+
+1. Click **Reclaim** in the session header once it appears (it shows up the moment the work
+   lands). It fast-forwards the local base branch from origin, removes the worktree, deletes the
+   local branch, and marks the task done in one step.
+2. To do this automatically for every task in a project, open **Context** → check **Reclaim a
+   task's worktree when its work lands**. It is off by default and set per project.
+3. To reclaim several merged or finished tasks at once, go to Settings → Storage. Discarding
+   unmerged work there requires the same explicit permanent-discard confirmation as the button.
+
+**What it does not do:**
+
+- It never discards anything silently. Uncommitted edits in the checkout, or commits the remote
+  never received, stop both the button and the automatic path. The automatic path just reports
+  and leaves the checkout alone; the button, and Settings → Storage, offer the same
+  permanent-discard confirmation a task move does, naming exactly what would be destroyed.
+- A branch that is merely "ahead" of its base after a squash merge is not treated as unsaved
+  work, since every squash-merged branch looks that way.
+- The remote branch is deleted only if the merge came from Calandria (`--delete-branch`) or the
+  repository has `delete_branch_on_merge` turned on; GitHub does not enable that by default.
 
 ### Collaborating on a document
 
-A text file the agent wrote or changed carries a **Collaborate** button in two places: its
-diff header in the Changes tab, and the **Write**/**Edit** tool card in the transcript. The
-button appears the moment the file is written, even under a gitignored directory that never
-shows up in the diff, because it's keyed on the path the agent wrote rather than on git
-status.
+**What it is:** a way to read and edit a text file the agent wrote or changed, with inline
+comments, without opening it in your own editor.
 
-It opens the file as a document with two tabs: **Edit** (a source editor, with a live render
-beside it for markdown, and ```mermaid fences drawn as diagrams) and **Comment** (select a
-passage and attach a note, plus a general comments box). **Send to agent** turns your edits
-into a unified diff (or writes them straight into the worktree, the default) and your
-comments into located, quoted feedback, sent as one message through the ordinary chat path.
-Passage comments save as you add them and survive a reload. Sent comments stay listed
-against the document, read-only, and collapse into an outdated group once the document
-changes. See [DOCUMENT_COLLABORATION.md](DOCUMENT_COLLABORATION.md) for details.
+**How to use it:**
+
+1. Click **Collaborate** wherever it appears: on a changed file's diff header in the Changes
+   tab, or on the **Write**/**Edit** tool card in the transcript. It shows up as soon as the
+   file is written, even under a gitignored directory that never appears in the diff.
+2. Use the **Edit** tab to edit the file directly in a source editor. Markdown gets a live
+   render beside it, and ` ```mermaid ` fences render as diagrams.
+3. Use the **Comment** tab to select a passage and attach a note, or leave a general comment.
+4. Click **Send to agent** to turn your edits into a unified diff (or write them straight into
+   the worktree, which is the default) and your comments into located, quoted feedback, sent as
+   one message through the ordinary chat.
+
+Passage comments save as you add them and survive a reload. Sent comments stay listed against
+the document, read-only, and move into an outdated group once the document changes further. See
+[Collaborating on a document](DOCUMENT_COLLABORATION.md) for the full reference.
 
 ### Base branches
 
-A project has a default base branch, and a task can name its own instead. That one setting
-controls what the task's worktree is cut from, what **Sync** catches it up to, what
-**Merge** lands it into, and what a PR is opened against. It lets five agents work against
-`feature/auth` while three others keep shipping to `main`, without a second project row
-pointed at the same repo (which would split the task list, recap and insights in half).
+**What it is:** each task can target its own base branch instead of the project's default, so
+different tasks in the same project can build against different branches.
 
-Set it in the task's edit dialog under **Base branch**. Leave it empty to follow the
-project; the inherited value shows as the placeholder so you can see it without filling the
-field in. Any local branch works, and so does one that exists only on the remote: a
-colleague's freshly pushed `feature/auth` is created locally, tracking it, instead of being
-refused as unknown. A branch checked out in another worktree is refused (including another
-task's own `calandria/…` branch), because merging moves that branch's ref, which would leave
-the other session pointed at a commit it no longer describes. The refusal names the worktree
-holding it.
+**How to use it:**
 
-Retargeting never rewrites history. A task that hasn't committed yet is re-cut from the new
-base, so it's fully up to date rather than just pointed at it. A task that has committed
-keeps every commit and shows how far behind the new base it now is; one Sync catches it up.
-Once a task's worktree is cut, the branch it forked from is recorded on the task, so
-retargeting later can't move its merge target out from under work already built on it. Tasks
-on a base of their own are badged in the task list and the Changes tab; tasks following the
-project default aren't badged.
+1. Open a task's edit dialog and set **Base branch**. Leave it empty to follow the project's
+   default; the inherited value shows as a placeholder so you can see it without typing it.
+2. Name any local branch, or one that only exists on the remote: Calandria creates a local
+   branch tracking it. A branch checked out in another worktree (including another task's own
+   `calandria/…` branch) is refused, and the refusal names which worktree holds it, because
+   merging into it would move a ref that worktree's session is still pointed at.
+3. To set the base for a whole group of tasks at once, expand a tag's chip and fill in **Base
+   branch** in its Edit form. Every task carrying that tag from then on is cut from that branch.
+   The form shows how many members are already past their worktree cut (they keep their
+   existing branch) and how many take their base from a different tag.
 
-**A tag can set the base for a whole plan**, so a five-task feature is configured once
-instead of five times. Expand its chip and fill in **Base branch** in the strip's Edit form.
-Every task tagged with it from then on is cut from that branch. The field shows how many
-members are already past their worktree cut (and so keep their existing branch) and how many
-take their base from a different tag. A task can carry several tags; if more than one sets a
-base branch, the **first tag on the task** (in the order its badges render) wins, and the
-strip names it. Resolution order: the task's own base, then the first of its tags that sets
-one, then the project's default. Moving a task to another project clears both, since a
-branch name doesn't carry over to a different repository.
+If a task carries several tags and more than one sets a base branch, the first tag on the task
+(in the order its badges render) wins, and the tag strip names it. Resolution order is: the
+task's own base branch, then the first of its tags that sets one, then the project's default.
+Moving a task to another project clears both, since a branch name does not carry over to a
+different repository.
 
-**And the strip says when that branch has fallen behind** — "3 behind main", with a **Sync**
-beside it. A long-lived integration branch drifts as work lands on the default, and every new
-task the tag cuts is then minted stale: the session builds on superseded commits and its pull
-request proposes reverting whatever landed in between. The reading is taken against the
-commit a new task would actually be cut from (the fetched remote tip when your local default
-is merely behind it), so a stale checkout of your own can't hide it.
+**Retargeting a task:**
 
-Sync **merges the default into the tag's branch**. It never resets it: proving a branch has been
-fully superseded is unreliable under squash merges — `git cherry` called 30 and 10 commits "not
-upstream" on two branches `main` had in fact entirely absorbed — and a reset also force-moves a ref
-a live session may have checked out. A merge needs no such proof and can't drop a commit. If a
-worktree is holding the branch, the merge happens inside it so its files move too, and is refused
-outright when that worktree has uncommitted work, naming it. A conflict is reported and changes
-nothing. A tag pinned to a branch that **doesn't exist here** says so too, rather than silently
-cutting new tasks from whatever `HEAD` is. The usual case is a base typed into the editor before
-anything created it: the field accepts a branch that doesn't exist yet on purpose, and a **Create
-from main** button beside the line makes it, at the commit a new task would otherwise have been cut
-from. A branch that lives only on the remote counts as existing, and gets a local ref the way a task
-cut would give it one.
+- A task that has not committed yet is re-cut from the new base, so it starts fully caught up.
+- A task that has already committed keeps every commit and shows how far behind the new base it
+  now is; run **Sync** to catch it up.
+- Once a task's worktree is cut, the branch it forked from is recorded on the task, so
+  retargeting later cannot move its merge target out from under work already built on it.
+  Retargeting never rewrites history.
 
-The strip is the half of this you can act on; the other half reaches the session. Every session's
-opening context states its resolved base branch and what Sync and Merge do with it, plus the
-project's default in parentheses when the two differ. A task whose worktree was cut from a base
-branch already behind the default is told so in that same context, before it writes a pull
-request — same measurement, said in the two places it matters. A task or tag configured to branch
-from something that no longer exists is told that too: the worktree cut falls back to whatever
-`HEAD` pointed at, and the opening context states this explicitly.
+Tasks on a base of their own are badged in the task list and the Changes tab; tasks following
+the project default are not badged.
+
+**Keeping a tag's branch current:**
+
+- The tag strip shows when its branch has fallen behind the default, for example "3 behind
+  main", with a **Sync** button beside it. The comparison is made against the commit a new task
+  would actually be cut from (the fetched remote tip, when your local default is merely behind
+  it), so a stale local checkout cannot hide the drift.
+- **Sync** merges the default into the tag's branch. It never resets the branch, since a merge
+  cannot drop a commit and a reset would force-move a ref a live session may have checked out. If
+  a worktree is holding the branch, the merge runs inside it so its files move too, and it is
+  refused outright if that worktree has uncommitted work, naming it. A conflict is reported and
+  nothing changes.
+- If a tag's branch does not exist yet, the strip says so and offers **Create from main**, which
+  creates it at the commit a new task would otherwise have been cut from. A branch that exists
+  only on the remote counts as existing and gets a local tracking ref the way a task cut would
+  give it one.
+
+Every session's opening context states its resolved base branch and what **Sync** and **Merge**
+will do with it, plus the project's default when the two differ. If a task's worktree was cut
+from a base already behind the default, or from a base branch that no longer exists, the session
+is told this in that same context before it writes a pull request. When there is no resolvable
+base branch at all, the worktree cut falls back to whatever `HEAD` pointed at, and the session's
+opening context says so.
 
 ### How work lands: merge or pull request
 
-A project also records **how** its work is meant to reach that branch, in the project
-settings dialog under **How work lands**:
+**What it is:** a per-project setting for how finished work is meant to reach the base branch,
+because a protected branch rejects a direct merge.
 
-- **Merge** — Calandria merges the finished task branch into the base branch itself. This is
-  the default, and what every project did before this setting existed.
-- **Pull request** — the base branch is protected, so a merge is rejected by GitHub.
-  Finishing a task means opening a PR against it and leaving it for review.
+**How to use it:**
 
-The setting is not cosmetic: it is the sentence every session in the project is told. Under
-`merge` the agent reads "Merge lands into it"; under `pr` it is told the branch is protected,
-that Merge will be rejected, and that finishing means opening a PR. On a repo with a branch
-ruleset, the old unconditional wording sent every session off to press a button that could
-not work.
+1. Open a project's **Context** dialog and choose **How work lands**:
 
-The buttons follow the setting, for the same reason. Under `pr` the Changes tab makes **Create
-PR** the primary action; **Merge** stays available but demoted to **Merge locally…**, whose
-first click opens a note rather than merging — a local merge really does work, it just moves
-the copy of the base branch in your own checkout and can never be pushed afterwards, which is
-how you end up with a local `main` diverged from origin and nothing to do about it but reset.
-So the **Push to origin** offer that follows an ordinary merge is replaced under `pr` by a
-line saying the merge was local only. The push route refuses it server-side too, in the same
-words — a stale tab shouldn't be able to try. That refusal is not only about the setting: a
-protected-branch rejection from the remote is recognized wherever the policy says otherwise,
-and reported as "`main` requires a pull request — open a PR instead", with GitHub's own
-`GH006` text kept underneath rather than shown as the headline.
+   | Option | Effect |
+   |-|-|
+   | **Merge** (default) | Calandria merges the finished task branch into the base branch itself. |
+   | **Pull request** | The base branch is protected; finishing a task means opening a PR against it and leaving it for review. |
 
-Under `pr` the session also gets the verb to go with the sentence: **`create_pr(title?,
-body?)`** commits the worktree, pushes the work branch and runs `gh pr create` — the same
-machinery the PR button runs, so a session's PR and a human's are the same operation.
-Calling it again after more work updates the same PR rather than opening a second one. It
-exists because a session's own `git push` and `gh pr create` are normally refused — the
-server is where the network git lives — so without it a finished task had no way to say so
-in git and landing was entirely a human click. It is registered only on a `pr` project: on a
-`merge` project there is nothing for it to open, so it is absent rather than
-present-and-refusing. There is deliberately no `merge_pr` — opening a PR is proposing,
-merging is deciding, and that stays yours.
+2. Click **Detect** to have Calandria ask GitHub which one applies, by reading both a branch
+   ruleset with a `pull_request` rule and classic branch protection (neither reports the other).
+   It also runs on its own when you open the dialog and when you create or clone a project.
+   Detection only proposes an answer: on an existing project it shows what GitHub said beside a
+   one-click **Use pull request**, without overwriting your existing choice. When GitHub cannot
+   be reached, or the repository is private to a login `gh` does not have, Detect says so instead
+   of guessing **Merge**.
 
-A PR that a session opened **by hand** is linked to its task anyway. `create_pr` can be cut
-off by the CLI before it reaches Calandria, and a session that sees that failure falls back to
-`git push` plus `gh pr create` in a terminal. That opens a real PR, but nothing on the task
-row knows about it: no chip in the session header, no state polling, no auto-reclaim when it
-lands, and you relink it by hand. So at the end of every turn, a task on a `pr` project that
-has a work branch and no PR yet is checked: if the branch was pushed, one `gh pr list --head
-<branch> --state open` asks whether a PR for it exists, and an open one whose head is exactly
-that branch is recorded the way `create_pr` records its own. The branch check is local, so a
-task that never pushed costs nothing, and a PR whose head is any other branch is never
-adopted. It is best-effort like the rest of the network git: bounded, never prompting, and a
-`gh` that is missing, logged out or offline leaves the task exactly as it was. The link is
-logged as one line.
+Every session is told the setting as plain instructions: under **Merge** it reads "Merge lands
+into it"; under **Pull request** it is told the branch is protected, that Merge will be
+rejected, and that finishing means opening a PR. The Changes tab's buttons follow the setting
+too: under **Pull request**, **Create PR** becomes the primary action and **Merge** is relabeled
+**Merge locally…**, whose first click opens a note explaining that a local merge only moves the
+branch in your own checkout and can never be pushed, instead of merging outright. The **Push to
+origin** offer that follows an ordinary merge is replaced under **Pull request** by a line
+saying the merge was local only, and the push route itself refuses the push server-side with the
+same message.
 
-**Detect** asks GitHub which it is, reading both mechanisms — a branch ruleset with a
-`pull_request` rule, and classic branch protection, neither of which reports the other. It
-runs on its own when you open the settings dialog and when you point a new project at a
-folder or clone one. Detection only ever *proposes*: at project creation it preselects the
-answer, and on an existing project it shows what GitHub said beside a one-click **Use pull
-request** rather than overwriting a choice you made. A repo that requires PRs while you
-deliberately merge into a staging branch locally is a real configuration, and only you know
-about it. When GitHub can't be reached, or the repo is private to a login `gh` doesn't have,
-the probe says so instead of guessing "merge".
+A protected-branch rejection from GitHub is recognized even when the project's own setting says
+otherwise, and reported as: "`main` requires a pull request — open a PR instead," with GitHub's
+own `GH006` text underneath.
 
-Agents can retarget tasks too. `set_base_branch(branch, task?)` defaults to the session's own
-task mid-turn, or can name any other task in the same project, running the same retarget as
-the edit dialog, refusals included. It's a separate tool from `update_task` because it moves
-a real worktree and can fail partway through. Retargeting another task shows as an agent
-change on the board with a one-click revert. `update_tag(tag, {name?, description?, color?,
-base_branch?})` edits the tag itself, separately from `update_task`'s `tags` field, which only
-sets which tags a task carries. There is no delete verb for a tag; deleting is a manual,
-hard-delete action with no undo.
+Under **Pull request**, the task's session also gets a tool: **`create_pr(title?, body?)`**
+commits the worktree, pushes the work branch, and runs `gh pr create`, the same operation the
+Create PR button runs. Calling it again after more work updates the same PR instead of opening a
+second one. It is registered only on a project set to **Pull request**; on a **Merge** project
+there is nothing for it to open, so it is absent instead of present and refusing. There is no
+`merge_pr` tool: opening a PR is available to agents, merging is not.
+
+If a session opens a PR by hand instead (falling back to `git push` and `gh pr create` in a
+terminal, which can happen if `create_pr` is cut off before it reaches Calandria), Calandria
+still links it to the task: at the end of every turn on a **Pull request** project, if the task
+has a pushed work branch and no linked PR yet, Calandria checks
+`gh pr list --head <branch> --state open` and records a match the same way `create_pr` would.
+This check is best-effort: it costs nothing for a task that never pushed, never adopts a PR
+whose head is a different branch, and is skipped entirely when `gh` is missing, logged out, or
+offline.
+
+Agents can also retarget a base branch directly: **`set_base_branch(branch, task?)`** defaults to
+the calling session's own task, or names any other task in the project, and runs the same
+retarget the edit dialog does (with the same refusals). Retargeting another task shows on the
+board as an agent change with a one-click revert. **`update_tag(tag, {name?, description?,
+color?, base_branch?})`** edits a tag's own fields, separately from a task's `tags` list; there
+is no tool to delete a tag, since deleting is a manual, hard-delete action with no undo.
 
 ### Staying level with the remote
 
-Work also arrives outside the merge button: a pull request merged on GitHub, a teammate's
-push, a pull in another checkout. Calandria fetches the base branch (best-effort) when you
-open a project and again before it cuts a new task worktree, so a new task starts from the
-real remote tip instead of a local `main` that's gone stale.
+**What it is:** Calandria fetches the base branch on its own so a new task is cut from the real
+remote tip, but it never moves your own checkout without asking.
 
-Your own checkout is never moved without your say-so. When local `main` is behind, the
-project header offers a one-click fast-forward. When it's ahead, it offers a push. When the
-two have diverged, it says so and leaves the resolution to you. After a merge lands, the same
-push is offered inline — except under a pull-request landing policy, where it can only be
-rejected. Set `CALANDRIA_GIT_FETCH=off` to keep an instance entirely offline.
+**How to use it:**
 
-When the base branch advances, an in-flight task's pending merge can go from a plain
-fast-forward to needing a sync first; the sync banner explains that the base moved. When the
-sync conflicts, **Fix with AI** runs a resolution turn that edits the files marker-free but
-doesn't commit, so the merge stays paused until you review the result. Once that turn ends,
-the banner switches to "conflicts resolved" with **Accept & merge** (the same as the Changes
-tab's Merge button) and **Review** to open that tab first, where **Discard** returns the
-worktree to where it was. Only Accept or Discard clears the banner. If the agent leaves some
-files still conflicted, the banner counts them and offers another pass.
+- Calandria fetches the base branch (best-effort) when you open a project and again before
+  cutting a new task's worktree.
+- When your local base branch is behind the remote, the project header offers a one-click
+  fast-forward. When it is ahead, it offers a push. When the two have diverged, it tells you and
+  leaves the resolution to you.
+- After a merge lands, the same push offer appears inline, except on a **Pull request** project,
+  where it can only be rejected (there is nothing to push, since the merge was local only).
+- Set `CALANDRIA_GIT_FETCH=off` to keep an instance entirely offline.
 
-Resolving conflicts is the same work under either landing policy — it merges the base *into*
-the task branch, which is exactly what an out-of-date PR needs — so the demotion above leaves
-it alone. Only the last step changes: under `pr` the button reads **Accept resolution** and
-stops once the merge is committed to the task branch, because the second half (landing that
-branch on the base) is the move the remote would refuse. The task isn't marked merged, and
-pushing the branch — Create PR / Update PR — is what makes the work land.
+| Setting | Default | Effect |
+|-|-|-|
+| `CALANDRIA_GIT_FETCH` | on | Set to `off` to disable all network git (fetch, push, PR creation) for the instance. |
 
-A merge into the branch your own checkout has open runs inside that checkout, and git only
-allows that on a clean tree. If it isn't clean, the merge is refused and the card shows
-`git status` for that checkout, so you can tell your own uncommitted work from something a
-tool dropped there (a hook-written `.gitattributes`, an editor scratch file). Clear it in a
-terminal and merge again, or press **Stash N files & merge**: exactly the listed files are
-stashed, the merge runs, and the stash is reapplied on top. Only files present when the card
-was drawn are stashed; anything that shows up afterward is left alone. If reapplying the
-stash conflicts, the stash is kept and the card prints the `git stash apply` command to
-recover it. Merges into any other branch never touch your checkout.
+When the base branch advances while a task's merge is pending, the sync banner tells you the
+base moved. If syncing conflicts:
+
+1. Click **Fix with AI** to run a resolution turn that edits the files with no conflict markers
+   left in them, but does not commit, so the merge stays paused for you to review.
+2. Once that turn ends, the banner reads "conflicts resolved" and offers **Accept & merge** (the
+   same action as the Changes tab's Merge button) and **Review**, which opens the Changes tab
+   first. **Discard** returns the worktree to where it was. Only **Accept** or **Discard** clears
+   the banner.
+3. If the agent leaves some files still conflicted, the banner counts them and offers another
+   pass.
+
+Resolving conflicts always merges the base into the task branch, on either landing setting. On a
+**Pull request** project the button instead reads **Accept resolution** and stops once the merge
+is committed to the task branch; the task is not marked merged, since landing it on the base is
+then done by pushing the branch through Create PR or Update PR.
+
+If the merge needs to run inside your own checked-out branch, git requires a clean tree. If it
+is not clean, the merge is refused and the card shows `git status` for that checkout. Clear it in
+a terminal and merge again, or click **Stash N files & merge**: exactly the files shown are
+stashed, the merge runs, and the stash reapplies on top. Only files present when the card was
+drawn are stashed. If reapplying the stash conflicts, the stash is kept and the card prints the
+`git stash apply` command to recover it. Merges into any other branch never touch your own
+checkout.
 
 ## Planning and orchestration
 
-Use a compact list or a full-width kanban board with Suggested, Not started, In progress,
-Needs input, Ran clean, Snoozed, and Done states. Tasks can depend on other tasks;
-**Start when unblocked** launches an opted-in task as soon as its final blocker is marked
-done. Opt in from the edit dialog's dependency picker, or straight from the blocked task's
-own start screen: its "Blocked until …" notice carries a **Start when unblocked** button, and
-the queued notice it becomes carries **Cancel** to hand the start back to you. The block is
-enforced by the server on the start itself, not just by the disabled button, so a stale tab or
-a scripted call is refused too — and only for a task's first turn, since blockers order starts
-rather than conversations.
+**What it is:** a list or kanban board of every task in a project, with dependencies between
+tasks and automatic ordering.
 
-A blocker doesn't have to be a task you accepted. An agent ordering a plan draws its edges
-while every step is still an unreviewed suggestion, so an accepted task can be waiting on
-siblings still sitting in the Suggested tray. Those blockers count — the chip names them
-`(suggested)` and server-side auto-start honors them — and the dependency picker lists them
-with a **Suggested** tag, so you can either accept them from the tray and work the plan in
-order, or untick them and start now. What the picker won't do is OFFER a suggestion you
-haven't already linked: waiting on work nobody has agreed to do yet isn't a choice worth
-putting on a menu.
+**How to use it:**
 
-Everywhere tasks are listed (every group in the list, every board column, the Suggested
-tray), the top one is the most recently active: whatever was last created, edited, or worked
-on by a turn. Nothing has to be dragged to the top, and a backlog you haven't touched in a
-week sinks below one you have. On the board, dragging a card between columns changes its
-status; there's no manual order to pin it in.
+1. Switch between a compact list and a full-width kanban board. The board's columns are
+   **Suggested**, **Not started**, **In progress**, **Needs input**, **Ran clean**, **Snoozed**,
+   and **Done**.
+2. Set which tasks a task depends on from its edit dialog's dependency picker (the **Blocked
+   by** field). Once every blocker is marked done, an opted-in task starts on its own.
+3. Opt a blocked task in from its own start screen: its "Blocked until …" notice carries a
+   **Start when unblocked** button, and once queued, that notice carries **Cancel** to hand the
+   start back to you.
 
 ![Board view: a tagged three-step pipeline with auto-start chips, one task waiting for input](images/board.png)
 
+**What it does not do:**
+
+- The block is enforced by the server on the start itself, not only by a disabled button, but
+  only for a task's first turn; blockers order starts, not conversations.
+- A blocker does not have to be a task you have accepted yet. An agent that files a plan can set
+  dependencies on tasks still sitting in the Suggested tray; the "Blocked until …" chip names
+  such a blocker with `(suggested)`, and the server honors it for auto-start the same as any
+  other blocker. The dependency picker lists those with a **Suggested** tag, and you can accept
+  them from the tray in order or untick them to start now. The picker will not offer a
+  suggestion you have not already linked, since that would be waiting on work nobody has agreed
+  to do.
+- Every group in the list, every board column, and the Suggested tray sort by most recently
+  active first (created, edited, or worked on). There is no manual drag-to-reorder; dragging a
+  card between board columns changes its status instead.
+
 ### Tags
 
-A **tag** is a named, project-scoped label with a description, for grouping the tasks that
-make up a feature, migration, or refactor. It has no session, worktree, or status of its
-own: its progress is derived from the tasks carrying it every time you read it (done when
-every one of them is done or cancelled), so there's no "close tag" action and nothing goes
-stale when a task is deleted or moved.
+**What it is:** a named, project-scoped label for grouping the tasks that make up one feature,
+migration, or refactor. A tag has no session, worktree, or status of its own; its progress is
+computed from its tasks every time you view it.
 
-A task can carry several tags at once: "port the login route" can be step 3 of the auth
-migration, part of the 0.4 release, and part of the `flaky-tests` sweep, and its session sees
-all three. Pick them in **New task** or **Edit task** from the **Tags** field, above
-**Blocked by**. **New tag…** mints one inline by name; names are unique within a project and
-a collision is flagged. You can tag a whole selection at once from the list's action bar:
-tick the rows, click **Tags…**, and add or remove tags across all of them in a single write.
-It adds and removes rather than replacing, since the rows in a selection rarely share the
-same tags and a replace would silently strip ones it didn't know about.
+**How to use it:**
 
-Tags never span projects. Moving tasks applies the same rule blocked-by links get: a tag
-whose every member is in the move travels with them, renamed `(moved)` if a tag with that
-name already exists at the destination. A tag selected only in part stays behind, and the
-tasks that moved lose that badge. Both move dialogs show which of the two will happen,
-alongside any dropped blocked-by links.
+1. In **New task** or **Edit task**, pick tags from the **Tags** field, above **Blocked by**.
+   Click **New tag…** to mint one inline by name; names are unique per project, and a collision
+   with an existing name is flagged.
+2. To tag several tasks at once, tick their rows in the list and click **Tags…** in the
+   selection bar. This adds or removes tags across the selection in one write; it does not
+   replace each task's tags outright.
+3. Once a project has a tag, a chip bar appears above the task list and the board, for example
+   **All · Auth migration 3/7 · Mobile PWA 0/4 · Done (2)**. Click a chip to narrow every status
+   bucket, including the Suggested tray, to tasks carrying it. Light several chips to union them
+   by default, or use the **any/all** toggle that appears once two are lit to intersect them
+   instead.
+4. Click a single lit chip to open the **tag strip**: the description, a progress bar (for
+   example "3 done · 2 withdrawn"), a **Planned in …** link back to the planning session if an
+   agent filed it, and the tag's tasks in dependency order. The fraction counts done tasks over
+   tasks still counted toward it: a withdrawn or cancelled task is taken out of the denominator
+   instead of counting as unfinished, and a tag is done once every one of its tasks is done or
+   cancelled.
+5. From the tag strip, use **Refresh tag** (below), **Edit** (rename, describe, recolor), and
+   **Delete tag** (asks twice, names how many tasks stay, and removes only this label, leaving
+   their other tags untouched).
 
-Once a project has a tag, a chip bar appears over the task list and the board: **All · Auth
-migration 3/7 · Mobile PWA 0/4 · Done (2)**. A chip narrows every status bucket, including the
-Suggested tray, to tasks carrying it. The fraction counts done over tasks still counted (a
-withdrawn or cancelled step doesn't count as unfinished). A blue dot marks a tag with a task
-waiting on you, and finished tags fold behind the **Done** chip. You can light several chips
-at once: by default they union, and an **any/all** toggle appears once two chips are lit to
-switch to the intersection ("in the auth migration and touches mobile"). The selection is
-remembered per project and survives switching between list and board views. Each task shows a
-tinted badge per tag (in the list, on the board card, in the suggested tray, and in the
-session header), capped at three with a `+2` pill naming the rest on hover; clicking a badge
-lights that tag alone. Dragging cards on the board is paused while a chip is lit, same as
-during a search.
+A blue dot marks a tag with a task waiting on you, and finished tags fold behind the **Done**
+chip. Each task shows a tinted badge per tag, capped at three with a `+2` pill naming the rest on
+hover; clicking a badge lights that tag alone.
 
-Lighting exactly one chip opens the **tag strip** beneath the bar: the description, a
-progress bar reading `3 done · 2 withdrawn`, a link back to the planning session
-(**Planned in …**, when an agent filed it), and its tasks in dependency order, each with a
-status dot and a step number. Its three actions are **Refresh tag** (below), **Edit** (rename,
-describe, recolor from the badge palette) and **Delete tag**, which asks twice and names how
-many tasks stay; deleting a tag removes the label from its tasks without deleting them or
-touching their other tags. With two chips lit, the strip stays shut.
-
-**Refresh tag** checks the whole plan against the code. The utility agent explores the
+**Refresh tag** checks the whole plan against the code: the utility agent explores the
 repository read-only, reads every member task's brief against what it finds, and reports what
-has drifted; the app applies the report. A brief pointing at files or an approach that no
-longer exists is reworded, the tag's description is rewritten to say where the plan actually
-stands, and a task the code shows is already handled is retired. Every task change lands as a
-**Changed by agent** edit with a per-field before/after and a one-click Revert, so the review
-happens after the write rather than in a second approval queue. Retiring is limited to work
-that has none in it: an unreviewed suggestion is withdrawn into the tray with the reason on
-it, a task accepted but never started is cancelled (revertably), and a task that has been
-started — it has a checkout and probably a diff — is only *named* in the report, never
-touched. The run is a detached background job: an inline bar under the progress bar says which
-phase it is in, and it keeps going if you light another chip, switch project or reload the
-tab. Spend shows up in **Insights** as *Tag refreshes*.
+has drifted. A brief pointing at something that no longer exists is reworded, the tag's
+description is rewritten to say where the plan stands, and a task the code shows is already
+handled is retired. Retiring only ever touches work that has none in it: an unreviewed
+suggestion is withdrawn into the tray with a reason, a task accepted but never started is
+cancelled (revertably), and a started task is only named in the report, never touched. Every
+change lands as a **Changed by agent** edit with a per-field before/after and a one-click
+**Revert**. The run is a detached background job; an inline bar under the tag's progress bar
+shows its phase, and it keeps going if you switch project, light another chip, or reload the tab.
+Its spend shows up in Insights as *Tag refreshes*.
 
-Tags are reachable outside the task list too. The project landing page has a **Tags** card
-between the recap and Runbooks, showing active tags with their progress and what needs you (a
-tag with nothing filed reads *no tasks yet*); clicking one opens the list narrowed to it. ⌘K
-finds a tag by name anywhere (`Auth migration · Mobile PWA 4/7`) and lands on the same
-selection. **Insights** has a *Tags* leaderboard beside the projects one, summing spend and
-tokens over every task carrying each tag; a task with three tags counts toward all three, so
-this column doesn't sum to the project's total.
+The project landing page also has a **Tags** card between the recap and Runbooks, showing active
+tags with their progress (a tag with nothing filed reads *no tasks yet*); clicking one opens the
+list narrowed to it. ⌘K finds a tag by name anywhere. Insights has a *Tags* leaderboard beside the
+projects one, summing spend and tokens over every task carrying each tag (a task with three tags
+counts toward all three, so the column does not sum to the project total).
 
-Agents can plan directly into tags. `suggest_task` takes a `tags` parameter (ids or names)
-resolved in the project the task is filed into; a name that doesn't exist yet is created
-there and attributed to the filing session, so one planning turn can land a whole named plan
-instead of loose rows. `update_task`'s `tags` field is stricter: only existing ids or exact
-names, and it replaces the set (`[]` clears it); an unknown tag refuses the whole call.
-`list_tasks` takes a `tag` filter, and `list_tags` answers "how is the migration going" in
-one call: description, counts, and each task's status.
+Agents can plan directly into tags: `suggest_task` takes a `tags` parameter (ids or names,
+creating a new name if it does not exist yet); `update_task`'s `tags` field only accepts
+existing ids or exact names and replaces the whole set (`[]` clears it), refusing the whole call
+on an unknown tag. `list_tasks` takes a `tag` filter, and `list_tags` reports each tag's
+description, counts, and every member task's status.
 
-A tagged session's context includes one block per tag: name and description, which step of
-how many it is, sibling tasks with their statuses, and a link back to the planning session.
-Sibling descriptions are left out to save context. A task with **Send project context** off
-gets none of this, same as it gets no project context.
+A tagged session's context includes one block per tag: the tag's name and description, which
+step of how many it is, the sibling tasks with their statuses, and a link back to the planning
+session. Sibling descriptions are left out of the block. A task with **Send saved project
+context to the agent** off gets none of this.
 
-Tags and dependencies are independent: a tag means "belongs with," a blocked-by edge means
-"waits for," and nothing is inferred from one to the other.
+**What it does not do:**
+
+- Tags never span projects. Moving tasks applies the same rule as blocked-by links: a tag whose
+  every member is in the move travels with them (renamed with a `(moved)` suffix if that name
+  already exists at the destination); a tag selected only in part stays behind and the moved
+  tasks lose that badge.
+- Tags and dependencies are independent. A tag means "belongs with"; a blocked-by edge means
+  "waits for." Nothing about one is inferred from the other.
 
 ### Snoozing
 
-The moon button on a task (in the list gutter, in the corner of a board card, or beside the
-status picker in the session header) parks it until a time you pick: a one-click preset (an
-hour, this evening, tomorrow, next week), a relative duration ("in 3 days"), or an exact date
-and time. While parked, the task moves to **Snoozed**, shows when it comes back, and has a
-sun button to wake it immediately. It also drops out of the "needs you" pill, its dropdown,
-and the project badge.
+**What it is:** a way to hide a task from your attention until a time you choose, without
+changing its status.
 
-Snoozing changes where a task is shown, not its status. When the deadline passes, or you wake
-it by hand, or drag its card out of the column, it returns to exactly the group it came from,
-marked **Was snoozed** so the reappearance makes sense. Opening the task clears that marker.
-Nothing sweeps for due snoozes on a timer: one that comes due while the app is closed is just
-already awake next time you look. A running turn is unaffected: a snoozed task still works,
-it just stops notifying you.
+**How to use it:**
+
+1. Click the moon button on a task (in the list gutter, the corner of a board card, or beside
+   the status picker in the session header).
+2. Pick a one-click preset (an hour, this evening, tomorrow, next week), type a relative
+   duration ("in 3 days"), or set an exact date and time.
+3. Click the sun button on a parked task to wake it immediately.
+
+While parked, a task moves to the **Snoozed** group or column, shows when it comes back, and
+drops out of the "needs you" pill, its dropdown, and the project badge. When the deadline passes,
+you wake it by hand, or you drag its card out of the column, it returns to exactly the group it
+came from, marked **Was snoozed**; opening the task clears that marker.
+
+**What it does not do:**
+
+- Nothing sweeps for due snoozes on a timer. One that comes due while the app is closed is
+  simply already awake the next time you look.
+- A running turn is unaffected by snoozing: the task keeps working, it just stops notifying you.
 
 ### Starting at the usage-window reset
 
-A spent subscription limit (Claude's five-hour window, the weekly cap) stops every turn on
-the instance until it resets, usually at an inconvenient hour. The titlebar plan meter shows
-when that is; **Start at reset** hands the wait to the server. On a task that hasn't started,
-the button sits beside **Start session** and queues the first turn for a minute after the
-reset the meter reports. On a task whose turn died on the limit, the notice in the transcript
-offers **Resume when the limit resets**: at the reset, the session picks up the oldest queued
-follow-up if you left one, otherwise a "continue where you left off" prompt. Until then, the
-task's card says *Starts at 4:49 PM* (or *Resumes …*), the session header carries a chip that
-cancels it, and the transcript records that the session moved on its own. Starting or
-messaging the task by hand in the meantime consumes the queued start. A queued task that's
-still blocked by another, or whose turn is already live, when its time comes is skipped with
-a note instead of started. The button only appears for an agent whose plan reports a reset
-time (a Codex task, or an API-key login, has no reset to aim at). The sweep runs on the
-server, so a start queued from a phone at midnight fires with no tab open.
+**What it is:** a way to queue a task's next turn for the moment your subscription's usage
+window resets, instead of babysitting the clock yourself.
 
-A misfiled task can be moved to another project from **Edit task**, keeping its description
-and transcript. The move drops any blocked-by links, since dependencies can't span projects.
+**How to use it:**
 
-A task that has already run can move too, but its git worktree can't come along, since that
-checkout was cut from the current project's repository. Moving it discards the worktree and
-its branch: the modal tells you what's in there first. A clean, merged worktree loses
-nothing; uncommitted edits or commits your base branch never took are named and need a second
-confirmation. Everything else (transcript, summaries, cost history, sessions and merges)
-follows the task to the new project, and the next turn cuts a fresh worktree there. A task
-with a live turn is refused; stop it first.
+1. On a task that has not started, click **Start at reset** beside **Start session**. It queues
+   the first turn for a minute after the reset time the titlebar plan meter reports.
+2. On a task whose turn died on a spent limit, click **Resume when the limit resets** in the
+   transcript notice. At the reset, the session picks up the oldest queued follow-up if you left
+   one, otherwise a "continue where you left off" prompt.
+3. Click the chip in the session header to cancel a queued start, or just message or start the
+   task by hand before the reset to consume it instead.
 
-You can move a whole batch at once: tick checkboxes in the task list (shift-click for a
-range, including the Suggested tray) and use **Move to project…** in the selection bar. They
-move in one transaction, and a blocked-by link whose both ends are in the selection survives
-the move. Anything that can't move is named in a report. Started tasks can come along, but
-each row with a worktree gets its own checkbox (off by default) showing what that checkout
-holds: clean and merged, or the uncommitted edits and unmerged commits it would destroy, in
-red. Leaving all of them unticked is a plain move. Three worktrees with unsaved work in a
-selection of eleven don't block the other eight; those three are reported and left in place.
+Until the reset fires, the task's card reads *Starts at 4:49 PM* (or *Resumes …*). A queued task
+that is still blocked by another, or whose turn is already live when its time comes, is skipped
+with a note instead of started. When the queued start fires, the transcript records that the
+session moved on its own.
 
-Agents can move tasks between projects too, with `move_task(tasks, project)`. It runs the
-same operation the board does, so a moved task keeps its id, brief, transcript, cost history
-and comments rather than being retyped into a new one, and a blocked-by link survives when
-both of its ends are in the same call — pass a whole chain together. What an agent is *not*
-given is the discard confirmation. A task you have already started can only move by having
-its worktree destroyed, and that answer is yours to give per checkout from the board, so the
-tool refuses those (and anything mid-turn) and names them instead. Every edge it had to drop
-is reported back, since a task that looks ready and isn't is worse than a refusal. Moving a
-task you had already accepted shows on the board as an agent change with a one-click revert,
-which moves it back the same way rather than rewriting a column.
+**What it does not do:**
 
-Agents can suggest follow-up tasks into their own project or any other one. When a session
-spots work that belongs to a different repo, it looks up the project and files the suggestion
-into that project's tray with that project's default agent and settings. It has to name the
-project exactly (by name or id); an unrecognized name is refused. Blocked-by links still
-can't span projects, so they point at tasks in whichever project the new task lands in.
-Project recaps help you pick up context when you return later.
+- The button only appears for an agent whose plan reports a reset time; a Codex task or an
+  API-key login has no reset to aim at.
+- The sweep that fires a queued start runs on the server, so a start queued from a phone at
+  midnight fires with no tab open.
 
-A suggestion also shows up **in the session that made it**, as a card on the tool call that
-filed it: the title, priority, any blockers, the project it landed in, and the same three
-actions the tray has — **Start** (cuts the worktree and launches the session right now),
-**Add** (accepts it onto the task list to start later) and **Dismiss** (deletes it). Nothing
-about the card is frozen into the transcript: it re-reads the task every time it renders, so
-reopening the session later shows what actually became of the suggestion — *Session started*,
-*Added to the task list*, withdrawn with its reason, or gone — rather than a stale button.
-Start is offered only for a suggestion filed into the project you're reading: starting one
-filed elsewhere would drop you out of this session and into another project, so those cards
-name where the task went and leave Start to that project's tray.
+### Moving tasks between projects
 
-Agents can also read the board: list the tasks in a project, see what each one is blocked
-by, and open any task in full, including its original brief. Agents can correct any task on
-the board in any project, including one you've already accepted or started: retitling it,
-rewriting its brief, reprioritizing it, adding or removing tags, closing it, or changing what
-it's blocked by. The one thing that stops them is a task with a turn running right now (that
-session may be reading the very fields being changed); cancelling is always your call. A
-correction like this shows a **"Changed by agent"** chip on the task's card, and opening it
-shows what changed field by field, old value next to new, with who made the edit and when. A
-**Revert** button undoes each change, and **Keep changes** clears the chip once you've looked
-it over. Correcting your own row, or a suggestion still sitting unreviewed in the tray, works
-the same as before but doesn't raise the chip.
+**What it is:** re-parenting one task or a whole selection into a different project, keeping
+its history.
 
-An agent breaking work into ordered steps files the tasks first, then goes back and sets what
-each one is blocked by, the same links you'd set in the edit dialog. On a task you've already
-accepted, this raises the same "Changed by agent" chip as any other correction. An agent
-can't chain a task to one in another project, and can't mark its own task as blocked by
-anything, since blockers decide whether a task may start and its own task already has.
+**How to use it:**
 
-An agent that decides one of its own suggestions was redundant can **withdraw** it, giving a
-reason. The card stays in your tray, struck through with the reason underneath, sorted below
-the live suggestions: a recommendation to drop it, not a deletion. **Restore** puts it back
-(clearing the strike-through and note), **Start** runs it anyway, and ✕ dismisses it for
-good. Withdrawing is the only way an agent can retract work it proposed; it can't cancel or
-delete anything.
+1. Open **Edit task** on a misfiled task and change its project. Its description and transcript
+   come with it; blocked-by links are dropped, since dependencies cannot span projects.
+2. To move a batch, tick checkboxes in the task list (shift-click for a range, including the
+   Suggested tray) and click **Move to project…** in the selection bar. A blocked-by link whose
+   both ends are in the selection survives the move.
+3. If a task has already run, its git worktree cannot come with it, since that checkout was cut
+   from the current project's repository. The modal shows what is in the checkout first: a
+   clean, merged worktree loses nothing when discarded, while uncommitted edits or unmerged
+   commits are named and need a second confirmation before the move proceeds. Everything else
+   (transcript, summaries, cost history, sessions, and merges) follows the task, and its next
+   turn cuts a fresh worktree in the new project.
 
-The tray lets you read a suggestion's whole brief before deciding: each row has a disclosure
-triangle that expands the one-line summary (clicking the brief does the same thing). A
-withdrawn row expands to show what was proposed underneath why it was pulled. Expanding
-doesn't persist across a project switch. The ✎ opens the full **Edit task** dialog, and the
-tray's footer has **Save** (keeps the sharpened brief in the tray), **Add** (accepts it into
-the task list), and **Add & start** (does both and launches the first session in one write).
-An already-added task that hasn't started yet gets **Save & start** in the same place. Start
-is greyed out, with a reason shown, while a blocker is unfinished or the task's agent isn't
-connected.
+**What it does not do:**
 
-When a task stops blocking, whether you mark it done, cancel it, or an agent withdraws it,
-anything set to **Start when unblocked** behind it launches just as it would from your click.
-Cancelling counts too: a cancelled task will never finish, so waiting on one would leave the
-blocked task stuck forever.
+- A task with a live turn is refused; stop it first.
+- In a bulk move, a worktree checkbox defaults to off per row, so an untouched row is a plain
+  move (its worktree is not discarded). A few dirty worktrees in a larger selection do not block
+  the rest; they are reported and left in place.
+
+### Agent suggestions and edits
+
+**What it is:** the set of tools that let an agent file new work, plan multi-step work, and edit
+existing tasks and dependencies across the whole board, subject to review controls.
+
+**How to use it:**
+
+- **Filing work.** An agent calls `suggest_task` to propose a follow-up task into its own
+  project or, by naming the project exactly, any other one. It lands in that project's Suggested
+  tray with a card on the tool call that filed it, showing the title, priority, blockers, target
+  project, and three actions: **Start** (cuts the worktree and launches it now), **Add**
+  (accepts it to start later), and **Dismiss** (deletes it). Start is offered only for a
+  suggestion filed into the project you are viewing; a suggestion filed elsewhere names its
+  destination and offers only Add and Dismiss. The card re-reads the task every time it renders,
+  so reopening the session later shows what actually became of it, *Session started*, *Added to
+  the task list*, withdrawn with its reason, or gone, instead of a stale button. A task filed
+  into another project takes that project's default agent and settings. An unrecognized project
+  name is refused outright; it never falls back to the calling project. Blocked-by links still
+  cannot span projects, so they point at tasks in whichever project the new task lands in.
+- **Reading the tray.** Each suggestion row has a disclosure triangle to expand its full brief.
+  The ✎ opens the full **Edit task** dialog; the tray's footer offers **Save** (keeps edits in
+  the tray), **Add**, and **Add & start**. An already-added task that has not started shows
+  **Save & start** instead. **Start** is greyed out, with a reason shown, while a blocker is
+  unfinished or the task's agent is not connected.
+- **Reading the board.** An agent can also read the board it isn't filing into: `list_tasks`
+  lists the tasks in a project and what each is blocked by, and `get_task` opens any task in
+  full, including its original brief.
+- **Ordering a plan.** An agent lays out an ordered plan by filing every task with
+  `suggest_task` first, waiting for their ids, then calling `update_task` on each to set
+  `blocked_by`. This is refused on the caller's own task (a running session cannot block its own
+  start) and fails the whole call, naming each unusable reference, if any target is invalid, in
+  another project, or would create a cycle.
+- **Correcting the board.** `update_task` lets an agent retitle, reword, reprioritize, tag, or
+  close any task in any project, including one you have already accepted or started, and set
+  `blocked_by`. The only refusal is a task with a turn running right now. Any such change shows a
+  **Changed by agent** chip on the task's card; opening it lists each field's old and new value,
+  showing who made the edit and when, with a per-edit **Revert** and a **Keep changes** button to
+  clear the chip. Correcting your own row, or a suggestion still sitting unreviewed in the tray,
+  does not raise the chip.
+- **Re-parenting.** `move_task(tasks, project)` runs the same move the board does, keeping the
+  task's id, brief, transcript, cost history, and comments, and keeping a blocked-by link when
+  both ends move in the same call. It refuses to move a started task's checkout (that discard
+  confirmation stays yours, from the board) and names every dropped edge. Moving a task you had
+  already accepted shows on the board as an agent change with a one-click revert, which moves it
+  back the same way.
+- **Withdrawing.** `withdraw_suggestion(task, reason)` retracts an agent's own suggestion with a
+  required, non-empty reason. It is not a delete: the card stays in your tray, struck through
+  with the reason, sorted below live suggestions. **Restore** puts it back, **Start** runs it
+  anyway, and ✕ dismisses it for good. A withdrawn row's disclosure triangle expands to show what
+  was proposed underneath the reason it was pulled; expanding does not persist across a project
+  switch.
+
+**What it does not do:**
+
+- Only a human can mark a task cancelled through `update_task`; withdrawing a suggestion is the
+  only way an agent retracts its own proposed work.
+- When a task stops blocking, whether you mark it done, cancel it, or an agent withdraws it,
+  anything set to **Start when unblocked** behind it launches, since cancelling a blocker still
+  means it will never finish.
 
 ## Runbooks
 
 ![Project page: a tag with its brief, two runbooks, and a weekday schedule](images/project.png)
 
-A **runbook** is a saved task-launch preset: a name, a one-line description, the prompt its
-first turn sends, and the agent, permission mode, priority, and context setting to run it
-under. Useful for recurring briefs like "push unpushed changes and babysit CI/CD" or "sweep
-my Jiras, IMs, and email and report," where retyping the same prompt every time gets old. It
-lives on the project landing pane, above **Schedules**; click the project's name at the top
-of the task list to get there. Pressing **Run** mints a fresh task, exactly as a schedule
-firing does, and launches its first turn.
+**What it is:** a saved task-launch preset: a name, a one-line description, the prompt its
+first turn sends, and the agent, permission mode, priority, and context setting to run it under.
+Useful for a recurring brief like "push unpushed changes and babysit CI/CD" instead of retyping
+the same prompt every time.
 
-Runbooks and schedules share the same dispatch path, so a recipe behaves identically whether
-a person pressed the button or the ticker fired it. A runbook dispatch is attended, so its
-turn can stop and ask you a permission question; a scheduled run declines automatically since
-nobody is around to answer.
+**How to use it:**
 
-**Instructions for this run** is an optional box appended to the saved prompt at dispatch
-time, for one-off additions like "…and focus on CEAP-1234." If the recipe is a slash command,
-the extra text becomes part of that command's arguments.
+1. Click the project's name at the top of the task list to reach the project landing page, where
+   **Runbooks** sits above **Schedules**.
+2. Click **Run** on a runbook to mint a fresh task and launch its first turn immediately, the
+   same way a schedule firing does. Because a runbook's dispatch is attended, its turn can stop
+   and ask you a permission question; a scheduled firing of the same recipe declines
+   automatically instead, since nobody is there to answer.
+3. Fill in **Instructions for this run**, an optional box appended to the saved prompt at
+   dispatch time, for one-off additions like "…and focus on CEAP-1234." If the recipe is a slash
+   command, the extra text becomes part of that command's arguments.
+4. Use **Copy to…** to duplicate a recipe into another project as an independent row, since
+   projects have different repos, agents, and command registries.
+5. Find any runbook in the current project through ⌘K (behind the `omniSearch` feature flag,
+   off by default; set `CALANDRIA_FEATURE_OMNI_SEARCH=1` to turn it on) as its own row, for
+   example "Run: Push & babysit CI," which dispatches it immediately instead of opening the
+   sheet. The card works either way.
 
-Everything else is decided when you save the runbook, and copied onto the task at dispatch
-time rather than read back later, so editing the recipe tomorrow doesn't rewrite what ran
-today.
+| Setting | Default | Effect |
+|-|-|-|
+| `CALANDRIA_FEATURE_OMNI_SEARCH` | off (set `=1` to enable) | Enables runbook rows in the ⌘K command palette. |
 
-There's no separate run history: "last run" is a link to the most recent task the runbook
-created.
+**What it does not do:**
 
-Other things the card does:
-
-- **Copy to…** duplicates a recipe into another project as an independent row, not a shared
-  reference, since projects have different repos, agents, and command registries.
-- The prompt is validated against the project's real slash-command registry before you save,
-  with one-click suggestions (the same check the schedules editor runs; see the slash-command
-  gotcha below). It never blocks saving.
-- **⌘K** offers every runbook in the current project as its own row (`Run: Push & babysit
-  CI`), dispatching immediately instead of opening the sheet. This is behind the `omniSearch`
-  feature flag, off by default; set `CALANDRIA_FEATURE_OMNI_SEARCH=1` to enable it. The card
-  works either way.
+- Everything a runbook runs with is decided when you save it and copied onto the task at
+  dispatch time, so editing the recipe tomorrow does not change what already ran today.
+- There is no separate run history. "Last run" is a link to the most recent task the runbook
+  created.
+- The prompt is validated against the project's real slash-command registry before you save
+  (the same check the schedules editor runs), with one-click suggestions, but it never blocks
+  saving.
 
 ### Schedules that fire a runbook
 
-A schedule can point at a runbook and take its prompt and config from that row at fire time,
-so a recurring procedure like "the morning sweep" stays defined in one place. The schedule
-editor names the linked runbook and warns that editing it changes what fires there, and the
-runbook's row lists the schedules it feeds.
+**What it is:** a schedule that takes its prompt and config from a linked runbook at fire time
+instead of storing its own copy, so a recurring procedure like "the morning sweep" stays defined
+in one place.
 
-Deleting a linked runbook doesn't break the schedule: the recipe is copied back into the
-schedule's own columns in the same transaction as the delete, so it keeps firing exactly what
-it fired yesterday. A link across projects is refused, at save time and again at fire time,
-since a runbook is written against one repo's commands.
+**How to use it:** in the schedule editor, name the linked runbook. It warns that editing the
+runbook changes what the schedule fires, and the runbook's own row lists which schedules feed
+from it.
+
+**What it does not do:**
+
+- Deleting a linked runbook does not break the schedule: the recipe is copied back into the
+  schedule's own columns in the same transaction as the delete, so it keeps firing exactly what
+  it fired yesterday.
+- A link across projects is refused, both at save time and at fire time, since a runbook is
+  written against one repository's commands.
 
 ### Agents can write runbooks
 
-An agent that has worked out a procedure with you can save it: `create_runbook`,
-`list_runbooks`, and `update_runbook` are available to every task session. An agent-created
-recipe is tagged with which agent filed it, and sits inert like any other runbook until you
-dispatch it.
+**What it is:** the tools that let an agent save a procedure it worked out with you as a
+runbook.
 
-Two things an agent cannot do:
+**How to use it:** `create_runbook`, `list_runbooks`, and `update_runbook` are available to
+every task session. An agent-created recipe is tagged with which agent filed it and sits inert,
+like any other runbook, until you dispatch it.
 
-- **Delete a runbook.** Delete is hard delete with no undo throughout Calandria; retiring a
-  recipe is your call.
-- **Edit a runbook that a schedule fires.** The refusal names the schedules involved, so the
-  agent can tell you what it would have changed, or save a new recipe instead.
+**What it does not do:**
+
+- An agent cannot delete a runbook. Delete is hard delete with no undo throughout Calandria;
+  retiring a recipe is your call.
+- An agent cannot edit a runbook that a schedule fires. The refusal names the schedules
+  involved, so it can tell you what it would have changed, or save a new recipe instead.
 
 ## Scheduled tasks
 
-A schedule is a saved prompt plus a day and time, owned by the project it lives in. Find it
-on the project landing pane, under **Schedules**; click the project's name at the top of the
-task list to get there from anywhere. A schedule fires with no browser tab open: it's driven
-by a ticker in the server process, not a timer in your browser.
+**What it is:** a saved prompt plus a day and time, owned by the project it lives in, that mints
+and launches a task on its own with no browser tab open.
 
-Every schedule has **Edit**, **Pause**, **Run now** and **Delete**. Deleting is a hard delete
-with no undo, like everything else here, but it only removes the *schedule*: the tasks it
-already minted are kept, so deleting tomorrow's job never deletes last week's work.
+**How to use it:**
 
-Each firing mints a fresh task with its own transcript, worktree, and turn, rather than
-reusing one across occurrences, so every run is reviewable like a task you started by hand
-and a bad run doesn't contaminate the next one's context.
+1. Click the project's name at the top of the task list to reach **Schedules** on the project
+   landing page.
+2. Use **Edit**, **Pause**, **Run now**, and **Delete** on any schedule. Deleting removes only
+   the schedule; tasks it already minted are kept.
+3. Choose **Repeats: Weekly** and pick days, or **Repeats: Once** and pick a single date, for
+   example "there's a release going out overnight, check on it at 04:00." A one-time schedule
+   fires once, then stays on its card reading **Ran — one-time**, disabled, with its run history
+   intact; delete it or edit it to a later date to arm it again. A past date is refused on save.
+4. Pick a **Timezone** explicitly (it defaults to your browser's), since the server may run in a
+   different zone than you. The time is wall-clock, so "08:30" keeps meaning 08:30 across a
+   Daylight Saving transition. The editor previews the next three occurrences (or the single
+   one, for a one-off) as you set days, time, and timezone.
+5. Choose a **permission mode**. This is a required, explicit choice, because a scheduled run
+   cannot answer a permission prompt: any mode other than the agent's never-asks mode (Claude's
+   **bypassPermissions**, Codex's **workspace-write**) declines every prompt automatically, so
+   the turn can stop early with the job half done. Only the never-asks mode runs a schedule all
+   the way through unattended. If the agent asks a question mid-run instead, it is declined
+   immediately and the question is preserved in the transcript.
 
-**Weekly or once.** The default is recurring: pick the days of the week it runs. Switch
-**Repeats** to **Once** and you pick a single date instead — "there's a release going out
-overnight, check on it at 04:00" — and the schedule fires exactly one time. Afterwards it
-doesn't vanish: it stays on the card reading **Ran — one-time**, disabled, with its run
-history intact, because the outcome of a 04:00 job is the thing you came to read at 09:00.
-Delete it when you're done with it, or edit it to a later date to arm it again. A date that
-has already passed is refused on the spot rather than saved as a job that can never fire.
+Each firing mints a fresh task with its own transcript, worktree, and turn instead of reusing one
+across occurrences, so every run is reviewable like a task you started by hand.
 
-**Timezone** is picked explicitly (defaulting to your browser's) rather than inferred from
-the server, since the server may run in a different zone than the person who set up the
-schedule (a container on UTC, a user on Pacific). The time is wall-clock, so "08:30" keeps
-meaning 08:30 across a Daylight Saving transition. The editor previews the next three
-occurrences (or the single one, for a one-off) as you set the days, time, and timezone, so
-you can catch a mistake on the form instead of the following Monday.
+If the app was asleep or down when a firing was due, the next tick runs the most recent missed
+slot once, marked `catch_up`; anything older is recorded `missed`. If the previous firing's turn
+is still running when the next one comes due, the new slot is recorded `skipped_overlap` instead
+of piling a second turn on top of the first.
 
-**Catching up**: if the app was asleep or down when a firing was due, the next tick runs the
-most recent missed slot once, marked `catch_up` (useful for a morning run discovered at noon,
-not one that starts at 6pm). Anything older than that window is recorded `missed`. **Overlap**
-works the same way: if the previous firing's turn is still running when the next one comes
-due, the new slot is recorded `skipped_overlap` instead of piling a second turn on top of the
-first.
-
-**Permission mode is a required, explicit choice**, because a scheduled run can't answer a
-permission prompt. Any mode other than the agent's never-asks mode (Claude's
-**bypassPermissions**, Codex's **workspace-write**) declines every prompt automatically
-instead of parking, so the turn can stop early with the job half done. Only the never-asks
-mode runs a schedule all the way through unattended.
-
-When a prompt gets declined, the run is recorded **failed**, with a note that the agent
-needed approval and nobody was watching. The same goes for a question: if the agent asks one
-mid-run, it's declined immediately with the question preserved in the transcript.
-
-**Where a clean run comes to rest.** A firing that finishes the job isn't waiting on an
-answer, so it stays out of the "N need you" pill. But it isn't in progress anymore either,
-and nobody has read it yet, so it rests in its own state, **Ran clean**, with its own group
-in the task list and its own column on the board. The card shows when it ran and has one
-button, **Mark done**. Replying to it moves the task back to In progress instead.
-
-The card also watches the ticker itself. If the scheduler isn't running, or its sweeps stop
+A firing that finishes the job is not waiting on an answer, so it rests in its own state, **Ran
+clean**, with its own group in the task list and its own board column, until you click **Mark
+done** or reply to it (which moves it back to In progress). If a prompt gets declined, the run is
+recorded **failed**, with a note that the agent needed approval and nobody was watching. The
+schedule card also watches the ticker itself: if the scheduler stops running or its sweeps stop
 completing, a banner says so instead of showing a next-run time that will never arrive.
 
-**The slash-command gotcha**: a prompt like `/jira-tasks` is expanded by the CLI before the
-model sees it, but an unrecognized command isn't an error. The CLI answers "Unknown command:
-/x" as a success, with no tool calls, so a typo'd schedule would report green every morning
-having done nothing. The editor checks the prompt against the project's real command registry
-before you save and shows one-click suggestions on a failure; the same check runs again when
-the schedule fires, and an unknown command there records the run as **failed** and creates no
-task, since a plugin can be uninstalled or renamed between the two checks. A prompt that
-merely starts with a filesystem path isn't read as a command: `/etc/passwd, tell me what's in
-it` is an ordinary prompt about a file. The check reads the same command list the composer's
-`/` menu offers and always reads it fresh, never cached, so a command you just installed
-isn't rejected for being new. It can't verify an MCP server's `/mcp__server__prompt` (that
-would require spawning your whole server fleet) or any prompt it otherwise couldn't check;
-both save with a note, and run.
+**What it does not do:**
 
-Save is never blocked on the check: it's a typo catcher, not an authority, since it reads one
-session's command list, and a conditionally registered command can read as unknown. If the
-command really is missing, the run fails loudly instead of reporting a success it didn't
-earn.
+- A prompt like `/jira-tasks` is expanded by the CLI before the model sees it, and an
+  unrecognized command is not treated as an error by the CLI itself (it answers "Unknown
+  command: /x" as a success, with no tool calls). The editor checks the prompt against the
+  project's real command registry before you save, showing one-click suggestions on a failure;
+  the same check runs again when the schedule fires, and an unknown command there records the
+  run **failed** and creates no task. A prompt that merely starts with a filesystem path, like
+  `/etc/passwd, tell me what's in it`, is read as an ordinary prompt, not a command.
+- This check never blocks saving: it only reads one session's live command list, so a
+  conditionally registered command can read as unknown at save time and still work when the
+  schedule fires. The reverse also happens: a command removed between the two checks fails
+  loudly at fire time instead of reporting a success it did not earn. It also cannot verify an
+  MCP server's `/mcp__server__prompt`, since checking that would mean spawning your whole server
+  fleet; such a prompt saves with a note and runs anyway.
 
 ## Notifications
 
 ![The Needs you dropdown listing sessions waiting on an answer across projects](images/inbox.png)
 
-Calandria notifies you when a task stops:
+**What it is:** an alert whenever a task stops and needs you, over a browser notification, push
+to a subscribed device, or both.
 
 | Notification | When it fires |
 |-|-|
 | A task is waiting for input | An agent asked a question, needs a tool approved, or finished its turn without finishing the job. |
 | A turn failed | The session died: a dead login, a spent quota, a full context window, or a crash. |
-| A scheduled run failed | A schedule fired and got nowhere, with nobody watching at 08:30 to see it fail. |
+| A scheduled run failed | A schedule fired and got nowhere, with nobody watching to see it fail. |
 
-Finishing a turn cleanly isn't itself a notification, and neither is a new suggestion: you're
-told when a task has stopped and needs you, so a turn that hands work back to you notifies
-you, while a scheduled run that finished the job, a task you already closed, and a snoozed
-task all stay quiet.
+**How to use it:**
 
-Two channels carry notifications, both switched on from Settings → Notifications:
+1. Open Settings → Notifications.
+2. Click **Enable browser notifications** to grant the browser's notification permission. This
+   channel needs the app open in a tab (any tab, any window); Calandria stays quiet only when
+   the tab is visible and you already have that exact task selected.
+3. Click **Enable push on this device** to subscribe it to push notifications, which need
+   nothing open at all: your device hears "a task needs you" with Calandria closed, and tapping
+   it opens the app at that task. On iPhone and iPad, push only works for an app added to the
+   Home Screen (see [Install as an app](#install-as-an-app)); the subscribe button says so.
+   Every subscribed device is listed here with a **Remove** button.
+4. Click **Send test notification** to send one through the same path a real notification takes,
+   including the push to every subscribed device, so you can check the wiring without waiting
+   for a task to stall.
 
-- A **browser notification** needs the app open in a tab (any tab, any window) and one grant
-  of the browser's notification permission. Calandria stays quiet only when the tab is
-  visible and you already have that exact task selected.
-- **Push** needs nothing open at all. Subscribe a device with "Enable push on this device"
-  and the notification arrives through the OS: your phone hears "a task needs you" with
-  Calandria closed, and tapping it opens the app at that task. Each browser subscribes
-  separately, and every subscribed device is listed in Settings with a Remove button. A
-  subscription the push service reports expired is pruned automatically; one that keeps
-  failing shows as failing. On iPhone and iPad, push only works for an app added to the Home
-  Screen ([Install as an app](#install-as-an-app)), and the subscribe button says so. A
-  device with both channels enabled sees one notification, not two.
+The instance signs its pushes with a VAPID key it mints on first use and stores beside the
+database (`<CALANDRIA_DB_DIR>/vapid.json`); back it up with the database, since subscriptions are
+bound to it.
 
-  The instance signs its pushes with a VAPID key it mints on first use and keeps beside the
-  database (`<CALANDRIA_DB_DIR>/vapid.json`; subscriptions are bound to it, so back it up
-  with the database). `VAPID_SUBJECT` and `VAPID_PRIVATE_KEY` in `.env.example` are the
-  knobs. For iPhone/iPad push, set `VAPID_SUBJECT` (or `PUBLIC_BASE_URL`) to a real `https:`
-  origin or `mailto:` address: Apple's push service rejects the default
-  `mailto:admin@localhost` with `403 BadJwtToken`, which the device list shows as *failing
-  (403)*. Chrome, Android, and Firefox accept the default.
+| Setting | Default | Effect |
+|-|-|-|
+| `VAPID_SUBJECT` | `PUBLIC_BASE_URL` if it is `https:`, else `mailto:admin@localhost` | The contact address push services see for this instance. |
+| `VAPID_PRIVATE_KEY` | generated on first use | The instance's push signing key. |
 
-**Send test notification** in Settings → Notifications sends one through the same path a real
-notification takes, including the push to every subscribed device, so you can check the wiring
-without waiting for a task to stall.
+For push to work on iPhone or iPad, set `VAPID_SUBJECT` (or `PUBLIC_BASE_URL`) to a real
+`https:` origin or `mailto:` address: Apple's push service rejects the default
+`mailto:admin@localhost` with `403 BadJwtToken`, shown in the device list as *failing (403)*.
+Chrome, Android, and Firefox accept the default.
 
-A snoozed task never shows as waiting for input, and neither does one in an archived project,
-but both still report a failure.
+Notifications are composed on the server: the tab and the push service receive the same message
+from the same source.
 
-Notifications are composed on the server: the tab and the push service receive the same
-message from the same source.
+**What it does not do:**
+
+- Finishing a turn cleanly is not itself a notification, and neither is a new suggestion. A
+  scheduled run that finished the job, a task you already closed, and a snoozed task all stay
+  quiet, and so does a task in an archived project (both still report a failure, though).
+- A device with both channels enabled sees one notification, not two.
 
 ## On a narrow window
 
-The three columns beside the transcript are fixed — projects 236px, tasks 352px, the
-DIFF / PREVIEW / CONTEXT rail 430px — and only the transcript flexes, so on a narrow
-window every missing pixel used to come out of the one pane you are reading. Instead the
-shell now sheds a side column, cheapest loss first: **projects below 1400px, tasks below
-1200px, the rail below 880px**, each one replaced by the 30px spine that restores it in a
-click. A 1024x768 window ends up with a 534px transcript beside a full-width rail rather
-than 6px of transcript.
+**What it is:** a layout that gives up the least-used side column first, instead of shrinking
+the transcript pane you are actually reading.
 
-It is a render-time policy, not a setting: your own column widths and collapsed state are
-untouched, so widening the window gives them straight back. Opening a column from its spine
-overrides the policy for as long as the window stays that size.
+**How it works:** the three columns beside the transcript are fixed-width, and only the
+transcript flexes: projects 236px, tasks 352px, and the DIFF / PREVIEW / CONTEXT rail 430px.
+Below certain widths the shell collapses a side column into a 30px spine instead: projects below
+1400px, tasks below 1200px, the rail below 880px. Click the spine to restore a collapsed column.
+
+**What it does not do:**
+
+- This is a render-time response to window size, not a saved setting. Your own column widths and
+  collapsed state are untouched, and widening the window gives them straight back. Opening a
+  column from its spine overrides the automatic collapse only until the window is resized again.
 
 ## On a phone
 
-Below 760px, the three columns collapse into one pane at a time with a bottom tab bar
-(**Board · Diffs · Terminals · Insights**), and the device Back button walks the panes back
-out.
+**What it is:** a single-pane layout with a bottom tab bar, below 760px wide.
+
+**How to use it:**
+
+- Switch between **Board**, **Diffs**, **Terminals**, and **Insights** using the tab bar. The
+  device Back button walks panes back out.
 
 <p align="center">
   <img src="images/mobile-tasks.png" width="300" alt="Task list on a phone">
@@ -772,90 +791,109 @@ out.
   <img src="images/mobile.png" width="300" alt="A session waiting on an answer, on a phone">
 </p>
 
-The Board tab drills down through **projects → tasks → session**, plus a fourth level, the
-**project home**, reached by tapping the project's name in the task list's header. That
-screen holds everything project-level rather than task-level: the "where you left off"
-recap, the Tags card, [Runbooks](#runbooks), and [Scheduled tasks](#scheduled-tasks). On
-desktop, the same content is what the session pane shows when no task is selected; on a
-phone, that space shows the task list instead, so project home gets its own level. It's a
-real route (`?home=1`), so a reload or a shared link lands back on it, and Back returns to
-the task list.
+- On the Board tab, drill down through projects → tasks → session, plus a fourth level, the
+  project home screen, reached by tapping the project's name in the task list's header. It holds
+  the "where you left off" recap, the Tags card, [Runbooks](#runbooks), and
+  [Scheduled tasks](#scheduled-tasks): everything project-level that the session pane shows in
+  place of an unselected task on desktop. The home screen is a real route (`?home=1`), so a
+  reload or a shared link lands back on it, and Back returns to the task list.
+- Use the terminal as a full-screen sheet with its own font sizing and a Paste / Ctrl-C / Enter
+  key row, on its own tab, instead of desktop's bottom drawer.
 
-Two surfaces differ from desktop. The terminal is a full-screen sheet with its own font
-sizing and a Paste / Ctrl-C / Enter key row, with its own tab, instead of the desktop's
-bottom drawer. The ⌘K command palette is desktop-only, since there's no keyboard to summon it
-with.
+**What it does not do:**
 
-**Managed services** have no phone UI yet. The Services drawer is mouse-resizable and lays
-its service list beside its log pane, which doesn't fit a 390px screen, so it stays
-desktop-only for now.
+- The ⌘K command palette is desktop-only, since there is no keyboard to summon it with.
+- Managed services have no phone UI yet: the Services drawer lays its service list beside its
+  log pane, which does not fit a 390px screen, so it stays desktop-only.
 
 ## Install as an app
 
-Calandria is an installable PWA. Chrome and Edge offer "Install app" from the address bar,
-and on iOS, Safari's Share → **Add to Home Screen** does the same. Installed, it gets its own
-icon, its own standalone window with no browser chrome, and its own entry in the app
-switcher, making the phone a real surface for the "needs you" workflow instead of a tab you
-have to go find.
+**What it is:** Calandria is an installable Progressive Web App, so it can run as its own
+window with its own icon instead of a browser tab.
 
-Two requirements, both browser rules rather than Calandria's:
+**How to use it:**
 
-- **A secure context.** Install (like the Notification permission) only works over HTTPS or
-  on `localhost`/`127.0.0.1`. A tunnel such as Cloudflare Access is already HTTPS; a raw LAN
-  IP over plain HTTP gets neither install nor notifications.
-- **A logged-in browser.** Behind Cloudflare Access, the manifest is fetched with your
-  session cookie, so install from the same browser profile you log in with. The standalone
-  window shares that profile's cookies, so an existing Access session carries over; when it
-  expires, the window shows the Access login and continues normally.
+1. In Chrome or Edge, use **Install app** from the address bar.
+2. On iOS, use Safari's Share → **Add to Home Screen**.
 
-A service worker (`public/sw.js`) handles Web Push, so a phone with no tab open still hears
-"a task needs you" ([Notifications](#notifications)); it's registered only when a device
-subscribes. It has no fetch handler and no offline mode, since everything on screen is live
-server state (SSE event streams, the terminal's WebSocket) with nothing useful to serve from
-a cache. Chrome no longer requires a service worker for install, so install works whether or
-not you ever subscribe. The desktop app never subscribes itself: it raises the same
-notifications natively, so its Settings say so and withhold the button, while still listing
-(and removing) the phones subscribed elsewhere.
+Installed, it gets its own icon, its own standalone window with no browser chrome, and its own
+entry in the app switcher.
+
+**What it does not do:**
+
+- Install requires a secure context, the same rule the Notification permission follows: it works
+  over HTTPS or on `localhost` / `127.0.0.1` only. A tunnel such as Cloudflare Access is already
+  HTTPS; a raw LAN IP over plain HTTP gets neither install nor notifications.
+- Behind Cloudflare Access, the manifest is fetched with your session cookie, so install from the
+  same browser profile you log in with. The standalone window shares that profile's cookies, so
+  an existing session carries over; when it expires, the window shows the Access login and
+  continues normally.
+- A service worker (`public/sw.js`) handles Web Push, registered only once a device subscribes
+  (see [Notifications](#notifications)). It has no fetch handler and no offline mode, since
+  everything on screen is live server state. Install itself does not require the service worker
+  to be registered.
+- The desktop app never subscribes itself to push; it raises the same notifications natively, so
+  its Settings say so and withhold the push button, while still listing (and letting you remove)
+  phones subscribed elsewhere.
 
 ## Workspace tools
 
-The integrated terminal provides a real shell for each project. It opens in the project's
-working directory; a Project/Task toggle in its bar switches the shell into the selected
-task's git worktree, so you can run tests or poke at a task's changes before merging.
-Managed `dev`, `setup`, and `test` services keep running after an agent turn or browser tab
-ends, with live logs and stable per-project ports. Optional service hostnames can expose
-previews with private, shared-link, or public visibility.
+**What it is:** an integrated terminal and managed dev/test services for each project, so you
+can poke at a task's changes without leaving the app.
+
+**How to use it:**
+
+1. Open the terminal drawer. It opens in the project's working directory by default.
+2. Use the **Project**/**Task** toggle in the drawer's bar to re-root the shell in the selected
+   task's git worktree instead, so you can run tests against a task's changes before merging.
+3. Use managed `dev`, `setup`, and `test` services, which keep running after an agent turn or
+   browser tab ends, with live logs and stable per-project ports.
+4. Expose a service on its own hostname with private, shared-link, or public visibility.
 
 See [Managed services](SERVICES.md) for setup and security details.
 
 ## Transparent usage
 
-Every task reports tokens and usage. The Insights dashboard breaks activity down by day,
-project, and agent, and keeps Calandria's background work separate from task usage.
-Subscription users see an API-price equivalent for context, not a bill.
+**What it is:** token and cost accounting for every task and every background job.
+
+**How to use it:** open the Insights dashboard to see activity broken down by day, project, and
+agent, with Calandria's own background work kept separate from task usage. Subscription users
+see an API-price equivalent for context, not a bill.
 
 See [Insights and usage](INSIGHTS.md) for how to read the numbers.
 
 ## Agent connections
 
-Claude Code, OpenAI Codex and Google's Antigravity are first-class agent drivers. Calandria
-detects expired connections, preserves queued follow-ups, and provides a reconnect action.
-Background jobs choose a connected agent automatically, so an installation with only one of
-the three connected works without special configuration, and each can be pinned to its own
-models — a small one for the short summarizing jobs, a stronger one for the draft that reads
-your repository.
+**What it is:** Claude Code, OpenAI Codex, and Google's Antigravity are all first-class agent
+drivers, and Calandria manages their logins and routes background jobs between whichever ones
+are connected.
+
+**How to use it:**
+
+- Connect one or more agents from Settings. Calandria detects an expired connection, preserves
+  any queued follow-ups, and offers a reconnect action.
+- Background jobs pick a connected agent automatically, so an installation with only one of the
+  three connected works with no extra configuration.
+- Pin a specific model per agent, for example a small model for short summarizing jobs and a
+  stronger one for a draft that reads your whole repository.
 
 See [Supported agents](AGENTS.md) for capabilities and upstream limitations.
 
 ### Routing through a LiteLLM gateway
 
-An instance can point Claude Code at a self-hosted [LiteLLM](https://docs.litellm.ai) proxy
-instead of the agent's own cloud login — a fourth "Model provider" preset alongside a local
-model server and a custom base URL. The gateway adds a real model catalog with context windows
-and prices, per-task spend attribution, and budgets, so a project's turns can be billed to a
-shared key or metered without leaving your own login. A project's settings can also mount the
-gateway's own **hosted MCP servers** on every task: pick which of the gateway's servers a
-project uses, optionally trust one to skip its permission prompts, and Calandria mounts it
-alongside its own tools with no extra configuration in the task's checkout.
+**What it is:** an instance can point Claude Code at a self-hosted
+[LiteLLM](https://docs.litellm.ai) proxy instead of the agent's own cloud login, adding a real
+model catalog with context windows and prices, per-task spend attribution, and budgets.
+
+**How to use it:**
+
+1. In a project's **Context** dialog, set **Model provider** to **Gateway**, one of four presets
+   alongside the agent's own cloud login, a local model server, and a custom base URL.
+2. To mount one of the gateway's hosted MCP servers on every task in the project, pick it from
+   the project's settings. Click **Trust this server** to skip its permission prompts, or leave
+   it untrusted to approve each call.
+
+A project on the gateway can bill its turns to a shared key or have them metered, without
+touching your own agent login.
 
 See [Supported agents](AGENTS.md#litellm-gateway) for setup and current provider coverage.
