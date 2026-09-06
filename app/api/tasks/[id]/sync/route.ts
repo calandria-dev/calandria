@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getTask, getProject, updateTask } from "@/lib/store";
-import { worktreeSyncStatus, fastForwardWorktree, prepareWorktreeMerge, syncCommitMessage } from "@/lib/git";
+import { worktreeSyncStatus, fastForwardWorktree, prepareWorktreeMerge, syncCommitMessage, fetchBase, remoteBaseStatus } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
 import { buildConflictPrompt } from "@/lib/agents/shared";
 import { hasTurn } from "@/lib/abort";
@@ -28,8 +28,26 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     worktreePath: task.worktree_path,
     workBranch: task.work_branch,
     baseBranch,
+    baseSha: task.base_sha || undefined,
   });
-  return NextResponse.json({ isolated: true, baseBranch, projectBranch: project.branch, ...status });
+
+  // How the task's OWN base branch stands against its remote. The project banner
+  // does this for `project.branch` only, so a task based on an integration branch
+  // had nothing watching origin for it: a force-push there left the local ref —
+  // and therefore every number above — describing history that no longer exists
+  // upstream. Best-effort and cooldown-coalesced, exactly as the project route
+  // does it; a repo with no remote reports hasRemote: false and nothing renders.
+  await fetchBase(project.repo_path, baseBranch).catch(() => {});
+  const remote = await remoteBaseStatus(project.repo_path, baseBranch).catch(() => null);
+  const baseRemote = remote && remote.hasRemote && !remote.unknown
+    ? { label: remote.label, behind: remote.behind, ahead: remote.ahead, diverged: remote.diverged }
+    : undefined;
+
+  return NextResponse.json({
+    isolated: true, baseBranch, projectBranch: project.branch,
+    workBranch: task.work_branch, baseSha: task.base_sha || "",
+    baseRemote, ...status,
+  });
 }
 
 // POST: actually bring the worktree up to date with the base branch. Triggered by
@@ -56,6 +74,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       worktreePath: task.worktree_path,
       workBranch: task.work_branch,
       baseBranch,
+      baseSha: task.base_sha || undefined,
     });
     // Nothing was compared, so "up to date" would be a lie — and every tier below
     // would fail against a branch git doesn't have. Refuse and name it.

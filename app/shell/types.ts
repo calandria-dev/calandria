@@ -278,6 +278,13 @@ export interface SyncStatusResp {
   mergeInProgress?: boolean; // a base→work merge is paused in the worktree, awaiting accept/discard in Changes
   unresolved?: string[]; // while paused: files still conflicted (markers or unstaged binaries)
   baseMissing?: boolean; // the base branch has no ref in the repo — the zeros above mean "couldn't compare"
+  baseRewritten?: boolean; // the base branch's history was rewritten since this task was cut — a merge here reconciles two copies of the same work
+  projectBranch?: string; // the project default, so the banner can tell whether BaseBranchBanner already covers this base
+  workBranch?: string;
+  baseSha?: string; // the commit the task was cut from / last synced to, and the rebase --onto cut point
+  // The task's own base branch against its remote. Undefined when the repo has
+  // no remote for it or ancestry couldn't be established.
+  baseRemote?: { label?: string; behind?: number; ahead?: number; diverged?: boolean };
 }
 
 // How the project's LOCAL base branch stands against its remote — the thing

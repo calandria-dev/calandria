@@ -2576,6 +2576,14 @@ export interface SyncStatus {
   // zero meaning "couldn't compare" rather than "in sync". Set only in that case;
   // absent otherwise, so nothing has to test it to read an ordinary status.
   baseMissing?: boolean;
+  // The base branch's history was REWRITTEN (rebased, amended, force-pushed)
+  // since this task was cut: the commit the task last synced from is no longer
+  // reachable from the base tip. The ahead/behind pair above cannot say this —
+  // it looks exactly like ordinary divergence — but the remedy is different.
+  // Merging here reconciles two copies of the same work under different SHAs
+  // and conflicts in every file the rewrite touched, where a rebase --onto
+  // would replay cleanly. Undefined when there is no cut point to test.
+  baseRewritten?: boolean;
 }
 
 /**
@@ -2588,8 +2596,9 @@ export async function worktreeSyncStatus(input: {
   worktreePath: string;
   workBranch: string;
   baseBranch: string;
+  baseSha?: string;
 }): Promise<SyncStatus> {
-  const { repoPath, worktreePath, workBranch, baseBranch } = input;
+  const { repoPath, worktreePath, workBranch, baseBranch, baseSha } = input;
   const none: SyncStatus = { behind: 0, ahead: 0, isDirty: false, canFastForward: false, clean: true, conflicts: [], baseTip: "", mergeInProgress: false, unresolved: [] };
   if (!worktreePath || !workBranch) return none;
   const [baseOk, workOk] = await Promise.all([branchExists(repoPath, baseBranch), branchExists(repoPath, workBranch)]);
@@ -2601,6 +2610,26 @@ export async function worktreeSyncStatus(input: {
   if (!baseOk) return { ...none, baseMissing: true };
   if (!workOk) return none;
 
+  // The task's cut point (or the tip it last synced to) must still be reachable
+  // from the base branch, or the base's history was rewritten under it. This is
+  // the one test that separates a rewrite from an ordinary "base moved on":
+  // forward movement keeps the old tip an ancestor, a rebase or an amend does
+  // not. Best-effort — an unknown or garbage-collected SHA just leaves it unset
+  // rather than crying rewrite over a ref we cannot resolve.
+  //
+  // `git()` rejects on any non-zero exit, and `merge-base --is-ancestor` exits
+  // 1 for "not an ancestor" and 128 for "not a valid object" — indistinguishable
+  // through a bare catch. So the object is verified first; only once it resolves
+  // does a caught rejection unambiguously mean "not an ancestor".
+  const baseShaResolved = baseSha
+    ? await git(repoPath, ["rev-parse", "--verify", `${baseSha}^{commit}`]).then(() => true).catch(() => false)
+    : false;
+  const baseRewritten = baseShaResolved
+    ? await git(repoPath, ["merge-base", "--is-ancestor", baseSha!, baseBranch])
+        .then(() => false)
+        .catch(() => true)
+    : undefined;
+
   const countOf = async (range: string) => parseInt(await git(repoPath, ["rev-list", "--count", range]).catch(() => "0"), 10) || 0;
   const [baseTip, behind, ahead, isDirty] = await Promise.all([
     git(repoPath, ["rev-parse", baseBranch]).catch(() => ""),
@@ -2611,7 +2640,7 @@ export async function worktreeSyncStatus(input: {
   const idle = { mergeInProgress: false, unresolved: [] as string[] };
 
   // Already up to date — nothing to sync; skip the (relatively costly) conflict probe.
-  if (behind === 0) return { behind, ahead, isDirty, canFastForward: false, clean: true, conflicts: [], baseTip, ...idle };
+  if (behind === 0) return { behind, ahead, isDirty, canFastForward: false, clean: true, conflicts: [], baseTip, ...idle, baseRewritten };
 
   // A base→work merge paused in the worktree (prepareWorktreeMerge left the
   // conflicts for a resolution turn or an editor). The branch tips haven't
@@ -2626,16 +2655,16 @@ export async function worktreeSyncStatus(input: {
     return {
       behind, ahead, isDirty, canFastForward: false, baseTip,
       clean: paused.unresolved.length === 0, conflicts: paused.unresolved,
-      mergeInProgress: true, unresolved: paused.unresolved,
+      mergeInProgress: true, unresolved: paused.unresolved, baseRewritten,
     };
   }
 
   // No divergent commits + clean tree → merging base in is a plain fast-forward
   // (just moves the branch pointer), so there's zero conflict risk.
-  if (ahead === 0 && !isDirty) return { behind, ahead, isDirty, canFastForward: true, clean: true, conflicts: [], baseTip, ...idle };
+  if (ahead === 0 && !isDirty) return { behind, ahead, isDirty, canFastForward: true, clean: true, conflicts: [], baseTip, ...idle, baseRewritten };
 
   const conflicts = await predictMergeConflicts(repoPath, baseBranch, workBranch);
-  return { behind, ahead, isDirty, canFastForward: false, clean: conflicts.length === 0, conflicts, baseTip, ...idle };
+  return { behind, ahead, isDirty, canFastForward: false, clean: conflicts.length === 0, conflicts, baseTip, ...idle, baseRewritten };
 }
 
 // Predict the conflicts of merging `baseBranch` into `workBranch` WITHOUT touching

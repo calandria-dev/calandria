@@ -1583,6 +1583,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .ny-row .ny-ci{color:var(--red);}
 .sync-msg{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .sync-spacer{flex:1;}
+.sync-cmd{flex:none;font-family:var(--mono);font-size:12px;opacity:.85;white-space:nowrap;}
 .sync-err{color:var(--err);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
 /* session break (/clear) */
