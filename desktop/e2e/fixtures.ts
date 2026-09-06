@@ -276,6 +276,25 @@ function bootTracePath(root: string): string {
 }
 
 /**
+ * The shell's own account of its boot, read off disk.
+ *
+ * Distinct from `Shell.log`, and the difference is the point: that one starts
+ * at the moment `electron.launch()` resolved and so cannot see the startup
+ * itself. main.js appends this one synchronously, line by line, from its first
+ * line onward.
+ */
+export function bootTrace(shell: Shell): string[] {
+  try {
+    return fs
+      .readFileSync(bootTracePath(shell.root), "utf8")
+      .split(/\r?\n/)
+      .filter((l: string) => l.trim());
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Turn a launch that never resolved into a sentence that names the cause.
  *
  * `electron.launch()` yields no process handle until it succeeds, so the
@@ -293,7 +312,7 @@ function launchFailure(root: string, err: unknown): Error {
     trace = fs
       .readFileSync(bootTracePath(root), "utf8")
       .split(/\r?\n/)
-      .filter((l) => l.trim());
+      .filter((l: string) => l.trim());
   } catch {
     // No trace file at all: the binary never got as far as running main.js.
   }
@@ -575,6 +594,15 @@ export async function attachShellLog(testInfo: TestInfo, shell: Shell | null | u
   const file = path.join(shell.root, "shell.log");
   fs.writeFileSync(file, [...shell.log, await geometryLine(shell)].join("\n"));
   await testInfo.attach("shell.log", { path: file, contentType: "text/plain" });
+  // The boot trace goes up with it: on a failure that happened during startup
+  // it is the only record of that stretch, and it is written into an instance
+  // root the cleanup reporter keeps only on red runs.
+  const trace = bootTrace(shell);
+  if (trace.length) {
+    const traceFile = path.join(shell.root, "boot-trace.attached.log");
+    fs.writeFileSync(traceFile, trace.join("\n"));
+    await testInfo.attach("boot-trace.log", { path: traceFile, contentType: "text/plain" });
+  }
   await attachScreenshot(testInfo, shell);
 }
 
