@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
 import { isAwaiting, isWithdrawn } from "./format";
@@ -327,6 +327,9 @@ export function TagStrip({ tag, members, allTags, projectBranch, originTask, onS
   const [color, setColor] = useState<string | null>(tag.color);
   const [base, setBase] = useState(tag.base_branch);
   const [job, setJob] = useState<JobState>(() => jobOf(tag));
+  const descRef = useRef<HTMLDivElement | null>(null);
+  const [descOpen, setDescOpen] = useState(false);
+  const [descClipped, setDescClipped] = useState(false);
 
   // The job outlives this component. Its state is on the tag ROW, which arrives
   // with every tags_changed refetch (TagRow IS Tag), so a strip mounting fresh —
@@ -375,6 +378,29 @@ export function TagStrip({ tag, members, allTags, projectBranch, originTask, onS
     setColor(tag.color);
     setBase(tag.base_branch);
   }, [tag.id, tag.name, tag.description, tag.color, tag.base_branch]);
+
+  // A tag description is free prose and some run to paragraphs, so the strip
+  // clamps it and puts the rest behind a toggle. Expanding is a reading gesture
+  // rather than a preference, so it isn't persisted and it drops when another
+  // chip is lit — the same call `useExpanded` makes for suggestion rows.
+  useEffect(() => { setDescOpen(false); }, [tag.id]);
+
+  // Whether the clamp actually bites is MEASURED, not guessed from length: the
+  // strip is as wide as the task column, which the user drags, so one sentence
+  // is one line at one width and four at another. A character threshold would
+  // offer "Show more" over text already fully on screen. Skipped while open,
+  // because the clamp is off then and the element can't report an overflow —
+  // measuring there would retract the toggle that collapses it again.
+  useEffect(() => {
+    const el = descRef.current;
+    if (!el || descOpen) return;
+    const measure = () => setDescClipped(el.scrollHeight - el.clientHeight > 1);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [tag.description, descOpen]);
 
   const ordered = topoMembers(members);
   const p = memberProgress(members);
@@ -520,7 +546,17 @@ export function TagStrip({ tag, members, allTags, projectBranch, originTask, onS
               <button className="btn btn-ghost btn-sm" onClick={() => void dismissJob()}>Dismiss</button>
             </div>
           )}
-          {tag.description && <div className="gs-desc">{tag.description}</div>}
+          {tag.description && (
+            <div className={`gs-descwrap ${descOpen ? "open" : ""}`}>
+              <div className="gs-desc" ref={descRef}>{tag.description}</div>
+              {(descClipped || descOpen) && (
+                <button className="gs-desc-more" aria-expanded={descOpen} onClick={() => setDescOpen((o) => !o)}
+                  title={descOpen ? "Collapse the description" : "Show the full description"}>
+                  {Icon.chevDown()}{descOpen ? "Show less" : "Show more"}
+                </button>
+              )}
+            </div>
+          )}
           {originTask && (
             <button className="gs-origin" onClick={() => onSelectTask(originTask.id)}
               title="The session that planned this tag. Its transcript is the brief">

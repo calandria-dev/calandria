@@ -239,3 +239,54 @@ test("the landing card leads back to the chip, and the palette's feed carries ta
   expect(rows.find((t) => t.title === looseA)!.tags.map((x) => x.name)).toEqual([name]);
   expect(rows.find((t) => t.title === looseB)!.tags).toEqual([]);
 });
+
+// Self-contained: the cases above rename and then delete the seeded tag, so this
+// one mints its own chips. Two of them, rather than one tag re-described
+// mid-test, because the lit chip survives a reload — re-clicking it after one
+// would shut the strip instead of reopening it.
+test("a long description is clamped behind Show more, and the short one gets no toggle", async ({ page, request }) => {
+  const short = "Move every route onto AuthService.";
+  const long = Array.from({ length: 12 }, (_, i) =>
+    `Step ${i + 1}: move one more route onto AuthService and delete the middleware it used to need.`).join(" ");
+  const shortName = `Brief ${uid()}`;
+  const longName = `Clamp ${uid()}`;
+  const mint = async (name: string, description: string) => {
+    const res = await request.post(`/api/projects/${projectId}/tags`, { data: { name, description } });
+    expect(res.status()).toBe(201);
+    const id = (await res.json()).id;
+    const task = await request.post("/api/tasks", {
+      data: { project_id: projectId, title: `${name} member ${uid()}`, priority: "med", agent: "mock", tag_ids: [id] },
+    });
+    expect(task.status()).toBe(201);
+  };
+  await mint(shortName, short);
+  await mint(longName, long);
+
+  await openProject(page);
+  const wrap = page.locator(".gstrip .gs-descwrap");
+
+  // The short description fits, so there is nothing to offer. Whether the toggle
+  // appears is measured off the rendered element, not the text's length.
+  await chip(page, shortName).click();
+  await expect(wrap.locator(".gs-desc")).toHaveText(short);
+  await expect(wrap.locator(".gs-desc-more")).toHaveCount(0);
+  await chip(page, shortName).click();
+
+  await chip(page, longName).click();
+  const more = wrap.locator(".gs-desc-more");
+  await expect(more).toHaveText("Show more");
+  await expect(more).toHaveAttribute("aria-expanded", "false");
+  // The whole point: clamped, the element renders shorter than its content.
+  const clamped = (await wrap.locator(".gs-desc").boundingBox())!.height;
+
+  await more.click();
+  await expect(more).toHaveText("Show less");
+  await expect(more).toHaveAttribute("aria-expanded", "true");
+  expect((await wrap.locator(".gs-desc").boundingBox())!.height).toBeGreaterThan(clamped);
+
+  // And it collapses again — the toggle has to survive its own expansion, which
+  // takes the clamp off and leaves nothing overflowing to measure.
+  await more.click();
+  await expect(more).toHaveText("Show more");
+  expect((await wrap.locator(".gs-desc").boundingBox())!.height).toBeCloseTo(clamped, 0);
+});

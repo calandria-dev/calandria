@@ -2529,7 +2529,20 @@ button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,tra
 .gs-frac{font-size:11px;color:var(--ink-3);}
 .gs-bar{height:4px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
 .gs-bar>span{display:block;height:100%;background:var(--gc,var(--ink-3));transition:width .2s;}
-.gs-desc{font-size:12px;color:var(--ink-2);white-space:pre-wrap;}
+/* The description clamps to three lines, with the rest behind "Show more".
+   Whether the toggle appears is MEASURED in TagStrip.tsx, not assumed from the
+   text's length, which is why this clamps by max-height rather than with the
+   `-webkit-box` / line-clamp pair the cards use: a line-clamped box reports no
+   overflow through scrollHeight, so there would be nothing to measure. The
+   height is exactly three of the line-height below, so the cut lands on a line
+   boundary rather than through the glyphs. */
+.gs-descwrap{display:flex;flex-direction:column;gap:2px;}
+.gs-desc{font-size:12px;line-height:1.45;color:var(--ink-2);white-space:pre-wrap;overflow:hidden;max-height:4.35em;}
+.gs-descwrap.open .gs-desc{max-height:none;overflow:visible;}
+.gs-desc-more{align-self:flex-start;display:flex;align-items:center;gap:3px;font-size:11px;color:var(--ink-3);transition:color .12s;}
+.gs-desc-more svg{width:11px;height:11px;transform:rotate(-90deg);transition:transform .15s;}
+.gs-descwrap.open .gs-desc-more svg{transform:none;}
+.gs-desc-more:hover{color:var(--accent-ink);}
 /* The "Refresh tag" job band: an indeterminate sweep while the agent reads the
    repo, then the one-line report of what it changed. Indeterminate because the
    long phase has no measurable fraction — see TagStrip.tsx. */
