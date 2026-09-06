@@ -87,7 +87,7 @@ describe("Claude CLI pin", () => {
 
   it("pins @anthropic-ai/claude-agent-sdk exactly, with no range", () => {
     // The reason is reproducibility, not the coupling the case below rules out.
-    // `npm ci` — CI, the image, every built artifact — reads the lockfile and
+    // `npm ci` (CI, the image, every built artifact) reads the lockfile and
     // ignores the range entirely, so a caret ships nothing. What it does reach
     // is a developer's plain `npm install`, which adopts whatever 0.3.x is
     // current that day. That makes the SDK a session ran against a function of

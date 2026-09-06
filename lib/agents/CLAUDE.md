@@ -38,7 +38,7 @@ a dedicated tool only when Bash genuinely cannot do the job"* — and on an Opus
 system prompt additionally carries *"Do not call the AgentTool unless the user requested it"*.
 Both are sensible defaults for a session nobody has told otherwise, both come from the CLI rather
 than from here, and together they are the measured reason a first turn spends 79% of its tool
-calls on Bash and none on `Agent` (`docs/DELEGATION.md`).
+calls on Bash and none on `Agent` (https://github.com/calandria-dev/calandria-notes/blob/main/measurements/DELEGATION.md).
 
 `buildProjectContext()` therefore ends with the block that answers them: bulk collection goes to a
 synchronous subagent past two read-only commands in a row. Three things about it are load-bearing
@@ -54,7 +54,7 @@ One thing to watch on a CLI upgrade: 2.1.240 also carries a `## Delegating to su
 arguing the other way ("subagents multiply cost and time … do not fan out"), gated behind an
 experiment (`CLAUDE_CODE_THISTLE_GREBE`, values `default` / `no_nudges` / `counter_steer`) that is
 not on for us today. If a release ever floors Opus to `counter_steer`, this block is arguing with a
-whole section instead of two lines, and the dispatch rate in `docs/DELEGATION.md` is what to
+whole section instead of two lines, and the dispatch rate in https://github.com/calandria-dev/calandria-notes/blob/main/measurements/DELEGATION.md is what to
 re-measure.
 
 ### Refusals that skip the callback
