@@ -897,3 +897,4 @@ A project on the gateway can bill its turns to a shared key or have them metered
 touching your own agent login.
 
 See [Supported agents](AGENTS.md#litellm-gateway) for setup and current provider coverage.
+
