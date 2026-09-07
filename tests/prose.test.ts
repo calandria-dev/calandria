@@ -35,6 +35,13 @@ const BANNED_PHRASES = [/the whole point/i, /is what makes/i, /load-bearing/i, /
 /** Markdown files this guard doesn't cover. */
 const EXCLUDED_MD = new Set(["CHANGELOG.md"]);
 
+/**
+ * Path prefixes this guard doesn't cover. docs/design/ holds design records and
+ * specs, the work-log format this whole cleanup moves out of the repo over
+ * time; they aren't the published, how-to documentation this guard pins.
+ */
+const EXCLUDED_MD_PREFIXES = ["docs/design/"];
+
 interface AllowEntry {
   /** Why this exact line is allowed to keep its hit. */
   reason: string;
@@ -44,22 +51,6 @@ interface AllowEntry {
 
 // file:line -> why the hit there is a verbatim quote, not prose.
 const ALLOWLIST: Record<string, AllowEntry> = {
-  "docs/FEATURES.md:267": {
-    reason:
-      "Quotes the protected-branch rejection message verbatim from prRequiredMessage() at lib/git.ts:666.",
-    verify: () => {
-      const line = readLine("lib/git.ts", 666);
-      expect(line).toContain("requires a pull request — open a PR instead");
-    },
-  },
-  "docs/FEATURES.md:667": {
-    reason:
-      "Quotes the one-time schedule card label verbatim from app/shell/Schedules.tsx:575.",
-    verify: () => {
-      const line = readLine("app/shell/Schedules.tsx", 575);
-      expect(line).toContain("Ran — one-time");
-    },
-  },
   ".github/CLAUDE.md:37": {
     reason:
       'Quotes GitHub\'s own PR-checks UI text ("Expected — waiting for status") verbatim; ' +
@@ -69,11 +60,6 @@ const ALLOWLIST: Record<string, AllowEntry> = {
     reason: "Same GitHub PR-checks UI quote as .github/CLAUDE.md:37.",
   },
 };
-
-function readLine(file: string, lineNo: number): string {
-  const lines = fs.readFileSync(path.join(ROOT, file), "utf8").split("\n");
-  return lines[lineNo - 1] ?? "";
-}
 
 /**
  * Tracked Markdown files, or `null` when git can't answer: a task worktree's
@@ -97,6 +83,7 @@ function trackedMarkdownFiles(): string[] | null {
     .split("\0")
     .filter(Boolean)
     .filter((f) => !EXCLUDED_MD.has(f))
+    .filter((f) => !EXCLUDED_MD_PREFIXES.some((prefix) => f.startsWith(prefix)))
     .filter((f) => !f.includes("node_modules"))
     .filter((f) => !/generated/i.test(f));
 }

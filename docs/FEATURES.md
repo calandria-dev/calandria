@@ -267,7 +267,7 @@ saying the merge was local only, and the push route itself refuses the push serv
 same message.
 
 A protected-branch rejection from GitHub is recognized even when the project's own setting says
-otherwise, and reported as: "`main` requires a pull request — open a PR instead," with GitHub's
+otherwise, and reported as: "`main` requires a pull request, open a PR instead," with GitHub's
 own `GH006` text underneath.
 
 Under **Pull request**, the task's session also gets a tool: **`create_pr(title?, body?)`**
@@ -681,7 +681,7 @@ and launches a task on its own with no browser tab open.
    the schedule; tasks it already minted are kept.
 3. Choose **Repeats: Weekly** and pick days, or **Repeats: Once** and pick a single date, for
    example "there's a release going out overnight, check on it at 04:00." A one-time schedule
-   fires once, then stays on its card reading **Ran — one-time**, disabled, with its run history
+   fires once, then stays on its card reading **Ran, one-time**, disabled, with its run history
    intact; delete it or edit it to a later date to arm it again. A past date is refused on save.
 4. Pick a **Timezone** explicitly (it defaults to your browser's), since the server may run in a
    different zone than you. The time is wall-clock, so "08:30" keeps meaning 08:30 across a
