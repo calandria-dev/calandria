@@ -14,6 +14,15 @@
 # production, since anything other than the project's production branch is a
 # preview deployment on Direct Upload.
 #
+# The pull_request trigger takes any base branch, matching test.yml. This repo
+# lands batches of work through integration branches (`integration/**`), and a
+# PR into one of those edits docs/*.md just like a PR into main does. Pinning
+# the trigger to main turned the docs gate off for exactly those PRs, so a
+# missing front-matter `title` or a dead relative link (see docs/CLAUDE.md)
+# surfaced only when the integration branch reached main, several rewrites
+# after the one that broke it. The `paths` filter above is what keeps the run
+# off PRs that touch neither the site nor the docs.
+#
 # FORKS. A fork's PR gets no secrets, so the deploy step is gated on the
 # credentials actually being present rather than on `github.repository` — same
 # outcome for a fork, and it also degrades correctly on a clone of this repo
@@ -54,7 +63,7 @@ on:
       - docs/**
       - .github/workflows/website.yml
   pull_request:
-    branches: [main]
+    branches: ["**"]
     paths:
       - website/**
       - docs/**
