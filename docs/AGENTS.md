@@ -587,7 +587,7 @@ A selected alias becomes `mcpServers[alias]` in the session, next to Calandria's
 The credential goes on `x-litellm-api-key`, never `Authorization` — LiteLLM reserves that header
 for the upstream server's own OAuth, and sending the gateway key there is the single most common
 mistake on LiteLLM's own troubleshooting page. A task with a per-task virtual key
-(`docs/design/litellm.md`, "Per-task virtual keys") uses that key here too, so its
+(the private notes repo's [litellm.md](https://github.com/calandria-dev/calandria-notes/blob/main/design/litellm.md), "Per-task virtual keys") uses that key here too, so its
 `object_permission.mcp_servers` scopes exactly which of the project's selected servers the task can
 actually reach; without one, every mount shares the instance key.
 
@@ -609,7 +609,7 @@ the mount endpoint itself answers **HTTP 400, not 401** (measured), so the picke
 check reads the response body for the real reason rather than trusting the status code.
 
 **Codex and Antigravity mount the same selection too**, each with a driver-specific wrinkle
-(`docs/design/litellm.md`, "Hosted MCP servers").
+(the private notes repo's [litellm.md](https://github.com/calandria-dev/calandria-notes/blob/main/design/litellm.md), "Hosted MCP servers").
 
 Codex has no approver at all — `codex exec` cannot service an interactive approval — so every
 mounted server also carries `default_tools_approval_mode: "approve"`, which auto-approves every one
@@ -655,7 +655,7 @@ LiteLLM's `/v1/models` is OpenAI-shaped and Claude Code expects the Anthropic sh
 (BerriAI/litellm#27180); Calandria does its own discovery from `/model/info`.
 
 The full spike, including the reproduction recipe and the measured request shapes, is in
-`docs/design/litellm.md`.
+the private notes repo's [litellm.md](https://github.com/calandria-dev/calandria-notes/blob/main/design/litellm.md).
 
 ## Adding another agent
 
@@ -669,7 +669,7 @@ for the implementation guide. Proposals for another agent are welcome in
 
 The third driver is the worked example for a CLI with no SDK. The spike that chose its
 backend, the Antigravity CLI (`agy`) rather than Gemini CLI, is recorded in
-[design/gemini-driver.md](design/gemini-driver.md): why (Gemini CLI stopped serving Google
+the private notes repo's [gemini-driver.md](https://github.com/calandria-dev/calandria-notes/blob/main/design/gemini-driver.md): why (Gemini CLI stopped serving Google
 AI Pro, Ultra and free accounts on 2026-06-18), the measured headless surface of both CLIs,
 the event mapping, the login flow, and which of its assumptions the driver then had to
 correct against a real capture.
