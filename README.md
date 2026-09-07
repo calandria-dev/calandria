@@ -30,14 +30,14 @@ covers it. No API key needed.
   waiting for an answer while the rest keep working.
 - **Review every change.** Read the diff next to the conversation, then
   merge, resolve conflicts, or open a pull request. Once a PR exists, its
-  state — open, merged or closed, checks green or red, review approved or
-  not — stays live on the task without you opening GitHub, and one button
-  squash-merges it from there. Where the repo allows auto-merge, that click
-  queues it and GitHub lands the PR the moment its checks pass.
+  state (open, merged or closed, checks green or red, review approved or
+  not) stays live on the task, so you don't need to open GitHub, and one
+  button squash-merges it from there. Where the repo allows auto-merge, that
+  click queues it and GitHub lands the PR the moment its checks pass.
 - **Catch a red build.** A PR whose checks go red raises its task into the
   same "Needs you" inbox a parked question does, names the job that broke,
   and offers a one-click Fix CI that starts a turn seeded with the failing
-  job's log — even when the task was already marked done.
+  job's log, even on a task already marked done.
 - **Start from the latest base.** Calandria fetches the base branch before
   cutting a task's worktree, so a PR merged on GitHub doesn't leave new tasks
   building on stale code. It also tells you when your own checkout has fallen
@@ -45,14 +45,14 @@ covers it. No API key needed.
 - **Point a task at any branch.** A task can use its own base branch instead
   of the project default: it's cut from it, synced to it, merged into it, and
   PR'd against it. Several tasks can land on one feature branch while the
-  rest keep shipping to `main`. A tag can set that branch for a whole plan —
-  and says when it has fallen behind the project default ("3 behind main"),
-  with a Sync that merges the default into it, and a Create for a base branch
-  nothing has made yet. Left alone, an integration branch drifts and every
-  task cut from it is minted stale.
+  rest keep shipping to `main`. A tag can set that branch for a whole plan.
+  It shows when the branch has fallen behind the project default ("3 behind
+  main"), with a Sync that merges the default into it, and a Create for a
+  base branch nothing has made yet. Left alone, an integration branch
+  drifts, and every task cut from it starts stale.
 - **Say how work lands.** A project lands by merge or by pull request, and
   every session in it is told which. On a repo whose base branch requires a
-  PR, agents stop reaching for a Merge that GitHub will reject — and so does
+  PR, agents stop reaching for a Merge that GitHub will reject, and so does
   the diff rail: Create PR becomes the primary button, and the local merge
   says up front that it can't be pushed. Calandria can read the branch's rules
   from GitHub and preselect the answer. A PR a session opened by hand, in a
@@ -74,21 +74,21 @@ server and transcripts are saved, so a browser reload or a sleeping laptop
 doesn't interrupt anything. `/clear` starts a fresh context window and keeps
 the task's history as a summary.
 
-A session is also told to push bulk context collection into subagents: past two
-read-only commands in a row, the third goes to a subagent that reports its
-conclusions and `file:line`s rather than pouring file contents into the
-session's own window. That is a deliberate override of the CLI's own defaults,
-which ask for work to go through the shell and for subagents to be left alone
-unless the user asked — measured across 198 sessions on one instance, first
-turns spent 79% of their tool calls on the shell and, in the 25 most expensive,
-none at all on a subagent (the private notes repo's [DELEGATION.md](https://github.com/calandria-dev/calandria-notes/blob/main/measurements/DELEGATION.md) has the measurement).
-`CALANDRIA_DELEGATE_COLLECTION=off` leaves sessions on those defaults.
+Each session is told to push bulk context collection into subagents. After two
+read-only commands in a row, the third goes to a subagent instead, which
+reports back its conclusions and `file:line`s rather than pouring file
+contents into the session's own context window. This overrides the CLI's own
+default, which runs that work directly in the shell and leaves subagents
+unused unless you ask for one; the private notes repo's
+[DELEGATION.md](https://github.com/calandria-dev/calandria-notes/blob/main/measurements/DELEGATION.md)
+has the measurement behind it. Set `CALANDRIA_DELEGATE_COLLECTION=off` to leave
+sessions on the CLI's defaults.
 
 When a Claude turn starts background shell work or schedules a wakeup
 (`ScheduleWakeup`, `CronCreate`, `/loop`), the session stays open after the
 model stops. The task shows "working in background" or "waiting to wake at
 12:00" with its age; when the work finishes or the wakeup fires, the agent
-continues. There is no deadline by default, so a recurring `/loop` holds the
+continues. No deadline applies by default, so a recurring `/loop` holds the
 session open until you stop it. `CALANDRIA_BACKGROUND_LINGER_MS` adds an
 optional auto-cut (a wakeup past it is cancelled and noted in the
 transcript), and `CALANDRIA_BACKGROUND_LINGER=off` disables lingering and
@@ -97,27 +97,24 @@ you send while a session is lingering goes straight in and starts the next
 turn instead of waiting in the queue.
 
 Because that wait has no deadline, a session can also sit live and silent
-waiting on something that already finished — a poll against a service that
-died, a watcher loop that never exits. After 20 minutes with no output and no
-tool call, the task card and the session say "no activity for 34m" beside the
-running indicator. Nothing is stopped for you: the server can't tell a wedged
-wait from a slow one, and cutting a real 40-minute test run would be worse.
-It's also not a "needs you" item, since there's nothing to answer. What the
-card does carry is the one action — a **Stop this turn** chip under that line,
-which arms on the first press and stops on the second. It asks because the
-signal is exactly as ambiguous for you as it is for the server, and a list is
-somewhere a stray click lands. The session gets no such chip: the composer's
-Stop is already in that view, with the transcript above it to judge against.
-`CALANDRIA_TURN_IDLE_MS` moves the window, or 0 turns the note off. A turn
-parked on a question or a permission card is never marked; that wait is meant
-to be open-ended.
+waiting on something that already finished: a poll against a dead service, a
+watcher loop that never exits. After 20 minutes with no output and no tool
+call, the task card and the session show "no activity for 34m" beside the
+running indicator. Calandria doesn't stop the turn for you, since the server
+can't tell a wedged wait from a slow one and cutting a real 40-minute test run
+would be worse. It's also not a "needs you" item, since nothing needs an
+answer. The card's one action is a **Stop this turn** chip below that line: it
+arms on the first press and stops on the second, since a stray click is easy
+to make on a list. The session view carries no such chip; the composer's Stop
+covers it, next to the transcript to judge against. `CALANDRIA_TURN_IDLE_MS`
+moves the window, and 0 turns the note off. A turn parked on a question or a
+permission card is never marked, since that wait is meant to be open-ended.
 
-The session itself is told nothing by default, because only the model knows
-whether its wait still means anything and asking costs a turn. Set
+By default, the session gets no nudge about this. Set
 `CALANDRIA_TURN_IDLE_NUDGE=1` and a turn that goes quiet is sent one line
-asking it to re-check what it is waiting on — at most once per turn, only when
-the session is lingering (a build or a tool call in flight is never
-interrupted), never on a scheduled run, and never ahead of a message you have
+asking it to recheck what it's waiting on. This fires at most once per turn,
+only while the session is lingering (a build or tool call in flight is never
+interrupted), never on a scheduled run, and never ahead of a message you've
 already queued. The transcript records that it was sent.
 
 ## What you get
@@ -129,9 +126,9 @@ already queued. The transcript records that it was sent.
   the cause is stale git bookkeeping (a lock file from a crashed git, a
   worktree still registered at a directory that's gone), the error says so
   and offers **Repair worktree**: it clears the lock, prunes the
-  registration, cuts the checkout again, and re-sends the message. Causes you
-  have to fix yourself (a full disk, a detached HEAD) are named just as
-  plainly, including on unattended scheduled runs.
+  registration, cuts the checkout again, and re-sends the message. Calandria
+  names causes you have to fix yourself (a full disk, a detached HEAD) just
+  as plainly, including on unattended scheduled runs.
 - **Agent settings can't change behind your back:** Claude Code re-reads a
   task's `.claude/settings.json` at the start of every turn, and its hooks run
   shell commands with no permission prompt. That file lives in the task's own
@@ -157,16 +154,16 @@ already queued. The transcript records that it was sent.
 - **Review-to-merge workflow:** inspect diffs, sync branches, resolve
   conflicts, merge, or open a GitHub PR from the same screen.
 - **Attach any file:** drag, paste or pick a screenshot, a log bundle, a
-  spreadsheet, a PDF — up to 25 MB (`CALANDRIA_MAX_UPLOAD_MB`). The file is
+  spreadsheet, or a PDF, up to 25 MB (`CALANDRIA_MAX_UPLOAD_MB`). The file is
   staged on disk outside the worktree and the message carries only its path,
-  so nothing lands in the model's context until the agent decides to open it,
-  and nothing lands in your diff. Staged files are swept with the task.
+  so nothing lands in the model's context until the agent opens it, and
+  nothing lands in your diff. Staged files are swept with the task.
 - **Collaborate on documents:** open a file the agent wrote as a document
   (mermaid fences render as diagrams), edit the text, attach comments to
-  passages, and send it all back as one message. Comments are saved as you
-  go; your edits are either written straight into the task's worktree
-  (default) or sent as a diff for the agent to apply. Open it from the diff
-  or from the Write/Edit card in the transcript.
+  passages, and send it all back as one message. Calandria saves comments as
+  you go, and writes your edits straight into the task's worktree (default)
+  or sends them as a diff for the agent to apply. Open it from the diff or
+  from the Write/Edit card in the transcript.
 - **Task pipelines:** make a task depend on one or more earlier tasks,
   branch work into parallel paths, and start each task automatically when
   its blockers finish.
@@ -175,10 +172,10 @@ already queued. The transcript records that it was sent.
   (union by default, intersection behind an any/all toggle). Each task shows
   a tinted badge per tag, progress comes from the tasks, and finished tags
   fold away. One lit chip expands into a strip with the tag's brief and its
-  steps in dependency order, plus **Refresh tag** — an agent reads the whole
+  steps in dependency order, plus **Refresh tag**: an agent reads the whole
   plan against the code, rewords briefs that point at things that no longer
   exist, retires work the repo shows is already done, and rewrites the
-  description; every task change arrives as a revertable "Changed by agent"
+  description. Every task change arrives as a revertable "Changed by agent"
   edit, and the job keeps running if you navigate away. ⌘K, the project page,
   and the Insights leaderboard all reach a tag by name. A tag can also set the git **base
   branch** its tasks are cut from, merged into, and synced against, so a
@@ -189,7 +186,7 @@ already queued. The transcript records that it was sent.
   in one click. Each run creates a fresh task, with a box for this-run-only
   instructions.
 - **Scheduled tasks:** run a saved prompt on a recurring day and time in its
-  own timezone, with nobody logged in — or **once**, on a date you pick, for
+  own timezone, with nobody logged in, or **once** on a date you pick, for
   the "there's a release overnight, check on it at 04:00" job. Each firing
   creates a fresh task you review like any other, and a schedule can fire a
   runbook so one recipe serves both the clock and the button. A run that
@@ -199,9 +196,9 @@ already queued. The transcript records that it was sent.
   ![Project page with a tag, two runbooks, and a weekday schedule](docs/images/project.png)
 
 - **Notifications:** when a task stops and waits for you, when a turn fails,
-  or when a scheduled run fails. Delivered as a browser notification in any
-  open tab and as a push to your phone with the app closed. Silent only when
-  you're already looking at that task.
+  or when a scheduled run fails. Calandria delivers these as a browser
+  notification in any open tab and as a push to your phone with the app
+  closed, and stays silent only when you're already looking at that task.
 - **Installable app:** a PWA with its own icon and standalone window. Install
   from Chrome/Edge or iOS Add to Home Screen, and the "needs you" inbox lives
   on your phone's home screen (needs HTTPS; works behind Cloudflare Access).
@@ -233,9 +230,9 @@ already queued. The transcript records that it was sent.
 
 Calandria supports **Claude Code**, **OpenAI Codex** and Google's **Antigravity**
 (the CLI behind Gemini) end to end. Choose an agent per task, or connect only the
-one you use. All three work with subscription login; API keys stay optional —
-except in a container, where Antigravity needs one, since its CLI stores its
-token in the OS keyring.
+one you use. All three work with subscription login, and API keys stay
+optional, except in a container, where Antigravity needs one because its CLI
+stores its token in the OS keyring.
 
 [Agent support, permissions, and usage details](docs/AGENTS.md)
 
@@ -249,8 +246,8 @@ provider entry Calandria adds for the turn. The model picker becomes a text box
 that suggests whatever the server reports it has, and Settings → Agents says
 whether that server is answering. A local turn is recorded at zero cost, because
 a model served off your own machine really is free. A **Custom base URL** may
-not be, so its turns are recorded as *unpriced* rather than as $0 — they are
-left out of every total, and the figures that omit them say so. Neither shows a
+not be, so its turns are recorded as *unpriced* rather than $0. They're left
+out of every total, and the figures that omit them say so. Neither shows a
 context percentage: the window of a model the catalog has never seen is not
 knowable, so the chip reports tokens used instead. A cloud session can also
 delegate a single task to the local model with
@@ -261,7 +258,18 @@ for a Docker instance.
 
 ### LiteLLM gateway
 
-A [LiteLLM](https://docs.litellm.ai) proxy is a fourth **Model provider**, on the same seam and with no new driver. Set `CALANDRIA_LITELLM_BASE_URL` and a project can route its turns through the gateway, either billed to the gateway's virtual key or to your own plan with the CLI's login forwarded. Every turn carries tags naming the project, task and agent, so LiteLLM's spend views break down by task on their own; a Claude task additionally joins to LiteLLM's spend log by session id, with no configuration on either side. Codex and Antigravity tasks route through it too, each on the credential its own CLI reads, and always billed to the gateway key. Settings → Agents shows whether the gateway answers, which LiteLLM version it is, how many models it serves, and the key's own spend, budget and reset time — saying so plainly when the proxy has no database and therefore has no keys, budgets or spend to report. A turn that exceeds the key's budget parks its queued follow-ups and offers a Retry rather than burning them on the same rejection, the way a dead login does. Gateway spend is an estimate from the gateway's own price table, marked `≈` in Insights, where a cache-hit column also shows whether prompt caching survived the proxy's translation.
+A [LiteLLM](https://docs.litellm.ai) proxy is a fourth **Model provider**, on the same seam as the others, with no new driver needed. Set `CALANDRIA_LITELLM_BASE_URL` and a project routes its turns through the gateway.
+
+Two billing modes:
+
+- Billed to the gateway's own virtual key.
+- Billed to your own plan, with the CLI's login forwarded through the gateway.
+
+Every turn carries tags naming the project, task and agent, so LiteLLM's spend views break down by task on their own. A Claude task also joins to LiteLLM's spend log by session id, with no configuration needed on either side. Codex and Antigravity tasks route through the gateway too, each on the credential its own CLI reads, always billed to the gateway key.
+
+Settings → Agents shows whether the gateway answers, which LiteLLM version it runs, how many models it serves, and the key's own spend, budget and reset time. When the proxy has no database, it says so plainly, since it then has no keys, budgets or spend to report.
+
+A turn that exceeds the key's budget parks its queued follow-ups and offers a Retry, the same as a dead login, instead of retrying into the same rejection. Gateway spend is an estimate from the gateway's own price table, marked `≈` in Insights, where a cache-hit column also shows whether prompt caching survived the proxy's translation.
 
 [Setup, billing modes and the two caveats](docs/AGENTS.md#litellm-gateway)
 
@@ -319,7 +327,7 @@ config on top of the published image, start from
 
 ### One instance per database
 
-Calandria locks `calandria.db` at boot and refuses to start if another
+Calandria locks `calandria.db` at boot and won't start if another
 process already owns it, naming the holder. Two servers sharing one database
 would overwrite each other's running tasks. Give a second instance its own
 `CALANDRIA_DB_DIR`.
@@ -342,13 +350,13 @@ the worktrees directory passes `CALANDRIA_WORKTREES_DISK_WARN_GB` (default
 tasks after 14 days. It never deletes the branch, and it skips (and names)
 any checkout holding uncommitted edits or unmerged commits.
 
-The prompt case is separate and doesn't wait on a clock. When a task's work
-**lands** — its pull request reports merged, or Calandria merged the branch
-locally — the session header offers **Reclaim**: fast-forward the local base
-branch from origin, remove the worktree, delete the local branch and mark the
-task done, in one click. Project settings can have the server do that by
-itself (off by default). Neither path discards uncommitted edits, or commits
-the remote never saw, without you saying so.
+The prompt case doesn't wait on a clock. When a task's work **lands** (its
+pull request reports merged, or Calandria merged the branch locally), the
+session header offers **Reclaim**: fast-forward the local base branch from
+origin, remove the worktree, delete the local branch and mark the task done,
+in one click. Project settings can have the server do that by itself (off by
+default). Neither path discards uncommitted edits, or commits the remote
+never saw, without you confirming it.
 
 ### Backups and upgrades
 
@@ -360,8 +368,7 @@ cold-copy alternative, and the restore procedure.
 
 Take a backup before upgrading, because upgrades only run one way. Each
 build stamps the database with the schema version it understands, and an
-older build pointed at a database a newer one already migrated refuses to
-boot. Rolling back means re-pinning the previous image tag *and* restoring
+older build pointed at a database a newer one already migrated won't boot. Rolling back means re-pinning the previous image tag *and* restoring
 that backup. See [Rolling back an
 upgrade](docs/SELF_HOSTING.md#rolling-back-an-upgrade).
 
@@ -384,11 +391,12 @@ belongs.
 ## Documentation
 
 Everything below is also published, rendered and searchable, at
-[**calandria.dev/docs**](https://calandria.dev/docs) — the same files, so
+[**calandria.dev/docs**](https://calandria.dev/docs): the same files, so
 either reader is current.
 
 - [Installation and local development](docs/INSTALLATION.md)
 - [Features](docs/FEATURES.md)
+- [Document collaboration](docs/DOCUMENT_COLLABORATION.md)
 - [Agents](docs/AGENTS.md)
 - [Insights and usage](docs/INSIGHTS.md)
 - [Managed services](docs/SERVICES.md)
@@ -396,7 +404,7 @@ either reader is current.
 - [Self-hosting](docs/SELF_HOSTING.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Windows: native and WSL2 setup](docs/INSTALLATION.md#windows) · [platform notes](docs/WINDOWS.md)
-- [Desktop app spike](docs/DESKTOP_APP.md)
+- [Desktop app spike](docs/DESKTOP_APP.md) · [desktop e2e testing](docs/DESKTOP_E2E.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Security](SECURITY.md)
 
@@ -406,14 +414,14 @@ either reader is current.
 
 ## Name and lineage
 
-In a CANDU reactor, the calandria is the vessel that hundreds of parallel
-fuel channels run through: one vessel, many channels, each working in
-isolation, all one coordinated machine. That is what this software does.
+In a CANDU reactor, a calandria is the vessel that hundreds of parallel fuel
+channels run through, each working in isolation inside one coordinated
+machine, which is what this software does.
 
 Calandria began as a fork of
 [Operator](https://github.com/iishyfishyy/operator-oss) by
 [@iishyfishyy](https://github.com/iishyfishyy). It keeps Operator's
 Apache-2.0 license; see [LICENSE](LICENSE) and [NOTICE](NOTICE). Calandria
-is not affiliated with the upstream project or its hosted service. Bugs and
-ideas for Calandria belong in
+is not affiliated with the upstream project or its hosted service. File
+bugs and ideas for Calandria in
 [this repo's issues](https://github.com/calandria-dev/calandria/issues).

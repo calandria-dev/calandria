@@ -123,7 +123,6 @@ const ALLOWED: Record<string, RegExp[]> = {
   "docker-compose.yml": [LEGACY_ENV, /orch-u-/, /\/home\/orch\b/],
   Dockerfile: [LEGACY_ENV, /\/home\/orch\b/],
   "docker/entrypoint.sh": [LEGACY_ENV, LEGACY_STORAGE],
-  "examples/overlay/compose.yaml": [/orch-u-/],
 
   // (c) storage: the old locations are read where they already hold data and
   // are never moved, so the names survive in the resolver, its callers and docs.

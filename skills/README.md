@@ -41,7 +41,7 @@ startup.
 ## Using one
 
 Both agents pick a skill up from its description when the task matches, so
-usually you just ask for what you want:
+usually you ask for what you want:
 
 > This project is going to have five tasks running at once. Is it ready for
 > that?
@@ -60,7 +60,7 @@ skill that uses them stops being portable.
 The rest of the shape:
 
 - `name` must match the directory, lowercase and hyphenated.
-- `description` is the only thing an agent sees until the skill fires, so it
+- `description` is the only text an agent reads until the skill fires, so it
   carries the triggers: what it does and when to reach for it, with the key
   case first. It's truncated from the end.
 - Keep `SKILL.md` itself short (under ~500 lines). Put depth in
