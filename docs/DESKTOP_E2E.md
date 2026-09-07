@@ -196,8 +196,8 @@ DISPLAY=:1 CALANDRIA_DESKTOP_BENCH=1 npm run test:desktop:window
 |-|-|-|
 | `desktop` | `ubuntu-24.04` (`.github/workflows/test.yml`) | Same as `e2e`: main, dispatch, or the `e2e` label |
 | `windows-desktop` | `windows-latest` (`.github/workflows/test.yml`) | Same as `e2e`: main, dispatch, or the `e2e` label |
-| `macos-desktop` | `macos-latest` (`.github/workflows/test.yml`) | Weekly cron, dispatch, or the `macos` label; deliberately does **not** ride the shared `e2e` label |
-| bench | self-hosted, labels `self-hosted, linux, x64, desktop-bench` (`.github/workflows/desktop-bench.yml`) | `workflow_dispatch` + nightly cron `37 3 * * *`; deliberately **no `pull_request` trigger** |
+| `macos-desktop` | `macos-latest` (`.github/workflows/test.yml`) | Weekly cron, dispatch, or the `macos` label; does **not** ride the shared `e2e` label |
+| bench | self-hosted, labels `self-hosted, linux, x64, desktop-bench` (`.github/workflows/desktop-bench.yml`) | `workflow_dispatch` + nightly cron `37 3 * * *`; **no `pull_request` trigger** |
 
 **Viewport clamping on hosted runners.** The hosted macOS and Windows runners have a 1024x768
 virtual display and clamp the app's requested 1440x900 window down to fit it; `xvfb-run`'s screen

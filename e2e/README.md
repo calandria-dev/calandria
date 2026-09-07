@@ -119,10 +119,10 @@ can be removed to reclaim disk.
   |-|-|
   | `e2e:write=<relpath>:<content>` | write that file in the task worktree |
   | `e2e:sleep=<ms>` | hold the turn open (Stop / queueing tests) |
-  | `e2e:type=<text>` | stream that text as `assistant_delta` fragments, one word every 300ms, then send it as the completed `assistant` message — the live-typing bubble and its replacement |
+  | `e2e:type=<text>` | stream that text as `assistant_delta` fragments, one word every 300ms, then send it as the completed `assistant` message (the live-typing bubble and its replacement) |
   | `e2e:output=<a>\|<b>\|<c>` | emit a `Bash` tool row, stream those lines into its peek as `tool_output_delta` fragments one every 300ms, then settle the row with the whole output |
-| `e2e:fail=<message>` | end the turn with an error event |
-  | `e2e:suggest=<title>` | file a suggested task as a real `suggest_task` tool call — tool row, result, then the event — so the transcript's suggestion card is exercised too |
+  | `e2e:fail=<message>` | end the turn with an error event |
+  | `e2e:suggest=<title>` | file a suggested task as a real `suggest_task` tool call (tool row, result, then the event), so the transcript's suggestion card is exercised too |
   | `e2e:suggest-into=<project>\|<title>` | file the suggestion into another project (id or name), through the real strict resolver; an unknown ref yields an error event |
   | `e2e:permission=<command>` | park the turn on a tool-permission card for that Bash command (runs the real `lib/permissions.ts` gate) |
   | `e2e:blocked=<command>` | that Bash call rejected by the CLI itself: an already-decided card with no buttons, nothing parked on the user |
@@ -177,7 +177,7 @@ project, so they're independently runnable.
   app the window never left the first width. `.body[data-shed]` is the
   auto-collapse policy as the app currently holds it (`""`, `"proj task"`,
   `"proj task rail"`); `03-views.spec.ts` shows the wait. The boot skeleton
-  draws a `.col-projects` too, so it is no proof boot has landed — gate on a
+  draws a `.col-projects` too, so it is no proof boot has landed; gate on a
   control that only the booted app renders (`19-mobile-project-pane.spec.ts`).
 - New agent-visible behavior → add a directive to the mock driver rather than
   special-casing a spec.

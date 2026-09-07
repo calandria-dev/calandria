@@ -20,7 +20,7 @@ happen](#what-does-not-happen) · [Ports and services](#ports-and-services) ·
 
 ## What does not happen
 
-This is the load-bearing part, and it's a short list because the answer is
+This is the important part, and it's a short list because the answer is
 "nothing":
 
 - **No files are copied in.** Not `.env`, not `node_modules`, not local certs,

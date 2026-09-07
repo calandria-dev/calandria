@@ -144,6 +144,11 @@ instead.
 - **Plain comments:** `tests/commentStyle.test.ts` fails any tracked source file that
   contains an em dash or a comment written as a work log (`deliberately`, `the whole
   point`, a dated `Measured` note, and similar) instead of stating the invariant to keep.
+- **Prose stays plain:** `tests/prose.test.ts` fails any tracked Markdown file (and any
+  `.env.example` comment) that has an em dash, a work-log line starting `Measured` or
+  `That is why`, or the phrase `the whole point`, `is what makes`, `load-bearing`, or
+  `deliberately`; a genuine quote of a program string or UI label goes on that test's
+  `ALLOWLIST` instead of being edited.
 
 ## AI-assisted contributions
 

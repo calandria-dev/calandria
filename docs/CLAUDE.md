@@ -1,4 +1,4 @@
-# docs/ — two rules
+# docs/: two rules
 
 These files are rendered at <https://calandria.dev/docs> by `website/`, which reads
 them where they live. Both rules are enforced by the site build in PR CI
@@ -9,7 +9,7 @@ them where they live. Both rules are enforced by the site build in PR CI
    it. GitHub renders it as a small table and otherwise ignores it. Subdirectories
    (`design/`) is internal, isn't published, and needs nothing.
 2. **Links stay relative and GitHub-correct.** `SELF_HOSTING.md#metrics`,
-   `images/board.png`, `../.env.example` — write them so they work when someone
+   `images/board.png`, `../.env.example`: write them so they work when someone
    reads the file on GitHub. A remark plugin in `website/` re-points them for the
    site (siblings become `/docs/<slug>/`, anything outside `docs/` becomes a
    github.com link). A link to a renamed file or a moved heading fails the build.
