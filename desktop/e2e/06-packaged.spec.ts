@@ -160,7 +160,7 @@ test("the OS sandbox is live here, or this lane is the one that admits it isn't"
   if (SANDBOXED) {
     // The packaged-INSTALL lane. This is the assertion no CI runner can make —
     // it needs a package that was actually installed, which is why the bench
-    // lane exists next to the Ubuntu one (docs/DESKTOP_E2E.md §4).
+    // lane exists next to the Ubuntu one (docs/DESKTOP_E2E.md §2).
     expect(facts.noSandboxSwitch, "the suite passed --no-sandbox in the lane whose whole point is not to").toBe(false);
     expect(
       isolated.map((p) => p.cmd),

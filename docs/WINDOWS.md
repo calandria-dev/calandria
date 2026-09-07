@@ -121,7 +121,7 @@ Concrete differences between running Calandria on Windows and on Linux/macOS:
   use Calandria from WSL2, run `npm start` inside the distro and open `http://127.0.0.1:3000` in a
   Windows browser. WSL2's localhost forwarding makes this work unchanged, including the
   terminal's WebSocket connection, on any port. See
-  [DESKTOP_APP.md → Per-platform gaps](DESKTOP_APP.md#5-per-platform-gaps) for why the shell
+  [DESKTOP_APP.md → Known limitations](DESKTOP_APP.md#known-limitations) for why the shell
   itself doesn't cross the boundary. One rule holds regardless of the shell question:
   `CALANDRIA_DB_DIR` and `CALANDRIA_WORKTREES_DIR` must live on the WSL2 distro's own filesystem,
   never under `/mnt/c`. That path is 9p, and SQLite's WAL mode corrupts over it.
@@ -134,7 +134,7 @@ Concrete differences between running Calandria on Windows and on Linux/macOS:
   it. The zip doesn't avoid this either, since Explorer copies the download mark onto whatever it
   extracts. Every release re-triggers the warning, since there's no publisher identity for
   SmartScreen's reputation system to build on. Signing removes the warning; see
-  [DESKTOP_APP.md → Cost of going further](DESKTOP_APP.md#7-cost-of-going-further-phase-2) for
-  what that costs.
+  [desktop/README.md → What signing costs](../desktop/README.md#what-signing-costs) for what
+  that costs.
 - **Service hostnames** (`<slug>--<host>`) need the same wildcard DNS as on any platform;
   `localhost` subdomains won't resolve without a `hosts` entry.

@@ -1,8 +1,8 @@
 # Branch rulesets
 
-GitHub rulesets are repository *settings*, not files — nothing here is read by GitHub. These
-payloads exist so a settings change is reviewable in a diff and repeatable from one command,
-instead of being a thing someone did once in a web form and nobody can audit.
+GitHub rulesets are repository *settings*: GitHub does not read any file here directly. These
+payloads make a settings change reviewable in a diff and repeatable from one command, instead of
+a one-off edit in the web UI with no audit trail.
 
 Read the live state before changing it; the API is the source of truth:
 
@@ -29,20 +29,20 @@ names** in `.github/workflows/test.yml`, not the job keys, and they must match b
 - `Unit (vitest)`
 - `Windows (types + unit)`
 
-Four things about that list are load-bearing.
+Four facts about this list matter.
 
-**`Changed paths` is required for a reason that is easy to miss.** A `needs:` whose dependency
-FAILS reports its dependents as `skipped`, and GitHub treats a skipped required check as
-*satisfied*. So without this entry a red `changes` job would wave a PR through having run
-nothing — the exact bug this was all set up to stop. Requiring it makes that unrepresentable.
+**`Changed paths` is required because a failed `needs:` dependency makes GitHub report its
+dependents as `skipped`, and GitHub treats a skipped required check as satisfied.** Without this
+entry, a red `changes` job would let a PR merge having run nothing. Requiring `Changed paths`
+rules that out.
 
-**`Audit (npm)` is unambiguous only because `security-scan.yml`'s identical weekly job was
-renamed to `Audit (npm, weekly)`.** Don't rename either back.
+**`Audit (npm)` is unambiguous only because `security-scan.yml`'s identical weekly job was renamed to
+`Audit (npm, weekly)`.** Don't rename either back.
 
-**The four slow lanes are deliberately absent.** `End-to-end (Playwright)`, both desktop lanes and
-the Windows e2e pair are label-gated (`e2e`, `macos`), so they report `skipped` on most PRs.
-Requiring a check that is usually skipped buys nothing — skipped satisfies the gate — while
-making every labelled PR wait half an hour.
+**The four slow lanes are absent from this list.** `End-to-end (Playwright)`, both desktop lanes
+and the Windows e2e pair are label-gated (`e2e`, `macos`), so they report `skipped` on most PRs.
+Requiring a check that is usually skipped buys nothing, since skipped satisfies the gate, and it
+would make every labelled PR wait half an hour.
 
 **`strict_required_status_checks_policy` is `false`.** True means "branch must be up to date with
 the base before merging", which in a stacked tag tree forces a rebase of every open PR each time
@@ -54,14 +54,14 @@ one of its siblings lands.
 every PR into it, permanently.** The check never reports, and the PR sits on "Expected — waiting
 for status" with no way forward but an admin bypass.
 
-So the order is always: land the workflow change on the branch first, *then* add the rule. That is
-why `integration-require-checks` targets only `refs/heads/integration/**` — a namespace with no
-branches in it — rather than also naming the integration branches that exist today.
+The order is always: land the workflow change on the branch first, then add the rule. This is why
+`integration-require-checks` targets only `refs/heads/integration/**` (a namespace with no
+branches in it) rather than naming the integration branches that exist today.
 
-Same reason `test.yml`'s `pull_request` trigger has no `paths-ignore`. A workflow-level path
-filter and a required check are incompatible: filtering the workflow out is indistinguishable, to
-the merge gate, from a check that never ran. The website-only saving lives in the `changes` job
-instead, which reports `skipped` where a filter reported nothing at all.
+For the same reason, `test.yml`'s `pull_request` trigger has no `paths-ignore`. A workflow-level
+path filter and a required check are incompatible: filtering the workflow out is indistinguishable,
+to the merge gate, from a check that never ran. The website-only saving lives in the `changes` job
+instead, which reports `skipped` where a filter would report nothing at all.
 
 ## Applying
 
@@ -99,9 +99,9 @@ gh api repos/calandria-dev/calandria/rulesets/<id> --jq '.rules[].type'
 ## Known friction
 
 `required_status_checks` applies to **direct pushes** to a matched branch, not only to merges. A
-fast-forward of an integration branch to a `main` commit is fine — that SHA already carries
-`main`'s green run — but a *merge commit* produced by syncing one is a new SHA with no checks, and
-the push is refused. Sync an `integration/**` branch by fast-forward, or open a PR for it.
+fast-forward of an integration branch to a `main` commit is fine, since that SHA already carries
+`main`'s green run. A *merge commit* produced by syncing one is a new SHA with no checks, and the
+push is refused. Sync an `integration/**` branch by fast-forward, or open a PR for it.
 
 `do_not_enforce_on_create: true` is set so creating a new `integration/**` branch is not itself
 refused for having no checks.

@@ -24,7 +24,7 @@
  * status-notifier host, because the hide branch ran either way. It does not run
  * either way any more. `desktop/tray-residency.js` asks the session, so on a
  * session whose panel dropped our icon — which is this bench today, see
- * `10-bench-tray.spec.ts` and docs/DESKTOP_E2E.md §5 — a close correctly QUITS
+ * `10-bench-tray.spec.ts` and docs/DESKTOP_E2E.md §6 — a close correctly QUITS
  * instead of hiding into nowhere.
  *
  * So the close test reads the shell's own verdict and asserts the matching
