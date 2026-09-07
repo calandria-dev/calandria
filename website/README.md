@@ -24,16 +24,17 @@ an older 22.x fails `npm ci` outright rather than warning.
 ## What is here
 
 - `/` — the phase-1 placeholder: brand lockup, one-line pitch, and two links
-  (docs, GitHub). Phase 3 of `docs/design/WEBSITE.md` replaces it with the full
-  landing page.
+  (docs, GitHub). Phase 3 of the private notes repo's
+  [`WEBSITE.md`](https://github.com/calandria-dev/calandria-notes/blob/main/design/WEBSITE.md)
+  replaces it with the full landing page.
 - `/docs` — Starlight, rendering the repo's `docs/*.md` **where they live**.
 
 ## The docs at /docs
 
 The Markdown is not copied, generated or moved. `src/content.config.ts` points a
 `glob()` loader at `../docs` with the pattern `["*.md", "!CLAUDE.md"]` — top
-level only, so `docs/design/` (decision records) and `docs/superpowers/` (agent
-tooling) stay internal — and `generateId` prefixes each entry with `docs/`, which
+level only, so `docs/design/` (the design handoff kit) stays internal — and
+`generateId` prefixes each entry with `docs/`, which
 is what mounts the collection at `/docs/` and leaves `/` to the landing page.
 `SELF_HOSTING.md` becomes `/docs/self-hosting/`: lowercased, underscores to
 hyphens, because file names are a GitHub convention and URLs are not.

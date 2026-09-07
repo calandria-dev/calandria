@@ -1806,7 +1806,8 @@ The shell is no longer a wrapper around *this machine's* server. It keeps a list
 instances and attaches its window to one of them; `local` — the pair of sidecars
 `supervisor.js` spawns — is the first entry and the default, and any number of `url` and
 `ssh` entries point at a Calandria running somewhere else. The design and its phasing are in
-[`superpowers/specs/2026-09-02-remote-instances-design.md`](superpowers/specs/2026-09-02-remote-instances-design.md);
+the private notes repo's
+[`remote-instances-design.md`](https://github.com/calandria-dev/calandria-notes/blob/main/specs/2026-09-02-remote-instances-design.md);
 what follows is what all three phases shipped.
 
 Nothing about the server changed. Every URL the web client builds is relative
