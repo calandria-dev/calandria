@@ -7,10 +7,11 @@ title: "Installation and development"
 ## Requirements
 
 - Node.js 22 or newer
-- macOS, Linux, or [Windows](#windows), natively or under WSL2
+- macOS, Linux, or [Windows](#windows)
 - Claude Code, OpenAI Codex, or both
 
-Install the CLI for the agent you plan to use:
+Calandria drives these CLIs from your own subscription login; it doesn't bundle them.
+Install at least one:
 
 ```bash
 npm install -g @anthropic-ai/claude-code
@@ -41,12 +42,14 @@ Every setting is an environment variable with a documented default in
 
 ## Windows
 
-Both ways are supported. **Native** is the ordinary install above, with three prerequisites
-and a few Windows-specific defaults. **WSL2** runs the Linux build unchanged, and is the
-better choice if your repos, toolchains or agent logins already live there.
-The typecheck, unit and end-to-end suites all run on `windows-latest` in CI, and the
-end-to-end suite boots the real server there. See [`WINDOWS.md`](WINDOWS.md) for what native
-support covers and the one thing still unverified on real hardware.
+Native Windows is the standard install: the ordinary steps above, plus three prerequisites
+and a few Windows-specific defaults, below. The typecheck, unit and end-to-end suites all
+run on `windows-latest` in CI, and the end-to-end suite boots the real server there. See
+[`WINDOWS.md`](WINDOWS.md) for what that coverage proves and the one thing still unverified
+on real hardware.
+
+If your repos, toolchains, or agent logins already live in a WSL2 distro, run Calandria
+there instead; see [WSL2](#wsl2) below.
 
 ### Native Windows
 
@@ -110,53 +113,20 @@ behind, but interrupted turns will look like they simply stopped.
 
 ### WSL2
 
-WSL2 runs the ordinary Linux build with no Windows-specific configuration.
-
-Install a distribution, then do everything else **inside** it:
+WSL2 runs the ordinary Linux build with no Windows-specific configuration. Install a
+distribution, then do everything else **inside** it, following the ordinary Requirements
+and "Run Calandria locally" steps above (Node, git, an agent CLI, `npm install && npm run
+build && npm start`): the Windows-side copies of those aren't visible from WSL2, so install
+and log in again from the Ubuntu shell.
 
 ```powershell
 wsl --install -d Ubuntu
 ```
 
-From the Ubuntu shell, install Node.js 22+, git, and the agent CLI you use. The
-Windows-side copies aren't usable from WSL2:
-
-```bash
-sudo apt update && sudo apt install -y git
-# Node 22+: nvm, or your distribution's preferred method
-npm install -g @anthropic-ai/claude-code
-npm install -g @openai/codex
-```
-
-Then clone Calandria on the WSL2 filesystem and run it as on any Linux host:
-
-```bash
-npm install
-npm run build
-npm start
-```
-
-WSL2 forwards `localhost:3000` to Windows, so <http://localhost:3000> opens in your
-Windows browser with nothing further to configure.
-
-Three caveats, all about the boundary between the two systems:
-
-**Keep everything on the ext4 root.** `CALANDRIA_DB_DIR`, `CALANDRIA_WORKTREES_DIR`, and your
-project repos must live under the Linux home (`/home/you/...`), never on `/mnt/c` or
-`\\wsl$`. Those cross-boundary filesystems don't implement file locking, so two processes can
-open the same database at once and corrupt its WAL. Git is also 10-50x slower there, and a
-per-task worktree feels it immediately.
-
-**Log the agents in again inside WSL2.** A Claude or Codex login done on the Windows side
-is not visible to the CLIs in WSL2. Run the first-run wizard (or `claude` / `codex`
-directly) from the Ubuntu shell and complete the browser login there; the credentials land
-under the WSL2 `$HOME`.
-
-**Managed-service hostnames need the same DNS story as Linux.** Public service URLs
-(`<slug>--<host>`, see [Managed services](SERVICES.md)) require `CALANDRIA_SERVICE_HOSTS=1`,
-`PUBLIC_BASE_URL`, and wildcard DNS. WSL2 changes none of that, and subdomains of
-`localhost` don't resolve from the Windows browser, so testing locally needs a
-`C:\Windows\System32\drivers\etc\hosts` entry per service hostname.
+WSL2 forwards `localhost:3000` to Windows, so <http://localhost:3000> opens in your Windows
+browser with nothing further to configure. Three boundary caveats, including a database
+corruption risk if `CALANDRIA_DB_DIR` ends up on the wrong filesystem, are in
+[WSL2 on Windows](TROUBLESHOOTING.md#wsl2-on-windows).
 
 ## Develop Calandria
 
