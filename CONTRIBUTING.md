@@ -141,6 +141,11 @@ instead.
   yours is genuinely attribution, the deprecated `ORCH_*` alias table, or a pre-rename
   on-disk/localStorage name, add the file to that test's `ALLOWED` map with the narrowest
   pattern covering the line, and a comment saying which of those.
+- **Prose stays plain:** `tests/prose.test.ts` fails any tracked Markdown file (and any
+  `.env.example` comment) that has an em dash, a work-log line starting `Measured` or
+  `That is why`, or the phrase `the whole point`, `is what makes`, `load-bearing`, or
+  `deliberately`; a genuine quote of a program string or UI label goes on that test's
+  `ALLOWLIST` instead of being edited.
 
 ## AI-assisted contributions
 

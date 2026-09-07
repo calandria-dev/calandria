@@ -25,7 +25,7 @@ and known flakes, see [`docs/DESKTOP_E2E.md`](../docs/DESKTOP_E2E.md).
 | `ssh-tunnel.js` | The `ssh` transport for a remote instance: `ssh -N -o ExitOnForwardFailure=yes -o BatchMode=yes -L 127.0.0.1:<local>:127.0.0.1:<remote> <host>`, the wait for the local port to accept, the message that tells a user to set up a key or a `ControlMaster` when ssh exits before it does, and the backoff that brings a dropped forward back on the **same** local port. Uses the user's own ssh binary, so their config, agent, jump hosts and hardware keys already work. No `require("electron")`. |
 | `main.js` | Electron main: one window on the active instance (`instances.js`), an application menu and tray carrying the instance switcher, external links to the real browser, and quit-drains-first (held open, with a title and an on-page overlay, until the drain finishes). Closing the window **hides** it where the session is really drawing the tray icon and quits where it is not (`tray-residency.js`). No preload, no IPC, no `nodeIntegration`. |
 | `instances.html` | The Add/Manage instances dialog. A static document whose CSP forbids its own scripts, like `loading.html`; `main.js` injects the behavior with `executeJavaScript`. |
-| `env-file.js` | The desktop app's one launch-time env source: a Finder/Dock/Login-Item launch hands `main.js` launchd's own minimal environment with nothing sourced, so this parses a plain `KEY=VALUE` file (default `~/.config/calandria/env`, `CALANDRIA_ENV_FILE` overrides; `XDG_CONFIG_HOME` respected) before either sidecar spawns. Deliberately dumb: no `$VAR` expansion, no command substitution, no sourced files. For real shell semantics, point `CALANDRIA_ENV_FILE` at a script and source it yourself first. |
+| `env-file.js` | The desktop app's one launch-time env source: a Finder/Dock/Login-Item launch hands `main.js` launchd's own minimal environment with nothing sourced, so this parses a plain `KEY=VALUE` file (default `~/.config/calandria/env`, `CALANDRIA_ENV_FILE` overrides; `XDG_CONFIG_HOME` respected) before either sidecar spawns. Kept dumb on purpose: no `$VAR` expansion, no command substitution, no sourced files. For real shell semantics, point `CALANDRIA_ENV_FILE` at a script and source it yourself first. |
 | `notifier.js` | The notification/badge policy: a reconnecting subscription to the app's own `GET /api/events`, the instance-wide "needs you" sum behind the dock badge, and the one rule that decides whether a toast would be redundant. Renders payloads the **server** composed (`lib/notifications/notify.ts`); it does not invent notifications. Electron-free. |
 | `assets/` | Committed tray and taskbar-badge PNGs. `scripts/make-assets.py` regenerates them (needs ImageMagick and a font). |
 | `tray-residency.js` | Whether a status area is really drawing the tray icon, a question `new Tray()` cannot answer, since on Linux the constructor succeeds whether or not the item ever reaches a status-notifier host. Asks the session over `gdbus`/`dbus-send`, three-valued (yes/no/could-not-ask); the close handler consults this instead of `tray` being truthy. Electron-free. |
@@ -215,7 +215,7 @@ Signing is **opt-in by name**, never by the presence of a secret: a
 half-configured request raises an error instead of silently downgrading to
 unsigned. `desktop/signing.js` holds the policy and `tests/desktopSigning.test.ts`
 drives every branch of it. No CI lane in `test.yml` sets any signing
-variables, and none should. `macos-desktop` deliberately signs ad-hoc and
+variables, and none should. `macos-desktop` signs ad-hoc on purpose and
 asserts Gatekeeper *refuses* the result, so a certificate leaking into a
 PR-triggered build would be caught instead of used silently.
 `.github/workflows/verify-signing-credentials.yml` is the on-demand check
@@ -234,7 +234,7 @@ ad-hoc and Developer ID cases; the difference is the entitlements file:
 `com.apple.security.cs.disable-library-validation` (an identity-less
 signature has no Team ID for library validation to match against the vendored
 Node and native addons it needs to `dlopen`); `build/entitlements.mac.plist`
-(Developer ID) deliberately does not: if a signed build ever needs that
+(Developer ID) does not, by design: if a signed build ever needs that
 entitlement to start, something in the payload was signed by the wrong
 identity.
 
@@ -440,7 +440,7 @@ tray/menu item labelled `Restart to update to <version>`, not a dialog, since
 the window is usually hidden to the tray. `Check for updates…` sits in both
 the tray menu and the View menu, from one shared function.
 
-**The restart goes through the drain, and that is the whole point.**
+**The restart goes through the drain.**
 `electron-updater`'s `autoInstallOnAppQuit` default installs from
 `app.on("quit")`, which fires after `before-quit` has already drained and
 exited, so the default would either skip the install or run it over turns
@@ -458,7 +458,7 @@ instead of failing oddly:
 | Windows NSIS | Yes, signed or not |
 | macOS | **Only when signed, and only from `/Applications`.** Squirrel.Mac refuses an app whose signature it can't read, so an ad-hoc build (every local `dist:mac`, every install from before 2026-08-30) has no update path at all; decided at boot from `codesign`, so the menu says `Updates need a manual download` before the first check. Running from the mounted DMG or a translocated path is refused the same way. |
 | Linux AppImage | Yes (detected by `process.env.APPIMAGE`) |
-| Linux `.deb` | No, deliberately: it's your package manager's to replace, and `electron-updater`'s deb path is an unverified `sudo dpkg -i` |
+| Linux `.deb` | No, by design: it's your package manager's to replace, and `electron-updater`'s deb path is an unverified `sudo dpkg -i` |
 | `npm start` | No: a dev build updates by `git pull` |
 
 On macOS the install itself happens after `quitAndInstall()`: that call

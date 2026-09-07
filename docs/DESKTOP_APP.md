@@ -203,7 +203,7 @@ Update support differs by platform and build:
 | Windows installer | Yes, whether or not it's signed |
 | macOS | Only if the build is signed and running from `/Applications`; otherwise the menu says updates need a manual download |
 | Linux AppImage | Yes, replaces itself in place |
-| Linux `.deb` | No, deliberately: the menu says "Updates come from your package manager" |
+| Linux `.deb` | No, by design: the menu says "Updates come from your package manager" |
 | A checkout run with `npm start` | No |
 
 Set `CALANDRIA_DESKTOP_AUTO_UPDATE=off` (documented in `../.env.example`) to stop the app

@@ -414,7 +414,7 @@ context on tools the job can never call. Four levers:
   fire whether or not a tool exists to hook. `managedSettings` doesn't work here (the SDK filters
   that tier restrictive-only) and shouldn't be used anyway: it impersonates the IT-policy tier.
 - **`settingSources: ["user"]`, not `[]`.** `~/.claude/settings.json` also carries a user's `env`
-  block, `apiKeyHelper` and model aliases, load-bearing for auth/provider routing on
+  block, `apiKeyHelper` and model aliases, both required for auth/provider routing on
   Vertex/Bedrock/proxy setups. `[]` fails such a run outright ("Not logged in"); `["user"]`
   succeeds with 0 tools and 0 MCP servers.
 
