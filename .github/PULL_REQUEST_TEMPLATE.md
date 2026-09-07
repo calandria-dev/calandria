@@ -7,7 +7,7 @@ TITLE THIS PR AS A CONVENTIONAL COMMIT: <type>[(scope)][!]: <description>
 
 main is squash-merge-only, so this title becomes the subject of the single
 commit that lands, and release-please reads it to write CHANGELOG.md and pick
-the next version. A title it can't parse is skipped silently — the change ships
+the next version. A title it can't parse is skipped silently: the change ships
 with no mention in the release notes. CI fails the PR instead; retitling
 re-runs the check. CONTRIBUTING.md has the full table.
 -->
@@ -38,7 +38,7 @@ re-runs the check. CONTRIBUTING.md has the full table.
 
 ## Checklist
 
-- [ ] The PR title is a Conventional Commit (`feat:`, `fix:`, `docs:`, …) — it becomes the squashed commit's subject and drives the changelog.
+- [ ] The PR title is a Conventional Commit (`feat:`, `fix:`, `docs:`, …); it becomes the squashed commit's subject and drives the changelog.
 - [ ] The change is focused and its commit message explains why.
 - [ ] I wrote the Human-written context myself and labeled any AI-generated PR prose.
 - [ ] Tests cover changed behavior, or I explained why tests are not applicable.

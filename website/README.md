@@ -1,4 +1,4 @@
-# website/ — calandria.dev
+# website/ (calandria.dev)
 
 The project's public site. Astro, static output, **no shared code with the
 app**: its own `package.json`, its own lockfile, its own Node floor, and it is
@@ -17,55 +17,55 @@ npm run dev      # localhost:4321
 npm run build    # -> dist/
 ```
 
-Node **≥22.19** — above the repo's `.nvmrc` floor of 22 because Astro 7's
-dependency tree requires it, and the repo's `.npmrc` sets `engine-strict`, so
-an older 22.x fails `npm ci` outright rather than warning.
+Node **≥22.19**, above the repo's `.nvmrc` floor of 22, because Astro 7's
+dependency tree requires it. The repo's `.npmrc` sets `engine-strict`, so an
+older 22.x fails `npm ci` outright instead of warning.
 
 ## What is here
 
-- `/` — the phase-1 placeholder: brand lockup, one-line pitch, and two links
-  (docs, GitHub). Phase 3 of the private notes repo's
+- `/`: the phase-1 placeholder, with a brand lockup, one-line pitch, and two
+  links (docs, GitHub). Phase 3 of the private notes repo's
   [`WEBSITE.md`](https://github.com/calandria-dev/calandria-notes/blob/main/design/WEBSITE.md)
   replaces it with the full landing page.
-- `/docs` — Starlight, rendering the repo's `docs/*.md` **where they live**.
+- `/docs`: Starlight, rendering the repo's `docs/*.md` **where they live**.
 
 ## The docs at /docs
 
 The Markdown is not copied, generated or moved. `src/content.config.ts` points a
-`glob()` loader at `../docs` with the pattern `["*.md", "!CLAUDE.md"]` — top
-level only, so `docs/design/` (the design handoff kit) stays internal — and
-`generateId` prefixes each entry with `docs/`, which
-is what mounts the collection at `/docs/` and leaves `/` to the landing page.
-`SELF_HOSTING.md` becomes `/docs/self-hosting/`: lowercased, underscores to
-hyphens, because file names are a GitHub convention and URLs are not.
+`glob()` loader at `../docs` with the pattern `["*.md", "!CLAUDE.md"]`, top
+level only, so `docs/design/` (the design handoff kit) stays internal.
+`generateId` prefixes each entry with `docs/`, which mounts the collection at
+`/docs/` and leaves `/` to the landing page. `SELF_HOSTING.md` becomes
+`/docs/self-hosting/`: lowercased, underscores to hyphens, because file names
+are a GitHub convention and URLs are not.
 
-**The files stay GitHub-renderable, and that is the constraint everything else
-bends around.** Two consequences, both stated for agents in `docs/CLAUDE.md`:
+The files stay GitHub-renderable. Two rules follow, both stated for agents in
+`docs/CLAUDE.md`:
 
 - Every `docs/*.md` carries a three-line front-matter `title`. Starlight
   requires it; GitHub renders it as a small table. The file's own `# H1` stays
   in place and is dropped from the render (it would otherwise print twice).
-- Links stay relative and GitHub-correct.
-  `src/plugins/docs-links.mjs` re-points them at build time: a sibling doc
-  becomes `/docs/<slug>/`, anything that leaves `docs/` becomes a
-  `github.com/…/blob/main/…` link. Images under `docs/images/` are left alone —
-  Astro resolves and optimizes them from the Markdown file's own location.
+- Links stay relative and GitHub-correct. `src/plugins/docs-links.mjs`
+  re-points them at build time: a sibling doc becomes `/docs/<slug>/`, anything
+  that leaves `docs/` becomes a `github.com/…/blob/main/…` link. Images under
+  `docs/images/` are left alone; Astro resolves and optimizes them from the
+  Markdown file's own location.
 
-`src/plugins/link-check.mjs` is the gate that keeps this honest: after the build
-it walks `dist/`, collects every page's anchors, and fails if an internal link
+`src/plugins/link-check.mjs` is the gate that enforces this: after the build it
+walks `dist/`, collects every page's anchors, and fails if an internal link
 points at a page or a fragment that isn't there. It is a local integration
-rather than `starlight-links-validator` because that plugin identifies a page by
-`path.relative(<srcDir>/content/docs, <file>)` — our Markdown is outside the
-Astro project, so every doc came back as `../../../docs/…`, nothing matched, and
-all 35 internal links were reported invalid. Checking `dist/` sidesteps the
-assumption and covers more: rendered anchors, the hand-written `/docs/` index,
-and anything else the build emits. External links are deliberately not checked —
-a build that reaches the network fails for reasons unrelated to the commit.
+rather than `starlight-links-validator`, because that plugin identifies a page
+by `path.relative(<srcDir>/content/docs, <file>)`, and this repo's Markdown is
+outside the Astro project, so every doc came back as `../../../docs/…` with
+nothing matched. Checking `dist/` sidesteps that and covers more: rendered
+anchors, the hand-written `/docs/` index, and anything else the build emits.
+External links are not checked; a build that reaches the network fails for
+reasons unrelated to the commit.
 
 Mermaid fences render at **build time** (`rehype-mermaid`, `inline-svg`), so a
 diagram needs no JavaScript in the browser. That costs a headless Chromium in
-CI; `website.yml` installs the shell only. There are no mermaid fences in
-`docs/` today — the support is here so the first one works.
+CI; `website.yml` installs the shell only. `docs/` has no mermaid fences today;
+the support is here so the first one works.
 
 Search is Pagefind, Starlight's default, built from `dist/` at the end of every
 build.
@@ -79,7 +79,7 @@ build.
   take it from Starlight's picker, which writes `[data-theme]`, so
   `src/styles/starlight.css` maps the same palette onto Starlight's `--sl-*`
   ramp instead. `src/styles/fonts.css` holds the `@font-face` rules both import.
-- **Fonts are self-hosted woff2 in `public/fonts/`, latin subsets only** — the
+- **Fonts are self-hosted woff2 in `public/fonts/`, latin subsets only.** The
   handoff forbids the Google Fonts CDN in production. They are vendored from
   the Fontsource distributions rather than installed; `public/fonts/OFL.txt`
   records provenance and licence. Add a face by vendoring the subset and
@@ -89,7 +89,7 @@ build.
   `docs/design/og.png`; Astro's `public/` cannot reach outside the project
   root. Re-copy them when the originals change. The logomark is the exception:
   `src/components/Logomark.astro` inlines it so it tints with `currentColor`,
-  which is also why `SiteTitle.astro` overrides Starlight's own logo slot rather
-  than using the `logo` option (that renders an `<img>`).
+  which is also why `SiteTitle.astro` overrides Starlight's own logo slot
+  instead of using the `logo` option (that renders an `<img>`).
 - Keep it dependency-light. Every addition is something Dependabot will open a
   PR for and something the deploy has to install.
