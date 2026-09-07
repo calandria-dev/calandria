@@ -11,6 +11,7 @@ import { DEFAULT_SETTINGS, EMPTY_AGENTS, type AgentsBundle, type BulkMoveResult,
 import type { TaskMovePatch } from "./TaskBoard";
 import { useTaskStream } from "./useTaskStream";
 import { useGlobalEvents } from "./useGlobalEvents";
+import { useLifecycleDiagnostics } from "./useLifecycleDiagnostics";
 import { useNotifications } from "./useNotifications";
 import { usePushRelay } from "./usePush";
 import { usePrefs } from "./usePrefs";
@@ -383,6 +384,10 @@ export function useShell() {
     window.addEventListener("calandria:runbooks", onChanged);
     return () => window.removeEventListener("calandria:runbooks", onChanged);
   }, [loadRunbooks]);
+
+  // The bounded page-lifecycle log behind Settings -> Diagnostics, and the
+  // opt-in reload of the installed iOS app after a long background.
+  useLifecycleDiagnostics({ resumeReloadMinutes: settings.resumeReloadMinutes ?? 0 });
 
   // A hidden tab gets throttled and its SSE streams may die without an error,
   // so the project badges / "needs you" counts drift while you're away. On the

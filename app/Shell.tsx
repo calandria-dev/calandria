@@ -29,6 +29,7 @@ import { PlanUsagePill } from "./shell/PlanUsage";
 import { CommandPalette, type PaletteCommand } from "./shell/CommandPalette";
 import { MobileTabBar, type MobileTabId } from "./shell/MobileTabBar";
 import { isMacDesktopShell } from "./shell/useNotifications";
+import { terminalShouldSuspend } from "./shell/lifecycle";
 
 // Below this width the three columns can't coexist, so the workspace collapses to
 // one pane at a time (projects -> tasks -> session) with back affordances. matchMedia
@@ -112,6 +113,26 @@ function MobileTerminalSheet({ cwd, port, visible, onClose }: { cwd: string; por
     return () => { vv.removeEventListener("resize", apply); vv.removeEventListener("scroll", apply); };
   }, [visible]);
 
+  // A hidden sheet holds a shell, an xterm buffer and a WebSocket for nobody.
+  // iOS drops the socket during a background anyway, so what it would keep is
+  // a dead buffer. Tear it down when the page goes to the background while the
+  // sheet is hidden (lifecycle.ts has the decision); the next open spawns a
+  // fresh shell. A sheet the user is looking at is left alone.
+  const [suspended, setSuspended] = useState(false);
+  useEffect(() => {
+    const onBackground = () => {
+      const pageHidden = document.visibilityState === "hidden";
+      if (terminalShouldSuspend({ mobile: true, sheetVisible: visible, pageHidden })) setSuspended(true);
+    };
+    document.addEventListener("visibilitychange", onBackground);
+    window.addEventListener("pagehide", onBackground);
+    return () => {
+      document.removeEventListener("visibilitychange", onBackground);
+      window.removeEventListener("pagehide", onBackground);
+    };
+  }, [visible]);
+  useEffect(() => { if (visible) setSuspended(false); }, [visible]);
+
   const send = (d: string) => apiRef.current?.send(d);
   const paste = async () => {
     try { const t = await navigator.clipboard.readText(); if (t) send(t); } catch { /* clipboard blocked, long-press paste still works */ }
@@ -128,7 +149,9 @@ function MobileTerminalSheet({ cwd, port, visible, onClose }: { cwd: string; por
         <button className="icon-btn" onClick={() => setEpoch((e) => e + 1)} title="Restart shell">{Icon.clear()}</button>
         <button className="icon-btn" onClick={onClose} title="Close terminal (the shell keeps running)">{Icon.x()}</button>
       </div>
-      <TerminalView key={epoch} cwd={cwd} port={port} fontSize={fontSize} onReady={(api) => { apiRef.current = api; }} />
+      {suspended
+        ? <div className="term-host" />
+        : <TerminalView key={epoch} cwd={cwd} port={port} fontSize={fontSize} onReady={(api) => { apiRef.current = api; }} />}
       <div className="mterm-keys">
         <button className="mtk" onClick={paste}>Paste</button>
         <span style={{ flex: 1 }} />

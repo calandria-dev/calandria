@@ -206,6 +206,9 @@ already queued. The transcript records that it was sent.
 - **Installable app:** a PWA with its own icon and standalone window. Install
   from Chrome/Edge or iOS Add to Home Screen, and the "needs you" inbox lives
   on your phone's home screen (needs HTTPS; works behind Cloudflare Access).
+  Settings → Diagnostics keeps a page-lifecycle log for an installed app that
+  comes back unresponsive; see
+  [the troubleshooting guide](docs/TROUBLESHOOTING.md#ios-home-screen-app-comes-back-frozen).
 - **Desktop app:** a native shell for macOS, Windows and Linux with a tray
   icon, OS notifications and a dock badge. It runs a server of its own, and it
   can also attach to servers you host elsewhere: a URL behind Cloudflare

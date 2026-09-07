@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import type { TaskStreamEvent, ToolData, AskAnswers, AskDismissal, PermissionOutcome } from "@/lib/types";
 import { jget } from "./api";
 import { contextPct, growOutputPeek } from "./format";
+import { evictTranscripts, touchRecent } from "./transcriptCache";
 import type { Msg, ProjectRow, TaskRow } from "./types";
 
 // The id of the one client-only row that renders live typing. A single reserved
@@ -375,6 +376,31 @@ export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, s
   // dependency list down to the task id by routing through a ref.
   const handleStreamEventRef = useRef(handleStreamEvent);
   useEffect(() => { handleStreamEventRef.current = handleStreamEvent; });
+
+  // msgsByTask is a cache, not a record: only the selected task's array is
+  // ever rendered, and reselecting a task replays its snapshot. Without a
+  // bound, a long-lived phone session held every transcript it had ever
+  // opened, tool results included. Keep the selected task plus the few most
+  // recently left (transcriptCache.ts), and drop everything but the selected
+  // task when the page goes to the background, where the memory matters most.
+  const recentRef = useRef<string[]>([]);
+  const selTaskRef = useRef(selTask);
+  selTaskRef.current = selTask;
+  const evictTo = (keep: string[]) => {
+    recentRef.current = keep;
+    setMsgsByTask((prev) => evictTranscripts(prev, keep));
+    for (const k of Object.keys(openAsksRef.current)) if (!keep.includes(k)) delete openAsksRef.current[k];
+  };
+  useEffect(() => { evictTo(touchRecent(recentRef.current, selTask)); }, [selTask]);
+  useEffect(() => {
+    const onBackground = () => { if (document.visibilityState === "hidden") evictTo(selTaskRef.current ? [selTaskRef.current] : []); };
+    document.addEventListener("visibilitychange", onBackground);
+    window.addEventListener("pagehide", onBackground);
+    return () => {
+      document.removeEventListener("visibilitychange", onBackground);
+      window.removeEventListener("pagehide", onBackground);
+    };
+  }, []);
 
   // One live stream per selected task: the server replays a snapshot of the
   // persisted transcript, then tails live turn events. Opening a task,
