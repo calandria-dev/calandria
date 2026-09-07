@@ -25,9 +25,9 @@ function heapMB(): number | undefined {
 
 // Records page-lifecycle events into a small persisted log and decides the
 // one recovery the page can attempt on its own (lifecycle.ts has the policy).
-// Every write lands in localStorage at once, since the whole point is a
-// record that survives the force-quit the user reaches for when the app
-// comes back dead. Nothing here reads a task, a transcript or a title.
+// Every write lands in localStorage at once, so the record survives the
+// force-quit the user reaches for when the app comes back dead. Nothing here
+// reads a task, a transcript or a title.
 export function useLifecycleDiagnostics({ resumeReloadMinutes }: { resumeReloadMinutes: number }) {
   const thresholdRef = useRef(resumeReloadMinutes);
   thresholdRef.current = resumeReloadMinutes;
