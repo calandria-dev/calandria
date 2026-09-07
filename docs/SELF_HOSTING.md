@@ -271,8 +271,12 @@ and `CF_ACCESS_AUD`. The origin then re-verifies the Access JWT
 against the team's public signing keys and the app's `aud` tag) on every HTTP
 route and every WebSocket upgrade (`server.js`, in front of the `/pty`
 terminal proxy). No valid assertion gets a 403.
-[`lib/cf-access.mjs`](../lib/cf-access.mjs) is the shared verifier; the
-titlebar shows the authenticated email.
+[`lib/cf-access.mjs`](../lib/cf-access.mjs) is the shared verifier.
+
+**Log out** sits at the foot of the settings section nav, below Setup. It ends
+the Access session for this instance and follows the redirect Access hands
+back. It renders only when there is a session to end, so in local mode nothing
+appears there.
 
 Requests get a second check on top of the JWT: if the browser sends an
 `Origin` header, it must match the `Host` the request was aimed at. The JWT

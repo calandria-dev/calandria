@@ -22,16 +22,13 @@ import type { PushDevice } from "@/lib/push/types";
 import type { AgentInfoT, AgentsResponseT, EndpointStatusT, GatewayHealthT } from "./types";
 import type { PermissionMatchKind, PermissionRule } from "@/lib/types";
 
-// Account / session panel. Shows who's signed in to this instance and a Logout
-// control, shown only when an origin provider is actually gating the box
-// (first-party control-plane session or Cloudflare Access). In open local dev
-// there's no session to end, so the panel says so and hides the button. The
+// Log out, at the foot of the settings nav rather than in a section of its own.
+// Calandria has no users, so there is no account to show: the only session that
+// can exist is Cloudflare Access's, and this renders nothing without one. The
 // redirect target is provider-specific and decided server-side (see
 // /api/auth/logout).
-function AccountSection() {
-  const [state, setState] = useState<
-    { provider: string; signedIn: boolean; email: string | null } | null
-  >(null);
+function NavLogout() {
+  const [signedIn, setSignedIn] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -39,11 +36,9 @@ function AccountSection() {
     fetch("/api/auth/whoami")
       .then((r) => r.json())
       .then((d) => {
-        if (!cancelled) setState(d);
+        if (!cancelled) setSignedIn(d?.signedIn === true);
       })
-      .catch(() => {
-        if (!cancelled) setState({ provider: "none", signedIn: false, email: null });
-      });
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -54,43 +49,23 @@ function AccountSection() {
     try {
       const res = await fetch("/api/auth/logout", { method: "POST" });
       const data = await res.json().catch(() => ({}));
-      // Top-level navigation so the CF logout (or CP login) loads as a real page.
+      // Top-level navigation so the provider's logout loads as a real page.
       window.location.href = data?.redirect || "/";
     } catch {
       setBusy(false);
     }
   }
 
+  if (!signedIn) return null;
   return (
-    <div className="field">
-      <div className="lab">{Icon.lock()} Signed in</div>
-      {state == null ? (
-        <LoadNote style={{ padding: 0 }}>Checking your session…</LoadNote>
-      ) : state.signedIn ? (
-        <>
-          <div className="hlp" style={{ marginTop: 0, marginBottom: 12 }}>
-            {state.email ? <strong>{state.email}</strong> : "Signed in"}
-          </div>
-          <button
-            className="btn btn-line"
-            onClick={logout}
-            disabled={busy}
-            style={{ alignSelf: "flex-start" }}
-          >
-            {Icon.external()} {busy ? "Signing out…" : "Log out"}
-          </button>
-          <div className="hlp" style={{ marginTop: 10 }}>
-            {state.provider === "cf-access"
-              ? "Ends your Cloudflare Access session for this instance."
-              : "Ends your session and returns you to the sign-in page."}
-          </div>
-        </>
-      ) : (
-        <div className="hlp" style={{ marginTop: 0 }}>
-          This instance isn&apos;t behind a sign-in (local/open mode). There&apos;s no session to end.
-        </div>
-      )}
-    </div>
+    <button
+      className="nav-item settings-nav-logout"
+      onClick={logout}
+      disabled={busy}
+      title="End your session on this instance"
+    >
+      {Icon.external()} {busy ? "Signing out…" : "Log out"}
+    </button>
   );
 }
 
@@ -765,7 +740,6 @@ const SETTINGS_SECTIONS: { id: string; label: string; icon: () => React.ReactNod
   { id: "agents", label: "Agents", icon: Icon.bolt },
   { id: "storage", label: "Storage", icon: Icon.archive },
   { id: "github", label: "GitHub", icon: Icon.github },
-  { id: "account", label: "Account", icon: Icon.lock },
   { id: "setup", label: "Setup", icon: Icon.bolt },
 ];
 
@@ -879,8 +853,9 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
               {s.icon()} {s.label}
             </button>
           ))}
+          <NavLogout />
         </div>
-        <div className="settings-nav-foot">{section === "appearance" ? "theme, mode & fonts · saved on this browser" : section === "background" ? "agent utility work · saved to this workspace" : section === "notifications" ? "alerts · saved to this workspace" : section === "run" ? "run defaults · saved to this workspace" : section === "agents" ? "coding agent logins · stored in this workspace" : section === "storage" ? "disk cleanup · acts on this workspace" : section === "github" ? "GitHub connection · stored in this workspace" : section === "account" ? "your sign-in to this instance" : section === "setup" ? "first-run setup · stored in this workspace" : "app-level preferences · saved on this browser"}</div>
+        <div className="settings-nav-foot">{section === "appearance" ? "theme, mode & fonts · saved on this browser" : section === "background" ? "agent utility work · saved to this workspace" : section === "notifications" ? "alerts · saved to this workspace" : section === "run" ? "run defaults · saved to this workspace" : section === "agents" ? "coding agent logins · stored in this workspace" : section === "storage" ? "disk cleanup · acts on this workspace" : section === "github" ? "GitHub connection · stored in this workspace" : section === "setup" ? "first-run setup · stored in this workspace" : "app-level preferences · saved on this browser"}</div>
       </div>
       <div className="col col-session">
         <div className="settings-head">
@@ -1109,7 +1084,6 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
             {section === "agents" && <AgentsSection defaultAgent="claude" appDefaults={appDefaults} setAppDefault={setAppDefault} onChanged={onAgentsRefresh} />}
             {section === "storage" && <WorktreePrune />}
             {section === "github" && <GitHubSettings />}
-            {section === "account" && <AccountSection />}
             {section === "setup" && (
               <div className="field">
                 <div className="lab">{Icon.bolt()} First-run setup</div>
