@@ -7,7 +7,7 @@ them where they live. Both rules are enforced by the site build in PR CI
 1. **Every `docs/*.md` starts with a `title` in front-matter.** Three lines,
    matching the H1 below it. Starlight requires it; the site build errors without
    it. GitHub renders it as a small table and otherwise ignores it. Subdirectories
-   (`design/`, `superpowers/`) are internal, aren't published, and need nothing.
+   (`design/`) is internal, isn't published, and needs nothing.
 2. **Links stay relative and GitHub-correct.** `SELF_HOSTING.md#metrics`,
    `images/board.png`, `../.env.example` — write them so they work when someone
    reads the file on GitHub. A remark plugin in `website/` re-points them for the

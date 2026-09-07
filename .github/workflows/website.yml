@@ -1,4 +1,5 @@
-# Builds website/ (the calandria.dev placeholder, docs/design/WEBSITE.md) and
+# Builds website/ (the calandria.dev placeholder; design plan in the private
+# notes repo at design/WEBSITE.md) and
 # deploys it to Cloudflare Pages. Deliberately separate from test.yml: the site
 # is an Astro project with its own package.json and its own lockfile, shares no
 # code with the app, and must never be able to fail the product's gate — the

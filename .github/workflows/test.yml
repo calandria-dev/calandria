@@ -103,7 +103,8 @@
 name: Test
 
 # `paths-ignore: website/**` keeps the site out of this gate. website/ is the
-# calandria.dev Astro project (docs/design/WEBSITE.md) — its own package.json,
+# calandria.dev Astro project (design plan in the private notes repo at
+# design/WEBSITE.md) — its own package.json,
 # its own lockfile, no import into the app — so a site-only change cannot break
 # anything here, and running the Windows lanes plus a full production build for
 # a copy edit is the wrong bill. website.yml builds and deploys it instead.

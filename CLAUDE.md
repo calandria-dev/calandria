@@ -38,8 +38,9 @@ Claude or Codex login rather than an API key.
 
 ## Collecting context
 
-Measured across 198 task sessions in this repo (`docs/DELEGATION.md` has the method and the full
-table): 79% of the tool calls a first turn makes are Bash, and only ~12% of those are decisions the
+Measured across 198 task sessions in this repo (the private notes repo's
+[DELEGATION.md](https://github.com/calandria-dev/calandria-notes/blob/main/measurements/DELEGATION.md)
+has the method and the full table): 79% of the tool calls a first turn makes are Bash, and only ~12% of those are decisions the
 model has to see raw output for. Half of all first-turn Bash calls sit inside unbroken runs of
 three or more read-only commands — the longest measured is 43 — and collection steps put **59% of
 the context a first turn accumulates** into the window, where every later step re-reads it. Across
@@ -758,7 +759,7 @@ Unmerged worktree changes aren't in it; verify locations against your working tr
 self-hosting, architecture) · `.env.example` (every env var, documented) ·
 `lib/agents/CLAUDE.md` (per-driver detail, loaded when you open that directory).
 
-**Before adding to this file, read `docs/CONTEXT_BUDGET.md`.** This file is 21,348 measured
+**Before adding to this file, read [CONTEXT_BUDGET.md](https://github.com/calandria-dev/calandria-notes/blob/main/measurements/CONTEXT_BUDGET.md) in the private notes repo.** This file is 21,348 measured
 tokens, loaded into every session in this repo before any code is read, so new material belongs in
 the nearest directory-scoped `CLAUDE.md` unless you need it before you'd open that directory. Don't restate `docs/` prose here; that duplication has already
 drifted.

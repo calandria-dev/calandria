@@ -7,9 +7,8 @@
 //
 //   SELF_HOSTING.md#metrics  ->  /docs/self-hosting/#metrics   (sibling doc)
 //   ../.env.example          ->  <repo>/blob/main/.env.example (leaves docs/)
-//   design/WEBSITE.md        ->  <repo>/blob/main/docs/design/WEBSITE.md
-//                                (docs/design/ and docs/superpowers/ are
-//                                internal and are not published here)
+//   design/handoff/styles.css -> <repo>/blob/main/docs/design/handoff/styles.css
+//                                (docs/design/ is internal and not published here)
 //
 // The slug map is exported too, because `content.config.ts` has to generate the
 // same slugs the rewriter targets — if the two ever disagreed the links would
@@ -79,7 +78,7 @@ export function rewriteDocsLink(url) {
     return `${DOCS_BASE}/${docSlug(clean)}/${hash}`;
   }
 
-  // Anything else under docs/ — a subdirectory (design/, superpowers/) or an
+  // Anything else under docs/ — a subdirectory (design/) or an
   // asset linked rather than embedded. Not published; send it to the repo.
   return githubUrl(`docs/${clean}`, hash);
 }

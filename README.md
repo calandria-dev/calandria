@@ -81,7 +81,7 @@ session's own window. That is a deliberate override of the CLI's own defaults,
 which ask for work to go through the shell and for subagents to be left alone
 unless the user asked — measured across 198 sessions on one instance, first
 turns spent 79% of their tool calls on the shell and, in the 25 most expensive,
-none at all on a subagent (`docs/DELEGATION.md`).
+none at all on a subagent (the private notes repo's [DELEGATION.md](https://github.com/calandria-dev/calandria-notes/blob/main/measurements/DELEGATION.md) has the measurement).
 `CALANDRIA_DELEGATE_COLLECTION=off` leaves sessions on those defaults.
 
 When a Claude turn starts background shell work or schedules a wakeup

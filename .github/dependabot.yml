@@ -105,7 +105,8 @@ updates:
   # The one npm ecosystem this file DOES cover, and the exception is narrow on
   # purpose. The root exclusion above is about volume and about `npm audit`
   # already covering the security case; neither applies here. website/ is the
-  # calandria.dev Astro site (docs/design/WEBSITE.md) with a single direct
+  # calandria.dev Astro site (design plan in the private notes repo at
+  # design/WEBSITE.md) with a single direct
   # dependency and ~190 transitive ones, and NOTHING else watches it — the
   # `audit` job in test.yml and the weekly one in security-scan.yml both run
   # against the root lockfile only, and test.yml now ignores website/** outright.
