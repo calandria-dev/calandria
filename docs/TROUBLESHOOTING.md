@@ -404,6 +404,78 @@ The new credentials land under `$HOME/.claude` (or `~/.codex`) inside the contai
 persistent volume as the database, so a restart doesn't lose the fix. If a login session is
 abandoned mid-flow, it expires after 15 minutes rather than leaving a stale pending state.
 
+## iOS home-screen app comes back frozen
+
+**Symptom.** The installed app (Safari Share → Add to Home Screen) sometimes comes back from the
+background with the UI painted but nothing responding: no button, no input. Force-quitting and
+relaunching is the only fix.
+
+**What the app does about it.**
+
+1. Browser-side transcript state is bounded. The shell keeps the selected task's transcript plus
+   the 3 most recently left (4 total), and drops everything except the selected task's when the
+   page goes to the background. Reselecting a task replays its transcript from the server, as it
+   always did.
+2. On a phone, the terminal sheet (shell, xterm buffer, WebSocket) is torn down when the page goes
+   to the background while the sheet is hidden, and respawned fresh the next time it's opened. A
+   sheet that's open on screen when the page backgrounds is left alone. The desktop terminal
+   drawer is unaffected.
+3. Settings → Diagnostics shows a page-lifecycle log: the last 80 events (visible/hidden,
+   pageshow/pagehide, focus/blur, online/offline, Chromium freeze/resume, and a "heartbeat gap"
+   when a 5-second timer fires at least 10 s late, with how far the wall clock jumped versus how
+   far `performance.now()` moved). Each entry carries the JS heap size where the browser reports
+   it (Chromium only; Safari doesn't). It's stored in `localStorage` under `calandria_lifecycle_v1`,
+   survives a force-quit, and contains no task content. The panel has Copy log and Clear buttons.
+   The boot entry records whether the page is running as an installed app and whether the device is
+   iOS.
+4. Settings → Diagnostics also has "Reload after a long background," a per-device setting: Off
+   (default), 5 min, 30 min, 2 h. When on, the installed iOS app reloads itself on returning from
+   at least that long in the background. It's inert in a browser tab and on non-iOS devices, and it
+   can only work when JavaScript is running on resume.
+
+**Diagnosis rule.** After a frozen resume, force-quit, relaunch, and open Settings →
+Diagnostics. If an entry (`visible`, `pageshow`, `focus`, or a heartbeat gap) is stamped at the
+time of the freeze, the page was running and the freeze is in the page: report it with the copied
+log. If there's nothing between the last `hidden` entry and the next `boot`, WebKit never resumed
+JavaScript; nothing in the page can recover that, and the reload option won't help either.
+
+**Further checks while still frozen**, before force-quitting:
+
+- Does the transcript still scroll or rubber-band? That means the compositor is alive.
+- Does Safari Remote Web Inspector (Mac Safari → Develop → your iPhone) attach and run `1+1` in
+  the console? A console that runs means the JS context is alive and the fault is in the page; a
+  console that can't attach means the process is suspended or gone.
+
+### Manual regression checklist
+
+1. Record the device model and iOS version.
+2. Background the app for 1 minute, resume, and check taps, scrolling, and Remote Web Inspector.
+3. Background for 10 minutes, resume, and repeat the same checks.
+4. Background for 1 hour, resume, and repeat the same checks.
+5. Background overnight, resume, and repeat the same checks.
+6. On every resume, also open Settings → Diagnostics and copy the log.
+
+### Reproduction matrix
+
+Change one variable per run and record each run with its copied log.
+
+| Variable | A | B |
+|-|-|-|
+| Surface | Installed app | Same URL in a Safari tab |
+| Service worker | Push enabled in Settings → Notifications | Clean install, never enabled |
+| Background length | Under 5 minutes | Over 1 hour / overnight |
+| Transcript size | A small new task | A long-lived task with many tool results, several tasks visited |
+| Terminal | Never opened | Opened, then closed with the X (hidden) |
+
+**WebKit references.**
+
+- Bug 211018, "iOS PWAs using Service Workers freeze after being backgrounded" (2020): a
+  suspend/resume race in the home-screen container, fixed and regressed several times through iOS
+  13.5–14, confirmed fixed on iOS 15.1, now closed.
+- Bug 308073: `new WebSocket()` hangs at `CONNECTING` after a background resume until a reload.
+  The terminal uses a WebSocket, so this is a candidate for the symptom above on iOS 26.
+- Bug 323322: a phantom keyboard-sized `visualViewport` inset after resume, on iOS 26.
+
 ## Upgrade rollback
 
 Pulling an older image tag against a database a newer build already migrated is a clean refusal

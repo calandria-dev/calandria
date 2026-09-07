@@ -408,3 +408,20 @@ test.describe("mobile settings nav", () => {
     expect(box!.x + box!.width).toBeLessThanOrEqual(390);
   });
 });
+
+// Settings → Diagnostics: the page-lifecycle log useLifecycleDiagnostics keeps
+// (app/shell/lifecycle.ts). A fresh page records its own boot, so the panel is
+// never empty on first open, and Clear empties it.
+test("Settings → Diagnostics shows the lifecycle log with this page's boot", async ({ page }) => {
+  await gotoApp(page);
+  await page.getByTitle("App settings").click();
+  await page.locator(".settings-nav .nav-item", { hasText: "Diagnostics" }).click();
+  const log = page.getByTestId("lifecycle-log");
+  await expect(log).toBeVisible();
+  await expect(log.locator(".diag-row").filter({ hasText: "boot" }).first()).toBeVisible();
+  await expect(log.locator(".diag-row").filter({ hasText: "browser tab" }).first()).toBeVisible();
+  // The per-device reload choice defaults to off.
+  await expect(page.getByRole("radio", { name: "Off" })).toHaveAttribute("aria-checked", "true");
+  await page.getByRole("button", { name: "Clear" }).click();
+  await expect(log).toBeHidden();
+});

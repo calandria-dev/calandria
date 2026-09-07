@@ -782,7 +782,9 @@ the task list.
 Two surfaces differ from desktop. The terminal is a full-screen sheet with its own font
 sizing and a Paste / Ctrl-C / Enter key row, with its own tab, instead of the desktop's
 bottom drawer. The ⌘K command palette is desktop-only, since there's no keyboard to summon it
-with.
+with. When the sheet is closed and the page goes to the background, its shell, xterm buffer and
+WebSocket are torn down; opening the sheet again spawns a fresh one. A sheet left open on screen
+is not affected.
 
 **Managed services** have no phone UI yet. The Services drawer is mouse-resizable and lays
 its service list beside its log pane, which doesn't fit a 390px screen, so it stays
@@ -814,6 +816,12 @@ a cache. Chrome no longer requires a service worker for install, so install work
 not you ever subscribe. The desktop app never subscribes itself: it raises the same
 notifications natively, so its Settings say so and withhold the button, while still listing
 (and removing) the phones subscribed elsewhere.
+
+Settings → Diagnostics keeps a page-lifecycle log (visibility, focus, freeze/resume, heartbeat
+gaps) for tracking down an installed app that comes back from the background unresponsive, and a
+per-device "Reload after a long background" setting for iOS. See
+[iOS home-screen app comes back frozen](docs/TROUBLESHOOTING.md#ios-home-screen-app-comes-back-frozen)
+in the troubleshooting guide.
 
 ## Workspace tools
 

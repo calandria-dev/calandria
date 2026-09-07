@@ -10,6 +10,7 @@ import { capsFor, agentLabel } from "./agents";
 import { ModelField } from "./Modal";
 import { GitHubSettings } from "./github";
 import { WorktreePrune } from "./WorktreePrune";
+import { Diagnostics } from "./Diagnostics";
 import { AgentConnect } from "./AgentConnect";
 import { endpointSummary } from "./modelEndpoint";
 import { ErrNote, LoadNote } from "./shared";
@@ -740,6 +741,7 @@ const SETTINGS_SECTIONS: { id: string; label: string; icon: () => React.ReactNod
   { id: "agents", label: "Agents", icon: Icon.bolt },
   { id: "storage", label: "Storage", icon: Icon.archive },
   { id: "github", label: "GitHub", icon: Icon.github },
+  { id: "diagnostics", label: "Diagnostics", icon: Icon.chart },
   { id: "setup", label: "Setup", icon: Icon.bolt },
 ];
 
@@ -1083,6 +1085,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
             )}
             {section === "agents" && <AgentsSection defaultAgent="claude" appDefaults={appDefaults} setAppDefault={setAppDefault} onChanged={onAgentsRefresh} />}
             {section === "storage" && <WorktreePrune />}
+            {section === "diagnostics" && <Diagnostics settings={settings} setSetting={setSetting} />}
             {section === "github" && <GitHubSettings />}
             {section === "setup" && (
               <div className="field">

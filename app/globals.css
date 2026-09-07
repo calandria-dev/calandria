@@ -2630,3 +2630,11 @@ button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,tra
 .model-field select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
 .tag-field .tag-new{display:flex;align-items:center;gap:6px;margin-top:8px;}
 .tag-field .tag-new input[type=text]{flex:1;min-width:0;}
+
+/* Settings -> Diagnostics: the page-lifecycle log, newest first. */
+.diag-log{display:flex;flex-direction:column;gap:2px;max-height:360px;overflow:auto;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--sunk, var(--raise));font-family:var(--mono);font-size:11.5px;line-height:1.5;}
+.diag-row{display:grid;grid-template-columns:auto 9ch 1fr;gap:10px;align-items:baseline;white-space:nowrap;}
+.diag-when{color:var(--dim);}
+.diag-kind{font-weight:600;color:var(--ink-2);}
+.diag-kind.warn{color:var(--warn);}
+.diag-detail{color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;}

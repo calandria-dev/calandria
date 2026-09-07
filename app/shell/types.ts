@@ -583,8 +583,12 @@ export interface Settings {
   // "Recommend /clear when context is high" feature reads these.
   clearThresholdPct: number;    // 0–100, % of the context window
   clearThresholdTokens: number; // absolute token count
+  // Settings -> Diagnostics: reload the installed iOS app when it comes back
+  // after at least this many minutes in the background. 0 is off (the
+  // default); lifecycle.ts has the decision and why it is per device.
+  resumeReloadMinutes: number;
 }
-export const DEFAULT_SETTINGS: Settings = { clearThresholdPct: 75, clearThresholdTokens: 150_000 };
+export const DEFAULT_SETTINGS: Settings = { clearThresholdPct: 75, clearThresholdTokens: 150_000, resumeReloadMinutes: 0 };
 
 // Persisted sidebar layout: column widths and collapsed (hidden) state, so the
 // user can carve out more room for the chat and have it stick across reloads.
