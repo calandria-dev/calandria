@@ -425,3 +425,4 @@ Apache-2.0 license; see [LICENSE](LICENSE) and [NOTICE](NOTICE). Calandria
 is not affiliated with the upstream project or its hosted service. File
 bugs and ideas for Calandria in
 [this repo's issues](https://github.com/calandria-dev/calandria/issues).
+
