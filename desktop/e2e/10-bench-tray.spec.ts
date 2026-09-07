@@ -44,7 +44,7 @@ let item: TrayItem | null = null;
 test.beforeAll(async () => {
   if (!BENCH) return;
   // The one file that needs the status area; it is red on this bench because
-  // of it (docs/DESKTOP_E2E.md §4).
+  // of it (docs/DESKTOP_E2E.md §6).
   assertBenchSession(["x", "tray"]);
   shell = await launchShell("bench-tray", { env: benchEnv() });
 });

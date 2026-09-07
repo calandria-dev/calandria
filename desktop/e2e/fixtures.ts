@@ -151,7 +151,7 @@ export function instanceRoot(name: string): string {
  * environment would be inherited by the sidecars incorrectly.
  *
  * The bench-VM specs that assert notifications reach the bus override this
- * and run under a real session with a daemon (dunst).
+ * and run under a real session with a daemon (dunst), docs/DESKTOP_E2E.md §3.
  */
 const NO_NOTIFICATION_BUS: Record<string, string> =
   process.platform === "linux"

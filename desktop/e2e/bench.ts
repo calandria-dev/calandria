@@ -91,9 +91,9 @@ export function benchEnv(): Record<string, string> {
  * Each file asks only for the capabilities it uses rather than requiring a
  * clean report overall. On this bench, the status area dies as soon as any
  * spec in the suite launches the shell, because xfce4-panel's systray plugin
- * crashes on Electron's status icon. An all-or-nothing check would fail the
- * notification and window-manager files along with the tray one, over a
- * capability neither of them uses.
+ * crashes on Electron's status icon (docs/DESKTOP_E2E.md §6). An all-or-nothing
+ * check would fail the notification and window-manager files along with the
+ * tray one, over a capability neither of them uses.
  */
 export const BENCH_CHECKS = {
   x: "X server reachable",
@@ -410,7 +410,7 @@ export function registeredTrayItems(): TrayItem[] {
           `status icon ("Plugin systray-6 has been automatically restarted after crash" in the ` +
           `session log), and the shell's icon is gone with it. That is a bench-provisioning defect, ` +
           `not a shell regression: the session needs a status-notifier host that survives a ` +
-          `Chromium-shaped item. docs/DESKTOP_E2E.md §5.`
+          `Chromium-shaped item. docs/DESKTOP_E2E.md §6.`
       );
     }
     throw err;
