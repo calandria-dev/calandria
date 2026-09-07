@@ -4,66 +4,123 @@ title: "Document collaboration mode"
 
 # Document collaboration mode
 
-When an agent writes or edits a text file, a **Collaborate** button appears on
-that file's row in the Changes tab and on the **Write**/**Edit** tool card in
-the transcript.
+Collaboration mode opens a file the agent wrote as a whole document instead of
+a diff. You proofread it, edit the text, attach comments to the passages you
+want changed, and send the whole review to the agent as one message.
 
-The two buttons see different files. The Changes tab button follows the diff,
-which lists tracked changes plus untracked files, minus anything gitignored:
-notes the agent keeps under an ignored `scratch/` or `.local/` never show up
-there. The tool card button is keyed on the path the agent actually wrote (the
-runner stores it worktree-relative on the tool message, and only when it
-resolves inside the task's worktree), so it opens the moment the Write lands,
-and you don't need to switch to the diff tab to reach it.
+Use it for the work where the wording is the point: a README, a design note, a
+runbook, release notes. For code, the Changes tab and its hunks are still the
+faster read.
 
-Either way, `GET /api/tasks/[id]/file` reads the file. That route confines
-reads to the worktree and doesn't check git status.
+## Open a document
 
-It opens the file as a whole document, letting you proofread it the way you
-would in a word processor:
+There are two ways in, and they see different files.
 
-- **Edit**: a source editor beside a live render for markdown (a ```mermaid```
-  fence renders as a diagram, see below), or the editor alone with syntax
-  picked from the filename for any other text file. Untouched lines never
-  change. How the edited ones reach the file is set by the **Edits** picker in
-  the footer, which appears once you've changed something, and your choice
-  persists per browser:
-  - **Write to file** (default): Send writes the edited text straight into
-    the task's worktree (`POST /api/tasks/[id]/file`, the read route's twin,
-    under the same path guard). The message carries the diff for context
-    only, telling the agent the file already has these changes. This is the
-    reliable route, because a model asked to apply a patch verbatim sometimes
-    doesn't. The server responds with a 409 in two cases: a turn is
-    running, so the picker greys out the option and edits go as a patch until
-    it ends; or the file changed since you opened it, because the agent's
-    last turn or a terminal wrote to it. In that case your edits were made
-    against text that no longer exists, so send them as a patch for the agent
-    to reconcile, or cancel and reopen.
-  - **Send as patch**: the message carries a unified diff the agent is told
-    to apply exactly as written. Nothing but the agent's own session touches
-    the worktree.
-- **Comment**: the rendered document, or the verbatim text for a non-markdown
-  file. Select a passage and press **Add comment** to attach a note to it. A
-  **General comments** box takes feedback that isn't tied to any passage.
-  Commented passages stay tinted while the modal is open, and clicking a
-  comment scrolls to its passage.
+1. **From the Changes tab.** Select the task, open the **DIFF** tab in the
+   session rail, and press **Collaborate** on a file's row.
+2. **From the transcript.** Press **Collaborate** on a **Write** or **Edit**
+   tool card. This one appears the moment the write lands, so you do not have
+   to switch tabs, and it reaches files the diff never lists, such as notes the
+   agent keeps under a gitignored `scratch/` directory.
 
-Both tabs share the same document state, so you can edit and comment in one
-pass. **Send to agent** composes one message (`lib/collab.ts`,
-`buildCollabPacket`) and sends it through the ordinary chat path, so it queues
-behind a running turn like any other message. **Cancel** just closes the
-modal: edits, the general note, and passage comments are already saved and
-remain when you reopen the document.
+Either way the file opens in a **Collaborate on document** window with two
+tabs, **EDIT** and **COMMENT**. Both tabs share one copy of the document, so
+you can edit and comment in a single pass. Nothing here is modal-only: edits,
+the general note, and passage comments autosave and are still there if you
+close the window and reopen it.
 
-What the agent receives in patch mode (in direct mode the "My edits" preamble
-says the file on disk already has the changes and the diff must not be
-reapplied, and comment line numbers refer to the current file):
+### When there is no button
 
-```
+| Case | Why |
+|-|-|
+| The agent has not touched the file | The button hangs off a change or a tool call. There is no file picker, and you cannot create a new file here. |
+| The file is binary | Only text opens. |
+| The file was deleted in this task | There is nothing to read. |
+| The tool call failed | The transcript offers the button only on a call that succeeded. |
+| The file is over 1 MB | Opening it reports `file too large for collaboration mode (max 1024 KB)`. |
+
+## Edit the text
+
+The **EDIT** tab gives you the file's source. Markdown opens with a live
+render beside the editor. Any other text file opens with the editor alone,
+with syntax highlighting picked from the filename.
+
+You edit the literal text, so lines you do not touch come back byte for byte
+as they were.
+
+Once you change something, an **Edits** picker appears in the footer. It sets
+how your edits reach the file when you press Send, and your choice is
+remembered in that browser.
+
+| Option | What Send does |
+|-|-|
+| **Write to file** (default) | Writes your edited text into the task's worktree, then sends the message. The message carries the diff so the agent can see what moved, and tells it the file on disk already has the changes and must not be patched again. |
+| **Send as patch for the agent to apply** | Writes nothing. The message carries a unified diff and tells the agent to apply it exactly as written. Only the agent's own session touches the worktree. |
+
+Prefer **Write to file** when you want the wording you typed to be the wording
+on disk. A model asked to apply a patch verbatim sometimes rephrases it.
+
+Two things change that:
+
+- **A turn is running.** The option reads **Write to file (agent is working)**
+  and is disabled. The agent owns the worktree until its turn ends, so your
+  edits go as a patch. Pick **Write to file** again once the turn finishes.
+- **The file changed since you opened it.** The write is refused and you are
+  told `file changed since it was loaded`. Your edits were made against text
+  that is no longer on disk, so send them as a patch for the agent to
+  reconcile, or cancel and reopen the document. Nothing is merged for you.
+
+## Comment on a passage
+
+The **COMMENT** tab shows the rendered document, with a comment panel down the
+right.
+
+1. Select the passage you want to talk about. A **+ Add comment** button
+   appears next to the selection.
+2. Press it, type what should change, and press **Add**. `Cmd`/`Ctrl` + `Enter`
+   does the same thing.
+3. For feedback that belongs to no single passage, use the **General
+   comments** box at the foot of the panel.
+
+Commented passages stay tinted while the window is open. Click a comment card
+to scroll its passage into view. Remove a comment you have not sent yet with
+the **×** on its card.
+
+A card tagged **not found** means its passage is no longer in the current text,
+usually because you edited over it. The comment still sends, and the agent is
+told the location could not be found.
+
+## Send it to the agent
+
+**Send to agent** composes one message and sends it down the ordinary chat
+path, so it queues behind a running turn like anything else you type.
+
+What the agent gets is your review, not the whole file over again:
+
+- **Each comment arrives with the context it needs.** The passage you selected
+  is quoted as you saw it rendered, so it carries no `**`, `#` or link syntax.
+  With it go the nearest heading above the passage and the line, or line
+  range, where it sits in the source. Comments are numbered in the order the
+  panel shows them.
+- **Your edits arrive once**, as a unified diff of the whole file, with a
+  sentence saying the wording is final and should not be rephrased.
+- **The general note arrives last**, under its own heading.
+
+A section is left out entirely when it is empty. Comments with no edits send
+as comments alone.
+
+The agent reads the passage locations off the source: an exact text match
+first, then a match that ignores emphasis, code spans, list markers, links and
+soft line breaks. When neither finds the passage, the message says so and
+falls back to the heading as the anchor.
+
+A review with one edit and one comment reaches the agent looking like this:
+
+````
 Document review of `docs/setup.md` — I read it in collaboration mode and have feedback.
 
 ## My edits
-I edited the document directly. Apply this patch to the file exactly as written — …
+I edited the document directly. Apply this patch to the file exactly as written — the wording is final, don't rephrase it — before working on the comments below.
 
 ```diff
 --- a/docs/setup.md
@@ -85,142 +142,93 @@ Line numbers refer to the file AFTER my patch is applied.
 Too terse for a first-time reader overall.
 
 Work through this on the document, then summarize what you changed.
-```
+````
 
-A passage comment carries the selected text as rendered (no `**`, `#`, or
-link syntax, since the selection happens in the rendered view), the nearest
-heading above it, and the source line range that `locateQuote()` finds for
-it. It first tries a verbatim substring match against the source, then a
-markdown-syntax-insensitive match that tolerates emphasis, code spans, list
-markers, links, and soft line breaks. When neither match succeeds, the packet
-says so and uses the heading as the anchor.
+In **Write to file** mode the edits preamble instead says the file on disk
+already has the changes and the diff must not be applied again, and the line
+numbers refer to the current file.
 
 ## Diagrams
 
-A ```` ```mermaid ```` fence renders as the diagram it describes in both tabs
-(`<Markdown diagrams>` → `app/Mermaid.tsx`), so an agent's design doc reads as
-a design doc, and a passage comment can attach to a node label like any other
-text.
+A ```` ```mermaid ```` fence renders as a diagram in both tabs, so an agent's
+design doc reads as a design doc. You can comment on a node label the same way
+you comment on any other text.
 
-The transcript keeps showing the fence as code, because a message re-renders
-on every streamed token: a half-written diagram would fail to parse on each
-one, while a document is read whole only after it finishes.
+While you type in the **EDIT** tab, the render follows the source after a
+short pause. When the source does not parse, the last diagram that did stays
+on screen, dimmed, with the parser's message underneath.
 
-In the Edit tab, the render follows the source with a short debounce. When
-the source doesn't parse, it keeps the **last good diagram** on screen,
-dimmed, with the parser's message underneath, because a diagram being typed
-is invalid more often than valid, and a picture that blinks out on every
-keystroke isn't useful while you're typing.
+The transcript keeps showing a mermaid fence as code.
 
-Rendering runs with mermaid's `strict` security level (the SVG goes through
-DOMPurify, since the source is whatever the agent or the user wrote) and
-follows the app theme. `mermaid` loads on first use through a dynamic import,
-so its ~2MB never reaches a session that opens no diagram.
+Diagrams render under mermaid's `strict` security level and the drawn SVG is
+sanitized before it reaches the page, because the source is whatever the agent
+or you wrote. Diagrams follow the app theme.
 
-## The review is saved as you go
+## What is saved
 
-Passage comments persist the moment you add them, to `task_doc_comments` via
-`/api/tasks/[id]/doc-comments`, so a review survives a reload or the Changes
-tab remounting (which happens on every rail collapse and tab switch,
-unmounting this modal).
+| Item | Saved |
+|-|-|
+| Passage comments | Immediately, as you add them. They survive a reload, and they survive the Changes tab remounting when you collapse the rail or switch tabs. |
+| Text edits | Autosaved about 600ms after you stop typing, as one draft per file. Restored when you reopen the document, if the file has not changed since. |
+| General comments box | Autosaved the same way as text edits, and always restored when you reopen the document. |
+| Edits picker choice | In your browser, across documents and sessions. |
 
-Each comment is stamped with the file's git blob sha as it was loaded (the
-file route's `sha`), not the worktree HEAD. An agent edits documents without
-committing, so HEAD wouldn't reflect the change a review is actually about.
+Each comment is stamped with the file's content as it stood when you opened
+it. That means:
 
-On Send, the drafts folded into the packet are marked sent: read-only from
-then on, but still listed against the document under "Sent to agent". Once
-the file's content moves past the sha they were written against, they
-collapse into a "Show N outdated comment(s)" group instead of being matched
-against text they weren't written for.
+- Comments folded into a Send become read only and stay listed under **Sent to
+  agent**.
+- Once the file moves past the version they were written against, they collapse
+  into a **Show N outdated comments** group instead of being shown against text
+  they were not written for.
+- Comments you have not sent stay live no matter what the file does. Every Send
+  folds in whatever is still open, so you decide each time whether they still
+  apply.
 
-Drafts stay live regardless of their anchor. They can be removed, and each
-Send folds in whatever is still open so you decide whether it still applies.
-A draft is flagged "not found" if its passage isn't in the current text. An
-unsent draft can also be edited: a pencil button on its card reopens it in
-the compose box tagged "editing", and Save rewrites it in place
-(`PATCH /api/tasks/[id]/doc-comments/[cid]` with `{ body }`). Sent comments
-stay read-only; the server refuses editing them with 409, the same rule as
-deletion. Selecting a different passage and pressing "Add comment" while one
-is still being typed saves it first, rather than dropping it, and reopens the
-compose box empty against the new quote; if that save fails, the box stays as
-it was with the error beside it.
+An unsent comment can also be edited: the pencil button on its card reopens it
+in the compose box, and **Save** rewrites it in place
+(`PATCH /api/tasks/[id]/doc-comments/[cid]` with `{ body }`). A sent comment
+stays read-only; the server refuses editing one the same way it refuses
+deleting one, with a 409. Selecting a different passage while a comment is
+still open saves it first instead of dropping it, then opens a fresh compose
+box against the new selection; if that save fails, the box stays open with
+the error shown.
 
-The Edit tab's text and the General comments note are saved the same way, as
-one draft row per (task, file) in `task_doc_drafts`, via
-`/api/tasks/[id]/doc-draft` (`GET ?file=`, `PUT`, `DELETE ?file=`). The modal
-autosaves on change, debounced about 600ms, and flushes whatever is pending
-when it unmounts, whether that's a rail collapse, a tab switch, Escape, or
-Cancel. The footer status reads "saving…" then "saved", or "not saved" with
-the error alongside it when a save fails. Send clears the draft once the
-message goes out. A "Discard edits" button appears in the footer while there
-is an edit or a note, and throws the draft away after a confirm; passage
-comments aren't touched by it.
+Text edits and the general note autosave too, as one draft row per (task,
+file) in `task_doc_drafts` (`/api/tasks/[id]/doc-draft`), about 600ms after
+you stop typing, and flush immediately when the window unmounts, whether
+that's a rail collapse, a tab switch, Escape, or Cancel. The footer shows
+**saving…**, then **saved**, or **not saved** with the error if a save fails.
+Sending the message clears the draft. A **Discard edits** button in the
+footer throws away the edit and the general note after a confirmation; it
+leaves passage comments untouched.
 
-The edit draft carries the same anchor as a comment: the file's blob sha as
-it was loaded. On open, the general note is always restored, but the edited
-text is only dropped back into the editor if the file's sha still matches
-what the draft was written against. If the file changed since, the modal
-shows the current file and a banner ("You have unsent edits to this file
-from before it last changed…") instead of silently patching the old edit
-onto the new text. **Restore edits** puts the saved version in the editor,
-so the diff is then computed against the current file and whatever changed
-on disk since shows up as removed; **Discard them** throws the stale draft
-away.
+The edit draft is anchored to the file's blob sha as it stood when you opened
+it. The general note always comes back; the edited text only comes back if
+the sha still matches. If the file changed since, the modal shows the current
+file with a banner instead of silently patching the old edit onto the new
+text. **Restore edits** puts your saved version back in the editor and diffs
+it against the current file; **Discard them** drops the stale draft.
 
-Closing the modal (Cancel, Escape, the scrim, or a rail collapse) never
+Closing the window (Cancel, Escape, the scrim, or a rail collapse) never
 discards anything by itself. A confirmation appears only when something
 would actually be lost: a comment still sitting in the compose box, or an
-edit draft whose save just failed.
+edit whose save just failed.
 
-## Editor choice: source over WYSIWYG
+## Limits
 
-The spike surveyed the widely used editors as of August 2026: MDXEditor,
-Milkdown, TipTap (with `@tiptap/markdown`), Lexical (`@lexical/markdown`),
-Plate (`@platejs/markdown` and `@platejs/comment`), BlockNote, Remirror,
-Toast UI, `@uiw/react-md-editor`, and CodeMirror 6, plus the annotation
-libraries Recogito, Annotorious, `web-highlighter`, `rangy`, and
-`react-text-annotate`.
-
-Every rich editor parses markdown into its own document model and
-re-serializes on save, which rewrites list markers, table padding, heading
-styles, and blank lines you never touched. BlockNote's API is literally named
-`blocksToMarkdownLossy`, and MDXEditor and TipTap both have open issues about
-normalization. What leaves this modal is a diff sent to an agent, so that
-noise would be read as instructions.
-
-CodeMirror edits the literal text, so untouched lines come back
-byte-identical. The rendered view sits beside it, so the document still
-reads as a document.
-
-For comments: TipTap's Comments extension is Tiptap Cloud Pro (paid), and
-BlockNote's requires a Yjs `ThreadStore` even for one user. Plate's
-`@platejs/comment` is the one standalone, mark-based option, and would be the
-pick if the app ever wanted a single-library WYSIWYG, subject to the
-round-trip caveat above.
-
-For a select-and-annotate flow over an already-rendered document, the native
-`Selection`/`Range` API plus the CSS Custom Highlight API (`CSS.highlights`,
-Chrome 105+, Safari 17.2+, Firefox 140+) does the job with no dependency and
-no DOM mutation under react-markdown. Browsers without it still get the
-comment list, just not the tint. `web-highlighter` was the fallback candidate
-and wasn't needed.
-
-Dependencies added: `diff` (jsdiff, for the unified patch),
-`@uiw/react-codemirror`, `@codemirror/lang-markdown`, and
-`@codemirror/language-data`. CodeMirror loads through `next/dynamic`, so it
-stays out of the main bundle until a document is opened, and `mermaid` loads
-the same lazy way on the first diagram.
-
-## What the spike does not do (yet)
-
-- A direct write isn't versioned or undoable beyond what git offers. The
-  worktree is the task's branch, so `git diff` in the task terminal shows the
-  change and `git checkout -- <file>` reverts it, but there is no in-app
-  undo.
-- The rendered view can't tell two identical passages apart. A quote is
-  found again by text search, so a selection inside the second of two
-  identical sentences highlights the first. This is rare in prose; the line
-  number in the packet is computed the same way.
-- Only markdown files get the button (`isMarkdownPath`). The same modal can
-  open any text file; the render tab is just less useful for one.
+- **No undo inside the app.** A **Write to file** lands straight in the task's
+  worktree. The worktree is the task's own branch, so `git diff` in the task
+  terminal shows the change and `git checkout -- <file>` reverts it.
+- **The write happens first.** Choosing **Write to file** means Send writes the
+  file before it composes the message. If the send then fails, the file on disk
+  has already changed.
+- **Sent comments cannot be taken back.** Send another comment instead.
+- **Two identical passages cannot be told apart.** A passage is found again by
+  searching the text, so selecting inside the second of two identical sentences
+  points at the first. The line number in the message is found the same way.
+- **One person at a time.** There is no live co-editing and no presence. Two
+  people editing the same file get the `file changed since it was loaded`
+  refusal, not a merge.
+- **Files only, up to 1 MB**, and only files the agent has already written or
+  changed.
