@@ -27,7 +27,7 @@
 # `if:` on a job in test.yml would be one careless edit away from that, and
 # would also have to be kept in step with four other gate expressions. Here the
 # trigger list is two lines and the property is obvious on sight.
-# docs/DESKTOP_E2E.md §4 records the rest of the non-negotiables (ephemeral
+# docs/DESKTOP_E2E.md §5 records the rest of the non-negotiables (ephemeral
 # registration, snapshot rollback, its own credentials, excluded from backups).
 #
 # WHAT THE RUNNER MUST PROVIDE, beyond the labels: a logged-in graphical session
@@ -41,7 +41,7 @@
 # Electron app), so the bench's status area disappears mid-launch and the tray
 # specs cannot find the icon. The spec says exactly that in its failure message.
 # The bench-side fix is tracked in infra-claude alongside registering this
-# runner; docs/DESKTOP_E2E.md §4 has the measurement.
+# runner; docs/DESKTOP_E2E.md §6 has the measurement.
 #
 # `04-db-lock` is red too as of 2026-08-28, and that one is NOT a bench fact —
 # it fails identically under `xvfb-run` on the hosted `desktop` job. A sidecar

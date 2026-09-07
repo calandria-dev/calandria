@@ -264,7 +264,7 @@ rather than living in a Windows-only module, so the POSIX suite pins both branch
   `http://127.0.0.1:3000` in a Windows browser, which WSL2's localhost forwarding makes
   work unchanged — verified, including the `/pty` WebSocket upgrade, on arbitrary ports.
   Reasons the shell does not cross the boundary are in
-  [DESKTOP_APP.md](DESKTOP_APP.md#5-per-platform-gaps) §5. Note the rule that outlives
+  [DESKTOP_APP.md](DESKTOP_APP.md#known-limitations). Note the rule that outlives
   the shell question: `CALANDRIA_DB_DIR` and `CALANDRIA_WORKTREES_DIR` must live on the
   distro's ext4, never under `/mnt/c` — that is 9p, and SQLite WAL over it corrupts.
 - **The desktop shell does not drain on a Windows shutdown or logout.** Quit and window
@@ -286,7 +286,7 @@ rather than living in a Windows-only module, so the POSIX suite pins both branch
   it runs a `.exe` it built itself seconds earlier, which no browser ever touched, so the
   interstitial has nothing to fire on. Everything else about the installer is now tested;
   this is the part that cannot be. Signing is the fix and is priced, not bought:
-  [DESKTOP_APP.md](DESKTOP_APP.md#7-cost-of-going-further-phase-2) §7 — Azure Trusted
+  [desktop/README.md](../desktop/README.md#what-signing-costs) — Azure Trusted
   Signing at $9.99/month or an OV certificate at roughly $129/yr, and explicitly not EV,
   which stopped buying instant reputation in March 2024.
 - **Service hostnames** (`<slug>--<host>`) need the same wildcard DNS story as on any
@@ -296,9 +296,9 @@ rather than living in a Windows-only module, so the POSIX suite pins both branch
 
 CI covers typecheck, the unit suite, the e2e suite and the desktop shell's suite: 1462 tests
 and 92 specs, green on a real Windows runner. The desktop shell half has since been run on an
-actual Windows 11 box as well (§5 of [DESKTOP_APP.md](DESKTOP_APP.md#5-per-platform-gaps)
-records what it did, including the quit drain, the terminal panel and the WSL2 decision), so
-what's left here is the console shutdown path, which all four lanes miss structurally.
+actual Windows 11 box as well, confirming the WSL2 decision in
+[DESKTOP_APP.md](DESKTOP_APP.md#known-limitations), so what's left here is the console
+shutdown path, which all four lanes miss structurally.
 `child.kill()` is a `TerminateProcess` on Windows, so no stub can observe which signal a
 process was sent; `tests/startLauncher.test.ts` skips its SIGINT case there for that reason.
 The e2e lane does boot `scripts/start.mjs`, but Playwright tears its `webServer` down with a
