@@ -1,118 +1,84 @@
-# CI and releases — agent policy
+# CI and releases: agent policy
 
-Local verification (typecheck, build, preflight) and CI verify different things. A successful
-push is not a successful CI run: CI has caught stale tests, Docker-only breakage and
-arch-specific failures that local runs can't. Main once sat red for ~9 hours across 12 pushes,
-because every agent verified locally and nobody watched Actions.
+Local verification (typecheck, build, preflight) and CI verify different things: CI catches
+stale tests, Docker-only breakage and arch-specific failures that local runs can't. A successful
+push is not a successful CI run.
 
-- **Work lands through a pull request; there is no push to main.** The `main-require-pr`
-  ruleset rejects a direct push, allows squash as the only merge method, requires one approving
-  review, and has an empty bypass list — so this is not a convention you can decide to skip on a
-  small change. Push your branch, open the PR, and treat that PR as the unit of work.
+- **Work lands through a pull request; there is no push to main.** The `main-require-pr` ruleset
+  rejects a direct push, allows squash as the only merge method, requires one approving review,
+  and has an empty bypass list. Push your branch, open the PR, and treat that PR as the unit of
+  work.
 - **Watch a PR's checks to terminal state.** `gh pr checks <number> --watch` (or poll
-  `gh pr checks <number>`) until every check has a conclusion — bounded, the same ~10 minutes the
-  push-triggered workflows took. Green-on-your-branch is the deliverable; a dispatch that ends
-  with checks still pending is unfinished work, exactly as an unwatched push was. Two things the
-  old push-and-watch rule did not have to think about: `gh pr view --json mergeStateStatus` is
-  where "red", "behind main" and "needs a review" are distinguishable, and only the last of those
-  is the user's to clear.
-- **`--watch` exits 0 on "no checks reported".** Run straight after `gh pr create`, it sees an
-  empty check list — the runs take a few seconds to register against the head SHA — and returns
-  success having watched nothing, which reads exactly like a green PR. Observed on PR #55, whose
-  six jobs were queued the whole time. Confirm with `gh run list --branch <branch>` (or
-  `gh pr view --json statusCheckRollup`) that checks EXIST before believing an empty watch, and
-  re-watch if they do. An empty result is never terminal state.
-- **A PR into a non-main base used to conclude without having run anything.** `test.yml` filtered
-  `pull_request` on `branches: [main]`, so a PR into a tag tree's integration branch
-  (`pr-workflow`, `core-fixes`, …) started no audit, typecheck, unit or Windows job at all. It
-  still went green, on the one check that survives: "PR title (Conventional Commits)", which fires
-  because `pr-title.yml` carries no branch filter. Six such PRs (#123-#128) each concluded on a
-  single 4-second check, and #62 was covered only by dispatching `test.yml` by hand. Watching to
-  terminal state cannot catch this — there was a conclusion, and it was green. The filter is now
-  `branches: ["**"]`, so this is history rather than a thing to check for; what it leaves behind is
-  the shape of the bug. **A green PR whose check list is implausibly short is a trigger bug, not a
-  fast suite.** Read the job names, not just the rollup, and if the four always-on jobs aren't
-  among them find out why before merging.
-- **`gh pr checks` cannot see a run that never started.** A workflow rejected at startup —
-  invalid YAML, or a called workflow requesting a permission scope above its caller's ceiling —
-  concludes `startup_failure`, contributes NO check runs, and is therefore absent from
-  `gh pr checks` and from `mergeStateStatus`. PR #142 read `CLEAN` with six passing checks while
-  `publish-image.yml` had been failing at startup for two commits. Same shape as the bullet above:
-  green because the thing that would have gone red never ran. `gh pr checks` answers "did the
-  checks that exist pass", which is not the question. **After changing anything under
-  `.github/workflows/`, list the RUNS:**
-  `gh run list --branch <branch> --json workflowName,headSha,status,conclusion`, and compare the
-  set of workflows against the commit before yours.
-- **Name a long-lived integration branch `integration/<something>`.** A tag tree's PRs target one,
-  and `integration/**` is what the `integration-require-checks` ruleset matches, so a branch named
-  outside the namespace is tested but still mergeable red. `.github/rulesets/README.md` has the
-  payloads, the five required contexts and the one ordering rule that matters: a required check
-  must ALREADY be produced by the base branch's `test.yml` before the rule goes on, or every PR
-  into that branch hangs on "Expected — waiting for status" with only an admin bypass to clear it.
-  Same incompatibility keeps `paths-ignore` off `test.yml`'s `pull_request` trigger.
-- **Title the PR as a Conventional Commit.** A squash makes the title the subject of the one
-  commit that lands, and `release-please.yml` parses exactly those subjects for the version bump
-  and CHANGELOG.md. A title it cannot parse is dropped with no error, so the change ships out of
-  the release notes. `.github/workflows/pr-title.yml` fails the PR instead; the fix is to retitle,
-  which re-runs the check without a push. CONTRIBUTING.md has the type table.
-- **The title only reaches main because `squash_merge_commit_title` is `PR_TITLE`.** That repo
-  setting is the entire link between the check above and the commit release-please reads, and it
-  was `COMMIT_OR_PR_TITLE` until 0.4.1 — which uses the PR title for a multi-commit branch but the
-  lone COMMIT's subject for a single-commit one. A PR that `pr-title.yml` had just passed therefore
-  landed with its prefix stripped, release-please parsed it as non-conventional, and dropped it:
-  green run, nothing in the notes. That is how #56, #64 and #66 all vanished from the 0.4.0
-  changelog and had to be restored by hand on the release branch (`2f0338d`). Nothing in this repo
-  enforces the setting and changing it leaves no commit, so when entries go missing the first thing
-  to read is `gh api repos/calandria-dev/calandria -q .squash_merge_commit_title`.
-- **Red run: diagnose before rerunning.** Compare the failing step against the last green run on
-  a sibling commit. If the failure is in an infra step your commit can't plausibly have caused
-  (say the buildx floor-check dying with exit 255 before producing output, a known arm64/registry
-  transient), run `gh run rerun <id> --failed` once. Green on attempt 2 means a flake; note it.
-  Red again, or any failure in a test, typecheck or build step, is real: fix it, or revert the
-  commit — which is now itself a PR, titled `revert: ...` so release-please records it. Never
-  rerun to make a real failure go away.
-- **The app is a backstop, not a substitute.** Calandria now raises a task whose open PR has a
-  failing check rollup into the "Needs you" inbox, names the red job, and offers a Fix CI button
-  that seeds a turn with its log tail. That exists because this rule was pure policy and main
-  once sat red for hours anyway. It catches what a session MISSED; it does not relieve the
-  session of watching its own push to terminal state, because a dispatch that ends red has
-  already handed the user a task they thought was finished.
-- **File issues for CI problems. You are empowered and expected to.** For a broken workflow, a
-  recurring flake, a misconfiguration, or a red main you can't fix in-session, file a GitHub issue
-  (or append to the open one) with the run URL and the failing step's output. Never leave main
-  silently red.
-- **The buildx/BuildKit version pinning in `publish-image.yml` is intentional** (its header
-  comment says why). Harden around it; don't upgrade it away.
-- **Agents propose releases, they don't decide them.** The versioning process is issue #12:
-  release-please, `latest` = newest release and `edge` = nightly main, semver 0.x pre-1.0.
-  `release-please.yml` opens and updates the release PR automatically off Conventional Commits.
-  That is release automation rather than a release, so agents may write and fix it freely: bump the
-  pinned action SHA, adjust `release-please-config.json`, repair the workflow when it breaks.
+  `gh pr checks <number>`) until every check has a conclusion, bounded to roughly the time
+  push-triggered workflows take (~10 minutes). A dispatch that ends with checks still pending is
+  unfinished work. `gh pr view --json mergeStateStatus` is where "red", "behind main" and "needs a
+  review" are distinguishable; only the last of those is the user's to clear.
+- **`--watch` can exit 0 having watched nothing.** Run straight after `gh pr create`, it can see
+  an empty check list before the runs register against the head SHA, and returns success having
+  watched nothing, indistinguishable from a green PR. Confirm checks actually exist
+  (`gh run list --branch <branch>`, or `gh pr view --json statusCheckRollup`) before trusting an
+  empty watch, and re-watch if they do. An empty result is never terminal state.
+- **A green PR whose check list is implausibly short is a trigger-configuration bug, not a fast
+  suite.** Read the job names, not just the rollup, and confirm the expected always-on jobs
+  (audit, typecheck, unit, Windows) are among them before merging. A PR into a non-main base can
+  otherwise conclude on nothing but the PR-title check, since `test.yml`'s `pull_request` trigger
+  is filtered on `branches: ["**"]` precisely to prevent this. Verify that filter hasn't
+  regressed before treating a short check list as legitimate.
+- **`gh pr checks` cannot see a workflow run that never started.** Invalid YAML, or a called
+  workflow requesting a permission scope above its caller's ceiling, concludes `startup_failure`,
+  contributes no check runs, and is absent from both `gh pr checks` and `mergeStateStatus`. After
+  changing anything under `.github/workflows/`, list the actual runs and compare the set of
+  workflows against the commit before yours:
+  `gh run list --branch <branch> --json workflowName,headSha,status,conclusion`.
+- **Name a long-lived integration branch `integration/<something>`.** That namespace is what the
+  `integration-require-checks` ruleset matches; a branch named outside it is tested but still
+  mergeable red. `.github/rulesets/README.md` has the required contexts and the ordering rule: a
+  required check must already be produced by the base branch's `test.yml` before the rule is
+  added, or PRs into that branch hang on "Expected — waiting for status" with only an admin
+  bypass to clear it. For the same reason, never add `paths-ignore` to `test.yml`'s
+  `pull_request` trigger: skipping the required check on some PRs reproduces the same deadlock.
+- **Title the PR as a Conventional Commit.** Squash makes the title the subject of the one commit
+  that lands, and `release-please.yml` parses exactly that subject for the version bump and
+  CHANGELOG.md; a title it can't parse is dropped from the release notes with no error.
+  `.github/workflows/pr-title.yml` enforces this and fails the PR instead. Retitle to fix it,
+  which re-runs the check with no push needed. CONTRIBUTING.md has the type table.
+- **The PR title only reaches main because `squash_merge_commit_title` is `PR_TITLE`.** That repo
+  setting is the entire link between the title check and the commit release-please reads. If
+  changelog entries seem to be silently missing, verify it first:
+  `gh api repos/calandria-dev/calandria -q .squash_merge_commit_title`.
+- **On a red run: diagnose before rerunning.** Compare the failing step against the last green
+  run on a sibling commit. Rerun once (`gh run rerun <id> --failed`) only for a failure that is
+  plausibly infra (a known transient in a build/registry step, not your code). A repeat failure,
+  or any failure in a test, typecheck or build step, is real: fix it, or open a `revert:`-titled
+  PR so release-please records it. Never rerun to make a real failure go away.
+- **The app's "Needs you" inbox is a backstop, not a substitute.** It raises a task for an open PR
+  with a failing check rollup and offers a Fix CI button, but it only catches what a session
+  missed; it does not relieve the session of watching its own push to terminal state.
+- **File a GitHub issue for CI problems you can't fix in-session.** A broken workflow, a
+  recurring flake, a misconfiguration, or a red main all warrant one, with the run URL and the
+  failing step's output. Never leave main silently red.
+- **The buildx/BuildKit version pin in `publish-image.yml` is intentional**: its header comment
+  explains why. Don't upgrade it away without reading that comment first.
+- **Release automation may be written and fixed freely by agents.** release-please, the
+  `latest` (newest release) and `edge` (nightly main) image tags, and semver 0.x pre-1.0 are
+  release automation, not a release itself: bump the pinned action SHA, adjust
+  `release-please-config.json`, repair the workflow when it breaks.
 - **Diff main's subjects against the changelog before proposing a release.**
   `git log <last-tag>..origin/main --format='%s'` beside the entries the release PR adds to
-  `CHANGELOG.md`: every subject should appear except the types release-please legitimately hides
-  (`chore:`, `ci:`, `test:`, `style:`, `refactor:`). This survives the `PR_TITLE` fix rather than
-  being replaced by it, because the omission is silent BY CONSTRUCTION — release-please skips a
-  subject it cannot parse without logging anything — and `PR_TITLE` only closes the one cause we
-  found. A typo'd type, a `revert:` GitHub retitled, a commit that reached main some other way all
-  fail the same way and this is the only step that puts the two lists side by side.
-- **Merging a release PR takes a recorded user confirmation naming the version.** That merge cuts
-  the tag and moves `latest`, so it carries the same human gate a manual `gh release create` used
-  to — but the gate is the decision, not the click. An agent may perform the merge only after
-  presenting what the release contains and what is green, asking through its **ask tool**, and
-  getting back an explicit affirmative that names the version. Nothing else substitutes for that
-  answer: never merge on your own initiative, and never infer approval from silence, from a task
-  description, from a background or scheduled event firing, or from your own earlier conclusion
-  that a merge looks safe. Having been told yes, finish the job in that session — merge, watch the
-  tag pipeline to terminal state, prove the artifact — rather than parking a second time for the
-  mechanics. The **"Cut a Calandria release" runbook** is the procedure this policy governs; where
-  they disagree, this file wins and the runbook is the thing to fix.
-- **An unattended release run refuses the merge.** A scheduled or otherwise unwatched run has no
-  one to ask, and an ask that cannot reach a human settles as a denial, not as permission to use
-  your own judgement. Stop before the merge, report the version it would have cut and what was
-  green, and leave the PR open.
-- **The merge needs a `Bash(gh pr merge:*)` permission rule to be possible at all.** At v0.2.0 the
-  sandbox classifier blocked `gh pr merge` on the release PR (while allowing it on an ordinary PR),
-  which is the failure mode to expect if the rule is missing. A block is a gate, not an obstacle:
-  after a second identical refusal, say what you were trying to do and hand the merge back to the
-  user. Never route around it — no raw REST call, no `git push` standing in for the merge.
+  `CHANGELOG.md`. Every subject should appear except the types release-please legitimately hides
+  (`chore:`, `ci:`, `test:`, `style:`, `refactor:`); anything else missing is a real omission to
+  chase down.
+- **Merging a release PR takes a recorded user confirmation naming the version.** Present what the
+  release contains and what is green, ask through the ask tool, and require an explicit
+  affirmative naming the version before merging. Never merge on your own initiative, and never
+  infer approval from silence, a task description, a background or scheduled event firing, or your
+  own judgment that it looks safe. Once approved, finish the job in that session: merge, watch the
+  tag pipeline to terminal state, confirm the artifact.
+- **An unattended or scheduled release run refuses the merge.** No one to ask means the answer is
+  no. Stop before the merge, report the version it would have cut and what was green, and leave
+  the PR open.
+- **The merge needs a `Bash(gh pr merge:*)` permission rule to be possible at all.** If it's
+  refused twice, stop routing around it (no raw REST call, no `git push` standing in for the
+  merge) and hand the merge back to the user.
+- **Where this file and the "Cut a Calandria release" runbook disagree, this file wins**; fix the
+  runbook.
