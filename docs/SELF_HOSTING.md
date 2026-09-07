@@ -4,24 +4,25 @@ title: "Self-hosting"
 
 # Self-hosting
 
-Running your own instance: Docker, tunnels, auth, and configuration. The
-[README](../README.md) covers the two-command quick start; this is the rest.
-Already broken? See [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for
-first-incident runbooks (DB corruption, disk fill, headless re-auth, boot
-failures).
+Configure and run your own Calandria instance: Docker, tunnels, auth, and every
+env var. The [README](../README.md) covers the two-command quick start; this
+page is the rest. If something is broken, see
+[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for first-incident runbooks (DB
+corruption, disk fill, headless re-auth, boot failures).
 
 ## Docker
 
-The [`Dockerfile`](../Dockerfile) builds a single-user image: a production Next.js
-build (a stopped container starts in seconds) with Node 22, git, and the `claude`
-CLI. [`docker/entrypoint.sh`](../docker/entrypoint.sh) runs both processes (app
-server and pty sidecar) under tini. All state lives under `/home/calandria`: one
-named volume holds the SQLite database, worktrees, project repos, and the claude
-login.
+The [`Dockerfile`](../Dockerfile) builds a single-user image: a production
+Next.js build on Node 22, with git and the `claude` CLI installed.
+[`docker/entrypoint.sh`](../docker/entrypoint.sh) runs both processes (app
+server and pty sidecar) under tini. All state lives under `/home/calandria`
+in one named volume: the SQLite database, worktrees, project repos, and the
+`claude` login.
 
-You don't have to build it yourself. The published image builds nightly
-from `main`, from `v*` release tags, and on manual dispatch (ordinary pushes
-to `main` no longer trigger a build; `test.yml` still runs on every push).
+You don't have to build the image yourself. The published image builds
+nightly from `main`, from `v*` release tags, and on manual dispatch. Ordinary
+pushes to `main` no longer trigger a build; `test.yml` still runs on every
+push.
 
 ### The published image
 
@@ -34,8 +35,8 @@ The package is public: no `docker login`, no token needed.
 publishes it, gated on the test suite (types, unit, e2e), so a red run never
 reaches the registry.
 
-**Architectures:** one manifest covers `linux/amd64` and `linux/arm64`, so
-`docker pull` picks the right one for you.
+One manifest covers `linux/amd64` and `linux/arm64`; `docker pull` picks the
+right one for you.
 
 | Tag | Points at |
 |-|-|
@@ -45,46 +46,47 @@ reaches the registry.
 | `<version>` | A pushed `v*` git tag with the `v` stripped (`v1.4.2` → `1.4.2`) |
 | `<major>.<minor>` | The newest patch on that line (e.g. `1.4`) |
 
-`latest` moves only on a `v*` tag push and only moves forward, so `latest`
-never points at untagged, unreleased code; nightly builds of `main` publish
-under `edge` instead. Pin `sha-<short>` (or a specific `X.Y.Z`) for a tag that
-never changes under you. See [Pinning a version](#pinning-a-version) below.
+`latest` moves only on a `v*` tag push and only moves forward: it never
+points at untagged, unreleased code. Nightly builds of `main` publish under
+`edge` instead. Pin `sha-<short>` (or a specific `X.Y.Z`) for a tag that never
+changes under you; see [Pinning a version](#pinning-a-version) below.
 
 Every release publishes all three tags: `latest`, `<version>`, and
-`<major>.<minor>`, e.g. `0.3.0` and `0.3` for a `v0.3.0` tag (no `v`). The
-[releases page](https://github.com/calandria-dev/calandria/releases) lists
-what `latest` has pointed at over time.
+`<major>.<minor>`, for example `0.3.0` and `0.3` for a `v0.3.0` tag (no `v`).
+The [releases page](https://github.com/calandria-dev/calandria/releases)
+lists what `latest` has pointed at over time.
 
 ### Verify the image's provenance
 
-The `attest` job signs the merged multi-arch index with SLSA build provenance
-(Sigstore, keyless): a signed claim that this digest was built by this
-workflow, from this commit. Check it before you run the image:
+The `attest` job signs the merged multi-arch index with SLSA build
+provenance (Sigstore, keyless): a signed claim that this digest was built by
+this workflow, from this commit. Check it before you run the image:
 
 ```bash
 gh attestation verify oci://ghcr.io/calandria-dev/calandria:latest --owner calandria-dev
 ```
 
 Success is the exit status; `gh` prints nothing when its output isn't a
-terminal. Add `--format json` for the parsed statement and signing certificate.
+terminal. Add `--format json` for the parsed statement and signing
+certificate.
 
-| Flag | Why |
+| Flag | Effect |
 |-|-|
 | `--repo calandria-dev/calandria` | Scopes the claim to this repo instead of anything the account publishes |
 | `--signer-workflow calandria-dev/calandria/.github/workflows/publish-image.yml` | Pins which workflow was allowed to sign |
 | `--bundle-from-oci` | Reads the signature from the registry instead of the GitHub API |
 
-The subject is the multi-arch index digest, since that's what you pull.
-Only digests published by a run that included the `attest` job carry a
-signature; anything older reports `no attestations found`.
+The subject is the multi-arch index digest, since that's what you pull. Only
+digests published by a run that included the `attest` job carry a signature;
+anything older reports `no attestations found`.
 
 ### Pinning a version
 
-The image tag carries no leading `v`, even though the git tag does: `v0.2.0` in
-git is `:0.2.0` in the registry (`docker/metadata-action`'s `{{version}}` strips
-it). `:vX.Y.Z` does not exist and fails to pull.
+The image tag carries no leading `v`, even though the git tag does: `v0.2.0`
+in git is `:0.2.0` in the registry. `:vX.Y.Z` does not exist and fails to
+pull.
 
-Pick one of:
+Pick one:
 
 | You want | Set `CALANDRIA_IMAGE` to |
 |-|-|
@@ -94,20 +96,20 @@ Pick one of:
 | Nightly builds of `main`, least stable | `ghcr.io/calandria-dev/calandria:edge` |
 
 `X.Y.Z` is the only one of these that never changes under you; `X.Y` and
-`latest` are both moving targets. Pin `X.Y.Z` for anything you don't want to
-babysit. Use `latest` only if you're fine re-reading the changelog after
-every unattended upgrade.
+`latest` are both moving targets. Pin `X.Y.Z` if you don't want to re-check
+the tag on every upgrade. Use `latest` only if you're willing to read the
+changelog after every unattended upgrade.
 
 Every past release tag stays pullable indefinitely, so moving between
-versions just means re-pinning `CALANDRIA_IMAGE`. Going backwards takes one
-more step than going forwards, because the newer build already migrated your
-database; see [Rolling back an upgrade](#rolling-back-an-upgrade).
+versions is a matter of re-pinning `CALANDRIA_IMAGE`. Going backwards takes
+one more step than going forwards, because the newer build already migrated
+your database; see [Rolling back an upgrade](#rolling-back-an-upgrade).
 
 ### Running it
 
 [`docker-compose.yml`](../docker-compose.yml) is the parameterized runner. It
-builds from this checkout by default; set `CALANDRIA_IMAGE` to run the published
-image instead.
+builds from this checkout by default; set `CALANDRIA_IMAGE` to run the
+published image instead.
 
 ```bash
 export CALANDRIA_USER=alice CALANDRIA_PORT=10001 CALANDRIA_RUNTIME=runc
@@ -126,41 +128,85 @@ docker compose -p calandria-alice up -d --no-build
 # open http://127.0.0.1:10001
 ```
 
-The explicit `pull` plus `--no-build` works around a Compose quirk: Compose
-versions differ on whether a missing image with a build context gets pulled
-or built, and the service keeps its `build: .` stanza so a bare checkout still
+`docker compose pull` followed by `--no-build` works around a difference
+between Compose versions in how a missing image with a `build:` stanza
+present is handled. The service keeps that stanza, so a bare checkout still
 works with no env set.
 
-The container publishes its port on the host's loopback only. To reach it from
-elsewhere, put an authenticated tunnel or reverse proxy in front. The app
-hands out a full shell and a `bypassPermissions` agent, so never expose the
+The container publishes its port on the host's loopback only. To reach it
+from elsewhere, put an authenticated tunnel or reverse proxy in front. The
+app hands out a full shell and a `bypassPermissions` agent: never expose the
 port raw.
 
 An HTTPS front also gets you PWA install and the Notification permission,
 which browsers only offer in a secure context (HTTPS or `localhost`). A
-plain-HTTP LAN IP gets neither, so if your phone is one of your surfaces,
-reach the instance through the tunnel hostname, not `http://192.168.x.x`.
+plain-HTTP LAN IP gets neither. If your phone is one of your surfaces, reach
+the instance through the tunnel hostname, not `http://192.168.x.x`.
 
-The `claude` CLI works headless: it prints the OAuth URL and accepts a pasted
-code, and the setup wizard drives that flow from the browser.
+The `claude` CLI works headless: it prints the OAuth URL and accepts a
+pasted code, and the setup wizard drives that flow from the browser.
 
-Antigravity is the exception, and it is a hard one: `agy` stores its OAuth
-token in the OS keyring over the D-Bus Secret Service with no file fallback,
-and this image ships no keyring daemon, so the subscription sign-in cannot
-complete in a container at all. Set `GEMINI_API_KEY` (or paste a key on the
-agent's card in Settings → Agents) and the driver points the CLI at it
-instead. That path bills Google's API rather than drawing on an Antigravity
-subscription.
+Antigravity's subscription sign-in cannot complete in a container: `agy`
+stores its OAuth token in the OS keyring over the D-Bus Secret Service, and
+this image ships no keyring daemon. Set `GEMINI_API_KEY` (or paste a key on
+the agent's card in Settings → Agents) and the driver points the CLI at it
+instead. That bills Google's API instead of an Antigravity subscription.
 
 For site-specific CLIs or config layered on the published image, see
-[`examples/overlay/`](../examples/overlay/); keep real overlays in a private
+[`examples/overlay/`](../examples/overlay/). Keep real overlays in a private
 repo, not committed here.
+
+**Compose variables.** `CALANDRIA_USER` and `CALANDRIA_PORT` are required.
+Compose fails loudly if you miss them (`set CALANDRIA_USER (e.g. alice)`)
+instead of starting a second, empty instance. The `-p` project name is your
+own label, not something the app reads. An existing stack can stay on
+`-p orch-alice`; these docs use `-p calandria-alice` for new ones.
+
+| Variable | Default | Effect |
+|-|-|-|
+| `CALANDRIA_USER` | *(required)* | Names the container, network, and home volume: `orch-u-<user>-*` |
+| `CALANDRIA_PORT` | *(required)* | Host loopback port the app is published on |
+| `CALANDRIA_IMAGE` | `calandria:latest` (built locally) | Image to run. Point it at a published tag to skip building |
+| `CALANDRIA_RUNTIME` | `runsc` | Container runtime. `runsc` (gVisor) keeps the untrusted shell and agent off the host kernel. Docker Desktop and colima ship no `runsc`, so local dev needs `CALANDRIA_RUNTIME=runc`; `runc` is not an acceptable runtime for a production, multi-user host |
+| `CALANDRIA_CPUS` | `2` | CPU limit passed to the container runtime |
+| `CALANDRIA_MEM` | `4g` | Memory limit (and matching swap limit) passed to the container runtime |
+
+These six are interpolated by `docker compose` itself, not read by the app,
+so unlike the app's own env vars (below) they have no `ORCH_*` fallback: an
+existing `ORCH_USER=… docker compose up` fails loudly instead of starting a
+second, empty instance. Rename them in your shell or `.env`:
+
+```bash
+sed -i 's/^ORCH_\(USER\|PORT\|CPUS\|MEM\|IMAGE\|RUNTIME\)=/CALANDRIA_\1=/' .env
+```
+
+The resource names these create are unchanged: the home volume is still
+`orch-u-<user>-home` and the network still `orch-u-<user>-net`. Renaming them
+would strand every existing instance's database, cloned repos, and agent
+logins behind a name nothing mounts anymore. Only the mount path moved, from
+`/home/orch` to `/home/calandria`; the image keeps `/home/orch` as a symlink
+to the new home, so old paths still resolve and new writes land under
+`/home/calandria`.
+
+To rename the volume to match the product anyway, do it while the container
+is down. Docker has no rename, so this is a copy:
+
+```bash
+docker compose -p calandria-alice down
+docker volume create calandria-u-alice-home
+docker run --rm -v orch-u-alice-home:/from -v calandria-u-alice-home:/to alpine \
+  sh -c 'cd /from && cp -a . /to'
+# then point the compose `volumes:` stanza at the new name and bring it back up
+```
+
+Verify the copy (the database and `projects/` are there) before
+`docker volume rm` on the old one. There is no undo.
 
 ### Upgrading
 
-**Take a backup first.** It's one command, needs no downtime, and is the only
-thing that makes the upgrade reversible. The new build migrates your database
-on first boot, and there's no down-migration.
+Take a backup first. It's one command, needs no downtime, and is the only
+thing that makes the upgrade reversible: the new build migrates your
+database on first boot, and there's no down-migration.
 
 ```bash
 # 1. Snapshot the database while the old version is still the one running.
@@ -179,23 +225,22 @@ docker compose -p calandria-alice up -d --no-build
 The container comes up, runs its schema migrations, and starts serving.
 Migrations are additive and idempotent: new columns get defaults, nothing is
 dropped, so a database from any older version upgrades in place, and
-re-running the same version changes nothing. They're not reversible, which is
-why step 1 matters.
+re-running the same version changes nothing. They are not reversible, which
+is why step 1 matters.
 
 After migrating, the build stamps the database with the schema version it
 understands (`PRAGMA user_version`,
-[`lib/schema-version.mjs`](../lib/schema-version.mjs)). This makes an older
-build pointed at that database refuse to start instead of writing to a schema
-it has never seen. The next section covers that refusal.
+[`lib/schema-version.mjs`](../lib/schema-version.mjs)). An older build
+pointed at that database then refuses to start instead of writing to a
+schema it has never seen. The next section covers that refusal.
 
 ### Rolling back an upgrade
 
-A rollback is two moves: re-pin the image and restore the database the old
+A rollback is two moves: re-pin the image, and restore the database the old
 version knew. Doing only the first is the common mistake.
 
 If you re-pin the image alone, the old build finds a database stamped by the
-newer one and refuses to boot. The error message includes both version numbers
-and both ways out:
+newer one and refuses to boot:
 
 ```
 Refusing to start: /home/calandria/.calandria/calandria.db was written by a NEWER version of Calandria.
@@ -206,12 +251,12 @@ Refusing to start: /home/calandria/.calandria/calandria.db was written by a NEWE
 ```
 
 This is a clean failure, not a corrupted instance. The container exits and,
-with `restart: unless-stopped`, keeps retrying, so check `docker compose logs`
+with `restart: unless-stopped`, keeps retrying; check `docker compose logs`
 to see it. Pick one of two exits:
 
-**A. Forward: go back to the version you just came from.** Nothing to restore;
-the database is already the shape that build expects. Use this when the
-upgrade just surprised you and no data is at stake.
+**A. Forward: go back to the version you just came from.** Nothing to
+restore; the database is already the shape that build expects. Use this
+when the upgrade just surprised you and no data is at stake.
 
 ```bash
 export CALANDRIA_IMAGE=ghcr.io/calandria-dev/calandria:0.3.0   # the NEWER tag
@@ -219,8 +264,8 @@ docker compose -p calandria-alice pull
 docker compose -p calandria-alice up -d --no-build
 ```
 
-**B. Backward: pin the old tag and restore the pre-upgrade backup.** This is a
-real rollback: you give up everything that happened after the backup was
+**B. Backward: pin the old tag and restore the pre-upgrade backup.** This is
+a real rollback: you give up everything that happened after the backup was
 taken.
 
 ```bash
@@ -248,10 +293,10 @@ curl -s localhost:10001/api/version
 Read [Restore](#restore) before running step 3. It covers the `db-dir/` half
 (uploads, VAPID key, a persisted API key), agent logins, and three things a
 restored instance does that look like faults but aren't. The backup's
-`manifest.json` records the snapshot's `userVersion` and the app version that
-wrote it, so you can check the tag you just pinned will accept it.
+`manifest.json` records the snapshot's `userVersion` and the app version
+that wrote it, so you can check that the tag you just pinned will accept it.
 
-A rollback costs three things, none avoidable by a different procedure:
+A rollback costs three things:
 
 - **Everything since the backup is gone**, including turns that ran on the
   new version. Task branches survive in your project repos, so committed
@@ -269,56 +314,53 @@ If you front an instance with Cloudflare Access, set `CF_ACCESS_TEAM_DOMAIN`
 and `CF_ACCESS_AUD`. The origin then re-verifies the Access JWT
 (`Cf-Access-Jwt-Assertion` header or `CF_Authorization` cookie, checked
 against the team's public signing keys and the app's `aud` tag) on every HTTP
-route and every WebSocket upgrade (`server.js`, in front of the `/pty`
-terminal proxy). No valid assertion gets a 403.
-[`lib/cf-access.mjs`](../lib/cf-access.mjs) is the shared verifier.
-
-**Log out** sits at the foot of the settings section nav, below Setup. It ends
-the Access session for this instance and follows the redirect Access hands
-back. It renders only when there is a session to end, so in local mode nothing
-appears there.
+route and every WebSocket upgrade, including the `/pty` terminal proxy. No
+valid assertion gets a 403. **Log out** sits at the foot of the settings
+section nav, below Setup: it ends the Access session for this instance and
+follows the redirect Access hands back. It renders only when there is a
+session to end, so nothing appears there in local mode.
 
 Requests get a second check on top of the JWT: if the browser sends an
 `Origin` header, it must match the `Host` the request was aimed at. The JWT
 proves who is calling, not that they meant to call: the `CF_Authorization`
 cookie is `SameSite=None` by default, so a hostile page can make a logged-in
-user's browser issue a request that the edge will happily attach a valid
-assertion to (opening `wss://your-host/pty` for a shell, or POSTing to a
-mutating API route via a CORS-exempt form or `text/plain` body). WebSocket
+user's browser issue a request that the edge attaches a valid assertion to,
+for example opening `wss://your-host/pty` for a shell, or POSTing to a
+mutating API route via a CORS-exempt form or `text/plain` body. WebSocket
 upgrades require an `Origin`; HTTP requests only require that one match if
 it's sent, so an ordinary cross-site link to your instance from an email or
 wiki still opens normally.
 
-`PUBLIC_BASE_URL` isn't required for this check; it compares the request's own
-two headers. Set it only if your proxy rewrites `Host` (Cloudflare Tunnel's
-`httpHostHeader`), which would otherwise make the two disagree. The pty
-sidecar repeats the same checks independently, so reaching `PTY_PORT` directly
-grants nothing either.
+`PUBLIC_BASE_URL` isn't required for this check: it compares the request's
+own two headers. Set it only if your proxy rewrites `Host` (Cloudflare
+Tunnel's `httpHostHeader`), which would otherwise make the two disagree. The
+pty sidecar repeats the same checks independently, so reaching `PTY_PORT`
+directly grants nothing either.
 
 Unset (the local default), the app has no login, but it still enforces a
-browser-origin boundary (accepting loopback hosts, rejecting cross-site
-requests, and requiring `/pty` WebSocket upgrades to carry a matching browser
-`Origin`), which stops an unrelated website from driving the local shell and
+browser-origin boundary: it accepts loopback hosts, rejects cross-site
+requests, and requires `/pty` WebSocket upgrades to carry a matching browser
+`Origin`. This stops an unrelated website from driving the local shell and
 blocks DNS-rebinding hostnames. `PUBLIC_BASE_URL` is accepted automatically;
-list any other LAN origin explicitly in `CALANDRIA_ALLOWED_ORIGINS`. It's
-still single-user mode, not authentication; never expose it raw to the
+list any other LAN origin explicitly in `CALANDRIA_ALLOWED_ORIGINS`. This is
+still single-user mode, not authentication: never expose it raw to the
 internet.
 
 The one Access-mode exception is `SERVICE_TOKEN`: a shared secret letting
-health probes read the documented service-token routes without an Access JWT
-(`x-service-token` header).
+health probes read the documented service-token routes without an Access
+JWT (`x-service-token` header).
 
 Nothing requires you to set a value, but in Access mode something has to
-present one, since three in-container callers have no Access JWT: the image's
-`HEALTHCHECK`, the boot restore of managed services, and the stdio MCP bridge
-non-Claude agents' tool calls go through. If `CF_ACCESS_*` is set and you
-leave `SERVICE_TOKEN` empty,
-[`docker/entrypoint.sh`](../docker/entrypoint.sh) mints a per-boot token into
-`/tmp/calandria-service-token`, which the `HEALTHCHECK` reads (a healthcheck
-runs as a separate exec with the image's environment, so the file is the only
-way a generated token reaches it). Supply your own token when a monitor
-outside the container needs to poll. Running bare Node behind Access with no
-token, `server.js` warns loudly at startup instead.
+present one: three in-container callers have no Access JWT (the image's
+`HEALTHCHECK`, the boot restore of managed services, and the stdio MCP
+bridge non-Claude agents' tool calls go through). If `CF_ACCESS_*` is set
+and you leave `SERVICE_TOKEN` empty,
+[`docker/entrypoint.sh`](../docker/entrypoint.sh) mints a per-boot token
+into `/tmp/calandria-service-token`, which the `HEALTHCHECK` reads (a
+healthcheck runs as a separate exec with the image's environment, so the
+file is the only way a generated token reaches it). Supply your own token
+when a monitor outside the container needs to poll. Running bare Node
+behind Access with no token, `server.js` warns loudly at startup instead.
 
 `CALANDRIA_FLEET_TOKEN` is a second, optional secret for the same read-only
 routes, shared fleet-wide so one dashboard can poll many boxes without
@@ -329,14 +371,15 @@ nothing.
 ## Connecting the desktop app
 
 The desktop app ([`docs/DESKTOP_APP.md`](DESKTOP_APP.md)) keeps a list of
-instances and points its window at one of them. `This computer` is the server
-it runs itself. Every other entry is a server you are already hosting, reached
-over one of three transports. Adding one is "Instance → Add instance…" in the
-app menu or the tray; the address field decides the transport.
+instances and points its window at one of them. `This computer` is the
+server it runs itself. Every other entry is a server you are already
+hosting, reached over one of three transports. Add one from "Instance → Add
+instance…" in the app menu or the tray; the address field decides the
+transport.
 
-Nothing on the server has to be installed, enabled or configured for the
-desktop app specifically. The requirements below are the ones a browser on the
-same machine would already have.
+Nothing on the server has to be installed, enabled, or configured for the
+desktop app specifically. The requirements below are the ones a browser on
+the same machine would already have.
 
 | Transport | Address you type | What the instance needs |
 |-|-|-|
@@ -345,46 +388,46 @@ same machine would already have.
 | SSH port-forward | `ssh://build-box:3000` | an SSH login that works non-interactively, and the server on the remote's loopback |
 
 **Direct URL behind Cloudflare Access.** The app window is a browser, so the
-Access login page opens in it and completes there. Each instance gets its own
-persistent cookie jar, so two instances behind the same Access team do not
-share an assertion, and "Sign out" on an instance deletes that jar. This is the
-only transport where the server is reachable from outside your network, and it
-is the one to use for that: Access is doing the authentication.
+Access login page opens in it and completes there. Each instance gets its
+own persistent cookie jar, so two instances behind the same Access team do
+not share an assertion, and "Sign out" on an instance deletes that jar.
+This is the only transport where the server is reachable from outside your
+network, and it is the one to use for that: Access does the authentication.
 
-If your identity provider refuses logins from an embedded browser, that is the
-one thing to check before choosing this transport. Electron's default user
-agent is usually accepted.
+If your identity provider refuses logins from an embedded browser, check
+that before choosing this transport. Electron's default user agent is
+usually accepted.
 
 **LAN origin in local mode.** Local mode has no login, so the origin gate is
-the whole boundary and it defaults to loopback only. To reach an instance from
-another machine on your network you have to widen two things, and they are
-different: `CALANDRIA_HOSTNAME` (which interface the server binds) and
-`CALANDRIA_ALLOWED_ORIGINS` (which browser origins it accepts). The desktop app
-loads its page from the remote origin, so `Origin` equals `Host` and the
+the whole boundary and it defaults to loopback only. To reach an instance
+from another machine on your network, widen two different things:
+`CALANDRIA_HOSTNAME` (which interface the server binds) and
+`CALANDRIA_ALLOWED_ORIGINS` (which browser origins it accepts). The desktop
+app loads its page from the remote origin, so `Origin` equals `Host` and the
 request passes exactly when a browser tab on that URL would. Attaching to a
-plain LAN instance has the same trust level as opening it in a browser: anyone
-who can reach the port gets a shell. Do not do this on a network you do not
-control, and never on the internet.
+plain LAN instance has the same trust level as opening it in a browser:
+anyone who can reach the port gets a shell. Do not do this on a network you
+do not control, and never on the internet.
 
 **SSH port-forward.** The app spawns your own `ssh` binary with a local
 forward and attaches to `http://127.0.0.1:<local port>`. The server needs no
-configuration at all for this — it stays bound to loopback on the remote, and
-loopback is what local mode already trusts. SSH is the credential, so your
-config, agent, jump hosts, `ControlMaster` sockets and hardware keys all apply.
+configuration for this: it stays bound to loopback on the remote, which is
+what local mode already trusts. SSH is the credential, so your config,
+agent, jump hosts, `ControlMaster` sockets, and hardware keys all apply.
 
-The forward runs with `BatchMode=yes`, because a GUI has no terminal to answer
+The forward runs with `BatchMode=yes`, since a GUI has no terminal to answer
 a prompt in. A host that would ask for a password or a 2FA code fails the
-attach with `ssh`'s own error rather than hanging. Set up a key or a
+attach with `ssh`'s own error instead of hanging. Set up a key or a
 `ControlMaster` socket first, and confirm `ssh -o BatchMode=yes <host> true`
 succeeds before adding the instance.
 
 Two limits of this transport. A [managed service](SERVICES.md) exposed on a
 `<slug>--<host>` hostname is not reachable through a single-port forward, so
-those links need a forward of their own or a browser that can reach the remote
-directly. And an instance you are not currently attached to contributes nothing
-to the app's badge count, because reaching it means holding an SSH connection
-open to a machine you are not looking at. `url` instances have no such cost and
-are watched whether or not the window is on them.
+those links need a forward of their own or a browser that can reach the
+remote directly. And an instance you are not currently attached to
+contributes nothing to the app's badge count: reaching it means holding an
+SSH connection open to a machine you are not looking at. `url` instances
+have no such cost and are watched whether or not the window is on them.
 
 **Signing in when the login page needs a passkey.** The Cloudflare Access
 transport above works because the app window is a browser and the login
@@ -401,102 +444,56 @@ it is for.
 
 ### Naming an instance
 
-`CALANDRIA_INSTANCE_NAME` is a human name for an instance ("Lab", "Build box").
-It is optional and cosmetic, and it is the only thing on the server that
-acknowledges being one of several:
+`CALANDRIA_INSTANCE_NAME` is a human name for an instance ("Lab", "Build
+box"). It is optional and cosmetic, and it is the only thing on the server
+that acknowledges being one of several:
 
-- The web app puts it in the document title and at the root of its breadcrumb,
-  so two browser tabs on two instances are told apart without clicking either.
+- The web app puts it in the document title and at the root of its
+  breadcrumb, so two browser tabs on two instances are told apart without
+  clicking either.
 - `GET /api/version` reports it as `instanceName` (null when unset).
-- The desktop app reads it off that handshake and offers it as the name for an
-  instance you add by URL without typing one. A name you type is yours and is
-  never overwritten.
+- The desktop app reads it off that handshake and offers it as the name for
+  an instance you add by URL without typing one. A name you type is yours
+  and is never overwritten.
 - With more than one instance saved, the desktop app appends it to every OS
-  notification that instance raises, and clicking that notification switches to
-  it.
+  notification that instance raises, and clicking that notification
+  switches to it.
 
 ## Configuration
 
-Every per-instance value is an env var with a documented default. One env set
-relocates an instance (fresh container, different user, different ports) with
-zero code edits. [`.env.example`](../.env.example) has the same list in
-copyable form. Export variables in the environment that launches `npm run dev`
-/ `npm start`: `server.js` and `pty-server.js` are plain Node and read them
-before Next boots, so a `.env` file alone doesn't cover `PORT`,
-`CALANDRIA_HOSTNAME`, or `PTY_*`.
+Every per-instance value is an env var with a documented default. One env
+set relocates an instance (fresh container, different user, different
+ports) with zero code edits. [`.env.example`](../.env.example) has the same
+list in copyable form. Export variables in the environment that launches
+`npm run dev` / `npm start`: `server.js` and `pty-server.js` are plain Node
+and read them before Next boots, so a `.env` file alone doesn't cover
+`PORT`, `CALANDRIA_HOSTNAME`, or `PTY_*`.
 
 The desktop app is the one exception, and it's desktop-only: `server.js` and
-`pty-server.js` still read only `process.env`, exactly as above, so this
-contract is unchanged for every self-hosted deployment. What's different is
-that the desktop app has no launcher script sourcing anything in front of it —
-a Finder/Dock/Login Item launch hands it launchd's own minimal environment — so
-it reads `$CALANDRIA_ENV_FILE` (default `~/.config/calandria/env`) as its own
-substitute for the launcher this section assumes. See
-[`DESKTOP_APP.md`](DESKTOP_APP.md) §5.2 for the file format and how it layers
-with the app's own env.
+`pty-server.js` still read only `process.env`, exactly as above, so this is
+unchanged for every self-hosted deployment. The desktop app has no launcher
+script sourcing anything in front of it: a Finder/Dock/Login Item launch
+hands it launchd's own minimal environment, so it reads `$CALANDRIA_ENV_FILE`
+(default `~/.config/calandria/env`) as its own substitute for the launcher
+this section assumes. See [`DESKTOP_APP.md`](DESKTOP_APP.md) §5.2 for the
+file format and how it layers with the app's own env.
 
-Variables below were renamed from an earlier `ORCH_*` naming. Every old name
-still works as a fallback (a `CALANDRIA_*` value wins if both are set), and
-the server prints one boot-time warning naming whichever old names are still
-in use. Move a self-hosted `.env`, systemd unit, or compose file over on your
-own schedule.
+Every variable below also answers to an older `ORCH_*` spelling (a uniform
+prefix swap: `ORCH_FOO` → `CALANDRIA_FOO`). An existing `.env`, systemd
+unit, or `docker run -e` keeps working untouched: a `CALANDRIA_*` value wins
+if both are set, an empty value counts as unset on both sides, and the
+server prints one boot-time warning naming whichever old names are still in
+use. Move a self-hosted `.env`, systemd unit, or compose file over on your
+own schedule. The compose-only variables in the Docker section above are the
+one exception: `docker compose` interpolates them itself with no aliasing
+mechanism, so they need the `sed` rename shown there instead.
 
-### Upgrading from `ORCH_*` names
-
-Three groups, and only one can break you.
-
-**App variables: nothing to do.** Everything in the table below reads
-`CALANDRIA_X` first and falls back to `ORCH_X`, so an existing `.env`,
-systemd unit, or `docker run -e` keeps working untouched. An empty value
-counts as unset on both sides, so a blank `CALANDRIA_X` never shadows a real
-`ORCH_X`.
-
-**Compose variables: a hard rename.** `ORCH_USER`, `ORCH_PORT`, `ORCH_CPUS`,
-`ORCH_MEM`, `ORCH_IMAGE`, and `ORCH_RUNTIME` are interpolated by
-`docker compose` itself, which has no aliasing mechanism, so there's nowhere
-to put a fallback. Rename them in your shell or `.env`:
-
-```bash
-sed -i 's/^ORCH_\(USER\|PORT\|CPUS\|MEM\|IMAGE\|RUNTIME\)=/CALANDRIA_\1=/' .env
-```
-
-The two required variables fail loudly if you miss them
-(`set CALANDRIA_USER (e.g. alice)`) instead of starting a second, empty
-instance. The `-p` project name is your own label, not something the app
-reads; an existing stack can stay on `-p orch-alice`. These docs use
-`-p calandria-alice` for new ones.
-
-**Docker resource names: unchanged.** The home volume is still
-`orch-u-<user>-home` and the network still `orch-u-<user>-net`, since
-renaming them would strand every existing instance's database, cloned repos,
-and agent logins behind a name nothing mounts anymore. Only the mount path
-moved, from `/home/orch` to `/home/calandria`, and a named volume follows its
-mount. Absolute `/home/orch/...` strings are baked into rows the app can't
-re-derive (`projects.repo_path`, `tasks.worktree_path`) and into each repo's
-git worktree metadata, so the image keeps `/home/orch` as a symlink to the
-new home; old paths keep resolving and new ones write under
-`/home/calandria`.
-
-To rename the volume to match the product anyway, do it while the container
-is down. Docker has no rename, so this is a copy:
-
-```bash
-docker compose -p calandria-alice down
-docker volume create calandria-u-alice-home
-docker run --rm -v orch-u-alice-home:/from -v calandria-u-alice-home:/to alpine \
-  sh -c 'cd /from && cp -a . /to'
-# then point the compose `volumes:` stanza at the new name and bring it back up
-```
-
-Verify the copy (the database and `projects/` are there) before
-`docker volume rm` on the old one. There is no undo.
-
-| Variable | Default | What it does |
+| Variable | Default | Effect |
 |-|-|-|
 | `PORT` | `3000` | Port of the single public origin (Next.js + `/pty` proxy) |
-| `CALANDRIA_HOSTNAME` | `127.0.0.1` | Bind address of the app server. Loopback by default, since a local instance is unauthenticated and the origin gate is a header check a LAN client can forge; widen it only behind `CF_ACCESS_*`. Bare `HOSTNAME` is not read (shells and container runtimes inject it). The image sets `CALANDRIA_HOSTNAME=0.0.0.0`, correct for a container published on the host's loopback |
+| `CALANDRIA_HOSTNAME` | `127.0.0.1` | Bind address of the app server. Loopback by default: a local instance is unauthenticated, and the origin gate is a header check a LAN client can forge. Widen it only behind `CF_ACCESS_*`. Bare `HOSTNAME` is not read (shells and container runtimes inject it). The image sets `CALANDRIA_HOSTNAME=0.0.0.0`, correct for a container published on the host's loopback |
 | `CALANDRIA_LOG_FORMAT` | `text` | `text` is the human-readable `[component] message key=value` form; `json` emits one object per line (`ts`, `level`, `component`, `msg`, plus that line's fields) for a collector. `server.js`, `pty-server.js`, and the app each read it independently, so set it for all three. See [Reading the logs](TROUBLESHOOTING.md#reading-the-logs) |
-| `CALANDRIA_CLAUDE_DEBUG_DIR` | unset | Directory for per-turn Claude CLI debug logs (`<task>-g<generation>-<timestamp>.log`, the CLI's own `--debug-file`). Unset writes none. The diagnostic for a Calandria tool call the CLI answers itself ("interrupted before a result was received"); verbose and never pruned, so set it to catch the next occurrence and clear it after |
+| `CALANDRIA_CLAUDE_DEBUG_DIR` | *(unset)* | Directory for per-turn Claude CLI debug logs (`<task>-g<generation>-<timestamp>.log`, the CLI's own `--debug-file`). Unset writes none. Turn it on to catch a Calandria tool call the CLI answers itself ("interrupted before a result was received"); the logs are verbose and never pruned, so clear the directory after |
 | `PTY_PORT` | `3001` | Port of the node-pty terminal sidecar |
 | `PTY_HOST` | `127.0.0.1` | Bind address of the sidecar and the proxy's upstream. Keep it on loopback; the browser never connects directly, since `server.js` proxies `/pty` to it |
 | `CALANDRIA_PTY_SHELL` | *(empty)* | The shell every terminal tab spawns. Empty falls back to `$SHELL`, then a platform default (POSIX: first of `/bin/zsh`, `/bin/bash`, `/bin/sh` that exists; Windows: `pwsh.exe`/`powershell.exe` on PATH, else `%COMSPEC%`). Set this if the terminal drawer can't spawn a shell, or to get a different one than your login shell |
@@ -504,34 +501,51 @@ Verify the copy (the database and `projects/` are there) before
 | `PUBLIC_BASE_URL` | *(empty)* | The origin you reach the app on (e.g. `https://calandria.example.com` behind a tunnel); the client builds its `ws(s)://` terminal URL from it. Empty means the browser's own origin, which works for any single-hostname deployment. Set it if your proxy rewrites `Host`, which would otherwise make the origin gate's `Origin` vs `Host` check disagree |
 | `CALANDRIA_ALLOWED_ORIGINS` | *(empty)* | Exact comma-separated `http(s)` origins allowed in no-login local mode, for intentional LAN or reverse-proxy access. Loopback origins and `PUBLIC_BASE_URL` are already accepted. Not a substitute for authentication |
 | `VAPID_SUBJECT` | *(derived)* | Contact for the browsers' push services (Web Push VAPID subject): a `mailto:` or `https:` URL. Defaults to `PUBLIC_BASE_URL` when that's https, else `mailto:admin@localhost`. iOS rejects `localhost` with `403 BadJwtToken`, so set a real https origin or `mailto:` for iOS push |
-| `VAPID_PRIVATE_KEY` | *(minted)* | Base64url raw P-256 scalar signing every push. Empty = minted on first use and kept at `<CALANDRIA_DB_DIR>/vapid.json`; subscriptions are bound to it, so back it up with the database |
+| `VAPID_PRIVATE_KEY` | *(minted)* | Base64url raw P-256 scalar signing every push. Empty means minted on first use and kept at `<CALANDRIA_DB_DIR>/vapid.json`; subscriptions are bound to it, so back it up with the database |
 | `CALANDRIA_PTY_ALLOW_REMOTE` | *(off)* | Set `1` to let the pty sidecar accept off-machine peers. Otherwise it requires a loopback peer, since `server.js` proxies to it from the same host. Only for a split deployment; anything that reaches the sidecar gets a shell |
 | `CF_ACCESS_TEAM_DOMAIN` | *(empty)* | Cloudflare Zero Trust team domain (e.g. `your-team.cloudflareaccess.com`); see above |
 | `CF_ACCESS_AUD` | *(empty)* | The Access application's `aud` tag the JWT must carry (comma-separable) |
 | `SERVICE_TOKEN` | *(empty)* | Shared secret for the health/version/usage/metrics routes and the in-container callers (health probe, service restore, agent-tool bridge); see above. The image mints a per-boot one under Access if empty |
 | `CALANDRIA_FLEET_TOKEN` | *(empty)* | Optional fleet-wide read token for the same read-only routes (`/api/version`, `/api/instance/usage`, `/api/instance/metrics`, `GET /api/instance/scheduler`), so one dashboard can scrape many instances with one secret. Never accepted on mutating endpoints |
 | `CALANDRIA_DB_DIR` | `~/.calandria` | Directory holding `calandria.db` (SQLite app data). Absolute path; created on first run |
-| `CALANDRIA_DB_LOCK` | `on` | The single-instance boot lock. `off` lets a second process start against a database another one already owns (unsupported: it's the exact corruption the lock exists to prevent). See **One process per database** below |
+| `CALANDRIA_DB_LOCK` | `on` | The single-instance boot lock. `off` lets a second process start against a database another one already owns; unsupported, and exactly the corruption the lock exists to prevent. See **One process per database** below |
 | `CALANDRIA_DB_LOCK_WAIT_MS` | `10000` | How long boot retries the lock before giving up. Covers a predecessor that is still shutting down; a crashed one releases instantly |
 | `CALANDRIA_WORKTREES_DIR` | `~/.calandria/worktrees` | Where per-task git worktrees are created. Must live outside any project repo |
 | `CALANDRIA_PROJECTS_DIR` | `~/projects` | Where **Clone from GitHub** puts cloned repos |
-| `CALANDRIA_MAX_UPLOAD_MB` | `25` | Largest single chat attachment. Any file type may be attached; it is staged under `<CALANDRIA_DB_DIR>/uploads/<taskId>` and only its path goes into the message, so the cap bounds disk and the server's heap rather than the model's context |
+| `CALANDRIA_MAX_UPLOAD_MB` | `25` | Largest single chat attachment. Any file type may be attached; it is staged under `<CALANDRIA_DB_DIR>/uploads/<taskId>` and only its path goes into the message, so the cap bounds disk and the server's heap; it does not limit the model's context |
 | `CALANDRIA_BACKUP_DIR` | `<CALANDRIA_DB_DIR>/backups` | Where `npm run backup` writes its archives. Read by [`scripts/backup.mjs`](../scripts/backup.mjs), not by the app; point it at a different volume than the one being backed up. See **Backup & restore** below |
 | `CALANDRIA_SERVICE_PORT_BASE` | `4300` | Base of the deterministic per-project port block. Each project is assigned `base + slot` at creation, injected as `PORT` into its supervised services and PTY |
 | `CALANDRIA_SERVICE_LOG_LINES` | `1500` | Per-service in-memory log ring buffer (lines) kept for the Services drawer |
-| `CALANDRIA_SERVICE_HOSTS` | *(off)* | Set `1` to serve each service on a public hostname `<slug>--<appHost>` with per-service visibility (private / shared link / public). Also needs `PUBLIC_BASE_URL` + wildcard DNS/TLS |
-| `CALANDRIA_FEATURE_SERVICES` | `1` (on) | The managed-services feature (Services drawer, supervisor, persisted registry with boot auto-restart + orphan reaping). Set `0` to disable |
+| `CALANDRIA_SERVICE_HOSTS` | *(off)* | Set `1` to serve each service on a public hostname `<slug>--<appHost>` with per-service visibility (private / shared link / public). Also needs `PUBLIC_BASE_URL` plus wildcard DNS/TLS |
+| `CALANDRIA_FEATURE_SERVICES` | `1` (on) | The managed-services feature (Services drawer, supervisor, persisted registry with boot auto-restart plus orphan reaping). Set `0` to disable |
 | `CLAUDE_CLI_PATH` | `~/.local/bin/claude` | Path to the logged-in `claude` CLI (pinned since Next's server may run with a trimmed `PATH`). On Windows: `%USERPROFILE%\.local\bin\claude.exe`, then `PATH` (point at a real `.exe`, not an npm `.cmd` shim) |
 | `CALANDRIA_LOCAL_MODEL_BASE_URL` | `http://localhost:11434` | Where a project's **Model provider → Local model** preset and `suggest_task`'s `provider: "local"` point by default: an Ollama or LM Studio server. A Docker instance reaches the host's Ollama at `http://host.docker.internal:11434`. Only the default is instance-wide; the preset copies the URL into the project. See [Local models](AGENTS.md#local-models) |
 | `CALANDRIA_GH_BIN` | *(auto-resolve)* | Path to the GitHub CLI (`gh`). Empty means bare `gh` if the server's `PATH` resolves it, else a probe of the usual install dirs (linuxbrew/Homebrew, `/usr/local/bin`, snap, `~/.local/bin`; Windows: winget Links, `%ProgramFiles%\GitHub CLI`, scoop shims). The server never reads a shell profile, so set this if the probe misses your `gh` |
+| `GEMINI_API_KEY` | *(unset)* | Google AI Studio key for the Antigravity driver, used when `agy`'s own subscription sign-in can't complete (for example inside a container with no keyring). Bills Google's API instead of an Antigravity subscription |
 | `CALANDRIA_PR_STALE_MS` | `60000` | How long a task's PR state counts as fresh. Opening a task, the chip's Refresh button and the create-PR trigger all skip `gh pr view` inside this window |
 | `CALANDRIA_PR_POLL_MS` | `300000` | How often the background sweep re-reads tasks whose PR is still open. `0` disables the sweep, leaving the on-open and explicit-Refresh triggers. The sweep stops itself when no PR is open and skips a pass when no browser tab is watching |
 | `CALANDRIA_PR_POLL_BATCH` | `5` | Most PRs refreshed per sweep (one `gh pr view` each, oldest-synced first) |
 | `CALANDRIA_CI_LOG_TAIL_LINES` | `200` | Lines of a failed job's log the **Fix CI** button seeds its turn with, per failing check. `gh run view --log-failed` already drops the green steps, but only the end of a failing suite says what broke |
+| `CALANDRIA_PERMISSION_PROMPT_TIMEOUT_MS` | `14400000` (4h) | How long a permission prompt parks waiting for a decision while at least one browser tab is watching, before it denies the call. `0` parks indefinitely, like an unanswered question card |
+| `CALANDRIA_PERMISSION_UNATTENDED_MS` | `45000` (45s) | The same deadline when nobody is watching: an auto-started task, or any turn running while the app is closed. `0` always uses the attended timeout above |
+| `CALANDRIA_ALLOW_API_KEY_ENV` | *(off)* | Keep an `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `OPENAI_API_KEY` found in the launch environment instead of stripping it at boot. Turns then bill per-token instead of using a connected subscription login |
 | `CALANDRIA_SCHEDULER` | `on` | Master switch for the schedule ticker. `off` stops this instance from ever starting scheduled work on its own; the worktree sweep and retention prune still run on the same ticker if either of those is on |
 | `CALANDRIA_SCHEDULE_TICK_MS` | `30000` | How often the ticker wakes to check for due firings |
 | `CALANDRIA_SCHEDULE_CATCHUP_MS` | `14400000` (4h) | How late a missed firing may still run. Past this it's recorded `missed`, never run; `0` disables catch-up entirely |
 | `CALANDRIA_SCHEDULE_PROBE_MS` | `20000` | Bound on the fire-time slash-command check, which spawns the agent CLI inside the ticker's single-flight sweep. An unbounded check would wedge every schedule on the instance |
+| `CALANDRIA_RETENTION` | `on` | Master switch for the retention sweep of finished tasks' database records. `off`/`0`/`false`/`no` keeps everything forever |
+| `CALANDRIA_RETENTION_DAYS` | `180` | How long a finished task keeps its own record: transcript, review comments, `/clear`-retired sessions, and uploaded attachments. `0` keeps them forever |
+| `CALANDRIA_USAGE_RETENTION_DAYS` | `400` | How long the spend rows (`task_usage`, `task_merges`, `internal_usage`) live. Longer than the window above because Insights reads 180 days back and needs the same width again for prior-period deltas. `0` keeps them forever |
+| `CALANDRIA_RETENTION_SWEEP_MS` | `21600000` (6h) | How often the retention sweep runs. Also paces the worktree sweep and the disk-usage check below, on the same ticker |
+| `CALANDRIA_RETENTION_VACUUM` | *(off)* | Run a full `VACUUM` after a sweep that deleted rows, to shrink `calandria.db` itself. A checkpoint alone reclaims the WAL but not the main file; `VACUUM` rewrites the whole database under a write lock, so it's opt-in |
+| `CALANDRIA_WORKTREE_RETENTION` | *(off)* | Master switch for the worktree sweep, which reclaims git worktrees of finished, cold tasks on a shorter clock than the table prune above. Set `1`/`on`/`true`/`yes` to enable |
+| `CALANDRIA_WORKTREE_RETENTION_DAYS` | `14` | How long a finished task keeps its git worktree once the sweep is on. `0` keeps them forever. The sweep never touches a worktree with uncommitted edits or commits the base branch hasn't absorbed, however old, and it never deletes the branch |
+| `CALANDRIA_WORKTREES_DISK_WARN_GB` | `20` | Warn in the server log, and on `GET /api/instance/scheduler`, when the worktrees directory crosses this size. Runs whether or not the sweep above is enabled. `0` disables it |
+| `CALANDRIA_METRICS_SIZE_TTL_MS` | `60000` (1m) | How long `/api/instance/metrics` reuses one measurement of the worktrees directory. That measurement runs `du` over every task checkout on the box, so a short scrape interval would otherwise walk it repeatedly; raise this if you carry many large worktrees. `0` measures on every scrape |
+
+Two variables above (`CALANDRIA_ENV_FILE`, and the desktop app's own instance
+list) are read by the desktop shell only, not by `server.js`; see
+[`DESKTOP_APP.md`](DESKTOP_APP.md) for those.
 
 Example: relocate an instance entirely via env.
 
@@ -572,7 +586,7 @@ mkdir -p ~/.calandria
 mv ~/.zen-orchestrator/orchestrator.db     ~/.calandria/calandria.db
 mv ~/.zen-orchestrator/orchestrator.db-wal ~/.calandria/calandria.db-wal 2>/dev/null || true
 mv ~/.zen-orchestrator/orchestrator.db-shm ~/.calandria/calandria.db-shm 2>/dev/null || true
-# The boot lock is a pure mutex holding no data: delete it rather than move it.
+# The boot lock is a pure mutex holding no data: delete it, don't move it.
 rm -f ~/.zen-orchestrator/orchestrator.lock.*
 # Anything else the app keeps beside the database (API keys, VAPID keys, uploads):
 mv ~/.zen-orchestrator/* ~/.calandria/ 2>/dev/null || true
@@ -580,7 +594,7 @@ mv ~/.zen-orchestrator/* ~/.calandria/ 2>/dev/null || true
 ```
 
 Move the `-wal`/`-shm` files together with the database, or checkpoint them
-away first; a stale `-wal` left behind next to a moved `.db` loses the most
+away first: a stale `-wal` left behind next to a moved `.db` loses the most
 recent writes. This recipe doesn't cover per-task worktrees: either leave
 `CALANDRIA_WORKTREES_DIR` pointing at the old directory, or relocate it
 yourself and run `git worktree repair <new-path>/<task-id>` inside each
@@ -589,8 +603,7 @@ affected project repo.
 ## Backup & restore
 
 `npm run backup` ([`scripts/backup.mjs`](../scripts/backup.mjs)) takes a hot
-backup: run it with the app up, no downtime. The database half isn't a plain
-file copy; that's the point of the script.
+backup: run it with the app up, no downtime.
 
 ### Never `cp` a live database
 
@@ -602,13 +615,13 @@ pair mid-write can tear it outright.
 The script runs `VACUUM INTO` instead: one read transaction that writes a
 self-contained, already-checkpointed copy with no `-wal`/`-shm` sidecars to
 move. It then runs `PRAGMA integrity_check` on the snapshot before calling
-the backup done (`tests/backup.test.ts` pins this against a naive copy of the
-same moment).
+the backup done (`tests/backup.test.ts` pins this against a naive copy of
+the same moment).
 
 The backup connection is read-only and takes no application lock: the
-single-instance boot mutex is a separate `*.lock.db` file, so an out-of-band
-reader can work while the app owns the database. A backup never stops the
-app from booting.
+single-instance boot mutex is a separate `*.lock.db` file, so an
+out-of-band reader can work while the app owns the database. A backup never
+stops the app from booting.
 
 ### What state lives where
 
@@ -624,31 +637,32 @@ app from booting.
 | Cloned project repos | `CALANDRIA_PROJECTS_DIR` (default `~/projects`) | **opt-in** (`--projects`) |
 | Your own repos | wherever you told the project they are | never (they're yours) |
 
-Antigravity's subscription token is NOT in that set — it lives in the OS keyring rather than in
-a file, so a restored instance signs in again (or uses `GEMINI_API_KEY`, which Calandria stores
-in its own database and the database backup does carry).
+Antigravity's subscription token is not in that set: it lives in the OS
+keyring, not in a file, so a restored instance signs in again (or
+uses `GEMINI_API_KEY`, which Calandria stores in its own database and the
+database backup does carry).
 
 `db-dir/` is captured by exclusion (everything in the DB dir that isn't a
-SQLite file, the lock pair, the backup directory, or a nested worktrees dir),
-so anything added beside the database later is picked up automatically.
+SQLite file, the lock pair, the backup directory, or a nested worktrees
+dir), so anything added beside the database later is picked up
+automatically.
 
-The last two rows are opt-in since they're reconstructible and are what turn
-a nightly backup into a disk problem: a worktree is a checkout of a branch
-already in the project repo, and a clone is a clone. Skipping them only
-costs a task's uncommitted working-tree edits.
+The last two rows are opt-in: they are reconstructible (a worktree is a
+checkout of a branch already in the project repo, and a clone is a clone),
+and including them by default would turn a nightly backup into a disk
+problem. Skipping them only costs a task's uncommitted working-tree edits.
 
 **Docker vs local.** In the container, everything above lives in one named
 volume mounted at `/home/calandria`. Running locally, the same state is
-spread across your
-`$HOME` (`~/.calandria`, `~/projects`, `~/.claude`, `~/.codex`), and only the
-env vars say where; the manifest records the resolved paths.
+spread across your `$HOME` (`~/.calandria`, `~/projects`, `~/.claude`,
+`~/.codex`), and only the env vars say where; the manifest records the
+resolved paths.
 
 The database file name is resolved, not assumed: a fresh install writes
 `calandria.db`, while an install that predates the rename keeps
 `orchestrator.db` and is never migrated
-([above](#upgrading-from-the-pre-rename-default-paths)). The script asks
-`lib/storage.mjs` the same question the app asks at boot, so it backs up
-whichever database your instance is actually using, under its real name.
+([above](#upgrading-from-the-pre-rename-default-paths)). The script backs
+up whichever database your instance is actually using, under its real name.
 
 ### Hot backup
 
@@ -668,15 +682,15 @@ docker exec -u calandria calandria-alice npm run backup -- --out /home/calandria
 | `--quiet` | Print only the resulting path on stdout |
 
 The archive is a single `.tar.gz` holding `manifest.json`, `db/`, `db-dir/`,
-and (unless skipped) `agent-login/`. The manifest records the format and app
-version, resolved source paths, the snapshot's SHA-256 and `user_version`,
-and row counts, enough to tell two backups apart and reconcile absolute
-paths on restore. On a 37 MB database with the app running, the run took
-1.2 s and produced an 8.5 MB archive.
+and (unless skipped) `agent-login/`. The manifest records the format and
+app version, resolved source paths, the snapshot's SHA-256 and
+`user_version`, and row counts, enough to tell two backups apart and
+reconcile absolute paths on restore. On a 37 MB database with the app
+running, the run took 1.2 s and produced an 8.5 MB archive.
 
-**It contains credentials.** The file is written `0600` on POSIX. On Windows a
-POSIX mode is a no-op, so the file inherits the ACL of the directory it lands
-in. Put it somewhere private.
+**It contains credentials.** The file is written `0600` on POSIX. On
+Windows a POSIX mode is a no-op, so the file inherits the ACL of the
+directory it lands in. Put it somewhere private.
 
 Nightly, with your own retention (there is no built-in pruning of old
 archives):
@@ -699,13 +713,13 @@ docker compose -p calandria-alice start
 ```
 
 This captures worktrees and project clones too, so it's much larger and
-costs downtime. Reach for it when you want a byte-for-byte image of the whole
-instance, not just its state.
+costs downtime. Reach for it when you want a byte-for-byte image of the
+whole instance, not just its state.
 
 ### Restore
 
-This procedure was tested end to end: hot backup, restore into a scratch
-directory, verification boot, contents checked through the API.
+This procedure covers a hot backup restored into a scratch directory, with a
+verification boot afterward.
 
 1. **Stop the app.** A restore that races a running instance replaces the
    database file out from under it; the boot lock can't save you from that.
@@ -735,10 +749,10 @@ directory, verification boot, contents checked through the API.
    cp -a db-dir/.     "$DBDIR"/             # uploads, vapid.json, any API key
    ```
 
-   If the backup's `contents.db` is `db/orchestrator.db`, this is the moment
-   to leave the old name behind: copy it to `calandria.db` instead. Nothing
-   but `lib/storage.mjs` cares about the name, so there's no other reference
-   to fix up.
+   If the backup's `contents.db` is `db/orchestrator.db`, this is the
+   moment to leave the old name behind: copy it to `calandria.db` instead.
+   Nothing but the app's storage resolver cares about the name, so there's
+   no other reference to fix up.
 
 4. **Put the agent logins back** (skip if the target is already logged in):
 
@@ -769,13 +783,13 @@ Expect three things from a restored instance; none are faults:
   `tasks.worktree_path` are absolute. Restoring onto the same layout (the
   container case, everything under `/home/calandria`) needs nothing.
   Restoring onto a different layout means editing `projects.repo_path` to
-  point at the repos' new home; worktrees self-heal, since every launch path
-  re-cuts a missing one.
+  point at the repos' new home; worktrees self-heal, since every launch
+  path re-cuts a missing one.
 - **Worktrees you didn't archive are gone, but that's recoverable.** A task
-  whose checkout is missing gets a fresh one cut from its branch on the next
-  turn. Uncommitted edits sitting in the old worktree aren't in the backup,
-  the argument for `--worktrees` if you run tasks that idle for days with
-  work in progress.
+  whose checkout is missing gets a fresh one cut from its branch on the
+  next turn. Uncommitted edits sitting in the old worktree aren't in the
+  backup, the argument for `--worktrees` if you run tasks that idle for
+  days with work in progress.
 
 ## Metrics
 
@@ -789,8 +803,8 @@ outside: is it doing work, and is it eating the disk? It's always on.
 Auth uses the same read-only service-token exemption as `/api/version` and
 `/api/instance/usage`. In no-login local mode, a loopback scrape needs
 nothing. Under Cloudflare Access, a scraper has no JWT, so it presents
-`SERVICE_TOKEN` or `CALANDRIA_FLEET_TOKEN` (one secret for a dashboard polling
-every box).
+`SERVICE_TOKEN` or `CALANDRIA_FLEET_TOKEN` (one secret for a dashboard
+polling every box).
 
 ```bash
 # local mode, from the host
@@ -803,31 +817,31 @@ curl -s -H "x-service-token: $CALANDRIA_FLEET_TOKEN" \
 
 | Series | Type | What it is |
 |-|-|-|
-| `calandria_build_info{version,sha}` | gauge | Always `1`; read the labels. The same provenance `/api/version` reports, so a change in behaviour can be lined up against a deploy |
+| `calandria_build_info{version,sha}` | gauge | Always `1`; read the labels. The same provenance `/api/version` reports, so a change in behavior can be lined up against a deploy |
 | `calandria_process_start_time_seconds` | gauge | When this process booted. The counters below reset here; graph it alongside them |
 | `calandria_turns_started_total` | counter | Agent turns started |
 | `calandria_turns_finished_total{outcome}` | counter | Turns that ended, by outcome: `ok`, `failed`, `stopped` (a human pressed Stop), `interrupted` (the agent session never opened, so the turn produced nothing) |
-| `calandria_turns_active` | gauge | Turns running right now, read from the in-process registry rather than `tasks.running`, the only source that's correct right after a crash |
+| `calandria_turns_active` | gauge | Turns running right now, read from the in-process registry, not the tasks table; that registry is the only source that's correct right after a crash |
 | `calandria_db_size_bytes{file}` | gauge | `calandria.db` and its `wal` / `shm` sidecars, separately |
 | `calandria_worktrees_size_bytes` | gauge | Everything under `CALANDRIA_WORKTREES_DIR` |
 | `calandria_schedule_runs{status}` | gauge | Rows in the schedule run ledger by status (`succeeded`, `failed`, `missed`, `skipped_overlap`, `claimed`, `running`, `stopped`, `interrupted`) |
 
-Two sharp edges worth knowing before you alert on these:
+Two sharp edges before you alert on these:
 
 **The turn counters are per-process.** They live in memory and reset on
 restart, so a raw `calandria_turns_started_total` panel sawtooths on every
 deploy. Graph rates, not totals, and keep
 `calandria_process_start_time_seconds` on the same board.
 
-**`calandria_schedule_runs` is a gauge, not a counter.** The ledger is capped
-per schedule, so these numbers fall as old runs age out. It answers "is
-anything stuck or failing right now", not "how many runs have ever failed."
-Read as a counter, a prune looks like a negative rate.
+**`calandria_schedule_runs` is a gauge, not a counter.** The ledger is
+capped per schedule, so these numbers fall as old runs age out. It answers
+"is anything stuck or failing right now", not "how many runs have ever
+failed." Read as a counter, a prune looks like a negative rate.
 
-Every label a metric can take is emitted on every scrape, including zeros, so
-an alert on `{outcome="failed"}` has data before the first failure. The one
-series that can be absent is `calandria_worktrees_size_bytes`, until its
-first successful measurement; reading `0` there instead would resolve a
+Every label a metric can take is emitted on every scrape, including zeros,
+so an alert on `{outcome="failed"}` has data before the first failure. The
+one series that can be absent is `calandria_worktrees_size_bytes`, until
+its first successful measurement; reading `0` there instead would resolve a
 firing alert without a byte reclaimed.
 
 ### Scraping it
@@ -897,36 +911,37 @@ waits on that walk once, right after a restart.
   default, or plan (a Codex task maps the same five modes onto its sandbox
   and approval policy; docs/AGENTS.md has the table). Anything the agent isn't pre-approved for parks on a
   permission card in the transcript, with Allow once / Always allow /
-  Decline. Read-only tools pass silently; "Always allow" remembers a command
-  for that project and is revocable in Settings → Run defaults → Remembered
-  approvals, which also takes a rule typed in ahead of time through the same
-  Bash-only, prefix-checked policy. A prompt nobody answers denies itself
-  (`CALANDRIA_PERMISSION_UNATTENDED_MS` when no tab is open,
-  `CALANDRIA_PERMISSION_PROMPT_TIMEOUT_MS` when one is), so an auto-started
-  task can't wedge a turn overnight. Calandria is a control layer, not a
+  Decline. Read-only tools pass silently; "Always allow" remembers a
+  command for that project and is revocable in Settings → Run defaults →
+  Remembered approvals, which also takes a rule typed in ahead of time
+  through the same Bash-only, prefix-checked policy. A prompt nobody
+  answers denies itself (`CALANDRIA_PERMISSION_UNATTENDED_MS` when no tab is
+  open, `CALANDRIA_PERMISSION_PROMPT_TIMEOUT_MS` when one is; both default
+  values are in the Configuration table above), so an auto-started task
+  can't wedge a turn overnight. Calandria is a control layer, not a
   sandbox; the isolated worktree is the real security boundary.
-- **One process per database:** Calandria runs single-process; boot clears
-  what a crash left behind (running flags, queued follow-ups, unanswered
-  permission cards, in-flight schedule runs). A second process on the same
+- **One process per database:** Calandria runs single-process. Boot clears
+  what a crash left behind: running flags, queued follow-ups, unanswered
+  permission cards, in-flight schedule runs. A second process on the same
   `calandria.db` would run that recovery pass against a live instance, so
-  the app takes a lock at boot and refuses to start if another process holds
-  it, naming the holder's pid and host. Crash recovery only runs in the
-  process that owns the database. The lock is a kernel file lock on a
+  the app takes a lock at boot and refuses to start if another process
+  holds it, naming the holder's pid and host. Crash recovery only runs in
+  the process that owns the database. The lock is a kernel file lock on a
   separate `calandria.lock.db`, named after the database it guards (a
   pre-rename `orchestrator.db` is guarded by `orchestrator.lock.db`), so a
   killed instance releases it immediately and a read-only
   `sqlite3 calandria.db` inspection is unaffected. Two instances need two
   `CALANDRIA_DB_DIR`s; `CALANDRIA_DB_LOCK=off` disables the check and is
-  unsupported. Limit: the lock only coordinates processes sharing a kernel,
-  so two containers mounting one volume may not see each other's locks, but
-  that's already unsafe, since SQLite's WAL mode needs shared memory between
-  its users. Use one instance per volume.
-- **Parallel quota:** every concurrent task spends your rate limit: N tasks
+  unsupported. The lock only coordinates processes sharing a kernel, so two
+  containers mounting one volume may not see each other's locks; that
+  configuration is already unsafe, since SQLite's WAL mode needs shared
+  memory between its users. Use one instance per volume.
+- **Parallel quota:** every concurrent task spends your rate limit. N tasks
   use roughly N times the token rate against one subscription.
 - **Terminal:** the `node-pty` sidecar stays bound to `127.0.0.1` only. The
-  browser reaches it through the app origin at `/pty`, so remote access goes
-  through your one tunneled hostname. `postinstall` restores the exec bit npm
-  can strip off node-pty's prebuilt helper.
+  browser reaches it through the app origin at `/pty`, so remote access
+  goes through your one tunneled hostname. `postinstall` restores the exec
+  bit npm can strip off node-pty's prebuilt helper.
 - **Keep `ANTHROPIC_API_KEY` unset** unless you chose the wizard's API-key
   path. If set, it takes precedence and bills per-use instead of using your
   subscription.
@@ -936,76 +951,74 @@ waits on that walk once, right after a restart.
   settings table. On Linux and macOS that file is mode `0600`. On Windows,
   where a POSIX mode is a no-op, it's restricted with an ACL instead
   (`icacls <file> /inheritance:r /grant:r <you>:(R,W)`), leaving only your
-  account with access. If that ACL call fails (no `icacls`, an unresolvable
-  account, a filesystem with no ACLs such as FAT32 or a mapped network
-  drive), the key is deleted and the save returns an error rather than
-  leaving a credential at permissions nobody checked; in that case, start the
-  app with `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` set and
-  `CALANDRIA_ALLOW_API_KEY_ENV=1` instead, so nothing is written to disk. The
-  VAPID private key (`vapid.json`) is written the same way but fails open: a
-  failed ACL logs a warning and keeps the key rather than disabling push
-  notifications, since you never pasted it in. Set `VAPID_PRIVATE_KEY` to
-  keep it off disk. On every platform, a local administrator or root can
-  take ownership regardless; this protects against other users, not the
-  machine's owner.
+  account with access. If that ACL call fails (no `icacls`, an
+  unresolvable account, a filesystem with no ACLs such as FAT32 or a
+  mapped network drive), the key is deleted and the save returns an error
+  instead of leaving a credential at permissions nobody checked. In that
+  case, start the app with `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` set and
+  `CALANDRIA_ALLOW_API_KEY_ENV=1` instead, so nothing is written to disk.
+  The VAPID private key (`vapid.json`) is written the same way but fails
+  open: a failed ACL logs a warning and keeps the key instead of disabling
+  push notifications. Set `VAPID_PRIVATE_KEY` to keep it off disk. On every
+  platform, a local administrator or root can take ownership regardless;
+  this protects against other users, not the machine's owner.
 - **Retention:** the database isn't append-only forever. A sweep rides the
-  schedule ticker and ages out the record of finished tasks (terminal, idle,
-  not snoozed, no queued follow-up, no in-flight scheduled run). A live task
-  is never touched, however old. Two windows, both in days:
-  `CALANDRIA_RETENTION_DAYS` (default 180) covers a finished task's own
-  record (transcript, review comments, `/clear`-retired sessions, uploaded
-  attachments); `CALANDRIA_USAGE_RETENTION_DAYS` (default 400) covers the
-  spend rows (`task_usage`, `task_merges`, `internal_usage`); it's longer
-  because Insights reads 180 days back and needs the same width again for
-  prior-period deltas. A sweep leaves an aged-out task with an empty
+  schedule ticker and ages out the record of finished tasks (terminal,
+  idle, not snoozed, no queued follow-up, no in-flight scheduled run). A
+  live task is never touched, however old. The first sweep runs on the tick
+  after boot. See `CALANDRIA_RETENTION`,
+  `CALANDRIA_RETENTION_DAYS`, `CALANDRIA_USAGE_RETENTION_DAYS`,
+  `CALANDRIA_RETENTION_SWEEP_MS`, and `CALANDRIA_RETENTION_VACUUM` in the
+  Configuration table above. A sweep leaves an aged-out task with an empty
   transcript (its `/clear` summaries survive, so it stays resumable) and an
-  all-time cost of $0.00. Set `CALANDRIA_RETENTION=off` to keep everything
-  forever, or either window to `0` to keep just that half. Cadence is
-  `CALANDRIA_RETENTION_SWEEP_MS` (default 6h); the first sweep runs on the
-  tick after boot. Anything deleted is named in one server log line.
+  all-time cost of $0.00. Anything deleted is named in one server log line.
 - **Reclaiming the disk:** a sweep that deletes anything follows with
-  `PRAGMA wal_checkpoint(TRUNCATE)`, since in WAL mode the deletes themselves
-  land in `calandria.db-wal` and grow it, so without a checkpoint a big prune
-  raises the on-disk footprint before it falls. A checkpoint can't shrink
-  `calandria.db` itself: freed pages go on the freelist for reuse rather than
-  being returned to the filesystem, so the file plateaus instead of
-  shrinking. Only `VACUUM` shrinks it (a write-locked rewrite of the whole
-  database, seconds on a small database, a visible stall on a large one), so
-  it's opt-in: set `CALANDRIA_RETENTION_VACUUM=1` to run one after any sweep
-  that deletes rows, or run `VACUUM;` yourself against a stopped instance.
-- **Worktrees are the bigger disk story**, measured in gigabytes rather than
-  rows, and have their own switch. Every task runs in its own git worktree
-  (a full checkout of the project repo) under `CALANDRIA_WORKTREES_DIR`.
-  **The sweep** (`CALANDRIA_WORKTREE_RETENTION=on`, off by default) rides the
-  same ticker and reclaims checkouts of finished, cold tasks on a shorter
-  window: `CALANDRIA_WORKTREE_RETENTION_DAYS`, default 14 (`0` keeps them
-  forever). It reuses the retention predicate above and skips, names in the
-  log, and never touches a worktree with uncommitted edits or commits the
-  base branch hasn't absorbed, however old. It never deletes a branch, so a
-  reclaimed task re-cuts its checkout on the next turn and keeps its diff.
-  It's opt-in because the retention windows above (180/400 days) are longer
+  `PRAGMA wal_checkpoint(TRUNCATE)`, since in WAL mode the deletes
+  themselves land in `calandria.db-wal` and grow it, so without a
+  checkpoint a big prune raises the on-disk footprint before it falls. A
+  checkpoint can't shrink `calandria.db` itself: freed pages go on the
+  freelist for reuse; they are not returned to the filesystem, so the
+  file plateaus instead of shrinking. Only `VACUUM` shrinks it (a
+  write-locked rewrite of the whole database, seconds on a small database,
+  a visible stall on a large one), so it's opt-in: set
+  `CALANDRIA_RETENTION_VACUUM=1` to run one after any sweep that deletes
+  rows, or run `VACUUM;` yourself against a stopped instance.
+- **Worktrees are the bigger disk story**, counted in gigabytes, and have
+  their own switch. Every task runs in its own git
+  worktree (a full checkout of the project repo) under
+  `CALANDRIA_WORKTREES_DIR`. **The sweep**
+  (`CALANDRIA_WORKTREE_RETENTION=on`, off by default) rides the same
+  ticker and reclaims checkouts of finished, cold tasks on a shorter
+  window than the table prune above: `CALANDRIA_WORKTREE_RETENTION_DAYS`,
+  default 14 (`0` keeps them forever). It skips, and names in the log, any
+  worktree with uncommitted edits or commits the base branch hasn't
+  absorbed, however old, and it never deletes a branch, so a reclaimed
+  task re-cuts its checkout on the next turn and keeps its diff. It's
+  opt-in because the retention windows above (180/400 days) are longer
   than most instances have existed, and a window in weeks would start
   removing checkouts on the first tick after an upgrade nobody asked for.
-  The manual path (Settings → Storage, which can also discard unmerged work
-  after you acknowledge it) works either way.
-  **Landing is the other trigger, and it isn't on this clock at all.** When a
-  task's PR reports merged, or its branch is merged locally, the session
-  header's **Reclaim** button (or the project's `auto_reclaim` setting, off by
-  default) catches the local base branch up with origin, removes the checkout,
-  deletes the *local* branch and marks the task done. Unlike the sweep it does
-  delete a branch — the diff it carried is in the base branch by then — and
-  like the sweep it never discards uncommitted edits, or commits the remote
-  never received, without an explicit acknowledgement nobody can give
-  unattended. See [Features](FEATURES.md).
-  **The disk warning** runs whether or not the sweep does: when the
-  worktrees directory crosses `CALANDRIA_WORKTREES_DISK_WARN_GB` (default 20,
-  `0` disables), a line goes to the server log each pass while it's over, the
-  reading is served on `GET /api/instance/scheduler` under `worktrees`, and
-  Settings → Storage shows it above the reclaim list. The same directory is
-  also the `calandria_worktrees_size_bytes` metrics gauge; see
-  [Metrics](#metrics). The total includes in-flight checkouts, which nothing
-  here touches, so on a busy instance the honest reading might be "40 GB of
-  worktrees, 6 GB reclaimable"; the rest is answered by finishing or deleting
-  tasks, not by a sweep.
-- **Delete is hard delete:** a removed project's chat history is gone (your
-  code on disk is untouched).
+  The manual path (Settings → Storage, which can also discard unmerged
+  work after you acknowledge it) works either way.
+  **Landing is the other trigger, and it isn't on this clock at all.**
+  When a task's PR reports merged, or its branch is merged locally, the
+  session header's **Reclaim** button (or the project's `auto_reclaim`
+  setting, off by default) catches the local base branch up with origin,
+  removes the checkout, deletes the *local* branch, and marks the task
+  done. Unlike the sweep it does delete a branch, since the diff it
+  carried is in the base branch by then, and like the sweep it never
+  discards uncommitted edits or commits the remote never received without
+  an explicit acknowledgement nobody can give unattended. See
+  [Features](FEATURES.md).
+  **The disk warning** runs whether or not the sweep does: see
+  `CALANDRIA_WORKTREES_DISK_WARN_GB` in the Configuration table above.
+  When it fires, a line goes to the server log each pass while the
+  directory stays over the threshold, the reading is served on
+  `GET /api/instance/scheduler` under `worktrees`, and Settings → Storage
+  shows it above the reclaim list. The same directory is also the
+  `calandria_worktrees_size_bytes` metrics gauge; see
+  [Metrics](#metrics). The total includes in-flight checkouts, which
+  nothing here touches, so on a busy instance the honest reading might be
+  "40 GB of worktrees, 6 GB reclaimable"; the rest is answered by
+  finishing or deleting tasks, not by a sweep.
+- **Delete is hard delete:** a removed project's chat history is gone
+  (your code on disk is untouched).
