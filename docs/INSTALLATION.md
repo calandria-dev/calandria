@@ -60,8 +60,8 @@ Prerequisites:
 - **Node.js 22 or newer.** `.nvmrc` pins 22, the version CI runs; newer lines, including
   *Current*, work too. Both native modules are N-API and carry their win32 binaries inside
   the npm package, so nothing compiles at install time and Visual Studio build tools aren't
-  required. `.npmrc` sets `engine-strict`, so `npm install` refuses a Node below the floor
-  with one line instead of half-installing.
+  required. `.npmrc` sets `engine-strict`, so `npm install` fails immediately with one clear
+  line on a Node below the floor.
 
 Set git's long-path support once for the machine before you start:
 
@@ -99,8 +99,8 @@ Set the variable to choose something else, Git Bash for instance:
 CALANDRIA_PTY_SHELL=C:\Program Files\Git\bin\bash.exe
 ```
 
-**Managed-service commands are `cmd.exe` command lines.** A `dev_command` written as
-`FOO=bar npm run dev` does not parse. See
+**Managed-service commands are `cmd.exe` command lines.** A `dev`, `setup`, or `test`
+command written as `FOO=bar npm run dev` does not parse. See
 [Windows command syntax](SERVICES.md#windows-command-syntax).
 
 **Stop the server with Ctrl+C in the terminal running `npm start`.** That is the only stop
@@ -143,9 +143,9 @@ Three caveats, all about the boundary between the two systems:
 
 **Keep everything on the ext4 root.** `CALANDRIA_DB_DIR`, `CALANDRIA_WORKTREES_DIR`, and your
 project repos must live under the Linux home (`/home/you/...`), never on `/mnt/c` or
-`\\wsl$`. Those cross-boundary filesystems don't implement file locking, which breaks the
-SQLite mutex in `lib/db-lock.mjs`: two processes can then open the same database and corrupt
-its WAL. Git is also 10-50x slower there, and a per-task worktree feels it immediately.
+`\\wsl$`. Those cross-boundary filesystems don't implement file locking, so two processes can
+open the same database at once and corrupt its WAL. Git is also 10-50x slower there, and a
+per-task worktree feels it immediately.
 
 **Log the agents in again inside WSL2.** A Claude or Codex login done on the Windows side
 is not visible to the CLIs in WSL2. Run the first-run wizard (or `claude` / `codex`
