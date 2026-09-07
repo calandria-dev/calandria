@@ -5,7 +5,7 @@ title: "Troubleshooting"
 # Troubleshooting
 
 First-incident runbooks for the failure modes a self-hoster actually hits. The rest of `docs/`
-is setup and architecture; this file is what to do when something's already wrong.
+covers setup and architecture; this file tells you what to do when something is already wrong.
 
 | Symptom | Section |
 |-|-|
@@ -20,8 +20,7 @@ is setup and architecture; this file is what to do when something's already wron
 
 ## Reading the logs
 
-One shared module (`lib/log.mjs`) emits every log line, in one of two shapes for the whole
-instance, chosen by `CALANDRIA_LOG_FORMAT`:
+Every log line for the instance takes one of two shapes, chosen by `CALANDRIA_LOG_FORMAT`:
 
 - **`text`** (the default): `[component] message key=value key=value`. The bracket tag names
   the subsystem: `[server]`, `[pty-server]`, `[runner]`.
@@ -30,15 +29,15 @@ instance, chosen by `CALANDRIA_LOG_FORMAT`:
   downstream parses the output, such as `docker logs` piped at a collector, or `jq` at the
   terminal.
 
-The turn runner and both plain-Node entrypoints emit this way today. A few other call sites
+The turn runner and both plain-Node entrypoints emit this way. A few other call sites
 (`[config]`, `[db-lock]`, `[scheduler]`, the routes) still print bracket-tagged prose through
-`console`, so a `json` instance still produces a few non-JSON lines, all `warn`/`error` and none
+`console`, so a `json` instance still produces a few non-JSON lines, all `warn`/`error` and never
 on the turn path. `server.js` and `pty-server.js` read the variable themselves, so export it in
-the environment that launches both; a `.env` file read by Next alone won't reach them. Any value
+the environment that launches both. A `.env` file read by Next alone won't reach them. Any value
 other than `json` or `text` logs a warning once and falls back to `text`.
 
-Every turn logs twice, at start and at settle. Those two lines answer how long turns take on
-this box, which task burned the tokens, and whether last night's schedule actually ran:
+Every turn logs twice, once at start and once at settle. Those two lines show how long turns take
+on this box, which task used the tokens, and whether last night's schedule actually ran:
 
 ```
 [runner] turn start task=lM5-igB project=cal agent=claude generation=0 origin=schedule resume=true
@@ -55,13 +54,13 @@ this box, which task burned the tokens, and whether last night's schedule actual
 | `stopped` | the Stop button (or a shutdown drain) cut it, not a failure |
 | `interrupted` | the agent session never opened, so the turn produced nothing; logged at `warn` |
 
-A scheduled run is settled with the same four outcomes in the ledger. These are also the label
-values on `calandria_turns_finished_total`, incremented from this same statement; see
-[Metrics](SELF_HOSTING.md#metrics) for a graph instead of raw log lines.
+A scheduled run settles with the same four outcomes. These are also the label values on
+`calandria_turns_finished_total`, incremented at the same point this log line is written, so the
+counter and the log can't drift apart; see [Metrics](SELF_HOSTING.md#metrics) for a graph instead
+of raw log lines.
 
-Token counts are per turn, summed from the same usage reports that write the `task_usage`
-table; an agent that reports no usage logs zeros rather than the task's running total. Some
-useful one-liners in JSON mode:
+Token counts are per turn. An agent that reports no usage logs zero for that turn; the task's
+running total is unaffected. Some useful one-liners in JSON mode:
 
 ```bash
 # The ten slowest turns, newest first
@@ -76,12 +75,12 @@ Calandria's own agent tools (`suggest_task`, `create_pr` and the rest) log too, 
 `[agent-tools]`: `agent tool call received` the moment a call reaches the server, and
 `agent tool call settled` with `outcome=` (`ok`, `error`, `timeout`, `blank`) and `ms=` when it
 answers, each carrying `tool=`, `task=` and `transport=` (`in-process` for a Claude session,
-`bridge` for the stdio bridge Codex uses). A call the Claude CLI answered itself, which never
-reaches Calandria, shows instead as `[claude] agent tool call cut off before Calandria answered`,
-and the turn's `ok` line then carries `tool_cutoffs=N`. So "did the session's `create_pr` land?"
-is: a `received` line means it did reach the server, a `cut off` line with no `received` line
-means it never did. `CALANDRIA_CLAUDE_DEBUG_DIR` adds the CLI's own per-turn debug log for the
-latter case.
+`bridge` for the stdio bridge Codex uses). A call the Claude CLI answers itself never reaches
+Calandria; it shows instead as `[claude] agent tool call cut off before Calandria answered`, and
+the turn's `ok` line then carries `tool_cutoffs=N`. To check whether a session's `create_pr`
+landed: a `received` line means it reached the server, and a `cut off` line with no `received`
+line means it did not. `CALANDRIA_CLAUDE_DEBUG_DIR` adds the CLI's own per-turn debug log for
+that case.
 
 ## Common boot failures
 
@@ -97,31 +96,31 @@ naming where the check ran:
 | `[server]` | `server.js` | `PORT`, `PTY_PORT` |
 | `[pty-server]` | `pty-server.js` | `PTY_PORT` |
 
-The app is running fine, on the default for that var, not the value you set. Fix the env var and
-restart. A separate, older class of timeout knobs (`CALANDRIA_PERMISSION_PROMPT_TIMEOUT_MS`,
-`CALANDRIA_SCHEDULE_TICK_MS`, and similar) falls back to its default the same way but doesn't
-warn; `lib/config.ts`'s `ms()` versus `num()` is the line between the two.
+The app runs fine, using the default for that variable instead of the value you set. Fix the env
+var and restart. A separate, older class of timeout knobs (`CALANDRIA_PERMISSION_PROMPT_TIMEOUT_MS`,
+`CALANDRIA_SCHEDULE_TICK_MS`, and similar) falls back to its default the same way, but without a
+warning.
 
 **"Another Calandria process is already running against this database."** A hard refusal to
 boot: the app runs as a single process, turns run detached and owned by the server, and boot
 clears wreckage a dead predecessor left behind. The error names the holder's pid, host, and
 start time when available. See **One process per database** in
 [`docs/SELF_HOSTING.md`](SELF_HOSTING.md#notes--caveats) for causes and fixes. Don't reach for
-`CALANDRIA_DB_LOCK=off`; it disables the protection this error is giving you.
+`CALANDRIA_DB_LOCK=off`; it disables the protection this error provides.
 
 **"was written by a NEWER version of Calandria."** Another hard refusal, and the one you get
 from rolling an image tag backwards. The database carries the schema version of the build that
 last migrated it (`PRAGMA user_version`, [`lib/schema-version.mjs`](../lib/schema-version.mjs)),
 and this build's number is lower than that. Booting anyway would keep writing to the database
-and lose whatever the newer version stored, so the app stops instead. The message prints both
-numbers and the two ways out: go back to the newer tag (nothing to restore), or stay on this
-build and restore the pre-upgrade backup. See
+and lose whatever the newer version stored, so the app refuses to boot instead. The message
+prints both numbers and the two ways out: go back to the newer tag (nothing to restore), or stay
+on this build and restore the pre-upgrade backup. See
 [Rolling back an upgrade](SELF_HOSTING.md#rolling-back-an-upgrade) in SELF_HOSTING.md. There's no
 down-migration and no override flag.
 
 ## WSL2 on Windows
 
-WSL2 is one of the two supported ways to run Calandria on Windows ([setup](INSTALLATION.md#wsl2));
+WSL2 is one of the two supported ways to run Calandria on Windows ([setup](INSTALLATION.md#wsl2)).
 [Native Windows](#native-windows) below is the other. Inside WSL2 the app runs as an ordinary
 Linux build, so everything else in this file applies, and the native section below doesn't.
 Three failures are specific to the WSL2 boundary.
@@ -129,7 +128,7 @@ Three failures are specific to the WSL2 boundary.
 **Anything under `/mnt/c` or `\\wsl$`.** `CALANDRIA_DB_DIR`, `CALANDRIA_WORKTREES_DIR`, and
 project repos must live on the WSL2 ext4 root. Those cross-boundary filesystems (drvfs/9p) don't
 implement file locking, so `lib/db-lock.mjs`'s SQLite mutex can't exclude a second process: two
-instances can open the same database and corrupt the WAL instead of one boot being refused.
+instances can open the same database and corrupt the WAL, with no boot refused to prevent it.
 Symptoms range from a `[db-lock]` boot that should have refused and didn't, through
 `SQLITE_IOERR`/`SQLITE_BUSY` mid-turn, to the torn-WAL damage in
 [Database corruption](#database-corruption). Git on those paths is also 10-50x slower, which
@@ -184,10 +183,10 @@ A Node version below the supported floor fails differently: `.npmrc` sets `engin
 **`MAX_PATH`, "Filename too long" on a task launch or an agent's `npm install`.** Git for
 Windows refuses paths over 260 characters unless `core.longpaths` is on, and a task's checkout
 starts deep before the repository's own tree begins: `%USERPROFILE%\.calandria\worktrees\<task
-id>\`. Add a `node_modules` chain to that and `git worktree add` fails part-way through the
-checkout. Calandria passes `-c core.longpaths=true` on its own git invocations (cutting,
-diffing, merging a worktree), but the agent's own `git`, `npm`, and your editor read the
-ordinary config, so set it once for the machine:
+id>\`. Adding a `node_modules` chain on top of that makes `git worktree add` fail part-way
+through the checkout. Calandria passes `-c core.longpaths=true` on its own git invocations
+(cutting, diffing, merging a worktree), but the agent's own `git`, `npm`, and your editor read
+the ordinary config, so set it once for the machine:
 
 ```
 git config --global core.longpaths true
@@ -195,13 +194,13 @@ git config --global core.longpaths true
 
 That's a Git for Windows setting only; the underlying Win32 path limit is separate, and some
 tools stay subject to it regardless. `CALANDRIA_WORKTREES_DIR=C:\w` (a short root near the drive
-letter) buys back about 30 characters per path if a repository still overflows.
+letter) recovers about 30 characters per path if a repository still overflows.
 
 **"Couldn't remove the task's worktree" on discard, prune, or delete.** POSIX lets an open file
 be unlinked and disappear; Windows returns `EBUSY`/`EPERM`/`ENOTEMPTY` while any process holds a
 handle on it. The usual holder is Calandria's own task-scoped terminal, rooted inside the
 worktree being removed; an editor with the folder open or a Defender scan of a fresh checkout
-cause the same error. Teardown retries and clears an antivirus scan on its own, but close a
+causes the same error. Teardown retries and clears an antivirus scan on its own, but close a
 shell sitting in the directory (or `cd` it out of the worktree) and close the editor window
 before retrying. Nothing is lost: the task row and its branch stay intact.
 
@@ -213,8 +212,8 @@ starts. `taskkill` without `/F` asks a GUI message loop to close, and Node has n
 doesn't help either. A service wrapper (NSSM, WinSW, `sc`) is only as graceful as its own
 configured shutdown method, so pin that method if you use one. No data is lost: the next boot
 clears the running flags, pending messages, unanswered permission cards, and orphaned schedule
-runs a hard stop left behind, but the interrupted turns carry no notice explaining themselves.
-To stop the server from outside its console, stop the tasks first.
+runs a hard stop left behind, but the interrupted turns carry no explanatory notice. To stop the
+server from outside its console, stop the tasks first.
 
 ## Database corruption
 
@@ -230,7 +229,7 @@ that's what you have.
 **Symptoms.** The app fails to boot with a SQLite error, a route 500s referencing
 `better-sqlite3`, or the app runs but a task's history looks wrong (missing messages, a
 transcript that ends mid-sentence with no error). The last pattern usually means a process was
-killed (OOM, `docker kill`, a host power-loss) mid-write, tearing the WAL rather than corrupting
+killed (OOM, `docker kill`, a host power-loss) mid-write, tearing the WAL instead of corrupting
 the main file outright.
 
 **Check it.** Stop the app first; a live WAL-mode connection is a moving target for a read-only
@@ -242,11 +241,11 @@ sqlite3 calandria.db "PRAGMA integrity_check;"
 
 `ok` means the b-tree structure is sound (this doesn't prove application-level consistency, just
 that SQLite can read every page). Anything else is a list of the specific corruption found. The
-boot mutex lives in a separate `calandria.lock.db` rather than locking the real file (see
-`lib/db-lock.mjs`), so a read-only inspection while the app is running is possible, but run the
-integrity check with the app stopped so a WAL checkpoint mid-scan can't produce a false read.
+boot mutex lives in a separate `calandria.lock.db` file, apart from the real database (see
+`lib/db-lock.mjs`), so a read-only inspection while the app is running is possible. Still, run
+the integrity check with the app stopped so a WAL checkpoint mid-scan can't produce a false read.
 
-**What `recoverFromCrash()` handles automatically.** Every boot that wins the single-process lock
+**What crash recovery handles automatically.** Every boot that wins the single-process lock
 (`lib/db-lock.mjs`) runs a recovery pass in `lib/db.ts` that clears process wreckage, not file
 corruption:
 
@@ -257,12 +256,11 @@ corruption:
   `permission` block), with the note "The app restarted before this was answered."
 - Marks any `schedule_runs` row stuck in `claimed`/`running` as `interrupted`.
 
-This runs once per boot, only for the process that wins the lock, never against a live instance
-(see `consumeDbRecoveryAuthorization()`), which is why an ungraceful container restart looks
-clean instead of leaving zombie "running" tasks or unanswerable permission cards. It does
-nothing for a torn WAL frame or a corrupted b-tree page: `recoverFromCrash()` only runs after
-the file has already opened successfully. A file-integrity problem needs the manual recovery
-below.
+This runs once per boot, only for the process that wins the lock, never against a live instance,
+which is why an ungraceful container restart looks clean, with no zombie "running" tasks or
+unanswerable permission cards left behind. It does nothing for a torn WAL frame or a corrupted
+b-tree page: this recovery pass only runs after the file has already opened successfully. A
+file-integrity problem needs the manual recovery below.
 
 **Manual recovery, in order of preference:**
 
@@ -287,7 +285,7 @@ an empty directory) doesn't touch your code: cloned repos (`CALANDRIA_PROJECTS_D
 `~/projects`) and task worktrees (`CALANDRIA_WORKTREES_DIR`, default `~/.calandria/worktrees`)
 stay on disk but become orphaned; find and remove them by hand (`git worktree list` in each
 project's repo). Your `claude`/`codex` CLI logins also survive (under `~/.claude` / `~/.codex`,
-not the app's DB), so agents reconnect with "Verify connection" rather than a fresh OAuth flow.
+not the app's DB), so agents reconnect with "Verify connection" instead of a fresh OAuth flow.
 What doesn't survive: every project and task, every transcript and generation summary,
 session/thread ids (an old `claude` session on disk can no longer be resumed through the app),
 usage and cost history, merge records, schedules and their run ledger, runbooks, remembered
@@ -307,7 +305,7 @@ checkpoints; SQLite's default auto-checkpoint (about 1000 pages) handles this on
 that a long-held read connection can defer a checkpoint, so close a `sqlite3 calandria.db`
 session left open for an inspection when you're done. The retention sweep ages out finished
 tasks' rows and checkpoints the WAL after deleting, reclaiming the space. `VACUUM`, the only
-operation that shrinks the file itself rather than freeing pages inside it, is opt-in behind
+operation that shrinks the file itself instead of just freeing pages inside it, is opt-in behind
 `CALANDRIA_RETENTION_VACUUM`. Both are covered in
 [SELF_HOSTING.md](SELF_HOSTING.md#notes--caveats) under **Retention**.
 
@@ -340,10 +338,10 @@ Running turns are excluded and re-checked at execution time under the task's loc
 can't disappear out from under an agent mid-turn.
 
 **Uploads** (`CALANDRIA_DB_DIR/uploads/<taskId>`, `lib/uploads.ts`) are the smallest and most
-bounded of the three (10MB per attachment, `MAX_UPLOAD_BYTES`) and are removed automatically
-(`removeTaskUploads()`) whenever the task or its project is hard-deleted. The worktree-reclaim
-path above doesn't clear them, since a merged/Done task can still be opened to review its
-history; they only disappear with the task itself.
+bounded of the three (25MB per attachment by default, configurable via `CALANDRIA_MAX_UPLOAD_MB`)
+and are removed automatically (`removeTaskUploads()`) whenever the task or its project is
+hard-deleted. The worktree-reclaim path above doesn't clear them, since a merged/Done task can
+still be opened to review its history; they only disappear with the task itself.
 
 **Rough sizing guidance:** budget generously for worktrees, since they scale with repo size times
 parallel task count, not with chat volume. A few hundred MB is plenty for the database on almost
@@ -357,7 +355,7 @@ That login is an OAuth session that can expire or be revoked independently of th
 a headless deployment (no desktop, no interactive shell attached), recovering it uses the same
 manual paste-code exchange the setup wizard uses to connect the account in the first place
 (`claude auth login`'s OAuth flow falls back to it when it can't open a browser), driven by
-`lib/claude-auth.ts`. Codex's own login is device-code style rather than paste-code
+`lib/claude-auth.ts`. Codex's own login is device-code style instead of paste-code
 (`lib/agents/codex/capabilities.ts`), but a failure is flagged through the same agent-agnostic
 machinery described below.
 
@@ -372,7 +370,7 @@ agent fails the same way; the first one to run just reveals it first. Once detec
   `app/shell/AgentConnect.tsx`), broadcast to every open tab via `GET /api/events` the moment any
   task hits the failure.
 - The failing task's transcript gets a standing notice with a one-click Reconnect button.
-- Any message queued behind the failing turn (`pending_messages`) stays parked rather than
+- Any message queued behind the failing turn (`pending_messages`) stays parked instead of
   draining and failing one by one.
 - The instance-wide flag persists in `settings` as `agent_auth_broken_<agentId>`
   (`lib/agents/connections.ts`) until a successful turn or a fresh login clears it, so the
@@ -381,8 +379,8 @@ agent fails the same way; the first one to run just reveals it first. Once detec
 - The same banner, worded *"The connection no longer applies"*, means the Claude connection was
   verified against one backend and Claude Code is now configured for another (Anthropic, Vertex
   AI or Amazon Bedrock, by `CLAUDE_CODE_USE_VERTEX` / `CLAUDE_CODE_USE_BEDROCK` in
-  `~/.claude/settings.json` or the env). The record is dropped rather than kept as a "connected"
-  that every turn would disprove, and the reason names both backends. Recovery is the same:
+  `~/.claude/settings.json` or the env). The record is dropped instead of kept as a "connected"
+  state that every turn would disprove, and the reason names both backends. Recovery is the same:
   reconnect, which verifies against the backend the CLI now uses.
 
 **Recovery.** No shell access to the container is needed:
@@ -402,12 +400,12 @@ agent fails the same way; the first one to run just reveals it first. Once detec
 
 The new credentials land under `$HOME/.claude` (or `~/.codex`) inside the container, on the same
 persistent volume as the database, so a restart doesn't lose the fix. If a login session is
-abandoned mid-flow, it expires after 15 minutes rather than leaving a stale pending state.
+abandoned mid-flow, it expires after 15 minutes instead of leaving a stale pending state.
 
 ## Upgrade rollback
 
-Pulling an older image tag against a database a newer build already migrated is a clean refusal
-rather than a silent hazard: every build stamps the schema version it understands (`PRAGMA
+Pulling an older image tag against a database a newer build already migrated is a clean refusal,
+not a silent hazard: every build stamps the schema version it understands (`PRAGMA
 user_version`), and boot refuses a database stamped higher. See the entry in
 [Common boot failures](#common-boot-failures) above for the message.
 
