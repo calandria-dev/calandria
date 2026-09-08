@@ -676,7 +676,7 @@ offered under every permission mode but `plan`, which runs read-only and mounts 
 User-configured and plugin-provided external servers follow `CODEX_INHERIT_MCP` independently of
 the permission mode. Settings → Agents states the hosted-server gate on Codex's card. Before
 relying on this in production, test `gpt-5-codex` plus a mounted
-MCP server on your pinned LiteLLM and codex versions — BerriAI/litellm#14846 recorded silent empty
+MCP server on your pinned LiteLLM and codex versions: BerriAI/litellm#14846 recorded silent empty
 completions for exactly that combination.
 
 Antigravity mounts every selected alias into the task's own `mcp_config.json`, slugified to
