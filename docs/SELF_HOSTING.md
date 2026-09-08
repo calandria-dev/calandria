@@ -1001,14 +1001,19 @@ waits on that walk once, right after a restart.
   work after you acknowledge it) works either way.
   **Landing is the other trigger, and it isn't on this clock at all.**
   When a task's PR reports merged, or its branch is merged locally, the
-  session header's **Reclaim** button (or the project's `auto_reclaim`
-  setting, off by default) catches the local base branch up with origin,
-  removes the checkout, deletes the *local* branch, and marks the task
-  done. Unlike the sweep it does delete a branch, since the diff it
-  carried is in the base branch by then, and like the sweep it never
+  session header's **Reclaim** button catches the local base branch up
+  with origin, removes the checkout, deletes the *local* branch, and marks
+  the task done. Unlike the sweep it does delete a branch, since the diff
+  it carried is in the base branch by then, and like the sweep it never
   discards uncommitted edits or commits the remote never received without
-  an explicit acknowledgement nobody can give unattended. See
-  [Features](FEATURES.md).
+  an explicit acknowledgement nobody can give unattended.
+  The project's `auto_reclaim` setting (off by default) does the same
+  without being asked, but only for a task that is already done or
+  cancelled and that nothing else marks as live. A landed pull request
+  says the work reached the base branch, not that you have finished the
+  session, and the branch a reclaim deletes is the one your next message
+  resumes onto. Press the button to reclaim a session you are still in.
+  See [Features](FEATURES.md).
   **The disk warning** runs whether or not the sweep does: see
   `CALANDRIA_WORKTREES_DISK_WARN_GB` in the Configuration table above.
   When it fires, a line goes to the server log each pass while the
