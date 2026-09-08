@@ -50,6 +50,9 @@ because every agent verified locally and nobody watched Actions.
   must ALREADY be produced by the base branch's `test.yml` before the rule goes on, or every PR
   into that branch hangs on "Expected — waiting for status" with only an admin bypass to clear it.
   Same incompatibility keeps `paths-ignore` off `test.yml`'s `pull_request` trigger.
+  The landing PR from an `integration/**` branch also runs the e2e, desktop and Windows lanes
+  without the `e2e` label (test.yml gates on `startsWith(github.head_ref, 'integration/')`), since
+  its leaf PRs only ran the unit lanes. `macos` is still a label.
 - **Title the PR as a Conventional Commit.** A squash makes the title the subject of the one
   commit that lands, and `release-please.yml` parses exactly those subjects for the version bump
   and CHANGELOG.md. A title it cannot parse is dropped with no error, so the change ships out of
@@ -71,6 +74,22 @@ because every agent verified locally and nobody watched Actions.
   Red again, or any failure in a test, typecheck or build step, is real: fix it, or revert the
   commit — which is now itself a PR, titled `revert: ...` so release-please records it. Never
   rerun to make a real failure go away.
+- **A publisher refused the tag.** `publish-image.yml` and `release-desktop.yml` both run
+  `.github/actions/require-green-test-run` on a tag: it reads the newest PUSH-event `Test` run for
+  the tag's commit (a PR's run does not count) and fails the release if that run is red, cancelled
+  or absent. A red push run on a release commit is nearly always a flake in one of the lanes that
+  only run on push (e2e, desktop, windows-e2e, windows-desktop; the Playwright configs retry once
+  on CI, so a red one failed twice). Recover in this order:
+  1. Find the run: `gh run list --workflow test.yml --branch main --commit <sha> --json databaseId,conclusion`.
+  2. Read the failing job before touching it. A known flake gets `gh run rerun <id> --failed`; a
+     real failure gets a fix and a new release commit, never a rerun.
+  3. Once that run is green, re-dispatch each publisher on the tag; the gate reads the run again
+     and passes: `gh workflow run publish-image.yml --ref vX.Y.Z` and
+     `gh workflow run release-desktop.yml --ref vX.Y.Z -f publish=true`. Without `-f publish=true`
+     the desktop workflow is a dry run and attaches nothing to the release.
+  4. Do not close or edit the release; both publishers attach to the existing one for the tag.
+  The failed-build bot no longer files for a refused tag push, only for the scheduled builds, so
+  do not wait for an issue to appear.
 - **The app is a backstop, not a substitute.** Calandria now raises a task whose open PR has a
   failing check rollup into the "Needs you" inbox, names the red job, and offers a Fix CI button
   that seeds a turn with its log tail. That exists because this rule was pure policy and main
