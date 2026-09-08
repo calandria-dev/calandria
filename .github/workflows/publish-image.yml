@@ -68,6 +68,24 @@
 # already differ. Pinning BuildKit would freeze one input to a build that has
 # several other unfrozen ones.
 #
+# The pull_request trigger takes any base branch, matching test.yml and
+# website.yml. This repo lands batches of work through integration branches
+# (`integration/**`), and a PR into one of those breaks the Dockerfile exactly
+# as a PR into main does. The classic case is a new `lib/*.mjs` that
+# `server.js` or `pty-server.js` loads at runtime with no matching COPY, since
+# Next's build output does not carry those files. Pinning the trigger to main
+# turned the image build off for those PRs, so the break surfaced only when the
+# integration branch reached main, several PRs after the one that caused it.
+#
+# This is the most expensive lane in the repo, so the cost is real: a batch of
+# eight PRs into an integration branch now builds the image eight times. That
+# is the price of the check running on the PR that broke it. The cost is also
+# the same under the narrower filter (`integration/**` plus `main`), which
+# covers the same PRs and only adds a third trigger shape to keep in sync with
+# the other two workflows. The PR lane still publishes nothing: `prepare` gates
+# `publish` on an allowlist of push, workflow_dispatch and schedule, the build's
+# `outputs:` falls to `type=cacheonly`, and merge/attest/verify never run.
+#
 # CADENCE (early-stage): pushes to main do NOT build the image. The pipeline
 # runs from a nightly schedule — skipped up-front in `prepare` when main's
 # HEAD is already published under its sha- tag — plus v* tags and manual
@@ -101,7 +119,7 @@ on:
   push:
     tags: ["v*"]
   pull_request:
-    branches: [main]
+    branches: ["**"]
     # website/ is the calandria.dev static site, not part of the image (it is
     # in .dockerignore). A site-only PR has nothing for a multi-arch container
     # build to validate, and this is the most expensive lane in the repo.
