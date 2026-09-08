@@ -415,8 +415,8 @@ computed from its tasks every time you view it.
    their other tags untouched).
 
 A blue dot marks a tag with a task waiting on you, and finished tags fold behind the **Done**
-chip. Each task shows a tinted badge per tag, capped at three with a `+2` pill naming the rest on
-hover; clicking a badge lights that tag alone.
+chip. Each task shows a tinted badge per tag, capped at three with a `+2` pill. Press the pill to
+open the rest, each one still a badge you can click. Clicking a badge lights that tag alone.
 
 **Refresh tag** checks the whole plan against the code: the utility agent explores the
 repository read-only, reads every member task's brief against what it finds, and reports what

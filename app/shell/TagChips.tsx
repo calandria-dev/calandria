@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { tagIsDone, type TagRow, type TaskRow } from "./types";
+import { Popover } from "./shared";
 
 // Tags on the list and the board. A tag is a FILTER over the status buckets
 // both views are built on, plus a badge on every row and card; it never
@@ -215,8 +216,18 @@ export function TagBadge({ tag, onSelect, className }: {
  * Every badge a row shows, in tag order. Its own component because three
  * surfaces (list row, board card, session header) render the same list from the
  * same two inputs, and a task with five tags must not push its title off the
- * card. `max` caps what's drawn and the rest becomes a "+2" pill that still
- * names them on hover.
+ * card. `max` caps what's drawn and the rest becomes a "+2" pill.
+ *
+ * That pill is a BUTTON, not a label. Its tooltip used to be the only way to
+ * read the hidden names, which on a phone means no way at all, and the phone is
+ * a primary surface here. Pressing it opens the rest in the shared `Popover`,
+ * which portals to the body and positions itself `fixed`: the three surfaces
+ * that render badges all clip (`.crumb` and `.ttitle` set `overflow:hidden`)
+ * and `.task-top` is a nowrap flex row where anything added squeezes the title,
+ * so expanding the names in place would hide them a second way.
+ *
+ * The pill stays neutral-tinted even as a button: no single tag's colour
+ * applies to a pill naming several.
  */
 export function TagBadges({ tagIds, tagsById, onSelect, max = 3, className }: {
   tagIds: string[];
@@ -225,6 +236,7 @@ export function TagBadges({ tagIds, tagsById, onSelect, max = 3, className }: {
   max?: number;
   className?: string;
 }) {
+  const [open, setOpen] = useState(false);
   const tags = tagIds.map((id) => tagsById.get(id)).filter((t): t is TagRow => !!t);
   if (!tags.length) return null;
   const shown = tags.slice(0, max);
@@ -235,8 +247,26 @@ export function TagBadges({ tagIds, tagsById, onSelect, max = 3, className }: {
         <TagBadge key={t.id} tag={t} className={className} onSelect={onSelect ? () => onSelect(t.id) : undefined} />
       ))}
       {rest.length > 0 && (
-        <span className={`gbadge more ${className ?? ""}`} title={rest.map((t) => t.name).join("\n")}>
-          +{rest.length}
+        <span className="gmore">
+          <button type="button" className={`gbadge more ${className ?? ""}`} data-testid="tag-more"
+            aria-expanded={open} aria-label={`Show ${rest.length} more tag${rest.length === 1 ? "" : "s"}`}
+            title={`${rest.map((t) => t.name).join("\n")}\nClick to show them`}
+            // The row, card and breadcrumb underneath are all clickable, and
+            // the Popover dismisses on any window click that isn't stopped.
+            onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+            onKeyDown={(e) => e.stopPropagation()}>
+            +{rest.length}
+          </button>
+          {open && (
+            <Popover onClose={() => setOpen(false)}>
+              <div className="gmore-list" data-testid="tag-more-list">
+                {rest.map((t) => (
+                  <TagBadge key={t.id} tag={t}
+                    onSelect={onSelect ? () => { setOpen(false); onSelect(t.id); } : undefined} />
+                ))}
+              </div>
+            </Popover>
+          )}
         </span>
       )}
     </>

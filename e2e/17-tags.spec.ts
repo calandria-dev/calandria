@@ -17,6 +17,10 @@ const bothTitle = `Port login route ${uid()}`;
 const suggestedTitle = `Remove legacy middleware ${uid()}`;
 const secondOnlyTitle = `Add push permission prompt ${uid()}`;
 const looseTitle = `Unrelated chore ${uid()}`;
+// A task carrying more tags than TagBadges draws, so the "+N" pill exists.
+// Its own tags, none of them TAG or SECOND, so the fractions above stay put.
+const MANY = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"];
+const manyTitle = `Carries every tag ${uid()}`;
 
 const makeTag = async (request: import("@playwright/test").APIRequestContext, name: string, color?: string) => {
   const res = await request.post(`/api/projects/${projectId}/tags`, { data: { name, ...(color ? { color } : {}) } });
@@ -43,6 +47,12 @@ test.beforeAll(async ({ request }) => {
     expect(res.status()).toBe(201);
   }
   await createTask(request, { projectId, title: looseTitle });
+  const manyIds: string[] = [];
+  for (const name of MANY) manyIds.push(await makeTag(request, name));
+  const many = await request.post("/api/tasks", {
+    data: { project_id: projectId, title: manyTitle, priority: "med", agent: "mock", tag_ids: manyIds },
+  });
+  expect(many.status()).toBe(201);
 });
 
 const openProject = async (page: Page, view: "List view" | "Board view" = "List view") => {
@@ -216,4 +226,76 @@ test("tag routes: rename conflicts are 409, a cross-project tag is refused, dele
   expect((await del.json()).untagged).toBe(1);
   expect((await getTask(request, t.id)).tag_ids).toEqual([tagId]);
   expect((await request.get(`/api/tags/${spare.id}`)).status()).toBe(404);
+});
+
+// TagBadges caps what it draws at three, and the "+N" pill used to name the
+// rest only in a `title` tooltip. A phone has no hover, so on a task carrying
+// four or more tags the extra ones were unreachable. The pill is a button now
+// and opens them in a popover; this runs at a phone viewport because that is
+// the surface where the tooltip was no affordance at all.
+test.describe("mobile: the +N pill", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
+
+  // A phone boots into the first project's task pane with no projects column
+  // beside it, so step back out before picking the fixture (03-views.spec.ts).
+  const openOnPhone = async (page: Page, view: "List view" | "Board view") => {
+    await gotoApp(page);
+    const back = page.getByRole("button", { name: "Back to projects" });
+    await expect(back).toBeVisible();
+    await back.click();
+    await page.getByText(PROJECT).first().click();
+    await page.getByTitle(view).click();
+  };
+
+  const texts = (loc: ReturnType<Page["locator"]>) => loc.allTextContents();
+
+  test("tapping it names the cropped tags, and one of them filters", async ({ page }) => {
+    await openOnPhone(page, "List view");
+    const line = row(page, manyTitle).locator("xpath=..");
+    // Three drawn, two behind the pill, and the pill is reachable by tap.
+    await expect(line.locator(".gbadge:not(.more)")).toHaveCount(3);
+    const more = line.getByTestId("tag-more");
+    await expect(more).toHaveText("+2");
+    await expect(more).toHaveAttribute("aria-expanded", "false");
+
+    await more.tap();
+    await expect(more).toHaveAttribute("aria-expanded", "true");
+    const popped = page.getByTestId("tag-more-list").locator(".gbadge");
+    await expect(popped).toHaveCount(2);
+    // Between them the row and the popover name every tag, none twice.
+    const seen = [...(await texts(line.locator(".gbadge:not(.more)"))), ...(await texts(popped))];
+    expect(seen.sort()).toEqual([...MANY].sort());
+
+    // A popped badge is the same way into the filter a drawn one is, and
+    // choosing shuts the popover rather than leaving it over the list.
+    const chosen = (await texts(popped))[0];
+    await popped.first().tap();
+    await expect(page.getByTestId("tag-more-list")).toHaveCount(0);
+    await expect(chip(page, chosen)).toHaveAttribute("aria-selected", "true");
+    await expect(row(page, manyTitle)).toBeVisible();
+    await expect(row(page, looseTitle)).toHaveCount(0);
+    await allChip(page).click();
+
+    // Tapping the pill again puts it away: the only affordance is not one-way.
+    await more.tap();
+    await expect(page.getByTestId("tag-more-list")).toBeVisible();
+    await more.tap();
+    await expect(page.getByTestId("tag-more-list")).toHaveCount(0);
+  });
+
+  test("the board card's pill works the same, at the card's smaller badge size", async ({ page }) => {
+    await openOnPhone(page, "Board view");
+    const card = page.locator(".bcard").filter({ has: page.locator(".bc-title", { hasText: manyTitle }) });
+    const more = card.getByTestId("tag-more");
+    await expect(more).toHaveText("+2");
+    await more.tap();
+    await expect(page.getByTestId("tag-more-list").locator(".gbadge")).toHaveCount(2);
+    // The popover is portalled to the body precisely so a card, a row or the
+    // session breadcrumb can't clip it; check it is actually on screen.
+    const box = (await page.getByTestId("tag-more-list").boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(390);
+    expect(box.y + box.height).toBeLessThanOrEqual(844);
+  });
 });
