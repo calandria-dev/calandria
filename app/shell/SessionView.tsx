@@ -33,6 +33,18 @@ import { ColResize, ColRail } from "./Layout";
 import { useOverflowRail } from "./useOverflowRail";
 import { jget, jsend } from "./api";
 
+// What POST /api/tasks/:id/sync answers with, across all four of its tiers.
+interface SyncPostResp {
+  ok?: boolean;
+  error?: string;
+  conflicts?: string[];
+  prompt?: string; // the resolution-turn prompt for whichever operation conflicted
+  prOpen?: boolean; // the rebase was refused once because a PR is open on this branch
+  rebased?: boolean;
+  done?: boolean; // rebase-continue ran the replay to completion
+  forcePushCommand?: string; // set when the rebased branch has a PR whose head now needs one
+}
+
 // Banner for a reopened task whose worktree is behind its base branch. Read-only
 // on open; the git op fires only on click. A fast-forward-able task catches up
 // on the next message and shows nothing here, so this covers tier 2 (clean
@@ -41,13 +53,18 @@ import { jget, jsend } from "./api";
 // Review opens the Changes tab, Discard lives there. Under a PR landing policy,
 // Accept commits the base-branch merge into the task's branch but does not land
 // it; only the PR moves the base.
-function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitchToChat, onReview, onMerged, onChanged }: {
+function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSendPrompt, onSwitchToChat, onReview, onMerged, onChanged }: {
   taskId: string; running: boolean;
   prMode: boolean; // the project lands through pull requests (projects.landing_mode === "pr")
   // Bumped by the parent when Changes mutates the merge state (accept, discard,
   // land); the banner otherwise re-reads only when a turn ends.
   refresh: number;
   onResolveWithAI: (taskId: string) => Promise<ResolveResult>;
+  // Start a turn on this task with a prompt this banner already has in hand.
+  // The rebase tiers need it because their conflicts are handed back by the
+  // sync route itself; `onResolveWithAI` can't serve them, since it re-enters
+  // /merge/prepare and would start the very merge the rebase exists to avoid.
+  onSendPrompt: (prompt: string) => void;
   onSwitchToChat: () => void;
   onReview: () => void;
   onMerged?: () => void; // the task landed, same hook TaskChanges fires
@@ -56,6 +73,8 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitc
   const [st, setSt] = useState<SyncStatusResp | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // The open-PR refusal, remembered so the second click can acknowledge it.
+  const [prAcked, setPrAcked] = useState(false);
 
   const load = useCallback(async () => {
     try { const r = await fetch(`/api/tasks/${taskId}/sync`, { cache: "no-store" }); setSt(await r.json()); }
@@ -67,6 +86,62 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitc
   // mid-merge reads. `refresh` is a dependency only; the parent bumps it after
   // Changes acts.
   useEffect(() => { if (!running) load(); }, [running, refresh, load]);
+
+  const post = useCallback(async (body: Record<string, unknown>): Promise<SyncPostResp> => {
+    const r = await fetch(`/api/tasks/${taskId}/sync`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    });
+    const res = (await r.json().catch(() => ({}))) as SyncPostResp;
+    return res.ok === undefined && !r.ok ? { ok: false, error: `sync failed (HTTP ${r.status})` } : res;
+  }, [taskId]);
+
+  /**
+   * Start the rebase onto the rewritten base, or, over a replay already
+   * stopped in the worktree, re-report the conflicts it is sitting on. One
+   * handler for both: the route answers a paused rebase with those conflicts
+   * and their prompt, which is exactly what "Fix with AI" over that state
+   * wants to send.
+   */
+  const doRebase = useCallback(async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await post({ action: "rebase", ...(prAcked ? { acknowledgePr: true } : {}) });
+      if (res.prOpen) { setPrAcked(true); setErr(res.error ?? "this branch has an open pull request"); return; }
+      if (!res.ok) { setErr(res.error || "rebase failed"); return; }
+      if (res.conflicts?.length && res.prompt) { onSendPrompt(res.prompt); onSwitchToChat(); return; }
+      // Landed. The branch was rewritten locally only; nothing here pushes, so
+      // say what publishing it takes rather than leaving an open PR silently
+      // pointing at commits that no longer exist.
+      if (res.forcePushCommand) setErr(`Rebased. The open PR still points at the old commits: ${res.forcePushCommand}`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); load(); onChanged(); }
+  }, [post, prAcked, onSendPrompt, onSwitchToChat, load, onChanged]);
+
+  const doRebaseContinue = useCallback(async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await post({ action: "rebase-continue" });
+      if (!res.ok) { setErr(res.error || "could not finish the rebase"); return; }
+      // Stopped again on a later commit: same escalation as the first stop.
+      if (!res.done && res.prompt) { onSendPrompt(res.prompt); onSwitchToChat(); }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); load(); onChanged(); }
+  }, [post, onSendPrompt, onSwitchToChat, load, onChanged]);
+
+  const doRebaseAbort = useCallback(async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await post({ action: "rebase-abort" });
+      if (!res.ok) setErr(res.error || "could not abort the rebase");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); load(); onChanged(); }
+  }, [post, load, onChanged]);
 
   if (!st || !st.isolated) return null;
 
@@ -101,14 +176,48 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitc
     );
   }
 
+  // A `rebase --onto` the rewritten base stopped on a conflict. It owns the
+  // checkout until it is finished or discarded, so it outranks every state
+  // below, the rewrite banner that started it included: that banner would
+  // otherwise offer Rebase again over a replay that is already half done.
+  if (st.rebaseInProgress) {
+    const left = st.unresolved?.length ?? st.conflicts?.length ?? 0;
+    const done = left === 0;
+    const why = done
+      ? `The replay of this task's commits onto ${st.baseBranch} is paused with every conflict resolved. Finish it to commit the resolution and replay whatever is left, or discard it to put the branch back where it started.`
+      : `Replaying this task's commits onto the rewritten ${st.baseBranch} stopped on a conflict. The markers are in the worktree. Resolve them and finish the rebase, or discard it to put the branch back where it started.`;
+    return (
+      <div className={`sync-banner ${done ? "resolved" : "conflict"}`} data-sync-state={done ? "rebase-resolved" : "rebase-conflict"} title={why}>
+        <span className="sync-msg">
+          {done
+            ? `Rebase onto ${st.baseBranch} resolved: review it, then finish or discard`
+            : `Rebase onto ${st.baseBranch} stopped: ${left} file${left === 1 ? "" : "s"} conflicted`}
+        </span>
+        {err && <span className="sync-err" title={err}>{err}</span>}
+        <span className="sync-spacer" />
+        <button className="tc-btn" onClick={doRebaseAbort} disabled={busy || running}>Discard rebase</button>
+        {done ? (
+          <>
+            <button className="tc-btn" onClick={onReview} disabled={busy || running}>Review</button>
+            <button className="tc-btn primary" onClick={doRebaseContinue} disabled={busy || running}>{busy ? "Finishing…" : "Finish rebase"}</button>
+          </>
+        ) : (
+          <button className="tc-btn primary" onClick={doRebase} disabled={busy || running}>{busy ? "…" : "Fix with AI"}</button>
+        )}
+      </div>
+    );
+  }
+
   // The base branch's history was rewritten out from under this task, or the
   // local base ref is itself out of step with its remote. Either way the
   // ahead/behind numbers below describe a comparison against history that no
   // longer exists upstream, and the ordinary Sync (a merge of base into work)
   // is the wrong move: it reconciles two copies of the same commits under
   // different SHAs and conflicts in every file the rewrite touched. So this
-  // states the situation and the command that replays cleanly, and offers no
-  // one-click action, because there is no safe generic one.
+  // states the situation, and for a rewrite offers Rebase: a `git rebase --onto`
+  // that replays this task's own commits onto the new tip. The command stays
+  // beside it for the cases the button won't take (no recorded cut point) and
+  // for anyone who'd rather run it themselves.
   // A base that IS the project default already has BaseBranchBanner reporting its
   // remote divergence above the task list, so repeating it here is noise. The gap
   // this covers is a task on a base of its OWN (a tag's integration branch, a
@@ -128,8 +237,17 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitc
     return (
       <div className="sync-banner conflict" data-sync-state={st.baseRewritten ? "base-rewritten" : "base-diverged"} title={hint}>
         <span className="sync-msg">{msg}</span>
+        {err && <span className="sync-err" title={err}>{err}</span>}
         <span className="sync-spacer" />
-        {rebaseCmd && st.baseRewritten ? <code className="sync-cmd">{rebaseCmd}</code> : null}
+        {/* The command stays for the case the button can't serve (no cut point
+            recorded, or a user who'd rather do it in a terminal), and steps
+            aside once there is something more urgent to read. */}
+        {rebaseCmd && st.baseRewritten && !err ? <code className="sync-cmd">{rebaseCmd}</code> : null}
+        {st.baseRewritten && st.baseSha ? (
+          <button className="tc-btn primary" onClick={doRebase} disabled={busy || running}>
+            {busy ? "Rebasing…" : prAcked ? "Rebase anyway" : "Rebase"}
+          </button>
+        ) : null}
       </div>
     );
   }
@@ -1076,7 +1194,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
         </div>
 
         {hasSession && (
-          <SyncBanner taskId={task.id} running={running} refresh={syncTick} prMode={project.landing_mode === "pr"} onResolveWithAI={onResolveWithAI} onSwitchToChat={() => setView("chat")} onReview={onReview} onMerged={onMerged} onChanged={onBannerChanged} />
+          <SyncBanner taskId={task.id} running={running} refresh={syncTick} prMode={project.landing_mode === "pr"} onResolveWithAI={onResolveWithAI} onSendPrompt={onSend} onSwitchToChat={() => setView("chat")} onReview={onReview} onMerged={onMerged} onChanged={onBannerChanged} />
         )}
 
         {/*

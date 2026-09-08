@@ -2406,22 +2406,35 @@ export async function worktreeMergeStatus(worktreePath: string): Promise<Worktre
   const mergeInProgress = await git(worktreePath, ["rev-parse", "-q", "--verify", "MERGE_HEAD"])
     .then(() => true)
     .catch(() => false);
+  return { mergeInProgress, unresolved: await unresolvedConflictFiles(worktreePath) };
+}
+
+/**
+ * The files a paused merge or rebase still has genuinely unresolved.
+ *
+ * The index flags a file unmerged until it's staged, but a resolution turn
+ * (AI or an editor) rewrites the markers out without `git add`, so going by
+ * the index alone tells the user "still unresolved" about content that is
+ * fine. Trust content over index: a text file with no markers left is
+ * resolved (accept stages everything anyway). Binaries can never carry
+ * markers, so they stay unresolved until staged explicitly.
+ *
+ * Shared by both paused states, which read identically at the index: a
+ * rebase that stopped on a conflict leaves the same unmerged entries a merge
+ * does, so a second copy of this rule would only be a way for the two to
+ * disagree about the same worktree.
+ */
+async function unresolvedConflictFiles(worktreePath: string): Promise<string[]> {
   const indexUnresolved = (await git(worktreePath, ["diff", "--name-only", "--diff-filter=U"]).catch(() => ""))
     .split("\n")
     .filter(Boolean);
-  if (!indexUnresolved.length) return { mergeInProgress, unresolved: [] };
-  // The index flags a file unmerged until it's staged, but a resolution turn
-  // (AI or an editor) rewrites the markers out without `git add`, so going by
-  // the index alone tells the user "still unresolved" about content that is
-  // fine. Trust content over index: a text file with no markers left is
-  // resolved (accept stages everything anyway). Binaries can never carry
-  // markers, so they stay unresolved until staged explicitly.
+  if (!indexUnresolved.length) return [];
   const [withMarkers, binaries] = await Promise.all([
     conflictMarkerFiles(worktreePath, indexUnresolved),
     binaryConflictFiles(worktreePath, indexUnresolved),
   ]);
   const binarySet = new Set(binaries);
-  return { mergeInProgress, unresolved: indexUnresolved.filter((f) => withMarkers.has(f) || binarySet.has(f)) };
+  return indexUnresolved.filter((f) => withMarkers.has(f) || binarySet.has(f));
 }
 
 // Of the given unmerged files, those whose working-tree content still
@@ -2580,6 +2593,331 @@ export async function abortWorktreeMerge(worktreePath: string): Promise<void> {
   }
 }
 
+// ---------- replay a task branch onto a rewritten base ----------
+//
+// The remedy for `SyncStatus.baseRewritten`. When the base branch's history
+// was replaced under a task (a rebase, an amend, a force-push), merging the
+// base in reconciles the pre-rewrite and post-rewrite copies of the same
+// commits and conflicts in every file the rewrite touched. Replaying the
+// task's own commits onto the new tip is the operation that was meant:
+//
+//   git rebase --onto <base tip> <base_sha> <work branch>
+//
+// `base_sha` is the cut point, so `base_sha..work_branch` is exactly the
+// task's own work and none of the old base's commits ride along. Everything
+// interesting is around that one command: what happens to uncommitted work,
+// to a branch that has already been pushed, to a replay that stops on a
+// conflict, and how to get back.
+
+const REBASE_ABORT_REF = "refs/worktree/calandria-rebase-abort";
+// How many times `rebase --continue` may stop again before the app gives up and
+// says so. A task branch is a handful of commits; a replay that is still
+// stopping after this many is not one a request should keep driving.
+const REBASE_CONTINUE_STEPS = 50;
+
+async function setRebaseAbortMarker(worktreePath: string, sha: string): Promise<void> {
+  await git(worktreePath, ["update-ref", REBASE_ABORT_REF, sha]).catch(() => {});
+}
+
+async function readRebaseAbortMarker(worktreePath: string): Promise<string> {
+  return (await git(worktreePath, ["rev-parse", "-q", "--verify", REBASE_ABORT_REF]).catch(() => "")).trim();
+}
+
+async function clearRebaseAbortMarker(worktreePath: string): Promise<void> {
+  await git(worktreePath, ["update-ref", "-d", REBASE_ABORT_REF]).catch(() => {});
+}
+
+export interface WorktreeRebaseStatus {
+  rebaseInProgress: boolean;
+  unresolved: string[]; // files still carrying markers (or unstaged binaries)
+  branch: string; // the branch being replayed, from git's own state; "" when unreadable
+}
+
+/**
+ * Whether a rebase is paused in this worktree, and what is still conflicted.
+ *
+ * The state directory is asked for by name rather than assembled from
+ * `<worktree>/.git`: a linked worktree's git dir lives inside the main
+ * repository's, and `rev-parse --git-path` is the only thing that knows
+ * where. `rebase-merge` is the merge backend's directory and `rebase-apply`
+ * the older `--apply` one; either present means a replay is stopped here.
+ */
+export async function worktreeRebaseStatus(worktreePath: string): Promise<WorktreeRebaseStatus> {
+  const none: WorktreeRebaseStatus = { rebaseInProgress: false, unresolved: [], branch: "" };
+  if (!worktreePath) return none;
+  let dir = "";
+  for (const name of ["rebase-merge", "rebase-apply"]) {
+    const rel = (await git(worktreePath, ["rev-parse", "--git-path", name]).catch(() => "")).trim();
+    if (!rel) continue;
+    const abs = path.resolve(worktreePath, rel);
+    if (fs.existsSync(abs)) {
+      dir = abs;
+      break;
+    }
+  }
+  if (!dir) return none;
+  let branch = "";
+  try {
+    branch = fs.readFileSync(path.join(dir, "head-name"), "utf8").trim().replace(/^refs\/heads\//, "");
+  } catch {
+    /* the am backend doesn't always write one; the caller has the branch anyway */
+  }
+  return { rebaseInProgress: true, unresolved: await unresolvedConflictFiles(worktreePath), branch };
+}
+
+export interface RebaseOntoResult {
+  ok: boolean;
+  clean: boolean; // the whole replay landed with nothing left to resolve
+  conflicts: string[]; // text files conflicted at the commit it stopped on
+  binaryConflicts: string[]; // unmergeable files there, which need hands
+  previousTip: string; // the work branch tip before anything moved: what abort restores
+  newTip: string; // the work branch tip after a clean replay ("" otherwise)
+  // The base tip actually replayed onto, read once and pinned for the whole
+  // operation. The caller writes this to `tasks.base_sha`, and it has to be the
+  // SHA the rebase used rather than a fresh read of the branch, or a base that
+  // moved mid-replay would leave the task's diff base describing a commit its
+  // branch was never built on.
+  onto: string;
+  error?: string;
+  // Refusals a caller has to tell apart, because each has its own way out.
+  dirty?: boolean; // uncommitted work in the worktree
+  alreadyInProgress?: boolean; // a merge or rebase is already paused here
+  cutPointMissing?: boolean; // base_sha unset or no longer an object in this repo
+}
+
+/**
+ * Replay a task's own commits onto the current tip of its base branch.
+ *
+ * Refuses over uncommitted work rather than committing it first, the way
+ * `prepareWorktreeMerge` does. That difference is deliberate. A merge's
+ * pre-commit is recoverable: whatever the merge then does, the commit stays
+ * on the branch at a SHA the reflog can find. A rebase REPLAYS what it finds
+ * committed, so the same move would rewrite work the user has never looked
+ * at into new commits under new SHAs. Committing on someone's behalf is
+ * cheap; rewriting on their behalf is not.
+ *
+ * On a conflict it leaves the replay stopped in the worktree, which is the
+ * same shape `prepareWorktreeMerge` leaves a conflicted merge in: markers on
+ * disk, the file list handed back for a resolution turn, and an explicit
+ * accept or discard to finish. `continueWorktreeRebase` and
+ * `abortWorktreeRebase` are those two ends.
+ */
+export async function rebaseWorktreeOntoBase(input: {
+  repoPath: string;
+  worktreePath: string;
+  workBranch: string;
+  baseBranch: string;
+  baseSha: string;
+}): Promise<RebaseOntoResult> {
+  const { repoPath, worktreePath, workBranch, baseBranch, baseSha } = input;
+  const fail = (extra: Partial<RebaseOntoResult>): RebaseOntoResult =>
+    Object.assign(
+      { ok: false, clean: false, conflicts: [] as string[], binaryConflicts: [] as string[], previousTip: "", newTip: "", onto: "" },
+      extra
+    );
+
+  if (!worktreePath || !workBranch) return fail({ error: "this task has no isolated worktree" });
+  if (!refNameSafe(workBranch) || !refNameSafe(baseBranch)) return fail({ error: "unsafe branch name" });
+  if (!(await branchExists(repoPath, baseBranch))) return fail({ error: `base branch ${baseBranch} not found` });
+  if (!(await branchExists(repoPath, workBranch))) return fail({ error: `work branch ${workBranch} not found` });
+
+  // The cut point is the whole basis of the replay. Without it there is no
+  // way to tell the task's own commits from the pre-rewrite copies of the
+  // base's, and rebasing against the branch instead would replay both.
+  const cut = baseSha
+    ? (await git(repoPath, ["rev-parse", "--verify", `${baseSha}^{commit}`]).catch(() => "")).trim()
+    : "";
+  if (!cut)
+    return fail({
+      cutPointMissing: true,
+      error: "the commit this task was cut from is not in this repository, so there is no way to tell its own work from the base's",
+    });
+
+  const dirty = (await git(worktreePath, ["status", "--porcelain"]).catch(() => "")).trim().length > 0;
+  if (dirty)
+    return fail({
+      dirty: true,
+      error: "the worktree has uncommitted changes. Commit or discard them first: a rebase replays commits and would rewrite anything it swept up along the way",
+    });
+
+  const [midRebase, midMerge] = await Promise.all([
+    worktreeRebaseStatus(worktreePath),
+    worktreeMergeStatus(worktreePath),
+  ]);
+  // Already stopped mid-replay (a reload, or a second click): report the
+  // conflicts it is sitting on rather than starting a second rebase on top.
+  if (midRebase.rebaseInProgress) {
+    const binaryConflicts = await binaryConflictFiles(worktreePath, midRebase.unresolved);
+    return {
+      ok: true, clean: false, previousTip: await readRebaseAbortMarker(worktreePath), newTip: "", onto: "",
+      conflicts: midRebase.unresolved.filter((f) => !binaryConflicts.includes(f)), binaryConflicts,
+    };
+  }
+  if (midMerge.mergeInProgress)
+    return fail({ alreadyInProgress: true, error: "a merge is paused in this worktree. Accept or discard it before rebasing" });
+
+  const previousTip = (await git(repoPath, ["rev-parse", `refs/heads/${workBranch}`]).catch(() => "")).trim();
+  // Pinned to a SHA, not the branch name: the base ref can move between the
+  // read and the replay, and `--onto` a moving target is a different rebase
+  // than the one the status the user acted on described.
+  const onto = (await git(repoPath, ["rev-parse", `refs/heads/${baseBranch}`]).catch(() => "")).trim();
+  if (!previousTip || !onto) return fail({ error: "could not resolve the branch tips to rebase between" });
+
+  // Recorded before anything moves. `git rebase --abort` has its own copy of
+  // this and normally does the restoring, but it needs its state directory
+  // intact; this ref makes the restore verifiable, and a forced abort resets
+  // to it when that directory is unusable.
+  await setRebaseAbortMarker(worktreePath, previousTip);
+
+  const identity = await committerIdentityArgs(worktreePath);
+  try {
+    await git(worktreePath, [...identity, "rebase", "--onto", onto, cut, workBranch]);
+  } catch (e) {
+    const paused = await worktreeRebaseStatus(worktreePath);
+    if (!paused.rebaseInProgress || !paused.unresolved.length) {
+      // Failed for a reason that isn't a conflict (or stopped with nothing to
+      // resolve, which no resolution turn could act on). There is nothing to
+      // hand a user, so put the worktree back the way it was found.
+      await git(worktreePath, ["rebase", "--abort"]).catch(() => {});
+      await clearRebaseAbortMarker(worktreePath);
+      return fail({ previousTip, error: gitErrorLine(e, "rebase failed") });
+    }
+    const binaryConflicts = await binaryConflictFiles(worktreePath, paused.unresolved);
+    return {
+      ok: true, clean: false, previousTip, newTip: "", onto,
+      conflicts: paused.unresolved.filter((f) => !binaryConflicts.includes(f)), binaryConflicts,
+    };
+  }
+
+  // Landed. The marker is spent for the same reason `completeWorktreeMerge`
+  // drops its own: there is no longer a paused state a discard could unwind.
+  await clearRebaseAbortMarker(worktreePath);
+  const newTip = (await git(repoPath, ["rev-parse", `refs/heads/${workBranch}`]).catch(() => "")).trim();
+  return { ok: true, clean: true, conflicts: [], binaryConflicts: [], previousTip, newTip, onto };
+}
+
+export interface ContinueRebaseResult {
+  ok: boolean;
+  done: boolean; // the replay ran to completion
+  conflicts: string[]; // it stopped again, on a later commit
+  binaryConflicts: string[];
+  newTip: string; // the work branch tip once done ("" while still paused)
+  error?: string;
+}
+
+/**
+ * Finish a stopped replay: stage the resolution, refuse if markers remain,
+ * then drive `rebase --continue` to a conclusion.
+ *
+ * The loop is not defensive padding. A rebase replays commits one at a time
+ * and each one gets its own chance to conflict, so continuing can stop
+ * again; handing back a half-finished state would make the banner responsible
+ * for looping, and a resolution turn responsible for knowing which commit it
+ * is on. This stops at the first commit the resolution didn't cover and says
+ * which files, which is the same answer the first stop gives.
+ */
+export async function continueWorktreeRebase(worktreePath: string): Promise<ContinueRebaseResult> {
+  const idle = { conflicts: [] as string[], binaryConflicts: [] as string[], newTip: "" };
+  const st = await worktreeRebaseStatus(worktreePath);
+  if (!st.rebaseInProgress) return { ok: false, done: false, ...idle, error: "no rebase is paused in this worktree" };
+
+  await git(worktreePath, ["add", "-A"]).catch(() => {});
+  const check = await git(worktreePath, ["diff", "--cached", "--check"]).catch((e) => stdoutOf(e));
+  if (/conflict marker/i.test(check))
+    return {
+      ok: false, done: false, ...idle,
+      error: "conflict markers (<<<<<<< / =======) still remain. Resolve them before continuing the rebase",
+    };
+
+  const paused = async (): Promise<ContinueRebaseResult | null> => {
+    const now = await worktreeRebaseStatus(worktreePath);
+    if (!now.rebaseInProgress) return null;
+    if (!now.unresolved.length) return null; // stopped for some other reason; the loop stages and retries
+    const binaryConflicts = await binaryConflictFiles(worktreePath, now.unresolved);
+    return {
+      ok: true, done: false, newTip: "",
+      conflicts: now.unresolved.filter((f) => !binaryConflicts.includes(f)), binaryConflicts,
+    };
+  };
+
+  // One iteration per commit the replay can stop on. Bounded so a rebase that
+  // refuses to advance (an empty commit git wants `--skip` for) ends in a
+  // reported error rather than spinning inside a request.
+  const identity = await committerIdentityArgs(worktreePath);
+  for (let i = 0; i < REBASE_CONTINUE_STEPS; i++) {
+    try {
+      // `--continue` reopens the commit message in an editor there is nobody
+      // to answer, so the editor is a no-op that exits 0 and keeps the message.
+      await git(worktreePath, [...identity, "-c", "core.editor=true", "rebase", "--continue"]);
+    } catch (e) {
+      const stopped = await paused();
+      if (stopped) return stopped;
+      return { ok: false, done: false, ...idle, error: gitErrorLine(e, "rebase --continue failed") };
+    }
+    const stopped = await paused();
+    if (stopped) return stopped;
+    const still = await worktreeRebaseStatus(worktreePath);
+    if (!still.rebaseInProgress) {
+      await clearRebaseAbortMarker(worktreePath);
+      const newTip = (await git(worktreePath, ["rev-parse", "HEAD"]).catch(() => "")).trim();
+      return { ok: true, done: true, conflicts: [], binaryConflicts: [], newTip };
+    }
+    await git(worktreePath, ["add", "-A"]).catch(() => {});
+  }
+  return { ok: false, done: false, ...idle, error: `the rebase did not finish after ${REBASE_CONTINUE_STEPS} steps; finish it in a terminal` };
+}
+
+/**
+ * Put a stopped replay back where it started.
+ *
+ * `git rebase --abort` does this itself and is preferred, since it restores
+ * the branch tip and the working tree together. It needs its state directory
+ * to be intact, though, and that is exactly the thing a half-finished
+ * hand-run rebase breaks, so the recorded pre-rebase tip is the fallback:
+ * `--quit` drops the state git can no longer use and the tip is restored
+ * directly.
+ *
+ * With no rebase paused this is a true no-op. A stale marker is cleared
+ * rather than acted on: once the replay is finished, later commits sit on
+ * top of it, and resetting to a pre-rebase tip that no longer describes a
+ * paused operation is data loss with a reassuring name.
+ */
+export async function abortWorktreeRebase(worktreePath: string): Promise<{ ok: boolean; restoredTo: string; error?: string }> {
+  if (!worktreePath) return { ok: false, restoredTo: "", error: "this task has no isolated worktree" };
+  const marker = await readRebaseAbortMarker(worktreePath);
+  const st = await worktreeRebaseStatus(worktreePath);
+  if (!st.rebaseInProgress) {
+    if (marker) await clearRebaseAbortMarker(worktreePath);
+    return { ok: true, restoredTo: "" };
+  }
+
+  let aborted = await git(worktreePath, ["rebase", "--abort"]).then(() => true).catch(() => false);
+  if (!aborted && marker) {
+    await git(worktreePath, ["rebase", "--quit"]).catch(() => {});
+    aborted = await git(worktreePath, ["reset", "--hard", marker]).then(() => true).catch(() => false);
+  }
+  if (!aborted) return { ok: false, restoredTo: "", error: "could not abort the rebase; finish or abort it in a terminal" };
+
+  await clearRebaseAbortMarker(worktreePath);
+  const head = (await git(worktreePath, ["rev-parse", "HEAD"]).catch(() => "")).trim();
+  // The marker is the claim this function makes; say so when git landed
+  // somewhere else, rather than reporting a restore that didn't happen.
+  if (marker && head && head !== marker)
+    return { ok: false, restoredTo: head, error: `the rebase was aborted but the branch is at ${head.slice(0, 12)}, not the pre-rebase tip ${marker.slice(0, 12)}` };
+  return { ok: true, restoredTo: head || marker };
+}
+
+/**
+ * `-c user.*` overrides for a commit-writing command, but only when the repo
+ * has no identity of its own. Unconditional overrides would stamp Calandria
+ * onto commits a real committer was configured for, and a rebase writes one
+ * per replayed commit.
+ */
+async function committerIdentityArgs(worktreePath: string): Promise<string[]> {
+  const email = (await git(worktreePath, ["config", "user.email"]).catch(() => "")).trim();
+  return email ? [] : FALLBACK_IDENTITY;
+}
+
 // ---------- sync the worktree to the latest base branch ----------
 //
 // An old task's worktree is branched from a stale base_sha; while it sat
@@ -2612,6 +2950,12 @@ export interface SyncStatus {
   // rebase --onto would replay cleanly. Undefined when there is no cut point
   // to test.
   baseRewritten?: boolean;
+  // A `rebase --onto` started by the app is stopped on a conflict in this
+  // worktree, awaiting a resolution and then an accept or a discard. The
+  // paused-merge twin above; kept separate because the two finish through
+  // different commands, and a banner offering `merge --continue` over a
+  // stopped rebase would be offering something that cannot work.
+  rebaseInProgress?: boolean;
 }
 
 /**
@@ -2668,6 +3012,22 @@ export async function worktreeSyncStatus(input: {
     git(worktreePath, ["status", "--porcelain"]).catch(() => "").then((s) => s.trim().length > 0),
   ]);
   const idle = { mergeInProgress: false, unresolved: [] as string[] };
+
+  // A `rebase --onto` stopped on a conflict. Tested before the counts are read
+  // for anything, because a stopped replay makes them describe a moment that no
+  // longer applies: the branch ref still points at the pre-rebase tip while
+  // HEAD is detached partway through, so `behind` is the pre-rebase count and
+  // `ahead` counts commits some of which have already been replayed. The live
+  // worktree is the truth here, exactly as it is for a paused merge.
+  const rebasing = await worktreeRebaseStatus(worktreePath);
+  if (rebasing.rebaseInProgress) {
+    return {
+      behind, ahead, isDirty, canFastForward: false, baseTip,
+      clean: rebasing.unresolved.length === 0, conflicts: rebasing.unresolved,
+      mergeInProgress: false, unresolved: rebasing.unresolved,
+      rebaseInProgress: true, baseRewritten,
+    };
+  }
 
   // Already up to date: nothing to sync, so skip the relatively costly conflict probe.
   if (behind === 0) return { behind, ahead, isDirty, canFastForward: false, clean: true, conflicts: [], baseTip, ...idle, baseRewritten };

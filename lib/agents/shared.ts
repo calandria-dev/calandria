@@ -218,6 +218,36 @@ export function buildConflictPrompt(baseBranch: string, conflicts: string[]): st
   ].join("\n");
 }
 
+/**
+ * The same job for a replay that stopped rather than a merge that conflicted.
+ * A separate prompt because every sentence of the merge one that mentions git
+ * is wrong here: nothing was merged into this branch, the conflict is against
+ * one replayed commit rather than the whole branch, and the command the agent
+ * must not run is `rebase --continue`. The instruction not to commit is the
+ * same and matters more: the app finishes the rebase on the user's accept, and
+ * a hand-run `--continue` mid-turn takes that decision away.
+ */
+export function buildRebaseConflictPrompt(baseBranch: string, conflicts: string[]): string {
+  const files = conflicts.map((f) => `  - ${f}`).join("\n");
+  return [
+    `\`${baseBranch}\` was rewritten under this task, so I am replaying this branch's own commits`,
+    `onto the new \`${baseBranch}\` with \`git rebase --onto\`. One of the replayed commits hit`,
+    `conflicts. Resolve every one.`,
+    ``,
+    `Conflicted files:`,
+    files,
+    ``,
+    `For each file, remove all conflict markers (\`<<<<<<<\`, \`=======\`, \`>>>>>>>\`) and produce a`,
+    `correct result. "Ours" here is the rewritten ${baseBranch} you are replaying onto and "theirs"`,
+    `is this task's own commit, which is the reverse of a merge, so read the surrounding code rather`,
+    `than reaching for a side. The rewrite usually carries the same intent under a different SHA,`,
+    `so most conflicts resolve to keeping both changes once.`,
+    ``,
+    `Do not run \`git commit\`, \`git rebase --continue\`, \`git rebase --abort\`, or \`git add\`. Just edit`,
+    `the files to a clean, marker-free state. I'll review the result and finish the rebase myself.`,
+  ].join("\n");
+}
+
 /** One red check as the Fix-CI prompt wants it: named, linked, and (usually) logged. */
 export interface CiFailure {
   name: string;
