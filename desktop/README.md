@@ -221,8 +221,10 @@ drives every branch of it. No CI lane in `test.yml` sets any signing
 variables, and none should. `macos-desktop` signs ad-hoc on purpose and
 asserts Gatekeeper *refuses* the result, so a certificate leaking into a
 PR-triggered build would be caught instead of used silently.
-`.github/workflows/verify-signing-credentials.yml` is the on-demand check
-that the real macOS signing secrets are valid, without doing a full build.
+`.github/workflows/verify-signing-credentials.yml` is the on-demand check that
+the real signing credentials work, without doing a full build: it imports the
+macOS certificate and authenticates to Apple's notary service, and on Windows it
+signs a throwaway file with the Azure credential.
 
 ### macOS
 
@@ -369,21 +371,114 @@ attribute, so only that reproduces what a user actually gets.
 
 ### Windows
 
-Azure Artifact Signing, configured by four non-secret variables: all four or
-none, three of four throws:
+Azure Artifact Signing, the service Microsoft renamed from Azure Trusted
+Signing during 2026. Seven repository *variables*, none of them a secret,
+because the credential is an OIDC token minted per run:
 
 | Variable | What it is |
 |-|-|
-| `AZURE_CODE_SIGNING_ENDPOINT` | Regional endpoint, e.g. `https://eus.codesigning.azure.net/`. |
+| `AZURE_CODE_SIGNING_ENDPOINT` | Regional endpoint, e.g. `https://eus.codesigning.azure.net/`. Shown as *Endpoint* on the signing account's overview, and it must name that account's own region; a mismatch returns 403 at sign time. |
 | `AZURE_CODE_SIGNING_ACCOUNT_NAME` | The signing account. |
 | `AZURE_CODE_SIGNING_CERT_PROFILE_NAME` | The certificate profile inside it. |
-| `AZURE_CODE_SIGNING_PUBLISHER_NAME` | The subject the signature must match, e.g. `CN=…, O=…, C=US`. |
+| `AZURE_CODE_SIGNING_PUBLISHER_NAME` | The certificate subject, e.g. `CN=…, O=…, L=…, S=…, C=US`. The portal shows it as *Certificate subject preview* before the profile exists. |
+| `AZURE_CLIENT_ID` | The Entra ID app registration's *Application (client) ID*. |
+| `AZURE_TENANT_ID` | Its *Directory (tenant) ID*. |
+| `AZURE_SUBSCRIPTION_ID` | Read only by `azure/login`, and optional: the lane passes `allow-no-subscriptions: true`, and signing needs no subscription context. |
 
-electron-builder switches from `signtool` to `WindowsSignAzureManager` on the
-presence of `win.azureSignOptions` alone. Authentication is Entra ID's
-ambient credential chain: on GitHub Actions, OIDC workload-identity
-federation via `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and the token file
-`azure/login` writes. There's no certificate and no secret to store.
+The first four are what `desktop/signing.js` reads: all four or none, three of
+four throws. electron-builder switches from `signtool` to
+`WindowsSignAzureManager` on the presence of `win.azureSignOptions` alone. The
+last three are `azure/login`'s inputs; neither electron-builder nor
+`desktop/signing.js` reads them, because Azure.Identity's ambient credential
+chain picks up what `azure/login` left behind. There's no certificate and no
+secret to store.
+
+`AZURE_CODE_SIGNING_PUBLISHER_NAME` is the one that fails late. electron-builder
+copies it into the published `latest.yml`, and `electron-updater` compares it
+against the downloaded installer's certificate before installing. A wrong value
+builds green and then refuses every Windows update, on other people's machines,
+months later. The comparison is per attribute: a value that parses as a
+distinguished name must match on every attribute it names, and a bare name must
+equal the certificate's common name.
+
+#### Setting it up
+
+Eight things have to exist before those variables mean anything. In this order,
+because each one gates the next, and one of them takes days.
+
+1. **A paid Azure subscription.** Free, trial and sponsored subscriptions cannot
+   create a signing account. For an individual the billing account's *Account
+   type* must be **Individual**, since that is what selects individual identity
+   validation, and the legal name and address on it become the certificate's
+   subject. Correct them there first: the validation form shows them read-only.
+2. **Register the resource provider.** *Subscriptions → Settings → Resource
+   providers → `Microsoft.CodeSigning` → Register*, or
+   `az provider register --namespace Microsoft.CodeSigning`.
+3. **A signing account**, Basic tier, in one of the supported regions. The region
+   fixes `AZURE_CODE_SIGNING_ENDPOINT`. Billing starts here, and the wait in the
+   next step runs on the clock.
+4. **Identity validation**, started from inside the account: *Identity
+   validations → Individual → New identity → Public*. Verification runs through
+   Microsoft Authenticator and Entra Verified ID against a government photo ID.
+   Microsoft states 1 to 20 business days and does not expedite. Individual
+   public-trust validation is limited to the United States and Canada. The New
+   Identity button stays disabled without `Reader` at subscription scope on top
+   of the *Artifact Signing Identity Verifier* role.
+5. **A certificate profile** of type **Public Trust**, which a completed identity
+   validation gates. Common name and organization are the validated legal name
+   and cannot be customised.
+6. **An Entra ID app registration**, with no client secret and no certificate.
+   Add a federated credential: issuer
+   `https://token.actions.githubusercontent.com`, audience
+   `api://AzureADTokenExchange`, subject
+   `repo:<owner>/<repo>:environment:windows-signing`.
+7. **The signer role.** Assign **Artifact Signing Certificate Profile Signer** to
+   that app registration's service principal, scoped to the certificate profile.
+   Tenants where the rename hasn't landed still show it as *Trusted Signing
+   Certificate Profile Signer*.
+8. **A GitHub environment named `windows-signing`**, with no protection rules.
+
+That last one is why the federated credential's subject names an environment
+instead of a ref. A federated credential matches one exact subject string, and
+GitHub derives that string from the run's ref; the release lane signs on `v*`
+tags, so a ref-scoped credential would need a new entry for every release. Both
+`release-desktop.yml`'s build job and `verify-signing-credentials.yml`'s Windows
+job declare `environment: windows-signing`, which fixes the subject for every
+ref. The environment holds no secrets and exists only to keep that subject
+constant, so leave it without protection rules: a required reviewer on it would
+stall every platform leg of every release. Entra's flexible federated
+credentials would allow a wildcard subject instead, and they're still in preview
+and unsupported by the Azure CLI.
+
+One naming trap. `WindowsSignAzureManager` runs `Install-Module -Name
+TrustedSigning` and then `Invoke-TrustedSigning`, and app-builder-lib pins those
+names, so a release installs the module under its old name even though Microsoft
+now also publishes an `ArtifactSigning` module. Anything reproducing the release
+lane by hand installs the same one.
+
+Then set the variables and check them before a release rather than during one:
+
+```bash
+gh variable set AZURE_CODE_SIGNING_ENDPOINT --body 'https://eus.codesigning.azure.net/'
+gh variable set AZURE_CODE_SIGNING_ACCOUNT_NAME --body '<account>'
+gh variable set AZURE_CODE_SIGNING_CERT_PROFILE_NAME --body '<profile>'
+gh variable set AZURE_CODE_SIGNING_PUBLISHER_NAME --body 'CN=..., O=..., L=..., S=..., C=US'
+gh variable set AZURE_CLIENT_ID --body '<application (client) id>'
+gh variable set AZURE_TENANT_ID --body '<directory (tenant) id>'
+gh variable set AZURE_SUBSCRIPTION_ID --body '<subscription id>'
+gh workflow run verify-signing-credentials.yml
+```
+
+That workflow's `windows` job authenticates, installs the same module
+`WindowsSignAzureManager` installs, signs a throwaway assembly with the same
+parameters, and then asserts that the signature verifies under `signtool`, that
+it carries an RFC 3161 timestamp, and that it matches
+`AZURE_CODE_SIGNING_PUBLISHER_NAME`. Presence of the variables is what the
+release lane's gate already checks, and it proves nothing here: the federated
+credential, the role assignment and the certificate profile all stay invisible
+until something asks the service to sign. A certificate profile issues
+certificates that live about three days, which is why the timestamp is checked
+and not assumed. The job spends one signature of the tier's monthly allowance.
 
 Without all four variables, electron-builder finds nothing to sign with and
 produces an unsigned artifact instead of failing. The SmartScreen cost of
@@ -463,6 +558,17 @@ macOS simply doesn't function.
 
 Linux costs nothing to enroll with; publishing SHA-256 checksums beside the
 artifacts is the whole convention.
+
+**What is bought** (checked 2026-09-08). The Apple Developer Program membership
+is active and its six credentials are repository secrets, so a release publishes
+a signed, notarized macOS build. Azure Artifact Signing is not enrolled: the
+seven Azure variables are unset, the release lane's `gate` job says so in the
+log, and Windows artifacts publish unsigned with the release notes stating it.
+Its identity validation is a person with a phone and a passport, and Microsoft
+states 1 to 20 business days for it, so the enrolment is a calendar item and not
+a build step. "Setting it up" above is the sequence, and nothing in the build
+changes until it finishes: `desktop/signing.js` reads "none of the four" as "do
+not sign", not as an error.
 
 ## Updates
 
