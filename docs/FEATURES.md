@@ -136,7 +136,10 @@ Calandria merged the branch locally, its checkout is disposable and Calandria ca
    lands). It fast-forwards the local base branch from origin, removes the worktree, deletes the
    local branch, and marks the task done in one step.
 2. To do this automatically for every task in a project, open **Context** → check **Reclaim a
-   task's worktree when its work lands**. It is off by default and set per project.
+   task's worktree when its work lands**. It is off by default and set per project. It waits until
+   the task is done or cancelled: landing means the work reached the base branch, not that you have
+   finished the session, and the branch a reclaim deletes is the one your next message resumes onto.
+   Use the button when you want a still-open session reclaimed now.
 3. To reclaim several merged or finished tasks at once, go to Settings → Storage. Discarding
    unmerged work there requires the same explicit permanent-discard confirmation as the button.
 
@@ -146,6 +149,9 @@ Calandria merged the branch locally, its checkout is disposable and Calandria ca
   never received, stop both the button and the automatic path. The automatic path just reports
   and leaves the checkout alone; the button, and Settings → Storage, offer the same
   permanent-discard confirmation a task move does, naming exactly what would be destroyed.
+- It never takes a branch out from under a session you are still using. If something does remove a
+  task's branch, a project move or a reclaim you asked for, the next turn cuts a fresh one and says
+  so on the transcript, naming the new branch and where the old commits went.
 - A branch that is merely "ahead" of its base after a squash merge is not treated as unsaved
   work, since every squash-merged branch looks that way.
 - The remote branch is deleted only if the merge came from Calandria (`--delete-branch`) or the
@@ -415,8 +421,8 @@ computed from its tasks every time you view it.
    their other tags untouched).
 
 A blue dot marks a tag with a task waiting on you, and finished tags fold behind the **Done**
-chip. Each task shows a tinted badge per tag, capped at three with a `+2` pill naming the rest on
-hover; clicking a badge lights that tag alone.
+chip. Each task shows a tinted badge per tag, capped at three with a `+2` pill. Press the pill to
+open the rest, each one still a badge you can click. Clicking a badge lights that tag alone.
 
 **Refresh tag** checks the whole plan against the code: the utility agent explores the
 repository read-only, reads every member task's brief against what it finds, and reports what
@@ -494,6 +500,11 @@ window resets, instead of babysitting the clock yourself.
    one, otherwise a "continue where you left off" prompt.
 3. Click the chip in the session header to cancel a queued start, or just message or start the
    task by hand before the reset to consume it instead.
+4. To skip step 2 in future, open **Settings → Run defaults**, pick an agent, and turn on
+   **Resume automatically when the limit resets**. Any of that agent's tasks whose turn then dies
+   on a spent quota is queued for the reset with no click, and the transcript says the queued
+   messages run automatically at that time instead of asking you to wait. The chip still cancels
+   it.
 
 Until the reset fires, the task's card reads *Starts at 4:49 PM* (or *Resumes …*). A queued task
 that is still blocked by another, or whose turn is already live when its time comes, is skipped
@@ -504,6 +515,10 @@ session moved on its own.
 
 - The button only appears for an agent whose plan reports a reset time; a Codex task or an
   API-key login has no reset to aim at.
+- **Resume automatically when the limit resets** is off by default, and stays a per-agent choice:
+  the next window's quota is finite, and pressing the button yourself is where you decide this
+  task is what it should go on. A task whose agent reports no reset time is never queued
+  automatically and keeps the button.
 - The sweep that fires a queued start runs on the server, so a start queued from a phone at
   midnight fires with no tab open.
 

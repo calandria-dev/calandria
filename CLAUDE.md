@@ -347,7 +347,13 @@ Three processes and entrypoints, one origin:
   default).
   `maybeAutoReclaim()` fires silently on `projects.auto_reclaim`;
   `POST /api/tasks/[id]/reclaim` is the manual button and the only place the unsafe
-  acknowledgement is given. `worktreePruneSafety()` blocks a local merge on `ahead > 0` but must
+  acknowledgement is given. A landing is not a finish, so the unattended half also requires
+  `taskIsFinishedWith()`, `prunableTaskIds()`' predicate for one task (`lib/retention.ts`, reused
+  rather than restated, as the sweep reuses it). `reclaimTask` refuses only a turn EXECUTING, which
+  a session idle between two messages passes, and the teardown then deletes the branch the next turn
+  resumes onto; `ensureWorktree` self-heals it into a fresh branch off the new base tip, so the
+  session's diff and history vanish with no error. The cost is that nothing marks a landed task done
+  by itself any more; the button does. `worktreePruneSafety()` blocks a local merge on `ahead > 0` but must
   not block a PR (a squash leaves the branch permanently ahead); `unpushedCommits()` is used
   there instead. Only the status write stamps `updated_at`. In `DYNAMIC_ONLY` because it sweeps
   dependents; `lib/prState.ts` is there for the same reason.

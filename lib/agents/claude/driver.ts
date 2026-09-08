@@ -23,7 +23,7 @@ import type {
 import type { AgentDriver, OneShotOptions, OneShotResult, TurnHooks } from "../types";
 import { claudeCapabilities } from "./capabilities";
 import { listClaudeCommands, recordMcpPrompts } from "./commands";
-import { getClaudePlanUsage, recordClaudeRateLimit } from "./planUsage";
+import { getClaudePlanUsage, recordClaudeRateLimit, claudeLimitResetAt } from "./planUsage";
 import { getSetting } from "../../store";
 import { registerTurnInput, unregisterTurnInput, type TurnInputHandle } from "../../turnInput";
 import {
@@ -711,16 +711,30 @@ async function* runTurn(
   // Latest usage-limit reset time the SDK reported this turn (rate_limit_event,
   // for claude.ai subscription users). When the turn then dies on a usage-limit
   // error, the raw error text usually says what happened but not when it heals;
-  // this timestamp does, so withResetTime() folds it into the error event and it
-  // lands in the persisted transcript line, the durable channel the UI renders.
+  // this timestamp does, so errorEvent() folds it into the error event and it
+  // lands in the persisted transcript line, the durable channel the UI renders,
+  // as well as on the event's own `resetAt` for the runner to queue against.
   let limitResetsAt: number | null = null;
-  // Appends the reset time to a usage-limit error's text, human-readably. The
-  // SDK reports `resetsAt` as a unix timestamp, epoch seconds in practice, but
-  // tolerate milliseconds defensively (values past ~2001 in ms terms).
-  const withResetTime = (text: string): string => {
-    if (limitResetsAt == null || !isUsageLimit(text)) return text;
-    const ms = limitResetsAt > 1e12 ? limitResetsAt : limitResetsAt * 1000;
-    return `${text}. Resets at ${new Date(ms).toLocaleString()}`;
+  // The reset as an epoch in MILLISECONDS, or null when nothing reported one.
+  // The SDK reports `resetsAt` as a unix timestamp, epoch seconds in practice,
+  // but tolerate milliseconds defensively (values past ~2001 in ms terms).
+  // Falls back to the plan meter's passive signal (./planUsage.ts), which the
+  // same events feed: a rejection can arrive with no rate_limit_event beside
+  // it, and an earlier turn's event still says when the window heals. Read
+  // from cache only, never fetched, so this stays free on the failure path.
+  const resetAtMs = (): number | null => {
+    if (limitResetsAt == null) return claudeLimitResetAt();
+    return limitResetsAt > 1e12 ? limitResetsAt : limitResetsAt * 1000;
+  };
+  // An error event, carrying the reset instant twice on a usage-limit failure:
+  // appended to the text human-readably, and as data on `resetAt`, which is
+  // what lib/runner.ts queues the automatic resume off (StreamEvent in
+  // lib/types.ts). Parsing the instant back out of a localized date string
+  // would be a second, worse copy of the same fact.
+  const errorEvent = (text: string): StreamEvent => {
+    const ms = isUsageLimit(text) ? resetAtMs() : null;
+    if (ms == null) return { type: "error", content: text };
+    return { type: "error", content: `${text}. Resets at ${new Date(ms).toLocaleString()}`, resetAt: ms };
   };
 
   // Resolve the run controls with a two-level fallback: the task's own choice wins;
@@ -1437,7 +1451,7 @@ async function* runTurn(
           }
           queue.push({ type: "usage", usage });
           if (message.subtype !== "success" && "result" in message === false) {
-            queue.push({ type: "error", content: withResetTime(`Run ended: ${message.subtype}`) });
+            queue.push(errorEvent(`Run ended: ${message.subtype}`));
           }
           // The linger decision. The Stop hook has already fired for this turn,
           // so pendingBg/pendingCrons are current: nothing to honor means the
@@ -1482,7 +1496,7 @@ async function* runTurn(
       // An abort (Stop button / disconnect) ends the stream on purpose, not as
       // an error. The partial transcript is already persisted by the consumer.
       if (!abortController?.signal.aborted) {
-        queue.push({ type: "error", content: withResetTime(err instanceof Error ? err.message : String(err)) });
+        queue.push(errorEvent(err instanceof Error ? err.message : String(err)));
       }
     } finally {
       // However the stream ended (clean close, Stop, a thrown transport

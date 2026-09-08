@@ -27,6 +27,7 @@ import { isPromptTooLong, CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
 import { isAuthFailure, AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
 import { isApprovalBlocked, APPROVAL_BLOCKED_NOTICE } from "@/lib/approvalFailure";
 import { isUsageLimit, USAGE_LIMIT_NOTICE } from "@/lib/usageLimit";
+import { autoResumeOnLimitKey, deferredStartFor } from "@/lib/usageReset";
 import { isBudgetExceeded, BUDGET_EXCEEDED_NOTICE, BUDGET_EXCEEDED_BANNER_REASON } from "@/lib/budgetFailure";
 import { worktreePrepNotice } from "@/lib/worktreeFailure";
 import { markAgentAuthBroken, clearAgentAuthBroken } from "@/lib/agents/connections";
@@ -329,6 +330,25 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
           worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha,
           ...(wt.baseBranch ? { base_branch: wt.baseBranch } : {}),
         });
+        // A resume that could not reattach means the task's own branch is
+        // gone: something removed it between two messages (a reclaim, a
+        // project move, a hand-run `git branch -D`), and the self-heal above
+        // has just handed the session a fresh branch cut from the base tip.
+        // That is the right repair for a checkout that went missing on its
+        // own, and the wrong thing to do quietly: the task's commits and its
+        // whole diff have disappeared, and the next thing the session sees is
+        // an empty change list it has no way to explain. Says so on the
+        // transcript, before the message that triggered the re-cut.
+        if (!wt.reattached) {
+          const note =
+            `This task's branch no longer existed, so a new one (${wt.branch}) was cut from ` +
+            `${wt.baseBranch || "the repository's current HEAD"}. Any commits the previous branch ` +
+            `held are not in this checkout: look for them in the base branch or on the remote ` +
+            `before redoing the work.`;
+          console.warn(`[runner] task ${id}: re-cut ${wt.branch} from scratch; the previous branch was gone`);
+          const m = addMessage(id, gen, "system", note);
+          publish(id, { type: "notice", content: note, msgId: m.id, generation: gen, ts: m.created_at });
+        }
         // Record what the cut actually got, for the opening turn's context to
         // state: a base branch behind the project default, or one that no
         // longer exists, is otherwise invisible to the session until its PR
@@ -549,6 +569,11 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // straight into the same limit. Classified after authFailure and
   // budgetFailure, since neither doubles as a spent quota.
   let usageLimitFailure: string | null = null;
+  // When the driver says that quota heals (StreamEvent.error's `resetAt`, ms
+  // epoch). Only a driver knows this: Claude reads it off the SDK's
+  // rate_limit_event. Null means nobody reported one, and the automatic
+  // resume below simply doesn't arm.
+  let usageLimitResetAt: number | null = null;
   // Set when a tool-permission prompt auto-denied because nobody was
   // watching (lib/permissions.ts). Like a dead login, the problem isn't the
   // work, it's that there was no one to approve it, and draining the queue
@@ -1142,7 +1167,10 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         const fail = failTurn(ev.content);
         if (fail === "auth") authFailure = ev.content;
         else if (fail === "budget") budgetFailure = ev.content;
-        else if (isUsageLimit(ev.content)) usageLimitFailure = ev.content;
+        else if (isUsageLimit(ev.content)) {
+          usageLimitFailure = ev.content;
+          if (ev.resetAt) usageLimitResetAt = ev.resetAt;
+        }
       } else if (ev.type === "notice") {
         // A quiet system note emitted mid-turn (e.g. expose_service
         // confirming a live URL). Persist it so a reload still shows the
@@ -1163,6 +1191,10 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     const fail = failTurn(turnError);
     if (fail === "auth") authFailure = turnError;
     else if (fail === "budget") budgetFailure = turnError;
+    // A throw carries prose only, so there is no reset time to read here: the
+    // driver's `resetAt` rides the error EVENT. A driver that dies by throwing
+    // therefore never arms the automatic resume, which is the same "nobody
+    // reported a reset" case as a driver that reports none at all.
     else if (isUsageLimit(turnError)) usageLimitFailure = turnError;
   } finally {
     // This whole block is synchronous (better-sqlite3, in-memory pub/sub),
@@ -1430,6 +1462,44 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       // once. They drain normally at the end of the next turn, after a
       // reconnect, once the budget resets, once the limit resets, or once
       // the user is back.
+      // Opt-in, per agent (Settings → Run defaults, `auto_resume_on_limit`):
+      // queue the resume the usage-limit notice otherwise offers as a button.
+      // The button needs somebody at the screen when the quota dies, which is
+      // exactly when there tends not to be one: a limit spent at 2am is
+      // noticed at 9. So when the driver told us when the window heals, store
+      // the same deadline the button would (lib/usageReset.ts adds the head-room)
+      // and let lib/deferredStart.ts fire it.
+      //
+      // Off by default because the click it replaces is a decision, not a
+      // formality: the next window's quota is finite and this task may not be
+      // what the user wanted it spent on.
+      //
+      // Nothing else is needed to make it fire. The sweep's ticker is already
+      // running (the boot ping starts it, /api/instance/scheduler), and the
+      // runner must not reach lib/deferredStart.ts to start it: that module
+      // reaches back here, and a cycle through the async agent-SDK graph is
+      // what tests/importGraph.test.ts exists to prevent.
+      //
+      // A resumed turn that hits the limit again simply re-arms for the next
+      // window, which is the correct behavior and self-paced: one turn per
+      // reset, not a retry loop.
+      const autoResumeAt =
+        usageLimitFailure && usageLimitResetAt != null && usageLimitResetAt > Date.now()
+          && getSetting(autoResumeOnLimitKey(task.agent)) === "on"
+          ? deferredStartFor(usageLimitResetAt)
+          : null;
+      if (autoResumeAt) {
+        try {
+          updateTask(id, { start_at: autoResumeAt });
+          // The coarse turn events don't carry start_at, so the hero and card
+          // chips (and the notice's own Cancel) need the edit announced.
+          publishGlobal(id, { type: "task_edited" });
+          log.info("queued an automatic resume for the usage-window reset", { task: id, at: autoResumeAt });
+        } catch (err) {
+          // Same best-effort rule as the notice below: the row can be gone.
+          log.error("could not queue the automatic resume (row gone?)", { task: id, err });
+        }
+      }
       const parked = listPendingMessages(id).length;
       if (parked) {
         const when = authFailure
@@ -1437,7 +1507,11 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
           : budgetFailure
             ? "once the budget resets"
             : usageLimitFailure
-              ? "once the limit resets"
+              // Server-local formatting, like the reset time the Claude driver
+              // folds into the error line just above it in the transcript.
+              ? autoResumeAt
+                ? `automatically at ${new Date(autoResumeAt).toLocaleString()}`
+                : "once the limit resets"
               : settingsBlocked
                 ? "once you've approved the settings change"
                 : "when you send the next message";

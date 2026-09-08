@@ -9,6 +9,13 @@
 // squash merge leaves a branch permanently ahead of its base with no real
 // unmerged commits. It must not bump `updated_at` except on the status
 // write, so an automatic reclaim can't float a stale task to the top of Done.
+//
+// The two halves answer to different rules about a LIVE task, because they
+// fail differently. The button (POST /api/tasks/[id]/reclaim) is a request,
+// so it reclaims whatever is not mid-turn. maybeAutoReclaim() is not, so it
+// additionally waits for lib/retention.ts's taskIsFinishedWith(): landing is
+// a fact about the base branch, not about whether the session is over, and
+// the branch this deletes is the one the next turn would have resumed onto.
 
 import fs from "node:fs";
 import { clearTaskWorktreePath, getProject, getTask, updateTask } from "@/lib/store";
@@ -22,6 +29,7 @@ import {
   worktreePruneSafety,
 } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
+import { taskIsFinishedWith } from "@/lib/retention";
 import { UNSAFE_DISCARD_REASON } from "@/lib/taskMove";
 import { withTaskLock } from "@/lib/taskLock";
 import { withRepoLock } from "@/lib/repoLock";
@@ -280,8 +288,9 @@ export async function reclaimTask(
 }
 
 /**
- * The automatic half: reclaim this task if its project opted in and its work
- * has landed. Fire-and-forget, and does nothing when the project didn't opt in.
+ * The automatic half: reclaim this task if its project opted in, its work has
+ * landed, and the session is over. Fire-and-forget, and does nothing when the
+ * project didn't opt in.
  *
  * Called from every place that learns a task has landed: the three merge
  * routes and lib/prState.ts's refresh, so "the PR merged" and "we merged it
@@ -297,6 +306,25 @@ export function maybeAutoReclaim(taskId: string): void {
   if (!task.worktree_path && !task.work_branch && TERMINAL.has(task.status)) return;
   const project = getProject(task.project_id);
   if (!project?.auto_reclaim) return;
+  // A landed task is not a finished one. reclaimTask() refuses only while a
+  // turn is EXECUTING, which is a much narrower question than whether anybody
+  // is still here: a session sitting idle between two messages passes that
+  // check, and the reclaim then deletes the branch its next turn would have
+  // resumed onto. `ensureWorktree` self-heals the missing checkout, so the
+  // session is handed a fresh branch cut from the new base tip, with none of
+  // its own history and an empty diff - the same "looks harmless" failure
+  // lib/worktreeSweep.ts's header describes, reached by a different route.
+  //
+  // So the unattended path asks lib/retention.ts's predicate, the one the
+  // table prune and the worktree sweep already use, rather than inventing a
+  // second reading of "done with". It costs the automatic status write: only
+  // a task the user already moved to done or cancelled is reclaimed without
+  // being asked. POST /api/tasks/[id]/reclaim, the session header's button,
+  // is unaffected and is where a live task can still be reclaimed on request.
+  if (!taskIsFinishedWith(taskId)) {
+    console.log(`[reclaim] left task ${taskId} alone: its session is still open (status ${task.status})`);
+    return;
+  }
 
   void reclaimTask(taskId)
     .then((r) => {
