@@ -8,6 +8,28 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.11.0](https://github.com/calandria-dev/calandria/compare/v0.10.0...v0.11.0) (2026-09-08)
+
+
+### Features
+
+* **collab:** persist edits and the general note, save a forgotten comment, edit draft comments ([#245](https://github.com/calandria-dev/calandria/issues/245)) ([607c03c](https://github.com/calandria-dev/calandria/commit/607c03c20dbe81c24a6ed599637826ce0daf5cbd))
+* **collab:** persist edits and the general note, save a forgotten comment, edit drafts ([607c03c](https://github.com/calandria-dev/calandria/commit/607c03c20dbe81c24a6ed599637826ce0daf5cbd))
+* **sync:** offer a rebase when a task's base branch was rewritten ([#276](https://github.com/calandria-dev/calandria/issues/276)) ([81b91d2](https://github.com/calandria-dev/calandria/commit/81b91d22c139ff236c7f31e7c0536f8cb2d4f651))
+* **tags:** collapse a long tag description behind Show more ([#248](https://github.com/calandria-dev/calandria/issues/248)) ([1f0a3fc](https://github.com/calandria-dev/calandria/commit/1f0a3fc0707c9e39f8529e6d83b98095e94432e4))
+* **usage:** opt-in auto-queue of a resume at the usage-window reset ([#283](https://github.com/calandria-dev/calandria/issues/283)) ([0cf163f](https://github.com/calandria-dev/calandria/commit/0cf163f07369de6ed7085e291661909aba15121a))
+
+
+### Bug Fixes
+
+* **desktop:** repair the macOS signing and release-manifest defects in the desktop release lane ([#239](https://github.com/calandria-dev/calandria/issues/239)) ([0416d2c](https://github.com/calandria-dev/calandria/commit/0416d2c428ab5d460d21eac82667805bf4971f17))
+* **desktop:** stop the packaged macOS app hanging on the platform keyring ([#250](https://github.com/calandria-dev/calandria/issues/250)) ([f248324](https://github.com/calandria-dev/calandria/commit/f24832487e413a39da51afa8b0a3c6e8ffd9b412)), closes [#240](https://github.com/calandria-dev/calandria/issues/240)
+* **pwa:** bound transcript state, suspend hidden phone terminals, add lifecycle diagnostics ([#260](https://github.com/calandria-dev/calandria/issues/260)) ([de50c65](https://github.com/calandria-dev/calandria/commit/de50c655c6dba8af96b17ee259cdc23de12b2bd7))
+* **reclaim:** don't auto-reclaim a task whose session is still open ([#280](https://github.com/calandria-dev/calandria/issues/280)) ([ec41512](https://github.com/calandria-dev/calandria/commit/ec41512abc2375306e2e57148f2b5332568e0c77))
+* **sync:** detect a base branch whose history was rewritten upstream ([#255](https://github.com/calandria-dev/calandria/issues/255)) ([a06b630](https://github.com/calandria-dev/calandria/commit/a06b630af2c49428d1a2afd1dcc1e8191c54cba6))
+* **tags:** make the +N tag pill reachable without a pointer ([#282](https://github.com/calandria-dev/calandria/issues/282)) ([df97a4b](https://github.com/calandria-dev/calandria/commit/df97a4baee411f23df23f0ac77dafc79051454b2))
+* **terminal:** respawn the visible mobile terminal on resume ([#272](https://github.com/calandria-dev/calandria/issues/272)) ([06f6e25](https://github.com/calandria-dev/calandria/commit/06f6e255d4a34ce8e9db3351f49574164a58753f))
+
 ## [0.10.0](https://github.com/calandria-dev/calandria/compare/v0.9.0...v0.10.0) (2026-09-06)
 
 
