@@ -306,6 +306,18 @@ tab's Merge button) and **Review** to open that tab first, where **Discard** ret
 worktree to where it was. Only Accept or Discard clears the banner. If the agent leaves some
 files still conflicted, the banner counts them and offers another pass.
 
+**A base branch whose history was rewritten gets a different button.** If the commit a task was
+cut from is no longer reachable from its base branch, something rebased, amended or force-pushed
+that branch underneath the task. Merging there reconciles the pre-rewrite and post-rewrite copies
+of the same commits and conflicts in every file the rewrite touched, so the banner says so and
+offers **Rebase** instead of Sync: `git rebase --onto` replays the task's own commits onto the new
+tip. It refuses over uncommitted changes, since a rebase rewrites what it finds committed. If the
+branch has an open pull request it refuses once and explains that rebasing makes the branch
+non-fast-forward, and the button becomes **Rebase anyway**; the rebase then runs locally and the
+banner prints the `git push --force-with-lease` line that would update the PR, because Calandria
+never force-pushes for you. A replay that stops on a conflict behaves like a paused merge: Fix
+with AI, then **Finish rebase**, or **Discard rebase** to put the branch back where it started.
+
 Resolving conflicts is the same work under either landing policy — it merges the base *into*
 the task branch, which is exactly what an out-of-date PR needs — so the demotion above leaves
 it alone. Only the last step changes: under `pr` the button reads **Accept resolution** and

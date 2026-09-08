@@ -279,6 +279,9 @@ export interface SyncStatusResp {
   unresolved?: string[]; // while paused: files still conflicted (markers or unstaged binaries)
   baseMissing?: boolean; // the base branch has no ref in the repo; the zeros above mean "couldn't compare"
   baseRewritten?: boolean; // the base branch's history was rewritten since this task was cut, so a merge here reconciles two copies of the same work
+  rebaseInProgress?: boolean; // a `rebase --onto` the new base tip stopped on a conflict in the worktree, awaiting resolution then accept/discard
+  prState?: string; // tasks.pr_state, so the rebase offer can warn before it makes an open PR's branch non-fast-forward
+  prNumber?: number;
   projectBranch?: string; // the project default, so the banner can tell whether BaseBranchBanner already covers this base
   workBranch?: string;
   baseSha?: string; // the commit the task was cut from or last synced to, and the rebase --onto cut point
