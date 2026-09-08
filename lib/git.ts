@@ -858,6 +858,22 @@ async function forkPointSha(repoPath: string, branch: string, localBase: string)
   return git(repoPath, ["rev-parse", localBase || "HEAD"]).catch(() => "");
 }
 
+/** What a worktree preparation produced. */
+export interface WorktreeCut {
+  path: string;
+  branch: string;
+  baseSha: string;
+  baseBranch: string;
+  /**
+   * The checkout was put back on a branch that already existed, so whatever
+   * the task had committed is still under it. False means a NEW branch was
+   * cut from the base: correct for a task's first turn, and for a resume it
+   * means the task's own branch is gone and its history with it, which
+   * lib/runner.ts reports rather than letting the self-heal be silent.
+   */
+  reattached: boolean;
+}
+
 /**
  * Create an isolated git worktree and branch for a task, branched from the
  * project's configured base branch (`baseBranch`) when it exists, else from
@@ -890,7 +906,7 @@ export async function ensureWorktree(
   repoPath: string,
   taskId: string,
   baseBranch?: string
-): Promise<{ path: string; branch: string; baseSha: string; baseBranch: string } | null> {
+): Promise<WorktreeCut | null> {
   // Refresh the remote-tracking ref before taking the lock. A fetch only
   // writes refs/remotes/*, so it's safe alongside anything else in the repo,
   // and holding the per-repo lock across a network round trip would park
@@ -961,7 +977,7 @@ async function ensureWorktreeLocked(
   repoPath: string,
   taskId: string,
   baseBranch?: string
-): Promise<{ path: string; branch: string; baseSha: string; baseBranch: string } | null> {
+): Promise<WorktreeCut | null> {
   // Greenfield (non-git) or commitless repo: initialize it so the task can be
   // isolated. Without this, every Calandria-created project (which starts as
   // a bare folder) would skip isolation and have nothing to diff.
@@ -1002,7 +1018,7 @@ async function ensureWorktreeLocked(
   // too. A leftover that isn't registered here is an orphan by definition:
   // clear it and cut fresh.
   if (fs.existsSync(wtPath)) {
-    if (await isLinkedWorktree(repoPath, wtPath)) return { path: wtPath, branch, baseSha, baseBranch: localBase };
+    if (await isLinkedWorktree(repoPath, wtPath)) return { path: wtPath, branch, baseSha, baseBranch: localBase, reattached: reattaching };
     try {
       rmTree(wtPath);
     } catch {
@@ -1012,13 +1028,18 @@ async function ensureWorktreeLocked(
     }
   }
 
+  // `reattaching` is the answer as of the branch lookup above; the fallback
+  // below can still land on an existing branch, so the report is corrected
+  // there rather than taken from the lookup alone.
+  let reattached = reattaching;
   try {
     await git(repoPath, ["worktree", "add", "-b", branch, wtPath, baseSha]);
   } catch {
     // Branch may already exist from a prior generation; attach to it instead.
     await git(repoPath, ["worktree", "add", wtPath, branch]);
+    reattached = true;
   }
-  return { path: wtPath, branch, baseSha, baseBranch: localBase };
+  return { path: wtPath, branch, baseSha, baseBranch: localBase, reattached };
 }
 
 // ---------- repair ----------
@@ -1062,7 +1083,7 @@ export interface WorktreeRepair {
    *  possible at all. Same shape `ensureWorktree` returns, `baseBranch`
    *  included: a repair re-cuts, so it settles the same "which base is this
    *  task really on" question the launch paths pin (lib/baseBranch.ts). */
-  worktree: { path: string; branch: string; baseSha: string; baseBranch: string } | null;
+  worktree: WorktreeCut | null;
 }
 
 /**
