@@ -49,3 +49,13 @@ export function usageResetAt(snap: PlanUsageSnapshot | null | undefined, now: nu
 
 /** The `start_at` to store for a reset at `resetAt`: the reset plus the margin. */
 export const deferredStartFor = (resetAt: number): number => resetAt + USAGE_RESET_MARGIN_MS;
+
+/**
+ * Settings key for "queue the resume yourself when a turn dies on the limit",
+ * agent-scoped like every other run default and stored as `"on"` (anything
+ * else, unset included, is off). Off by default on purpose: the click it
+ * replaces is where the user decides that THIS task is what the next window's
+ * quota should be spent on, and an unattended resume takes that decision
+ * away. Read server-side by lib/runner.ts, written by Settings → Run defaults.
+ */
+export const autoResumeOnLimitKey = (agentId: string): string => `auto_resume_on_limit:${agentId}`;

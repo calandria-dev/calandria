@@ -752,7 +752,14 @@ export type StreamEvent =
   // driver's account of which schedule fired and the prompt it submitted,
   // persisted so the transcript explains the unprompted continuation.
   | { type: "background_resumed"; status: "completed" | "failed" | "stopped" | "woke"; summary: string }
-  | { type: "error"; content: string }
+  // `resetAt` (ms epoch) is when the quota behind a usage-limit failure heals,
+  // as the provider itself reported it, and is set only on that failure. It is
+  // what lets lib/runner.ts queue the resume without a person reading the
+  // reset off the meter and clicking (the opt-in `auto_resume_on_limit:<agent>`
+  // setting, lib/usageReset.ts). Optional because it is the driver's to know:
+  // one that never learns a reset time simply doesn't arm the queued resume,
+  // and the notice keeps saying the limit has to reset first.
+  | { type: "error"; content: string; resetAt?: number }
   | { type: "done"; sessionId: string | null };
 
 // Events as delivered over the task event bus and the GET /messages SSE tail.

@@ -500,6 +500,11 @@ window resets, instead of babysitting the clock yourself.
    one, otherwise a "continue where you left off" prompt.
 3. Click the chip in the session header to cancel a queued start, or just message or start the
    task by hand before the reset to consume it instead.
+4. To skip step 2 in future, open **Settings → Run defaults**, pick an agent, and turn on
+   **Resume automatically when the limit resets**. Any of that agent's tasks whose turn then dies
+   on a spent quota is queued for the reset with no click, and the transcript says the queued
+   messages run automatically at that time instead of asking you to wait. The chip still cancels
+   it.
 
 Until the reset fires, the task's card reads *Starts at 4:49 PM* (or *Resumes …*). A queued task
 that is still blocked by another, or whose turn is already live when its time comes, is skipped
@@ -510,6 +515,10 @@ session moved on its own.
 
 - The button only appears for an agent whose plan reports a reset time; a Codex task or an
   API-key login has no reset to aim at.
+- **Resume automatically when the limit resets** is off by default, and stays a per-agent choice:
+  the next window's quota is finite, and pressing the button yourself is where you decide this
+  task is what it should go on. A task whose agent reports no reset time is never queued
+  automatically and keeps the button.
 - The sweep that fires a queued start runs on the server, so a start queued from a phone at
   midnight fires with no tab open.
 
