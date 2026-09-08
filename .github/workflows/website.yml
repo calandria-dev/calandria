@@ -1,4 +1,5 @@
-# Builds website/ (the calandria.dev placeholder, docs/design/WEBSITE.md) and
+# Builds website/ (the calandria.dev placeholder; design plan in the private
+# notes repo at design/WEBSITE.md) and
 # deploys it to Cloudflare Pages. Deliberately separate from test.yml: the site
 # is an Astro project with its own package.json and its own lockfile, shares no
 # code with the app, and must never be able to fail the product's gate — the
@@ -12,6 +13,15 @@
 # `--branch` is what makes Cloudflare mint one instead of overwriting
 # production, since anything other than the project's production branch is a
 # preview deployment on Direct Upload.
+#
+# The pull_request trigger takes any base branch, matching test.yml. This repo
+# lands batches of work through integration branches (`integration/**`), and a
+# PR into one of those edits docs/*.md just like a PR into main does. Pinning
+# the trigger to main turned the docs gate off for exactly those PRs, so a
+# missing front-matter `title` or a dead relative link (see docs/CLAUDE.md)
+# surfaced only when the integration branch reached main, several rewrites
+# after the one that broke it. The `paths` filter above is what keeps the run
+# off PRs that touch neither the site nor the docs.
 #
 # FORKS. A fork's PR gets no secrets, so the deploy step is gated on the
 # credentials actually being present rather than on `github.repository` — same
@@ -53,7 +63,7 @@ on:
       - docs/**
       - .github/workflows/website.yml
   pull_request:
-    branches: [main]
+    branches: ["**"]
     paths:
       - website/**
       - docs/**

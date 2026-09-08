@@ -103,7 +103,8 @@
 name: Test
 
 # `paths-ignore: website/**` keeps the site out of this gate. website/ is the
-# calandria.dev Astro project (docs/design/WEBSITE.md) — its own package.json,
+# calandria.dev Astro project (design plan in the private notes repo at
+# design/WEBSITE.md) — its own package.json,
 # its own lockfile, no import into the app — so a site-only change cannot break
 # anything here, and running the Windows lanes plus a full production build for
 # a copy edit is the wrong bill. website.yml builds and deploys it instead.
@@ -642,9 +643,8 @@ jobs:
       # The only Linux-specific step in this job — a macOS or Windows desktop
       # lane would copy this job and drop exactly this step plus the
       # `xvfb-run` prefix on the final one. Electron's own `--headless` mode is
-      # not a substitute: docs/DESKTOP_E2E.md §1 measured the process dying
-      # with SIGTRAP before the CDP socket settles, so a virtual display is
-      # mandatory here, not a preference.
+      # not a substitute: the process dies with SIGTRAP before the CDP socket
+      # settles, so a virtual display is mandatory here, not a preference.
       - name: Install a virtual display
         run: sudo apt-get update && sudo apt-get install -y xvfb
 
@@ -727,7 +727,7 @@ jobs:
       # still could not exercise: what makes the sandbox work is the .deb's
       # postinst, which installs an AppArmor profile — or, on a kernel without
       # user namespaces, the SUID bit — and only an INSTALL runs it. That run
-      # is the bench lane's (docs/DESKTOP_E2E.md §4).
+      # is the bench lane's (docs/DESKTOP_E2E.md §2).
       - name: Package the desktop app
         working-directory: desktop
         run: |
@@ -850,8 +850,7 @@ jobs:
                       || contains(github.event.pull_request.labels.*.name, 'e2e'))))) }}
     #
     # GITHUB-HOSTED, NOT THE HOMELAB'S WINDOWS VM (Proxmox template 9911).
-    # docs/DESKTOP_E2E.md §4 left that open; this lane closes it, and the
-    # deciding question is what a real logged-in Windows session buys.
+    # The deciding question is what a real logged-in Windows session buys.
     #
     # For the LINUX desktop lane the answer was "quite a lot" — hence the bench
     # VM — because a runner there has no display at all and `xvfb-run` hides a
@@ -1215,7 +1214,7 @@ jobs:
     # GITHUB-HOSTED, AND NOT NEGOTIABLE HERE. The homelab has no Apple hardware
     # and macOS cannot be virtualised on Proxmox/KVM with any legal path, so
     # unlike the Linux bench VM and the Windows lane this one had no
-    # alternative to weigh. docs/DESKTOP_E2E.md §4 records that.
+    # alternative to weigh.
     # The closed-PR clause is the other three lanes'; on the priciest runner in
     # the file it matters most, since a merged PR is awaiting nothing.
     if: >-

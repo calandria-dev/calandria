@@ -119,10 +119,10 @@ can be removed to reclaim disk.
   |-|-|
   | `e2e:write=<relpath>:<content>` | write that file in the task worktree |
   | `e2e:sleep=<ms>` | hold the turn open (Stop / queueing tests) |
-  | `e2e:type=<text>` | stream that text as `assistant_delta` fragments, one word every 300ms, then send it as the completed `assistant` message — the live-typing bubble and its replacement |
+  | `e2e:type=<text>` | stream that text as `assistant_delta` fragments, one word every 300ms, then send it as the completed `assistant` message (the live-typing bubble and its replacement) |
   | `e2e:output=<a>\|<b>\|<c>` | emit a `Bash` tool row, stream those lines into its peek as `tool_output_delta` fragments one every 300ms, then settle the row with the whole output |
-| `e2e:fail=<message>` | end the turn with an error event |
-  | `e2e:suggest=<title>` | file a suggested task as a real `suggest_task` tool call — tool row, result, then the event — so the transcript's suggestion card is exercised too |
+  | `e2e:fail=<message>` | end the turn with an error event |
+  | `e2e:suggest=<title>` | file a suggested task as a real `suggest_task` tool call (tool row, result, then the event), so the transcript's suggestion card is exercised too |
   | `e2e:suggest-into=<project>\|<title>` | file the suggestion into another project (id or name), through the real strict resolver; an unknown ref yields an error event |
   | `e2e:permission=<command>` | park the turn on a tool-permission card for that Bash command (runs the real `lib/permissions.ts` gate) |
   | `e2e:blocked=<command>` | that Bash call rejected by the CLI itself: an already-decided card with no buttons, nothing parked on the user |
@@ -156,6 +156,10 @@ can be removed to reclaim disk.
 | `19-mobile-project-pane.spec.ts` | the phone's project pane: Runbooks reachable and dispatch opens the task, Back walks project → task list → projects, a refresh lands back on the pane |
 | `20-agent-edits.spec.ts` | "Changed by agent": the chip appears live, the panel shows the diff, Revert restores the original, Keep changes clears the chip, a task with a live turn refuses the write |
 | `21-base-branch.spec.ts` | per-task base branches: retarget a started task from the edit dialog, merge into that branch, the user's checkout stays on `main` |
+| `22-settings-drift.spec.ts` | the pre-turn settings gate (issue #43): a turn that wrote `.claude/settings.json` mid-task parks the following turn on a card showing the diff before the agent starts |
+| `23-idle-stop.spec.ts` | stopping a turn marked idle from its card: the first press arms the button without stopping anything, and only the second press stops the turn |
+| `24-header-rail.spec.ts` | the session header's overflow rail: nothing is pushed out of reach at any pane width, and whatever gets tucked away stays one click away |
+| `25-project-restore.spec.ts` | a reload with no `?project=` returns to the last project open, not the first one in the list |
 | `26-ask-user.spec.ts` | the other half of `lib/asks.ts`: a turn parks on an AskUserQuestion card, it docks below the transcript while the answer is owed and settles back inline once given, and multi-select, "Other" and a two-question card all reach the model. Runs the `startAskUser` / `takeAskOutcome` pair the stdio bridge's `ask_user` uses, so it is the only browser coverage of the non-Claude ask path |
 
 The suite runs serially (one shared app instance + SQLite DB). Every spec after
@@ -173,7 +177,7 @@ project, so they're independently runnable.
   app the window never left the first width. `.body[data-shed]` is the
   auto-collapse policy as the app currently holds it (`""`, `"proj task"`,
   `"proj task rail"`); `03-views.spec.ts` shows the wait. The boot skeleton
-  draws a `.col-projects` too, so it is no proof boot has landed — gate on a
+  draws a `.col-projects` too, so it is no proof boot has landed; gate on a
   control that only the booted app renders (`19-mobile-project-pane.spec.ts`).
 - New agent-visible behavior → add a directive to the mock driver rather than
   special-casing a spec.

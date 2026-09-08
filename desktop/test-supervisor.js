@@ -1210,7 +1210,7 @@ function hold(port) {
     // An address that is SET but dead is the same no, and it is the one every
     // CI lane in this suite runs under: e2e/fixtures.ts points
     // DBUS_SESSION_BUS_ADDRESS at a socket that does not exist so libnotify
-    // fails fast. Both CLIs' real wording.
+    // fails fast (docs/DESKTOP_E2E.md §3). Both CLIs' real wording, measured.
     for (const stderr of [
       "Error connecting: Could not connect: No such file or directory",
       'Failed to open connection to "session" message bus: Failed to connect to socket /nope: No such file or directory',

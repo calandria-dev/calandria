@@ -7,7 +7,8 @@ import rehypeMermaid from "rehype-mermaid";
 import { remarkDocsLinks } from "./src/plugins/docs-links.mjs";
 import { linkCheck } from "./src/plugins/link-check.mjs";
 
-// calandria.dev. Two things in one build (docs/design/WEBSITE.md):
+// calandria.dev. Two things in one build (design plan in the private notes repo,
+// design/WEBSITE.md):
 //   /      the site's own page (phase 1 placeholder; phase 3 replaces it)
 //   /docs  Starlight, rendering the repo's `docs/*.md` where they live
 //
@@ -104,7 +105,6 @@ export default defineConfig({
         { label: "Troubleshooting", slug: "docs/troubleshooting" },
         { label: "Architecture", slug: "docs/architecture" },
         { label: "Community", slug: "docs/community" },
-        { label: "Context budget", slug: "docs/context-budget" },
       ],
     }),
 

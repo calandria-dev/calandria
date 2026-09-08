@@ -15,7 +15,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: calandria-example-overlay:latest
-    container_name: orch-u-example
+    container_name: calandria-example
     restart: unless-stopped
     environment:
       PUBLIC_BASE_URL: https://calandria.example.com
@@ -32,4 +32,4 @@ services:
 
 volumes:
   home:
-    name: orch-u-example-home
+    name: calandria-example-home

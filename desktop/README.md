@@ -1,637 +1,569 @@
-# Calandria desktop shell (spike)
+# Calandria desktop shell
 
-A minimal Electron shell that launches the local Calandria server and shows it in
-a window, so the app starts by double-clicking an icon instead of by opening a
-terminal, running `npm start`, and typing a URL — and then tells you when a task
-needs you, from the dock and the tray, whether or not the window is open.
+`desktop/` is an Electron shell around the same local Calandria server: it
+launches `server.js` and `pty-server.js` as sidecars and shows the app in a
+window, so the app starts by double-clicking an icon instead of by opening a
+terminal, running `npm start`, and typing a URL. It also tells you when a task
+needs you, from the dock and the tray, whether or not the window is open. It
+is its own npm package so Electron (~280 MB unpacked) never lands in the root
+app's `node_modules`, the Docker image, or the ordinary `npm test` run. The
+only things that exercise it are the label-gated `desktop` and `windows-desktop`
+jobs in `.github/workflows/test.yml`, and the tag-triggered
+`.github/workflows/release-desktop.yml`.
 
-**This is spike code**, kept because it is the cheapest way to answer the
-questions in [`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md), which also carries
-the recommendation, the measurements, and the reasons the architecture is what it
-is. It is wired into no runtime and into `npm test` and the Docker image not at
-all; the one thing that does run it is the label-gated `desktop` job in
-`.github/workflows/test.yml` (see [`docs/DESKTOP_E2E.md`](../docs/DESKTOP_E2E.md)).
-The repo root gains no dependency either way: Electron installs into this
-directory only.
+This file covers building, packaging, signing, publishing and testing the
+shell. For the shipped feature set and per-platform behavior, see
+[`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md); for the full e2e test recipes
+and known flakes, see [`docs/DESKTOP_E2E.md`](../docs/DESKTOP_E2E.md).
 
-## Run it
+## Layout
+
+| File | What it is |
+|-|-|
+| `supervisor.js` | All the process management: PATH repair, Node resolution, port selection, spawn, readiness polling (raced against the sidecars' own exits, so a boot that has already failed rejects in the first second with the child's reason instead of failing at the timeout with `fetch failed`), drain-then-kill. **No `require("electron")`.** This is the part that survives a change of shell, and the part that can be tested headlessly. |
+| `instances.js` | The saved instance list (which server the window attaches to) and the version handshake. `local` is the pair of sidecars `supervisor.js` spawns; a `url` entry is an origin the shell attaches to over the network; an `ssh` entry is one reached through a port forward (`ssh-tunnel.js`). Each in its own persistent Electron partition so an Access cookie cannot bleed between them. A `url` or `ssh` entry may also carry an `auth` block, validated by `instance-auth.js`'s `normalizeAuth` on every load and repair, which is what tells the window to offer sign-in instead of loading the instance's own login page. Holds the file at `~/.config/calandria/instances.json` (`CALANDRIA_INSTANCES_FILE` overrides) and repairs a hand-edited one instead of refusing to launch over it. No `require("electron")`. |
+| `oauth.js` | The RFC 8252 sign-in flow a passkey or security key needs: OpenID Connect discovery, mandatory PKCE (S256), the authorize URL, a one-shot HTTP receiver on `127.0.0.1` that waits for the loopback redirect, and the authorization-code and refresh-token exchanges. No `require("electron")`; the caller injects `fetch`, which is how `main.js` drives it through the instance's own session. See [`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md). |
+| `instance-auth.js` | The credential model behind sign-in: `normalizeAuth` validates a saved or typed `auth` block (refusing a client secret outright, since this app is a public OAuth client with no place to keep one), `parseHeaderLines` turns a pasted `Name: value` textarea into the `header`-kind credential, and `authHeaders` turns either kind, or a stored OAuth token, into request headers. Persists `credentials.json` beside `instances.json`, encrypted with Electron's `safeStorage` where a keyring backs it and 0600 plain-with-a-logged-warning where none exists. No `require("electron")`. |
+| `ssh-tunnel.js` | The `ssh` transport for a remote instance: `ssh -N -o ExitOnForwardFailure=yes -o BatchMode=yes -L 127.0.0.1:<local>:127.0.0.1:<remote> <host>`, the wait for the local port to accept, the message that tells a user to set up a key or a `ControlMaster` when ssh exits before it does, and the backoff that brings a dropped forward back on the **same** local port. Uses the user's own ssh binary, so their config, agent, jump hosts and hardware keys already work. No `require("electron")`. |
+| `main.js` | Electron main: one window on the active instance (`instances.js`), an application menu and tray carrying the instance switcher, external links to the real browser, and quit-drains-first (held open, with a title and an on-page overlay, until the drain finishes). Also owns instance sign-in: `armAuthHeaders` stamps a configured instance's headers onto its own Electron session, and `signInToInstance` drives `oauth.js`'s flow in the user's real browser and renews a token before it expires. Closing the window **hides** it where the session is really drawing the tray icon and quits where it is not (`tray-residency.js`). No preload, no IPC, no `nodeIntegration`. |
+| `instances.html` | The Add/Manage instances dialog, with a third mode for an instance's own sign-in settings (an `oauth` issuer/client-id/scope/redirect-port form, or the `header` textarea `parseHeaderLines` reads). A static document whose CSP forbids its own scripts, like `loading.html`; `main.js` injects the behavior with `executeJavaScript`. |
+| `signin.html` | The in-app sign-in screen for an instance with a configured `auth` block: a spinner, "Sign in with your browser" / "Set up sign-in…" buttons, and the authorize URL as selectable text for when the system browser doesn't open on its own. A static document like `loading.html` and `instances.html`; `main.js` injects its behavior the same way. |
+| `env-file.js` | The desktop app's one launch-time env source: a Finder/Dock/Login-Item launch hands `main.js` launchd's own minimal environment with nothing sourced, so this parses a plain `KEY=VALUE` file (default `~/.config/calandria/env`, `CALANDRIA_ENV_FILE` overrides; `XDG_CONFIG_HOME` respected) before either sidecar spawns. Kept dumb on purpose: no `$VAR` expansion, no command substitution, no sourced files. For real shell semantics, point `CALANDRIA_ENV_FILE` at a script and source it yourself first. |
+| `notifier.js` | The notification/badge policy: a reconnecting subscription to the app's own `GET /api/events`, the instance-wide "needs you" sum behind the dock badge, and the one rule that decides whether a toast would be redundant. Renders payloads the **server** composed (`lib/notifications/notify.ts`); it does not invent notifications. Electron-free. |
+| `assets/` | Committed tray and taskbar-badge PNGs. `scripts/make-assets.py` regenerates them (needs ImageMagick and a font). |
+| `tray-residency.js` | Whether a status area is really drawing the tray icon, a question `new Tray()` cannot answer, since on Linux the constructor succeeds whether or not the item ever reaches a status-notifier host. Asks the session over `gdbus`/`dbus-send`, three-valued (yes/no/could-not-ask); the close handler consults this instead of `tray` being truthy. Electron-free. |
+| `updater.js` | The auto-update policy: which installs may update themselves, what the menu item says, what the restart prompt admits it will interrupt, and the predicate the drain consults before it installs anything. Electron-free and pure; `main.js` owns every effect, including the `electron-updater` handle itself. See "Signing and publishing" below. |
+| `loading.html` | Boot screen: a spinner, and a hint that appears on its own after 12s so a long first launch doesn't read as a hang. Also the unreachable-instance state (error plus Retry/Switch) and, for an `ssh` instance, the reconnecting state carrying ssh's last stderr lines. `main.js` pushes sidecar log lines into its off-screen `#log`, the only surviving copy of the supervisor's first lines (`desktop/e2e/` reads them back). |
+| `test-supervisor.js` | The headless test suite: `supervisor.js`, `notifier.js`, `tray-residency.js`, `updater.js`, `instances.js`, `ssh-tunnel.js` (the last against `stub-ssh.js`), `oauth.js` (discovery, PKCE, the loopback receiver against a real socket, code/refresh exchange, no browser needed) and `instance-auth.js` (`normalizeAuth`, header-line parsing, the `credentials.json` round trip), plus source checks on `main.js`'s wiring: that an update installs only from inside the drain, that `SERVICE_TOKEN` has exactly one reader and it refuses any non-`local` instance, and that every main-process request goes through the instance's session. No deps, no display. |
+| `test-real-boot.js` | Boots the actual `server.js` + `pty-server.js` through the supervisor against a throwaway database. Needs a build. |
+| `e2e/` | The window layer, driven by Playwright's Electron driver under a virtual display, through its own config (`playwright.desktop.config.ts`, not the browser suite's). See "Testing" below and `docs/DESKTOP_E2E.md` for the full spec inventory and run recipes. |
+| `stub-ssh.js` | A fake `ssh` for the tests: it really forwards (a TCP proxy across the `-L` argument), and `STUB_SSH_PLAN` scripts misbehavior a real sshd can't be asked for on demand (refuse the key, come up and drop, connect and never listen). |
+| `stub-server.js`, `stub-pty.js` | Fake sidecars for the tests: readiness, drain-on-SIGTERM, a `POST /api/instance/drain` route that appends to `STUB_DRAIN_LOG` (with a `drain-hang` mode that never answers), and the unhappy paths (never ready, lock held, ignores SIGTERM). The stub server also echoes the env it was handed (`NODE_ENV`, `SHELL`, `argv[0]`, its ppid). |
+| `scripts/build-payload.js` | Stages the production server payload for packaging. See "Packaging" below. |
+| `scripts/fetch-node.js` | Downloads and verifies the vendored Node runtime. See "The bundled Node" below. |
+| `scripts/notarize-dmg.js` | electron-builder's `artifactBuildCompleted` hook: notarizes and staples the `.dmg` itself (electron-builder's own notarization only covers the `.app`). See "Signing and publishing" below. |
+| `electron-builder.cjs` | The packaging config. Lives here, not in `package.json`'s `build` field, because signing has to be decided at build time. |
+| `signing.js` | The signing policy: which env vars mean "sign", validated all-or-nothing per platform. See "Signing and publishing" below. |
+
+## Running it in dev
 
 ```bash
 npm ci && npm run build          # in the repo root; the shell serves a prod build
-cd desktop && npm install        # Electron only, ~280 MB, ignored by git
+cd desktop && npm install        # Electron only, ~280 MB, gitignored
 npm start
 ```
 
 The window shows a boot log until the server answers `/api/version`, then loads
-the app. Quitting drains in-flight turns before exiting (`/api/instance/drain` →
-SIGTERM), the same way stopping the server from a terminal does — and closing
-the window is that same quit, so it stays on screen with a "finishing in-flight
-turns…" overlay until the drain is done rather than vanishing while the process
-is still working.
+the app. Quitting drains in-flight turns before exiting (`/api/instance/drain`
+→ SIGTERM); closing the window is that same quit, so it stays on screen with a
+"finishing in-flight turns…" overlay until the drain is done.
 
-**On Linux, `npm start` needs `-- --no-sandbox`** — or a one-time
+**On Linux, `npm start` needs `-- --no-sandbox`**, or a one-time
 `sudo chown root:root node_modules/electron/dist/chrome-sandbox && sudo chmod
-4755` on the same file. npm unpacks Electron as you, so its setuid sandbox
-helper is not root-owned, and Chromium aborts (`FATAL: The SUID sandbox helper
-binary was found, but is not configured correctly`, then SIGTRAP) rather than
-run unsandboxed. A packaged install has none of this: the `.deb`'s postinst
-sets the bit. The e2e suite does not hit it either — Playwright's
-`_electron.launch()` adds `--no-sandbox` on Linux itself (`e2e/fixtures.ts`).
+4755` on that same file. npm unpacks Electron as you, so its setuid sandbox
+helper isn't root-owned, and Chromium aborts (`FATAL: The SUID sandbox helper
+binary was found, but is not configured correctly`, then SIGTRAP) instead of
+running unsandboxed. A packaged install has none of this: the `.deb`'s postinst
+sets the bit. `e2e/fixtures.ts` adds `--no-sandbox` itself for the test suite.
 
 Env it understands:
 
 | Var | Effect |
 |-|-|
 | `CALANDRIA_NODE` | Node binary the sidecars run under. Set this if `node` isn't on the GUI PATH. |
-| `CALANDRIA_REPO_ROOT` | Repo to launch. Defaults to the parent of `desktop/` when run unpackaged, or to the bundled `app-payload` when packaged (see "Building a package" below) — this var wins over both, which is how a packaged binary gets pointed at a working checkout instead. |
-| `CALANDRIA_READY_TIMEOUT_MS` | How long to wait for the first `/api/version` (default 90 s). Only ever paid by a sidecar that is *alive* and silent — one that exits during boot fails `start()` immediately instead. |
-| `PORT` / `PTY_PORT` | Preferred ports for the two sidecars. Taken ones are stepped past, not fought over — a preference, not a demand, so a second Calandria on a dev box still launches. |
-| `CALANDRIA_DB_DIR` | Which database to open. The shell doesn't read it: it reaches the sidecars by ordinary env inheritance, like the rest of the app's config below. (Same for its legacy `ORCH_DB_DIR` alias.) |
+| `CALANDRIA_REPO_ROOT` | Repo to launch. Defaults to the parent of `desktop/` when run unpackaged, or to the bundled `app-payload` when packaged. This var wins over both, which is how a packaged binary gets pointed at a working checkout instead. |
+| `CALANDRIA_READY_TIMEOUT_MS` | How long to wait for the first `/api/version` (default 90s). Only ever paid by a sidecar that is alive and silent; one that exits during boot fails `start()` immediately. |
+| `PORT` / `PTY_PORT` | Preferred ports for the two sidecars. Taken ones are stepped past, not fought over. |
+| `CALANDRIA_DB_DIR` | Which database to open. The shell doesn't read it itself: it reaches the sidecars by ordinary env inheritance, like the rest of the app's config. Same for its legacy alias `ORCH_DB_DIR`. |
+| `CALANDRIA_ENV_FILE` | Overrides the default `~/.config/calandria/env` path `env-file.js` reads before either sidecar spawns. |
 
 Everything else is the app's own config (`.env`, `lib/config.ts`) and is
 inherited unchanged.
 
-## Layout
-
-| File | What it is |
-|-|-|
-| `supervisor.js` | All the process management: PATH repair, Node resolution, port selection, spawn, readiness polling (raced against the sidecars' own exits, so a boot that has already failed rejects in the first second with the child's reason rather than at the timeout with `fetch failed`), drain-then-kill. **No `require("electron")`** — this is the part that survives a change of shell, and the part that can be tested headlessly. |
-| `main.js` | Electron main: one window on the active instance (`instances.js`), an application menu and tray carrying the instance switcher, external links to the real browser, and quit-drains-first (held open, with a title and an on-page overlay, until the drain finishes). Also owns instance sign-in: `armAuthHeaders` stamps a configured instance's headers onto its own Electron session (page loads, the `/api/events` stream, the `/pty` upgrade alike), `signInToInstance` drives `oauth.js`'s flow in the user's real browser and renews a token before it expires, `signin.html` is the screen shown while that's waiting, and the Manage-instances dialog's sign-in-settings mode is where an instance's `auth` block is configured or changed. See [`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md) §8.8. Closing the window **hides** it where the session is really drawing the tray icon and quits where it is not (`tray-residency.js`); quitting is otherwise asked for by name — see "Close vs quit" in [`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md) §5.1. No preload, no IPC, no `nodeIntegration`. |
-| `instances.js` | The saved instance list — which server the window attaches to — and the version handshake. `local` is the pair of sidecars `supervisor.js` spawns; a `url` entry is an origin the shell attaches to over the network and an `ssh` entry is one reached through a port forward (`ssh-tunnel.js`), each in its own persistent Electron partition so an Access cookie cannot bleed between them. A `url` or `ssh` entry may also carry an `auth` block, validated on every load and repair by `instance-auth.js`'s `normalizeAuth` — that's what tells the window to offer a native sign-in instead of loading the instance's own login page. Holds the file at `~/.config/calandria/instances.json` (`CALANDRIA_INSTANCES_FILE` overrides, resolved by `instances-path.js`) and repairs a hand-edited one rather than refusing to launch over it. **No `require("electron")`**, like its neighbours. See [`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md) §8. |
-| `oauth.js` | The RFC 8252 native sign-in flow a passkey or security key needs: OpenID Connect discovery, mandatory PKCE (S256), the authorize URL, a one-shot HTTP receiver on `127.0.0.1` that waits for the loopback redirect, and the authorization-code and refresh-token exchanges. **No `require("electron")`** — the caller injects `fetch`, which is how `main.js` makes these requests through the instance's own session and `test-supervisor.js` drives the same code against a stub on a box with no display. See [`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md) §8.8. |
-| `instance-auth.js` | The credential model behind sign-in: `normalizeAuth` validates a saved or typed `auth` block (refusing a client secret outright, since this app is a public OAuth client with no place to keep one), `parseHeaderLines` turns a pasted `Name: value` textarea into the `header`-kind credential, and `authHeaders` turns either kind — or a stored OAuth token — into the request headers `main.js` stamps on an instance's session, going quiet on an expired one rather than sending it stale. `refreshDelay`/`credentialExpired` decide when a token is renewed ahead of its own expiry. Persists `credentials.json` beside `instances.json` (`instances-path.js`), encrypted with Electron's `safeStorage` where a keyring backs it and 0600 plain-with-a-logged-warning where none exists. **No `require("electron")`**, like its neighbours. |
-| `instances-path.js` | One function, `instancesFilePath`, split out of `instances.js` purely so `instance-auth.js` can resolve `credentials.json` beside it without the two files requiring each other in a cycle. `instances.js` re-exports it unchanged, so nothing else has to know it moved. |
-| `ssh-tunnel.js` | The `ssh` transport: `ssh -N -o ExitOnForwardFailure=yes -o BatchMode=yes -L 127.0.0.1:<local>:127.0.0.1:<remote> <host>`, the wait for the local port to accept, the message that tells a user to set up a key or a `ControlMaster` when ssh exits before it does, and the backoff that brings a dropped forward back on the **same** local port. The user's own binary rather than an SSH library, so their config, agent, jump hosts and hardware keys already work. **No `require("electron")`**, like its neighbours. |
-| `instances.html` | The Add / Manage instances dialog, now three modes of the one dialog: add, manage the saved list, and — per instance — its sign-in settings (an `oauth` issuer/client-id/scope/redirect-port form, or the `header` textarea `parseHeaderLines` reads). A static document whose CSP forbids its own scripts, like `loading.html`; `main.js` injects the behaviour with `executeJavaScript`, which is how the dialog gets a form and a list without shipping a preload into every page the window later loads. |
-| `signin.html` | The in-app sign-in screen for an instance with a configured `auth` block: a spinner, "Sign in with your browser" / "Set up sign-in…" buttons, and the authorize URL shown as selectable text for when the system browser doesn't open on its own. A static document whose CSP forbids its own scripts, exactly like `loading.html` and `instances.html`; `main.js` injects its behaviour with `executeJavaScript`. |
-| `notifier.js` | The notification/badge policy, Electron-free for the same reason `supervisor.js` is: a reconnecting subscription to the app's own `GET /api/events`, the instance-wide "needs you" sum behind the dock badge, and the one rule that decides whether a toast would be redundant. It renders payloads the **server** composed (`lib/notifications/notify.ts`); it does not invent notifications. |
-| `assets/` | Committed tray and taskbar-badge PNGs. `scripts/make-assets.py` regenerates them (ImageMagick + a font — needed by nobody but whoever changes the mark). |
-| `tray-residency.js` | Whether a status area is really drawing the tray icon — the question `new Tray()` cannot answer, since on Linux the constructor succeeds whether or not the item ever reaches a status-notifier host. Asks the session over `gdbus`/`dbus-send`, three-valued (yes / no / could-not-ask), and is what the close handler consults instead of `tray` being truthy. Electron-free, like its two neighbours above. |
-| `updater.js` | The auto-update policy — which installs may update themselves, what the menu item says, what the restart prompt admits it will interrupt, and the predicate the drain consults before it installs anything. Electron-free like its three neighbours above, and pure: `main.js` owns every effect, including the `electron-updater` handle itself. See "Updates" below. |
-| `loading.html` | Boot screen: a spinner, and a hint that appears on its own after 12s so a long first launch doesn't read as a hang. Also the unreachable-instance state — the error plus Retry and Switch instance — for a remote instance that did not answer, and, for an `ssh` one, the reconnecting state carrying ssh's last stderr lines. `main.js` pushes sidecar log lines into its **off-screen** `#log` — diagnostics rather than something to read while waiting, and the only surviving copy of the supervisor's first lines (`desktop/e2e/` reads them back from there). |
-| `test-supervisor.js` | The headless half: `supervisor.js`, `notifier.js`, `tray-residency.js`, `updater.js`, `instances.js`, `ssh-tunnel.js` (the last against `stub-ssh.js`, so a box with no sshd still covers the spawn args, the port wait, the backoff and the teardown), `oauth.js` (discovery, PKCE, the loopback receiver against a real socket, code/refresh exchange, all without a browser) and `instance-auth.js` (`normalizeAuth`, header-line parsing, refresh timing, the `credentials.json` round trip) — plus source checks on `main.js`'s wiring — that an update installs only from inside the drain, that `SERVICE_TOKEN` has exactly one reader and it refuses any non-`local` instance, and that every main-process request goes through the instance's session), against stub sidecars, a stub event stream and an injected D-Bus CLI. No deps, no display. |
-| `test-real-boot.js` | Boots the actual `server.js` + `pty-server.js` through the supervisor against a throwaway database. Needs a build. |
-| `e2e/` | The window layer, driven by Playwright's Electron driver under a virtual display: boot + boot-screen handoff, menu roles, renderer hardening, the permission handler, external links, the single-instance refusal, the db-lock collision, clipboard copy/paste, quit-drains-in-flight-work, close-hides-and-the-later-quit-drains, one smoke path through the app inside the window — transcript over SSE, the diff, and the terminal panel over `/pty` — and attaching the shell to a **second** production server, by URL (`12-remote-instance.spec.ts`), through a real `ssh localhost` forward (`13-ssh-instance.spec.ts`, skipped where key-based ssh to localhost is not set up), with a task parked on each of two servers to prove the dock badge is their sum (`14-multi-instance-badge.spec.ts`), and native sign-in against a stub forward-auth proxy and OIDC provider, with `xdg-open` standing in for the system browser (`15-instance-auth.spec.ts`, `ssoStub.ts`). Run through its own config (`playwright.desktop.config.ts`, **not** the browser suite's — that one boots `npm start`, and the point here is that the shell boots the server itself). Takes the dev shell or a packaged build (`CALANDRIA_TEST_BIN`). Three more files (`09`–`11`) run only under `CALANDRIA_DESKTOP_BENCH=1` on a machine with a real desktop session, and read their answers off the session bus and the window manager rather than out of Electron — see "On the bench" below and [`docs/DESKTOP_E2E.md`](../docs/DESKTOP_E2E.md). |
-| `stub-ssh.js` | A fake `ssh` for the tests: it really forwards (a TCP proxy across the `-L` argument, so a test can put a real server behind it), and `STUB_SSH_PLAN` scripts the misbehaviour a real sshd cannot be asked for on demand — refuse the key, come up and drop, connect and never listen. |
-| `stub-server.js`, `stub-pty.js` | Fake sidecars for the tests: readiness, drain-on-SIGTERM, a `POST /api/instance/drain` route that appends to `STUB_DRAIN_LOG` (with a `drain-hang` mode that never answers), and the unhappy paths (never ready, lock held, ignores SIGTERM). The stub server also echoes the env it was handed — `NODE_ENV`, `SHELL`, `argv[0]`, its ppid — which is how the supervisor tests assert a bare `node <script>` spawn with no shell in between. |
-
-## Tests
-
-All three run from the **repo root**, and CI runs exactly these (the `desktop`
-job in `.github/workflows/test.yml`, and `windows-desktop` on `windows-latest`):
-
-```bash
-npm run desktop:install         # Electron, once (see the NODE_ENV note below)
-npm run build                   # the shell serves a production build
-
-npm run test:desktop:supervisor # headless, ~8 s, no display
-npm run test:desktop:boot       # boots the real server.js/pty-server.js
-xvfb-run -a npm run test:desktop:window   # the window suite; needs a display
-xvfb-run -a npm run test:desktop          # all three, in that order
-```
-
-In Electron's own runtime, from this directory:
-
-```bash
-ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron test-supervisor.js
-```
-
-### Against the packaged artifact
-
-The same window suite takes a package instead of the dev shell — that is what
-`CALANDRIA_TEST_BIN` is for, and the CI lane runs both halves. Two rules make
-the second run mean something, and the suite enforces both:
-
-- **The artifact must sit outside this checkout.** `fixtures.ts` refuses to
-  launch a binary under the repo. An installed app never is, and one that is
-  can satisfy an upward path lookup — a module, a lockfile, a relative path —
-  from the tree it was built in.
-- **No `CALANDRIA_REPO_ROOT`.** The fixture drops it (and deletes an inherited
-  one) for a packaged run, so `main.js` has to resolve
-  `resources/app-payload`. During the research spike the packaged shell passed
-  every assertion while still reading the repo, because the harness handed it
-  that variable; a real download would have died on the first boot.
-
-`e2e/06-packaged.spec.ts` is the only packaged-only spec — it asserts the
-payload the app booted from, the bundled Node the sidecars ran under, and how
-`chrome-sandbox` is packaged. It skips itself when `CALANDRIA_TEST_BIN` is unset.
-
-The `.deb`-install line below is the **bench lane's**, not CI's: what makes the
-sandbox work is the package's postinst, and only an install runs it.
-
-```bash
-# unpacked: what CI does (electron-builder --dir has no SUID chrome-sandbox,
-# so --no-sandbox is still passed and the spec records that)
-cd desktop && npm run payload -- --no-build && npx electron-builder --linux dir
-cd .. && mv desktop/dist/linux-unpacked /tmp/calandria-app
-CALANDRIA_TEST_BIN=/tmp/calandria-app/calandria-desktop \
-  xvfb-run -a npm run test:desktop:window
-
-# installed: what the bench does — a real `.deb`, a real session, no --no-sandbox
-sudo dpkg -i desktop/dist/calandria-desktop_*_amd64.deb
-CALANDRIA_TEST_BIN=/opt/Calandria/calandria-desktop CALANDRIA_DESKTOP_SANDBOX=1 \
-  DISPLAY=:1 npm run test:desktop:window
-
-# macOS: what the macos-desktop CI job does. dist:mac builds dir, dmg and zip
-# (see "Building a package" below); the suite runs against the unpacked `dir`
-# bundle. The build ad-hoc signs it via mac.identity "-" — no codesign step
-# here — which is what lets arm64 exec it at all. It is still unsigned in the
-# Developer ID sense unless CALANDRIA_MAC_SIGN_IDENTITY is set.
-cd desktop && npm run dist:mac
-cd .. && mv desktop/dist/mac*/Calandria.app /tmp/calandria-app.app   # mac-arm64 or mac, by host arch
-codesign --verify --deep --strict /tmp/calandria-app.app             # should pass; if not, nothing will launch
-CALANDRIA_TEST_BIN=/tmp/calandria-app.app/Contents/MacOS/Calandria \
-  CALANDRIA_TEST_APP_BUNDLE=/tmp/calandria-app.app \
-  npm run test:desktop:window
-
-# what the .dmg actually contains — the only thing that proves an installer
-# opens. Two specs, not the suite: the app inside is a ditto copy of the same
-# bundle, so all the round trip can break is the signature and the launch.
-hdiutil attach desktop/dist/*.dmg -nobrowse -readonly -mountpoint /tmp/cal-dmg
-ditto /tmp/cal-dmg/Calandria.app /tmp/calandria-dmg.app
-hdiutil detach /tmp/cal-dmg
-codesign --verify --deep --strict /tmp/calandria-dmg.app
-CALANDRIA_TEST_BIN=/tmp/calandria-dmg.app/Contents/MacOS/Calandria \
-  CALANDRIA_TEST_APP_BUNDLE=/tmp/calandria-dmg.app \
-  npx playwright test --config playwright.desktop.config.ts 06-packaged
-```
-
-Windows is the one platform where CI runs the **installer** rather than the
-unpacked tree, because `perMachine: false` means a silent install needs no
-elevation. In PowerShell:
-
-```powershell
-# what the windows-desktop lane does: build the nsis installer, install it
-# silently, and run the suite against the installed exe. No move out of the
-# checkout is needed — an installed app is outside the source tree already.
-cd desktop; npm run payload -- --no-build; npx electron-builder --win nsis; cd ..
-Start-Process (Get-ChildItem desktop/dist -Filter '*.exe' -File)[0].FullName '/S' -Wait
-Get-Process -Name Calandria -ErrorAction SilentlyContinue | Stop-Process -Force
-$env:CALANDRIA_TEST_BIN = "$env:LOCALAPPDATA\Programs\Calandria\Calandria.exe"
-npm run test:desktop:window
-
-# and back out again, the way Settings -> Apps would
-& "$env:LOCALAPPDATA\Programs\Calandria\Uninstall Calandria.exe" /S
-```
-
-The `Stop-Process` is not optional theatre: `runAfterFinish` defaults true, and
-an instance the installer started would hold `requestSingleInstanceLock()` and
-the database lock and wedge the suite.
-
-`CALANDRIA_TEST_APP_BUNDLE` is the macOS-only third variable, alongside
-`CALANDRIA_TEST_BIN` and `CALANDRIA_DESKTOP_SANDBOX` above: it points at the
-`.app` itself rather than the binary inside it, which is what
-`08-macos-launchd.spec.ts` below needs to `open` the bundle through
-LaunchServices instead of spawning the executable directly.
-
-`CALANDRIA_DESKTOP_SANDBOX=1` is what stops the suite disabling the sandbox, so
-the flag cannot be what makes an installed app pass. It sets two things, and the
-second is not obvious: the `--no-sandbox` argument, **and**
-`chromiumSandbox: true` on `electron.launch()` — on Linux Playwright unshifts
-`--no-sandbox` onto the argument list itself unless that option is given
-(playwright-core 1.61.1). Omitting the flag was not enough; the packaged-install
-run was unsandboxed anyway until the option went in.
-
-In that mode `06-packaged.spec.ts` asserts the sandbox is **running** rather
-than that a mode bit is set, because the bit no longer decides it:
-electron-builder 26's `postinst` chmods `chrome-sandbox` to 0755 when
-unprivileged user namespaces work and installs
-`/etc/apparmor.d/calandria-desktop` instead, which is what keeps the namespace
-sandbox alive under Ubuntu 24.04's
-`kernel.apparmor_restrict_unprivileged_userns=1`. The SUID bit only appears on a
-kernel without user namespaces. What both mechanisms produce — and
-`--no-sandbox` cannot — is a descendant process in its own user namespace, which
-is what the spec reads out of `/proc`. That difference only reproduces on a
-machine where the package was actually installed (docs/DESKTOP_E2E.md §4).
-
-### On the bench (native integration)
-
-Three more spec files run only with `CALANDRIA_DESKTOP_BENCH=1`, and only mean
-anything on a machine with a real logged-in desktop session — the Linux bench
-VM (docs/DESKTOP_E2E.md §5). Each reads what the app did from **outside** it:
-the session bus (`dbus-monitor`, `gdbus`) and the window manager's own EWMH
-properties (`xprop`). None of it is observable under `xvfb-run`, where there is
-no window manager, no notification daemon and no status area — and where every
-Electron-side read still answers cheerfully.
-
-| Spec | What only a real session can answer |
-|-|-|
-| `e2e/09-bench-notifications.spec.ts` | a parked turn's notification reaches a notification daemon, which accepts it and hands back an id |
-| `e2e/10-bench-tray.spec.ts` | the tray icon is registered with the panel, and its menu — read over `com.canonical.dbusmenu`, since `Tray` has no getter — carries the "N need you" count |
-| `e2e/11-bench-window.spec.ts` | minimize/restore, close-hides-without-quitting, and a second launch focusing the existing window, each paired with the WM's own `_NET_*` properties |
-
-```bash
-# on the bench, in the real session — note the absence of xvfb-run
-DISPLAY=:1 CALANDRIA_DESKTOP_BENCH=1 npm run test:desktop:window
-```
-
-Two things `e2e/bench.ts` does that are easy to get wrong by hand. It runs
-`desktop-bench-check` in every spec's `beforeAll` — asking only for the checks
-that file uses, so a dead status area does not fail the notification and window
-specs — because a session that lost a daemon would otherwise fail these as
-though the *shell* had regressed. And it
-takes the bus address from `~/.vnc/session-bus` and **ignores the inherited
-`DBUS_SESSION_BUS_ADDRESS`**, which over SSH points at the systemd user bus —
-a real bus with none of the session's daemons on it.
-
-`.github/workflows/desktop-bench.yml` is the lane: `workflow_dispatch` plus a
-nightly cron and, deliberately, no `pull_request` trigger at all — a self-hosted
-runner on a home network must not be reachable from a fork. It also installs the
-`.deb` and re-runs the whole window suite against `/opt/Calandria`, which is the
-un-flagged sandbox run `06-packaged.spec.ts` above is written for.
-
-**Known red as of 2026-08-28, for a session reason rather than a shell one.**
-xfce4-panel 4.18.4's built-in `systray` plugin crashes when Electron registers a
-status icon, taking `org.kde.StatusNotifierWatcher` off the bus with it — so the
-tray file cannot find the icon it is looking for. Measured with both tray
-assets, so it is not the image, and with a nine-line Electron app that does
-nothing but `new Tray(...)`, so it is not this shell. `registeredTrayItems()`
-recognises the empty name and says all of that in the failure message instead of
-letting it read as a missing tray.
-
-Traces are off for this suite (`playwright.desktop.config.ts`): Playwright's
-trace/video capture against a packaged Electron app is unreliable
-([microsoft/playwright#13180](https://github.com/microsoft/playwright/issues/13180)),
-so both lanes keep screenshots-on-failure plus the shell log
-`attachShellLog()` writes beside each instance's database.
-
-The suite resolves `playwright` from the repo root's `node_modules` (already a
-dev dependency for the browser suite) and needs `xvfb` plus Chromium's usual
-library set on a headless box. It disables the sandbox because an unpacked
-Electron has neither a SUID `chrome-sandbox` nor an AppArmor profile permitting
-its user namespace; an install has one of the two, which is what
-`CALANDRIA_DESKTOP_SANDBOX=1` is for (see "Against the packaged artifact").
-
-**On Windows and macOS drop the `xvfb-run` prefix** — both have a real window
-station and need no display to be installed, which is why the `windows-desktop`
-CI job has no display step in it at all. `--no-sandbox` is not passed there
-either (`e2e/fixtures.ts` gates it on Linux): neither platform has a setuid
-helper to be missing, so the flag would only weaken what those lanes test.
-
-`e2e/05-windows-quit.spec.ts` is win32-only and skips itself elsewhere. It
-covers what happens when something *outside* the app ends it — a plain
-`taskkill` is a `WM_CLOSE`, which close-to-tray answers by hiding the window and
-leaving the sidecars running (a real `app.quit()` is what reaps them, and the
-same test goes on to show it); `taskkill /F` without `/T` is a
-`TerminateProcess` that orphans them. `03-quit-drain.spec.ts`'s
-database assertion no longer needs a Windows exception: `supervisor.stop()`
-POSTs `/api/instance/drain` itself and waits for it before it ever sends the
-kill, so the turn is settled whether or not the platform can deliver a signal,
-and the assertion holds everywhere. What no test here covers is a real Windows
-shutdown or logout, where `before-quit`/`will-quit` are not emitted at all — a
-`session-end` listener does not exist yet, and nothing drains until it does.
-
-`e2e/07-macos.spec.ts` is darwin-only and skips itself elsewhere.
-`titleBarStyle: "hiddenInset"` is the whole point of it — plain `"default"`
-reserves a strip the renderer never draws into, and `getContentBounds()` only
-comes back equal to `getBounds()` under `hiddenInset` — so the spec pins that
-equality, that the traffic lights stay closable/minimizable/maximizable, that
-the app paints into the rows the native title bar used to own, and that the
-menubar's submenus still carry the roles macOS reads its keyboard shortcuts
-off (Edit: undo/redo/cut/copy/paste/select; the app menu: about/hide/quit;
-File: close, Cmd+W; Window: minimize) — a hand-rolled menu can drop a role
-while still looking right. It attaches a screenshot (`hiddenInset.png`) and a
-JSON probe of what sits under the traffic lights anyway, since that is
-exactly what an assertion can't answer and a human should look once on a
-green run. `e2e/08-macos-launchd.spec.ts` is darwin **and** packaged only,
-gated on `CALANDRIA_TEST_APP_BUNDLE`: a binary spawned directly, the way
-every other packaged spec launches it, inherits the spawning shell's PATH,
-but a `.app` double-clicked in Finder gets launchd's stub instead,
-`/usr/bin:/bin:/usr/sbin:/sbin`, with none of the user's own tooling on it — the reason
-`supervisor.js` repairs PATH from the login shell in the first place
-(`docs/DESKTOP_APP.md` §2). So the spec `open`s the bundle instead of
-spawning it, captures its stdout with `open --stdout`, and asserts the repair
-ran. It stays hermetic the way the other packaged specs do, `launchctl
-setenv`-ing `instanceEnv()`'s keys — PATH included, since `open` is not the
-double-click its header once assumed and the domain has to be given a value
-worth reading — and unsets them in `afterAll`. The launch itself deletes PATH
-from the environment handed to `open`, which forwards its caller's; without
-that deletion the job's own PATH shadows the planted one and the spec measures
-nothing. See `docs/DESKTOP_E2E.md` §4.
-
-One environment gotcha it handles for you, worth knowing if you run the shell by
-hand on a headless box: on Linux with a session bus but **no** notification
-daemon, every native notification blocks the Electron main process for GDBus's
-25-second timeout. The suite points `DBUS_SESSION_BUS_ADDRESS` at a socket that
-does not exist so libnotify fails immediately instead. `main.js` now denies the
-renderer that permission — both the request and the *check*, since Electron
-answers checks "granted" by default and the page reads `Notification.permission`
-— so the page can no longer trigger it on every turn event; the shell's own
-notifications are the same call on the same thread, which is why the dead socket
-stays. Denying the check is also why the shell appends `Calandria-Desktop/` to
-the user agent: Settings → Notifications reads that same permission and would
-otherwise report the browser channel as blocked (`docs/DESKTOP_APP.md` §5.1).
-
-Electron is a `devDependency`, so an `npm install` run with `NODE_ENV=production`
-in the environment reports "up to date" and installs nothing — including in an
-agent session, which exports it. Use `NODE_ENV=development npm install`, and if
-`node_modules/electron/dist/` is still missing afterwards, `node
-node_modules/electron/install.js` fetches the binary.
-
-## Building a package
+## Packaging
 
 ```bash
 cd desktop
 npm install
 npm run dist:dir      # → dist/linux-unpacked/calandria-desktop
 npm run dist:linux    # dist:dir, plus deb and AppImage targets
-npm run dist:mac      # → dist/mac(-arm64)/Calandria.app
+npm run dist:mac      # → dist/mac(-arm64)/Calandria.app, plus .dmg and .zip
 npm run dist:win      # → dist/Calandria Setup <version>.exe, plus a zip
 ```
 
 `dist:mac` builds all three of `mac.target`. `dir` is the unpacked bundle the
-test suite launches; `dmg` is the download people expect; `zip` is the one
-Squirrel.Mac needs, since `electron-updater` updates from the `.zip` on macOS
-and a dmg-only build emits no `latest-mac.yml` at all. The dmg keeps
-electron-builder's default layout — there is nothing to brand until there is
-something to distribute.
+test suite launches and the only form the launchd spec can `open`; `dmg` is
+the download people expect; `zip` is the one Squirrel.Mac needs: `electron-updater`
+updates from the `.zip` on macOS, and a dmg-only build emits no
+`latest-mac.yml` at all. `dist:win` builds `nsis` (a wizard, `oneClick: false`,
+installs per-user with `perMachine: false` so no UAC prompt, directory
+choosable) and `zip` for anyone who'd rather unpack a folder than run an
+installer.
 
-All three are **ad-hoc signed** unless you ask for a Developer ID, and asking is
-one variable: `CALANDRIA_MAC_SIGN_IDENTITY`. Ad-hoc is not a placeholder for
-signing — it is what makes the file runnable at all, since arm64 macOS refuses to
-`exec` a Mach-O carrying no signature whatsoever and electron-builder invalidates
-the one Electron's prebuilt arrived with. `mac.identity: "-"` asks electron-builder
-for exactly that, in the build, before the `dmg` and `zip` are cut from the
-bundle — which is why it is no longer a `codesign` you run afterwards. A signature
-applied to the `.app` after packaging never reaches the installers, so they would
-ship an app the kernel kills. A Developer ID signature has the same constraint and
-lands in the same place. `docs/DESKTOP_APP.md` §6.2 records the ordering in full.
+`dist:dir` runs `scripts/build-payload.js` (the `payload` script) before
+handing off to electron-builder:
 
-The build is hardened-runtime in both cases; the branch is the entitlements.
-`build/entitlements.mac.adhoc.plist` carries
-`com.apple.security.cs.disable-library-validation` because an identity-less
-signature has no Team ID for library validation to match, and
-`build/entitlements.mac.plist` deliberately does not — if a Developer ID build
-ever needs it, something in the payload was signed by the wrong identity.
-
-Ad-hoc is still not distributable. A `.app` that arrives over the network carries
-the quarantine attribute, and Gatekeeper refuses an ad-hoc-signed bundle with
-"Calandria is damaged and can't be opened" — which is not a corrupt download. So
-a build you made yourself, or an artifact pulled off a CI run, needs
-`xattr -dr com.apple.quarantine /Applications/Calandria.app`, or right-click →
-Open, on **every** install on a machine that did not build it. A published
-release is signed, notarized and stapled and needs none of that; this paragraph
-goes when the release lane has published one.
-
-`dist:win` builds real installer targets. `nsis` is a wizard (`oneClick: false`)
-that installs per-user (`perMachine: false`, so no UAC prompt) and lets you pick
-the directory; `zip` is there for anyone who would rather unpack a folder.
-Signing needs the four `AZURE_CODE_SIGNING_*` variables and nothing here sets
-them, so electron-builder skips signing rather than failing, and **anything
-downloaded from an unsigned release will raise a SmartScreen interstitial** —
-*"Windows protected your PC"*, past which is **More info** → **Run anyway**. The zip does not avoid it (Explorer propagates the Mark of the
-Web to extracted files), and a build you made yourself will never show it,
-because a file that was never downloaded carries no mark. The full account,
-including why this recurs with every release while unsigned, is in
-[`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md#6-packaging) §6.
-
-Everything else about that installer is exercised in CI: the `windows-desktop`
-lane builds `--win nsis`, installs it with `/S`, runs the window suite against
-the installed `Calandria.exe`, and then checks the install landed under
-`%LOCALAPPDATA%\Programs\Calandria`, carries its payload, laid down both
-shortcuts, and uninstalls cleanly. SmartScreen is the only part it cannot see.
-
-## Releases
-
-`npm run dist:*` is for building one yourself. What people download comes from
-`.github/workflows/release-desktop.yml`, which runs on the `v*` tag
-release-please cuts: three runners in parallel, each building and publishing its
-own platform's targets straight to the GitHub Release, plus one `SHA256SUMS.txt`
-for all of them and a note in the release body saying what is signed and what is
-not, per platform.
-
-The upload is **electron-builder's own** `github` publish provider, not a
-`gh release upload` step, and that is load-bearing rather than tidy: the provider
-writes the update feed — `latest.yml`, `latest-mac.yml`, `latest-linux.yml` and
-the `.blockmap` files — beside each artifact as it goes. Uploading by hand
-produces the downloads and no feed, which is an updater that silently never finds
-anything.
-
-Two consequences reach this directory. `desktop/package.json`'s `version` is the
-tag the publisher looks the Release up by, so release-please rewrites it on every
-bump (`extra-files` in `release-please-config.json`) and
-`tests/desktopRelease.test.ts` fails if it drifts — a stale version does not error,
-it quietly uploads everything into a draft release nobody looks at. And the
-vendored Node is pinned there with `CALANDRIA_DESKTOP_NODE_VERSION` rather than
-taking the runner's, so two releases a week apart ship the same runtime.
-
-[`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md#6-packaging) §6.5 has the rest,
-including how signing credentials reach the build and what the lane asserts about
-the result.
-
-## Updates
-
-The shell reads the feed that lane publishes. Checked 45 seconds after boot and
-every six hours after; downloading is automatic, **installing never is**. A ready
-update announces itself as an OS notification and as a tray/menu item labelled
-`Restart to update to 0.5.0` — not a dialog, because the window is usually hidden
-to the tray and a modal nobody sees is not an answer. `Check for updates…` sits
-in the tray menu and the View menu, from one shared function.
-
-**The restart goes through the drain, and that is the whole point.**
-`electron-updater`'s `autoInstallOnAppQuit` default installs from
-`app.on("quit")`, which fires *after* `before-quit` has already drained and
-exited — so the default would either skip the install or run it over turns that
-were still settling. It is off. `main.js`'s `finishQuit()` calls
-`quitAndInstall()` as the last statement of the drain instead, and only when the
-user asked *and* something is downloaded. `tests/desktopUpdater.test.ts` and
-`test-supervisor.js` both pin that, including that `finishQuit` is the file's
-only install call site.
-
-Not every install can update itself, and the ones that cannot say so in the menu
-rather than failing oddly:
-
-| | Updates? |
-|-|-|
-| Windows NSIS | Yes, signed or not |
-| macOS | **Only when signed, and only from `/Applications`** — Squirrel.Mac refuses an app whose signature it cannot read, so an ad-hoc build (every install from before 2026-08-30, every local `dist:mac`) has no update path at all; decided at boot from `codesign`, so the menu says `Updates need a manual download` before the first check. Running from the mounted DMG or a translocated path is refused the same way. |
-| Linux AppImage | Yes (detected by `process.env.APPIMAGE`) |
-| Linux `.deb` | No, deliberately — it is your package manager's to replace, and `electron-updater`'s deb path is an unverified `sudo dpkg -i` |
-| `npm start` | No — a dev build updates by `git pull` |
-
-On macOS the install itself happens *after* `quitAndInstall()`: that call is
-what first hands the zip to Squirrel.Mac, which then fetches, unpacks and
-verifies the bundle before it quits the app. The drain's tail waits on
-Squirrel's own progress events for that (ten minutes while it is demonstrably
-working, thirty seconds while it has said nothing) rather than the fixed ten
-seconds that used to exit over the top of it and relaunch the old build. An
-install that still fails is written down and reported on the next launch, with
-the log path.
-
-Logs: `~/Library/Logs/Calandria/main.log` on macOS,
-`~/.config/Calandria/logs/main.log` on Linux, `%APPDATA%\Calandria\logs\main.log`
-on Windows. Everything the shell prints goes there too, including the updater's
-own debug trace.
-
-`CALANDRIA_DESKTOP_AUTO_UPDATE=off` stops the shell contacting the feed at all.
-[`docs/DESKTOP_APP.md`](../docs/DESKTOP_APP.md) §6.6 has the reasoning, including
-why the `.deb` gate has to run *before* `require("electron-updater")`.
-
-`electron-updater` and `electron-log` are this package's two **runtime**
-dependencies. They are packed because they are in `dependencies`, not because
-`electron-builder.cjs`'s `files` names them — that list cannot carry
-`node_modules` — so moving either to `devDependencies` would ship a shell that
-throws on the require.
-
-Electron and `electron-builder` are `devDependencies`, so if your shell exports
-`NODE_ENV=production` (a Calandria task session does) `npm install` reports
-"up to date", installs neither, and `dist:dir` then fails with
-`electron-builder: not found`. Prefix it: `NODE_ENV=development npm install`.
-
-`dist:dir` runs `scripts/build-payload.js` (the `payload` script) before handing
-off to `electron-builder`. That build script:
-
-1. Runs `npm run build` in the repo root if there is no `.next` there yet
-   (`--no-build` refuses instead, for a CI step that built earlier).
-2. Installs a **fresh, production-only** `node_modules` with `npm ci --omit=dev`
-   into a staging dir (`desktop/payload`) — not copied from this checkout, whose
-   `node_modules` carries the whole dev toolchain.
-3. Deletes the files that existed only to make step 2 work (`package-lock.json`,
-   `.npmrc`, `scripts/fix-pty.js`). The lockfile is not inert: Next walks up
-   looking for one to infer a workspace root and warns on every boot when it
-   finds more than one.
-4. Sweeps two things out of that fresh tree — see "What the payload does not
-   carry" below. Every package either sweep deletes is named, with its size, in
-   the build log.
+1. Runs `npm run build` in the repo root if there's no `.next` there yet
+   (`--no-build` refuses instead, for a CI step that already built).
+2. Installs a fresh, production-only `node_modules` with `npm ci --omit=dev`
+   into a staging dir (`desktop/payload`), not copied from this checkout,
+   whose `node_modules` carries the whole dev toolchain.
+3. Deletes the files that existed only to make step 2 work
+   (`package-lock.json`, `.npmrc`, `scripts/fix-pty.js`). The lockfile isn't
+   inert: Next walks up looking for one to infer a workspace root and warns on
+   every boot when it finds more than one.
+4. Sweeps two classes of package out of that fresh tree, printing every
+   deleted package with its size in the build log:
+   - **Packages built for the wrong libc.** npm's lockfile records `os`/`cpu`
+     per platform-optional dependency but never `libc`, so `npm ci` installs
+     both the glibc and musl variant of anything scoped that way (e.g. both
+     `@anthropic-ai/claude-agent-sdk-linux-x64-musl` and its glibc twin, plus
+     two musl `sharp` packages). The sweep reads each staged package's own
+     `libc` declaration (npm's matching rules, `!` negation included) instead
+     of pattern-matching on `-musl`, so a newly added dependency is covered
+     automatically. It keys off the **build target**, not the host
+     (`--libc=musl` is for an Alpine-targeted build); on macOS and Windows,
+     where there's no libc axis, it reports finding nothing instead of
+     staying silent. Doing this at the `npm ci` layer doesn't work:
+     `--omit=optional` drops the variant you need along with the one you
+     don't, and `--libc=glibc` installs all four musl packages anyway because
+     the lockfile has no `libc` field to filter on.
+   - **`@next/swc`**, a build-time compiler a finished `next build` served by
+     `next start` doesn't need, *unless* `next.config.mjs` sets
+     `experimental.useLightningcss`; the build script checks for that flag
+     first and keeps the compiler if it finds it.
+   - **Not prunable**: `@openai/codex-linux-x64` declares no `libc` and has no
+     twin: it ships one statically linked `x86_64-unknown-linux-musl` binary
+     that runs on glibc systems fine.
 5. Copies `.next` (minus `.next/cache`, which is `next build` scratch nothing
-   reads at runtime — its dropped size is logged, not silently absorbed into the
-   artifact), plus `server.js`, `pty-server.js`, and every plain-Node `.mjs` the
-   two entrypoints dynamic-import. That file list lives in
-   [`payload-manifest.js`](payload-manifest.js) and is the SAME inventory the
-   Dockerfile's runtime stage COPYs — `tests/desktopPayload.test.ts` fails the
-   suite if the two drift, so a new `.mjs` import goes into both places.
-6. Downloads and vendors a Node runtime (`scripts/fetch-node.js`) — see below.
-7. Runs the vendored Node against the staged tree with `require('better-sqlite3');
-   require('node-pty')`, so an ABI mismatch fails the build instead of the app's
-   first query.
+   reads at runtime), plus `server.js`, `pty-server.js`, `next.config.mjs`,
+   `package.json`, and every plain-Node `.mjs` the two entrypoints
+   dynamic-import. That file list lives in `desktop/payload-manifest.js` and
+   is the SAME inventory the Dockerfile's runtime stage `COPY`s.
+   `tests/desktopPayload.test.ts` fails the suite if the two drift, so a new
+   `.mjs` import goes into both places.
+6. Downloads and vendors a Node runtime (`scripts/fetch-node.js`; see "The
+   bundled Node" below).
+7. Runs the vendored Node against the staged tree with
+   `require('better-sqlite3'); require('node-pty')`, so an ABI mismatch fails
+   the build instead of the app's first query.
 
 Packaged layout:
 
 | Path | What it is |
 |-|-|
-| `resources/app.asar` | The Electron shell — `main.js`, `supervisor.js`, `notifier.js`, `tray-residency.js`, `loading.html`. |
-| `resources/app-payload/` | The server payload from step 3 above. `extraResources`, **not** inside the asar: it holds native addons that `dlopen` from a real path and is spawned as a child process, and a child cannot read out of an archive. |
-| `resources/node/bin/node` | The Node the sidecars are spawned under (see below). |
+| `resources/app.asar` | The Electron shell: `main.js`, `supervisor.js`, `notifier.js`, `tray-residency.js`, `loading.html`. |
+| `resources/app-payload/` | The server payload from step 3 above. `extraResources`, **not** inside the asar: it holds native addons that `dlopen` from a real path and is spawned as a child process, and a child can't read out of an archive. |
+| `resources/node/bin/node` | The Node the sidecars are spawned under. |
 
-One `electron-builder` trap is worth knowing before editing the `build` block: a
-single `{from: "payload", to: "app-payload"}` entry copies everything **except**
-`node_modules`, silently — electron-builder manages app dependencies itself and
-filters that name out of `extraResources`. The packaged app looks complete and
-dies at first boot on an unresolved `next`. The second, explicit
-`payload/node_modules` entry is what actually carries it.
+One `electron-builder` trap is worth knowing before editing the `build`
+block: a single `{from: "payload", to: "app-payload"}` entry copies everything
+**except** `node_modules`, silently: electron-builder manages app
+dependencies itself and filters that name out of `extraResources`. The
+packaged app looks complete and dies at first boot on an unresolved `next`.
+The second, explicit `payload/node_modules` entry in `electron-builder.cjs` is
+what actually carries it.
 
-### What the payload does not carry
+The electron-builder config lives in `desktop/electron-builder.cjs`, not
+`package.json`'s `build` field, because signing decisions have to happen at
+build time. Two traps come with that split, both pinned by
+`tests/desktopSigning.test.ts`: a `build` key in `package.json` would shadow
+the standalone file entirely (`app-builder-lib` reads `package.json` first and
+only looks for a standalone config when that field is absent), and the loader
+only scans for `electron-builder` + `.yml`/`.yaml`/`.json`/`.json5`/`.toml`/`.js`/`.cjs`/`.ts`.
+`electron-builder.config.cjs`, the name most projects use, is not on that list
+and would be silently ignored.
 
-Step 4 above drops two things `npm ci --omit=dev` leaves behind. Together they
-are **515 MB** of the staged tree — a third of it. Both print every package they
-delete, with its size, for the same reason the `.next/cache` drop does: a build
-that quietly shrinks its own artifact is a build nobody can audit, and these
-delete whole dependencies rather than a scratch directory. Measured on linux-x64
-(2026-08-27): staged payload 1564 MB → **1049 MB**, `dist/linux-unpacked`
-2.1 GB → **1.4 GB**, AppImage 653 MB → **489 MB**, deb 485 MB → **364 MB**. The
-per-package numbers are in `docs/DESKTOP_APP.md` §2.
-
-**Packages built for another libc.** npm scoped the platform-specific optional
-dependencies to the target os/cpu, but not to a libc, and the reason is
-mechanical: `package-lock.json` records `os` and `cpu` for each of them and
-records `libc` for none, while `npm ci` filters on what the lockfile says rather
-than re-reading the registry. So a glibc host installs
-`@anthropic-ai/claude-agent-sdk-linux-x64-musl` and two musl `sharp` packages
-beside their glibc twins — 242 MB that cannot execute on the system a `.deb` or
-an AppImage targets. The sweep reads each staged package's own `libc`
-declaration (npm's matching rules, `!` negation included) rather than looking for
-a `-musl` name, so a newly added dependency is covered without anyone
-remembering to list it — that is how the two `sharp` packages, which nobody had
-counted, turned up.
-
-It keys off the **target**, not the build host: `--libc=musl` is there for an
-Alpine-targeted build, and on macOS and Windows there is no libc axis, so the
-sweep says it found nothing rather than saying nothing at all.
-
-Three ways to do this at the `npm ci` layer were rejected. `--omit=optional`
-drops the variant we need along with the one we don't. `--libc=glibc` looks
-right and does nothing — measured: a full `npm ci --omit=dev --libc=glibc`
-installs all four musl packages anyway, because the lockfile it reads has no
-`libc` to compare against. And regenerating the app's root lockfile so it
-carries `libc` would change what every install produces — Docker, CI,
-contributors — to shrink one desktop artifact, invisibly.
-
-**`@next/swc`**, 273 MB across its two libc variants, is a compiler, and the
-payload is a finished `next build` served by `next start`. Outside
-`next/dist/build`, `next/dist/cli` and the dev bundler, the only thing that
-reaches for the native bindings is `next/dist/server/config.js`, behind
-`experimental.useLightningcss`. That was proved by deletion rather than by
-reading: with the package gone from a staged payload, `node server.js` came up
-on the vendored Node and served `/`, `/api/projects` and a `_next/static` chunk,
-all 200, with a log identical to the run that had it. The build script checks
-`next.config.mjs` for `useLightningcss` first and keeps the compiler if it finds
-it — an app that wants lightningcss should keep its 137 MB, and the alternative
-is an artifact that dies at first boot.
-
-What is *not* prunable is the biggest single item: `@openai/codex-linux-x64` is
-350 MB, but it declares no `libc` and has no twin — it ships one statically
-linked `x86_64-unknown-linux-musl` binary that runs on glibc systems fine.
+Also: electron-builder 26.15.3 warns on every Linux build that `desktopName`
+is unset, then **rejects** `desktopName` as an unknown key if you set it. The
+option its own warning names isn't in that version's schema. Don't chase it;
+`syncDesktopName: true` is set instead and the warning is noise. The Linux
+icon and `.desktop` entry come from the app's own PWA icon
+(`public/icons/icon-512.png`).
 
 ### The bundled Node
 
-`resolveNode()` in `supervisor.js` already preferred
-`<resourcesPath>/node/bin/node` — the "bundled" branch was written before there
-was anything to put there. It's live now, for two reasons: a double-clicked app
-must not depend on the PATH it was launched with (on macOS that's launchd's stub
-— see `docs/DESKTOP_APP.md` §2), and it pins the ABI — `better-sqlite3` ships
-per-`NODE_MODULE_VERSION` prebuilds, so a payload installed under one Node major
-and later run under whatever the user happens to have is a coin flip that lands
-as "compiled against a different Node.js version" at the first query.
+`resolveNode()` in `supervisor.js` prefers `<resourcesPath>/node/bin/node`.
+Two reasons: a double-clicked app must not depend on the PATH it was launched
+with (on macOS that's launchd's stub, see `docs/DESKTOP_APP.md`'s Known
+limitations section), and it
+pins the ABI so a payload installed under one Node major isn't run under
+whatever the user happens to have.
 
-The vendored version defaults to the **host's own** `node --version` — the same
-one that ran `npm ci` for the payload — so runtime and prebuild match by
-construction. `CALANDRIA_DESKTOP_NODE_VERSION` overrides it for a reproducible,
-pinned CI build. The download is verified against the official `SHASUMS256.txt`
-before it is unpacked; only the `node` binary is taken, not `npm` or the
-headers.
+The vendored version defaults to the **host's own** `node --version` (the
+same one that ran `npm ci` for the payload), so runtime and prebuild match by
+construction. `CALANDRIA_DESKTOP_NODE_VERSION` overrides it for a
+reproducible, pinned CI build. The download is verified against the official
+`SHASUMS256.txt` before it's unpacked; only the `node` binary is taken, not
+`npm` or the headers.
 
-Native modules are never rebuilt against Electron's ABI — `npmRebuild: false`
-and `nodeGypRebuild: false` stay set in `electron-builder.cjs`, because
-the addons are only ever loaded by the bundled Node, never by Electron.
-
-electron-builder 26.15.3 also warns on every Linux build that `desktopName` is
-not set, and then rejects `desktopName` as an unknown configuration key if you
-set it — the option its warning names is not in that version's schema. Don't
-chase it; `syncDesktopName: true` is set and the warning is noise.
-
-The Linux icon and `.desktop` entry come from the app's own PWA icon
-(`public/icons/icon-512.png`), so there is no second icon asset to keep in step
-with the first.
+Native modules are never rebuilt against Electron's ABI: `npmRebuild: false`
+and `nodeGypRebuild: false` stay set in `electron-builder.cjs`, since the
+addons are only ever loaded by the bundled Node, never by Electron.
 
 ### Prerequisites
 
-- `tar` and `xz` on PATH (Linux/macOS) to unpack the downloaded Node tarball —
+- `tar` and `xz` on PATH (Linux/macOS) to unpack the downloaded Node tarball;
   Windows uses `Expand-Archive` instead.
 - Network access to `nodejs.org/dist` (or `CALANDRIA_DESKTOP_NODE_MIRROR`) the
   first time a given Node version is vendored; a version already present under
   `desktop/vendor/node` is reused.
 
 `desktop/payload/`, `desktop/vendor/` and `desktop/dist/` are build
-intermediates and gitignored — delete them freely, they're regenerated.
+intermediates and gitignored. Delete them freely; they're regenerated.
 
-Signing and notarization ARE wired up, and are off unless asked for:
-`CALANDRIA_MAC_SIGN_IDENTITY` plus a certificate and App Store Connect key on
-macOS, four `AZURE_CODE_SIGNING_*` variables for Azure Artifact Signing on
-Windows. Setting half of either fails the build rather than producing a green,
-unsigned artifact. `desktop/signing.js` holds the policy and
-`docs/DESKTOP_APP.md` §6.4 documents every variable. No CI lane sets any of them;
-the release lane will. Auto-update is still future (`docs/DESKTOP_APP.md` §7).
+## Signing and publishing
+
+Signing is **opt-in by name**, never by the presence of a secret: a
+half-configured request raises an error instead of silently downgrading to
+unsigned. `desktop/signing.js` holds the policy and `tests/desktopSigning.test.ts`
+drives every branch of it. No CI lane in `test.yml` sets any signing
+variables, and none should. `macos-desktop` signs ad-hoc on purpose and
+asserts Gatekeeper *refuses* the result, so a certificate leaking into a
+PR-triggered build would be caught instead of used silently.
+`.github/workflows/verify-signing-credentials.yml` is the on-demand check
+that the real macOS signing secrets are valid, without doing a full build.
+
+### macOS
+
+All three mac targets are **ad-hoc signed by default**: arm64 macOS refuses to
+`exec` a Mach-O carrying no signature at all, and electron-builder invalidates
+the signature Electron's prebuilt arrived with. `mac.identity: "-"` in
+`electron-builder.cjs` is electron-builder's own ad-hoc path, applied *during*
+the build, before `dmg`/`zip` are cut from the bundle. A `codesign` run
+afterward would never reach the installers. Hardened runtime is on in both the
+ad-hoc and Developer ID cases; the difference is the entitlements file:
+`build/entitlements.mac.adhoc.plist` carries
+`com.apple.security.cs.disable-library-validation` (an identity-less
+signature has no Team ID for library validation to match against the vendored
+Node and native addons it needs to `dlopen`); `build/entitlements.mac.plist`
+(Developer ID) does not, by design: if a signed build ever needs that
+entitlement to start, something in the payload was signed by the wrong
+identity.
+
+**A postinstall patch is currently required for any of this to sign at all.**
+`desktop/scripts/patch-electron-builder-keychain.js`, run from `desktop`'s own
+`postinstall`, rewrites three lines in the installed `app-builder-lib` copy:
+its `createKeychain()` never passes its own keychain-unlock password into
+`importCerts()`, so `security set-key-partition-list -k` receives the `.p12`
+import password instead. That went unnoticed while macOS ignored `-k` on an
+already-unlocked keychain; a current macOS runner image enforces it and fails
+every build with `security: SecKeychainUnlock: The user name or passphrase
+you entered is not correct.` No released electron-builder carries the fix yet
+(upstream [electron-userland/electron-builder#10101](https://github.com/electron-userland/electron-builder/pull/10101)
+merged only to the v27 alpha line; a v26 backport is merged but unpublished on
+npm). The patch matches each line against a string re-verified unique on
+every run, so a partial application can't happen silently, and retires itself
+once it detects the already-fixed shape. It hard-fails only on macOS, where
+signing happens; elsewhere it warns and continues so an unrelated upstream
+restructure can't take down Linux or Windows builds too.
+
+An ad-hoc signature is not distributable: a `.app` downloaded from the
+internet is quarantine-tagged, and Gatekeeper refuses it with *"Calandria is
+damaged and can't be opened,"* which is not a corrupt download. Every install on a
+machine that didn't build it needs:
+
+```bash
+# after dragging Calandria.app to /Applications
+xattr -dr com.apple.quarantine /Applications/Calandria.app
+```
+
+or right-click → Open and confirm the dialog, on **every** such install. A
+published release is Developer ID signed, notarized and stapled, and needs
+none of this.
+
+**Getting a Developer ID Application certificate.** Under *Certificates,
+Identifiers & Profiles → Certificates → + → Software*, pick **Developer ID
+Application**: not *Developer ID Installer* (signs `.pkg`, unused here), not
+*Apple Development*/*Apple Distribution* (Xcode/App Store only; Gatekeeper
+won't accept them for a direct download). No Mac is required: a CSR is a
+plain PKCS#10 request, and OpenSSL on Linux or Windows does the whole round
+trip.
+
+```bash
+# 1. Key and CSR. Apple requires RSA 2048; the email should be the Apple ID.
+openssl genrsa -out devid.key 2048
+openssl req -new -key devid.key -out devid.certSigningRequest \
+  -subj "/emailAddress=you@example.com/CN=Your Name/C=US"
+
+# 2. Upload devid.certSigningRequest, pick Developer ID Application, download
+#    the .cer. It contains only the certificate; the private key never left here.
+openssl x509 -inform DER -in developerID_application.cer -out devid.pem
+
+# 3. The intermediates, WITHOUT WHICH THIS SILENTLY FAILS.
+#    Both, not one: Apple runs two Developer ID CAs and you should not have to
+#    know which signed yours.
+curl -O https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer   # G2, to 2031
+curl -O https://www.apple.com/certificateauthority/DeveloperIDCA.cer     # G1, to 2027
+openssl x509 -inform DER -in DeveloperIDG2CA.cer  > apple-intermediates.pem
+openssl x509 -inform DER -in DeveloperIDCA.cer   >> apple-intermediates.pem
+
+# 4. Bundle key + leaf + intermediates. -legacy is not optional on OpenSSL 3.
+#    It prompts twice for an export password: that is CSC_KEY_PASSWORD, and it
+#    should not be blank.
+openssl pkcs12 -export -legacy -out devid.p12 \
+  -inkey devid.key -in devid.pem -certfile apple-intermediates.pem
+
+# 5. CSC_LINK, and the identity string.
+base64 -w0 devid.p12 > devid.p12.base64
+openssl x509 -in devid.pem -noout -subject   # CN= is CALANDRIA_MAC_SIGN_IDENTITY
+```
+
+On Windows, the OpenSSL that ships with Git Bash or WSL runs all of that
+unchanged, except there's no `base64 -w0`; use PowerShell:
+`[Convert]::ToBase64String([IO.File]::ReadAllBytes('devid.p12'))`. On a Mac,
+`base64 -i devid.p12`.
+
+Two failure modes produce a build that imports the certificate happily and
+then reports no identity at all: a `.p12` missing the issuing intermediate
+(step 3 above: without it, `security find-identity -v` can't build a chain to
+a trusted root and drops the identity silently on a hosted runner); and
+OpenSSL 3's default PKCS#12 encryption, which macOS's `security import`
+doesn't read (`-legacy` in step 4 fixes it). Don't pass `-passout` on the
+command line for the export password; let OpenSSL prompt, so it doesn't land
+in shell history.
+
+Env vars, all-or-nothing per platform:
+
+| Variable | What it is |
+|-|-|
+| `CALANDRIA_MAC_SIGN_IDENTITY` | The Developer ID Application certificate name, **with** the `Developer ID Application: ` prefix (`desktop/signing.js` strips it before handing it to electron-builder, which rejects the prefix itself). Unset or `-` means ad-hoc; this is the only switch. |
+| `CSC_LINK` / `CSC_KEY_PASSWORD` | The `.p12` electron-builder imports into a temporary keychain, base64-encoded, and its password. |
+| `APPLE_API_KEY` / `APPLE_API_KEY_ID` / `APPLE_API_ISSUER` | An App Store Connect **Team** key (not an Individual key: those can't use `notarytool`), from *Users and Access → Integrations → App Store Connect API → Team Keys*. `APPLE_API_KEY` is a **file path**, not the key contents; `APPLE_API_KEY_P8` is the CI secret holding the `.p8` contents, written to that path before the build runs. The `.p8` downloads exactly once; Apple keeps no copy. |
+| `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` | The fallback if the API key route is blocked (app-specific password from account.apple.com → Sign-In and Security). Worse: tied to the account, invalidated on password change. |
+| `CALANDRIA_MAC_SKIP_NOTARIZE=1` | Sign without notarizing, for testing signing alone. The result must not be published. |
+
+Setting the identity with no notarization credentials **fails the build**:
+a Developer ID signature without notarization is still refused on a
+downloaded copy, so that combination would look signed and behave unsigned.
+
+**electron-builder skips macOS signing outright on pull-request builds**
+(`isSignAllowed()` treats a set `GITHUB_BASE_REF` as "this is a PR"). The
+packaging step works around it by unsetting `GITHUB_BASE_REF` in the shell
+(not in a step's `env:` map: GitHub Actions drops any assignment to a
+`GITHUB_`-prefixed variable when building the process environment, so setting
+it there only makes the log lie about what ran). That re-enables signing, not
+signing-with-a-certificate: `mac.identity: "-"` still wins over anything a
+`CSC_LINK` import put in the keychain.
+
+Notarization happens twice, on two different artifacts: electron-builder
+notarizes and staples **the `.app`** from inside `MacPackager.sign()`, so the
+`.dmg` and `.zip` are cut from an already-stapled bundle; and
+`desktop/scripts/notarize-dmg.js`, wired in as electron-builder's
+`artifactBuildCompleted` hook (not `afterAllArtifactBuild`, which would race a
+`--publish` run that's already uploading un-stapled bytes), notarizes and
+staples **the `.dmg` itself**: the disk image is its own notarizable
+container and is what the browser quarantine-tags. The `.zip` is left alone:
+nowhere to hold a ticket, and the app inside is already stapled.
+
+Verify with:
+
+```bash
+codesign --verify --deep --strict Calandria.app   # passes even on an ad-hoc bundle
+spctl --assess --type execute -vvv Calandria.app  # must ACCEPT for a real release
+xcrun stapler validate Calandria.app               # and on the .dmg too
+```
+
+Only a real browser download (not `curl`, not `scp`) produces the quarantine
+attribute, so only that reproduces what a user actually gets.
+
+### Windows
+
+Azure Artifact Signing, configured by four non-secret variables: all four or
+none, three of four throws:
+
+| Variable | What it is |
+|-|-|
+| `AZURE_CODE_SIGNING_ENDPOINT` | Regional endpoint, e.g. `https://eus.codesigning.azure.net/`. |
+| `AZURE_CODE_SIGNING_ACCOUNT_NAME` | The signing account. |
+| `AZURE_CODE_SIGNING_CERT_PROFILE_NAME` | The certificate profile inside it. |
+| `AZURE_CODE_SIGNING_PUBLISHER_NAME` | The subject the signature must match, e.g. `CN=…, O=…, C=US`. |
+
+electron-builder switches from `signtool` to `WindowsSignAzureManager` on the
+presence of `win.azureSignOptions` alone. Authentication is Entra ID's
+ambient credential chain: on GitHub Actions, OIDC workload-identity
+federation via `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and the token file
+`azure/login` writes. There's no certificate and no secret to store.
+
+Without all four variables, electron-builder finds nothing to sign with and
+produces an unsigned artifact instead of failing. The SmartScreen cost of
+that is real: a MotW-marked, unsigned `.exe` or extracted `.zip` raises a
+full-screen *"Windows protected your PC"* dialog (past it: **More info** →
+**Run anyway**), and it re-earns that warning from zero on every release for
+as long as the artifacts stay unsigned. A locally built installer never shows
+it, since a file that was never downloaded carries no mark, which is also
+why no CI lane can observe it.
+
+### The release lane
+
+`.github/workflows/release-desktop.yml` is what puts a binary in anybody's
+hands; everything above is for building one yourself or proving CI can. It
+runs on the `v*` tag release-please cuts, three runners in parallel, each
+building and publishing its own platform's targets straight to the GitHub
+Release, plus one `SHA256SUMS.txt` covering all of them.
+
+The upload is **electron-builder's own** `github` publish provider
+(`--publish always`), not a `gh release upload` step: the provider is what
+writes the update feed (`latest.yml`, `latest-mac.yml`, `latest-linux.yml`,
+plus `.blockmap` files for differential downloads) beside each artifact as it
+goes. Hand-uploading would produce every artifact and no feed, which is an
+updater that silently never finds anything.
+
+`desktop/package.json`'s `version` is the tag the publisher looks the Release
+up by; release-please rewrites it on every bump via `extra-files` in
+`release-please-config.json`, and `tests/desktopRelease.test.ts` fails if it
+drifts. A stale version doesn't error; it quietly uploads everything into an
+unseen draft release. The vendored Node is pinned for a release with
+`CALANDRIA_DESKTOP_NODE_VERSION` instead of taking the runner's, so two
+releases a week apart ship the same runtime.
+
+A dry run (`gh workflow run release-desktop.yml --ref <ref>`, `publish` left
+unticked) builds, signs, notarizes, staples and runs every assertion without
+publishing, attaching the installers to the run as downloadable workflow
+artifacts. It's the only way to exercise the signed path before a tag exists,
+since no pull-request lane has the real signing secrets.
+
+`SHA256SUMS.txt` is generated by matching each built installer's filename
+against the release's actual asset list, normalizing every non-alphanumeric
+character in a name to the same placeholder on both sides before comparing,
+and failing the job if a name matches zero or more than one asset. This
+replaced a manifest that named a spaced `Calandria Setup <version>.exe` while
+GitHub served the hyphenated `Calandria-Setup-<version>.exe`, which made
+`sha256sum -c` either report the file missing or, with `--ignore-missing`,
+report success having verified nothing.
+
+The generated release notes name a platform only when that platform's build
+leg actually produced an artifact; a leg that failed is named as absent
+instead of being described as present or silently left out.
+
+### What signing costs
+
+Re-checked 2026-08-29.
+
+| Item | Cost |
+|-|-|
+| Apple Developer Program + notarization | $99/yr, paid. An individual membership is enough and grants up to five Developer ID Application certificates; notarization is included. |
+| Windows code signing | Azure Artifact Signing, $9.99/month (Basic, 5,000 signatures/month), not yet purchased. |
+| Auto-update | Free once signing is in place: `electron-updater` reads the feed the release lane already writes. Windows and Linux AppImage work as-is; macOS needs the $99 above, since Squirrel.Mac refuses to install into an unsigned build. |
+
+**EV is not worth the premium on Windows.** Microsoft's Trusted Root Program
+removed EV's automatic SmartScreen reputation in March 2024; its own
+documentation now says paying extra for EV solely to dodge SmartScreen
+warnings isn't justified. Azure Artifact Signing (non-EV, $9.99/mo, no
+certificate or secret to guard, since authentication is OIDC) produces the
+identical SmartScreen outcome to a traditional OV certificate, which by
+comparison runs closer to $369/yr once you add the FIPS 140-2 Level 2 cloud
+HSM subscription a June 2023 CA/Browser Forum rule now requires. Take Azure.
+
+**On macOS the $99 is the price of the auto-update feature, not a premium**:
+an unsigned or ad-hoc-signed app cannot self-update at all. Squirrel.Mac
+verifies the downloaded bundle's signature before installing. Windows and
+Linux degrade gracefully without signing (a warning, an unverified package);
+macOS simply doesn't function.
+
+Linux costs nothing to enroll with; publishing SHA-256 checksums beside the
+artifacts is the whole convention.
+
+## Updates
+
+The shell checks the feed the release lane publishes 45 seconds after boot
+and every six hours after that. Downloading is automatic; **installing never
+is**. A ready update announces itself as an OS notification and as a
+tray/menu item labelled `Restart to update to <version>`, not a dialog, since
+the window is usually hidden to the tray. `Check for updates…` sits in both
+the tray menu and the View menu, from one shared function.
+
+**The restart goes through the drain.**
+`electron-updater`'s `autoInstallOnAppQuit` default installs from
+`app.on("quit")`, which fires after `before-quit` has already drained and
+exited, so the default would either skip the install or run it over turns
+still settling. It is off. `main.js`'s `finishQuit()` calls
+`quitAndInstall()` as the last statement of the drain instead, only when the
+user asked and something is downloaded. `tests/desktopUpdater.test.ts` and
+`test-supervisor.js` pin that, including that `finishQuit` is the file's only
+install call site.
+
+Not every install can update itself; the ones that can't say so in the menu
+instead of failing oddly:
+
+| | Updates? |
+|-|-|
+| Windows NSIS | Yes, signed or not |
+| macOS | **Only when signed, and only from `/Applications`.** Squirrel.Mac refuses an app whose signature it can't read, so an ad-hoc build (every local `dist:mac`, every install from before 2026-08-30) has no update path at all; decided at boot from `codesign`, so the menu says `Updates need a manual download` before the first check. Running from the mounted DMG or a translocated path is refused the same way. |
+| Linux AppImage | Yes (detected by `process.env.APPIMAGE`) |
+| Linux `.deb` | No, by design: it's your package manager's to replace, and `electron-updater`'s deb path is an unverified `sudo dpkg -i` |
+| `npm start` | No: a dev build updates by `git pull` |
+
+On macOS the install itself happens after `quitAndInstall()`: that call
+hands the zip to Squirrel.Mac, which fetches, unpacks and verifies the
+bundle before it quits the app. The drain's tail waits on Squirrel's own
+progress events for that (ten minutes while it's demonstrably working,
+thirty seconds while it's said nothing) instead of a fixed timeout that
+could exit over the top of it and relaunch the old build. An install that
+still fails is written down and reported on the next launch, with the log
+path.
+
+Logs: `~/Library/Logs/Calandria/main.log` on macOS,
+`~/.config/Calandria/logs/main.log` on Linux,
+`%APPDATA%\Calandria\logs\main.log` on Windows. Everything the shell prints
+goes there too, including the updater's own debug trace.
+
+`CALANDRIA_DESKTOP_AUTO_UPDATE=off` stops the shell contacting the feed at
+all.
+
+`electron-updater` and `electron-log` are this package's two **runtime**
+dependencies. They're packed because they're in `dependencies`, not because
+`electron-builder.cjs`'s `files` names them (that list can't carry
+`node_modules`), so moving either to `devDependencies` would ship a shell
+that throws on the require.
+
+## Testing
+
+```bash
+npm run desktop:install         # Electron, once (see the NODE_ENV note below)
+npm run build                   # the shell serves a production build
+
+npm run test:desktop:supervisor # headless, ~8s, no display
+npm run test:desktop:boot       # boots the real server.js/pty-server.js
+xvfb-run -a npm run test:desktop:window   # the window suite; needs a display
+xvfb-run -a npm run test:desktop          # all three, in that order
+```
+
+All three run from the **repo root**; CI runs exactly these (the `desktop` job
+and `windows-desktop` job in `.github/workflows/test.yml`). `desktop/e2e/`
+drives its window suite through its own config, `playwright.desktop.config.ts`,
+not the browser suite's config, since the point here is that the shell
+boots the server itself.
+
+Electron is a `devDependency`, so `npm install` under `NODE_ENV=production`
+(which a Calandria task session exports) reports "up to date" and installs
+nothing. Use `NODE_ENV=development npm install`; if `node_modules/electron/dist/`
+is still missing, `node node_modules/electron/install.js` fetches the binary.
+
+A few env vars gate what the window suite runs against:
+
+| Var | Effect |
+|-|-|
+| `CALANDRIA_TEST_BIN` | Runs the window suite against a packaged binary instead of the dev shell. `e2e/fixtures.ts` refuses to launch a binary under the repo checkout, and drops any inherited `CALANDRIA_REPO_ROOT` so the packaged app has to resolve its own bundled payload. |
+| `CALANDRIA_DESKTOP_SANDBOX=1` | For a real installed package: keeps `--no-sandbox` off AND sets `chromiumSandbox: true` on `electron.launch()` (Playwright otherwise unshifts `--no-sandbox` on Linux by default). |
+| `CALANDRIA_TEST_APP_BUNDLE` | macOS only: points at the `.app` bundle itself (not the binary inside), for the launchd-launch spec that needs to `open` it through LaunchServices. |
+| `CALANDRIA_DESKTOP_BENCH=1` | Gates three native-integration specs (tray registration, OS notifications, window-manager behavior) that only mean anything on a machine with a real logged-in desktop session. |
+
+See `docs/DESKTOP_E2E.md` for the full per-platform packaged-testing recipes
+(unpacked/installed Linux, macOS dist+codesign+dmg verification, the Windows
+installer round trip), the bench-VM access and gotchas, and the current flake
+list.
 
 ## The one rule
 
-**The server runs under a real `node`, never inside Electron.** Two reasons, both
-measured in `docs/DESKTOP_APP.md`: `better-sqlite3`'s prebuild will not load into
-Electron's V8 ABI, and `lib/agents/codex/driver.ts` spawns the MCP tool bridge as
-`process.execPath scripts/calandria-mcp.mjs` with a closed env. Hosting the
-server inside Electron would turn that spawn into a GUI process on every Codex
-turn instead of the bridge.
+**The server runs under a real `node`, never inside Electron.** Two reasons,
+both measured in `docs/DESKTOP_APP.md`: `better-sqlite3`'s prebuild will not
+load into Electron's V8 ABI, and `lib/agents/codex/driver.ts` spawns the MCP
+tool bridge as `process.execPath scripts/calandria-mcp.mjs` with a closed env.
+Hosting the server inside Electron would turn that spawn into a GUI process on
+every Codex turn instead of the bridge.
 
-`supervisor.js` enforces this: it refuses an Electron binary as the runtime and
-strips every `ELECTRON_*` variable out of the sidecar environment, so nothing the
-server spawns downstream (agent CLIs, MCP bridges, your login shell in the
-terminal panel) inherits Electron's runtime flags.
+`supervisor.js` enforces this: it refuses an Electron binary as the runtime
+and strips every `ELECTRON_*` variable out of the sidecar environment, so
+nothing the server spawns downstream (agent CLIs, MCP bridges, your login
+shell in the terminal panel) inherits Electron's runtime flags.

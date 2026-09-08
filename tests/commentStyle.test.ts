@@ -44,6 +44,10 @@ const ALLOWED: Record<string, RegExp[]> = {
   // examples all necessarily contain the exact patterns being guarded
   // against. Same precedent as tests/naming.test.ts's own entry below.
   "tests/commentStyle.test.ts": [/./],
+  // tests/prose.test.ts is the same guard for Markdown, and needs the same
+  // self-exemption for the same reason: its own literals and examples
+  // necessarily contain the patterns it guards against.
+  "tests/prose.test.ts": [/./],
 };
 
 const DIRS = ["lib/", "app/", "desktop/", "scripts/", "tests/", "e2e/"];

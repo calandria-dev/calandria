@@ -4,127 +4,190 @@ title: "Insights and usage"
 
 # Insights and usage
 
-Calandria shows what your agents process and what they ship without sending repository data
-elsewhere. Open **Insights** from the top bar for daily usage, tasks shipped, and lines
-merged to base, filterable by project and agent across 7-, 30-, and 90-day ranges.
+The Insights dashboard shows what your agents have processed and shipped, computed entirely
+from your local database. Open it from the chart icon in the top bar (the Insights tab on
+mobile). Everything on the page is local: no repository content or transcript leaves your
+machine to produce it.
 
 ![Insights: spend, tokens, tasks shipped, and lines merged over 30 days](images/insights.png)
 
-## Reading the task chip
+## Filtering the dashboard
 
-A task may show a chip such as `250k tok · 3.5M cached · ~$4.20`.
+Three controls apply to almost every panel:
+
+- **Range**: 7, 30, or 90 days, always ending today.
+- **Project**: narrows every panel to one project. Clicking a row in the Projects table sets
+  this filter too; click it again, or the "clear project" pill, to reset it.
+- **Agent**: narrows to one connected agent (Claude, Codex, and so on) or "All agents."
+
+If you've used Calandria for under 7 days, a banner names how many days of activity actually
+feed a 30- or 90-day view, since an average over the full range would otherwise look diluted.
+
+## Reading the marks
+
+A few symbols repeat across the dashboard:
+
+- **`~`** on a dollar figure means it's an estimate, not a bill: either the agent (Codex) reports
+  tokens only and Calandria multiplies by published API prices, or the turn ran on a
+  Max/Pro/ChatGPT subscription login, where the figure states what the tokens would have cost at
+  API prices instead of a charge. Under an API key the figure is a real charge instead: Claude
+  reports its SDK dollar figure directly, so only a subscription login or a token-only agent
+  produces the `~` estimate.
+- **`≈`** means the figure came from a LiteLLM gateway's own price table. See
+  [By provider](#by-provider).
+- A raised **`+`** after a dollar figure means some turns in that total had no price at all: they
+  ran against a custom endpoint nobody has told Calandria the cost of, so the total leaves them
+  out instead of counting them as $0. Hover the figure for the exact turn count.
+
+## Overview numbers
+
+Six cards summarize the current range, each with a sparkline and, except **Active projects**, an
+arrow comparing the total to the immediately preceding period of the same length (last 30 days
+versus the 30 before that, for example):
+
+| Card | What it counts | What it excludes |
+|-|-|-|
+| Spend | API-price-equivalent cost of task turns in range, marked `~` if every visible agent's cost is estimated | Calandria's own convenience-job spend (see below) |
+| Calandria overhead | Convenience-job spend as a percentage of total spend (tasks + convenience jobs) | n/a |
+| Tokens used | Input, output, cache-read, and cache-write tokens across all task turns in range | Tokens burned inside a subagent's own context window (see [Per-task usage](#per-task-usage)) |
+| Tasks shipped | Tasks whose work merged to base in range (a local merge or a merged/reclaimed PR) | Tasks marked done without merging, and tasks still in progress |
+| Lines merged | Lines added and removed by merges landed in range, from each merge's own diff stat | Net repository size; a reverted change counts as its own addition and removal when it lands |
+| Active projects | Distinct projects with any spend, tasks, or merges in range | Projects with no activity in the window, even if they exist |
+
+## Daily charts
+
+Four stacked-bar charts break the same range down by day, each with a crosshair: hover a day for
+its exact breakdown.
+
+**Daily spend** stacks one series per agent plus, unless you hide it from the legend,
+Calandria's own convenience-job spend. Hiding it from the chart doesn't change the Calandria
+overhead card above, which always covers the full period.
+
+**Tokens per day** defaults to input and output tokens only. Flip "Include cache" to also stack
+cache-write and cache-read tokens, since cache reads routinely dwarf the tokens actually
+processed for the first time and can make a normal day look alarming by default.
+
+**Tasks shipped per day** counts the same merges as the Tasks shipped card, by day.
+
+**Code merged per day** plots lines added above the baseline and lines removed below it, from
+the same merges as the Lines merged card.
+
+## Calandria's own usage
+
+A table of Calandria's convenience jobs: `/clear` handoff summaries, project recaps,
+"Refresh with AI" context drafts, tag refreshes, and agent-connection verification. Each row
+shows the runs, tokens, total cost, and cost per run for that job type in the selected range,
+plus which project(s) it ran for and which model it actually ran on. A job run before model
+recording shipped, or by a driver that can't report one, reads "model not recorded" but still
+counts toward the row's runs and cost. A job left on **Inherit** still reports which model it
+actually ran on. A "Settings →" link on each row jumps to where you'd change it: the
+background-jobs switch, the model picker under Run defaults, or the agent's own card. Your task
+chats never appear here.
+
+Settings also shows the last 30 days of this same utility-job activity, with the models behind
+it, and lets you turn off unattended background work entirely.
+
+## By provider
+
+Total task spend broken down by connected agent: spend, tokens, tasks, and the model(s) each one
+ran. A project routed through the **Gateway** model-provider preset (a LiteLLM proxy) shows its
+figure with `≈` instead of `~`, and adds a **Cache hit** column, shown only once any gateway
+turn exists in range: cache-read tokens over input tokens for that provider's gateway turns.
+A rate stuck near 0% despite real input tokens usually means prompt caching is failing silently
+somewhere in the gateway's translation layer, since a proxy that drops the caching hint won't
+report the failure itself.
+
+A turn that exceeds the gateway key's budget is a recoverable failure with its own **Retry**
+button, the same way a dead login or a spent usage limit is.
+
+**Cross-checking a task against LiteLLM's own logs.** Every gateway request carries
+`x-litellm-tags` naming the project, task, and agent, enough to filter LiteLLM's own spend views
+to one task by hand. For a Claude task there's an exact join: Claude Code sends
+`x-claude-code-session-id` on every request, and LiteLLM records that same value as the spend
+log's session ID. Filtering LiteLLM's `/spend/logs` (or its UI) by that session ID gets you that
+session's exact per-call cost, cache breakdown, and any upstream errors, the ledger the `≈`
+estimate here is standing in for. LiteLLM's `/spend/logs` has no tag filter of its own
+(`BerriAI/litellm#14218`), so the tags give you coarse filtering across a project, task, and
+agent, and the session ID gives you an exact match on one session.
+
+Settings → Agents shows the gateway key's own spend, budget, and reset time when the proxy has a
+database behind it; without one it shows only whether the proxy is reachable and how many models
+it serves.
+
+## Projects
+
+Every project with activity in range, sorted by spend. The agent filter applies here; the
+project filter doesn't, because clicking a row IS the project filter. Each row shows spend,
+tokens, tasks shipped, lines added/removed, when the project was last active (day resolution),
+and a spend sparkline over the range.
+
+## Tags
+
+Shown only once at least one tag has spend. Unlike Projects, both the project and agent filters
+apply, and a task's spend counts toward EVERY tag it carries: a task tagged with three features
+appears in all three rows, so this column doesn't sum to the Projects table above it. Usage from
+an untagged task, or one since deleted, is left out entirely; it isn't pooled into a catch-all
+row.
+
+## Per-task usage
+
+A task's own header carries a compact usage chip once it has any recorded usage, such as
+`250k tok · 3.5M cached · ~$4.20`. Hover it for the exact breakdown.
 
 | Part | Meaning |
 |-|-|
-| `250k tok` | Prompt, completion, and context written into the prompt cache: tokens processed for the first time |
-| `3.5M cached` | Prompt-cache reads, usually the conversation so far being reused on later turns |
-| `~$4.20` | Estimated API-price equivalent; the tilde marks an estimate rather than a reported charge |
+| `250k tok` | Input, output, and cache-write tokens: everything processed for the first time this task |
+| `3.5M cached` | Cache-read tokens, usually the conversation so far being resent and reused on later turns |
+| `~$4.20` | The same price-equivalent or estimated figure described in [Reading the marks](#reading-the-marks) |
 
-Cache reads can dominate the raw count in a long task but aren't millions of tokens of new
-work. Hover the chip for exact counts and the full breakdown.
+Both token figures cover the **main session only**. When a turn fans out to subagents, each one
+runs in its own context window, and the driver reports those tokens separately from the session
+that launched them. The tooltip states the subagent share on its own line
+("1,200,000 of those in subagents (their own windows, not this session's
+context)") and adds it to the grand total it shows, so the tokens and
+the dollar figure describe the same work; the dollar figure already includes subagent cost even
+though the two headline token counts don't. An agent that doesn't report the subagent split
+omits that line instead of claiming zero.
 
-Both counts describe the **main session only**. A turn that fans out to subagents runs each one
-in its own context window, and Claude reports those sidechains separately from the session that
-launched them — so the two figures above never included them, while the dollar figure always did.
-Where a task has fanned out, the tooltip states the sidechain share on its own line
-(`1,200,000 of those in subagents`) and adds it to the total, so the tokens and the dollars are
-describing the same work. Agents that don't report the split omit the line rather than claim a
-zero.
-
-## Cost versus price equivalent
-
-On a Max, Pro, or ChatGPT subscription login, turns consume plan quota. The displayed dollar
-figure answers "what would these tokens cost at published API prices?" It isn't a bill, and
-the marginal API charge is zero.
-
-With an API key, the amount is billed API usage. Claude reports its SDK dollar figure
-directly. Codex reports tokens only, so its amount is estimated from token counts and
-published prices and carries a `~`.
-
-## Stopped turns
-
-A turn you Stop is billed for whatever it already ran, so it is recorded. Its tokens come from
-the model requests the turn made rather than from the end-of-turn total it never produced, and
-no dollar figure comes with them, so a stopped turn is recorded *unpriced* the way a custom base
-URL's turns are. The tokens count toward the task and the project; the amount beside them is a
-floor, and the figures that omit a price say so.
-
-Before this, a turn Stopped mid-work recorded nothing at all. A model can run for half an hour
-of tool calls inside one turn, so half-hour stops were reported as zero tokens and $0.
-
-## Through a LiteLLM gateway
-
-A project routed through the Gateway provider preset bills a LiteLLM virtual key instead of a
-vendor subscription or API key. Its turns show up in Insights the same way any custom-endpoint
-turn does, marked so the figure reads as an estimate rather than a bill:
-
-- The dollar figure carries a `≈` rather than the `~` a token-counted estimate (Codex) carries.
-  It's computed from the gateway's own price table (`GET /model/info`), which is closer to the
-  truth than a vendor's list price but still short of LiteLLM's own billing ledger.
-- The "By provider" table's **cache hit** column, shown only when the period has gateway usage,
-  is cache-read tokens over input tokens for turns run through the gateway. Prompt caching can
-  fail silently when a proxy's translation layer drops `cache_control`, and a rate stuck near 0%
-  despite real input tokens is the only signal Calandria has that this happened — LiteLLM never
-  reports the failure itself.
-- Settings → Agents shows the gateway key's own spend, budget and reset time (`GET /key/info`),
-  which needs LiteLLM's database; a proxy running without one shows liveness and a model count
-  only. A turn that exceeds the key's budget is a recoverable failure with its own Retry button,
-  the same way a dead login or a spent usage limit is.
-
-**Joining a task to LiteLLM's own spend logs.** Every gateway request carries `x-litellm-tags`
-naming the project, task and agent, which is enough to filter LiteLLM's spend views to one task
-by hand. For a Claude task there's a second, exact join with no configuration on either side:
-Claude Code sends `x-claude-code-session-id` on every request, LiteLLM records that value as the
-spend log's session id, and Calandria already stores the same id in `sessions.claude_session_id`
-(one row per task generation). So `sessions.claude_session_id` for a given task's generation is
-the value to filter LiteLLM's `/spend/logs` or its UI by for that generation's exact per-call
-cost, cache breakdown and any upstream errors — the ledger Calandria's own `≈` estimate above is
-standing in for. `/spend/logs` has no tag filter of its own (docs; BerriAI/litellm#14218), which
-is why the tags exist for coarser filtering and the session id for an exact one.
+A turn you stop is billed for whatever it already ran, so it's still recorded: its tokens come
+from the model requests it actually made, not the end-of-turn total it never produced, and it
+carries no dollar figure, the same way a turn against a custom, unpriced endpoint doesn't.
+Its tokens still count toward the task and the project; the dollar figure beside them is a floor.
 
 ## Plan usage meter
 
-On a Claude Pro/Max or ChatGPT subscription login, the titlebar shows a compact meter with
-the current session (5-hour) and week (7-day) plan utilization, plus the time left before the
-session window resets. Running many parallel sessions burns a plan faster than one terminal,
-so check the remaining headroom before dispatching more work. Click it for the full
-breakdown: every window the provider reports (for Claude, including per-model weeks), reset
-times, and data freshness. The pill tints amber at 80% and red at 95% or when a limit is
-reached. Connect both agents and you get a pill each, marked with the agent it meters; the
-mark is the only label, and the tooltip and breakdown name the agent in full.
+On a Claude Pro/Max, ChatGPT, or Antigravity subscription login, the titlebar shows a compact
+meter: current session (5-hour) and week utilization, plus time left before the session window
+resets. Click it for the full breakdown: every window the provider reports (including per-model
+weeks for Claude), reset times, and how fresh the data is. It tints amber at 80% utilization and
+red at 95% or once a limit is actually reached. Connect more than one metered agent and you get a
+pill each, distinguished by its brand mark; the tooltip and breakdown name the agent in full. If
+your LiteLLM gateway key has a budget configured, its spend-to-budget ratio gets its own
+"Gateway" pill using the same meter.
 
-Settings → Agents carries a switch per metered agent to hide or show its pill. Hiding one
-changes nothing about what the server reads or records, so a second login you only use for
-utility jobs need not spend titlebar space.
+Settings → Agents has a switch per metered agent to hide or show its pill; hiding one only
+affects the titlebar, not what the server reads or records.
 
-Percentages are read conservatively in both cases: only while a tab is open, at most once per
-five minutes (`CALANDRIA_PLAN_USAGE_MIN_FETCH_MS`), backing off on failure and serving the
-cache in between. For Claude that read is the same usage endpoint the CLI's own `/usage`
-panel uses, and it is topped up for free by the rate-limit telemetry every turn already
-carries, so an approaching or reached limit shows up immediately instead of on the next poll.
-Codex has no such telemetry — its turn stream reports token counts and nothing about limits —
-so its figures come only from `codex app-server`'s account rate-limit view and are at most one
-fetch interval old. Set `CALANDRIA_PLAN_USAGE=off` to hide the meter and stop the app from
-asking either provider. The meter doesn't render for API-key auth, since there's no plan to
-meter.
+Percentages are read conservatively: only while a tab is open, and only refetched from the
+provider at the floor in the table below, serving the cached value in between and backing off on
+failure. For Claude that read rides the same usage endpoint the CLI's own `/usage` panel uses,
+topped up for free by the rate-limit telemetry every turn already carries, so an approaching or
+reached limit can show up before the next scheduled poll. Codex's turn stream carries no such
+telemetry, so its figures come only from that periodic read and can be one interval old. The
+meter doesn't render at all under API-key auth, since there's no plan to meter.
 
-## Calandria overhead
+## Settings and environment variables
 
-Insights separates task activity from Calandria's own convenience jobs, including:
-
-- `/clear` handoff summaries;
-- project recaps;
-- project-context drafts; and
-- agent connection verification.
-
-This lets you see quota spent on automation separately from the work requested in task
-sessions. Each row names the models those runs used, read back from the run rather than from
-the picker, so a job left on **Inherit** still says what it ran on. A run recorded before this
-shipped, or by a driver that could not report a model, reads "model not recorded" and still
-counts towards the row's runs and cost. Settings shows the last 30 days of utility-job
-activity, the models behind it, and lets you disable unattended background work.
+| Name | Default | Effect |
+|-|-|-|
+| Settings → Background jobs → "Let Calandria use your agent for background work" | On | Off stops unattended recap, context-draft, and tag-refresh jobs; explicit `/clear`, Refresh with AI, and a manual recap refresh still run |
+| Settings → Background jobs → Project recaps | Automatic | Automatic / Only when I open a project / Off |
+| Settings → Background jobs → Utility agent | Falls back through the app default agent | Which connected agent runs Calandria's own convenience jobs |
+| Settings → Agents → "Show \<agent\>'s plan usage in the titlebar" | On | Off hides that agent's meter pill only |
+| `CALANDRIA_PLAN_USAGE` | on | Set to `off` to hide the plan usage meter entirely and stop polling every provider for it |
+| `CALANDRIA_PLAN_USAGE_MIN_FETCH_MS` | `300000` (5 minutes) | Minimum time between live plan-usage reads per provider; cached value serves requests in between |
 
 ## Data handling
 
-The dashboard is computed from the local SQLite database. Filtering happens in the browser;
-task transcripts and repository contents are not uploaded for Insights.
+Every figure on this page is computed from your local SQLite database, and filtering happens in
+your browser. No task transcript or repository content is uploaded to produce it.
