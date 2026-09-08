@@ -329,6 +329,25 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
           worktree_path: wt.path, work_branch: wt.branch, base_sha: wt.baseSha,
           ...(wt.baseBranch ? { base_branch: wt.baseBranch } : {}),
         });
+        // A resume that could not reattach means the task's own branch is
+        // gone: something removed it between two messages (a reclaim, a
+        // project move, a hand-run `git branch -D`), and the self-heal above
+        // has just handed the session a fresh branch cut from the base tip.
+        // That is the right repair for a checkout that went missing on its
+        // own, and the wrong thing to do quietly: the task's commits and its
+        // whole diff have disappeared, and the next thing the session sees is
+        // an empty change list it has no way to explain. Says so on the
+        // transcript, before the message that triggered the re-cut.
+        if (!wt.reattached) {
+          const note =
+            `This task's branch no longer existed, so a new one (${wt.branch}) was cut from ` +
+            `${wt.baseBranch || "the repository's current HEAD"}. Any commits the previous branch ` +
+            `held are not in this checkout: look for them in the base branch or on the remote ` +
+            `before redoing the work.`;
+          console.warn(`[runner] task ${id}: re-cut ${wt.branch} from scratch; the previous branch was gone`);
+          const m = addMessage(id, gen, "system", note);
+          publish(id, { type: "notice", content: note, msgId: m.id, generation: gen, ts: m.created_at });
+        }
         // Record what the cut actually got, for the opening turn's context to
         // state: a base branch behind the project default, or one that no
         // longer exists, is otherwise invisible to the session until its PR

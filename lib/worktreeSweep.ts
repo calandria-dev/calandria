@@ -34,8 +34,8 @@
 // PDFs and log bundles that outlive every worktree they were staged for. They
 // are swept here, and not in one of the other teardowns, because this is
 // the only one whose licence is "this task has been terminal and untouched
-// for weeks": a reclaim fires the instant a PR lands, on a task the user may
-// still be reading, and a project move keeps the task alive with its
+// for weeks": a reclaim can fire the instant a PR lands, on a task the user
+// may still be reading, and a project move keeps the task alive with its
 // transcript intact, so deleting its uploads in either would break marker
 // links under a live task. Hard delete and the transcript prune already cover
 // their own cases.
@@ -46,7 +46,10 @@
 // is not evidence that the diff is anywhere else. lib/reclaim.ts is the case
 // where it is: a merged PR (or a local merge) says the work is in the base
 // branch, and that reclaim does delete the local branch, optionally
-// unattended. Same teardown, different licence, tied to the landing.
+// unattended. Same teardown, different licence, tied to the landing. The
+// unattended half of it borrows prunableTaskIds()' predicate too, one task at
+// a time (taskIsFinishedWith): landing licenses the teardown, but only this
+// says the session that would resume onto that branch is over.
 //
 // Off by default, unlike the table prune. The table prune's defaults (180/400
 // days) are longer than most instances have existed, so switching it on for

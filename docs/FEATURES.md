@@ -136,7 +136,10 @@ Calandria merged the branch locally, its checkout is disposable and Calandria ca
    lands). It fast-forwards the local base branch from origin, removes the worktree, deletes the
    local branch, and marks the task done in one step.
 2. To do this automatically for every task in a project, open **Context** → check **Reclaim a
-   task's worktree when its work lands**. It is off by default and set per project.
+   task's worktree when its work lands**. It is off by default and set per project. It waits until
+   the task is done or cancelled: landing means the work reached the base branch, not that you have
+   finished the session, and the branch a reclaim deletes is the one your next message resumes onto.
+   Use the button when you want a still-open session reclaimed now.
 3. To reclaim several merged or finished tasks at once, go to Settings → Storage. Discarding
    unmerged work there requires the same explicit permanent-discard confirmation as the button.
 
@@ -146,6 +149,9 @@ Calandria merged the branch locally, its checkout is disposable and Calandria ca
   never received, stop both the button and the automatic path. The automatic path just reports
   and leaves the checkout alone; the button, and Settings → Storage, offer the same
   permanent-discard confirmation a task move does, naming exactly what would be destroyed.
+- It never takes a branch out from under a session you are still using. If something does remove a
+  task's branch, a project move or a reclaim you asked for, the next turn cuts a fresh one and says
+  so on the transcript, naming the new branch and where the old commits went.
 - A branch that is merely "ahead" of its base after a squash merge is not treated as unsaved
   work, since every squash-merged branch looks that way.
 - The remote branch is deleted only if the merge came from Calandria (`--delete-branch`) or the
