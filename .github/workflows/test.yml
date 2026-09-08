@@ -131,8 +131,17 @@ on:
   # `push` deliberately stays main-only, so a task branch's own pushes don't
   # double-run alongside its PR. Cost is bounded by the paths-ignore filter
   # above, the concurrency group below, and the fact that the four slow jobs
-  # (e2e, desktop and the Windows pair) stay label-gated on any pull_request
-  # whatever its base.
+  # (e2e, desktop and the Windows pair) stay label-gated on a pull_request,
+  # with one exception: a PR whose HEAD is an `integration/**` branch runs
+  # them without the label. Its leaf PRs only ever ran the unit lanes, so the
+  # landing PR is the first time the e2e lanes see the accumulated work, and
+  # skipping them there makes main's push run the first, where a red run
+  # blocks the next release (issue #78). Four such PRs (#130, #132, #133,
+  # #135) had to be labelled by hand on 2026-09-02. Opting in every PR whose
+  # BASE is main was rejected: every one-line fix would pay for half-hour
+  # lanes, and the `e2e` label would stop meaning "run e2e on a PR that is
+  # not landing yet". `macos-desktop` keeps its own `macos` label; that runner
+  # pool is scarce and the lane runs weekly on its own.
   pull_request:
     branches: ["**"]
     # No `paths-ignore` here, unlike `push` above. A required status check that
@@ -546,7 +555,9 @@ jobs:
     # default path there; only an explicit 'off' from a caller suppresses it.
     # The closed-PR clause is the one the other four jobs carry; a merged PR
     # would not normally hold the `e2e` label, but this is the pair of jobs
-    # whose waste is measured in half-hours, so it does not rely on that.
+    # whose waste is measured in half-hours, so it does not rely on that. An
+    # `integration/**` HEAD opts in without the label; the `on:` block above
+    # says why.
     if: >-
       ${{ needs.changes.outputs.app == 'true' && ((github.event_name != 'pull_request'
            || github.event.pull_request.state == 'open')
@@ -554,6 +565,7 @@ jobs:
               || (inputs.e2e != 'off'
                   && (github.event_name == 'push'
                       || github.event_name == 'workflow_dispatch'
+                      || startsWith(github.head_ref, 'integration/')
                       || contains(github.event.pull_request.labels.*.name, 'e2e'))))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -609,6 +621,7 @@ jobs:
               || (inputs.e2e != 'off'
                   && (github.event_name == 'push'
                       || github.event_name == 'workflow_dispatch'
+                      || startsWith(github.head_ref, 'integration/')
                       || contains(github.event.pull_request.labels.*.name, 'e2e'))))) }}
     runs-on: ubuntu-24.04
     # 45, not `e2e`'s 30: this job runs the window suite TWICE — once against
@@ -770,6 +783,7 @@ jobs:
               || (inputs.e2e != 'off'
                   && (github.event_name == 'push'
                       || github.event_name == 'workflow_dispatch'
+                      || startsWith(github.head_ref, 'integration/')
                       || contains(github.event.pull_request.labels.*.name, 'e2e'))))) }}
     runs-on: windows-latest
     # Twice `e2e`'s 30. Same suite, but every process spawn, file write and
@@ -832,6 +846,7 @@ jobs:
               || (inputs.e2e != 'off'
                   && (github.event_name == 'push'
                       || github.event_name == 'workflow_dispatch'
+                      || startsWith(github.head_ref, 'integration/')
                       || contains(github.event.pull_request.labels.*.name, 'e2e'))))) }}
     #
     # GITHUB-HOSTED, NOT THE HOMELAB'S WINDOWS VM (Proxmox template 9911).

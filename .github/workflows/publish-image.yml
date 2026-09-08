@@ -729,7 +729,14 @@ jobs:
   # second schedule is added here.
   notify:
     needs: [prepare, test, build, merge, attest, verify]
-    if: failure() && github.event_name != 'pull_request'
+    # Schedule only. The nightly and the Sunday cold build run with nobody
+    # watching, so a red one needs an issue or it is never seen. A tag push or
+    # a dispatch is a person cutting a release, who is already looking at the
+    # run; filing those too is how issue #78 collected one comment per blocked
+    # publish for a flake the release gate had already named. The action
+    # appends to the open issue with the same title, so the schedule path still
+    # gets one issue per workflow.
+    if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
