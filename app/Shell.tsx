@@ -133,6 +133,29 @@ function MobileTerminalSheet({ cwd, port, visible, onClose }: { cwd: string; por
   }, [visible]);
   useEffect(() => { if (visible) setSuspended(false); }, [visible]);
 
+  // A sheet the user left open backgrounds with its socket alive, and iOS
+  // closes it a few seconds in. It would come back showing "press Enter to
+  // start a new shell", and on a build carrying WebKit 308073 that respawn
+  // hangs at CONNECTING. Respawn on resume instead, which remounts the whole
+  // terminal and so gives the retry a fresh xterm as well. Only when the
+  // socket actually closed: a live shell (a long `npm run dev`, say) must
+  // survive a glance at another app.
+  const closedRef = useRef(false);
+  useEffect(() => {
+    if (!visible) return;
+    const onResume = () => {
+      if (document.visibilityState !== "visible" || !closedRef.current) return;
+      closedRef.current = false;
+      setEpoch((e) => e + 1);
+    };
+    document.addEventListener("visibilitychange", onResume);
+    window.addEventListener("pageshow", onResume);
+    return () => {
+      document.removeEventListener("visibilitychange", onResume);
+      window.removeEventListener("pageshow", onResume);
+    };
+  }, [visible]);
+
   const send = (d: string) => apiRef.current?.send(d);
   const paste = async () => {
     try { const t = await navigator.clipboard.readText(); if (t) send(t); } catch { /* clipboard blocked, long-press paste still works */ }
@@ -151,7 +174,9 @@ function MobileTerminalSheet({ cwd, port, visible, onClose }: { cwd: string; por
       </div>
       {suspended
         ? <div className="term-host" />
-        : <TerminalView key={epoch} cwd={cwd} port={port} fontSize={fontSize} onReady={(api) => { apiRef.current = api; }} />}
+        : <TerminalView key={epoch} cwd={cwd} port={port} fontSize={fontSize}
+            onReady={(api) => { apiRef.current = api; closedRef.current = false; }}
+            onClosed={() => { closedRef.current = true; }} />}
       <div className="mterm-keys">
         <button className="mtk" onClick={paste}>Paste</button>
         <span style={{ flex: 1 }} />
