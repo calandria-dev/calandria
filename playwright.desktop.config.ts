@@ -28,7 +28,15 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,
-  retries: 0,
+  // One retry on CI, none locally. The e2e lanes are the release gate: both
+  // publishers refuse a tag whose push-to-main Test run is red, and one flaky
+  // assertion blocked the 0.6.1 and 0.6.2 publishes until somebody reran the
+  // job by hand (issue #78). The retry is a floor under a release, not a
+  // substitute for fixing the race: the `list` reporter below prints every
+  // retried test under "Flaky tests" with its attempt count, so a retry is
+  // visible in the log and stays a thing to fix. Locally a failure should
+  // fail at once, with its trace kept.
+  retries: process.env.CI ? 1 : 0,
   // A spec here pays for a full Electron start plus a production Next boot, and
   // 03-quit-drain deliberately waits out a drain — generous where the browser
   // suite's 60s is not.
