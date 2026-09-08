@@ -128,8 +128,9 @@ The app talks to coding agents only through the `AgentDriver` interface.
 
 `runTurn()` runs a turn via the Claude Agent SDK, resuming or starting fresh, with project
 context appended to the Claude Code system prompt. It exposes the Calandria MCP tools
-(`suggest_task`, `list_tasks`, `get_task`, `update_task`, `withdraw_suggestion`,
-`set_base_branch`, `create_pr`, `update_tag`, `list_projects`, `expose_service`),
+(`suggest_task`, `list_tasks`, `get_task`, `update_task`, `move_task`,
+`withdraw_suggestion`, `set_base_branch`, `create_pr`, `update_tag`, `list_projects`,
+`expose_service`),
 `summarizeTranscript()` for `/clear`, and `draftProjectContext()`, a read-only agent loop
 that explores the repo to refresh a project's saved context. Auth delegates to
 `lib/claude-auth.ts`.
@@ -140,15 +141,15 @@ the user's MCP servers, plugins, skills, and the repo's `CLAUDE.md` from every s
 
 The one-shot helpers isolate capability but still inherit config. Each sets `tools`
 explicitly, since that is the real restriction: `allowedTools` only pre-approves calls, and
-`bypassPermissions` pre-approves everything anyway, so all three helpers used to run with
+`bypassPermissions` pre-approves everything anyway, so every helper used to run with
 the full toolset regardless. Each also sets `strictMcpConfig: true` to drop the user's MCP
 fleet, `skills: []`, `settings: { disableAllHooks: true, autoMemoryEnabled: false }` to close
 surfaces the tool list doesn't cover, and `persistSession: false` since nothing records
 their session id. They keep `settingSources: ["user"]`, since `~/.claude/settings.json` also
 holds a Bedrock/Vertex/proxy user's `env` block and `apiKeyHelper`; full isolation there
 would fail the run with "Not logged in" while ordinary turns kept working. The two
-text-only helpers get `tools: []` and one turn. `draftProjectContext` adds `project` (to
-load `CLAUDE.md`) and gets `["Read", "Grep", "Glob"]` with no Bash, which under
+text-only helpers get `tools: []` and one turn. `draftProjectContext` and `planTagRefresh` add
+`project` (to load `CLAUDE.md`) and get `["Read", "Grep", "Glob"]` with no Bash, which under
 `bypassPermissions` would have meant unreviewed execution in the user's checkout to produce
 prose. `tests/claudeSettingSources.test.ts` pins both policies.
 
@@ -161,15 +162,24 @@ picker entry can't quietly resolve to something else.
 
 `canUseTool` is the SDK callback that also has to be present before the CLI will expose
 `AskUserQuestion` at all. It routes every call the SDK doesn't auto-approve through
+**`lib/permissionPrompt.ts`**, the gate the Codex driver shares, and the policy it applies is
 **`lib/permissions.ts`**: a read-only allowlist passes silently unless the CLI flagged a
 `blockedPath`, which forces a prompt; otherwise the check falls through to the project's
 remembered rules, then to a human. A prompt reuses the ask machinery wholesale
 (`lib/asks.ts`, `POST /answer`, `tasks.awaiting_input`), yielding a `permission` StreamEvent
 that the runner persists as an answerable transcript card and settles as
-`permission_decided`. Remembered rules (`permission_rules`) are Bash-only and
-project-scoped, because a command is the one input a user can read in full and generalize;
-non-Bash tools get allow-once plus the CLI's own session-scoped suggestion. Every non-answer path denies: Stop, the SDK cancelling its own request, an expired prompt,
-an unparseable answer, or a turn ending with a card still open (settled by the runner's
+`permission_decided`. While it is still open the card is lifted OUT of the transcript's flow
+into a dock below it (`app/shell/pendingPrompt.ts`, rendered by `SessionView`), asks
+included: inline, anything that streams in afterwards scrolls the thing the turn is parked on
+off the top — one subagent returning a screenful is enough — leaving nothing on screen to say
+an answer is owed. That module decides liveness rather than trusting the row, because nothing
+backfills an ask card a Stop tore down and `awaiting_input` is zeroed by the next turn either
+way, so "has no answer" alone would dock a dead question forever.
+
+Remembered rules (`permission_rules`) are Bash-only and project-scoped, because a command is
+the one input a user can read in full and generalize; non-Bash tools get allow-once plus the
+CLI's own session-scoped suggestion. Every non-answer path denies: Stop, the SDK cancelling
+its own request, an expired prompt, an unparseable answer, or a turn ending with a card still open (settled by the runner's
 `finally`, or by a restart for any left in the DB). An unattended auto-deny also parks
 queued follow-ups, the same way a dead login does.
 
@@ -215,9 +225,32 @@ the codex thread id emitted as the `session` event so lineage and resume work un
 `web_search`, `todo_list`, and `reasoning` become `tool` and `tool_result`; and
 `turn.completed` usage becomes tokens plus an estimated `cost_usd`.
 
-Run controls map our permission modes to codex's sandbox/approval policy
-(`bypassPermissions` to workspace-write with approvals-never, `plan` to read-only); reasoning
-presets map to `model_reasoning_effort`. The capability descriptor declares
+Under the app-server transport the CLI also pushes `item/agentMessage/delta` and
+`item/reasoning/summaryTextDelta` while it writes. Those become `assistant_delta`, the one
+StreamEvent the runner publishes without persisting: the completed item still produces the
+`assistant` message (or the "🧠 Thinking" tool row) that the transcript keeps, so the delta only
+ever reaches whoever has the task open, where `app/shell/useTaskStream.ts` grows one client-only
+bubble and drops it as soon as a real row lands under it. The Claude driver emits the same event
+from the SDK's partial messages (`includePartialMessages`), covering text and thinking blocks.
+
+`item/commandExecution/outputDelta` becomes the second such event, `tool_output_delta`. A command's
+output is not a reply, so it grows the peek of the tool row `item/started` already produced rather
+than a bubble: the runner looks the row up in the same `toolMsgs` map `tool_result` uses, attaches
+its DB message id and publishes without persisting, and the client appends into `ToolData.peek`
+through `growOutputPeek()` in `app/shell/format.ts` — a six-line tail with a 500-character bound
+per line, so a build that prints 50k lines never accumulates in React state. The completed item
+still writes the whole `aggregated_output` through `tool_result`, whose peek replaces the live one,
+so a reload shows the settled output instead of replaying the build. The chunks are base64 over the
+raw bytes a pty produced and a multi-byte character can straddle two of them, so the mapper decodes
+through one `TextDecoder` per item in `{ stream: true }` mode rather than per chunk.
+
+This half is Codex-only. The Agent SDK's `SDKToolProgressMessage` carries `elapsed_time_seconds`
+and no output at all, and a live probe over a six-second `Bash` command emitted none of them (nor
+any `local_command_output`), so there is nothing on the Claude side to wire.
+
+`policy.ts` maps the five permission modes to codex's sandbox, approval policy, reviewer and
+writable roots (docs/AGENTS.md has the table); reasoning presets map to
+`model_reasoning_effort`. The capability descriptor declares
 `supportsMcpTools: true`: Calandria's tools reach codex through the portable stdio MCP
 bridge described below, registered per turn with a roughly one-day `tool_timeout_sec` so a
 parked ask survives. It declares `supportsAsks: true` because codex has no native
@@ -227,15 +260,34 @@ blocks until the user answers. It declares `reportsCostUsd: false` and
 estimates the dollar cost per turn from tokens times published API prices for the resolved
 model, and the UI renders those figures with a `~`.
 
-One upstream limitation: the non-interactive CLI cannot pause a turn for command approval,
-so on-request approval modes aren't offered. The only permission modes are workspace-write
-(approvals never) and read-only (plan), labeled with codex's own sandbox-mode names. Auth
-(`auth.ts`) drives `codex login --device-auth` and `codex login status`. The one-shot
+Turns run on `codex app-server` by default (`appServerClient.ts` is the JSON-RPC transport,
+`appServerTurn.ts` the turn, `appServerEvents.ts` the adapter that respells v2 items as the
+exec protocol's so `events.ts` maps both transports). The server's approval requests
+(`item/commandExecution/requestApproval`, `item/fileChange/requestApproval`,
+`item/permissions/requestApproval`) are answered through `lib/permissionPrompt.ts`, which is
+the Claude gate — `canUseTool` calls the same `promptPermission()`, so the rules, the card and
+the `/answer` registry are one implementation — and its `item/tool/requestUserInput`
+through the ask card. `CODEX_TRANSPORT=exec` keeps the SDK's `codex exec` path, which
+auto-rejects approvals inside the CLI. Auth (`auth.ts`) drives `codex login --device-auth` and `codex login status`. The one-shot
 helpers run as `codex exec` one-shots in a read-only sandbox (no writes, no approvals, no
 network), bounded by an item cap, codex's analog of the Claude helpers' `maxTurns`, so a
 runaway helper turn is cut off instead of looping unbounded. The binary path comes from
 `CODEX_CLI_PATH`, or the SDK auto-resolves its bundled
 binary or PATH.
+
+### The Antigravity driver (`lib/agents/gemini/driver.ts`)
+
+Google's `agy` CLI has no SDK, so this driver owns the process itself: `spawn`, NDJSON off
+stdout, `gemini/events.ts` to normalize. It runs on the user's Google login and needs no API
+key outside a container (where it needs one, since the CLI's token lives in the OS keyring —
+see [AGENTS.md](AGENTS.md#antigravity-gemini)). Two structural differences from the other two
+drivers: **each task runs under its own `HOME`** (`gemini/home.ts`), because the CLI reads MCP
+servers from exactly one user-global file and a shared one would let whichever task wrote last
+own every other task's tool identity; and **usage is cumulative per conversation**, so a turn's
+spend is a delta against the `sessions.usage_cum` baseline, the same shape Codex needs. Cost is
+estimated from Google's published prices (`gemini/pricing.ts`) — the CLI reports no dollar
+figure — while plan quota is read from the CLI's own `/usage` command, which spends none
+(`gemini/planUsage.ts`).
 
 ### Internal one-shots (`lib/agents/oneshots.ts`)
 
@@ -266,9 +318,10 @@ controls show their run count and API-price-equivalent cost without polling.
 
 ### The agent-tool bridge (`scripts/calandria-mcp.mjs` + `lib/agentTools.ts`)
 
-`suggest_task`, `list_tasks`, `get_task`, `update_task`, `withdraw_suggestion`,
-`set_base_branch`, `create_pr`, `list_tags`, `update_tag`, `list_projects`, `expose_service`,
-and `ask_user` are the same Calandria tools every driver exposes. The Claude driver mounts all
+`suggest_task`, `list_tasks`, `get_task`, `update_task`, `move_task`,
+`withdraw_suggestion`, `set_base_branch`, `create_pr`, `list_tags`, `update_tag`,
+`list_projects`, `expose_service`, and `ask_user` are the same Calandria tools every driver
+exposes. The Claude driver mounts all
 but `ask_user` as an in-process SDK MCP server (`createSdkMcpServer`) and gets asks natively
 through its AskUserQuestion hook. The portable equivalent is **`scripts/calandria-mcp.mjs`**,
 a plain-Node stdio MCP server (`@modelcontextprotocol/sdk`) that non-Claude drivers spawn
@@ -361,6 +414,19 @@ UI's edit dialog. The supported recipe is two-phase, and the prompt in
 `buildProjectContext()` spells it out: file every task, wait for the ids, then call
 `update_task` per dependent task.
 
+Neither call screens a blocker on `suggested`, deliberately: the order an agent expresses is
+drawn while every step is still in the tray, so filtering those edges out would discard the
+plan's sequence at the moment it's stated. The cost, until issue #46, was that the edit
+dialog's picker was fed real tasks only. A suggested blocker had no row to untick and every
+save re-submitted it, while the "Blocked by" chip and `blocks()` both counted it — a task
+that couldn't start, with no visible cause and no way to clear it. One predicate decides now:
+`isBlocking()` in `app/shell/format.ts`, mirroring `blocks()` in `lib/autoStart.ts` on both
+edges. Terminal doesn't block, and neither does a ref that resolves to nothing — the client
+used to assume a missing row still blocked, disabling a Start the server would have allowed.
+`blockerCandidates()` lists a suggestion only when it is ALREADY selected, the same exception
+a terminal blocker gets and for the same reason: an edge nothing draws is an edge nobody can
+remove.
+
 `update_task`'s version of `blocked_by` differs from `suggest_task`'s in two ways, both
 because it replaces a set instead of filling a blank one. It is refused on the caller's own
 row, because blockers gate whether a task may start and a session calling this has already
@@ -392,6 +458,45 @@ argument straight through, while the bridge's endpoint takes the caller from the
 env-injected `CALANDRIA_TASK_ID` and the target from the request body. Because the target
 is model-supplied in both cases, `tests/codexUpdateTaskPolicy.test.ts` runs the real bridge
 against the real endpoint and asserts on the database rather than on the refusal text.
+
+**`move_task(tasks, project)`** re-parents tasks between projects (issue #24). Before it,
+`suggest_task` picked a project at creation and nothing afterwards could change it, so the
+only route was re-filing into the target and retiring the original: N `get_task` calls to
+recover descriptions `list_tasks` omits, N `suggest_task` calls to retype them, and a
+dependency graph rebuilt by hand from the new ids afterwards — a second pass that looks
+identical whether or not it was done.
+
+The operation itself is `lib/taskMove.ts`'s, shared with the two user-facing move routes, so
+an agent's move and a board move can't mean different things. A dedicated verb rather than a
+`project` field on `update_task`, for `set_base_branch`'s reason plus one more:
+`updateTaskForAgent()` is a synchronous atomic write and this takes per-task locks and can
+run git, so folding it in would make the field-writer non-atomic for every other field. And
+it is a *set* operation — whether a `blocked_by` edge survives depends on which other tasks
+are moving in the same call, which a per-row field has nowhere to express. Chains are
+therefore moved whole in one call, which is the answer to the issue's first open question:
+an edge survives iff both ends move together, and every edge that doesn't is **reported** by
+name, since a task that looks ready and isn't is worse than a refusal.
+
+The issue's second question — scope — is answered by what the tool deliberately doesn't
+take. A started task's checkout was cut from the old repo and can only move by being
+destroyed; the bulk route demands that acknowledgement as a **list of ids** rather than a
+flag, precisely because one switch over eleven irreversible answers isn't consent. An
+agent-facing verb must not become the shortcut past that question, so `move_task` passes no
+acknowledgements at all and the internal endpoint ignores one sent anyway
+(`tests/agentMoveTask.test.ts`). Started tasks are refused with their checkouts untouched,
+the reply says the user gives that answer from the board's Move dialog, and everything
+movable in the same call still moves — refusals are per task, matching the bulk route. A
+task with a live turn is refused for the same reason it is on the board, including the
+caller's own row: a session can't move the worktree it is writing into.
+
+Moving a task the user had already accepted is recorded in `task_agent_edits` on
+`update_task`'s exact rule (`isInertSuggestion()` read off the pre-move row, so a move isn't
+judged by the state it produced), under a new `project` field on `AgentEditField`. Its
+Revert re-runs the move backwards through `moveTasksToProject()` rather than writing
+`project_id`, which would strand the task's sessions, usage and merge rows in the project it
+left; it goes first in the revert, ahead of even the base branch, so a refusal leaves the
+edit entirely un-reverted. If the user started the task in its new home before reverting,
+the undo is refused rather than destroying that checkout — still their answer to give.
 
 Tags reuse the same three tools plus one new read, and the create-vs-strict split is the
 whole policy (`resolveTagRefs()` in `lib/agentTools.ts`, over `resolveTag()` in the store).
@@ -473,16 +578,25 @@ Cancelling a task can now start work, matching what "Start when unblocked" promi
 `tests/autoStart.test.ts` and `tests/withdrawSuggestion.test.ts` pin both directions so this
 can't regress.
 
-### Adding a third agent (e.g. Gemini, Cursor)
+### Adding another agent
 
 Implement the `AgentDriver` interface in `lib/agents/<id>/driver.ts`. `runTurn()` is the
 only required method; the one-shot helpers are optional and fall back to the utility agent.
-Register the driver in `lib/agents/registry.ts` and ship its CLI in the `Dockerfile`,
-installed on `PATH` next to `claude` and `codex`. Nothing else needs to change: the
-capability descriptor drives the pickers, the `/api/agents/[id]/*` routes are generic, and
+Register the driver in `lib/agents/registry.ts` **and** `lib/agents/capabilities.ts` (the
+second is what `listAgentIds()` reads, so a driver registered only in the first is connectable
+but invisible to every id-level lookup), and ship its CLI in the `Dockerfile`, installed on
+`PATH` next to `claude`, `codex` and `agy`. Nothing else needs to change: the capability
+descriptor drives the pickers, the `/api/agents/[id]/*` routes are generic, and
 `getDriver(task.agent)` resolves the new driver everywhere it's used. `tests/agentDriver.test.ts`
 (the driver contract test) and `tests/codexEvents.test.ts` (the event-mapping test) are
 templates for pinning a new driver to the same `StreamEvent` contract.
+
+The Antigravity driver is the worked example for a CLI with **no SDK** — spawn the binary,
+parse its stream, mock `node:child_process` in the tests — and for the two places a genuinely
+new agent shape reached past the driver seam rather than being absorbed by it: the connect
+card grew `loginCompletesOutOfBand` and `connectHint` on the capability descriptor, because
+that login can finish without the code box and cannot finish at all in a container. Both are
+data the card renders, not branches on an agent id, which is the rule to hold to.
 
 ## Everything else, by module
 
@@ -528,6 +642,15 @@ templates for pinning a new driver to the same `StreamEvent` contract.
   read-only, and persists the result for the client to poll via
   `GET /api/projects/[id]/refresh-context`. The draft is for the user to review; it is never
   auto-saved.
+- **`lib/tagRefresh.ts`** is the same shape for a whole TAG: "Refresh tag" reads every member
+  task's brief against the code and fixes what drifted. `startTagRefreshJob()` builds a digest of
+  the tag, its description and its members, runs `planTagRefresh()` read-only in the repo, and
+  applies the JSON plan it gets back — polled via `GET /api/tags/[id]/refresh`, state on the tags
+  row so the bar survives lighting another chip or a reload. Unlike the context draft there is
+  nothing to accept: task changes go through `lib/agentTools.ts` and land as revertable "Changed
+  by agent" edits, which is what lets the job apply rather than propose. Retiring is limited to
+  work that has none in it — an unreviewed suggestion is withdrawn, an accepted-but-never-started
+  task is cancelled revertably, and a STARTED task is only named in the report.
 - **`lib/recap.ts`** holds the "where you left off" staleness and activity logic, plus its
   background sweep.
 - **`app/Shell.tsx`** is the client UI: a projects rail, task list, and live session, with

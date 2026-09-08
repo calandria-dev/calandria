@@ -144,6 +144,14 @@ reach the instance through the tunnel hostname, not `http://192.168.x.x`.
 The `claude` CLI works headless: it prints the OAuth URL and accepts a pasted
 code, and the setup wizard drives that flow from the browser.
 
+Antigravity is the exception, and it is a hard one: `agy` stores its OAuth
+token in the OS keyring over the D-Bus Secret Service with no file fallback,
+and this image ships no keyring daemon, so the subscription sign-in cannot
+complete in a container at all. Set `GEMINI_API_KEY` (or paste a key on the
+agent's card in Settings → Agents) and the driver points the CLI at it
+instead. That path bills Google's API rather than drawing on an Antigravity
+subscription.
+
 For site-specific CLIs or config layered on the published image, see
 [`examples/overlay/`](../examples/overlay/); keep real overlays in a private
 repo, not committed here.
@@ -263,8 +271,12 @@ and `CF_ACCESS_AUD`. The origin then re-verifies the Access JWT
 against the team's public signing keys and the app's `aud` tag) on every HTTP
 route and every WebSocket upgrade (`server.js`, in front of the `/pty`
 terminal proxy). No valid assertion gets a 403.
-[`lib/cf-access.mjs`](../lib/cf-access.mjs) is the shared verifier; the
-titlebar shows the authenticated email.
+[`lib/cf-access.mjs`](../lib/cf-access.mjs) is the shared verifier.
+
+**Log out** sits at the foot of the settings section nav, below Setup. It ends
+the Access session for this instance and follows the redirect Access hands
+back. It renders only when there is a session to end, so in local mode nothing
+appears there.
 
 Requests get a second check on top of the JWT: if the browser sends an
 `Origin` header, it must match the `Host` the request was aimed at. The JWT
@@ -313,6 +325,95 @@ routes, shared fleet-wide so one dashboard can poll many boxes without
 learning each one's private `SERVICE_TOKEN`. It is not accepted on the
 mutating internal agent-tool endpoints. Unset (the default), it grants
 nothing.
+
+## Connecting the desktop app
+
+The desktop app ([`docs/DESKTOP_APP.md`](DESKTOP_APP.md)) keeps a list of
+instances and points its window at one of them. `This computer` is the server
+it runs itself. Every other entry is a server you are already hosting, reached
+over one of three transports. Adding one is "Instance → Add instance…" in the
+app menu or the tray; the address field decides the transport.
+
+Nothing on the server has to be installed, enabled or configured for the
+desktop app specifically. The requirements below are the ones a browser on the
+same machine would already have.
+
+| Transport | Address you type | What the instance needs |
+|-|-|-|
+| Direct URL behind Cloudflare Access | `https://calandria.example.com` | `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD` set, and the hostname reachable |
+| LAN origin in local mode | `http://192.168.1.50:3000` | that exact origin in `CALANDRIA_ALLOWED_ORIGINS` (or as `PUBLIC_BASE_URL`), and `CALANDRIA_HOSTNAME` widened past loopback |
+| SSH port-forward | `ssh://build-box:3000` | an SSH login that works non-interactively, and the server on the remote's loopback |
+
+**Direct URL behind Cloudflare Access.** The app window is a browser, so the
+Access login page opens in it and completes there. Each instance gets its own
+persistent cookie jar, so two instances behind the same Access team do not
+share an assertion, and "Sign out" on an instance deletes that jar. This is the
+only transport where the server is reachable from outside your network, and it
+is the one to use for that: Access is doing the authentication.
+
+If your identity provider refuses logins from an embedded browser, that is the
+one thing to check before choosing this transport. Electron's default user
+agent is usually accepted.
+
+**LAN origin in local mode.** Local mode has no login, so the origin gate is
+the whole boundary and it defaults to loopback only. To reach an instance from
+another machine on your network you have to widen two things, and they are
+different: `CALANDRIA_HOSTNAME` (which interface the server binds) and
+`CALANDRIA_ALLOWED_ORIGINS` (which browser origins it accepts). The desktop app
+loads its page from the remote origin, so `Origin` equals `Host` and the
+request passes exactly when a browser tab on that URL would. Attaching to a
+plain LAN instance has the same trust level as opening it in a browser: anyone
+who can reach the port gets a shell. Do not do this on a network you do not
+control, and never on the internet.
+
+**SSH port-forward.** The app spawns your own `ssh` binary with a local
+forward and attaches to `http://127.0.0.1:<local port>`. The server needs no
+configuration at all for this — it stays bound to loopback on the remote, and
+loopback is what local mode already trusts. SSH is the credential, so your
+config, agent, jump hosts, `ControlMaster` sockets and hardware keys all apply.
+
+The forward runs with `BatchMode=yes`, because a GUI has no terminal to answer
+a prompt in. A host that would ask for a password or a 2FA code fails the
+attach with `ssh`'s own error rather than hanging. Set up a key or a
+`ControlMaster` socket first, and confirm `ssh -o BatchMode=yes <host> true`
+succeeds before adding the instance.
+
+Two limits of this transport. A [managed service](SERVICES.md) exposed on a
+`<slug>--<host>` hostname is not reachable through a single-port forward, so
+those links need a forward of their own or a browser that can reach the remote
+directly. And an instance you are not currently attached to contributes nothing
+to the app's badge count, because reaching it means holding an SSH connection
+open to a machine you are not looking at. `url` instances have no such cost and
+are watched whether or not the window is on them.
+
+**Signing in when the login page needs a passkey.** The Cloudflare Access
+transport above works because the app window is a browser and the login
+completes inside it. That breaks down for an identity provider in front of
+your own reverse proxy that wants a passkey, a security key or a phone-based
+ceremony: Electron has no WebAuthn implementation, so the provider hands the
+ceremony off to your system browser, and the app's window and that browser are
+two different cookie jars. For that case, configure the instance's sign-in
+settings in "Manage instances…" instead: the whole login runs in your real
+browser and a token comes back to the app over a loopback redirect, or you
+supply a credential you already hold as request headers. See
+[`docs/DESKTOP_APP.md`](DESKTOP_APP.md) §8.8 for how it works and which case
+it is for.
+
+### Naming an instance
+
+`CALANDRIA_INSTANCE_NAME` is a human name for an instance ("Lab", "Build box").
+It is optional and cosmetic, and it is the only thing on the server that
+acknowledges being one of several:
+
+- The web app puts it in the document title and at the root of its breadcrumb,
+  so two browser tabs on two instances are told apart without clicking either.
+- `GET /api/version` reports it as `instanceName` (null when unset).
+- The desktop app reads it off that handshake and offers it as the name for an
+  instance you add by URL without typing one. A name you type is yours and is
+  never overwritten.
+- With more than one instance saved, the desktop app appends it to every OS
+  notification that instance raises, and clicking that notification switches to
+  it.
 
 ## Configuration
 
@@ -395,9 +496,11 @@ Verify the copy (the database and `projects/` are there) before
 | `PORT` | `3000` | Port of the single public origin (Next.js + `/pty` proxy) |
 | `CALANDRIA_HOSTNAME` | `127.0.0.1` | Bind address of the app server. Loopback by default, since a local instance is unauthenticated and the origin gate is a header check a LAN client can forge; widen it only behind `CF_ACCESS_*`. Bare `HOSTNAME` is not read (shells and container runtimes inject it). The image sets `CALANDRIA_HOSTNAME=0.0.0.0`, correct for a container published on the host's loopback |
 | `CALANDRIA_LOG_FORMAT` | `text` | `text` is the human-readable `[component] message key=value` form; `json` emits one object per line (`ts`, `level`, `component`, `msg`, plus that line's fields) for a collector. `server.js`, `pty-server.js`, and the app each read it independently, so set it for all three. See [Reading the logs](TROUBLESHOOTING.md#reading-the-logs) |
+| `CALANDRIA_CLAUDE_DEBUG_DIR` | unset | Directory for per-turn Claude CLI debug logs (`<task>-g<generation>-<timestamp>.log`, the CLI's own `--debug-file`). Unset writes none. The diagnostic for a Calandria tool call the CLI answers itself ("interrupted before a result was received"); verbose and never pruned, so set it to catch the next occurrence and clear it after |
 | `PTY_PORT` | `3001` | Port of the node-pty terminal sidecar |
 | `PTY_HOST` | `127.0.0.1` | Bind address of the sidecar and the proxy's upstream. Keep it on loopback; the browser never connects directly, since `server.js` proxies `/pty` to it |
 | `CALANDRIA_PTY_SHELL` | *(empty)* | The shell every terminal tab spawns. Empty falls back to `$SHELL`, then a platform default (POSIX: first of `/bin/zsh`, `/bin/bash`, `/bin/sh` that exists; Windows: `pwsh.exe`/`powershell.exe` on PATH, else `%COMSPEC%`). Set this if the terminal drawer can't spawn a shell, or to get a different one than your login shell |
+| `CALANDRIA_INSTANCE_NAME` | *(empty)* | A human name for this instance ("Lab", "Build box"). Shown in the document title and the app's breadcrumb, reported on `GET /api/version`, and used by the desktop app as the default name for an instance added by URL. Trimmed, capped at 60 characters |
 | `PUBLIC_BASE_URL` | *(empty)* | The origin you reach the app on (e.g. `https://calandria.example.com` behind a tunnel); the client builds its `ws(s)://` terminal URL from it. Empty means the browser's own origin, which works for any single-hostname deployment. Set it if your proxy rewrites `Host`, which would otherwise make the origin gate's `Origin` vs `Host` check disagree |
 | `CALANDRIA_ALLOWED_ORIGINS` | *(empty)* | Exact comma-separated `http(s)` origins allowed in no-login local mode, for intentional LAN or reverse-proxy access. Loopback origins and `PUBLIC_BASE_URL` are already accepted. Not a substitute for authentication |
 | `VAPID_SUBJECT` | *(derived)* | Contact for the browsers' push services (Web Push VAPID subject): a `mailto:` or `https:` URL. Defaults to `PUBLIC_BASE_URL` when that's https, else `mailto:admin@localhost`. iOS rejects `localhost` with `403 BadJwtToken`, so set a real https origin or `mailto:` for iOS push |
@@ -512,10 +615,14 @@ app from booting.
 | Web Push signing key | `<CALANDRIA_DB_DIR>/vapid.json` | `db-dir/` |
 | A persisted API key (only if you used the wizard's key path) | `<CALANDRIA_DB_DIR>/anthropic-api-key`, `openai-api-key` | `db-dir/` |
 | Boot mutex | `<CALANDRIA_DB_DIR>/*.lock.db`, `*.lock.json` | **excluded**: a pure lock holding no data; restoring one restores a stale claim |
-| Agent CLI logins | `~/.claude.json`, `~/.claude/.credentials.json`, `~/.claude/settings.json`, `~/.codex/auth.json`, `~/.codex/config.toml` | `agent-login/home/…` (`--no-logins` to skip) |
+| Agent CLI logins | `~/.claude.json`, `~/.claude/.credentials.json`, `~/.claude/settings.json`, `~/.codex/auth.json`, `~/.codex/config.toml`, `~/.gemini/antigravity-cli/settings.json` | `agent-login/home/…` (`--no-logins` to skip) |
 | Per-task git worktrees | `CALANDRIA_WORKTREES_DIR` (default `~/.calandria/worktrees`) | **opt-in** (`--worktrees`) |
 | Cloned project repos | `CALANDRIA_PROJECTS_DIR` (default `~/projects`) | **opt-in** (`--projects`) |
 | Your own repos | wherever you told the project they are | never (they're yours) |
+
+Antigravity's subscription token is NOT in that set — it lives in the OS keyring rather than in
+a file, so a restored instance signs in again (or uses `GEMINI_API_KEY`, which Calandria stores
+in its own database and the database backup does carry).
 
 `db-dir/` is captured by exclusion (everything in the DB dir that isn't a
 SQLite file, the lock pair, the backup directory, or a nested worktrees dir),
@@ -783,8 +890,8 @@ waits on that walk once, right after a restart.
   classifier approves calls it judges safe and escalates the rest. Switch a
   task, or the app default in Settings → Run defaults, to bypassPermissions
   for work that must never block on a prompt, or down to acceptEdits,
-  default, or plan (a Codex task offers its own workspace-write / read-only
-  sandboxes instead). Anything the agent isn't pre-approved for parks on a
+  default, or plan (a Codex task maps the same five modes onto its sandbox
+  and approval policy; docs/AGENTS.md has the table). Anything the agent isn't pre-approved for parks on a
   permission card in the transcript, with Allow once / Always allow /
   Decline. Read-only tools pass silently; "Always allow" remembers a command
   for that project and is revocable in Settings → Run defaults → Remembered

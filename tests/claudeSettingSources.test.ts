@@ -1,51 +1,17 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// Pins how much of the user's own machine each Claude query() gets to see.
+// Pins how much of the user's machine a Claude query() gets to see.
 //
-// TWO deliberate policies, not one:
+// A turn pins settingSources to ["user", "project"], dropping the SDK's
+// default 'local' source since it resolves against the task's own
+// gitignored settings.local.json, where an agent-written hook or permission
+// rule would skip review. A one-shot (handoff note, recap, context draft)
+// isolates capability (`tools`, `strictMcpConfig`, `skills`,
+// `settings.disableAllHooks`) while keeping 'user' in settingSources so
+// authentication and provider routing still work.
 //
-// A TURN inherits most of it, but not all. The SDK loads every on-disk setting
-// source when `settingSources` is omitted ("matches CLI defaults" — sdk.d.ts);
-// we pin the list explicitly instead so an SDK default change can't silently
-// change what a task trusts, and we drop 'local' from it. 'user' and 'project'
-// give a task session the user's ~/.claude settings, MCP servers, plugins,
-// skills, and the repo's CLAUDE.md. 'local' (<worktree>/.claude/settings.local.json)
-// is excluded on purpose: it resolves against the task's own worktree, same as
-// 'project', but by convention it's gitignored — so an agent that writes one
-// (trivial under an auto-accept edit policy) plants a hook, permission-allow
-// rule, or env var that never appears in the diff a human reviews, and it
-// still runs next turn with no canUseTool check in between. 'project' stays
-// because it's tracked and shows up in that same diff.
-//
-// A ONE-SHOT does not. The handoff note, the recap and the context draft are
-// internal transformations with no Calandria bridge and no UI to answer a
-// prompt; inheriting the session config made each of them spawn the user's
-// whole MCP fleet (measured: 10 servers, 146 tools) to offer tools they can
-// never call. They isolate CAPABILITY (`tools`, `strictMcpConfig`, `skills`,
-// `settings.disableAllHooks`) and inherit CONFIG (`settingSources` keeps
-// 'user'), the same split the Codex driver's oneShot() already makes.
-//
-// Three things this file exists to stop regressing, all verified live against
-// claude CLI 2.1.228:
-//   - `allowedTools` is NOT a restriction. The SDK defines it as "auto-allowed
-//     without prompting", and under bypassPermissions everything is
-//     auto-approved anyway. All three one-shots used to pass it and get the
-//     full toolset: `allowedTools: []` ran Read, and the "read-only" draft
-//     agent ran Write. `tools` is the real switch.
-//   - `settingSources: []` is NOT free. ~/.claude/settings.json is where a
-//     user's `env` block, `apiKeyHelper` and model aliases live. On a
-//     Vertex-configured machine with those absent from the server's own
-//     environment, `[]` fails the run with "Not logged in" while `["user"]`
-//     succeeds with 0 tools and 0 MCP servers.
-//   - Hooks are a separate surface from tools, and inline `settings` is the
-//     lever that closes it. Keeping 'user' keeps the user's hooks, so a
-//     SessionStart hook injects context into a four-bullet recap regardless of
-//     the tool set; `settings: { disableAllHooks: true }` suppresses it while
-//     the same run still authenticates. `managedSettings` does not — the SDK
-//     filters that tier restrictive-only and the key doesn't survive.
-//
-// The SDK is mocked at its module boundary, so the REAL driver builds the real
-// options object and we read back exactly what would have been handed to the CLI.
+// The SDK is mocked at its module boundary: the real driver builds the real
+// options object, and the test reads back exactly what it handed the CLI.
 const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }));
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
@@ -60,10 +26,9 @@ import { claudeDriver, SETTING_SOURCES, WATCHED_SETTINGS_FILES, WORKTREE_SETTING
 import { listSlashCommands } from "@/lib/schedule/commands";
 import type { Project, Task } from "@/lib/types";
 
-// The sources a turn actually loads — not the SDK's full default list, which
-// also includes 'local' (see SETTING_SOURCES in driver.ts for why that one's
-// dropped). 'project' is the load-bearing one of the two: per sdk.d.ts,
-// settingSources "must include 'project' to load CLAUDE.md files".
+// The sources a turn actually loads (the SDK's default list also includes
+// 'local'; see SETTING_SOURCES in driver.ts). 'project' is required: per
+// sdk.d.ts, settingSources "must include 'project' to load CLAUDE.md files".
 const TURN_SOURCES = ["user", "project"];
 
 const project = { id: "p1", name: "P", repo_path: "/tmp/repo", context: "", port: 4301 } as Project;
@@ -100,19 +65,16 @@ describe("claude driver setting sources", () => {
   it("pins settingSources on a turn instead of inheriting the SDK default", async () => {
     await runTurn();
     expect(queryMock).toHaveBeenCalledTimes(1);
-    // Explicitly present — the whole point. `undefined` here means we're back to
-    // relying on an SDK default nobody in this repo controls (and that default
-    // includes 'local', which we deliberately don't want).
+    // undefined here would mean falling back to the SDK default, which also
+    // includes 'local'.
     expect(optionsOfCall(0).settingSources).toEqual(TURN_SOURCES);
   });
 
   it("never loads 'local', even though the SDK default would", async () => {
-    // The security-relevant assertion: 'local' resolves to
-    // <worktree>/.claude/settings.local.json, which is agent-writable and, by
-    // convention, gitignored — so a hook planted there never appears in the
-    // diff a human reviews before a task's changes land. 'project' is kept
-    // despite also being worktree-writable because it's tracked and visible in
-    // that same diff; 'local' offers no equivalent review gate.
+    // 'local' resolves to <worktree>/.claude/settings.local.json, which is
+    // agent-writable and gitignored by convention, so a hook written there
+    // never appears in the diff a human reviews. 'project' stays because it
+    // is tracked and visible in that diff.
     await runTurn();
     expect(optionsOfCall(0).settingSources).not.toContain("local");
   });
@@ -121,18 +83,17 @@ describe("claude driver setting sources", () => {
     await runTurn();
     const options = optionsOfCall(0);
     // 'project' loads CLAUDE.md; 'user' is where ~/.claude MCP servers, plugins
-    // and skills come from. `[]` would be the SDK's isolation mode (no
-    // filesystem settings at all) and strictMcpConfig drops every MCP server we
-    // didn't pass inline — either one silently cuts the user out of their tasks.
+    // and skills come from. `[]` is the SDK's isolation mode (no filesystem
+    // settings at all), and strictMcpConfig drops every MCP server not passed
+    // inline; either one cuts the user out of their own tools.
     expect(options.settingSources).toContain("project");
     expect(options.settingSources).toContain("user");
     expect(options.settingSources).not.toEqual([]);
     expect(options.strictMcpConfig).toBeUndefined();
-    // A turn is also the one place the full toolset is right: omitted, so the
-    // CLI's own default set applies.
+    // tools is omitted on a turn, so the CLI's own default set applies.
     expect(options.tools).toBeUndefined();
-    // And the one place the user's hooks and skills are wanted — a task session
-    // is supposed to behave like their own terminal.
+    // A task session keeps the user's hooks and skills so it behaves like
+    // their own terminal.
     expect(options.settings).toBeUndefined();
     expect(options.skills).toBeUndefined();
     // Turns are resumed by session id across a task's whole lineage.
@@ -149,34 +110,30 @@ describe("claude driver setting sources", () => {
 });
 
 describe("drift detection covers every source a turn loads from the worktree", () => {
-  // The other half of the 'local' decision above (issue #43). Dropping 'local'
-  // closed the source a human review can never see; 'project' stays, and what
-  // makes that safe is that the runner hashes the file before every turn and
-  // holds the turn on a card when it moved (lib/settingsDrift.ts). The two
-  // facts — which sources a turn loads, and which files that gate watches —
-  // must be ONE fact, or re-adding a source re-opens the hole under a name
-  // nothing is looking at.
+  // Complements the 'local' decision above: the runner hashes
+  // settings.json before every turn and holds the turn on a card when it
+  // moved (lib/settingsDrift.ts), so which sources a turn loads and which
+  // files that gate watches must stay the same list, or a re-added source
+  // reopens the hole under a name the gate doesn't watch.
   it("derives the watch list from SETTING_SOURCES rather than restating it", () => {
-    // Asserted as a DERIVATION, not as a value: every source a turn loads that
-    // resolves inside the task's own worktree is watched, and nothing else is.
+    // Every worktree source SETTING_SOURCES loads must appear in
+    // WATCHED_SETTINGS_FILES, and nothing else does.
     const worktreeSources = SETTING_SOURCES.filter((s) => WORKTREE_SETTINGS_FILE[s]);
     for (const source of worktreeSources) {
       expect(WATCHED_SETTINGS_FILES, `${source} is loaded but unwatched`).toContain(WORKTREE_SETTINGS_FILE[source]);
     }
     expect(WATCHED_SETTINGS_FILES).toHaveLength(worktreeSources.length);
-    // The driver publishes it on the seam the runner reads (AgentDriver), which
-    // is the only reason the gate fires for a Claude task and not a Codex one.
+    // watchedSettingsFiles is the AgentDriver field the runner reads to decide
+    // whether to watch a task's settings; only Claude publishes it here.
     expect(claudeDriver.watchedSettingsFiles).toEqual(WATCHED_SETTINGS_FILES);
     expect(claudeDriver.watchedSettingsFiles).toContain(".claude/settings.json");
   });
 
   it("maps every source in the SDK's union, so a re-added one arrives watched", () => {
-    // The map is total over SettingSource (a compile-time obligation), and
-    // these are the two entries that decide what re-adding a source would do:
-    // 'local' would be covered the moment it went back into SETTING_SOURCES,
-    // and 'user' is null because ~/.claude is the operator's own machine —
-    // outside every worktree, no more trusted than the person running the app,
-    // and holding a turn on it would be raising a card against yourself.
+    // WORKTREE_SETTINGS_FILE is total over SettingSource: 'local' maps to a
+    // path, so re-adding it to SETTING_SOURCES would be watched automatically;
+    // 'user' maps to null because ~/.claude sits outside every worktree, so
+    // there is no file there to watch.
     expect(WORKTREE_SETTINGS_FILE.local).toBe(".claude/settings.local.json");
     expect(WORKTREE_SETTINGS_FILE.project).toBe(".claude/settings.json");
     expect(WORKTREE_SETTINGS_FILE.user).toBeNull();
@@ -185,19 +142,16 @@ describe("drift detection covers every source a turn loads from the worktree", (
 
 describe("the schedule preflight validates against the same sources a turn gets", () => {
   it("probes with SETTING_SOURCES itself, not a second copy of the list", async () => {
-    // lib/schedule/commands.ts reads the slash-command registry a scheduled turn
-    // WOULD have, and refuses the run if the prompt's command isn't in it. It
-    // used to hardcode its own ["user","project","local"], so the two could
-    // drift — and drift doesn't degrade quietly here: the preflight would
-    // validate against a different registry than the turn actually gets, settle
-    // the run `failed` and mint nothing, every morning, for a command that is
-    // in fact registered.
+    // lib/schedule/commands.ts reads the slash-command registry a scheduled
+    // turn would have, and refuses the run if the prompt's command isn't in
+    // it. If this registry drifted from the turn's own sources, the
+    // preflight would validate against the wrong list and settle a valid
+    // command's run failed.
     //
-    // Asserted behaviourally (what the probe HANDED the SDK) rather than by
-    // grepping for an import, so any future way of getting the value wrong —
-    // a re-declared local, a spread that drops an entry — still fails here.
-    // Since the probe is now the composer's own (lib/agents/claude/commands.ts),
-    // this pins BOTH callers to the turn's sources at once.
+    // Asserted behaviourally, on what the probe handed the SDK, so it catches
+    // any way of getting the value wrong, not just one particular way. The
+    // probe is the composer's own (lib/agents/claude/commands.ts), which pins
+    // both callers to the turn's sources at once.
     queryMock.mockImplementation(() => ({
       supportedCommands: async () => [{ name: "jira-tasks", description: "", argumentHint: "" }],
       close: () => {},
@@ -212,10 +166,10 @@ describe("the schedule preflight validates against the same sources a turn gets"
 describe("claude driver one-shot isolation", () => {
   it("gives every one-shot the user's settings, so auth and provider routing survive", async () => {
     const o = await oneShotOptions();
-    // The counter-pin to the isolation asserts below. settingSources: [] drops
-    // ~/.claude/settings.json, which for a Bedrock/Vertex/proxy/apiKeyHelper
-    // user is where the login itself comes from — the one-shots would fail
-    // while their ordinary turns kept working.
+    // settingSources: [] drops ~/.claude/settings.json, which for a
+    // Bedrock/Vertex/proxy/apiKeyHelper user is where authentication comes
+    // from, so an isolated one-shot would fail while ordinary turns kept
+    // working.
     for (const [name, options] of Object.entries(o)) {
       expect(options.settingSources, `${name} lost the user's settings`).toContain("user");
       expect(options.settingSources, `${name} is fully isolated`).not.toEqual([]);
@@ -225,12 +179,12 @@ describe("claude driver one-shot isolation", () => {
   it("mounts no MCP servers on any one-shot", async () => {
     const o = await oneShotOptions();
     for (const [name, options] of Object.entries(o)) {
-      // strictMcpConfig is what actually drops them: settings, .mcp.json and
-      // plugins alike. `tools` doesn't — it governs built-ins only, so without
-      // this the user's whole fleet still spawns and still fills the context.
+      // strictMcpConfig drops every MCP source (settings, .mcp.json, plugins);
+      // `tools` only governs built-ins, so without strictMcpConfig the user's
+      // whole MCP fleet would still spawn and fill the context.
       expect(options.strictMcpConfig, `${name} still inherits MCP servers`).toBe(true);
-      // None of the three mounts the Calandria bridge either — no task, no
-      // transcript, nothing for suggest_task to attach to.
+      // None of the three mounts the Calandria bridge: there is no task or
+      // transcript for suggest_task to attach to.
       expect(options.mcpServers, `${name} mounted an MCP server`).toBeUndefined();
     }
   });
@@ -238,18 +192,19 @@ describe("claude driver one-shot isolation", () => {
   it("shuts off the surfaces that aren't the tool list", async () => {
     const o = await oneShotOptions();
     for (const [name, options] of Object.entries(o)) {
-      // Hooks fire whether or not a tool exists to hook — a SessionStart hook
-      // injects context into a four-bullet recap. Inline `settings` is the lever
-      // that works; `managedSettings` is filtered restrictive-only and drops the
-      // key, and impersonating the IT policy tier is the wrong move regardless.
+      // Hooks fire independent of the tool list, so a SessionStart hook can
+      // inject context into a four-bullet recap unless suppressed. Inline
+      // `settings: { disableAllHooks: true }` suppresses it; `managedSettings`
+      // is filtered restrictive-only and drops the key, and is also the wrong
+      // tier to impersonate.
       expect(options.settings, `${name} still runs the user's hooks`).toEqual({
         disableAllHooks: true,
         autoMemoryEnabled: false,
       });
       expect(options.managedSettings, `${name} impersonates the managed tier`).toBeUndefined();
       expect(options.skills, `${name} still discovers skills`).toEqual([]);
-      // Nothing records a one-shot's session id, so these can never be resumed;
-      // persisting only fills the user's own ~/.claude/projects with recap turns.
+      // Nothing records a one-shot's session id, so it can never be resumed;
+      // persisting would only fill ~/.claude/projects with recap turns.
       expect(options.persistSession, `${name} litters the session store`).toBe(false);
     }
   });
@@ -257,9 +212,8 @@ describe("claude driver one-shot isolation", () => {
   it("restricts tools with `tools`, never with `allowedTools`", async () => {
     const o = await oneShotOptions();
     for (const [name, options] of Object.entries(o)) {
-      // The bug this whole change came from: `allowedTools` only pre-approves,
-      // and bypassPermissions pre-approves everything anyway. Any reappearance
-      // here is a restriction that isn't one.
+      // `allowedTools` only pre-approves calls, and bypassPermissions
+      // pre-approves everything anyway, so it is never a real restriction.
       expect(options.allowedTools, `${name} is back to the decorative allowedTools`).toBeUndefined();
       expect(Array.isArray(options.tools), `${name} did not pin a tool set`).toBe(true);
     }
@@ -267,29 +221,30 @@ describe("claude driver one-shot isolation", () => {
 
   it("gives the text-only one-shots no tools at all", async () => {
     const o = await oneShotOptions();
-    // Transcript summary and recap are text in, text out. Nothing to read,
-    // nothing to run — and with maxTurns: 1 nothing to iterate on either.
+    // Transcript summary and recap are text in, text out, with nothing to
+    // read or run, and maxTurns: 1 leaves nothing to iterate on.
     for (const name of ["summarize", "recap"] as const) {
       expect(o[name].tools, `${name} can still call tools`).toEqual([]);
       expect(o[name].maxTurns, `${name} is no longer single-turn`).toBe(1);
-      // No CLAUDE.md, no repo-level hooks: for a text transform that's context
-      // that can only skew the output.
+      // A text transform has no use for CLAUDE.md or repo-level hooks;
+      // loading them would only skew the output.
       expect(o[name].settingSources, `${name} loads repo settings it can't use`).toEqual(["user"]);
     }
   });
 
   it("leaves the context draft able to read the repo, and only read it", async () => {
     const o = await oneShotOptions();
-    // This is the one one-shot that genuinely explores, so it keeps 'project' —
-    // what loads CLAUDE.md, the most useful file it can see — and a real
-    // read-only tool set. 'local' stays off: gitignored CLAUDE.local.md and
-    // settings.local.json are one developer's private overrides, and this
-    // document is written for everyone.
+    // The context draft is the only one-shot that explores the repo, so it
+    // keeps 'project' to load CLAUDE.md and a real read-only tool set. 'local'
+    // stays off because gitignored CLAUDE.local.md and settings.local.json
+    // are one developer's private overrides, not part of a document meant
+    // for everyone.
     expect(o.draft.settingSources).toEqual(["user", "project"]);
     expect(o.draft.settingSources).not.toContain("local");
     expect(o.draft.tools).toEqual(["Read", "Grep", "Glob"]);
-    // Bash under bypassPermissions with no canUseTool is unreviewed arbitrary
-    // execution in the user's own checkout, to produce a paragraph of prose.
+    // Bash under bypassPermissions with no canUseTool would be unreviewed
+    // arbitrary execution in the user's own checkout, just to produce a
+    // paragraph of prose.
     expect(o.draft.tools).not.toContain("Bash");
     // Nor anything that could change the repo it was asked to describe.
     for (const write of ["Write", "Edit", "NotebookEdit"]) {

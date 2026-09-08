@@ -1,11 +1,11 @@
-// Regression for the security finding, at the fourth site: lib/runner.ts's
-// startResumeTurn. Its riskiest caller is the queue drain in run()'s finally —
-// a dequeued follow-up whose task lost its worktree_path reaches
-// startResumeTurn with nobody watching the exact instant it's prepared. An
-// empty `catch {}` around ensureWorktree there used to fall back to
-// task.worktree_path || project.repo_path on ANY git error, not just the
-// legitimate non-git/empty-repo null case — so a stale index.lock would run
-// the drained turn straight in the user's real project checkout.
+// lib/runner.ts's startResumeTurn. Its riskiest caller is the queue drain in
+// run()'s finally: a dequeued follow-up whose task lost its worktree_path
+// reaches startResumeTurn with nobody watching the exact instant it's
+// prepared. ensureWorktree failing with a git error there (a stale
+// index.lock, for example) must be classified and refused, instead of
+// falling back to task.worktree_path || project.repo_path, which would run
+// the drained turn straight in the user's real project checkout. That
+// fallback is legitimate only for the non-git/empty-repo null case.
 //
 // Same seam as tests/queueDrainWorktree.test.ts: the Claude driver is mocked
 // so the real runner (including its queue drain and startResumeTurn) runs
@@ -72,7 +72,7 @@ beforeEach(() => {
 
 // A task with a live worktree, a turn that dies on a dead login (parking the
 // queued follow-up instead of draining it), and the worktree then reclaimed
-// exactly like "prune merged worktrees" does — the state in which a drained
+// exactly like "prune merged worktrees" does: the state in which a drained
 // follow-up must self-heal a worktree of its own. Leaves `cwds` holding
 // exactly turn 1's cwd (the live worktree).
 async function primeDrainedTask() {
@@ -109,11 +109,11 @@ describe("queue drain fails closed on a throwing ensureWorktree", () => {
   it("refuses the drained turn and records the failure instead of running it in the real repo checkout", async () => {
     const { repo, project, task } = await primeDrainedTask();
 
-    // Turn 2 runs fine (worktree_path is empty, so it falls back to repo_path —
-    // that part is unaffected); it's turn 3, the drained follow-up, whose
-    // self-heal throws.
-    // The shape ensureWorktree really throws now: classified, so the failure
-    // line the drain writes can carry a recovery (issue #44).
+    // Turn 2 runs fine (worktree_path is empty, so it falls back to repo_path,
+    // unaffected here); it's turn 3, the drained follow-up, whose self-heal
+    // throws.
+    // ensureWorktree throws a classified error, so the failure line the drain
+    // writes can carry a recovery (issue #44).
     ensureWorktreeMock.mockImplementationOnce(async () => {
       throw new WorktreePrepError(new Error(LOCK_ERROR));
     });
@@ -126,9 +126,9 @@ describe("queue drain fails closed on a throwing ensureWorktree", () => {
     await settled;
 
     // Turn 1 (from setup) ran in the live worktree; turn 2 ran unisolated in
-    // repo_path (worktree_path was cleared — that fallback for an empty path
-    // is pre-existing, legitimate behavior, untouched by this fix). The
-    // drained turn 3 never reached the driver at all.
+    // repo_path (worktree_path was cleared, and that fallback for an empty
+    // path is legitimate on its own). The drained turn 3 never reached the
+    // driver at all.
     expect(cwds).toHaveLength(2);
     expect(real(cwds[1])).toBe(real(repo));
 
@@ -142,9 +142,9 @@ describe("queue drain fails closed on a throwing ensureWorktree", () => {
     expect(listPendingMessages(task.id)).toHaveLength(0);
     await vi.waitFor(() => expect(hasTurn(task.id)).toBe(false));
     await vi.waitFor(() => expect(getTask(task.id)!.running).toBe(0));
-    // Never fell back to the user's actual project checkout for the DRAINED
-    // turn: worktree_path stayed empty rather than being silently populated
-    // with something running unisolated.
+    // Never fell back to the user's actual project checkout for the drained
+    // turn: worktree_path stayed empty instead of getting populated with
+    // something running unisolated.
     expect(getTask(task.id)!.worktree_path).toBe("");
   });
 

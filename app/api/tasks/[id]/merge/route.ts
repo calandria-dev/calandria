@@ -13,10 +13,10 @@ export const maxDuration = 120;
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   // Optional body: the paths of the main checkout's uncommitted changes the user
-  // was shown and agreed to have stashed for the duration of the merge. A LIST,
-  // never a flag — the merge re-checks it against the tree it actually finds, so
-  // dirt that appeared after the card was rendered is refused rather than swept
-  // up. A bodyless POST (the ordinary Merge click) parses to undefined.
+  // was shown and agreed to have stashed for the duration of the merge. Always a
+  // list, not a flag: the merge re-checks it against the tree it actually finds,
+  // so dirt that appeared after the card was rendered is refused instead of
+  // swept up. A bodyless POST (the ordinary Merge click) parses to undefined.
   const body = (await req.json().catch(() => null)) as { stashDirty?: unknown } | null;
   const stashDirty =
     Array.isArray(body?.stashDirty) && body.stashDirty.every((p) => typeof p === "string")
@@ -42,8 +42,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       workBranch: task.work_branch,
       baseBranch: resolveBaseBranch(task, project),
       message: taskCommitMessage(task),
-      // Lets the merge fast-forward the base past any remote commits the task
-      // was cut from, so the merge commit holds only the task's own work.
+      // Allows the merge to fast-forward the base past any remote commits the
+      // task was cut from, so the merge commit holds only the task's own work.
       baseSha: task.base_sha,
       stashDirty,
     });
@@ -51,9 +51,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (result.ok) {
       // Record the merge and advance the diff base to the merged tip so a later
       // round in the same task shows only changes made after this merge. Status
-      // is deliberately NOT changed — merging is a git action, not a declaration
-      // that the task is finished. The user owns the "done" status (you may merge
-      // several rounds while still iterating). They mark it done manually.
+      // is not changed: merging is a git action, not a declaration that the task
+      // is finished. The user owns the "done" status and may merge several rounds
+      // while still iterating, marking it done manually when ready.
       updateTask(id, {
         merged_at: Date.now(),
         ...(result.mergedSha ? { base_sha: result.mergedSha } : {}),
@@ -67,8 +67,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           additions: result.additions ?? 0, deletions: result.deletions ?? 0,
         });
       // The mirror of a merged PR: this task's work is now in the base branch, so
-      // its checkout is disposable. A no-op unless the project opted in, and
-      // never awaited — the reclaim fetches origin (lib/reclaim.ts).
+      // its checkout is disposable. A no-op unless the project opted in, and not
+      // awaited, since the reclaim fetches origin (lib/reclaim.ts).
       maybeAutoReclaim(id);
     }
     return NextResponse.json(result, { status: result.ok ? 200 : 409 });

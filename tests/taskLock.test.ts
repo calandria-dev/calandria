@@ -1,14 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// Regression: merge/sync checked task.running once, then ran multi-second git
-// operations — a POST /messages landing in that window launched the agent into
-// the SAME worktree mid-commit, so `git add -A` staged half-written files (and
-// mergeTask could land them into the base branch). The fix is a per-task
-// exclusive lock (lib/taskLock.ts) held by BOTH the turn-launch path (messages
-// route + queue drain) and the git-op routes. These tests drive a SCRIPTED fake
-// driver through the real runner and routes (same seam as clearMidTurn.test.ts)
-// and simulate a slow merge by holding the lock, then assert no turn starts
-// writing until the git op releases it.
+// Pins lib/taskLock.ts: a per-task exclusive lock serializes the turn-launch
+// path (messages route, queue drain) against the git-op routes (merge, sync),
+// so a turn never starts writing into a worktree mid-git-operation. Drives a
+// scripted fake driver through the real runner and routes, and simulates a
+// slow merge by holding the lock.
 const { runTurnMock } = vi.hoisted(() => ({ runTurnMock: vi.fn() }));
 
 vi.mock("@/lib/agents/claude/driver", () => ({
@@ -72,8 +68,8 @@ describe("withTaskLock", () => {
       order.push("second-start");
     });
     // second's registration into the lock map happens synchronously when
-    // withTaskLock is called (before any await), so it's already FIFO-queued
-    // behind `first` here — waiting is only for first's fn to actually start.
+    // withTaskLock is called, before any await, so it is already FIFO-queued
+    // behind `first` here; waiting is only for first's fn to actually start.
     await vi.waitFor(() => expect(order).toEqual(["first-start"])); // second is queued, not interleaved
     expect(isTaskLocked("t1")).toBe(true);
     gate.resolve();
@@ -126,23 +122,21 @@ describe("merge vs turn launch (the TOCTOU race)", () => {
     });
     await vi.waitFor(() => expect(order).toEqual(["gitop-start"]));
 
-    // The incoming message must NOT start a turn while the git op runs — this
-    // is the window where the old code began writing into the mid-commit tree.
+    // The incoming message must not start a turn while the git op runs.
     const ended = nextEvent(task.id, "turn_end");
     const posted = post(task.id);
-    // claimTurn runs synchronously at the top of the route, before it ever
-    // queues on the task lock (held by gitOp above) — so hasTurn flipping true
-    // is the real signal that the launch is now parked behind gitOp, unable to
-    // reach runTurn until gitOp releases the lock.
+    // claimTurn runs synchronously at the top of the route, before it queues
+    // on the task lock held by gitOp above, so hasTurn flipping true confirms
+    // the launch is parked behind gitOp and cannot reach runTurn until gitOp
+    // releases the lock.
     await vi.waitFor(() => expect(hasTurn(task.id)).toBe(true));
     expect(runTurnMock).not.toHaveBeenCalled();
-    // The POST claimed the turn slot BEFORE queueing on the lock (that's the
-    // launch-TOCTOU guard), so the task reads occupied while it waits — a
-    // second POST parks, and a merge arriving behind us would 409 — but the
-    // agent itself must not have started writing.
+    // The POST claims the turn slot before queueing on the lock, so the task
+    // reads occupied while it waits: a second POST parks, and a merge arriving
+    // behind it would 409, but the agent itself must not have started writing.
     expect(hasTurn(task.id)).toBe(true);
 
-    // Git op finishes → the parked launch proceeds, strictly after it.
+    // Git op finishes; the parked launch proceeds only after it.
     gitOpGate.resolve();
     await gitOp;
     const res = await posted;
@@ -156,8 +150,8 @@ describe("merge vs turn launch (the TOCTOU race)", () => {
     const task = createTask({ project_id: project.id, title: "T", description: "" });
     updateTask(task.id, { worktree_path: "/nonexistent/wt", work_branch: "calandria/x" });
 
-    // A live turn per the in-process registry (the DB flag stays 0 — the lock
-    // path must consult liveness, not the possibly-stale row).
+    // A live turn per the in-process registry; the DB flag stays 0, so the
+    // lock path checks liveness instead of the possibly-stale row.
     const ac = new AbortController();
     registerTurn(task.id, ac);
     try {
@@ -187,15 +181,15 @@ describe("merge vs turn launch (the TOCTOU race)", () => {
 
     // Wedge the launch path behind a held lock and fire two POSTs into it.
     // The atomic claim decides the race on arrival: the winner owns the slot
-    // (and waits out the lock), the loser parks its message — never two
-    // concurrent turns on one worktree.
+    // and waits out the lock, the loser parks its message. Only one turn runs
+    // on a worktree at a time.
     const wedge = deferred();
     const held = withTaskLock(task.id, () => wedge.promise);
     const p1 = post(task.id, "one");
     const p2 = post(task.id, "two");
-    // Whichever POST wins the atomic claim flips hasTurn before it ever queues
-    // on the (currently held) task lock, so this proves the launch is parked
-    // rather than merely guessing enough real time has passed.
+    // Whichever POST wins the atomic claim flips hasTurn before it queues on
+    // the held task lock, so this confirms the launch is parked instead of
+    // assuming enough real time has passed.
     await vi.waitFor(() => expect(hasTurn(task.id)).toBe(true));
     expect(runTurnMock).not.toHaveBeenCalled();
 
@@ -234,9 +228,9 @@ describe("merge vs turn launch (the TOCTOU race)", () => {
     await startResumeTurn(task, project, "go");
     addPendingMessage(task.id, task.generation, "follow-up");
 
-    // A git op grabs the lock while the first turn is still streaming (legal —
-    // it would 409 on its own hasTurn re-check, but here it stands in for one
-    // that squeezed into the gap right after the turn unregistered).
+    // A git op grabs the lock while the first turn is still streaming. This
+    // would 409 on its own hasTurn re-check; here it stands in for one that
+    // reached the gap right after the turn unregistered.
     const gitOpGate = deferred();
     const gitOp = withTaskLock(task.id, () => gitOpGate.promise);
 
@@ -246,14 +240,15 @@ describe("merge vs turn launch (the TOCTOU race)", () => {
     turnGate.resolve();
     await dequeued;
     // The handoff claims occupancy and publish() delivers "dequeued"
-    // synchronously, before the follow-up's withTaskLock call — so hasTurn is
-    // already true here; poll it explicitly rather than lean on that ordering.
+    // synchronously, before the follow-up's withTaskLock call, so hasTurn is
+    // already true here. Poll it explicitly instead of relying on that
+    // ordering.
     await vi.waitFor(() => expect(hasTurn(task.id)).toBe(true));
     expect(runTurnMock).toHaveBeenCalledTimes(1);
-    // The finishing turn handed its occupancy slot to the follow-up before
-    // queueing on the lock, so hasTurn never lapses across the drain (a POST
-    // in this window queues instead of double-launching) — but the follow-up
-    // agent itself must not have started while the git op holds the lock.
+    // The finishing turn hands its occupancy slot to the follow-up before
+    // queueing on the lock, so hasTurn never lapses across the drain: a POST
+    // in this window queues instead of double-launching. The follow-up agent
+    // itself must not start while the git op holds the lock.
     expect(hasTurn(task.id)).toBe(true);
 
     const ended = nextEvent(task.id, "turn_end");

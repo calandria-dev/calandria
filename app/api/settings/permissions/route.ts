@@ -6,15 +6,17 @@ import type { PermissionMatchKind } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 // The "always allow" grants for tool calls (lib/permissions.ts), listed for
-// review, revocation — and creation — in Settings. A grant nobody can find is a
-// grant nobody can take back, which is why the list exists; POST is the other
-// gap: until it, a rule could only be minted by sitting through one prompt in
-// one task, which an unattended turn auto-denies before anyone sees it.
+// review, revocation and creation in Settings. A grant nobody can find is a
+// grant nobody can take back, which is why the list exists. POST fills the
+// other gap: without it, a rule could only be minted by sitting through one
+// prompt in one task, which an unattended turn auto-denies before anyone sees
+// it.
 //
 // Each rule is returned with its project's name so the list reads without a
 // second fetch; rules are project-scoped and cascade-delete with the project.
 // The project roster rides along because the add form needs somewhere to scope
-// a new rule TO — the panel has no project selected the way a transcript does.
+// a new rule to, since the panel has no project selected the way a transcript
+// does.
 export async function GET() {
   const projects = listProjectsPlain().map((p) => ({ id: p.id, name: p.name }));
   const names = new Map(projects.map((p) => [p.id, p.name]));
@@ -25,11 +27,11 @@ export async function GET() {
 const MATCH_KINDS: PermissionMatchKind[] = ["bash_prefix", "bash_exact"];
 
 /**
- * Add a rule by hand. Everything about WHAT may be granted is decided by
- * ruleFromTypedCommand() — the same prefix policy the permission card's
- * "Always allow" runs on — so this route only checks that the request names a
- * real project and a match kind it understands. It stores the value the policy
- * returns, not the text that was typed, and reports a refused prefix as a 400.
+ * Add a rule by hand. What may be granted is decided by ruleFromTypedCommand(),
+ * the same prefix policy the permission card's "Always allow" runs on, so this
+ * route only checks that the request names a real project and a match kind it
+ * understands. It stores the value the policy returns; the typed text itself is
+ * discarded. A refused prefix is reported as a 400.
  */
 export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as {

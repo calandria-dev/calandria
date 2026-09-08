@@ -7,16 +7,16 @@ export const dynamic = "force-dynamic";
 
 // The slash commands this task's composer should offer, straight from the agent
 // that would run them (AgentDriver.listCommands, cached driver-side with a short
-// TTL — see lib/agents/claude/commands.ts). Read-only and cheap enough to hang
-// off a keystroke; the client fetches it the first time the user types "/".
+// TTL, see lib/agents/claude/commands.ts). Read-only and cheap enough to call on
+// a keystroke; the client fetches it the first time the user types "/".
 //
-// Calandria's own /clear is NOT in here. It's a client-side action, not a prompt
-// the agent expands, so the composer prepends it — and lib/agentCommands.ts
-// drops the CLI's same-named command so one name can't mean two things.
+// Calandria's own /clear is not in this list. It is a client-side action, not a
+// prompt the agent expands, so the composer prepends it, and lib/agentCommands.ts
+// drops the CLI's same-named command so one name does not mean two things.
 //
-// Best-effort: a driver without a command surface (Codex) or a CLI that won't
-// answer yields [], and the menu degrades to Calandria's own commands rather
-// than erroring in the user's face mid-typing.
+// Best-effort: a driver without a command surface (Codex) or a CLI that does not
+// answer yields [], and the menu falls back to Calandria's own commands instead
+// of erroring mid-typing.
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const task = getTask(id);
@@ -30,7 +30,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   try {
     const commands = await driver.listCommands(task, project);
     // no-store: the driver already caches with a TTL it controls, and a stale
-    // browser/proxy copy would outlive a plugin the user just installed.
+    // browser or proxy copy could outlive a plugin the user just installed.
     return NextResponse.json(
       { commands: visibleAgentCommands(commands) },
       { headers: { "Cache-Control": "no-store" } }

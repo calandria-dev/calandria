@@ -1,17 +1,13 @@
-// GET /api/tasks/[id]/commands — the discovery half of the composer's "/" menu,
-// driven end to end through the real route and the real driver seam.
-//
-// Regression this guards: the menu used to be a hardcoded one-element array, so
-// every command the agent actually expands except /clear was undiscoverable.
-// The route is what closes that, and its contract is narrow — ask the task's
-// own driver, filter, never throw at the composer.
+// GET /api/tasks/[id]/commands: the discovery half of the composer's "/" menu,
+// driven end to end through the real route and the real driver seam. Its
+// contract: ask the task's own driver, filter, never throw at the composer.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const { listCommandsMock } = vi.hoisted(() => ({ listCommandsMock: vi.fn() }));
 
-// A scripted driver in the claude slot, the same seam tests/clearMidTurn.ts uses
-// — so this exercises the route's real getDriver() path without a CLI.
+// A scripted driver in the claude slot, the same seam tests/clearMidTurn.ts
+// uses, exercises the route's real getDriver() path without a CLI.
 vi.mock("@/lib/agents/claude/driver", () => ({
   claudeDriver: {
     id: "claude",
@@ -51,7 +47,7 @@ describe("GET /api/tasks/[id]/commands", () => {
     const { status, body } = await get(taskId);
     expect(status).toBe(200);
     expect(body.commands.map((c: { name: string }) => c.name)).toEqual(["simplify", "superpowers:writing-plans"]);
-    // Aliases survive the trip — the menu matches on them.
+    // Aliases survive the trip; the menu matches on them.
     expect(body.commands[1].aliases).toEqual(["writing-plans"]);
   });
 
@@ -64,8 +60,8 @@ describe("GET /api/tasks/[id]/commands", () => {
   });
 
   it("degrades to an empty list when discovery throws, instead of erroring", async () => {
-    // A missing CLI or a dead login must cost the menu its long tail and
-    // nothing else — typing a command in full still works.
+    // A missing CLI or a dead login costs the menu its long tail and nothing
+    // else: typing a command in full still works.
     listCommandsMock.mockRejectedValue(new Error("no CLI on PATH"));
     const { status, body } = await get(taskId);
     expect(status).toBe(200);

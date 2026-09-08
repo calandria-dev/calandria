@@ -5,9 +5,10 @@ import { getAgentConnection, setAgentConnection } from "@/lib/agents/connections
 
 export const dynamic = "force-dynamic";
 
-// The wizard's Verify step. Reads the resolved account/plan and runs a one-shot
-// test turn through the same `claude` binary the SDK drives, so a green result
-// means real turns will work — not just that credentials exist on disk.
+// The wizard's Verify step. Reads the resolved account/plan and runs a
+// one-shot test turn through the same `claude` binary the SDK drives, so a
+// green result means real turns will work, beyond confirming credentials
+// exist on disk.
 export async function POST() {
   const driver = getDriver("claude");
   const status = await driver.authStatus();

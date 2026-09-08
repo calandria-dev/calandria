@@ -87,7 +87,17 @@ name: Publish image
 on:
   schedule:
     # 09:23 UTC ≈ 02:23 PT — off-peak, and off the top of the hour.
-    - cron: "23 9 * * *"
+    - cron: "23 9 * * 1-6"
+    # Sunday is the same build with the layer cache turned off, selected on
+    # `github.event.schedule` in the build job below. A cached layer means CI
+    # cannot see a pin rot: `gh` is pinned to an exact apt version and
+    # cli.github.com serves only its newest, so once gh publishes, every cold
+    # build fails while this lane keeps reusing the layer that installed the old
+    # one and stays green (PR #183 found exactly that). `Pin drift`
+    # (pin-drift.yml) catches the two known-rotting pins by name and days
+    # earlier; this leg is the backstop for whatever nobody has thought of, and
+    # the only thing here that actually proves a from-scratch build works.
+    - cron: "23 9 * * 0"
   push:
     tags: ["v*"]
   pull_request:
@@ -99,6 +109,11 @@ on:
     paths-ignore:
       - website/**
   workflow_dispatch:
+    inputs:
+      no_cache:
+        description: "Build without the layer cache (proves a cold build works)"
+        type: boolean
+        default: false
 
 # Workflow-level permissions are the floor; only the jobs that talk to the
 # registry raise them.
@@ -261,6 +276,24 @@ jobs:
   # path has its own end-of-pipeline proof in `verify` (which boots the actual
   # published image on both arches). Paying for a second full build + browser
   # run here would add ~10 minutes to every release for no new signal.
+  #
+  # Audited and KEPT, deliberately, because on a tag this is the suite's second
+  # run against the same commit: `prepare` has already polled the push-to-main
+  # run green through require-green-test-run, so everything here is a repeat.
+  # One release cycle therefore runs the unit suite five times across four SHAs
+  # (squash push, release-please PR, release-commit push, and this), with no
+  # vitest retry anywhere, and each repeat is a fresh chance for a flaky or
+  # clock-dependent test to sink a release that was already proven — which is
+  # exactly how v0.9.0's tag build died (PR #225).
+  #
+  # It stays because the alternative is worse. Dropping it would leave `build`
+  # with no `needs:` edge to any job this workflow controls, resting the whole
+  # publish on an externally polled run: a green poll and a `build` that starts
+  # minutes later are not the same commit's guarantee if the run is re-run,
+  # deleted or superseded in between, and a `needs:` edge is the only thing
+  # GitHub enforces. The redundant exposure is the price of that enforcement.
+  # The right lever on the risk is fewer flaky tests, not fewer runs of them,
+  # which is what test-clock.yml and test-shuffle.yml are for.
   test:
     # needs+if exist only for the nightly no-change skip; when test skips,
     # build and everything after it skip through the needs chain.
@@ -283,7 +316,12 @@ jobs:
             platform: linux/arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    # An uncached leg redoes npm ci, next build and every apt/npm install from
+    # nothing, so it needs materially more headroom than a warm one. The
+    # condition is spelled out here rather than shared, because `env` is not a
+    # context job-level keys can read; it is repeated once more on `no-cache`
+    # below and the two must stay in step.
+    timeout-minutes: ${{ (github.event.schedule == '23 9 * * 0' || github.event.inputs.no_cache == 'true') && 60 || 30 }}
     permissions:
       contents: read
       packages: write
@@ -384,6 +422,12 @@ jobs:
           # overwrite each other's manifest every run and never hit. mode=max
           # is what keeps the build stage (npm ci, next build) cached at all —
           # the default only stores layers present in the final image.
+          # The Sunday cron and the `no_cache` dispatch input ignore the cache
+          # on the way IN while still writing it on the way out, so the weekly
+          # cold build both proves a from-scratch build works and leaves the
+          # next six nights a cache made from current upstreams. Keep in step
+          # with `timeout-minutes` above.
+          no-cache: ${{ github.event.schedule == '23 9 * * 0' || github.event.inputs.no_cache == 'true' }}
           cache-from: type=gha,scope=${{ matrix.arch }}
           # PRs read the cache but never write it. Two mode=max arch caches are
           # already most of the repo's 10 GB allowance; letting every PR add its

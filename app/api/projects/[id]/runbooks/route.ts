@@ -14,7 +14,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const last = lastRunOf(r.id);
     return {
       ...r,
-      // Not the whole task — the card shows when it last ran and links to it.
+      // Not the whole task: the card shows when it last ran and links to it.
       last_run: last ? { id: last.id, title: last.title, status: last.status, created_at: last.created_at } : null,
       // Naming the schedules is the point: "editing this changes what fires at
       // 08:30" is only actionable if you know which 08:30.
@@ -34,7 +34,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (typeof body?.name !== "string" || !body.name.trim()) return NextResponse.json({ error: "name required" }, { status: 400 });
   if (typeof body?.prompt !== "string" || !body.prompt.trim()) return NextResponse.json({ error: "prompt required" }, { status: 400 });
   // Unlike permission_mode above, priority has no "unrecognized degrades to
-  // the default" resolver behind it and no CHECK constraint — refuse it here.
+  // the default" resolver behind it and no CHECK constraint: refuse it here.
   if (body.priority !== undefined && !PRIORITIES.includes(body.priority)) {
     return NextResponse.json({ error: `priority must be one of: ${PRIORITIES.join(", ")}` }, { status: 400 });
   }
@@ -51,7 +51,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     send_context: typeof body.send_context === "boolean" ? body.send_context : undefined,
     priority: body.priority,
   });
-  // "" because no task published this — see the runbooks_changed note in lib/events.ts.
+  // "" because no task published this; see the runbooks_changed note in lib/events.ts.
   publishGlobal("", { type: "runbooks_changed", projectId: id });
   return NextResponse.json(runbook, { status: 201 });
 }

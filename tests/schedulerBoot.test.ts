@@ -26,8 +26,8 @@ describe("scheduler boot chain", () => {
   it("the route exists and starts the ticker", () => {
     const src = read("app/api/instance/scheduler/route.ts");
     expect(src).toContain("startScheduler");
-    // Dynamic import, or Turbopack's async-external compilation bites (the same
-    // bug the services-restore route documents).
+    // Must be a dynamic import, or Turbopack's async-external compilation
+    // breaks it (the same failure the services-restore route documents).
     expect(src).toContain('await import("@/lib/scheduler")');
   });
 

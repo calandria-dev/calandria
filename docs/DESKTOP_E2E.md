@@ -35,7 +35,8 @@ today.
 
 1. ~~**A `desktop` lane in `.github/workflows/test.yml`, on the ubuntu runner we
    already use.**~~ **Landed.** `xvfb-run` + the Playwright `_electron` suite in
-   `desktop/e2e/` (24 specs across eight files, nine of them platform-gated),
+   `desktop/e2e/` (46 specs across thirteen files, sixteen of them platform- or
+   bench-gated, three more skipped where the box has no key-based ssh),
    plus the two supervisor scripts that already
    existed and ran nowhere (21 + 8 assertions). Zero infra, ~1.2 minutes of
    window suite on top of a build the lane needs anyway, and it covers the
@@ -130,6 +131,9 @@ for what only the shell can break:
 | The db-lock collision reads as "another Calandria is running", not a crash | `onExit` + `dialog` path |
 | One smoke path through the app inside the window (onboarding → project → turn) | Proves SSE/WebSocket/xterm survive Electron's renderer, once |
 | The packaged artifact does all of the above, plus: it booted from `resources/app-payload` with no `CALANDRIA_REPO_ROOT`, spawned the Node it shipped, and (installed) is really sandboxed | It is what a user would download — and `desktop/e2e/06-packaged.spec.ts` is the only spec that cannot also run against the dev shell |
+| Attaching to a server the shell did not start: the window lands on a **second** production server's origin, no local server is started, the title names the instance, the window sits in that instance's own session partition, and switching to `This computer` from the app menu boots the local one and leaves the remote up | `desktop/e2e/12-remote-instance.spec.ts`. Only the shell has an instance list, a session partition per instance, or a native menu to switch from; a browser tab reaches a remote Calandria by typing its URL |
+| Attaching through a real `ssh -L` forward: the window lands on a loopback origin that is really the other server, the argv is the one the design names, and quitting takes the ssh child with it | `desktop/e2e/13-ssh-instance.spec.ts`. Skipped where `ssh -o BatchMode=yes <host> true` does not already work, which is the same refusal the app itself would make; `desktop/test-supervisor.js` covers the transport's own logic against `stub-ssh.js` on every box |
+| The dock badge SUMS two instances: a task parked on a server the window is not showing badges the dock on its own, and a second parked on the attached server takes it to two | `desktop/e2e/14-multi-instance-badge.spec.ts`. Two real production servers with two databases, and `app.getBadgeCount()` read out of the main process. `desktop/test-supervisor.js` pins the policy, but only a running shell can say it really holds two `/api/events` streams open at once — a shell that quietly kept one would pass every headless test. Skipped on Windows, where the badge is a pre-rendered overlay image rather than a count |
 
 Not covered, deliberately: everything the browser suite already asserts, and
 anything requiring a signed installer until installers exist.
@@ -138,7 +142,7 @@ anything requiring a signed installer until installers exist.
 
 | Lane | Runner | Scope | Trigger |
 |-|-|-|-|
-| **desktop-linux** (landed) | GitHub-hosted `ubuntu-24.04` + `xvfb-run` | `test-supervisor.js`, `test-real-boot.js`, the `_electron` suite; then `electron-builder --dir`, the artifact moved to `$RUNNER_TEMP`, and the window suite again against it with no `CALANDRIA_REPO_ROOT` | Same policy as the `e2e` job: main, dispatch, or the `e2e` label |
+| **desktop-linux** (landed) | GitHub-hosted `ubuntu-24.04` + `xvfb-run` | `test-supervisor.js`, `test-real-boot.js`, the `_electron` suite — including `12-remote-instance.spec.ts`, which boots a **second** production server on its own port and attaches the shell to it by URL, `14-multi-instance-badge.spec.ts`, which parks a task on each of two servers and reads the summed dock badge back, and `13-ssh-instance.spec.ts`, which attaches to one through a real `ssh localhost` forward — the lane mints a runner key first (best-effort; the spec skips rather than fails where BatchMode ssh to localhost does not work, which is every non-Linux lane); then `electron-builder --dir`, the artifact moved to `$RUNNER_TEMP`, and the window suite again against it with no `CALANDRIA_REPO_ROOT` | Same policy as the `e2e` job: main, dispatch, or the `e2e` label |
 | **desktop-bench** (landed, runner not registered) | Proxmox VM, real session | The whole suite twice — dev shell, then an installed `.deb` at `/opt/Calandria` with the sandbox intact — plus three spec files gated on `CALANDRIA_DESKTOP_BENCH=1`: `09-bench-notifications`, `10-bench-tray`, `11-bench-window`. VNC for a human or an agent session to watch | `workflow_dispatch` + nightly, in its own workflow file (`.github/workflows/desktop-bench.yml`) with **no `pull_request` trigger at all** |
 | **desktop-windows** (landed) | GitHub-hosted `windows-latest` | The shell's Windows half: `TerminateProcess` vs graceful drain, `taskkill` with and without `/T`, the `COMSPEC` pty shell, the bare-`node` spawn. Then, further than Ubuntu goes, `electron-builder --win nsis`, a **silent install** (`/S`) of the installer it produced, and the window suite against the installed `Calandria.exe` under `%LOCALAPPDATA%\Programs\Calandria` with no `CALANDRIA_REPO_ROOT` — plus the install's own location, payload, shortcuts and uninstaller. No `$RUNNER_TEMP` move: an installed app is outside the checkout by construction. Only SmartScreen stays untested, since a locally built installer carries no Mark of the Web | Same expression as `desktop`/`e2e`: main, dispatch, or the `e2e` label |
 | **desktop-macos** (landed) | GitHub-hosted `macos-latest` | The whole suite twice (dev shell, then a packaged `.app`), plus the three things only macOS has: the launchd PATH repair under a real `open` launch, the `hiddenInset` title bar, and the menu roles under a real menubar | **Weekly cron**, dispatch, or a PR carrying the `macos` label — not the shared `e2e` one |
@@ -349,6 +353,33 @@ cd .. && DISPLAY=:1 CALANDRIA_TEST_BIN=/opt/Calandria/calandria-desktop \
 real session) and no `CALANDRIA_REPO_ROOT`. The bench's
 `desktop_bench_allow_unprivileged_userns` knob should be left at stock (`1`) for
 this run — the point is that the installed app sandboxes anyway.
+
+**`CALANDRIA_DESKTOP_LOG_FILE`, for a main process that dies before there is
+anything to attach to.** Set to a path, `main.js` appends every
+`console.log`/`info`/`warn`/`error` line to it with a synchronous
+`fs.appendFileSync`, one line at a time, on top of stdout and electron-log's own
+file transport — unset, and therefore off, unless something asks for it. It
+exists because both of the other two channels can go silent at once:
+`_electron.launch()` hands back no process handle until it resolves, so
+`fixtures.ts`'s stdout capture only starts at that moment, and electron-log's
+file transport buffers its writes through the event loop, the very thing a
+blocked main thread has stopped turning. A main process that wedges before its
+first window is therefore invisible to both — which is exactly how issue #240
+(the packaged macOS shell hanging in `safeStorage.isEncryptionAvailable()`) read
+as ten unrelated `electron.launch: Timeout 120000ms exceeded` failures with no
+app output at all, and cost three CI runs to diagnose. `launchEnv()` points it
+at `<instance root>/boot-trace.log` for every launched shell; `launchFailure()`
+reads it when `launch()`/`firstWindow()` fails and quotes the last line plus the
+last 12, or says the binary never reached `main.js` at all if the file never
+appeared; `bootTrace(shell)` is exported from `fixtures.ts` for a spec that
+wants to read it directly; and `attachShellLog()` uploads it as `boot-trace.log`
+on a failing test. `main.js` logs `[shell] boot complete` as the last statement
+of its `app.whenReady()` chain, which `01-shell.spec.ts` asserts arrived, along
+with the absence of any `[shell] keyring:` line on an instance with
+nothing signed in — moving the lane that catches a repeat of issue #240 onto
+Linux, which runs on every push to main and on an `e2e`-labelled pull request,
+rather than macOS, which waits for the weekly schedule or a `macos` label. This is not a third log for users: per-line
+synchronous I/O is exactly why it stays opt-in.
 
 **Self-hosted runners on a public repo are a security decision, not a
 convenience.** A fork PR can execute arbitrary code on a self-hosted runner, and
@@ -564,7 +595,7 @@ Obsidian vault.
 | Item | Cost |
 |-|-|
 | The `desktop-linux` CI lane | ~2–4 min for the dev-shell half, plus the packaged half: **25 s** to stage the payload and **20 s** for `electron-builder --dir` (bench, warm — a cold runner also pays a production-only `npm ci` and one ~30 MB Node download), then the window suite again at ~80 s. Free (public repo); the job's ceiling is 45 min |
-| The `_electron` suite | Net-new test code; landed as `desktop/e2e/` (24 specs over eight files, nine of them Windows- or macOS-gated) with `desktop/test-window.js` retired into it |
+| The `_electron` suite | Net-new test code; landed as `desktop/e2e/` (43 specs over twelve files, sixteen of them Windows-, macOS- or bench-gated) with `desktop/test-window.js` retired into it |
 | Bench VM | 4 vCPU / 8 GiB / 60 GiB, HA across the Orion nodes; one `ansible-orion` role + playbook; ongoing patching |
 | Ephemeral-runner plumbing | Snapshot rollback + registration token handling; the homelab has **no** self-hosted runner infrastructure today, so this is net-new |
 | Windows lane | Landed: free minutes on GitHub-hosted `windows-latest`, ~2x the Ubuntu lane's wall clock. Deliberately not the Proxmox template — see §4 |

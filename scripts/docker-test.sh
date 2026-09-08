@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Run a command against THIS checkout inside a throwaway Linux test container.
-# The repo's rule is "run tests in a separate docker container"; this is how.
+# Runs a command against this checkout inside a throwaway Linux test container.
 #
 #   scripts/docker-test.sh [--e2e] [command…]     (default: npm test)
 #
@@ -11,19 +10,15 @@
 # Env knobs:
 #   CALANDRIA_TEST_VOLUME   named volume holding node_modules (default below).
 #                           Shared by every worktree; `docker volume rm` it to
-#                           reset.
+#                           reset. Renamed from ORCH_TEST_VOLUME; `docker
+#                           volume rm` any leftover orch-test-node-modules
+#                           and `docker image rm` old orch-test:* tags too.
 #   CALANDRIA_TEST_USER     "uid:gid" to run as. Unset (root) is right on a host
-#                           whose bind mounts remap ownership — OrbStack/Docker
+#                           whose bind mounts remap ownership (OrbStack/Docker
 #                           Desktop do; a plain Linux daemon does not, and there
-#                           root leaves you root-owned .next/ and test-results/.
+#                           root leaves you root-owned .next/ and test-results/).
 #   CALANDRIA_TEST_REBUILD  =1 to rebuild the image even though the tag exists
 #                           (needed after editing docker/test/*).
-#
-# These three are a hard rename from ORCH_TEST_* with no fallback — they are
-# test-only, so a stale export just means the default is used. The image tag
-# and default node_modules volume moved to calandria-test* in the same pass:
-# `docker volume rm orch-test-node-modules` and `docker image rm` the old
-# `orch-test:*` tags to reclaim the space, at the cost of one cold `npm ci`.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -36,10 +31,10 @@ fi
 [ "$#" -gt 0 ] || set -- npm test
 
 # The browsers baked into the image must match the @playwright/test that npm ci
-# installs, or playwright re-downloads chromium on every single run. Read the
-# RESOLVED version from the lockfile rather than the ^range in package.json, so
-# a dependency bump changes the image tag (and forces a rebuild) instead of
-# silently desyncing the two.
+# installs, or playwright re-downloads chromium on every run. Read the resolved
+# version from the lockfile instead of the ^range in package.json, so a
+# dependency bump changes the image tag (and forces a rebuild) instead of
+# leaving the two out of sync.
 pw=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")
 image="calandria-test:${target}-pw${pw}"
 volume=${CALANDRIA_TEST_VOLUME:-calandria-test-node-modules}
@@ -49,11 +44,11 @@ if [ "${CALANDRIA_TEST_REBUILD:-}" = "1" ] || ! docker image inspect "$image" >/
   docker build --target "$target" --build-arg "PLAYWRIGHT_VERSION=$pw" -t "$image" docker/test
 fi
 
-# --init: tini as PID 1. Without it the test process is PID 1, which does not
+# --init: tini as PID 1. Without it the test process is PID 1, which doesn't
 # reap orphans, and tests/services.test.ts's orphaned-process-group case fails
-# for a reason that has nothing to do with the code under test.
+# for a reason unrelated to the code under test.
 #
-# One array, appended to and never empty — `"${maybe_empty[@]}"` under `set -u`
+# One array, appended to and never empty: `"${maybe_empty[@]}"` under `set -u`
 # is an unbound-variable error in the bash 3.2 that macOS still ships.
 run=(docker run --rm --init)
 if [ -t 0 ] && [ -t 1 ]; then run+=(-it); fi

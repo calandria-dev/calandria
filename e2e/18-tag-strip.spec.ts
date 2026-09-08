@@ -1,8 +1,8 @@
-// Tags, the curating half (docs/superpowers/specs/2026-08-27-tags-design.md):
-// the selection bar's bulk add/remove, the strip one lit chip expands into, the
-// project landing's Tags card, and the palette's tag entries. The chip/badge/
-// field gestures are in 17-tags.spec.ts; this file starts where a plan already
-// exists and is about navigating and curating it.
+// Tags, the curating half (docs/FEATURES.md): the selection bar's bulk
+// add/remove, the strip one lit chip expands into, the project landing's Tags
+// card, and the palette's tag entries. The chip/badge/field gestures are in
+// 17-tags.spec.ts; this file starts where a plan already exists and covers
+// navigating and curating it.
 //
 // The store rules underneath (progress with withdrawn tasks, moveTasks carrying
 // vs dropping a tag) are pinned by tests/tags.test.ts.
@@ -92,7 +92,7 @@ test("the selection bar adds a tag to a whole batch, and removes one without tou
   // Now the other direction, over a selection that doesn't all share the tag:
   // Remove takes it off the rows that had it and leaves `outsider`'s own tag be.
   // The bar keeps its selection through a tag write (unlike a move, where the
-  // rows leave the project), so start from a clear one rather than toggling.
+  // rows leave the project), so start from a clear selection instead of toggling.
   await page.locator(".pick-bar").getByRole("button", { name: "Clear" }).click();
   await pickbox(page, looseB).click();
   await pickbox(page, outsider).click();
@@ -136,6 +136,44 @@ test("the strip expands one lit chip into the tag's detail, and stays shut for t
   await expect(page.locator(".sess-head")).toContainText(memberTitle);
 });
 
+test("Refresh tag runs a detached job whose report outlives leaving the tag", async ({ page, request }) => {
+  await openProject(page);
+  await chip(page).click();
+  const strip = page.locator(".gstrip");
+
+  await strip.getByRole("button", { name: "Refresh tag" }).click();
+  // The mock driver returns a plan that rewrites the description and rewords
+  // the first member, so both halves of "apply" are on screen.
+  await expect(strip.locator(".gs-job-sum")).toContainText("description rewritten", { timeout: 30000 });
+  await expect(strip.locator(".gs-job-sum")).toContainText("1 task reworded");
+  await expect(strip.locator(".gs-desc").first()).toHaveText(`Mock tag refresh for ${PROJECT}.`);
+
+  // The job's state lives on the tag ROW, not in the component: shutting the
+  // strip (a second lit chip) and reopening it must not lose the report. This
+  // is the same mechanism that lets the run survive a reload or a project
+  // switch while it is still going.
+  await chip(page, OTHER).click();
+  await expect(strip).toHaveCount(0);
+  await chip(page, OTHER).click();
+  await expect(strip.locator(".gs-job-sum")).toContainText("description rewritten");
+
+  // The reword is a revertable agent edit, which is why the job is allowed to
+  // apply its change instead of only proposing one.
+  const member = (await tasksOf(request)).find((t) => t.title === memberTitle)!;
+  const edits = await (await request.get(`/api/tasks/${member.id}/agent-edits`)).json();
+  expect(edits.edits).toHaveLength(1);
+  expect(edits.edits[0].changes[0]).toMatchObject({ field: "description", after: "Mock refreshed brief." });
+
+  // Dismiss clears the report for good, and never the edits it reported on.
+  await strip.getByRole("button", { name: "Dismiss" }).click();
+  await expect(strip.locator(".gs-job-sum")).toHaveCount(0);
+  await chip(page, OTHER).click();
+  await chip(page, OTHER).click();
+  await expect(strip.locator(".gs-job-sum")).toHaveCount(0);
+  const stillEdited = await (await request.get(`/api/tasks/${member.id}`)).json();
+  expect(stillEdited.description).toBe("Mock refreshed brief.");
+});
+
 test("the strip renames the tag and deletes it without touching its tasks", async ({ page, request }) => {
   await openProject(page);
   await chip(page).click();
@@ -153,7 +191,7 @@ test("the strip renames the tag and deletes it without touching its tasks", asyn
   await strip.getByRole("button", { name: "Delete tag" }).click();
   await strip.getByRole("button", { name: "Delete: 3 tasks stay" }).click();
   // The chip bar falls back to All, and every task that carried it is still
-  // here — including `outsider`, which keeps the OTHER tag it also carries.
+  // here, including `outsider`, which keeps the OTHER tag it also carries.
   await expect(page.locator(".gstrip")).toHaveCount(0);
   await expect(page.locator(".gchip .gc-name", { hasText: renamed })).toHaveCount(0);
   for (const title of [memberTitle, looseA, looseB]) await expect(row(page, title)).toBeVisible();
@@ -187,11 +225,11 @@ test("the landing card leads back to the chip, and the palette's feed carries ta
   await expect(row(page, looseA)).toBeVisible();
   await expect(row(page, memberTitle)).toHaveCount(0);
 
-  // The ⌘K rows themselves are not driven here, for the reason 12-runbooks
-  // states: the palette lives behind `omniSearch`, which DEFAULT_FEATURES ships
-  // off, so this suite's server doesn't render it. What IS assertable is the
-  // feed it reads — tags as jump targets with their counts, and each session
-  // row carrying the badges it should show.
+  // The palette rows themselves are not driven here, for the reason
+  // 12-runbooks states: the palette lives behind `omniSearch`, which
+  // DEFAULT_FEATURES ships off, so this suite's server doesn't render it.
+  // What is assertable is the feed it reads: tags as jump targets with their
+  // counts, and each session row carrying the badges it should show.
   const feed = await request.get("/api/tasks").then((r) => r.json());
   const palTag = (feed.tags as { id: string; name: string; project_name: string; counts: { total: number; done: number } }[]).find((t) => t.id === id);
   expect(palTag).toBeTruthy();
@@ -200,4 +238,55 @@ test("the landing card leads back to the chip, and the palette's feed carries ta
   const rows = feed.tasks as { title: string; tags: { name: string }[] }[];
   expect(rows.find((t) => t.title === looseA)!.tags.map((x) => x.name)).toEqual([name]);
   expect(rows.find((t) => t.title === looseB)!.tags).toEqual([]);
+});
+
+// Self-contained: the cases above rename and then delete the seeded tag, so this
+// one mints its own chips. Two of them, not one tag re-described mid-test,
+// because the lit chip survives a reload: re-clicking it after one would shut
+// the strip instead of reopening it.
+test("a long description is clamped behind Show more, and the short one gets no toggle", async ({ page, request }) => {
+  const short = "Move every route onto AuthService.";
+  const long = Array.from({ length: 12 }, (_, i) =>
+    `Step ${i + 1}: move one more route onto AuthService and delete the middleware it used to need.`).join(" ");
+  const shortName = `Brief ${uid()}`;
+  const longName = `Clamp ${uid()}`;
+  const mint = async (name: string, description: string) => {
+    const res = await request.post(`/api/projects/${projectId}/tags`, { data: { name, description } });
+    expect(res.status()).toBe(201);
+    const id = (await res.json()).id;
+    const task = await request.post("/api/tasks", {
+      data: { project_id: projectId, title: `${name} member ${uid()}`, priority: "med", agent: "mock", tag_ids: [id] },
+    });
+    expect(task.status()).toBe(201);
+  };
+  await mint(shortName, short);
+  await mint(longName, long);
+
+  await openProject(page);
+  const wrap = page.locator(".gstrip .gs-descwrap");
+
+  // The short description fits, so there is nothing to offer. Whether the toggle
+  // appears is measured off the rendered element, not the text's length.
+  await chip(page, shortName).click();
+  await expect(wrap.locator(".gs-desc")).toHaveText(short);
+  await expect(wrap.locator(".gs-desc-more")).toHaveCount(0);
+  await chip(page, shortName).click();
+
+  await chip(page, longName).click();
+  const more = wrap.locator(".gs-desc-more");
+  await expect(more).toHaveText("Show more");
+  await expect(more).toHaveAttribute("aria-expanded", "false");
+  // Clamped, the element renders shorter than its content.
+  const clamped = (await wrap.locator(".gs-desc").boundingBox())!.height;
+
+  await more.click();
+  await expect(more).toHaveText("Show less");
+  await expect(more).toHaveAttribute("aria-expanded", "true");
+  expect((await wrap.locator(".gs-desc").boundingBox())!.height).toBeGreaterThan(clamped);
+
+  // And it collapses again: the toggle has to survive its own expansion, which
+  // takes the clamp off and leaves nothing overflowing to measure.
+  await more.click();
+  await expect(more).toHaveText("Show more");
+  expect((await wrap.locator(".gs-desc").boundingBox())!.height).toBeCloseTo(clamped, 0);
 });

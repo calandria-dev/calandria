@@ -1,18 +1,17 @@
 /* Finding and launching a CLI on Windows, from a POSIX suite.
  *
- * The bug this pins is invisible on Linux/macOS and total on native Windows:
  * Node's spawn is shell-less, so an extension-less name (`~/.local/bin/claude`)
- * or a bare one (`codex`) reaches CreateProcess, which only ever finds a file
- * that exists under a PATHEXT extension — and cannot execute the `.cmd` shims
- * npm writes at all. Every function in lib/binPath.ts therefore takes its
- * platform, PATH and PATHEXT as arguments, and this file drives the win32 rules
- * against real fixture directories on whatever OS the suite is running on.
+ * or a bare one (`codex`) reaches CreateProcess, which only finds a file under
+ * a PATHEXT extension and cannot execute the `.cmd` shims npm writes. Every
+ * function in lib/binPath.ts takes its platform, PATH and PATHEXT as arguments,
+ * so this file can drive the win32 rules against fixture directories regardless
+ * of the OS running the suite.
  *
- * The fixture filenames are exact-case on purpose: NTFS wouldn't care, so it is
- * the Linux/macOS lanes that pin the "PATHEXT is uppercase, binaries on disk are
- * not" lowercasing — a Windows run can't tell the difference. Two cases go the
- * other way and are skipped there (`onPosix`): the executable bit and `:` as a
- * PATH separator have no Windows equivalent to assert against.
+ * Fixture filenames are exact-case: the Linux/macOS lanes pin the
+ * PATHEXT-is-uppercase, binaries-on-disk-are-not lowercasing, which a Windows
+ * run can't distinguish since NTFS ignores case. Two cases have no Windows
+ * equivalent and run POSIX-only via `onPosix`: the executable bit and `:` as a
+ * PATH separator.
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -45,7 +44,7 @@ function dir(files: string[] = [], mode = 0o644): string {
 const win = { platform: "win32" as const, pathext: DEFAULT_PATHEXT };
 
 describe("binCandidates", () => {
-  it("is the name itself on POSIX — no extension games", () => {
+  it("is the name itself on POSIX, with no extension games", () => {
     expect(binCandidates("codex", { platform: "linux" })).toEqual(["codex"]);
   });
 
@@ -78,7 +77,7 @@ describe("isExecutableFile", () => {
     expect(isExecutableFile(path.join(d, "codex"), "linux")).toBe(true);
   });
 
-  it("accepts any existing file on win32 — X_OK is meaningless there, and the extension carries executability", () => {
+  it("accepts any existing file on win32, since X_OK is meaningless there and the extension carries executability", () => {
     const d = dir(["codex.cmd"]);
     expect(isExecutableFile(path.join(d, "codex.cmd"), "win32")).toBe(true);
   });
@@ -91,7 +90,7 @@ describe("isExecutableFile", () => {
 });
 
 describe("findInDirs", () => {
-  it("finds gh.exe for a bare 'gh' on win32 — the probe-dir miss that made every Windows install invisible", () => {
+  it("finds gh.exe for a bare 'gh' on win32, closing the probe-dir miss that made every Windows install invisible", () => {
     const d = dir(["gh.exe"]);
     expect(findInDirs("gh", [d], win)).toBe(path.join(d, "gh.exe"));
     expect(findInDirs("gh", [d], { platform: "linux" })).toBeNull();
@@ -125,13 +124,13 @@ describe("findOnPath", () => {
     expect(findOnPath("claude", { ...win, pathEnv: [miss, hit].join(";") })).toBe(path.join(hit, "claude.exe"));
   });
 
-  it("does not split a win32 PATH on ':' — a drive letter is not a separator", () => {
+  it("does not split a win32 PATH on ':', since a drive letter is not a separator", () => {
     const hit = dir(["claude.exe"]);
     expect(findOnPath("claude", { ...win, pathEnv: `C:\\Windows;${hit}` })).toBe(path.join(hit, "claude.exe"));
   });
 
-  // Skipped on win32: the fixture paths interpolated below are `C:\...`, so a
-  // ':' split would cut them in half — which is the very rule under test.
+  // Skipped on win32: the fixture paths below are `C:\...`, so a ':' split
+  // would cut them in half, which is the rule this test checks.
   onPosix("splits on ':' for POSIX", () => {
     const hit = dir(["claude"], 0o755);
     expect(findOnPath("claude", { platform: "linux", pathEnv: `${dir()}:${hit}` })).toBe(path.join(hit, "claude"));
@@ -179,7 +178,7 @@ describe("spawnSpec", () => {
     });
   });
 
-  it("wraps a .cmd shim in cmd.exe — Node refuses to spawn one without a shell (CVE-2024-27980)", () => {
+  it("wraps a .cmd shim in cmd.exe, since Node refuses to spawn one without a shell (CVE-2024-27980)", () => {
     expect(spawnSpec("C:\\x\\codex.cmd", ["mcp", "list", "--json"], { platform: "win32", comspec })).toEqual({
       command: comspec,
       args: ["/d", "/s", "/c", '"C:\\x\\codex.cmd mcp list --json"'],

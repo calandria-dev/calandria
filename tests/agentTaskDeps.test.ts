@@ -1,25 +1,16 @@
-// Wiring dependencies from an agent, AFTER the tasks exist.
-//
-// `suggest_task` has always taken `blocked_by`, but only at creation time — so
-// the ONE moment an agent could express order was the same call that invented
-// the task, before any of its blockers had ids. A planning turn files N tasks in
-// one parallel tool-call batch (no ids returned yet, and title refs race the
-// handler order), realizes the order afterwards, and then had nowhere to put it:
-// `update_task` wrote title/description/priority/status and nothing else. The
-// live DB bears this out — every dependency edge on the board was drawn by the
-// UI's Edit dialog; not one transcript contains the "Blocked by N task(s)" line
-// depNote returns.
-//
-// So `update_task` takes `blocked_by` too, and the two-phase recipe (file the
-// tasks, then wire the order) becomes possible. What's pinned here:
+// update_task accepting `blocked_by` after a task already exists, so a
+// planning turn can file its tasks first and wire their order in a second
+// phase. Pinned here:
 //   - it replaces the dep set, the way the Edit dialog's DepPicker does, and []
 //     clears it;
-//   - refs are partitioned and REPORTED exactly as suggest_task's are, since the
+//   - refs are partitioned and reported exactly as suggest_task's are, since the
 //     same project-scoping rule applies;
-//   - a cycle refuses the WHOLE call — no half-applied title/priority left over;
-//   - the caller's own row is refused: blockers gate STARTING, and a session
-//     calling this has already started, so the honest verb is `on_hold`;
-//   - the cross-task boundary is unchanged — only an inert tray suggestion.
+//   - a cycle refuses the whole call, with no half-applied title/priority left
+//     over;
+//   - the caller's own row is refused: blockers gate starting, and a session
+//     calling this has already started, so the refusal names `on_hold`;
+//   - the cross-task write boundary is unchanged: only an inert tray
+//     suggestion is freely writable.
 import { describe, it, expect } from "vitest";
 import { NextRequest } from "next/server";
 import { createProject, createTask, getTask, getTaskDeps, setTaskDeps, updateTask } from "@/lib/store";
@@ -38,7 +29,7 @@ function post(handler: (req: NextRequest) => Promise<Response>, url: string, bod
   );
 }
 
-/** A running session's own task — the trusted `caller` every tool call carries. */
+/** A running session's own task: the trusted `caller` every tool call carries. */
 function callerTask(projectId: string, title = "Caller") {
   const t = createTask({ project_id: projectId, title, description: "" });
   return updateTask(t.id, { started: 1, running: 1 })!;
@@ -74,11 +65,11 @@ describe("update_task sets dependencies after the fact", () => {
   });
 
   it("refuses the whole call on an unusable ref rather than wiring the rest", () => {
-    // Fail-closed, and this is where it diverges from suggest_task, which
-    // partitions and reports. suggest_task fills in a blank set on a task that
-    // has just been invented; this REPLACES one. Keeping the refs we recognized
-    // and dropping the rest would delete edges the agent never mentioned and
-    // still hand back a success.
+    // Fail-closed, unlike suggest_task, which partitions and reports.
+    // suggest_task fills in a blank set on a newly invented task; this
+    // replaces an existing one. Keeping the refs that resolved and dropping
+    // the rest would delete edges the agent never mentioned while still
+    // reporting success.
     const project = createProject({ name: "UD-Partition" });
     const other = createProject({ name: "UD-Foreign" });
     const caller = callerTask(project.id);
@@ -90,7 +81,7 @@ describe("update_task sets dependencies after the fact", () => {
     const { task, text } = updateTaskForAgent(caller, target.id, { blocked_by: [blocker.id, foreign.id, "ghost"] });
     expect(task).toBeNull();
     expect(getTaskDeps(target.id)).toEqual([kept.id]);
-    // Each bad ref is named with the reason it failed — the fix differs per
+    // Each bad ref is named with the reason it failed. The fix differs per
     // reason, so "ignored 2 refs" would tell the agent nothing it can act on.
     expect(text).toContain(`"${foreign.id}" is in UD-Foreign, not UD-Partition`);
     expect(text).toContain(`"ghost" isn't a task id`);
@@ -148,8 +139,8 @@ describe("update_task sets dependencies after the fact", () => {
   });
 
   it("still refuses a target with a live turn streaming in it", () => {
-    // The one refusal that survived the ownership-gate removal: a turn may be
-    // mid-way through reading the very fields this call would rewrite.
+    // A target with a live turn streaming in it is still refused: a turn may
+    // be mid-way through reading the very fields this call would rewrite.
     const project = createProject({ name: "UD-Boundary" });
     const caller = callerTask(project.id);
     const blocker = createSuggestedTask(project, { title: "Blocker", description: "" }).task!;
@@ -225,7 +216,7 @@ describe("the project-context prompt asks for ordered plans", () => {
     const task = createTask({ project_id: project.id, title: "T", description: "" });
     const ctx = buildProjectContext(project, task);
     // The prompt is the only always-present place the model learns the tool's
-    // shape, and it used to mention blocked_by exclusively as a restriction.
+    // shape.
     expect(ctx).toContain("blocked_by");
     expect(ctx).toContain("update_task");
     expect(ctx.toLowerCase()).toContain("order");

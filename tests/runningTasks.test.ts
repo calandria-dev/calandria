@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { createProject, createTask, updateTask, listRunningTaskIds } from "../lib/store";
 
 // Backs the client's fleet-wide running-set reconciliation (GET /api/running).
-// The client holds only the selected project's tasks, so a turn_end missed while
-// the global /api/events stream was disconnected is never learned locally;
-// reconciling against this authoritative list on SSE reconnect is what clears
-// the stale spinner.
+// The client holds only the selected project's tasks, so it never learns
+// locally about a turn_end missed while the global /api/events stream was
+// disconnected. Reconciling against this authoritative list on SSE reconnect
+// clears the stale spinner.
 describe("listRunningTaskIds", () => {
   it("returns running task ids across projects and excludes idle/suggested ones", () => {
     const a = createProject({ name: "A" });
@@ -27,7 +27,7 @@ describe("listRunningTaskIds", () => {
     expect(ids).not.toContain(bSuggested.id);
   });
 
-  it("drains to empty once every turn has ended — so a reconnect resync clears everything", () => {
+  it("drains to empty once every turn has ended, so a reconnect resync clears everything", () => {
     const p = createProject({ name: "Drain" });
     const t = createTask({ project_id: p.id, title: "T", description: "" });
 

@@ -4,11 +4,11 @@ title: "Supported agents"
 
 # Supported agents
 
-Calandria supports Claude Code and OpenAI Codex as first-class task agents. Connect either
-one or both, choose a default, and override the agent for an individual task. With only one
-agent connected, the New-task and Edit-task dialogs skip the agent picker, since there is
-nothing to choose. It reappears once a second agent is connected, or when a task already
-points at an agent that isn't.
+Calandria supports Claude Code, OpenAI Codex and Google's Antigravity as first-class task
+agents. Connect one, two or all three, choose a default, and override the agent for an
+individual task. With only one agent connected, the New-task and Edit-task dialogs skip the
+agent picker, since there is nothing to choose. It reappears once a second agent is connected,
+or when a task already points at an agent that isn't.
 
 ## Support matrix
 
@@ -16,10 +16,12 @@ points at an agent that isn't.
 |-|-|-|-|
 | Claude Code | Max/Pro login or optional API key | Full | Reference driver; supports interactive questions and reported cost data |
 | OpenAI Codex | ChatGPT login or optional API key | Full | Supports interactive questions through Calandria's bridge; estimated cost data |
+| Antigravity | Google login, or an API key (the only path in a container) | Full | Gemini models, plus Claude and GPT on the same subscription; estimated cost data |
 
-Connecting either agent completes first-run setup and makes it the initial default. Claude
-is not required when only Codex is connected, or vice versa. Project recaps, context drafts,
-and other utility jobs prefer a connected agent automatically.
+Connecting ANY one of them completes first-run setup and makes it the initial default. No
+particular agent is required: an instance with only Codex connected, or only Antigravity, is
+a supported configuration. Project recaps, context drafts, and other utility jobs prefer a
+connected agent automatically.
 
 ## Choosing a model
 
@@ -28,6 +30,16 @@ Each driver publishes its own model catalog, and Calandria offers it in four pla
 task's model for its next turn), and **Settings → Run defaults → Default model**. The list
 comes from the agent, not Calandria: a Vertex-routed instance sees the corrected context
 windows its aliases actually resolve to, and a new driver's models appear with no UI change.
+
+A family alias such as **Opus (latest)** is resolved by the installed CLI at turn time, not by
+Calandria, so the row's label never claims a version. It does report the id the alias currently
+resolves to, in the subtitle under the name. Calandria reads that by asking the CLI once per CLI
+version: `claude -p --bare --model opus --output-format stream-json` prints the resolved id
+before any request goes out, so the reading spends nothing — `--bare` never touches your login,
+and the process is killed as soon as the line arrives. It does spawn the CLI five times at a few
+seconds each, so it runs in the background the first time you open a picker and the ids appear on
+a later load. Set `CALANDRIA_CLAUDE_MODEL_PROBE=off` to skip it; the picker then shows the
+built-in catalog, with the labels but not the ids.
 
 Every picker leads with an **Inherit** entry, following the same fallback chain as reasoning
 level and permission mode: the task's own pick wins; failing that, the agent's default from
@@ -39,6 +51,32 @@ The Settings default is per agent. There is no instance-wide default, because a 
 names one provider's catalog and `opus` is not a value Codex can run. Switching an
 unstarted task's agent drops its model back to Inherit rather than carrying over an id the
 new driver would silently ignore.
+
+### Models for Calandria's own jobs
+
+The jobs Calandria runs for you — described under background jobs below — have their own two
+pickers, beside the default model and scoped to the same agent: **Quick internal jobs** and
+**Repo-reading internal jobs**.
+
+They are split that way because the work is. The quick tier is the `/clear` handoff note and
+the project recap: one turn, no tools, text in and text out, which is what a small fast model
+is for. The heavy tier is the "Refresh with AI" context draft and the "Refresh tag" plan check,
+which both explore an unfamiliar repository read-only before deciding something durable — a
+document prepended to every new session in that project, or which of a tag's tasks have gone
+stale — so accuracy is worth paying for. Two tiers rather than a knob per job, since a
+knob per job is four settings almost everyone would set to two values.
+
+Both lead with **Inherit**, and that is the default: left alone, these jobs send no model and
+run on whatever `~/.claude/settings.json` or `~/.codex/config.toml` names, exactly as they did
+before the pickers existed. Which model that turned out to be is recorded per run, so
+**Inherit** is still answerable after the fact: Insights names the models behind each job under
+"Calandria's own usage", and Settings names them beside the utility-job run count.
+
+Each tier is read off the agent that actually runs the job, which is not always the one you
+were looking at. A `/clear` note follows its own task's agent so the cost lands on that login;
+recaps and context drafts follow the utility agent. When a driver doesn't implement a job and
+falls back, the fallback agent's setting is the one used — a model id belongs to one provider's
+catalog, and `opus` is not something Codex can run.
 
 ## Authentication and billing
 
@@ -122,21 +160,25 @@ tools go through the permission modes above like everything else.
 
 Skills follow the same inheritance: a Claude session sees `~/.claude/skills` and the
 repository's `.claude/skills`; a Codex session sees `~/.agents/skills` and the repository's
-`.agents/skills`. Neither reads the other's directory, and neither reads the other's
-instruction file: Claude Code reads `CLAUDE.md`, Codex reads `AGENTS.md`. A project you
-might open with either agent needs both files present, even if one is a stub pointing at
-the other. Calandria ships a skill for preparing a repo to be worked on in many worktrees
-at once; `skills/README.md` covers installing it for both agents.
+`.agents/skills`. Antigravity reads the repository's `.agents/` customization roots too —
+skills, rules and hooks, with MCP config the one thing it does not take from there. No agent
+reads another's directory, and none reads another's instruction file: Claude Code reads
+`CLAUDE.md`, Codex and Antigravity read `AGENTS.md`. A project you might open with more than
+one of them needs both files present, even if one is a stub pointing at the other. Calandria
+ships a skill for preparing a repo to be worked on in many worktrees at once;
+`skills/README.md` covers installing it for both directories.
 
 Calandria's own background jobs don't inherit any of this. A `/clear` handoff note, a
-project recap, and a "Refresh with AI" context draft are internal transformations, not
+project recap, a "Refresh with AI" context draft and a "Refresh tag" plan check are internal
+transformations, not
 sessions you're sitting in, so they run with your MCP servers, plugins, skills, and hooks
 switched off. Otherwise every four-bullet recap would start your entire MCP fleet to offer
 tools it can never call. They still read `~/.claude/settings.json`, because that's also
 where a Bedrock/Vertex/proxy setup keeps its `env` block and `apiKeyHelper`, so they
-authenticate the same way your ordinary turns do. The context draft additionally loads the
-repository's `CLAUDE.md`, since describing the repo is its job, and can read, search, and
-list files, but not run commands or write anything.
+authenticate the same way your ordinary turns do. The two repo-reading jobs additionally load
+the repository's `CLAUDE.md`, since judging the repo is their job, and can read, search, and
+list files, but not run commands or write anything. Which model each of them runs on is the
+two-tier setting described under "Choosing a model" above.
 
 ## OpenAI Codex
 
@@ -148,41 +190,150 @@ Three upstream differences are visible:
 
 - ChatGPT-plan authentication reports tokens but not dollar cost, so Calandria estimates
   the API-price equivalent and marks it with `~`.
-- The context-window gauge is an estimate, marked `≈`. Claude's stream reports each model
-  request's usage, so a Claude task's gauge shows the window's actual contents as of the
-  latest request. `codex exec` reports only the thread's running totals on
-  `turn.completed`, so a Codex task's gauge is derived from its last turn's usage report,
-  and a turn spans many requests (every tool call re-reads the whole context), so a
-  tool-heavy turn over-reads. The per-request figure exists in the Codex binary
-  (`last_token_usage`) but only on the app-server protocol, which the SDK doesn't use.
-- The non-interactive CLI can't pause an active turn for a command-approval prompt.
-  Calandria offers Codex's own **workspace-write** (writable sandbox, never asks) and
-  **read-only** (plan) modes instead of a mid-turn approval mode, and asks Codex not to
-  require approvals (`approval_policy=never`). If an enterprise-managed Codex configuration
-  disallows that, Calandria detects the CLI's downgrade warning on the first affected turn
-  and switches to the compatible `on-request` policy automatically; the failed turn gets a
-  one-click Retry. `CODEX_APPROVAL_POLICY` remains the manual override. Claude's permission
-  cards have no Codex equivalent yet: the MCP bridge that carries `ask_user` could carry
-  approvals the same way, but the CLI would first need to route an approval request to a
-  tool call instead of a terminal prompt.
-- Codex tasks get Calandria's own tools but not the MCP servers from your
-  `~/.codex/config.toml`, where a Claude task does get yours. Same missing approver as
-  above: an inherited server's tools are offered to the model, and every call returns
-  `user cancelled MCP tool call`. Calandria unmounts them rather than leave tools that can't
-  work. Set `CODEX_INHERIT_MCP=1` to mount them anyway, worthwhile if you've set
-  `default_tools_approval_mode = "approve"` on your own servers. Each agent's card in
-  **Settings → Agents** states which side of this it's on, so you can check before picking
-  an agent for a task.
+- The context-window gauge reads the last request's prompt size on the default transport
+  (`codex app-server` reports it on every usage update), the same figure Claude's gauge
+  shows. On the `exec` transport the CLI reports only the thread's running totals on
+  `turn.completed`, so the gauge is derived from the last turn's usage report, marked `≈`.
+- Task turns run on `codex app-server`, the CLI's IDE protocol (`CODEX_TRANSPORT`, default
+  `app-server`). Its approval requests come back to Calandria over JSON-RPC and park on the
+  same permission card a Claude prompt uses, with Allow once / Always allow / Decline and the
+  same remembered rules per project. The previous `codex exec` transport auto-rejects every
+  approval inside the CLI and is kept as `CODEX_TRANSPORT=exec`, where the asking modes run
+  like acceptEdits.
+- The five permission modes map onto Codex's sandbox and approval policy
+  (`lib/agents/codex/policy.ts`); the picker labels each with Codex's own words:
+
+  | Mode | Codex label | Sandbox | Approvals |
+  |-|-|-|-|
+  | **auto** *(default)* | auto-review | workspace-write | on request, decided by Codex's own reviewer (`approvals_reviewer=auto_review`) |
+  | **default** | on-request | workspace-write | on request, decided by you on a permission card |
+  | **acceptEdits** | workspace-write | workspace-write | never: what the sandbox refuses fails and the model works around it |
+  | **bypassPermissions** | danger-full-access | none | never |
+  | **plan** | read-only | read-only | never |
+
+  A workspace-write turn can commit from its worktree. Codex protects a checkout's `.git`
+  and, for a linked worktree, the real gitdir the `.git` file points at, while the repo's
+  common `.git` sits outside every writable root, so `git add` and `git commit` would fail
+  in every sandboxed mode. Calandria grants what a commit writes, the task's private gitdir
+  plus the repo's `.git/objects`, `refs` and `logs`, and nothing else: `hooks/`, `config`
+  and `info/` keep Codex's protection. `CODEX_WRITABLE_ROOTS` adds more directories.
+- If an enterprise-managed Codex configuration disallows `approval_policy=never`, Calandria
+  detects the CLI's downgrade warning on the first affected turn and sends `on-request` for
+  the never-asking modes from then on, which parks escalations on a card instead of failing
+  them; that first turn gets a one-click Retry. `CODEX_APPROVAL_POLICY` is the manual
+  override for those modes.
+- Codex tasks get Calandria's own tools and, like Claude tasks, the MCP servers from your
+  `~/.codex/config.toml`. Set `CODEX_INHERIT_MCP=0` to keep your servers off task sessions.
+  Calandria then overrides each one with `enabled = false` plus an inert transport, since
+  Codex validates every override before merging plugin-provided servers and rejects one with
+  no transport. Each agent's card in **Settings → Agents** states whether your servers are
+  mounted, so you can check before picking an agent for a task.
+
+### Linux sandbox
+
+Codex confines `workspace-write` and `read-only` turns with bubblewrap, which needs to
+create an unprivileged user namespace. Ubuntu 24.04 blocks that by default
+(`kernel.apparmor_restrict_unprivileged_userns=1`), and on such a host every command in
+every workspace-write or read-only turn fails. The only signal is a startup warning from
+`codex app-server`: "Codex's Linux sandbox uses bubblewrap and needs access to create user
+namespaces."
+
+Calandria detects that warning and flags the Codex card in **Settings → Agents** with the
+fix and a "Check again" button. While the flag is set, Calandria refuses to start a
+workspace-write or read-only turn and fails it with an explanation instead of running one
+where every command fails. `bypassPermissions` (danger-full-access) uses no sandbox and is
+never refused.
+
+Fix it one of these ways:
+
+- Run `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` and persist it under
+  `/etc/sysctl.d/`.
+- Add an AppArmor profile that allows `bwrap` to create user namespaces.
+- Run the task in `bypassPermissions` mode.
+- In a container, set `CODEX_EXTERNAL_SANDBOX=1`. It sends `workspace-write` turns Codex's
+  `externalSandbox` policy, which runs commands unconfined and relies on the container as
+  the boundary. It covers `workspace-write` only: `read-only` (plan mode) stays sandboxed,
+  because its guarantee is that nothing is writable and a container does not provide that.
+  It has no effect under `CODEX_TRANSPORT=exec`, which cannot express the policy.
+
+## Antigravity (Gemini)
+
+Antigravity is Google's coding agent and Gemini is what it runs. There is no JavaScript SDK for
+it, so Calandria drives the `agy` CLI directly — spawning the binary and normalizing its NDJSON
+stream (`lib/agents/gemini/`). Tasks get parallel worktrees, diff review and merge, `/clear`
+lineage, project context, interactive questions through Calandria's MCP bridge, and usage
+tracking, the same as the other two.
+
+Sign in with your Google account from **Settings → Agents**. Two things about that login differ
+from Claude's and Codex's, and the card handles both:
+
+- **The authorize link is short-lived.** The CLI waits 60 seconds for the callback and that
+  window is not configurable, so **Start again** stays on the card throughout. It is not a retry:
+  the code is bound to the process that printed the link, so a new attempt means a new link.
+- **The code box is one of two ways this finishes.** Google's callback page completes the sign-in
+  for the CLI waiting on it, so a user who never copies anything is nonetheless signed in. The
+  card polls for that as well, and closes itself when the CLI reports it is connected.
+
+**In a container, use an API key.** `agy` keeps its OAuth token in the OS keyring over the D-Bus
+Secret Service and has no file fallback, and the published image runs no keyring daemon — so the
+subscription sign-in cannot complete there at all. Set `GEMINI_API_KEY`, or paste a key on the
+agent's card, and the driver points the CLI at it. That path bills Google's API rather than
+drawing on your Antigravity subscription. A desktop install with a running keyring uses the
+subscription login as normal.
+
+Four upstream differences are visible:
+
+- **Three permission modes, and not the CLI's own default one.** Calandria offers **skip
+  permissions** (auto-approve every tool, the default on this agent), **accept-edits** and
+  **plan**. The CLI's default mode asks a human about each tool call, and a headless run has
+  nobody to ask, so
+  every tool is auto-denied and the turn ends having done nothing — measured. That mode is
+  therefore not offered rather than offered-and-broken, the same judgement Calandria makes about
+  Codex's unreachable approval policies.
+- **A denied tool is nearly silent.** The auto-denial changes neither the exit code (0) nor
+  reliably the status: the same denial has been seen ending a run both `CANCELED` and `SUCCESS`.
+  So the driver reads the denial line off stderr, and never reads `CANCELED` alone as "the user
+  stopped it" unless Calandria's own Stop fired.
+- **No cost is reported at all.** The usage report carries token counts and no dollar figure, so
+  Calandria prices those tokens at Google's published API rates and marks the result `~`, the
+  same convention as Codex's estimate. The context gauge is a heuristic for a related reason: the
+  CLI emits no per-request context figure, and its usage totals accumulate over the whole
+  conversation, which is spend rather than occupancy.
+- **Reasoning effort is part of the model id.** The catalog sells effort in the slug
+  (`gemini-3.8-flash-high`), so there is no separate effort picker — choosing the model is
+  choosing the effort. That catalog also serves Claude and open-weights models through the same
+  Antigravity subscription.
+
+Plan usage works here the way it does for Claude: the CLI's own `/usage` reports the weekly and
+5-hour quota remaining, and reports it without spending any, so the titlebar meter works on this
+agent too. It lists two PAIRS of windows, because an Antigravity subscription meters the Gemini
+models and the Claude/GPT models it also serves against separate limits; the pill itself shows
+the Gemini pair.
+
+An Antigravity task gets Calandria's own tools and **not** the MCP servers in your
+`~/.gemini/config/mcp_config.json`. The CLI reads MCP config from that one user-global file, so
+each task is handed its own copy containing only Calandria's bridge — which is what lets tasks
+run in parallel without stealing each other's tool identity. Each agent's card in
+**Settings → Agents** states this.
+
+Calandria always runs the CLI with `AGY_CLI_DISABLE_AUTO_UPDATE=true`, so a self-update can never
+swap the binary out mid-turn or mid-login. `AGY_CLI_PATH` pins a specific binary when PATH is
+trimmed; the published image installs a version the `Dockerfile` records and reviews the checksum
+of.
 
 ## Local models
 
 A project, or a single task, can run its turns against a local model server instead of the
-agent's cloud login. There is no separate driver: both CLIs already accept a different
-endpoint, and Calandria sets it per turn. Claude Code reads `ANTHROPIC_BASE_URL` and
-`ANTHROPIC_AUTH_TOKEN` from its environment. Codex reads its provider from
-`~/.codex/config.toml`, so Calandria passes a provider entry of its own as a config override
-(`model_provider = "calandria-local"`, on the Responses wire API) and leaves your
-`config.toml` alone. Everything else, worktrees, diff review, merge, tools, asks, works as
+agent's cloud login. There is no separate driver: the Claude and Codex CLIs both accept a
+different endpoint, and Calandria sets it per turn. **Antigravity does not take part in the
+Local model preset** — its CLI exposes no endpoint override, so a local-model project runs an
+Antigravity task against Google as usual; point such a task at Claude or Codex instead. It does
+take part in the **Gateway** preset below, which is a different endpoint knob the CLI does honour.
+
+Claude Code reads `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` from its environment. Codex
+reads its provider from `~/.codex/config.toml`, so Calandria passes a provider entry of its
+own as a config override (`model_provider = "calandria-local"`, on the Responses wire API)
+and leaves your `config.toml` alone. Everything else, worktrees, diff review, merge, tools, asks, works as
 it does in the cloud.
 
 **Setup.** Open the project's settings and set **Model provider** to *Local model*. The base
@@ -197,6 +348,40 @@ carries a `local` chip beside the agent mark.
   `ollama`. Run a model with at least a 32K context window.
 - **LM Studio**: start the local server, load a model, then base URL `http://localhost:1234`
   and the model's identifier as LM Studio shows it.
+
+**Which `codex` this works with: 0.146.0 or newer.** The Codex half of the override is the one
+piece here that reaches into another program's configuration schema, and the `codex` CLI
+autoupdates on your machine independently of Calandria. That would be a footnote if a broken
+mapping failed loudly, but it doesn't: an override the CLI no longer recognises is *inert*, so
+it would quietly fall back to the built-in `openai` provider and bill your ChatGPT login while
+the session header still showed the `local` chip. So Calandria asks the CLI to confirm, once per
+endpoint, that `model_provider` really did resolve to `calandria-local` (`codex doctor --json`,
+about a second) and **refuses the turn** if it can't get that confirmation, naming the version it
+saw. The answer is remembered against the CLI version that gave it and re-earned whenever that
+version moves. Set `CALANDRIA_CODEX_PROVIDER_CHECK=off` to skip the check and accept the risk, or
+pin a known-good binary with `CODEX_CLI_PATH`. On Windows, if your `codex` is the npm `.cmd`
+shim the check stands down and says so in the log — the shim's command line can't carry the
+settings faithfully enough to check them; point `CODEX_CLI_PATH` at the real executable to get
+it back. Claude Code needs none of this: it reads
+`ANTHROPIC_BASE_URL` directly, and measured against a sink endpoint on 2.1.257 it sends every
+request there under a subscription login rather than falling back to Anthropic.
+
+**Picking a model.** Once a project is on an endpoint, the model field stops being
+the driver's catalog and becomes a text box: the vendor's line-up is not what that
+machine has, and only the machine knows. Its suggestions are what the server itself
+reports — Calandria asks Ollama's `GET /api/tags` first (its names are the ids the
+Anthropic endpoint wants, tag included), then `GET /v1/models` for LM Studio and
+anything else OpenAI-compatible. Anything can still be typed, so a model pulled a
+minute ago works before any probe has seen it. The probe is always server-side
+(`GET /api/projects/[id]/models`): the endpoint is loopback on the machine
+Calandria runs on, which the browser usually can't reach at all.
+
+Settings → Agents reports the instance's default endpoint the same way — *Ollama at
+localhost:11434: reachable, 4 models* — separately from the agents above it, because
+an agent's *connected* is its CLI login and says nothing about a local server. A
+project on Ollama runs through a Claude login it never uses, and fails with a
+perfectly good one when Ollama is down. `CALANDRIA_MODEL_PROBE_MS` (2500ms) bounds
+how long the probe waits.
 
 **What the override can and can't carry.** The stored form is `projects.agent_env`, a JSON
 object over a fixed allowlist: the two base URLs, the Anthropic auth token, the model
@@ -231,17 +416,238 @@ you typed for it. The reverse holds too. A project-level `ANTHROPIC_AUTH_TOKEN` 
 only when the same override points the base URL somewhere other than Anthropic, so the
 field is not a way around `CALANDRIA_ALLOW_API_KEY_ENV`.
 
-**Billing.** A turn against an override is recorded with a cost of zero and tagged with the
-endpoint's host in `task_usage.provider`. Token counts are still recorded, since the local
-model still filled a context window, and the context gauge still works. Project-scoped
-one-shots (recaps, *Refresh with AI*) run on the utility agent's own login, not the
-project's endpoint.
+**Billing, and what the gauges can still tell you.** A turn against an override is
+recorded with a cost of zero and tagged with the endpoint's host in
+`task_usage.provider`, and the session header shows no dollar figure at all rather
+than `$0.00` — there is no price, and the API-price equivalent would be the list
+price of a model that didn't run. Token counts *are* recorded, since the local model
+still filled a context window. The window itself is reported as **unknown**: the
+override rewrites `ANTHROPIC_MODEL` and the `opus`/`sonnet`/`haiku` aliases, so a
+task whose picker still reads *Sonnet* is not running Sonnet, and sizing it from the
+catalog would draw a 4% gauge on a 32K window about to overflow. The rail shows the
+token count without a percentage. Project-scoped one-shots (recaps, *Refresh with
+AI*, *Refresh tag*) run on the utility agent's own login, not the project's endpoint.
 
 **Delegating from a cloud session.** A task can override its project on its own row, which is
 what lets a frontier model hand routine work to a local one. `suggest_task` takes
 `provider: "local"` plus a `model`: the task it files runs against the instance's local
 endpoint whatever the project's setting, and `provider: "cloud"` does the reverse inside a
 local project. The same field is `agent_env` on `PATCH /api/tasks/[id]`.
+
+## LiteLLM gateway
+
+A [LiteLLM](https://docs.litellm.ai) proxy is the fourth **Model provider**, beside *Local model*
+and *Custom base URL* and on the same seam. It is not a driver: LiteLLM speaks the Anthropic
+Messages API, so Claude Code reaches it through `ANTHROPIC_BASE_URL` exactly as it reaches Ollama.
+What the gateway adds over a custom base URL is a catalog it will tell you about, spend it can
+attribute per key and tag, and budgets it enforces.
+
+**Scope today: Claude Code, Codex and Antigravity.**
+
+**Setup.** Set `CALANDRIA_LITELLM_BASE_URL` to the proxy's origin. Unset is the off switch: with
+no address the preset is absent from the settings form and Settings → Agents shows no card. Then
+open a project's settings, set **Model provider** to *Gateway*, name a model your `model_list`
+serves, and choose who pays:
+
+- **Billed to the gateway's key** — the instance's virtual key goes out as the turn's Anthropic
+  auth token, so the turn draws on that key's account. Set the key with `CALANDRIA_LITELLM_KEY`
+  or in Settings → Agents.
+- **Billed to your own plan** — no credential variable is set, the CLI keeps its own `/login`, and
+  the gateway forwards it upstream. This needs `general_settings.forward_client_headers_to_llm_api:
+  true` on the proxy. Measured working on Claude Code 2.1.257 through LiteLLM 1.101.0.
+
+Every gateway turn also carries `x-litellm-api-key` and a tag list naming the project, task and
+agent, so LiteLLM's own spend views break down by task with nothing written on Calandria's side.
+Those headers are composed per turn rather than stored: `ANTHROPIC_CUSTOM_HEADERS` is Claude
+Code's only knob for arbitrary request headers, and a project field that could set it would be a
+way to make every turn in that project send anything at all. It is deliberately absent from the
+`agent_env` allowlist, and the key is absent from the project row entirely — it lives in a 0600
+file beside the database and is resolved at turn time.
+
+**The health card.** Settings → Agents reports the gateway separately from the agents above it,
+for the reason the local endpoint is reported separately: an agent's *connected* is its CLI login
+and says nothing about whether the gateway is up. It reads `/health/readiness` (which takes no
+key, so an instance with the address and no key still gets an answer), the `x-litellm-version`
+header that rides on every response, and a model count from `/model/info`. `/key/info` answers
+`500 Database not connected` on a proxy with no Postgres behind it, and the card says **keys,
+budgets and spend need LiteLLM's database** rather than showing blanks where those would go.
+
+**What a gateway turn costs.** Recorded as **unpriced** (`task_usage.cost_usd` is NULL) and left
+out of every total, the same row a custom base URL gets. The reason differs: the gateway states
+its prices in `/model/info` and computes the real figure itself, but no CLI exposes the
+`x-litellm-response-cost` header it answers with, so the number has to be recomputed from token
+counts. Until that lands, unpriced is the honest record. The session header shows a `gateway`
+chip.
+
+### Codex through the gateway
+
+Codex reads its provider from `~/.codex/config.toml` rather than from the environment, so the
+gateway reaches it as a provider entry the driver passes on the command line — the same mapping a
+local endpoint gets (**Local models** above), with a second entry named `calandria-gateway`:
+
+```toml
+[model_providers.calandria-gateway]
+name = "Calandria gateway"
+base_url = "<gateway>/v1"
+env_key = "CALANDRIA_GATEWAY_KEY"
+wire_api = "responses"
+http_headers = { "x-litellm-tags" = "calandria,project:<id>,task:<id>,agent:codex" }
+```
+
+`env_key` names a VARIABLE the CLI reads, not the key itself, which is the part people get wrong:
+the value goes in the turn's environment as `CALANDRIA_GATEWAY_KEY`, set from the same instance key
+Claude Code sends as `x-litellm-api-key`. The tag list is identical too, so LiteLLM's spend views
+break down a Codex task the same way. `codex doctor --json` proves the entry took before the turn
+spends anything, and remembers its verdict against this base URL rather than the local endpoint's.
+
+**Codex is billed to the gateway's key in both billing modes.** The ChatGPT-forwarding equivalent
+is `requires_openai_auth = true`, and on the spike host it sent no `Authorization` header at all,
+so it stays out until someone with a ChatGPT login measures it through LiteLLM. A gateway project
+set to *Billed to your own plan* still forwards the Claude Code login for its Claude tasks; its
+Codex tasks draw on the key.
+
+Three things to expect, none of them fixable here:
+
+- **The deployment cooldown below hits Codex hardest.** Codex retries a failed request several
+  times on its own, so one upstream error can turn every retry into `429 No deployments available`
+  until the CLI gives up with "exceeded retry limit". Tune `router_settings.allowed_fails` and
+  `cooldown_time` before running Codex tasks in parallel.
+- **LiteLLM adds `reasoning.summary` to reasoning-effort requests**, which OpenAI rejects for
+  organisations that have not completed verification (BerriAI/litellm#16032). Either verify the
+  organisation upstream or run Codex on a model that takes no reasoning effort.
+- **`gpt-5-codex` through LiteLLM has a history of silent empty completions when MCP servers are
+  attached** (BerriAI/litellm#14846, closed). Nothing mounts MCP servers on a gateway Codex task
+  today; the hosted-MCP work will test that combination on pinned versions before enabling it.
+
+**No plan meter.** Codex's rate-limit snapshot is empty behind a gateway, and the key's spend is
+not a plan window in any case, so a gateway Codex task offers no "resume when your window resets".
+The titlebar meter still reports the ChatGPT login for whatever cloud Codex tasks the instance runs.
+Codex also prints `Model metadata for gpt-5-codex not found. Defaulting to fallback metadata` for
+any custom provider; it is noise, not a failure.
+
+### Antigravity through the gateway
+
+`agy` speaks the Gemini-native API, not the OpenAI or Anthropic shape, so the gateway reaches it
+through `GOOGLE_GEMINI_BASE_URL` and `GEMINI_API_KEY` rather than a config override like Codex's.
+Measured on `agy` 1.1.24 against LiteLLM 1.101.0: with `{"modelProvider":"gemini"}` in
+`~/.gemini/antigravity-cli/settings.json` and those two variables set, `agy` sends
+`POST /v1beta/models/<model>:streamGenerateContent?alt=sse` with `x-goog-api-key`, which LiteLLM
+serves at its root — a `model_list` entry (or a `gemini/*` wildcard) has to exist for every model
+name the CLI uses. Calandria writes that settings file itself for a gateway task; there is nothing
+to set up beyond picking the Gateway preset.
+
+**Always billed to the gateway's key.** `agy` has no equivalent of Claude Code's own-plan
+forwarding, so the *Billed to your own plan* choice above has no effect on Antigravity tasks —
+they draw on the key either way.
+
+**The gateway address must be HTTPS unless it is loopback.** This is `agy`'s own rule (the Gemini
+CLI source enforces it, and Antigravity's docs describe the same), not a Calandria restriction, so
+an `http://` gateway on any other address would fail every Antigravity turn deep inside the CLI.
+Calandria refuses the combination in the task dialog instead — "Start session immediately" is
+disabled and the reason is stated, rather than letting the turn fail with an opaque error.
+
+**The health card names a missing side model.** `agy` calls a flash-lite model on every turn as
+well as whichever model the task picked — measured making one call each to
+`gemini-3.1-flash-lite-preview` and `gemini-3.1-pro-preview` in a single turn — and a turn whose
+side model is absent from the gateway's catalog fails with an unhelpful `Agent execution
+terminated due to error`. Settings → Agents runs `agy models` against the gateway's `/model/info`
+catalog and names anything the CLI would ask for that the catalog doesn't serve, so the gap shows
+up before a task hits it.
+
+**No plan meter.** `agy -p "/usage"` reports Google's own plan windows, which a gateway turn never
+spends, so a gateway Antigravity task offers no "resume when your window resets". The titlebar
+meter still reports the Google account for whatever cloud Antigravity tasks the instance runs. The
+gateway key's own spend is what to watch instead for a gateway one.
+
+### Hosted MCP servers
+
+**Claude Code only for now.** A project's settings picker lists the gateway's own hosted MCP
+servers (`GET <gateway>/v1/mcp/server`, with a tool-name preview from `GET
+<gateway>/mcp-rest/tools/list`) and lets you check off which ones every task mounts. The picker
+needs no database: LiteLLM answers both routes off the calling key's own `object_permission`.
+Turn the feature off entirely with `CALANDRIA_LITELLM_MCP=0`.
+
+Mounting is independent of the *Model provider* choice above — a project on the *Cloud* preset can
+still mount hosted MCP servers, since the mount is a separate HTTP call to `<gateway>/<alias>/mcp`
+and never touches `ANTHROPIC_BASE_URL`. A selected alias becomes `mcpServers[alias]` in the
+session, next to Calandria's own tools:
+
+```json
+{ "type": "http", "url": "<gateway>/<alias>/mcp", "headers": { "x-litellm-api-key": "Bearer <key>" } }
+```
+
+The credential goes on `x-litellm-api-key`, never `Authorization` — LiteLLM reserves that header
+for the upstream server's own OAuth, and sending the gateway key there is the single most common
+mistake on LiteLLM's own troubleshooting page. A task with a per-task virtual key
+(`docs/design/litellm.md`, "Per-task virtual keys") uses that key here too, so its
+`object_permission.mcp_servers` scopes exactly which of the project's selected servers the task can
+actually reach; without one, every mount shares the instance key.
+
+**Tool names and permissions.** LiteLLM returns tools prefixed `<alias>-<tool>`, so Claude sees
+`mcp__<alias>__<alias>-<tool>` — an ordinary MCP tool as far as `canUseTool` is concerned: a card
+under the default permission mode, classifier-screened under `auto`, auto-approved under
+`bypassPermissions`. Nothing about the read-only allowlist changes. The picker's **Trust this
+server** button mints a remembered rule covering the whole alias (`mcp__<alias>__*`) through the
+same `permission_rules` table a Bash "Always allow" uses, so it shows up — and can be revoked — in
+Settings → Run defaults next to your remembered commands. It only ever mints: revoking a trust is
+Settings' job, the same way undoing a card's "Always allow" is.
+
+**Auth types.** A server whose `auth_type` needs no browser (no auth, an API key, a bearer token,
+basic auth, OAuth2 client-credentials or token-exchange, or AWS SigV4) mounts silently. One using
+OAuth2 authorization-code needs a human to sign in at the gateway's own UI first — a detached task
+has no browser to do it in — so the picker marks it **sign in at the gateway first** and mounts it
+anyway, since LiteLLM holds the token for every later call once that's done. A wrong key against
+the mount endpoint itself answers **HTTP 400, not 401** (measured), so the picker's connection
+check reads the response body for the real reason rather than trusting the status code.
+
+**Codex and Antigravity mount the same selection too**, each with a driver-specific wrinkle
+(`docs/design/litellm.md`, "Hosted MCP servers").
+
+Codex gates MCP calls with its own per-server approval mode, which the turn's approval policy
+doesn't reach, so every mounted server also carries `default_tools_approval_mode: "approve"`, which
+auto-approves every one of its tools for the task the moment it mounts. That is offered under every
+permission mode but `plan`, which runs read-only and mounts none of them, the same reason
+`codex/mcp.ts` unmounts the user's own inherited servers under a mode with nothing to call them. Settings → Agents states
+the gate on Codex's card. Before relying on this in production, test `gpt-5-codex` plus a mounted
+MCP server on your pinned LiteLLM and codex versions — BerriAI/litellm#14846 recorded silent empty
+completions for exactly that combination.
+
+Antigravity mounts every selected alias into the task's own `mcp_config.json`, slugified to
+hyphens: the CLI's policy engine splits a tool name on the first underscore after `mcp_`, so an
+alias with one would break a wildcard permission rule for it. The URL still addresses the real
+(unslugged) alias LiteLLM hosts.
+
+### Two caveats from the spike
+
+**One upstream error cools the deployment for everyone.** A single 401 from upstream put the
+deployment in cooldown and every later request got `429 No deployments available for selected
+model` until the window expired. With many parallel sessions on one deployment, a transient
+upstream failure takes them all down. Raise `router_settings.allowed_fails` and shorten
+`cooldown_time` if you run more than a handful of tasks at once:
+
+```yaml
+router_settings:
+  allowed_fails: 8
+  cooldown_time: 30
+```
+
+**LiteLLM rebuilds `anthropic-beta` and drops values it does not recognise.** On the unified
+route, three of the eight betas Claude Code sent did not reach upstream:
+`claude-code-20250219`, `thinking-token-count-2026-05-13` and `extended-cache-ttl-2025-04-11`.
+The last one is a billing regression — a 1-hour cache request silently becomes a 5-minute one —
+so **1-hour prompt caching is unavailable through the gateway**. LiteLLM assembles the header
+from a set of betas it knows plus its own additions
+(`litellm/llms/anthropic/common_utils.py`, `get_anthropic_headers`), while Claude Code's gateway
+protocol asks that it be forwarded as an open list.
+
+Two more worth knowing. Do not point `ANTHROPIC_BASE_URL` at `<gateway>/anthropic`: that
+pass-through is byte-faithful but ignores `model_list` and calls api.anthropic.com directly with
+your forwarded token. And `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY` cannot help, because
+LiteLLM's `/v1/models` is OpenAI-shaped and Claude Code expects the Anthropic shape
+(BerriAI/litellm#27180); Calandria does its own discovery from `/model/info`.
+
+The full spike, including the reproduction recipe and the measured request shapes, is in
+`docs/design/litellm.md`.
 
 ## Adding another agent
 
@@ -253,8 +659,9 @@ See [Architecture: the agent-driver seam](ARCHITECTURE.md#the-agent-driver-seam-
 for the implementation guide. Proposals for another agent are welcome in
 [GitHub Discussions](https://github.com/calandria-dev/calandria/discussions/categories/ideas).
 
-A Google driver is in progress. The spike that chose its backend, the Antigravity CLI
-(`agy`) rather than Gemini CLI, is recorded in
+The third driver is the worked example for a CLI with no SDK. The spike that chose its
+backend, the Antigravity CLI (`agy`) rather than Gemini CLI, is recorded in
 [design/gemini-driver.md](design/gemini-driver.md): why (Gemini CLI stopped serving Google
 AI Pro, Ultra and free accounts on 2026-06-18), the measured headless surface of both CLIs,
-the event mapping, the login flow and the open questions the driver has to settle.
+the event mapping, the login flow, and which of its assumptions the driver then had to
+correct against a real capture.

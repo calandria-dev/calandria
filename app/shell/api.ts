@@ -1,15 +1,15 @@
 // Tiny fetch helpers used throughout the Calandria client.
 
-// Routes report failures as JSON `{ error }` — unwrap that so surfaced messages
-// read "worktree is dirty", not a raw JSON blob (transcript system errors, modal
-// error notes and ErrNote all show this string verbatim).
+// Routes report failures as JSON `{ error }`; unwrap that so surfaced messages
+// read "worktree is dirty" instead of a raw JSON blob (transcript system errors,
+// modal error notes and ErrNote all show this string verbatim).
 async function fail(r: Response): Promise<never> {
   const raw = await r.text();
   let msg = raw || `${r.status} ${r.statusText}`;
   try {
     const j = JSON.parse(raw);
     if (typeof j?.error === "string" && j.error) msg = j.error;
-  } catch { /* not JSON — keep the raw body */ }
+  } catch { /* not JSON, keep the raw body */ }
   throw new Error(msg);
 }
 

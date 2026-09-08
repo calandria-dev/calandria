@@ -1,33 +1,12 @@
-// Keeping a task's GitHub PR state fresh.
+// Keeps a task's GitHub PR state fresh: polls `gh pr view` per task as a
+// detached job (per CLAUDE.md), persists the result, and publishes it on the
+// bus so the board and session rail update without client polling.
 //
-// tasks.pr_url used to be write-once display data: "Create PR" stored a URL and
-// nothing ever asked GitHub about it again, so the app could not tell you
-// whether the PR was open, red, approved, merged or closed — and therefore
-// could not do anything useful after the PR existed. This module is the other
-// half: one `gh pr view` per task, run as a DETACHED job (never a held HTTP
-// request, per CLAUDE.md), persisted, and announced on the bus so the board and
-// the session rail update without polling.
-//
-// Three rules keep it cheap, in the order they bite:
-//
-//   1. FRESHNESS. Every trigger goes through refreshPrState(), which returns
-//      early inside PR_STALE_MS unless forced. Opening the same task ten times
-//      is one fetch, exactly like lib/git.ts's fetch cooldown.
-//   2. TERMINAL STATES ARE NEVER RE-POLLED. A merged or closed PR cannot change
-//      back, so the sweep's candidate set is bounded by OPEN work rather than by
-//      how many PRs this instance has ever opened.
-//   3. PRESENCE. The sweep skips a pass with no browser tab watching
-//      (watcherCount()), the same heuristic the permission gate uses. Nobody can
-//      see a chip nothing is rendering, and an idle instance must not fork gh
-//      forever — the create/open/click triggers still work with no tab, because
-//      each of them IS a client.
-//
-// Statically SDK-free, which is what the PR routes that call it need — they are
-// ordinary sync-compiled route entries. It is in tests/importGraph.test.ts's
-// DYNAMIC_ONLY set rather than PINNED for one edge: a merged PR hands off to
-// lib/reclaim.ts, whose dependent auto-start sweep reaches the runner through
-// `await import()`. Same guarantee (no static path to an SDK), reached the way
-// lib/autoStart.ts's own importers reach it.
+// refreshPrState() returns early inside PR_STALE_MS unless forced. Terminal
+// states (merged/closed) are never re-polled, and the sweep skips a pass
+// when watcherCount() is zero. Statically SDK-free (DYNAMIC_ONLY in
+// tests/importGraph.test.ts): a merged PR reaches the runner via
+// lib/reclaim.ts's `await import()`.
 
 import { getProject, getTask, setTaskPrState, stalePrTasks, openPrTaskCount } from "./store";
 import { fetchPrState, type PrFailingCheck, type PrSnapshot } from "./github";
@@ -36,9 +15,9 @@ import { publishGlobal, watcherCount } from "./events";
 import { PR_POLL_BATCH, PR_POLL_MS, PR_STALE_MS } from "./config";
 import type { Task } from "./types";
 
-// Refreshes genuinely executing in THIS process, so a double click, a remount
-// and the sweep landing on the same task at once cost one subprocess rather
-// than three. Module-level = per server, like lib/contextRefresh.ts's.
+// Tracks refreshes running in this process, so a double click, a remount and
+// the sweep landing on the same task at once share one subprocess. Module
+// scoped per server, like lib/contextRefresh.ts.
 const inFlight = new Set<string>();
 
 /** Is a refresh for this task running right now? (The UI's spinner.) */
@@ -46,7 +25,7 @@ export function isRefreshingPr(taskId: string): boolean {
   return inFlight.has(taskId);
 }
 
-/** What the client renders — the persisted snapshot, nothing recomputed. */
+/** What the client renders: the persisted snapshot, nothing recomputed. */
 export interface PrView {
   url: string;
   number: number;
@@ -55,7 +34,7 @@ export interface PrView {
   review: string;
   merged_at: number;
   synced_at: number;
-  /** 1 while the PR is a draft — open, but unmergeable by anyone. */
+  /** 1 while the PR is a draft: open, but not mergeable. */
   draft: number;
   /** gh's mergeStateStatus (CLEAN / BLOCKED / DIRTY / BEHIND / UNSTABLE; "" = unknown). */
   merge_state: string;
@@ -65,10 +44,9 @@ export interface PrView {
 }
 
 /**
- * The red checks stored on a task row. Defensive on purpose: the column is JSON
- * this process wrote, but it is also a column an older build never wrote and a
- * hand-edited database could hold anything in, and a malformed one must cost a
- * chip its detail rather than throw inside a task list.
+ * The red checks stored on a task row. The column may be missing (an older
+ * build never wrote it) or malformed (a hand-edited database), so a bad
+ * value returns an empty list instead of throwing inside a task list render.
  */
 export function parseFailingChecks(json: string): PrFailingCheck[] {
   if (!json) return [];
@@ -99,19 +77,15 @@ export function prView(task: Task): PrView | null {
 }
 
 // The red-check list as it is stored: gh's own order, so a rollup that hasn't
-// moved serializes identically and `changed()` stays quiet.
+// moved serializes identically and `changed()` returns false.
 function serializeFailing(snap: PrSnapshot): string {
   return snap.failing.length ? JSON.stringify(snap.failing) : "";
 }
 
-// Did GitHub actually tell us something new? pr_synced_at moves on EVERY
-// refresh, so comparing whole rows would publish a "the task changed" event
-// every five minutes forever and have every tab refetch its tray for nothing.
-// Only the facts a human can see count as a change. That includes the two the
-// Squash & merge button is enabled off (lib/prMerge.ts) — a draft marked ready,
-// or a conflict appearing, has to reach the rail as promptly as a check going
-// red — and WHICH checks are red, since a second job failing under an already-
-// red rollup changes what the chip names and what a "Fix CI" turn would be told.
+// pr_synced_at moves on every refresh, so comparing whole rows would publish
+// a "task changed" event on every poll. Only facts visible to the user count
+// as a change: PR state, checks, review, merge time, draft flag, merge
+// state, and which specific checks are failing.
 function changed(task: Task, snap: PrSnapshot): boolean {
   return (
     task.pr_state !== snap.state ||
@@ -131,12 +105,12 @@ export type RefreshOutcome =
 /**
  * Re-read one task's PR from GitHub and persist what came back.
  *
- * Never throws: every caller is a fire-and-forget trigger, and a dead network,
- * a logged-out gh or a deleted PR must come back as a reported outcome rather
- * than an unhandled rejection in a detached job.
+ * Never throws: every caller is a fire-and-forget trigger. A dead network, a
+ * logged-out gh, or a deleted PR comes back as a reported outcome instead of
+ * an unhandled rejection in a detached job.
  *
- * `force` skips the freshness window — it is what the explicit Refresh button
- * and the sweep pass, since both have already decided the answer is stale.
+ * `force` skips the freshness window. The explicit Refresh button and the
+ * sweep pass it, since both have already decided the answer is stale.
  */
 export async function refreshPrState(taskId: string, opts: { force?: boolean } = {}): Promise<RefreshOutcome> {
   const task = getTask(taskId);
@@ -158,10 +132,10 @@ export async function refreshPrState(taskId: string, opts: { force?: boolean } =
     const res = await fetchPrState(cwd, task.pr_number);
     const now = Date.now();
     if (!res.ok) {
-      // Stamp the clock even on failure, so a repo GitHub can't answer for
-      // (no network, a deleted PR) backs off to the sweep's interval instead of
-      // being retried by every tick. The last good snapshot is left intact —
-      // "we couldn't ask" is not the same as "the PR changed".
+      // Stamp the clock even on failure, so a repo GitHub can't answer for (no
+      // network, a deleted PR) backs off to the sweep interval instead of
+      // being retried on every tick. The last good snapshot is left intact: a
+      // failed ask is not the same as a changed PR.
       setTaskPrState(taskId, {
         state: task.pr_state,
         checks: task.pr_checks,
@@ -187,17 +161,15 @@ export async function refreshPrState(taskId: string, opts: { force?: boolean } =
       merge_state: snap.mergeState,
       failing: serializeFailing(snap),
     });
-    // task_edited is the "refetch the row" event, which is exactly right here:
-    // the coarse wire payload can't carry pr_state or a check rollup, so
-    // listeners are told to re-read rather than handed a field they'd have to
-    // learn. Published only on a real change (see changed()).
+    // task_edited tells listeners to re-read the row, since the coarse wire
+    // payload can't carry pr_state or a check rollup. Published only on a
+    // real change (see changed()).
     if (moved) publishGlobal(taskId, { type: "task_edited" });
-    // A PR reporting `merged` is the definitive signal that this task's checkout
-    // is disposable (lib/reclaim.ts). Fire-and-forget, and a no-op unless the
-    // project opted in — this must not turn a poll into a git teardown for
-    // everybody. Guarded on the SNAPSHOT rather than on `moved`, since a forced
-    // refresh of an already-merged PR should still finish an interrupted
-    // reclaim; rule 2 above means it can never become a loop.
+    // A PR reporting `merged` signals that this task's checkout is disposable
+    // (lib/reclaim.ts). Fire-and-forget and a no-op unless the project opted
+    // in. Guarded on the snapshot, so a forced refresh of an already-merged
+    // PR still finishes an interrupted reclaim; terminal states are never
+    // re-polled, so this cannot loop.
     if (snap.state === "merged") maybeAutoReclaim(taskId);
     return { ok: true, changed: moved, view: prView(row ?? task)! };
   } finally {
@@ -206,9 +178,9 @@ export async function refreshPrState(taskId: string, opts: { force?: boolean } =
 }
 
 /**
- * Kick a refresh and return immediately. This is the shape every trigger wants:
- * creating a PR, opening a task and the sweep all want the fetch to happen
- * without a request waiting on a network round trip to github.com.
+ * Kicks a refresh and returns immediately, so a request never waits on a
+ * network round trip to github.com. Used by PR creation, opening a task, and
+ * the sweep.
  */
 export function schedulePrRefresh(taskId: string, opts: { force?: boolean } = {}): void {
   void refreshPrState(taskId, opts).catch((e) => {
@@ -248,7 +220,7 @@ export function startPrPolling(): void {
   if (PR_POLL_MS <= 0) return; // explicitly disabled
   const s = state();
   if (s.timer) return;
-  if (openPrTaskCount() === 0) return; // nothing to watch — start again when a PR appears
+  if (openPrTaskCount() === 0) return; // nothing to watch; starts again when a PR appears
   s.timer = setInterval(() => { void sweepPrs(); }, PR_POLL_MS);
   // Never hold the process open on the ticker alone (same rule as the scheduler).
   s.timer.unref?.();
@@ -261,10 +233,10 @@ export function stopPrPolling(): void {
 }
 
 /**
- * One pass: refresh up to PR_POLL_BATCH open PRs that nobody has looked at
- * within PR_POLL_MS, oldest first. Sequential — each is a subprocess and a
- * network call, and a board with forty open PRs should spread them over passes
- * rather than fork forty gh processes at once.
+ * One pass: refreshes up to PR_POLL_BATCH open PRs that nobody has looked at
+ * within PR_POLL_MS, oldest first. Sequential, since each refresh is a
+ * subprocess and a network call and a pass should spread the load instead of
+ * forking every gh process at once.
  *
  * Exported so a test can drive a pass without waiting on the interval.
  */
@@ -274,12 +246,12 @@ export async function sweepPrs(): Promise<number> {
   s.sweeping = true;
   try {
     if (openPrTaskCount() === 0) {
-      stopPrPolling(); // every PR has landed; the next one restarts us
+      stopPrPolling(); // every PR has landed; the next one restarts polling
       return 0;
     }
-    // Rule 3: nobody is watching, so nothing would render the answer. The clock
-    // keeps ticking (cheap: two counting queries) and the first tab to open
-    // triggers its own refresh on the task it selects.
+    // Nobody is watching, so nothing renders the answer. The clock keeps
+    // ticking, and the first tab to open triggers its own refresh on the
+    // task it selects.
     if (watcherCount() === 0) return 0;
     const due = stalePrTasks(Date.now() - PR_POLL_MS, PR_POLL_BATCH);
     let n = 0;

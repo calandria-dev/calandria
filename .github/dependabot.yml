@@ -59,6 +59,15 @@
 #      that PR would be rewritten several times a week. Both ARGs are bumped by
 #      hand BECAUSE the upgrade is a behavioural decision, not because no bot
 #      could see them.
+#      Hand-bumped must not mean unwatched, which it was: CODEX_VERSION sat
+#      seven minors back at 0.146.0 until GPT-6 Astra failed on it outright.
+#      Both halves a bot would have given us are now covered without one.
+#      `Pin drift` (.github/workflows/pin-drift.yml) files an issue when either
+#      ARG goes three weeks old or three minors behind — a notice, not a PR,
+#      because the merge needs a human to exercise the agent either way. And
+#      the step-in-with-the-SDK constraint is `tests/cliPins.test.ts`, which
+#      fails on the PR that desynchronizes them; a Renovate PR touching only
+#      the ARG could not have satisfied it.
 #   3. The coverage bought is one image that is already recorded (versions plus
 #      resolved digest, to the run summary), floored (hard-fails below the
 #      type=gha minimums), and removed outright from the merge job.

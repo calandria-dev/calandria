@@ -10,25 +10,26 @@ import { capsFor, agentLabel } from "./agents";
 import { ModelField } from "./Modal";
 import { GitHubSettings } from "./github";
 import { WorktreePrune } from "./WorktreePrune";
+import { Diagnostics } from "./Diagnostics";
 import { AgentConnect } from "./AgentConnect";
+import { endpointSummary } from "./modelEndpoint";
 import { ErrNote, LoadNote } from "./shared";
+import { usePlanUsage, planUsageShown } from "./PlanUsage";
 import { jget, jsend } from "./api";
 import { notificationPermission, type BrowserNotificationState } from "./useNotifications";
 import { disablePush, enablePush, pushSupport, syncPushSubscription, type PushSupportState } from "./usePush";
-import { relTime } from "./format";
+import { modelLabel, relTime } from "./format";
 import type { PushDevice } from "@/lib/push/types";
-import type { AgentInfoT, AgentsResponseT } from "./types";
+import type { AgentInfoT, AgentsResponseT, EndpointStatusT, GatewayHealthT } from "./types";
 import type { PermissionMatchKind, PermissionRule } from "@/lib/types";
 
-// Account / session panel. Shows who's signed in to this instance and a Logout
-// control — but only when an origin provider is actually gating the box (first-
-// party control-plane session or Cloudflare Access). In open local dev there's
-// no session to end, so the panel says so and hides the button. The redirect
-// target is provider-specific and decided server-side (see /api/auth/logout).
-function AccountSection() {
-  const [state, setState] = useState<
-    { provider: string; signedIn: boolean; email: string | null } | null
-  >(null);
+// Log out, at the foot of the settings nav rather than in a section of its own.
+// Calandria has no users, so there is no account to show: the only session that
+// can exist is Cloudflare Access's, and this renders nothing without one. The
+// redirect target is provider-specific and decided server-side (see
+// /api/auth/logout).
+function NavLogout() {
+  const [signedIn, setSignedIn] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -36,11 +37,9 @@ function AccountSection() {
     fetch("/api/auth/whoami")
       .then((r) => r.json())
       .then((d) => {
-        if (!cancelled) setState(d);
+        if (!cancelled) setSignedIn(d?.signedIn === true);
       })
-      .catch(() => {
-        if (!cancelled) setState({ provider: "none", signedIn: false, email: null });
-      });
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -51,43 +50,23 @@ function AccountSection() {
     try {
       const res = await fetch("/api/auth/logout", { method: "POST" });
       const data = await res.json().catch(() => ({}));
-      // Top-level navigation so the CF logout (or CP login) loads as a real page.
+      // Top-level navigation so the provider's logout loads as a real page.
       window.location.href = data?.redirect || "/";
     } catch {
       setBusy(false);
     }
   }
 
+  if (!signedIn) return null;
   return (
-    <div className="field">
-      <div className="lab">{Icon.lock()} Signed in</div>
-      {state == null ? (
-        <LoadNote style={{ padding: 0 }}>Checking your session…</LoadNote>
-      ) : state.signedIn ? (
-        <>
-          <div className="hlp" style={{ marginTop: 0, marginBottom: 12 }}>
-            {state.email ? <strong>{state.email}</strong> : "Signed in"}
-          </div>
-          <button
-            className="btn btn-line"
-            onClick={logout}
-            disabled={busy}
-            style={{ alignSelf: "flex-start" }}
-          >
-            {Icon.external()} {busy ? "Signing out…" : "Log out"}
-          </button>
-          <div className="hlp" style={{ marginTop: 10 }}>
-            {state.provider === "cf-access"
-              ? "Ends your Cloudflare Access session for this instance."
-              : "Ends your session and returns you to the sign-in page."}
-          </div>
-        </>
-      ) : (
-        <div className="hlp" style={{ marginTop: 0 }}>
-          This instance isn&apos;t behind a sign-in (local/open mode). There&apos;s no session to end.
-        </div>
-      )}
-    </div>
+    <button
+      className="nav-item settings-nav-logout"
+      onClick={logout}
+      disabled={busy}
+      title="End your session on this instance"
+    >
+      {Icon.external()} {busy ? "Signing out…" : "Log out"}
+    </button>
   );
 }
 
@@ -96,13 +75,32 @@ function AccountSection() {
 // agent) gets a "connect another agent" card driven by AgentConnect against the
 // generic /api/agents/[id]/* routes. Reads the same GET /api/agents the task
 // pickers gate on, so connecting here immediately un-grays the agent there.
-function AgentsSection({ defaultAgent, onChanged }: { defaultAgent: string; onChanged?: () => void }) {
+function AgentsSection({ defaultAgent, appDefaults, setAppDefault, onChanged }: {
+  defaultAgent: string;
+  appDefaults: Record<string, string>;
+  setAppDefault: (key: string, value: string | null) => void;
+  onChanged?: () => void;
+}) {
   const [agents, setAgents] = useState<AgentInfoT[] | null>(null);
+  // Which agents the titlebar could meter, so the show/hide switch below only
+  // appears on cards where there is something to show. Same shared poll the
+  // pill itself subscribes to, and it lists an agent regardless of the setting
+  // (the server doesn't know about it), so hiding a tracker doesn't hide the
+  // switch that brings it back.
+  const planUsage = usePlanUsage();
   const [def, setDef] = useState<string>(defaultAgent);
+  // Reachability of the instance's local model endpoint, which is NOT any
+  // agent's connection state: a project on Ollama runs through a Claude login
+  // it never uses, and fails with a perfectly good one when Ollama is down. The
+  // server probes it (lib/modelEndpoint.ts); this is the only place the
+  // instance-wide default endpoint is reported.
+  const [endpoint, setEndpoint] = useState<EndpointStatusT | null>(null);
+  // Same fact for the LiteLLM gateway, and null unless one is configured.
+  const [gateway, setGateway] = useState<GatewayHealthT | null>(null);
 
   const load = () =>
     jget<AgentsResponseT>("/api/agents")
-      .then((r) => { setAgents(r.agents); setDef(r.default); })
+      .then((r) => { setAgents(r.agents); setDef(r.default); setEndpoint(r.local_endpoint ?? null); setGateway(r.gateway ?? null); })
       .catch(() => setAgents([]));
   useEffect(() => { load(); }, []);
 
@@ -111,7 +109,7 @@ function AgentsSection({ defaultAgent, onChanged }: { defaultAgent: string; onCh
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
       <div className="hlp" style={{ marginTop: 0 }}>
-        Each task runs as a coding agent. Connect an agent&apos;s subscription login (or API key) once and it becomes selectable for new tasks. {def === "claude" ? "Claude is the default and runs the app's own jobs (summaries, recaps), so keep it connected." : ""}
+        Each task runs as a coding agent. Connect a subscription login or API key once to make it selectable for new tasks. {def === "claude" ? "Claude is the default and runs Calandria's own jobs (summaries, recaps); keep it connected." : ""}
       </div>
       {agents.map((a) => (
         <div key={a.id} className="field" style={{ marginBottom: 0 }}>
@@ -119,46 +117,159 @@ function AgentsSection({ defaultAgent, onChanged }: { defaultAgent: string; onCh
             {Icon.spark()} {a.label}
             {a.id === def && <span className="opt">(default)</span>}
             {a.authBroken
-              // Its login died (still on record) or its record was dropped for a
-              // provider change — either way a green check here would contradict
-              // the card below it (and the titlebar banner).
+              // Its login died (still on record) or its record was dropped for
+              // a provider change. Either way a green check here would
+              // contradict the card below it (and the titlebar banner).
               ? <span className="wiz-warn" style={{ marginLeft: "auto" }} title="Needs reconnecting">{Icon.bolt()}</span>
               : a.connected && <span className="wiz-ok" style={{ marginLeft: "auto" }}>{Icon.check()}</span>}
           </div>
           <McpInheritance agent={a} />
+          {planUsage[a.id]?.available && planUsage[a.id].windows.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 4 }}>
+              <div style={{ flex: 1 }}>
+                <div className="hlp" style={{ marginTop: 0 }}>
+                  Show {a.label}&apos;s plan usage in the titlebar.
+                </div>
+              </div>
+              <button
+                role="switch"
+                aria-label={`Show ${a.label}'s plan usage in the titlebar`}
+                aria-checked={planUsageShown(appDefaults, a.id)}
+                className={`in-switch${planUsageShown(appDefaults, a.id) ? " on" : ""}`}
+                onClick={() => setAppDefault(`plan_usage:${a.id}`, planUsageShown(appDefaults, a.id) ? "off" : null)}
+              ><span /></button>
+            </div>
+          )}
           <AgentConnect agent={a} compact onConnected={() => { load(); onChanged?.(); }} />
         </div>
       ))}
+      {endpoint?.base_url && (
+        <div className="field" style={{ marginBottom: 0 }}>
+          <div className="lab" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {Icon.spark()} Local model endpoint
+            {endpoint.reachable
+              ? <span className="wiz-ok" style={{ marginLeft: "auto" }}>{Icon.check()}</span>
+              : <span className="wiz-warn" style={{ marginLeft: "auto" }} title="Nothing answered at this address">{Icon.bolt()}</span>}
+          </div>
+          <div className="hlp">
+            {endpointSummary(endpoint)}. A project runs here by setting its <strong>Model provider</strong> to
+            {" "}<em>Local model</em>; the address is <code className="ctx-mono">CALANDRIA_LOCAL_MODEL_BASE_URL</code>.
+          </div>
+        </div>
+      )}
+      {gateway?.base_url && <GatewayCard gateway={gateway} onChanged={load} />}
+    </div>
+  );
+}
+
+// The LiteLLM gateway's own card, beside the local-endpoint one above and for
+// the same reason: an agent's `connected` is its CLI login and says nothing
+// about whether the gateway is up. Rendered only when CALANDRIA_LITELLM_BASE_URL
+// is set, which is also what puts the Gateway preset in a project's settings.
+//
+// The three facts come from lib/gatewayHealth.ts. `database: false` is the
+// no-Postgres 500 from /key/info, and it is stated instead of shown as blank
+// rows: every key, budget and spend feature on a LiteLLM proxy needs that
+// database, so a card that just omitted them would read like a bug.
+function GatewayCard({ gateway, onChanged }: { gateway: GatewayHealthT; onChanged: () => void }) {
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const where = gateway.base_url.replace(/^https?:\/\//, "");
+
+  const save = async (clear: boolean) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      if (clear) await jsend("/api/settings/gateway-key", "DELETE");
+      else await jsend("/api/settings/gateway-key", "POST", { key: key.trim() });
+      setKey("");
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="field" style={{ marginBottom: 0 }}>
+      <div className="lab" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {Icon.spark()} LiteLLM gateway
+        {gateway.reachable
+          ? <span className="wiz-ok" style={{ marginLeft: "auto" }}>{Icon.check()}</span>
+          : <span className="wiz-warn" style={{ marginLeft: "auto" }} title="Nothing answered at this address">{Icon.bolt()}</span>}
+      </div>
+      <div className="hlp">
+        {gateway.reachable
+          ? `${where}: reachable${gateway.version ? `, LiteLLM ${gateway.version}` : ""}${gateway.model_count === null ? "" : `, ${gateway.model_count} ${gateway.model_count === 1 ? "model" : "models"}`}.`
+          : `${where}: ${gateway.error || "not reachable"}.`}
+        {" "}A project runs here by setting its <strong>Model provider</strong> to <em>Gateway</em>; the address is
+        {" "}<code className="ctx-mono">CALANDRIA_LITELLM_BASE_URL</code>.
+      </div>
+      {gateway.database === false && (
+        <div className="hlp">Keys, budgets and spend need LiteLLM&apos;s database, which this proxy doesn&apos;t have. The card shows liveness, version and model count only.</div>
+      )}
+      {gateway.database === true && (
+        <div className="hlp">
+          {gateway.max_budget == null
+            ? `Spend so far: $${gateway.spend?.toFixed(2) ?? "0.00"} (no budget set on this key).`
+            : `Spend: $${gateway.spend?.toFixed(2) ?? "0.00"} of a $${gateway.max_budget.toFixed(2)} budget${gateway.spend != null && gateway.spend >= gateway.max_budget ? ", exhausted" : ""}.`}
+          {gateway.budget_reset_at && ` Resets ${new Date(gateway.budget_reset_at).toLocaleString()}.`}
+          {!!gateway.key_models?.length && ` Allowed models: ${gateway.key_models.join(", ")}.`}
+        </div>
+      )}
+      {!!gateway.gemini_missing_models?.length && (
+        <div className="hlp wiz-warn">
+          {Icon.bolt()} Antigravity uses <code className="ctx-mono">{gateway.gemini_missing_models.join(", ")}</code>, missing from this gateway&apos;s catalog.
+          Add {gateway.gemini_missing_models.length === 1 ? "it" : "them"} to LiteLLM&apos;s <code className="ctx-mono">model_list</code>, or Antigravity turns
+          against this gateway will fail.
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+        <input type="password" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={key} autoComplete="off"
+          placeholder={gateway.has_key ? "a key is set, type a new one to replace it" : "virtual key (sk-…)"}
+          title="The instance's LiteLLM virtual key, stored 0600 and never sent to the browser."
+          onChange={(e) => setKey(e.target.value)} />
+        <button className="btn btn-line" disabled={busy || !key.trim()} onClick={() => save(false)}>{Icon.check()} Save key</button>
+        {gateway.has_key && <button className="btn btn-ghost" disabled={busy} onClick={() => save(true)}>{Icon.x()} Clear</button>}
+      </div>
+      {err && <div className="hlp wiz-warn">{Icon.bolt()} {err}</div>}
+      <div className="hlp">
+        Sent as <code className="ctx-mono">x-litellm-api-key</code> on every gateway turn, alongside tags naming the project, task and agent.
+        {" "}<code className="ctx-mono">CALANDRIA_LITELLM_KEY</code> sets the same thing from the environment.
+      </div>
     </div>
   );
 }
 
 // Whether a task on this agent can use the MCP servers the user configured for
-// its own CLI — the one capability difference between the agents that changes
-// what a task can DO, rather than how its controls look. A Claude task reaches
-// the tools in ~/.claude; an otherwise-identical Codex task reaches only
-// Calandria's, so it's worth knowing before choosing an agent for a task. Both
-// the verdict and the explanation come from the driver's descriptor
-// (lib/agents/types.ts AgentCapabilities), never from the agent's id: a third
-// agent states its own position here with no edit to this file.
+// its own CLI. This capability difference changes what a task can do, not just
+// how its controls look. A Claude task reaches the tools in ~/.claude; an
+// otherwise-identical Codex task reaches only Calandria's, so it's worth
+// knowing before choosing an agent for a task. Both the verdict and the
+// explanation come from the driver's descriptor (lib/agents/types.ts
+// AgentCapabilities), never from the agent's id, so a third agent states its
+// own position here with no edit to this file.
 function McpInheritance({ agent }: { agent: AgentInfoT }) {
-  const { inheritsUserMcpServers: inherits, userMcpServersNote: note } = agent.capabilities;
+  const { inheritsUserMcpServers: inherits, userMcpServersNote: note, gatewayMcpNote } = agent.capabilities;
   return (
     <div className="hlp" style={{ marginTop: 2, marginBottom: 12 }}>
       <strong style={{ color: "var(--ink-2)" }}>
         {inherits ? "Uses your own MCP servers." : "Calandria's tools only."}
       </strong>
       {note ? ` ${note}` : ""}
+      {gatewayMcpNote && <div style={{ marginTop: 4 }}>{gatewayMcpNote}</div>}
     </div>
   );
 }
 
-// The EFFECTIVE utility agent, resolved connected-first by the server
+// The effective utility agent, resolved connected-first by the server
 // (lib/agents/oneshots.ts). The buttons above show what's *configured*; this
-// line shows what will actually run — they diverge whenever the configured
-// agent isn't connected, and silently picking a different agent would be a
-// worse surprise than saying so. When nothing is connected at all, internal
-// jobs can't run, so this says that instead of naming a stand-in.
+// line shows what will actually run. They diverge whenever the configured
+// agent isn't connected, and picking a different agent without saying so
+// would be a worse surprise. When nothing is connected at all, internal jobs
+// can't run, so this says that instead of naming a stand-in.
 function UtilityEffective({ agents }: { agents: AgentsBundle }) {
   const u = agents.utility;
   if (!u) return null;
@@ -180,10 +291,10 @@ function UtilityEffective({ agents }: { agents: AgentsBundle }) {
 // The "always allow" answers given to tool-permission prompts (lib/permissions.ts),
 // with a revoke on each, plus a row to add one WITHOUT waiting for a prompt.
 // A grant nobody can find is a grant nobody can take back, so this list is the
-// other half of the "Always allow" button — without it, one click in a
-// transcript is permanent and invisible. The add row is the other direction:
-// "always allow" was the only way to mint a rule, so pre-approving `npm test`
-// for a project cost you one prompt in one task first — and an auto-started
+// other half of the "Always allow" button; without it, one click in a
+// transcript is permanent and invisible. The add row covers the other case:
+// with "always allow" as the only way to mint a rule, pre-approving `npm test`
+// for a project required one prompt in one task first, and an auto-started
 // unattended turn declines that prompt before anyone can answer it.
 //
 // The form can't grant more than the card can. It sends the command the user
@@ -223,8 +334,8 @@ function PermissionRules() {
       const { rule } = await jsend<{ rule: PermissionRule & { project_name: string } }>(
         "/api/settings/permissions", "POST", { project_id: projectId, command, match_kind: kind }
       );
-      // The stored rule, not the typed line — say so whenever they differ, so a
-      // narrowed prefix isn't a silent surprise the next time it doesn't match.
+      // The stored rule, not the typed line: say so whenever they differ, so a
+      // narrowed prefix doesn't come as a surprise the next time it doesn't match.
       setAdded(rule.match_kind === "bash_prefix" ? `${rule.value} …` : rule.value);
       setCommand("");
       setRules((prev) => [rule, ...(prev ?? []).filter((r) => r.id !== rule.id)]);
@@ -240,9 +351,9 @@ function PermissionRules() {
       <div className="lab">{Icon.check()} Remembered approvals</div>
       <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
         Commands allowed without a prompt: the ones you chose <strong>Always allow</strong> for on a permission
-        card, plus any you add here. They apply to one project and skip the prompt entirely, so revoke anything you
-        no longer want run unattended. A remembered command names a script, not a behaviour: <code>npm test</code>
-        {" "}is whatever the project says it is today.
+        card, plus any you add here. They apply to one project and skip the prompt entirely. Revoke anything you no
+        longer want to run unattended. A remembered command matches by name: <code>npm test</code> runs whatever the
+        project defines that as today.
       </div>
       {projects.length > 0 && (
         <>
@@ -267,11 +378,10 @@ function PermissionRules() {
             </button>
           </div>
           <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-            <strong>And its arguments</strong> remembers only the leading command and subcommand, exactly as the
-            permission card would: <code>git push origin main</code> is stored as <code>git push …</code>, and a line
-            the shell could reinterpret (pipes, <code>$(…)</code>, <code>&amp;&amp;</code>) or one led by a wrapper
-            like <code>sudo</code> can&apos;t be generalized at all. <strong>Exactly</strong> matches that one literal
-            line and nothing else.
+            <strong>And its arguments</strong> remembers only the command and subcommand, the same way the permission
+            card does: <code>git push origin main</code> is stored as <code>git push …</code>. A line with pipes,{" "}
+            <code>$(…)</code>, <code>&amp;&amp;</code>, or a wrapper like <code>sudo</code> can&apos;t be generalized
+            this way. <strong>Exactly</strong> matches only that one literal line.
           </div>
           {error && <ErrNote style={{ marginBottom: 10 }}>{error}</ErrNote>}
           {added && !error && <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>Remembered as <code>{added}</code>.</div>}
@@ -285,7 +395,8 @@ function PermissionRules() {
         <div className="perm-rules">
           {rules.map((r) => (
             <div className="perm-rule" key={r.id}>
-              <code>{r.match_kind === "bash_prefix" ? `${r.value} …` : r.value}</code>
+              <code>{r.match_kind === "bash_prefix" ? `${r.value} …` : r.match_kind === "mcp_server" ? `mcp__${r.value}__*` : r.value}</code>
+              {r.match_kind === "mcp_server" && <span className="opt">hosted MCP server, trusted from project settings</span>}
               <span className="opt">{r.project_name}</span>
               <button className="btn btn-sm" onClick={() => void revoke(r.id)} title="Stop allowing this">Revoke</button>
             </div>
@@ -296,11 +407,11 @@ function PermissionRules() {
   );
 }
 
-// Browser notifications. The permission grant is per-DEVICE and owned by the
-// browser, so it is read live from Notification.permission rather than stored;
+// Browser notifications. The permission grant is per-device and owned by the
+// browser, so it is read live from Notification.permission instead of stored;
 // everything else is server-side policy the webhook channel will inherit.
 // Copy here is written to make sense whether or not the user saw the
-// onboarding nudge (Welcome.tsx) that already offers this same grant — it
+// onboarding nudge (Welcome.tsx) that already offers this same grant: it
 // neither assumes this is their first time nor references that earlier step.
 function NotificationSettings({ appDefaults, setAppDefault }: {
   appDefaults: Record<string, string>;
@@ -324,7 +435,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
   useEffect(() => {
     setPush(pushSupport());
     loadDevices().catch((e) => setPushErr(e instanceof Error ? e.message : String(e)));
-    // The re-sync also answers "is this browser subscribed?" — it returns the
+    // The re-sync also answers "is this browser subscribed?": it returns the
     // row the browser's subscription upserted into, or null.
     syncPushSubscription().then((d) => { setThisDevice(d?.id ?? null); if (d) void loadDevices(); }).catch(() => {});
   }, []);
@@ -353,14 +464,14 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
     }
   }
   // `desktop_shell` mirrors the Browser/Desktop notifications block above: the
-  // shell denies the page's notification permission on purpose and raises
-  // native toasts itself, so the subscribe button is withheld rather than left
-  // to fail with a "browser site settings" hint the shell has no page for. The
-  // shell exposes no bridge (no preload, by design), so there is nothing to
-  // open the OS notification pane with — the copy names it instead. The device
-  // list below still shows, and still removes, the phones subscribed elsewhere.
+  // shell denies the page's notification permission and raises native toasts
+  // itself, so the subscribe button is withheld instead of left to fail with a
+  // "browser site settings" hint the shell has no page for. The shell exposes
+  // no bridge (no preload), so there is nothing to open the OS notification
+  // pane with, so the copy names it instead. The device list below still
+  // shows, and still removes, the phones subscribed elsewhere.
   const pushHelp = push === "desktop_shell"
-    ? "Native notifications are already on: the desktop app raises them itself through your OS, so this window doesn't subscribe to push — that would deliver every event twice. Manage them in your OS notification settings. Push is for phones and other browsers: open Settings there to subscribe one, and it appears in the list here."
+    ? "Native notifications are already on: the desktop app raises them through your OS, so this window doesn't also subscribe to push. Manage them in your OS notification settings. Push is for phones and other browsers: open Settings there to subscribe one, and it appears in the list here."
     : push === "insecure"
     ? "Push needs a secure origin, like every notification does. Reach the instance over https or as localhost."
     : push === "needs_install"
@@ -375,7 +486,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
   const kinds: [string, string, string][] = [
     ["notify_awaiting_input", "A task is waiting for input", "An agent asked a question, needs a tool approved, or ended its turn with the work back in your hands. Either way the task has stopped until you pick it up."],
     ["notify_turn_failed", "A turn failed", "The session died: a dead login, a spent quota, a full context window, or a crash."],
-    ["notify_schedule_failed", "A scheduled run failed", "A schedule fired and got nowhere. Nobody is watching at 08:30, so this is the one failure with no other witness."],
+    ["notify_schedule_failed", "A scheduled run failed", "A schedule fired and got nowhere, with nobody watching to notice otherwise."],
   ];
 
   async function sendTest() {
@@ -416,14 +527,14 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
         <div className="lab">{Icon.bolt()} {perm === "desktop_shell" ? "Desktop notifications" : "Browser notifications"}</div>
         <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
           {perm === "desktop_shell"
-            // The page's own channel really is switched off in here, and saying
-            // so plainly is the point: read straight off Notification.permission
-            // this card used to report "blocked", sending the user hunting for a
-            // browser site setting that doesn't exist in the shell — while OS
-            // notifications were arriving the whole time from a channel the page
-            // can't see. The desktop app raises them from outside the window, so
-            // it keeps working with this window hidden to the tray.
-            ? "The desktop app handles these itself, so the page's own channel is switched off — that's what stops every event arriving twice. Notifications come through your OS whether or not this window is in front, and clicking one opens the task."
+            // The page's own channel really is switched off here. Reading
+            // straight off Notification.permission would report "blocked",
+            // sending the user hunting for a browser site setting that doesn't
+            // exist in the shell, while OS notifications arrive the whole time
+            // from a channel the page can't see. The desktop app raises them
+            // from outside the window, so it keeps working with this window
+            // hidden to the tray.
+            ? "The desktop app handles these itself; this page's own channel is switched off to avoid duplicates. Notifications come through your OS whether or not this window is in front, and clicking one opens the task."
             : perm === "insecure"
             ? "Browsers only allow notifications on a secure origin, and this page is plain http. No site setting can change that. Reach the instance over https (a reverse proxy or tunnel, see the self-hosting docs and PUBLIC_BASE_URL) or open it as localhost."
             : perm === "unsupported"
@@ -432,7 +543,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
                 ? "This browser is allowed to show notifications. They appear only when you aren't already looking at the task."
                 : perm === "denied"
                   ? "You've blocked notifications for this site. Calandria can't ask again. Unblock it in your browser's site settings for this address."
-                  : "Allow notifications so Calandria can reach you when this tab isn't in front of you."}
+                  : "Allow notifications to reach you when this tab isn't in front of you."}
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {perm === "default" && (
@@ -490,7 +601,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
       <div className="field">
         <div className="lab">{Icon.list()} What to notify me about</div>
         <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-          Each of these means a task has STOPPED. Finished turns and new suggestions deliberately stay quiet.
+          Each of these means a task has STOPPED. Finished turns and new suggestions stay quiet.
         </div>
         {kinds.map(([key, label, help]) => {
           const kindOn = appDefaults[key] !== "off";
@@ -516,10 +627,10 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
   );
 }
 
-// Static preview colors for each palette's dark variant — the design-system
+// Static preview colors for each palette's dark variant: the design-system
 // values from docs/design/handoff/styles.css, hardcoded here since the swatch
 // has to show every theme at once regardless of which one is currently active
-// (CSS custom properties only expose the LIVE theme, not the other three).
+// (CSS custom properties only expose the live theme, not the other three).
 const PALETTE_PREVIEW: { id: Palette; label: string; bg: string; accent: string; ink: string }[] = [
   { id: "cherenkov", label: "Cherenkov", bg: "#081217", accent: "#45cabb", ink: "#d5e4ea" },
   { id: "heavywater", label: "Heavy water", bg: "#0d1414", accent: "#dd7f68", ink: "#dce7e4" },
@@ -531,7 +642,7 @@ const PROMPT_SAMPLE = "Refactor the auth flow to use refresh tokens.";
 
 // The "Appearance" section: theme cards, mode, and the code/prompt font pickers
 // (docs/design/handoff/ui/Settings.html). Density + text-width stay in the
-// AppearancePanel popover only — no home for them here yet, and duplicating a
+// AppearancePanel popover only: no home for them here yet, and duplicating a
 // setter across two surfaces just invites drift.
 function AppearanceSection({ appearance, setAppearance }: {
   appearance: Appearance;
@@ -539,9 +650,9 @@ function AppearanceSection({ appearance, setAppearance }: {
 }) {
   // Chromium (and kin) treat focus that arrives through a wrapping <label>
   // click as :focus-visible, so a mouse selection left the radio wearing a
-  // keyboard focus ring. CSS can't tell those apart, so a REAL pointer click
+  // keyboard focus ring. CSS can't tell those apart, so a real pointer click
   // (e.detail > 0; keyboard-synthesized clicks are 0) drops focus after the
-  // change lands — keyboard focus and its row treatment stay untouched.
+  // change lands. Keyboard focus and its row treatment stay untouched.
   const unfocusOnPointer = (e: React.MouseEvent<HTMLLabelElement>) => {
     if (e.detail > 0) e.currentTarget.querySelector("input")?.blur();
   };
@@ -619,8 +730,8 @@ function AppearanceSection({ appearance, setAppearance }: {
 
 // The settings surface is a two-pane view that replaces the work area: a category
 // nav (left) + the active section's content (right). Sections are data-driven so
-// growing settings is adding an entry here + a branch in renderSection — no layout
-// work. Today there's one section; appearance/models/integrations slot in later.
+// growing settings is adding an entry here plus a branch in renderSection, with
+// no layout work.
 const SETTINGS_SECTIONS: { id: string; label: string; icon: () => React.ReactNode }[] = [
   { id: "general", label: "General", icon: Icon.gear },
   { id: "appearance", label: "Appearance", icon: Icon.sliders },
@@ -630,7 +741,7 @@ const SETTINGS_SECTIONS: { id: string; label: string; icon: () => React.ReactNod
   { id: "agents", label: "Agents", icon: Icon.bolt },
   { id: "storage", label: "Storage", icon: Icon.archive },
   { id: "github", label: "GitHub", icon: Icon.github },
-  { id: "account", label: "Account", icon: Icon.lock },
+  { id: "diagnostics", label: "Diagnostics", icon: Icon.chart },
   { id: "setup", label: "Setup", icon: Icon.bolt },
 ];
 
@@ -663,9 +774,13 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   // The model default has no legacy un-suffixed key to fall back to: it shipped
   // agent-scoped, and a model id names one provider's catalog anyway.
   const modelVal = appDefaults[`default_model:${editAgent}`] ?? null;
-  // What the agent being edited calls its never-asks mode — the labels are the
+  // The internal one-shots, in the two tiers lib/agents/oneshots.ts routes them
+  // by. Agent-scoped like the model default above, and for the same reason.
+  const lightJobModel = appDefaults[`job_model_light:${editAgent}`] ?? null;
+  const heavyJobModel = appDefaults[`job_model_heavy:${editAgent}`] ?? null;
+  // What the agent being edited calls its never-asks mode. The labels are the
   // provider's own vocabulary (Claude: "bypassPermissions", Codex:
-  // "workspace-write"), so the help copy resolves the name per agent instead of
+  // "danger-full-access"), so the help copy resolves the name per agent instead of
   // hardcoding one.
   const bypassLabel = caps?.permissionModes.find((p) => p.value === "bypassPermissions")?.label ?? "bypassPermissions";
   // Every picker's head is the same word ("Inherit") everywhere, but what it
@@ -677,19 +792,34 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   const recapMode = appDefaults.recap_mode === "on_open" || appDefaults.recap_mode === "off"
     ? appDefaults.recap_mode
     : "automatic";
-  const [jobUsage, setJobUsage] = useState<Record<string, { runs: number; cost_usd: number }> | null>(null);
+  type JobUsage = { runs: number; cost_usd: number; models: string[] };
+  const [jobUsage, setJobUsage] = useState<Record<string, JobUsage> | null>(null);
   useEffect(() => {
     if (section !== "background" || jobUsage !== null) return;
-    jget<{ jobs: { job: string; runs: number; cost_usd: number }[] }>("/api/settings/background-jobs")
-      .then((data) => setJobUsage(Object.fromEntries(data.jobs.map((j) => [j.job, { runs: j.runs, cost_usd: j.cost_usd }]))))
+    jget<{ jobs: { job: string; runs: number; cost_usd: number; models: string[] }[] }>("/api/settings/background-jobs")
+      .then((data) => setJobUsage(Object.fromEntries(data.jobs.map((j) => [j.job, { runs: j.runs, cost_usd: j.cost_usd, models: j.models }]))))
       .catch(() => setJobUsage({}));
   }, [jobUsage, section]);
-  const recapUsage = jobUsage?.summarizeProjectRecap ?? { runs: 0, cost_usd: 0 };
+  const recapUsage: JobUsage = jobUsage?.summarizeProjectRecap ?? { runs: 0, cost_usd: 0, models: [] };
   const utilityUsage = [jobUsage?.summarizeProjectRecap, jobUsage?.draftProjectContext]
-    .filter((u): u is { runs: number; cost_usd: number } => !!u)
-    .reduce((sum, u) => ({ runs: sum.runs + u.runs, cost_usd: sum.cost_usd + u.cost_usd }), { runs: 0, cost_usd: 0 });
+    .filter((u): u is JobUsage => !!u)
+    .reduce<JobUsage>(
+      (sum, u) => ({
+        runs: sum.runs + u.runs,
+        cost_usd: sum.cost_usd + u.cost_usd,
+        models: [...sum.models, ...u.models.filter((m) => !sum.models.includes(m))],
+      }),
+      { runs: 0, cost_usd: 0, models: [] },
+    );
+  // A recorded model id belongs to one agent's catalog, and the row doesn't say
+  // which, so try every connected agent and fall back to the raw id.
+  // modelLabel() falls back to the raw id, so "it returned something" is not a
+  // hit: take the first agent whose catalog actually names the model.
+  const labelModel = (m: string) =>
+    agents.agents.map((a) => modelLabel(m, capsFor(agents, a.id))).find((l) => l && l !== m) || m;
   const usageLine = (label: string, usage = recapUsage) =>
-    `${label} · ${usage.runs.toLocaleString()} ${usage.runs === 1 ? "run" : "runs"} · ~$${usage.cost_usd.toFixed(2)} in the last 30 days`;
+    `${label} · ${usage.runs.toLocaleString()} ${usage.runs === 1 ? "run" : "runs"} · ~$${usage.cost_usd.toFixed(2)} in the last 30 days`
+    + (usage.models.length ? ` · on ${usage.models.map(labelModel).join(", ")}` : "");
   // Any server-backed run default set (agent-scoped, legacy, or default_agent)
   // means we're off the built-in defaults.
   const hasRunDefault = Object.keys(appDefaults).some((k) => k.startsWith("default_") || k === "utility_agent");
@@ -706,7 +836,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   const clampTokens = (n: number) => Math.max(1000, Math.round(n));
   const active = SETTINGS_SECTIONS.find((s) => s.id === section) ?? SETTINGS_SECTIONS[0];
   // On a phone the nav is a horizontal rail (see globals.css), so a section
-  // past the third one — or a deep link straight into `initialSection` — starts
+  // past the third one, or a deep link straight into `initialSection`, starts
   // scrolled off the right edge with no sign it's selected. Pull it back into
   // view. `nearest` on both axes makes this a no-op for the desktop sidebar,
   // where every entry already fits.
@@ -725,8 +855,9 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
               {s.icon()} {s.label}
             </button>
           ))}
+          <NavLogout />
         </div>
-        <div className="settings-nav-foot">{section === "appearance" ? "theme, mode & fonts · saved on this browser" : section === "background" ? "agent utility work · saved to this workspace" : section === "notifications" ? "alerts · saved to this workspace" : section === "run" ? "run defaults · saved to this workspace" : section === "agents" ? "coding agent logins · stored in this workspace" : section === "storage" ? "disk cleanup · acts on this workspace" : section === "github" ? "GitHub connection · stored in this workspace" : section === "account" ? "your sign-in to this instance" : section === "setup" ? "first-run setup · stored in this workspace" : "app-level preferences · saved on this browser"}</div>
+        <div className="settings-nav-foot">{section === "appearance" ? "theme, mode & fonts · saved on this browser" : section === "background" ? "agent utility work · saved to this workspace" : section === "notifications" ? "alerts · saved to this workspace" : section === "run" ? "run defaults · saved to this workspace" : section === "agents" ? "coding agent logins · stored in this workspace" : section === "storage" ? "disk cleanup · acts on this workspace" : section === "github" ? "GitHub connection · stored in this workspace" : section === "setup" ? "first-run setup · stored in this workspace" : "app-level preferences · saved on this browser"}</div>
       </div>
       <div className="col col-session">
         <div className="settings-head">
@@ -823,6 +954,11 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                     ))}
                   </div>
                   <UtilityEffective agents={agents} />
+                  <div className="hlp" style={{ marginTop: 8 }}>
+                    Which MODEL these jobs run on is set per agent under <strong>Run defaults</strong>, split into quick jobs
+                    (recaps, <strong>/clear</strong> notes) and repo-reading ones (<strong>Refresh with AI</strong>). Left alone, each
+                    inherits the agent&apos;s own default.
+                  </div>
                   <div className="hlp" style={{ marginTop: 10 }}>{jobUsage === null ? "Loading last-30-day usage…" : usageLine("Utility agent jobs", utilityUsage)}</div>
                 </div>
               </>
@@ -875,6 +1011,31 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                     </div>
                   }
                 />
+                <ModelField
+                  label="Quick internal jobs"
+                  options={modelOptions(caps, inheritSub)}
+                  value={lightJobModel}
+                  onChange={(m) => setAppDefault(`job_model_light:${editAgent}`, m)}
+                  note={
+                    <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+                      Calandria&apos;s own short jobs on {agentLabel(agents, editAgent)}: <strong>/clear</strong> handoff notes and
+                      project recaps, each one turn of text in and out with no tools.
+                    </div>
+                  }
+                />
+                <ModelField
+                  label="Repo-reading internal jobs"
+                  options={modelOptions(caps, inheritSub)}
+                  value={heavyJobModel}
+                  onChange={(m) => setAppDefault(`job_model_heavy:${editAgent}`, m)}
+                  note={
+                    <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+                      The <strong>Refresh with AI</strong> project-context draft and the <strong>Refresh tag</strong> plan check. Both
+                      explore the repository read-only, then produce something durable: context prepended to every new session, or
+                      which of a tag&apos;s tasks have gone stale.
+                    </div>
+                  }
+                />
                 <div className="field">
                   <div className="lab">{Icon.spark()} Default reasoning level</div>
                   <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
@@ -898,9 +1059,9 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                 <div className="field">
                   <div className="lab">{Icon.lock()} Default permission mode</div>
                   <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                    How tasks run when their own picker is set to <strong>{INHERIT_LABEL}</strong>. Every mode except <strong>{bypassLabel}</strong>
-                    {" "}parks the turn on a permission card for anything it won&rsquo;t auto-approve, including while you&rsquo;re
-                    away, where an unanswered card declines itself. Pick <strong>{bypassLabel}</strong> for work that must never stop to ask.
+                    How tasks run when their own picker is set to <strong>{INHERIT_LABEL}</strong>. Every mode but <strong>{bypassLabel}</strong>
+                    {" "}can park a turn on a permission card that goes unanswered while you&rsquo;re away. Pick <strong>{bypassLabel}</strong> for
+                    work that must run through unattended.
                   </div>
                   <div className="seg wrap" style={{ maxWidth: 520 }}>
                     {permissionOptions(caps, inheritSub).map((p) => (
@@ -912,7 +1073,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                         >
                           {p.label}
                         </button>
-                        {/* Rule after the inherit head — Claude's own list has a
+                        {/* Rule after the inherit head: Claude's own list has a
                             mode spelled "default" right below it. */}
                         {p.value === null && <span className="seg-sep" aria-hidden />}
                       </Fragment>
@@ -922,10 +1083,10 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                 <PermissionRules />
               </>
             )}
-            {section === "agents" && <AgentsSection defaultAgent="claude" onChanged={onAgentsRefresh} />}
+            {section === "agents" && <AgentsSection defaultAgent="claude" appDefaults={appDefaults} setAppDefault={setAppDefault} onChanged={onAgentsRefresh} />}
             {section === "storage" && <WorktreePrune />}
+            {section === "diagnostics" && <Diagnostics settings={settings} setSetting={setSetting} />}
             {section === "github" && <GitHubSettings />}
-            {section === "account" && <AccountSection />}
             {section === "setup" && (
               <div className="field">
                 <div className="lab">{Icon.bolt()} First-run setup</div>

@@ -13,12 +13,12 @@ export const maxDuration = 120;
 
 // Materialize a task branch's merge conflicts inside its isolated worktree so
 // they can be resolved (by AI or by hand). If the trial merge turns out clean,
-// land it immediately — there's nothing to resolve.
+// land it immediately, since there is nothing to resolve.
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   // Locked against the turn-launch path: the trial merge (and the land step on
   // a clean result) commits the whole worktree, so the running check must stay
-  // true for the duration — no turn may start writing mid-commit.
+  // true for the duration, and no turn may start writing mid-commit.
   return jsonGuard(`merge/prepare ${id}`, () => withTaskLock(id, async () => {
     const task = getTask(id);
     if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -40,7 +40,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
     if (!prep.ok) return NextResponse.json(prep, { status: 409 });
 
-    // Clean trial merge — nothing to resolve, so land it now.
+    // Clean trial merge, nothing to resolve, so land it now.
     if (prep.clean) {
       const result = await completeWorktreeMerge({
         repoPath: project.repo_path,
@@ -50,7 +50,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         message,
       });
       if (result.ok) {
-        // Record the merge and advance the diff base — but do NOT change status.
+        // Record the merge and advance the diff base, but do not change status.
         // Merging is a git action, not a declaration that the task is finished;
         // the user may merge several rounds while still iterating. They own "done".
         updateTask(id, {
@@ -59,13 +59,13 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         });
         // The mirror of a merged PR: this task's work is now in the base branch,
         // so its checkout is disposable. A no-op unless the project opted in, and
-        // never awaited — the reclaim fetches origin (lib/reclaim.ts).
+        // not awaited, since the reclaim fetches origin (lib/reclaim.ts).
         maybeAutoReclaim(id);
       }
       return NextResponse.json({ ...prep, merged: result }, { status: result.ok ? 200 : 409 });
     }
 
-    // Conflicts present — hand back the file lists plus a ready-to-send prompt for
+    // Conflicts present: hand back the file lists plus a ready-to-send prompt for
     // an AI resolution turn (the client streams it through the normal turn path).
     return NextResponse.json(
       { ...prep, prompt: buildConflictPrompt(baseBranch, prep.conflicts) },

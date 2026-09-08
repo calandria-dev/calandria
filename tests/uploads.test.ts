@@ -32,8 +32,8 @@ async function upload(taskId: string, name: string, type: string, body = "hello"
 }
 
 describe("attachment typing", () => {
-  // The bug this whole feature is: file.type is an OS-registry lookup, so it is
-  // routinely blank for exactly the formats a user wants to hand over.
+  // file.type is an OS-registry lookup, so it is routinely blank for exactly
+  // the formats a user wants to hand over.
   it("takes the extension from the filename, not the MIME type", () => {
     expect(uploadExtension("q3-report.pdf", "")).toBe("pdf");
     expect(uploadExtension("server.log", "")).toBe("log");
@@ -51,8 +51,8 @@ describe("attachment typing", () => {
   });
 
   it("stages under a name that cannot escape the uploads dir", () => {
-    // Every dot is stripped from the stem, so a staged name holds exactly one —
-    // which is what lets the serving route's guard be a plain charset test.
+    // Every dot is stripped from the stem, so a staged name holds exactly one,
+    // which lets the serving route's guard be a plain charset test.
     expect(safeStem("../../etc/passwd")).toBe("passwd");
     expect(safeStem("my.config.yaml")).toBe("my-config");
     expect(safeStem("report (final) v2.pdf")).toBe("report-final-v2");
@@ -81,8 +81,8 @@ describe("attachment typing", () => {
     expect(servedType("png")).toEqual({ contentType: "image/png", download: false });
     expect(servedType("jpeg")).toEqual({ contentType: "image/jpeg", download: false });
     expect(servedType("md").contentType).toBe("text/plain; charset=utf-8");
-    // Markup is deliberately text/plain rather than its real type: with nosniff
-    // it renders as source instead of executing on this origin.
+    // Markup is served as text/plain, not its real type: with nosniff it
+    // renders as source instead of executing on this origin.
     expect(servedType("html")).toEqual({ contentType: "text/plain; charset=utf-8", download: false });
     expect(servedType("svg")).toEqual({ contentType: "text/plain; charset=utf-8", download: false });
     expect(servedType("pdf")).toEqual({ contentType: "application/octet-stream", download: true });

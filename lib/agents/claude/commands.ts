@@ -1,59 +1,49 @@
 // Enumerating the slash commands a Claude task session would expand.
 //
-// The composer's "/" menu used to be a hardcoded one-element list, so the 58
-// other commands a session actually honors — the user's skills, their plugin
-// commands, the repo's .claude/commands, the CLI's built-ins — were invisible
-// even though typing one in full worked fine. This is the discovery half: ask
-// the CLI what it has rather than maintaining a list that can only rot.
+// The composer's "/" menu previously listed only "/clear", so skills, plugin
+// commands, the repo's .claude/commands, and the CLI's built-ins were invisible
+// even though typing one in full worked. This asks the CLI what it has instead
+// of maintaining a list that can only rot.
 //
 // The mechanism is the SDK's own control channel. `supportedCommands()` is
-// answered during session INITIALIZATION: we hand query() a prompt generator
-// that never yields, read the answer, and tear the process down. No model
-// request is ever sent — nothing is billed and the transcript is untouched.
+// answered during session initialization: query() is handed a prompt generator
+// that never yields, the answer is read, and the process is torn down. No
+// model request is sent, so nothing is billed and the transcript is untouched.
 //
-// "No model request" is not "nothing happens", though, and the difference is
-// what the options below are for. Initialization is a real session startup, so
-// with the user's setting sources loaded a SessionStart hook would fire — on a
-// keystroke, repeatedly, running whatever the user's hook runs. Discovery
-// therefore takes the same shape as the one-shots in driver.ts: inherit the
-// CONFIG that decides the answer (settingSources — the menu has to describe the
-// commands a REAL turn would honor, so this list must match the turn's), and
-// isolate everything else.
+// "No model request" is not "nothing happens", though. Initialization is a
+// real session startup, so with the user's setting sources loaded a
+// SessionStart hook would fire on every keystroke. Discovery therefore takes
+// the same shape as the one-shots in driver.ts: inherit the config that
+// decides the answer (settingSources, so the menu matches what a real turn
+// would honor) and isolate everything else.
 //
-// This is the app's ONLY slash-command enumeration. lib/schedule/commands.ts
+// This is the app's only slash-command enumeration. lib/schedule/commands.ts
 // used to have a second one (send "noop", read `slash_commands` off the init
-// message) which answered the same question with none of the isolation above —
-// firing the user's SessionStart hooks unattended inside the scheduler's sweep,
+// message) that answered the same question with none of the isolation above,
+// firing the user's SessionStart hooks unattended inside the scheduler's sweep
 // on every save and every fire. Two implementations of one question is how the
-// composer's menu and the schedule validator come to disagree, and a
-// disagreement there means the editor rejects a command the menu offers.
+// composer's menu and the schedule validator came to disagree.
 //
-// MCP PROMPT commands — the `/mcp__<server>__<prompt>` form — are the one thing
-// this probe cannot see, and that is a CONSEQUENCE OF THE ISOLATION rather than
-// a gap in the SDK. Measured on CLI 2.1.240 / SDK 0.3.159, in a checkout with
-// fifteen MCP servers configured:
+// MCP prompt commands (the `/mcp__<server>__<prompt>` form) are the one thing
+// this probe cannot see, a consequence of the isolation rather than a gap in
+// the SDK:
 //
-//   - A probe that inherits the user's MCP config DOES report them, but under a
-//     display label — `stash:analyze-performer (MCP)`, not the token a session
-//     expands. Verified with a UserPromptExpansion hook:
-//     `/mcp__stash__discover-performers` expands (`expansion_type: "mcp_prompt"`)
-//     while `/stash:discover-performers` answers "Unknown command".
-//   - The list is FROZEN AT INITIALIZATION. Asked again at 4s, 9s and 20s on one
-//     long-lived session it stayed at the same 82 commands while eleven more
-//     servers finished connecting — MCP startup is non-blocking, so only the
-//     servers that connect inside the ~700ms startup window contribute prompts
-//     at all (three of fifteen did).
+//   - A probe that inherits the user's MCP config does report them, but under a
+//     display label ("stash:analyze-performer (MCP)") rather than the token a
+//     session actually expands; typing that label answers "Unknown command".
+//   - The list is frozen at initialization, so only servers that connect
+//     inside the startup window contribute prompts at all.
 //
-// So loosening the isolation would spawn the user's whole fleet on a menu read
-// AND still answer with a racy subset of it. The names come from the sessions
-// that already paid for that fleet instead: a real turn's `init` message
-// carries `slash_commands` with the `mcp__` forms in it, and the driver hands
-// them to recordMcpPrompts() below, which listClaudeCommands() merges in. Free,
-// exactly the token the CLI expands — and bounded by what it is: a task offers
+// So loosening the isolation would spawn the user's whole MCP fleet on a menu
+// read and still answer with a racy subset of it. The names come from the
+// sessions that already paid for that fleet instead: a real turn's `init`
+// message carries `slash_commands` with the `mcp__` forms in it, and the driver
+// hands them to recordMcpPrompts() below, which listClaudeCommands() merges in.
+// That's the same token the CLI expands, bounded by what it is: a task offers
 // no MCP prompts until its first turn has run, and offers whatever that turn's
 // session saw. The schedule validator's probe is keyed to the project's repo,
-// where no turn runs, so it still treats an absent `mcp__` command as
-// unverifiable rather than unknown.
+// where no turn runs, so it treats an absent `mcp__` command as unverifiable
+// rather than unknown.
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { SettingSource } from "@anthropic-ai/claude-agent-sdk";
@@ -62,41 +52,41 @@ import { CLAUDE_CLI_PATH } from "../../config";
 
 // How long a resolved list is reused. Commands change when the user edits a
 // file on disk (a new .claude/commands entry, an installed plugin), which is
-// rare and never mid-keystroke — but "rare" isn't "never", so this is a short
-// TTL rather than a process-lifetime cache. A stale entry costs the user one
-// menu that's a minute out of date; the floor on that is the whole reason not
-// to cache forever.
+// rare but not never, so this is a short TTL rather than a process-lifetime
+// cache. A stale entry costs the user a menu that's at most a minute out of
+// date.
 const TTL_MS = 60_000;
 
-// A hung CLI must not hang the menu. The measured cost of a real enumeration is
-// ~330ms (see the note on strictMcpConfig below), so this is generous by an
-// order of magnitude and only ever fires on a genuinely wedged process.
+// A hung CLI must not hang the menu. A real enumeration costs on the order of
+// a few hundred milliseconds (see the note on strictMcpConfig below), so this
+// is generous by an order of magnitude and only fires on a genuinely wedged
+// process.
 //
-// This is the ENUMERATION's deadline, not any one caller's, and deliberately
-// not a parameter: several callers share one in-flight probe, so a caller's
+// This is the enumeration's deadline, not any one caller's, and is not a
+// parameter: several callers share one in-flight probe, so a caller's own
 // deadline expiring must not kill a probe the others are still waiting on. A
-// caller that needs a tighter bound than this races the returned promise
-// against its own clock (lib/schedule/commands.ts does; SCHEDULE_PROBE_MS is
-// 20s, so in the default configuration this fires first and the child dies
-// here rather than being left to the backstop).
+// caller that needs a tighter bound races the returned promise against its own
+// clock (lib/schedule/commands.ts does, with a shorter bound, so in the default
+// configuration this fires first and the child dies here rather than being
+// left to the backstop).
 const TIMEOUT_MS = 15_000;
 
-// Most cache entries are a worktree, and worktrees are per task — an instance
-// that's been up for weeks would otherwise accumulate one entry per task ever
-// opened, including the deleted ones. Small enough to be free, large enough
-// that no realistic session evicts a task the user is still typing in (the
-// schedule validator's project repo paths are a handful on top of that).
+// Most cache entries are a worktree, and worktrees are per task, so a
+// long-lived instance would otherwise accumulate one entry per task ever
+// opened, including deleted ones. Small enough to be free, large enough that no
+// realistic session evicts a task the user is still typing in (the schedule
+// validator's project repo paths add a handful on top of that).
 const MAX_ENTRIES = 64;
 
 type Entry = { at: number; commands: AgentCommand[] };
 
 // HMR-surviving, like every other piece of long-lived server state in this app
-// (lib/events.ts, lib/abort.ts, lib/asks.ts). Keyed by cwd AND setting sources,
+// (lib/events.ts, lib/abort.ts, lib/asks.ts). Keyed by cwd and setting sources,
 // because those are the two inputs that change the answer: a task's worktree
 // decides which project-level .claude/commands are in scope, and the sources
 // decide whether project-level ones are read at all. Sources are a constant
-// today (every caller passes the driver's SETTING_SOURCES), which is exactly
-// why keying on cwd alone would go wrong silently the first time they aren't.
+// today (every caller passes the driver's SETTING_SOURCES), so keying on cwd
+// alone would go wrong the first time they aren't.
 const g = globalThis as unknown as {
   __calandriaClaudeCommands?: Map<string, Entry>;
   __calandriaClaudeCommandsInFlight?: Map<string, Promise<AgentCommand[] | null>>;
@@ -104,10 +94,10 @@ const g = globalThis as unknown as {
 };
 const cache = (g.__calandriaClaudeCommands ??= new Map());
 const inFlight = (g.__calandriaClaudeCommandsInFlight ??= new Map());
-// The MCP prompts observed on real turns, same key, same cap — see the header.
-// Deliberately WITHOUT a TTL: the probe's entries expire because a fresh probe
-// can always be run, and nothing can refresh these but another turn, so expiry
-// would only ever throw away the single source there is.
+// The MCP prompts observed on real turns, same key, same cap; see the header.
+// Without a TTL, unlike the probe's entries: a fresh probe can always be run,
+// but nothing can refresh these but another turn, so expiry would only ever
+// throw away the single source there is.
 const mcpPrompts: Map<string, Entry> = (g.__calandriaClaudeMcpPrompts ??= new Map());
 
 const cacheKey = (cwd: string, settingSources: SettingSource[]) => `${settingSources.join(",")} @ ${cwd}`;
@@ -118,7 +108,7 @@ const MCP_PREFIX = "mcp__";
 
 /**
  * An `mcp__<server>__<prompt>` name as a menu row. The init message carries the
- * name and nothing else, so the description is synthesized — in the CLI's own
+ * name and nothing else, so the description is synthesized in the CLI's own
  * idiom for a command that came from somewhere (`(claude-mem) Watch a pull
  * request…`), since the one thing worth saying about these is which server the
  * prompt belongs to.
@@ -145,22 +135,19 @@ async function enumerate(cwd: string, settingSources: SettingSource[]): Promise<
       })(),
       options: {
         cwd,
-        // The one thing that IS inherited, because it's what decides the
+        // The one thing that is inherited, because it's what decides the
         // answer: the same sources a real turn loads (SETTING_SOURCES in
-        // driver.ts). A narrower list here would make the menu describe a
-        // session the user is not going to get.
+        // driver.ts). A narrower list here would describe a session the user
+        // is not going to get.
         settingSources,
         pathToClaudeCodeExecutable: CLAUDE_CLI_PATH,
         abortController: abort,
         // No MCP for a question about commands, so a keystroke-triggered call
-        // never spawns the user's server fleet (measured elsewhere in this
-        // driver at 10 servers / ~8s). What that costs is exactly the MCP
-        // prompt rows and nothing else: re-measured on CLI 2.1.240, the same
-        // list comes back with and without it apart from those (a checkout with
-        // no MCP prompts published: 70 commands either way; one with four:
-        // 78 against 82, the diff being those four). Plugin *commands* still
-        // don't travel with plugin MCP config. See the header for why the fleet
-        // is not the way to get the prompts back.
+        // never spawns the user's server fleet. What that costs is exactly the
+        // MCP prompt rows and nothing else: the rest of the command list is the
+        // same with or without it. Plugin commands still don't travel with
+        // plugin MCP config. See the header for why the fleet is not the way to
+        // get the prompts back.
         strictMcpConfig: true,
         mcpServers: {},
         // A SessionStart hook fires on initialization whether or not a turn
@@ -175,10 +162,11 @@ async function enumerate(cwd: string, settingSources: SettingSource[]): Promise<
     return commands
       // A `… (MCP)` row can only appear if the isolation above stopped working
       // (a future SDK ignoring strictMcpConfig, a fork that drops it), and it is
-      // a DISPLAY label, not a command: typing `/stash:discover-performers` gets
-      // "Unknown command" from the same CLI that reports it. Dropping it costs
-      // nothing — the invocable form arrives via recordMcpPrompts — while
-      // keeping it would put a name in the menu that inserting can only break.
+      // a display label, not a command: typing `/stash:discover-performers`
+      // gets "Unknown command" from the same CLI that reports it. Dropping it
+      // costs nothing, since the invocable form arrives via recordMcpPrompts,
+      // while keeping it would put a name in the menu that inserting can only
+      // break.
       .filter((c) => !MCP_LABEL.test(c.name))
       .map((c) => ({
       name: c.name.replace(/^\//, ""),
@@ -197,15 +185,15 @@ async function enumerate(cwd: string, settingSources: SettingSource[]): Promise<
 }
 
 /**
- * Record the MCP prompt commands a REAL session reported on its `init` message,
+ * Record the MCP prompt commands a real session reported on its `init` message,
  * so the menu can offer what the probe structurally cannot see (header).
  *
- * Called by the driver for every turn, which is what keeps this honest: the
- * newest observation replaces the previous one wholesale, so a server the user
- * removed stops being offered after the next turn rather than lingering until a
- * restart. An empty list IS an observation — a session with no MCP prompts is a
- * fact worth recording — but a message without the field at all is not, since
- * that's an SDK shape we didn't expect rather than a session without prompts.
+ * Called by the driver for every turn: the newest observation replaces the
+ * previous one wholesale, so a server the user removed stops being offered
+ * after the next turn rather than lingering until a restart. An empty list is
+ * an observation, since a session with no MCP prompts is a fact worth
+ * recording, but a message without the field at all is not, since that's an
+ * unexpected SDK shape rather than a session without prompts.
  */
 export function recordMcpPrompts(
   cwd: string,
@@ -218,8 +206,8 @@ export function recordMcpPrompts(
     .filter((c) => c.startsWith(MCP_PREFIX))
     .map(mcpPromptCommand);
   const key = cacheKey(cwd, settingSources);
-  // Re-insert so the eviction below drops the least recently OBSERVED entry —
-  // most keys here are task worktrees, and an instance up for weeks would
+  // Re-insert so the eviction below drops the least recently observed entry.
+  // Most keys here are task worktrees, and a long-lived instance would
   // otherwise accumulate one per task ever run, deleted ones included.
   mcpPrompts.delete(key);
   mcpPrompts.set(key, { at: Date.now(), commands });
@@ -229,11 +217,12 @@ export function recordMcpPrompts(
 /**
  * The probe's answer plus any MCP prompts observed for the same key.
  *
- * Merged at READ time rather than into the cache entry, so a prompt observed on
+ * Merged at read time rather than into the cache entry, so a prompt observed on
  * a turn shows up in the very next menu instead of waiting out the probe's TTL.
  * `null` is passed straight through: it means "we could not find out", and an
- * observation from an earlier session is not an answer to that question — the
- * validator would read the list as complete and refuse a real command.
+ * observation from an earlier session is not an answer to that question, since
+ * the validator would then read the list as complete and refuse a real
+ * command.
  */
 function withMcpPrompts(key: string, commands: AgentCommand[] | null): AgentCommand[] | null {
   if (!commands) return null;
@@ -246,7 +235,8 @@ function withMcpPrompts(key: string, commands: AgentCommand[] | null): AgentComm
 /**
  * One enumeration per (cwd, sources), shared by everyone who asks while it is
  * running. Resolves to `null` on failure and never rejects; the caller decides
- * what a failure means, because they don't agree — see listClaudeCommands.
+ * what a failure means, since callers don't agree on that; see
+ * listClaudeCommands.
  */
 function startEnumeration(
   key: string,
@@ -259,7 +249,7 @@ function startEnumeration(
   const run = enumerate(cwd, settingSources)
     .then((commands) => {
       // Re-insert to make this the newest key, so the eviction below drops the
-      // least recently RESOLVED entry rather than an arbitrary one.
+      // least recently resolved entry rather than an arbitrary one.
       cache.delete(key);
       cache.set(key, { at: Date.now(), commands });
       while (cache.size > MAX_ENTRIES) cache.delete(cache.keys().next().value as string);
@@ -284,9 +274,9 @@ function startEnumeration(
  * same shape and opposite facts, and the two callers need opposite things from
  * them: the composer's menu degrades to Calandria's own commands either way
  * (`?? []` at the driver), while the schedule validator must say "couldn't
- * check" rather than "that command doesn't exist" — reading a dead login as an
- * empty registry there settles a scheduled run `failed` and mints nothing,
- * every morning, for a command that is in fact registered.
+ * check" rather than "that command doesn't exist", since reading a dead login
+ * as an empty registry there would settle a scheduled run `failed` and mint
+ * nothing for a command that is in fact registered.
  *
  * MCP prompts are folded in from what real turns in the same cwd reported (see
  * recordMcpPrompts), because no probe cheap enough to run here can see them.
@@ -296,9 +286,9 @@ function startEnumeration(
  * CLI, and several schedules on one project must not each spawn one inside a
  * single sweep.
  *
- * `refresh` bypasses the TTL and, on failure, refuses the stale entry too — for
+ * `refresh` bypasses the TTL and, on failure, refuses the stale entry too, for
  * the caller that is about to turn "absent from this list" into a refusal and
- * needs the absence to be a fact rather than a fact from a minute ago.
+ * needs the absence to be a current fact rather than a fact from a minute ago.
  */
 export async function listClaudeCommands(
   cwd: string,

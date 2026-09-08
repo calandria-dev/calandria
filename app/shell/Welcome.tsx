@@ -5,9 +5,9 @@ import { Icon } from "../icons";
 import { Modal } from "./Modal";
 
 // Coach marks + the post-merge nudge for the built-in "Welcome" tutorial project
-// (projects.seeded = 1). These carry the "how Calandria works" teaching that we
-// deliberately keep OUT of the Claude-facing project context — so the concepts
-// live where the user reads them, not where the agent does.
+// (projects.seeded = 1). These carry the "how Calandria works" teaching that is
+// kept out of the Claude-facing project context, so the concepts live where
+// the user reads them, not where the agent does.
 
 const COACH_KEY = "calandria:welcomeCoach:dismissed";
 const LEGACY_COACH_KEY = "orch:welcomeCoach:dismissed";
@@ -57,8 +57,8 @@ export function WelcomeCoach() {
 }
 
 // Fires once the tutorial task is merged: the aha moment landed, so this is the
-// natural place to point the user at their own code (and, since we dropped the
-// notifications step from the wizard, to offer the browser-notification opt-in).
+// natural place to point the user at their own code, and to offer the
+// browser-notification opt-in that the wizard itself does not.
 export function WelcomeNudge({ onCreateProject, onClose }: { onCreateProject: () => void; onClose: () => void }) {
   const notifSupported = typeof window !== "undefined" && "Notification" in window;
   const [perm, setPerm] = useState<NotificationPermission | "unsupported">(

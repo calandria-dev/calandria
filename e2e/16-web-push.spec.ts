@@ -1,9 +1,9 @@
-// Web Push surface against the BUILT server: the push-only service worker is
+// Web Push surface against the built server: the push-only service worker is
 // served and installs in a real browser, and the subscription endpoints behave
 // as same-origin credentialed calls (the same gate every /api route sits
-// behind). The push itself can't be observed here — there is no push service in
-// the loop — so the protocol is pinned by tests/webpush.test.ts against the RFC
-// vector instead; this spec is about what only the real server and browser show.
+// behind). There is no push service in the loop here, so the protocol is
+// pinned by tests/webpush.test.ts against the RFC vector instead; this spec
+// covers what only the real server and browser show.
 
 import { expect, test } from "@playwright/test";
 import { ensureOnboarded, gotoApp } from "./helpers";
@@ -23,7 +23,7 @@ test("the service worker is served as script and has no fetch handler", async ({
 
 test("the service worker installs and activates in the browser", async ({ page }) => {
   await gotoApp(page);
-  // localhost is a secure context, so registration is real — parse errors or a
+  // localhost is a secure context, so registration is real: parse errors or a
   // failing install handler would reject here, which the unit pin can't see.
   const state = await page.evaluate(async () => {
     const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });

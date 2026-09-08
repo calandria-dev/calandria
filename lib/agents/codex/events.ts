@@ -1,15 +1,15 @@
-// The Codex event normalizer — pure functions that turn the codex CLI's JSONL
+// The Codex event normalizer: pure functions that turn the codex CLI's JSONL
 // `ThreadEvent` stream (surfaced by @openai/codex-sdk) into the agent-agnostic
 // StreamEvent contract (lib/types.ts). Kept separate from driver.ts so it can
 // be unit-tested against recorded JSONL fixtures without spawning the CLI.
 //
-// Codex emits *items* through a lifecycle — item.started → item.updated* →
-// item.completed — reusing a stable `item.id` across the phases. The runner
+// Codex emits *items* through a lifecycle, item.started -> item.updated* ->
+// item.completed, reusing a stable `item.id` across the phases. The runner
 // keys tool messages by that id (a second `tool` event with the same id would
-// create a duplicate row), so we emit exactly one `tool` event per item on its
-// first sighting and fold every later update into `tool_result` events, which
-// update the same row in place (matching the Claude driver's tool/tool_result
-// pairing).
+// create a duplicate row), so exactly one `tool` event is emitted per item on
+// its first sighting, and every later update folds into `tool_result` events,
+// which update the same row in place (matching the Claude driver's
+// tool/tool_result pairing).
 
 import type { StreamEvent, ToolPeek } from "../../types";
 import type {
@@ -22,16 +22,16 @@ import type {
   Usage,
 } from "@openai/codex-sdk";
 
-// The SDK's Usage, with every counter optional: the app reads a `codex` binary
-// the user installed, which may be older or newer than the SDK types.
+// The SDK's Usage, with every counter optional, since the app reads a `codex`
+// binary the user installed, which may be older or newer than the SDK types.
 type TurnCompletedUsage = Partial<Usage>;
 import { clip, clipKeepTail, summarizeResult, summarizeFailure, resultText } from "../shared";
 import { DEFAULT_CODEX_MODEL } from "./pricing";
 import { codexUsage } from "./usage";
 
 // Codex's raw cumulative token counters for a thread, exactly as `turn.completed`
-// reports them. Persisted per thread (sessions.usage_cum) so the NEXT turn can
-// subtract them — see the delta logic in mapThreadEvent.
+// reports them. Persisted per thread (sessions.usage_cum) so the next turn can
+// subtract them; see the delta logic in mapThreadEvent.
 export interface CodexCum {
   input: number;
   cachedInput: number;
@@ -42,8 +42,8 @@ export interface CodexCum {
 
 export const ZERO_CUM: CodexCum = { input: 0, cachedInput: 0, cacheWrite: 0, output: 0, reasoning: 0 };
 
-// Per-turn state threaded through every event: the item ids we've already
-// emitted a `tool` event for, the model the turn runs (drives cost estimation on
+// Per-turn state threaded through every event: the item ids already emitted a
+// `tool` event for, the model the turn runs (drives cost estimation on
 // turn.completed), the thread's previously-reported cumulative counters (the
 // baseline this turn's usage is measured against), and a dirty flag the driver
 // watches to persist the new baseline. A fresh object per turn (see newState()).
@@ -68,27 +68,28 @@ type ItemPhase = "started" | "updated" | "completed";
 export function mapThreadEvent(ev: ThreadEvent, state: CodexMapState): StreamEvent[] {
   switch (ev.type) {
     case "thread.started":
-      // The thread id is the opaque session id — persisted (tasks.session_id)
+      // The thread id is the opaque session id, persisted (tasks.session_id)
       // and handed back verbatim on resume, exactly like a Claude session id.
       return [{ type: "session", sessionId: ev.thread_id }];
     case "turn.completed": {
-      // Codex reports the THREAD's running totals here, not this turn's — a
+      // Codex reports the thread's running totals here, not this turn's: a
       // resumed thread re-reports everything it has ever spent (turn 2 of a
-      // 14k-token thread reports 28k). The StreamEvent contract is per-turn
-      // (the runner appends each usage event to the task's cumulative spend),
-      // so subtract the baseline the previous turn left behind. Counters that
-      // went BACKWARDS mean the report isn't cumulative after all (a thread
-      // reset, or an upstream switch to per-turn semantics) — take it at face
-      // value then rather than clamping the turn to zero.
+      // thread that spent 14k tokens reports 28k). The StreamEvent contract is
+      // per-turn (the runner appends each usage event to the task's
+      // cumulative spend), so subtract the baseline the previous turn left
+      // behind. Counters that go backwards mean the report isn't cumulative
+      // after all (a thread reset, or an upstream switch to per-turn
+      // semantics), so take it at face value rather than clamping the turn to
+      // zero.
       //
-      // The three token buckets are kept DISJOINT, as the contract expects
-      // (Claude's are): codex folds cached + cache-write tokens into
+      // The three token buckets are kept disjoint, as the contract expects
+      // (Claude's are): codex folds cached and cache-write tokens into
       // input_tokens, so they're netted out here instead of double-counted in
       // the task total and the context gauge. Reasoning output folds into
-      // output_tokens — the API bills reasoning as output.
+      // output_tokens, since the API bills reasoning as output.
       //
       // ChatGPT-plan auth reports token counts only, so cost_usd is an
-      // ESTIMATE: tokens × published API prices for the turn's model (see
+      // estimate: tokens × published API prices for the turn's model (see
       // ./pricing.ts; capabilities.costIsEstimated makes the UI label it ~).
       const cur = toCum(ev.usage);
       const turn = monotonic(cur, state.cum) ? diffCum(cur, state.cum) : cur;
@@ -110,7 +111,7 @@ export function mapThreadEvent(ev: ThreadEvent, state: CodexMapState): StreamEve
     }
     case "turn.failed":
       // A model/turn failure (distinct from a Stop, which kills the process and
-      // never reaches here — see the driver's abort handling).
+      // never reaches here; see the driver's abort handling).
       return [{ type: "error", content: ev.error.message }];
     case "error":
       // A fatal, unrecoverable stream error.
@@ -129,7 +130,7 @@ function mapItem(phase: ItemPhase, item: ThreadItem, state: CodexMapState): Stre
   switch (item.type) {
     case "agent_message":
       // The assistant's natural-language reply arrives complete on the item's
-      // terminal event. (A turn can have several — codex narrates between steps.)
+      // terminal event. (A turn can have several: codex narrates between steps.)
       return phase === "completed" && item.text.trim() ? [{ type: "assistant", content: item.text }] : [];
     case "reasoning":
       // Rendered as a collapsed tool line (there is no distinct "thinking"
@@ -195,7 +196,7 @@ function mapCommand(phase: ItemPhase, item: CommandExecutionItem, state: CodexMa
 }
 
 // Codex reports the *set of changed paths* (path + add/delete/update), not a
-// content diff, so we render a git-status-style file list rather than a +/-
+// content diff, so this renders a git-status-style file list instead of a +/-
 // hunk. A failed patch also emits an error tool_result so the failure is legible.
 function mapFileChange(phase: ItemPhase, item: FileChangeItem, state: CodexMapState): StreamEvent[] {
   const out: StreamEvent[] = [];
@@ -221,7 +222,7 @@ function describeFileChange(changes: FileChangeItem["changes"]): { title: string
     title,
     detail: changes.map((c) => c.path).join("\n"),
     peek: { kind: "lines", lines: lines.slice(0, MAX), truncated: Math.max(0, lines.length - MAX) },
-    // One surviving file → the card can open it in collaboration mode. A
+    // One surviving file lets the card open it in collaboration mode. A
     // multi-file patch names no single document, and a delete leaves nothing.
     file: changes.length === 1 && changes[0].kind !== "delete" ? changes[0].path : undefined,
   };
@@ -229,15 +230,15 @@ function describeFileChange(changes: FileChangeItem["changes"]): { title: string
 
 function mapMcp(phase: ItemPhase, item: McpToolCallItem, state: CodexMapState): StreamEvent[] {
   // ask_user is rendered as an interactive card published directly by the
-  // internal ask-user endpoint (lib/agentTools.startAskUser) — suppress the
-  // generic tool line so the question isn't shown twice (mirrors the Claude
-  // driver skipping AskUserQuestion tool_use blocks).
+  // internal ask-user endpoint (lib/agentTools.startAskUser), so the generic
+  // tool line is suppressed here to avoid showing the question twice (mirrors
+  // the Claude driver skipping AskUserQuestion tool_use blocks).
   if (item.server === "calandria" && item.tool === "ask_user") return [];
   const out: StreamEvent[] = [];
-  // `server__tool` is this driver's spelling of the tool's own name — the
+  // `server__tool` is this driver's spelling of the tool's own name; the
   // Claude driver's in-process mount spells the same call
   // `mcp__calandria__suggest_task`. What matches on it (lib/suggestionCard.ts)
-  // matches a substring for exactly that reason.
+  // matches a substring for that reason.
   const tool = toolOnce(state, item.id, { name: `${item.server}__${item.tool}`, title: `⚙ ${item.server}: ${item.tool}`, detail: clip(item.arguments) });
   if (nonEmpty(tool)) out.push(tool);
   if (phase === "completed") {
@@ -275,19 +276,20 @@ function toCum(u: TurnCompletedUsage): CodexCum {
   return {
     input: u.input_tokens ?? 0,
     cachedInput: u.cached_input_tokens ?? 0,
-    // Added to the SDK's Usage after the driver shipped; treat as optional so an
-    // older/newer CLI that omits it prices as plain input rather than crashing.
+    // Optional: an older/newer CLI that omits this field prices as plain
+    // input instead of crashing.
     cacheWrite: u.cache_write_input_tokens ?? 0,
     output: u.output_tokens ?? 0,
     reasoning: u.reasoning_output_tokens ?? 0,
   };
 }
 
-// Is this report still counting up from the baseline? Decided on the INPUT side:
-// it's the dominant counter, it can only grow while a thread lives, and it's the
-// one a migrated/backfilled baseline records exactly (the output-side split
-// between plain and reasoning tokens isn't always recoverable). Input going
-// backwards means the baseline doesn't belong to this run of the thread.
+// Is this report still counting up from the baseline? Decided on the input
+// side: it's the dominant counter, it can only grow while a thread lives, and
+// it's the one a migrated/backfilled baseline records exactly (the
+// output-side split between plain and reasoning tokens isn't always
+// recoverable). Input going backwards means the baseline doesn't belong to
+// this run of the thread.
 const monotonic = (cur: CodexCum, prev: CodexCum): boolean =>
   cur.input >= prev.input && cur.cachedInput >= prev.cachedInput && cur.cacheWrite >= prev.cacheWrite;
 

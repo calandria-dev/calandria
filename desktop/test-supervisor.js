@@ -1,11 +1,11 @@
-/* Supervisor tests — plain `node desktop/test-supervisor.js`, no deps, no GUI.
+/* Supervisor tests. Run with plain `node desktop/test-supervisor.js`, no
+ * deps, no GUI.
  *
- * Deliberately NOT a vitest file: the point of this spike is that the shell's
- * risky half (process supervision) can be verified on a headless box with
- * nothing installed, including under Electron's own runtime
- * (`ELECTRON_RUN_AS_NODE=1 electron desktop/test-supervisor.js`). Folding it
- * into the repo suite would drag `desktop/` into everyone's `npm test` before
- * anyone has decided the wrapper ships at all.
+ * Not a vitest file: the shell's process-supervision logic needs to be
+ * verifiable on a headless box with nothing installed, including under
+ * Electron's own runtime (`ELECTRON_RUN_AS_NODE=1 electron
+ * desktop/test-supervisor.js`). Folding it into the repo suite would drag
+ * `desktop/` into every `npm test` run before the wrapper ships at all.
  */
 "use strict";
 const assert = require("node:assert/strict");
@@ -14,12 +14,70 @@ const path = require("node:path");
 const os = require("node:os");
 const fs = require("node:fs");
 const http = require("node:http");
+const crypto = require("node:crypto");
+const { spawn } = require("node:child_process");
 const { Supervisor, pickPorts, preferredPorts, resolveNode, sidecarEnv, waitForReady, needsPathRepair, loginShellPath } = require("./supervisor");
 const { envFilePath, parseEnvFile, loadEnvFile } = require("./env-file");
+const {
+  DEFAULT_REMOTE_PORT,
+  LOCAL_ID,
+  MIN_SERVER_VERSION,
+  activeInstance,
+  addInstance,
+  addUrlInstance,
+  adoptServerName,
+  compareVersions,
+  derivedNameFor,
+  findInstance,
+  instanceAddress,
+  instanceMenuItems,
+  instancesFilePath,
+  loadInstances,
+  normalizeInstanceUrl,
+  normalizeState,
+  parseInstanceAddress,
+  partitionFor,
+  removeInstance,
+  saveInstances,
+  serverTooOld,
+  setActive,
+  setInstanceAuth,
+  versionBannerText,
+  windowTitle,
+} = require("./instances");
+const {
+  DISCOVERY_PATH,
+  LoopbackReceiver,
+  authorizeUrl,
+  createPkce,
+  createState,
+  discover,
+  discoveryUrl,
+  exchangeCode,
+  parseCallback,
+  refreshCredential,
+} = require("./oauth");
+const {
+  MAX_REFRESH_DELAY_MS,
+  NO_CIPHER,
+  REFRESH_SKEW_MS,
+  authHeaders,
+  credentialExpired,
+  credentialsFilePath,
+  formatHeaderLines,
+  loadCredentials,
+  normalizeAuth,
+  parseHeaderLines,
+  refreshDelay,
+  saveCredentials,
+} = require("./instance-auth");
+const { SshTunnel, pickLocalPort, portAccepts, sshArgs, sshFailureMessage, waitForPort } = require("./ssh-tunnel");
 const {
   AppEvents,
   NeedsYou,
   createSseParser,
+  gotoUrl,
+  notificationText,
   overlayIconName,
   selectedTaskFromUrl,
   shouldNotify,
@@ -35,11 +93,11 @@ const {
 } = require("./tray-residency");
 
 const HERE = __dirname;
-// Three cases below assert POSIX process semantics rather than merely using
+// Three cases below assert POSIX process semantics instead of merely using
 // them, and one asserts the win32 branch. Following tests/platform.ts's rule:
-// a construct a test only USES gets a portable spelling; a test ABOUT a
+// a construct a test only uses gets a portable spelling; a test about a
 // platform's semantics gets a branch that says what the other platform does,
-// never a skip that quietly pins nothing.
+// never a skip that pins nothing.
 const IS_WIN = process.platform === "win32";
 const stubOpts = (extra = {}) => ({
   repoRoot: HERE,
@@ -60,6 +118,34 @@ async function test(name, fn) {
   }
 }
 
+/**
+ * Points a tunnel at desktop/stub-ssh.js instead of the real ssh, through
+ * the injected `spawnFn`: the argv is fixed by the spec and has nowhere in
+ * it to put a script path. No shebang, no exec bit, no `.cmd`, so the same
+ * code path runs on every platform; the app must never pass `shell: true`
+ * (CVE-2024-27980), which a shell-script stub would need on Windows. This
+ * gives up proof that `sshPath` resolves to a real binary: that is
+ * desktop/e2e's job, since only there is the binary a real OpenSSH.
+ */
+function fakeSshOptions(dir, env = {}) {
+  const stub = path.join(HERE, "stub-ssh.js");
+  return {
+    sshPath: "ssh",
+    spawnFn: (_bin, args, opts) => spawn(process.execPath, [stub, ...args], opts),
+    env: { ...process.env, STUB_SSH_COUNT_FILE: path.join(dir, "attempts"), ...env },
+  };
+}
+
+/** Poll a predicate until it passes, with no fixed sleep. */
+async function waitUntil(fn, timeoutMs, what) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await fn()) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error(`timed out after ${timeoutMs}ms waiting for: ${what}`);
+}
+
 function hold(port) {
   return new Promise((resolve, reject) => {
     const srv = net.createServer();
@@ -74,9 +160,9 @@ function hold(port) {
   await test("resolveNode finds a usable Node and never returns the Electron binary", async () => {
     const n = resolveNode({ env: process.env });
     assert.match(n.version, /^v\d+\./);
-    assert.ok(!/electron/i.test(path.basename(n.path)), `resolved ${n.path} — must not be Electron`);
-    // Under Electron (including ELECTRON_RUN_AS_NODE) execPath is the Electron
-    // binary, so it must not be what we picked.
+    assert.ok(!/electron/i.test(path.basename(n.path)), `resolved ${n.path}, must not be Electron`);
+    // Under Electron, including ELECTRON_RUN_AS_NODE, execPath is the
+    // Electron binary, so it must not be what we picked.
     if (process.versions.electron) assert.notEqual(n.source, "execPath");
   });
 
@@ -122,22 +208,21 @@ function hold(port) {
   });
 
   await test("sidecarEnv sets NODE_ENV only when the caller names one, and deletes an inherited one otherwise", async () => {
-    // issue #102 §2: the pty sidecar (and, through it, every agent turn) must
-    // not inherit NODE_ENV=production just because the launching shell had it —
-    // only the caller building the APP sidecar's env asks for it by name.
+    // The pty sidecar, and through it every agent turn, must not inherit
+    // NODE_ENV=production merely because the launching shell had it; only
+    // the caller building the app sidecar's env sets it by name.
     const named = sidecarEnv({ env: {}, port: 1, ptyPort: 2, nodeEnv: "production" });
     assert.equal(named.NODE_ENV, "production");
     const unnamed = sidecarEnv({ env: { NODE_ENV: "production" }, port: 1, ptyPort: 2 });
     assert.equal("NODE_ENV" in unnamed, false, "an inherited NODE_ENV must be dropped, not merely left unset");
   });
 
-  await test("sidecarEnv never invents a SHELL — the pty sidecar probes a better one", async () => {
+  await test("sidecarEnv never invents a SHELL, the pty sidecar probes a better one", async () => {
     // pty-server.js resolves CALANDRIA_PTY_SHELL, then $SHELL, then a probed
-    // default (docs/WINDOWS.md). The supervisor used to fill $SHELL in on win32
-    // from COMSPEC, back when that probe was a hardcoded "/bin/zsh"; now that it
-    // prefers pwsh.exe, setting $SHELL SHORT-CIRCUITS it and pins every desktop
-    // terminal tab to cmd.exe. So the same assertion holds on both platforms:
-    // an inherited SHELL is passed through, and an absent one stays absent.
+    // default. Setting SHELL here would short-circuit that probe and pin
+    // every desktop terminal tab to the wrong default shell. The same
+    // assertion holds on both platforms: an inherited SHELL is passed
+    // through, and an absent one stays absent.
     const win = sidecarEnv({ env: { COMSPEC: "C:\\Windows\\system32\\cmd.exe" }, port: 1, ptyPort: 2 });
     const noComspec = sidecarEnv({ env: {}, port: 1, ptyPort: 2 });
     const preset = sidecarEnv({ env: { SHELL: "C:\\ProgramData\\nu\\nu.exe", COMSPEC: "cmd.exe" }, port: 1, ptyPort: 2 });
@@ -147,9 +232,9 @@ function hold(port) {
   });
 
   // ---------------------------------------------------------------------------
-  // The desktop launch env file (env-file.js, issue #102 §1) — the desktop
-  // app's only substitute for a launcher script that sources a file and
-  // `exec npm start`s.
+  // The desktop launch env file (env-file.js): the desktop app's only
+  // substitute for a launcher script that sources a file and `exec npm
+  // start`s.
   // ---------------------------------------------------------------------------
 
   await test("envFilePath resolves CALANDRIA_ENV_FILE, then XDG_CONFIG_HOME, then the ~/.config default", async () => {
@@ -220,12 +305,163 @@ function hold(port) {
     }
   });
 
+  /* ----------------------------------------------------------------------- *
+   * instances.js: the saved instance list and the version handshake.
+   * ----------------------------------------------------------------------- */
+
+  await test("instancesFilePath sits beside the env file and honours the same overrides", async () => {
+    const env = { XDG_CONFIG_HOME: "/x/cfg" };
+    assert.equal(instancesFilePath(env), path.join("/x/cfg", "calandria", "instances.json"));
+    assert.equal(path.dirname(instancesFilePath(env)), path.dirname(envFilePath(env)));
+    assert.equal(instancesFilePath({ CALANDRIA_INSTANCES_FILE: "/tmp/other.json" }), "/tmp/other.json");
+  });
+
+  await test("normalizeState repairs a hand-edited file into something usable", async () => {
+    // Everything wrong at once: no local entry, an unknown kind, a duplicate
+    // id, a junk id, a url that will not parse, and an `active` naming an
+    // instance that is not in the list.
+    const state = normalizeState({
+      active: "ghost",
+      instances: [
+        { id: "a1f3", kind: "url", name: "Lab", url: "https://lab.example.com/some/path" },
+        { id: "a1f3", kind: "url", name: "Dup", url: "https://dup.example.com" },
+        { id: "9c2e", kind: "ssh", name: "Build box" },
+        { id: "!!", kind: "url", url: "https://bad.example.com" },
+        { id: "beef", kind: "url", name: "Broken", url: "not a url at all ://" },
+      ],
+    });
+    assert.equal(state.active, LOCAL_ID, "an active naming nothing falls back to local");
+    assert.equal(state.instances[0].id, LOCAL_ID, "local is always present and always first");
+    assert.equal(state.instances[0].kind, "local");
+    assert.deepEqual(
+      state.instances.map((i) => i.id),
+      [LOCAL_ID, "a1f3"],
+    );
+    // The path is dropped: every client URL is relative to the origin.
+    assert.equal(state.instances[1].url, "https://lab.example.com");
+  });
+
+  await test("normalizeState keeps a renamed local and refuses to let it stop being local", async () => {
+    const state = normalizeState({ active: "local", instances: [{ id: "local", kind: "url", name: "Laptop", url: "https://elsewhere" }] });
+    assert.equal(state.instances.length, 1);
+    assert.deepEqual(state.instances[0], { id: "local", kind: "local", name: "Laptop" });
+  });
+
+  await test("normalizeInstanceUrl defaults to https, keeps the origin, and refuses the rest", async () => {
+    assert.equal(normalizeInstanceUrl("calandria.example.com"), "https://calandria.example.com");
+    assert.equal(normalizeInstanceUrl("  https://x.example.com/  "), "https://x.example.com");
+    assert.equal(normalizeInstanceUrl("http://192.168.1.9:3000/tasks?a=1"), "http://192.168.1.9:3000");
+    for (const bad of ["", "   ", "ftp://x.example.com", "file:///etc/passwd", "http://"]) {
+      assert.throws(() => normalizeInstanceUrl(bad), undefined, `${JSON.stringify(bad)} should be refused`);
+    }
+  });
+
+  await test("adding, switching and removing an instance", async () => {
+    let state = normalizeState({});
+    assert.equal(activeInstance(state).id, LOCAL_ID);
+
+    let added;
+    ({ state, instance: added } = addUrlInstance(state, { name: "", url: "lab.example.com:8443" }));
+    // An unnamed instance takes its host as the name.
+    assert.equal(added.name, "lab.example.com:8443");
+    assert.equal(added.url, "https://lab.example.com:8443");
+    assert.equal(added.kind, "url");
+    assert.notEqual(added.id, LOCAL_ID);
+
+    state = setActive(state, added.id);
+    assert.equal(activeInstance(state).id, added.id);
+    assert.deepEqual(
+      instanceMenuItems(state).map((i) => i.checked),
+      [false, true],
+    );
+    assert.equal(instanceMenuItems(state)[1].label, "lab.example.com:8443 (lab.example.com:8443)");
+
+    // Removing the ATTACHED instance has to leave the app somewhere to go.
+    state = removeInstance(state, added.id);
+    assert.equal(state.active, LOCAL_ID);
+    assert.equal(findInstance(state, added.id), null);
+
+    // And local is never removable, or there would be nowhere at all.
+    const before = normalizeState({});
+    assert.deepEqual(removeInstance(before, LOCAL_ID), before);
+  });
+
+  await test("every non-local instance gets its own persistent partition", async () => {
+    const { instance: a } = addUrlInstance(normalizeState({}), { name: "A", url: "https://a.example.com" });
+    const { instance: b } = addUrlInstance(normalizeState({}), { name: "B", url: "https://b.example.com" }, () => 0.5);
+    assert.equal(partitionFor({ id: "local", kind: "local", name: "This computer" }), null);
+    assert.equal(partitionFor(a), `persist:instance-${a.id}`);
+    assert.notEqual(partitionFor(a), partitionFor(b), "two instances must not share a cookie jar");
+  });
+
+  await test("windowTitle names the instance", async () => {
+    assert.equal(windowTitle({ id: "local", kind: "local", name: "This computer" }), "This computer · Calandria");
+    assert.equal(windowTitle({ id: "a1f3", kind: "url", name: "Lab" }), "Lab · Calandria");
+    assert.equal(windowTitle(null), "Calandria");
+  });
+
+  await test("the version handshake warns on an older server and never on an unreadable one", async () => {
+    assert.equal(compareVersions("0.7.0", "0.7.0"), 0);
+    assert.equal(compareVersions("0.6.9", "0.7.0"), -1);
+    assert.equal(compareVersions("0.10.0", "0.9.9"), 1);
+    assert.equal(compareVersions("1.2", "1.2.0"), 0);
+    // A prerelease of a NEWER server must not be reported as older.
+    assert.equal(compareVersions("0.8.0-rc.1", "0.7.0"), 1);
+    assert.equal(compareVersions("unknown", "0.7.0"), null);
+
+    assert.equal(serverTooOld("0.6.0", "0.7.0"), true);
+    assert.equal(serverTooOld("0.7.0", "0.7.0"), false);
+    assert.equal(serverTooOld("9.9.9", "0.7.0"), false);
+    // Not a version at all is not evidence of anything, so it must not nag.
+    for (const v of ["unknown", "", null, undefined, "dev"]) {
+      assert.equal(serverTooOld(v, "0.7.0"), false, `${JSON.stringify(v)} must not trip the banner`);
+    }
+
+    const text = versionBannerText({ instanceName: "Lab", serverVersion: "0.6.0", minVersion: "0.7.0" });
+    assert.ok(text.includes("Lab"), "the banner names the instance");
+    assert.ok(text.includes("0.6.0") && text.includes("0.7.0"), "the banner names BOTH versions");
+    assert.ok(typeof MIN_SERVER_VERSION === "string" && /^\d+\.\d+\.\d+$/.test(MIN_SERVER_VERSION));
+  });
+
+  await test("loadInstances/saveInstances round-trip, and a corrupt file still launches", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-instances-"));
+    const file = path.join(dir, "nested", "instances.json");
+    try {
+      const missing = loadInstances({ file });
+      assert.equal(missing.found, false);
+      assert.equal(missing.error, null, "a file that was never written is not an error");
+      assert.equal(missing.state.active, LOCAL_ID);
+      assert.equal(missing.state.instances.length, 1);
+
+      const { state } = addUrlInstance(missing.state, { name: "Lab", url: "https://lab.example.com" });
+      // The parent directory does not exist yet: saving has to make it.
+      saveInstances(setActive(state, state.instances[1].id), { file });
+      const back = loadInstances({ file });
+      assert.equal(back.found, true);
+      assert.equal(back.state.active, state.instances[1].id);
+      assert.deepEqual(back.state.instances[1], state.instances[1]);
+      // Nothing left behind by the atomic write.
+      assert.deepEqual(
+        fs.readdirSync(path.dirname(file)),
+        ["instances.json"],
+      );
+
+      fs.writeFileSync(file, "{ this is not json");
+      const corrupt = loadInstances({ file });
+      assert.equal(corrupt.found, false);
+      assert.ok(corrupt.error, "a parse failure is reported, not swallowed");
+      assert.equal(corrupt.state.active, LOCAL_ID, "and the app still has somewhere to go");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   await test("needsPathRepair fires on launchd's stub PATH and not on a real one", async () => {
     if (IS_WIN) {
       // There is no launchd and no GUI-vs-shell PATH split on Windows: a
       // process started from Explorer inherits the same machine+user PATH a
-      // console does. So the repair is refused outright rather than reaching
-      // for a login shell that does not exist — asserted here, because the
+      // console does. So the repair is refused outright instead of reaching
+      // for a login shell that does not exist. Asserted here because the
       // failure mode of getting this wrong is a `sh -ilc` spawn on every
       // desktop launch.
       assert.equal(needsPathRepair({ PATH: "/usr/bin:/bin:/usr/sbin:/sbin" }), false);
@@ -242,7 +478,7 @@ function hold(port) {
 
   await test("loginShellPath fences the PATH out of a chatty login shell", async () => {
     if (IS_WIN) {
-      // Not "unavailable here" — refused by contract. `-ilc`, `printf` and
+      // Not "unavailable here": refused by contract. `-ilc`, `printf` and
       // `$PATH` are POSIX shell syntax, and there is nothing on Windows that
       // both understands them and would answer with a PATH worth adopting.
       assert.equal(loginShellPath({ env: { ...process.env, SHELL: "powershell.exe" } }), null);
@@ -322,14 +558,14 @@ function hold(port) {
     // The end-to-end half of `sidecarEnv` above: what the child's OWN
     // process.env says, after a real spawn. Both facts are Windows facts.
     //
-    //   nodeenv  — package.json's scripts reach NODE_ENV through cross-env
-    //              because an inline `NODE_ENV=production node …` prefix is
-    //              POSIX shell syntax that cmd.exe reads as a program name.
-    //              The shell sidesteps the question entirely: it spawns the
-    //              resolved node binary with the script as argv[1] and puts
-    //              NODE_ENV in the env object, so no shell parses anything.
-    //   argv0    — the same claim from the other side. `npm`/`npm.cmd` or a
-    //              `shell: true` spawn would put a wrapper here.
+    //   nodeenv: package.json's scripts reach NODE_ENV through cross-env
+    //            because an inline `NODE_ENV=production node …` prefix is
+    //            POSIX shell syntax that cmd.exe reads as a program name.
+    //            The shell spawns the resolved node binary with the script
+    //            as argv[1] and puts NODE_ENV in the env object, so no
+    //            shell parses anything.
+    //   argv0:   the same claim from the other side. `npm`/`npm.cmd` or a
+    //            `shell: true` spawn would put a wrapper here.
     const sup = new Supervisor(stubOpts({ port: 45110, ptyPort: 45111 }));
     try {
       await sup.start();
@@ -338,10 +574,10 @@ function hold(port) {
       assert.match(line, /nodeenv=production/);
       assert.match(line, IS_WIN ? /argv0=node\.exe/i : /argv0=node/);
       assert.match(line, new RegExp(`ppid=${process.pid}\\b`), "the sidecar's parent should be this process, with no shell in between");
-      // No $SHELL assertion here on purpose: the supervisor deliberately does
-      // not invent one (see the sidecarEnv test above), so what the child sees
-      // is whatever the launching desktop session had — and on Windows that is
-      // usually nothing, which is the case pty-server.js's own probe handles.
+      // No $SHELL assertion here: the supervisor does not invent one (see the
+      // sidecarEnv test above), so the child sees whatever the launching
+      // desktop session had. On Windows that is usually nothing, which is
+      // the case pty-server.js's own probe handles.
     } finally {
       await sup.stop();
     }
@@ -360,25 +596,25 @@ function hold(port) {
     await sup.start();
     await sup.stop();
     assert.ok(sup.children.every((c) => c.exited), "every sidecar should be reaped");
-    // The platform-independent half, and the point of the whole route: the
-    // drain is a request the SHELL made, carrying the same header server.js
-    // sends, so it lands without any signal having to be deliverable.
+    // The platform-independent half: the drain is a request the shell made,
+    // carrying the same header server.js sends, so it lands without any
+    // signal having to be deliverable.
     assert.equal(fs.readFileSync(drainLog, "utf8").trim(), "drain token=stub-token");
     const log = sup.recentLog(50);
     assert.ok(log.includes("drain complete"), "stop() should have waited for the drain, not fired and forgotten");
     assert.ok(log.includes("[shell] drained in-flight turns (status 200)"), "the shell should say it drained");
     if (IS_WIN) {
-      // There is still no deliverable SIGTERM here — `child.kill("SIGTERM")`
+      // There is still no deliverable SIGTERM here: `child.kill("SIGTERM")`
       // is a TerminateProcess and the stub's signal handler never runs. That
-      // is now a property of the BACKSTOP rather than a gap: everything the
-      // app needed to settle settled over HTTP a moment earlier.
+      // is a property of the backstop, not a gap: everything the app needed
+      // to settle already settled over HTTP.
       assert.ok(!log.includes("drained, exiting"), "a SIGTERM handler cannot have run on win32");
       return;
     }
-    // On POSIX the signal path still runs afterwards, unchanged — server.js
-    // POSTs the same route from its own handler and exits 0. It finds nothing
-    // left in flight, which is why the drain above is the mechanism and this
-    // is the backstop.
+    // On POSIX the signal path still runs afterwards: server.js POSTs the
+    // same route from its own handler and exits 0. It finds nothing left in
+    // flight, which is why the drain above is the mechanism and this is the
+    // backstop.
     assert.ok(log.includes("draining"), "server should have run its own SIGTERM drain handler too");
     assert.ok(log.includes("drained, exiting"), "the signal-side drain should have been allowed to finish");
     assert.equal(sup.children.find((c) => c.name === "app").exited.code, 0);
@@ -387,8 +623,8 @@ function hold(port) {
   await test("the drain still lands when the signal buys nothing (the Windows case, on any box)", async () => {
     // `ignore-term` stands in for TerminateProcess semantics on a POSIX box:
     // the signal accomplishes nothing the server can act on, so a drain that
-    // rode on it would not happen at all. What is asserted is the ORDER —
-    // drained, then killed — because "the file exists afterwards" would also
+    // rode on it would not happen at all. What is asserted is the order,
+    // drained then killed, because "the file exists afterwards" would also
     // be true of a shell that drained a corpse.
     const drainLog = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "calandria-drain-")), "drain.log");
     fs.writeFileSync(drainLog, ""); // so "never drained" reads as an empty file rather than an ENOENT
@@ -423,7 +659,7 @@ function hold(port) {
     const started = Date.now();
     await sup.stop({ drainMs: 600, graceMs: 1000 });
     const took = Date.now() - started;
-    assert.ok(took < 4000, `stop() took ${took}ms — the drain wait looks unbounded`);
+    assert.ok(took < 4000, `stop() took ${took}ms, the drain wait looks unbounded`);
     assert.ok(sup.recentLog(50).includes("drain request failed"), "an abandoned drain should say so in the log");
     assert.ok(sup.children.every((c) => c.exited), "every sidecar should still be reaped");
   });
@@ -437,10 +673,10 @@ function hold(port) {
     const app = sup.children.find((c) => c.name === "app");
     assert.ok(app.exited, "killed child should be reaped");
     if (IS_WIN) {
-      // "ignore-term" is unreachable on Windows — the first kill is already
+      // "ignore-term" is unreachable on Windows: the first kill is already
       // the termination, so there is nothing left to escalate to. Asserting
-      // the ABSENCE of the escalation is what makes that visible: a SIGKILL
-      // line here would mean a child had somehow survived a TerminateProcess.
+      // the absence of the escalation makes that visible: a SIGKILL line
+      // here would mean a child had somehow survived a TerminateProcess.
       assert.ok(!sup.recentLog(50).includes("SIGKILL"), "nothing to escalate: the first kill is terminal");
       return;
     }
@@ -457,14 +693,15 @@ function hold(port) {
   });
 
   await test("a sidecar that dies during boot fails start() at once, naming the real cause", async () => {
-    // The bug: waitForReady polls a port and knows nothing about the process it
-    // is waiting for, so an app that exited one second in still sat out the
-    // whole readiness timeout and then rejected with "server did not become
-    // ready … (fetch failed)". The db lock is just the cheapest way to make a
-    // sidecar die on purpose; the fix is about ANY boot-time exit.
+    // waitForReady only polls a port; it has no way to know about the
+    // process it is waiting for. An app that exits early must still fail
+    // fast, instead of sitting out the whole readiness timeout and
+    // rejecting with "server did not become ready … (fetch failed)". The db
+    // lock is just a convenient way to make a sidecar exit; the fix covers
+    // any boot-time exit.
     //
-    // The timeout here is deliberately far larger than the assertion below: a
-    // start() that merely got faster would still pass a small one, whereas
+    // The timeout here is far larger than the assertion below: a start()
+    // that merely got faster would still pass a small one, whereas
     // 30s-vs-5s can only be met by not waiting for the deadline at all.
     const sup = new Supervisor(
       stubOpts({
@@ -477,9 +714,9 @@ function hold(port) {
     await assert.rejects(
       () => sup.start(),
       (err) => {
-        // Not the timeout's words: the child's own. Both halves matter — a
-        // message that merely said "the app sidecar exited" would be fast and
-        // still send the user looking in the wrong place.
+        // Not the timeout's words: the child's own. Both halves matter, since
+        // a message that merely said "the app sidecar exited" would be fast
+        // but still send the user looking in the wrong place.
         assert.ok(!/did not become ready/.test(err.message), `still the timeout's error: ${err.message}`);
         assert.match(err.message, /app sidecar exited with code 1/);
         assert.match(err.message, /already holds this database/);
@@ -489,7 +726,7 @@ function hold(port) {
       }
     );
     const took = Date.now() - started;
-    assert.ok(took < 5000, `start() took ${took}ms — it waited out the readiness timeout`);
+    assert.ok(took < 5000, `start() took ${took}ms, it waited out the readiness timeout`);
     assert.ok(sup.children.every((c) => c.exited), "a failed start must not leak the surviving sidecar");
   });
 
@@ -525,9 +762,9 @@ function hold(port) {
   await test("preferredPorts reads PORT/PTY_PORT and ignores junk", async () => {
     assert.deepEqual(preferredPorts({ PORT: "4830", PTY_PORT: "4831" }), { port: 4830, ptyPort: 4831 });
     assert.deepEqual(preferredPorts({ PORT: " 4830 " }), { port: 4830 });
-    // Absent/unusable values must leave the option UNSET, not pass a 0 or NaN
-    // through — the Supervisor's `opts.port || 3000` fallback is the intended
-    // default, and sidecarEnv treats 0 as "don't set PORT at all".
+    // Absent or unusable values must leave the option unset, never pass a 0
+    // or NaN through: the Supervisor's `opts.port || 3000` fallback is the
+    // intended default, and sidecarEnv treats 0 as "don't set PORT at all".
     assert.deepEqual(preferredPorts({}), {});
     for (const bad of ["", "0", "-1", "70000", "http://x", "3000.5", "3000a"]) {
       assert.deepEqual(preferredPorts({ PORT: bad, PTY_PORT: bad }), {}, `PORT=${bad} should be dropped`);
@@ -542,9 +779,9 @@ function hold(port) {
       assert.equal(sup.preferredPort, base);
       assert.equal(sup.preferredPtyPort, base + 10);
       const res = await sup.start();
-      // Preference, not demand: base is taken, so the app lands just past it —
-      // what makes a second Calandria on a dev box survivable. The free
-      // preference is honoured exactly.
+      // Preference, not demand: base is taken, so the app lands just past it.
+      // That's what makes a second Calandria on a dev box survivable, and
+      // the free preference is honoured exactly.
       assert.equal(res.port, base + 1);
       assert.equal(res.ptyPort, base + 10);
       assert.equal(res.url, `http://127.0.0.1:${base + 1}`);
@@ -557,11 +794,11 @@ function hold(port) {
   });
 
   await test("main.js actually passes the env ports to the Supervisor", async () => {
-    // The bug this pins was entirely in the WIRING: supervisor.js supported
-    // `port`/`ptyPort` all along and main.js never passed them, so a documented
-    // PORT=4830 launch bound 3002. Nothing here can be exercised without a
-    // display, so assert on the source — main.js is `require("electron")` at
-    // line 1 and cannot be loaded by this runner.
+    // Pins the wiring: supervisor.js supports `port`/`ptyPort`, and main.js
+    // must pass them or a documented PORT=4830 launch binds 3002 instead.
+    // Nothing here can be exercised without a display, so this asserts on
+    // the source: main.js is `require("electron")` at line 1 and cannot be
+    // loaded by this runner.
     const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
     const ctor = src.indexOf("new Supervisor(");
     const wiring = src.indexOf("...preferredPorts(process.env)");
@@ -571,18 +808,18 @@ function hold(port) {
   });
 
   // ---------------------------------------------------------------------------
-  // Notifications, badge, tray (notifier.js). Everything below runs headless on
-  // purpose: the policy — which events raise a toast, what the badge counts,
-  // when a toast would be redundant — is exactly the part a display cannot
-  // check for you, and desktop/e2e is where the Electron calls get exercised.
+  // Notifications, badge, tray (notifier.js). Everything below runs headless:
+  // the policy (which events raise a toast, what the badge counts, when a
+  // toast would be redundant) is the part a display cannot check for you.
+  // desktop/e2e is where the Electron calls get exercised.
   // ---------------------------------------------------------------------------
 
   await test("the SSE reader reassembles frames split across chunks and drops keep-alives", async () => {
     const got = [];
     const parser = createSseParser((d) => got.push(d));
-    // Exactly what /api/events writes on connect, then a frame torn in half by
-    // a chunk boundary — the case that makes this a push parser rather than a
-    // split().
+    // Exactly what /api/events writes on connect, then a frame torn in half
+    // by a chunk boundary: the case that makes this a push parser instead of
+    // a split().
     parser.push(": connected\n\n");
     parser.push('data: {"type":"task","taskId":"a"}\n\ndata: {"type":"notif');
     assert.deepEqual(got, ['{"type":"task","taskId":"a"}']);
@@ -598,8 +835,8 @@ function hold(port) {
   await test("the badge counts every live project, and asks to reseed when it cannot", async () => {
     const n = new NeedsYou();
     // Deprecated projects are excluded here for the same reason the titlebar
-    // pill excludes them (app/shell/useShell.ts) — an archived project must not
-    // badge the dock.
+    // pill excludes them (app/shell/useShell.ts): an archived project must
+    // not badge the dock.
     assert.equal(
       n.seed([
         { id: "p1", awaiting_count: 2 },
@@ -613,7 +850,7 @@ function hold(port) {
     assert.equal(n.total, 6);
     assert.equal(n.apply({ type: "task_deleted", projectId: "p1", awaiting_count: 0 }), "ok");
     assert.equal(n.total, 4);
-    // Silent on events that say nothing about the count.
+    // Returns null for events that say nothing about the count.
     assert.equal(n.apply({ type: "agent_auth", agent: "claude", broken: true }), null);
     assert.equal(n.total, 4);
     // The two cases only the server can settle.
@@ -623,10 +860,11 @@ function hold(port) {
 
   await test("the shell suppresses exactly one toast: the task you are looking at", async () => {
     const payload = { id: "awaiting_input:t1", taskId: "t1", title: "Waiting for input", body: "…" };
-    // The whole rule, matching shouldDisplay in app/shell/useNotifications.ts.
+    // Matches shouldDisplay in app/shell/useNotifications.ts.
     assert.equal(shouldNotify(payload, { focused: true, selectedTaskId: "t1" }), false);
     assert.equal(shouldNotify(payload, { focused: true, selectedTaskId: "t2" }), true);
-    // Hidden to the tray, or behind the editor: this is what the shell is for.
+    // Unfocused still notifies, even for the same task: that's the case the
+    // tray and notification center exist for.
     assert.equal(shouldNotify(payload, { focused: false, selectedTaskId: "t1" }), true);
     // A test send (Settings → "Send test notification") belongs to no task, so
     // it must show even while that very screen is focused.
@@ -637,9 +875,9 @@ function hold(port) {
   });
 
   await test("the selected task is readable off the window URL alone", async () => {
-    // This is what makes the suppression above possible with no preload and no
-    // IPC: the app mirrors its selection into the query string
-    // (app/shell/persist.ts), so webContents.getURL() is the answer.
+    // The app mirrors its selection into the query string
+    // (app/shell/persist.ts), so webContents.getURL() is enough to read it
+    // with no preload and no IPC.
     assert.equal(selectedTaskFromUrl("http://127.0.0.1:3000/?project=p1&task=t9"), "t9");
     assert.equal(selectedTaskFromUrl("http://127.0.0.1:3000/?project=p1"), null);
     assert.equal(selectedTaskFromUrl(`file://${path.join(HERE, "loading.html")}`), null);
@@ -660,8 +898,9 @@ function hold(port) {
       const name = overlayIconName(i);
       assert.ok(fs.existsSync(path.join(assets, name)), `missing overlay asset ${name}`);
     }
-    // The tray icons, including the macOS template pair — a Tray constructed
-    // from a missing path throws, which would take the whole shell down at boot.
+    // The tray icons, including the macOS template pair: a Tray constructed
+    // from a missing path throws, which would take the whole shell down at
+    // boot.
     for (const f of ["tray.png", "trayTemplate.png", "trayTemplate@2x.png"]) {
       assert.ok(fs.existsSync(path.join(assets, f)), `missing tray asset ${f}`);
     }
@@ -669,14 +908,80 @@ function hold(port) {
 
   await test("the tray tooltip says the count in words, and gets the plural right", async () => {
     assert.equal(trayTooltip(0), "Calandria");
-    assert.equal(trayTooltip(1), "Calandria — 1 task needs you");
-    assert.equal(trayTooltip(3), "Calandria — 3 tasks need you");
+    assert.equal(trayTooltip(1), "Calandria: 1 task needs you");
+    assert.equal(trayTooltip(3), "Calandria: 3 tasks need you");
+  });
+
+  await test("a toast names the instance it came from, and only when there is more than one", async () => {
+    const payload = { id: "n1", title: "Needs you: rename the config loader", body: "Lab · calandria" };
+    // The single-instance app is unchanged, byte for byte: naming the only
+    // instance there is would be noise on every toast it ever raises.
+    assert.deepEqual(notificationText(payload, { instanceName: null }), {
+      title: "Needs you: rename the config loader",
+      body: "Lab · calandria",
+    });
+    assert.equal(notificationText(payload, {}).title, "Needs you: rename the config loader");
+    // Blank and whitespace names are the same "unnamed" the server means by a
+    // null instanceName on /api/version.
+    assert.equal(notificationText(payload, { instanceName: "   " }).title, "Needs you: rename the config loader");
+    // The name goes on the TITLE: the body is what a collapsed notification
+    // centre drops first, and "which machine" is not a detail.
+    const named = notificationText(payload, { instanceName: "Build box" });
+    assert.equal(named.title, "Needs you: rename the config loader · Build box");
+    assert.equal(named.body, "Lab · calandria");
+  });
+
+  await test("a cross-instance notification click carries its task in the URL", async () => {
+    // The switch is a page load in another session partition, so there is no
+    // running SPA to dispatch into: the selection rides in the query the app
+    // restores from (app/shell/persist.ts).
+    assert.equal(
+      gotoUrl("https://lab.example.com", { projectId: "p1", taskId: "t9" }),
+      "https://lab.example.com/?project=p1&task=t9",
+    );
+    // A project id is optional; the task is what selects.
+    assert.equal(gotoUrl("http://127.0.0.1:3000", { taskId: "t9" }), "http://127.0.0.1:3000/?task=t9");
+    // Nothing to select, or nothing parseable: the bare origin, so the caller
+    // can use this unconditionally.
+    assert.equal(gotoUrl("https://lab.example.com", {}), "https://lab.example.com");
+    assert.equal(gotoUrl("https://lab.example.com"), "https://lab.example.com");
+    assert.equal(gotoUrl("not a url", { taskId: "t9" }), "not a url");
+  });
+
+  await test("an instance adopts the name its server reports, but never over a typed one", async () => {
+    let state = normalizeState({ instances: [{ id: "local", kind: "local", name: "This computer" }] });
+    const added = addUrlInstance(state, { name: "", url: "https://lab.example.com" }, () => 0.5);
+    state = added.state;
+    // Blank name in the dialog means the host, which is the address again.
+    assert.equal(added.instance.name, "lab.example.com");
+    assert.equal(derivedNameFor(added.instance), "lab.example.com");
+
+    // The server-reported name overrides the derived one.
+    state = adoptServerName(state, added.instance.id, "Lab");
+    assert.equal(findInstance(state, added.instance.id).name, "Lab");
+
+    // Idempotent, and no longer derived: a server that renames itself does
+    // not keep rewriting a name the user is now reading in their menus.
+    const again = adoptServerName(state, added.instance.id, "Lab annexe");
+    assert.equal(again, state, "a name already adopted is not re-adopted");
+    assert.equal(findInstance(again, added.instance.id).name, "Lab");
+
+    // A typed name is the user's.
+    const typed = addUrlInstance(state, { name: "My box", url: "https://box.example.com" }, () => 0.25);
+    assert.equal(adoptServerName(typed.state, typed.instance.id, "Prod"), typed.state);
+
+    // Nothing to adopt, and nothing to adopt onto.
+    assert.equal(adoptServerName(state, added.instance.id, "  "), state);
+    assert.equal(adoptServerName(state, "nope", "Lab"), state);
+    // `local` has a fixed name and no address to derive one from.
+    assert.equal(adoptServerName(state, LOCAL_ID, "Lab"), state);
+    assert.equal(derivedNameFor(findInstance(state, LOCAL_ID)), null);
   });
 
   await test("the event subscription seeds the badge, delivers notifications, and reconnects", async () => {
-    // A stand-in for /api/events and /api/projects, so the whole loop —
-    // seed, subscribe, parse, drop, reconnect, reseed — runs with no display
-    // and no server build.
+    // Stands in for /api/events and /api/projects, so the seed, subscribe,
+    // parse, drop, reconnect and reseed sequence runs with no display and no
+    // server build.
     const notified = [];
     const badges = [];
     let streams = 0;
@@ -712,9 +1017,10 @@ function hold(port) {
       assert.fail(`timed out waiting for ${what}`);
     };
     try {
-      // Seeded from the project list before a single event arrives — a fresh
-      // launch usually has work waiting from the last session, and a badge that
-      // only appears on the next turn boundary would be wrong until then.
+      // Seeded from the project list before a single event arrives: a fresh
+      // launch usually has work waiting from the last session, and a badge
+      // that only appeared on the next turn boundary would be wrong until
+      // then.
       await events.refreshProjects();
       assert.deepEqual(badges, [2]);
       events.start();
@@ -740,13 +1046,13 @@ function hold(port) {
 
   // ---------------------------------------------------------------------------
   // Is the tray icon really there? (tray-residency.js). The probe talks to a
-  // session bus, so every case below injects the `exec` instead — what is being
-  // pinned is the VERDICT each reply implies, and in particular the difference
-  // between "the session said no" and "the session could not be asked", which
-  // is the distinction the close handler hangs on.
+  // session bus, so every case below injects `exec` instead. What is pinned
+  // is the verdict each reply implies, in particular the difference between
+  // "the session said no" and "the session could not be asked", which is the
+  // distinction the close handler hangs on.
   // ---------------------------------------------------------------------------
 
-  // Replies as the two CLIs really print them, captured on the bench.
+  // Replies as the two CLIs actually print them.
   const GDBUS_TRUE = "(<true>,)\n";
   const GDBUS_FALSE = "(<false>,)\n";
   const GDBUS_ITEMS = (...names) => `(<[${names.map((n) => `'${n}'`).join(", ")}]>,)\n`;
@@ -782,7 +1088,7 @@ function hold(port) {
 
   await test("D-Bus replies parse the same whichever CLI printed them", async () => {
     // gdbus single-quotes and dbus-send double-quotes; the parsers tolerate
-    // both rather than branching, which is what lets either tool answer.
+    // both without branching, so either tool can answer.
     assert.deepEqual(parseDbusStrings(GDBUS_ITEMS(":1.25/StatusNotifierItem", ":1.9")), [
       ":1.25/StatusNotifierItem",
       ":1.9",
@@ -815,8 +1121,8 @@ function hold(port) {
     const exec = fakeExec((file, args) => {
       if (args.includes("IsStatusNotifierHostRegistered")) return GDBUS_TRUE;
       if (args.includes("RegisteredStatusNotifierItems")) return GDBUS_ITEMS(":1.9", ":1.25/StatusNotifierItem");
-      // Somebody else's icon first, ours second — the reason the match is on
-      // the connection's pid and not on the item's name.
+      // Somebody else's icon first, ours second: the match is on the
+      // connection's pid, not the item's name.
       if (args.includes(":1.9")) return GDBUS_PID(777);
       if (args.includes(":1.25")) return GDBUS_PID(4242);
       return undefined;
@@ -827,9 +1133,9 @@ function hold(port) {
   });
 
   await test("a session with no status-notifier host is a definite no", async () => {
-    // THE BENCH BUG, in the shape it reaches us: xfce4-panel's systray plugin
-    // crashes when Electron registers its item and takes the watcher name off
-    // the bus with it. `new Tray()` succeeded; there is no icon.
+    // xfce4-panel's systray plugin can crash when Electron registers its
+    // item, taking the watcher name off the bus with it. `new Tray()`
+    // succeeds; there is no icon.
     const exec = fakeExec(() => serviceUnknown());
     const v = await probeTrayResidency({ platform: "linux", env: busEnv, pid: 4242, exec });
     assert.equal(v.hosted, false, v.reason);
@@ -837,8 +1143,8 @@ function hold(port) {
   });
 
   await test("a watcher with no host, and a host that never took our icon, are both no", async () => {
-    // A watcher can exist with nothing drawing for it — that is what
-    // `IsStatusNotifierHostRegistered` is for.
+    // A watcher can exist with nothing drawing for it: that is what
+    // `IsStatusNotifierHostRegistered` checks.
     const noHost = fakeExec((file, args) =>
       args.includes("IsStatusNotifierHostRegistered") ? GDBUS_FALSE : undefined,
     );
@@ -846,7 +1152,7 @@ function hold(port) {
     assert.equal(a.hosted, false, a.reason);
     assert.match(a.reason, /no host has registered/);
 
-    // And a host that is drawing somebody else's icons but not ours.
+    // A host drawing icons, none of them ours.
     const notOurs = fakeExec((file, args) => {
       if (args.includes("IsStatusNotifierHostRegistered")) return GDBUS_TRUE;
       if (args.includes("RegisteredStatusNotifierItems")) return GDBUS_ITEMS(":1.9");
@@ -895,8 +1201,8 @@ function hold(port) {
 
   await test("no session bus, and the platforms that own their own status area, skip the bus entirely", async () => {
     const exec = fakeExec(() => new Error("should not have been called"));
-    // Nowhere for Electron to have registered the icon either — a definite no,
-    // and checked here rather than left to the CLI because gdbus would try to
+    // Nowhere for Electron to have registered the icon either, so this is
+    // checked here instead of left to the CLI, because gdbus would try to
     // autolaunch a bus daemon of its own.
     const linux = await probeTrayResidency({ platform: "linux", env: {}, pid: 1, exec });
     assert.equal(linux.hosted, false, linux.reason);
@@ -904,7 +1210,7 @@ function hold(port) {
     // An address that is SET but dead is the same no, and it is the one every
     // CI lane in this suite runs under: e2e/fixtures.ts points
     // DBUS_SESSION_BUS_ADDRESS at a socket that does not exist so libnotify
-    // fails fast (docs/DESKTOP_E2E.md §1). Both CLIs' real wording, measured.
+    // fails fast. Both CLIs' real wording.
     for (const stderr of [
       "Error connecting: Could not connect: No such file or directory",
       'Failed to open connection to "session" message bus: Failed to connect to socket /nope: No such file or directory',
@@ -961,15 +1267,180 @@ function hold(port) {
     assert.deepEqual(never, []);
   });
 
+  await test("main.js scopes SERVICE_TOKEN to the local instance and fetches through the instance session", async () => {
+    // Source-pinned for the reason every other main.js case here is: the file
+    // is `require("electron")` at line 1 and cannot be loaded by this runner.
+    // Both halves matter and neither has a headless failure mode.
+    const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
+
+    // THE TOKEN. It authorizes the database this machine's server owns, so a
+    // `url` instance must never see it. There is exactly one reader, and it
+    // refuses anything that is not `local`.
+    const reads = [...src.matchAll(/\.SERVICE_TOKEN\b/g)].length;
+    assert.equal(reads, 1, `SERVICE_TOKEN should be read in exactly one place, found ${reads}`);
+    const gate = src.indexOf("function serviceTokenFor(");
+    assert.notEqual(gate, -1, "main.js should funnel the token through serviceTokenFor()");
+    const gateBody = src.slice(gate, gate + 400);
+    assert.ok(/kind !== "local"/.test(gateBody), "serviceTokenFor must refuse every non-local instance");
+    assert.ok(/SERVICE_TOKEN/.test(gateBody), "and it is the one place the env is read");
+
+    // THE COOKIE. Every main-process request now goes through the active
+    // instance's session, or a Cloudflare Access instance answers the badge and
+    // the notification stream with a redirect to its identity provider.
+    assert.ok(/function sessionFor\(/.test(src), "main.js should resolve a session per instance");
+    assert.ok(/session\.fromPartition\(/.test(src), "a non-local instance needs its own partition");
+    assert.ok(
+      /fetchImpl:\s*\(url, init\) =>\s*sess\.fetch\(/.test(src),
+      "the notifier must fetch through the instance session, not globalThis.fetch",
+    );
+    assert.ok(
+      !/\bawait fetch\(/.test(src) && !/[^.]\bfetch\(`\$\{appUrl\}/.test(src),
+      "no main-process request should use the global fetch",
+    );
+
+    // THE PARTITION. The window and the notifier have to be in the SAME jar, or
+    // the login the user completed in the window buys the badge nothing.
+    assert.ok(/partition: winPartition/.test(src), "the window must be built in the instance's partition");
+    assert.ok(/clearStorageData\(\)/.test(src), "sign out must delete the partition's storage");
+  });
+
+  await test("main.js watches every reachable instance, not only the one on screen", async () => {
+    // Source-pinned for the same reason: main.js requires electron at line 1.
+    // What is pinned is the shape of the badge: a sum over live subscribers.
+    // The failure mode is easy to miss: a shell that kept one subscriber
+    // would look completely normal and never mention the other machine.
+    const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
+
+    assert.ok(/const subscribers = new Map\(\)/.test(src), "one subscriber per instance, keyed by id");
+    const total = src.indexOf("function totalNeedsYou(");
+    assert.notEqual(total, -1, "the badge should be a sum across subscribers");
+    assert.ok(/for \(const sub of subscribers\.values\(\)\) n \+= sub\.needsYou\.total/.test(src.slice(total, total + 300)));
+    assert.ok(/function applyBadge\(\)/.test(src), "applyBadge takes no count now, it reads the sum");
+
+    // WHICH instances. An `ssh` one needs a spawned forward, so it is watched
+    // only while attached; the other two kinds have an origin already.
+    const origin = src.indexOf("function subscriberOrigin(");
+    assert.notEqual(origin, -1);
+    const originBody = src.slice(origin, origin + 400);
+    assert.ok(/kind === "url"/.test(originBody) && /inst\.url/.test(originBody), "a url instance is always reachable");
+    assert.ok(/kind === "local"/.test(originBody) && /localUrl/.test(originBody), "local is reachable while its server is up");
+    assert.ok(/tunnel\?\.url/.test(originBody), "an ssh instance is reachable only through this window's forward");
+
+    // A SWITCH MUST NOT STOP THEM. That is the whole feature: the instance you
+    // just left keeps counting into the badge.
+    const apply = src.indexOf("async function applyActiveInstance()");
+    const applyBody = src.slice(apply, apply + 1800);
+    assert.ok(!/stopSubscribers\(\)/.test(applyBody), "switching must not stop the other instances' streams");
+    assert.ok(/stopSubscribers\(\)/.test(src.slice(0, src.indexOf("app.whenReady"))), "quitting stops all of them");
+
+    // THE TOAST. It names its instance and, when clicked, goes to the
+    // instance it came from, not the one on screen.
+    const notify = src.indexOf("function notify(payload, sub)");
+    assert.notEqual(notify, -1, "notify must know which instance raised the payload");
+    const notifyBody = src.slice(notify, notify + 1200);
+    assert.ok(/notificationText\(payload, \{ instanceName:/.test(notifyBody), "the title carries the instance name");
+    assert.ok(/`\$\{sub\.id\}:\$\{payload\.id\}`/.test(notifyBody), "toasts collapse per instance, not per bare id");
+    assert.ok(/openFromNotification\(sub\.id, payload\)/.test(notifyBody), "a click resolves against the raising instance");
+    const open = src.indexOf("async function openFromNotification(");
+    assert.notEqual(open, -1);
+    const openBody = src.slice(open, open + 700);
+    assert.ok(/gotoTask\(payload\)/.test(openBody), "same instance: the live SPA");
+    assert.ok(/switchTo\(instanceId\)/.test(openBody), "another instance: switch to it first");
+    assert.ok(/pendingGoto = \{/.test(openBody), "and the selection rides in the URL that switch loads");
+  });
+
+  await test("the instance dialog is closed before its answer is acted on", async () => {
+    // The dialog is a modal child of the main window, and answering it usually
+    // ends with that window being rebuilt. `BrowserWindow.close()` is
+    // asynchronous, so the answer must not resolve before the modal closes:
+    // resolving first can parent a live modal to a window mid-destruction and
+    // take the whole process down with no crash output.
+    const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
+    const open = src.indexOf("function openInstanceDialog(");
+    assert.notEqual(open, -1, "main.js should have an instance dialog");
+    const body = src.slice(open, open + 2600);
+    assert.ok(/dlg\.on\("closed"[\s\S]{0,220}?resolve\(answer\)/.test(body), "the answer must be resolved from `closed`");
+    assert.ok(
+      body.indexOf("else dlg.close();") < body.indexOf('dlg.on("closed"'),
+      "done() must close the window rather than resolve straight from the click",
+    );
+    assert.ok(/modal: !!parent/.test(body), "the dialog is modal on its parent window");
+  });
+
+  await test("main.js attaches by URL, warns on an old server, and keeps the local one running", async () => {
+    const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
+    assert.ok(/async function attachUrl\(/.test(src), "main.js should have a url attach path");
+    // Everything past "we have an origin" is shared with the `ssh` kind, so
+    // these assertions live on attachOrigin, not attachUrl.
+    const attach = src.indexOf("async function attachOrigin(");
+    assert.notEqual(attach, -1, "main.js should converge both remote kinds on attachOrigin");
+    const body = src.slice(attach, attach + 4000);
+    assert.ok(/probeVersion\(inst, origin\)/.test(body), "the handshake runs before the window is pointed anywhere");
+    assert.ok(/showAttachFailure\(/.test(body), "an unreachable instance gets the loading page, not a modal");
+    // A login in front of the server is not a failure: the window IS a browser,
+    // so the way through it is to load the page. Getting this wrong strands
+    // every Cloudflare Access instance on an error screen it can never leave.
+    assert.ok(/probe\.signIn/.test(body), "a sign-in must not be treated as unreachable");
+    assert.ok(/serverTooOld\(/.test(body) && /showVersionBanner\(/.test(body), "an older server loads with a banner");
+    // The origin, plus a task a notification click asked for: `takePendingGoto`
+    // returns the bare origin when there is none, so this is still the one
+    // load.
+    assert.ok(/loadURL\(takePendingGoto\(inst, origin\)\)/.test(body), "and then it is loaded");
+    assert.ok(/api\/version/.test(src.slice(src.indexOf("async function probeVersion("), src.indexOf("async function probeVersion(") + 900)));
+
+    // Switching away from local must not stop its server: turns are detached
+    // and server-owned.
+    const apply = src.indexOf("async function applyActiveInstance()");
+    assert.notEqual(apply, -1);
+    const applyBody = src.slice(apply, apply + 1800);
+    assert.ok(!/supervisor\.stop\(\)/.test(applyBody), "a switch must never stop the local server");
+    assert.ok(/createWindow\(\)/.test(applyBody), "a partition change means a new window");
+    // Order matters here. Electron emits `window-all-closed` synchronously
+    // from `destroy()`, and this shell quits when nothing is hosting its
+    // tray icon, so destroying before building exits the app halfway
+    // through every switch on a session with no status area.
+    assert.ok(
+      applyBody.indexOf("createWindow();") < applyBody.indexOf("old?.destroy();"),
+      "the replacement window must be built BEFORE the old one is destroyed",
+    );
+    // And `appUrl` is cleared first, or `createWindow()` opens the replacement
+    // on the previous instance's origin inside the new instance's partition:
+    // one server's page in another's cookie jar.
+    assert.ok(
+      applyBody.indexOf("appUrl = null;") < applyBody.indexOf("createWindow();"),
+      "appUrl must be cleared before the replacement window is built",
+    );
+
+    // Both menus draw the same radio list.
+    assert.ok(/function instanceMenuTemplate\(/.test(src));
+    const template = src.slice(src.indexOf("function instanceMenuTemplate("), src.indexOf("function instanceMenuTemplate(") + 1800);
+    assert.ok(/type: "radio"/.test(template), "the instance list is a radio group");
+    // Off the menu callback: switching destroys a window and replaces the
+    // application menu, and doing either from inside the activation handler
+    // of an item in that same menu wedges the whole main process on the
+    // second switch.
+    assert.ok(
+      /click: \(\) => setImmediate\(\(\) => void switchTo\(/.test(template),
+      "an instance switch must be deferred off the menu click",
+    );
+    assert.ok(/Add instance…/.test(template) && /Manage instances…/.test(template));
+    const tray = src.indexOf("function rebuildTrayMenu()");
+    assert.ok(/instanceMenuTemplate\(\)/.test(src.slice(tray, tray + 1600)), "the tray carries the switcher too");
+    const menu = src.indexOf("function buildMenu()");
+    assert.ok(/instanceMenuTemplate\(\)/.test(src.slice(menu, menu + 1600)), "and so does the app menu");
+
+    // The window title names the instance.
+    assert.ok(/setTitle\(windowTitle\(/.test(src), "the title should come from windowTitle()");
+  });
+
   await test("main.js wires the shell half of all of that", async () => {
     // main.js is `require("electron")` at line 1 and cannot be loaded by this
-    // runner, so the wiring — as opposed to the policy above — is asserted on
-    // the source. Same approach as the port-wiring case, and for the same
-    // reason: every one of these was once absent and none of them has a
-    // headless failure mode.
+    // runner, so the wiring, as opposed to the policy above, is asserted on
+    // the source. Same approach as the port-wiring case: every one of these
+    // was once absent and none of them has a headless failure mode.
     const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
-    // The main process is the notification channel, so the renderer's must be
-    // off — granting both gives two toasts per event out of one payload.
+    // The main process is the notification channel, so the renderer's must
+    // be off: granting both gives two toasts per event out of one payload.
     assert.ok(
       /setPermissionRequestHandler[\s\S]{0,400}?callback\(permission === "clipboard-sanitized-write"\)/.test(src),
       "the renderer must NOT be granted the notifications permission",
@@ -979,8 +1450,7 @@ function hold(port) {
     assert.ok(/new Tray\(/.test(src) && /setContextMenu/.test(src), "main.js should build a tray with a menu");
     assert.ok(/setBadgeCount/.test(src) && /setOverlayIcon/.test(src), "both badge APIs should be wired");
     // Close hides; quitting is asked for by name. If this ever flips back,
-    // desktop/e2e/03-quit-drain.spec.ts and §5.1 of docs/DESKTOP_APP.md have to
-    // move with it.
+    // desktop/e2e/03-quit-drain.spec.ts has to move with it.
     const close = src.indexOf('win.on("close"');
     assert.notEqual(close, -1, "main.js should intercept the window close");
     const body = src.slice(close, close + 700);
@@ -992,22 +1462,341 @@ function hold(port) {
     assert.notEqual(decide, -1, "main.js should have a decideClose()");
     const decideBody = src.slice(decide, decide + 700);
     assert.ok(/win\.hide\(\)/.test(decideBody), "closing the window should hide it");
-    // ...but only where there is something to come back from, and NOT merely
-    // where `new Tray()` returned an object: on Linux it does that on a session
-    // with no status area, and hiding into one of those is how a user loses the
-    // app. The answer comes from the session (tray-residency.js), which is also
-    // why this is re-read per close rather than trusted from boot.
+    // ...but only where there is something to come back from, not merely
+    // where `new Tray()` returned an object: on Linux it does that on a
+    // session with no status area, and hiding into one of those is how a
+    // user loses the app. The answer comes from the session
+    // (tray-residency.js), so it is re-read per close instead of trusted
+    // from boot.
     assert.ok(/refreshTrayResidency\(/.test(decideBody), "hiding must be gated on a confirmed tray");
     assert.ok(/app\.quit\(\)/.test(decideBody), "an unconfirmed tray must fall back to quitting");
     // The one message that tells the user where the window went. Raised on a
     // session with no icon, it sends them looking for something that is not
-    // there — worse than saying nothing.
+    // there, worse than saying nothing.
     const announce = src.indexOf("function announceTrayResidency()");
     assert.notEqual(announce, -1, "main.js should announce the first hide");
     assert.ok(
       /!trayHosted/.test(src.slice(announce, announce + 500)),
       "the tray-residency toast must be gated on a confirmed tray, not on `tray`",
     );
+  });
+
+  // ---------------------------------------------------------------------------
+  // The ssh transport (ssh-tunnel.js).
+  //
+  // Everything here runs against desktop/stub-ssh.js instead of a real sshd,
+  // which is the only way to ask for the cases that matter: a host that
+  // refuses the key under BatchMode, a forward that comes up and then drops,
+  // an ssh that stays alive and never listens.
+  // desktop/e2e/13-ssh-instance.spec.ts is the other half: it drives a real
+  // `ssh localhost` when the box has one, and skips when it does not, because
+  // a stub cannot show that the argv this file pins is one OpenSSH actually
+  // accepts.
+  // ---------------------------------------------------------------------------
+
+  await test("the forward is spawned exactly as the spec writes it", async () => {
+    assert.deepEqual(sshArgs({ host: "build", localPort: 3100, remotePort: 3000 }), [
+      "-N",
+      "-o",
+      "ExitOnForwardFailure=yes",
+      "-o",
+      "BatchMode=yes",
+      "-L",
+      "127.0.0.1:3100:127.0.0.1:3000",
+      "build",
+    ]);
+    const args = sshArgs({ host: "me@build", localPort: 3100, remotePort: 8080 });
+    // Both ends of -L are pinned to loopback: the local one so the forward is
+    // not offered to the LAN, the remote one because the server over there is
+    // bound to loopback, which makes SSH the credential.
+    assert.equal(args[args.indexOf("-L") + 1], "127.0.0.1:3100:127.0.0.1:8080");
+    // BatchMode is not optional: a window has no terminal for a password.
+    assert.ok(args.includes("BatchMode=yes"));
+    // Without this an ssh whose local port is taken stays up with no forward,
+    // and "connected" would mean nothing.
+    assert.ok(args.includes("ExitOnForwardFailure=yes"));
+    assert.equal(args[args.length - 1], "me@build", "the host goes last, after every option");
+  });
+
+  await test("a host that wants a password is told what to do instead", async () => {
+    const msg = sshFailureMessage({
+      host: "build",
+      code: 255,
+      stderr: ["build: Permission denied (publickey,keyboard-interactive)."],
+    });
+    assert.ok(msg.includes("Permission denied"), "ssh's own words come first");
+    assert.ok(msg.includes("BatchMode=yes"), "and why it could not ask");
+    assert.ok(msg.includes("ssh-copy-id build") && msg.includes("ssh -fN build"), "and the two ways out");
+    // A forward that WAS up is a different sentence: authentication worked, so
+    // repeating the key advice would be a wrong answer to a network drop.
+    const drop = sshFailureMessage({ host: "build", code: 255, dropped: true, stderr: ["Broken pipe"] });
+    assert.ok(drop.includes("closed") && drop.includes("Broken pipe"));
+    assert.ok(!drop.includes("ssh-copy-id"), "a drop must not be reported as an auth problem");
+    // No ssh at all is neither of those.
+    const missing = sshFailureMessage({ host: "build", spawnError: "spawn ssh ENOENT" });
+    assert.ok(missing.includes("ENOENT") && missing.includes("CALANDRIA_SSH"));
+  });
+
+  await test("a configured local port is honoured or refused, never quietly moved", async () => {
+    const free = await pickLocalPort(0, { base: 45300, probes: 5 });
+    assert.ok(free >= 45300 && free < 45305);
+    const held = await hold(45320);
+    try {
+      // Scanning steps past a busy port...
+      assert.equal(await pickLocalPort(0, { base: 45320, probes: 5 }), 45321);
+      // ...but a port the user wrote down is never swapped for another: the
+      // reason to configure one is that something else on this machine
+      // expects the forward to be there.
+      await assert.rejects(() => pickLocalPort(45320), /already in use/);
+    } finally {
+      held.close();
+    }
+  });
+
+  await test("waitForPort waits for an accept, and gives up rather than hanging", async () => {
+    let srv = null;
+    const opening = new Promise((resolve) => {
+      setTimeout(() => {
+        hold(45330).then((s) => {
+          srv = s;
+          resolve(s);
+        });
+      }, 150);
+    });
+    try {
+      // Nothing is listening yet, so this has to keep probing instead of
+      // answering the first refusal: that is the difference between a
+      // forward that is up and an ssh that has only just been spawned.
+      await waitForPort(45330, { timeoutMs: 5_000, intervalMs: 25 });
+      await opening;
+    } finally {
+      srv?.close();
+    }
+    await assert.rejects(() => waitForPort(45331, { timeoutMs: 300, intervalMs: 50 }), /nothing accepted/);
+  });
+
+  await test("the tunnel forwards a real connection, and stopping it kills the ssh child", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-ssh-"));
+    const argsLog = path.join(dir, "args.log");
+    const behind = http.createServer((_req, res) => res.end("behind the forward"));
+    await new Promise((r) => behind.listen(45340, "127.0.0.1", r));
+    const tunnel = new SshTunnel({
+      host: "stub",
+      remotePort: 45340,
+      portBase: 45341,
+      ...fakeSshOptions(dir, { STUB_SSH_ARGS_LOG: argsLog }),
+    });
+    try {
+      const started = await tunnel.start();
+      assert.ok(started.ok, `the forward should come up: ${started.error}`);
+      assert.equal(tunnel.url, `http://127.0.0.1:${tunnel.localPort}`);
+      const body = await fetch(`${tunnel.url}/`).then((r) => r.text());
+      assert.equal(body, "behind the forward", "the tunnel's URL should reach the server behind it");
+      // The argv the child really got, not the one sshArgs() returns in the
+      // abstract: this is the only place the two are checked against each other.
+      const argv = JSON.parse(fs.readFileSync(argsLog, "utf8").trim().split("\n")[0]);
+      assert.deepEqual(argv, sshArgs({ host: "stub", localPort: tunnel.localPort, remotePort: 45340 }));
+
+      const child = tunnel.child;
+      await tunnel.stop();
+      assert.ok(child.exitCode !== null || child.signalCode, "stop() must reap the ssh child");
+      // And with it the forward: an orphaned `ssh -N` holds the local port for
+      // the rest of the session.
+      assert.equal(await portAccepts(tunnel.localPort, { timeoutMs: 500 }), false);
+    } finally {
+      behind.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await test("a forward that never authenticates fails the attach with ssh's own words", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-ssh-"));
+    const tunnel = new SshTunnel({
+      host: "build",
+      remotePort: 45350,
+      portBase: 45351,
+      ...fakeSshOptions(dir, { STUB_SSH_PLAN: "fail" }),
+    });
+    try {
+      const started = await tunnel.start();
+      assert.equal(started.ok, false);
+      assert.ok(started.error.includes("Permission denied"), started.error);
+      assert.ok(started.error.includes("ssh-copy-id build"), "the message has to be actionable");
+      assert.equal(tunnel.child, null, "a failed attempt leaves no child behind");
+    } finally {
+      await tunnel.stop();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await test("an ssh that connects and never forwards is killed rather than waited out", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-ssh-"));
+    const tunnel = new SshTunnel({
+      host: "build",
+      remotePort: 45360,
+      portBase: 45361,
+      connectTimeoutMs: 600,
+      ...fakeSshOptions(dir, { STUB_SSH_PLAN: "hang" }),
+    });
+    try {
+      const started = await tunnel.start();
+      assert.equal(started.ok, false);
+      assert.ok(started.error.includes("did not open the forward"), started.error);
+      // Killed, not left running: an ssh that is connected and forwarding
+      // nothing looks exactly like a working one from the outside, and a retry
+      // would then fail to bind the port the corpse is not holding.
+      assert.equal(tunnel.child, null, "the wedged child should be gone by the time start() returns");
+    } finally {
+      await tunnel.stop();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await test("a forward that drops comes back on the same port, with backoff", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-ssh-"));
+    const behind = http.createServer((_req, res) => res.end("still here"));
+    await new Promise((r) => behind.listen(45370, "127.0.0.1", r));
+    const downs = [];
+    let ups = 0;
+    const tunnel = new SshTunnel({
+      host: "build",
+      remotePort: 45370,
+      portBase: 45371,
+      minBackoffMs: 50,
+      maxBackoffMs: 100,
+      onDown: (info) => downs.push(info),
+      onUp: () => (ups += 1),
+      // First attempt forwards for 250ms and dies; the second refuses; the
+      // third (and every later one) works. So the backoff is exercised twice,
+      // which is the only way to see it grow.
+      ...fakeSshOptions(dir, { STUB_SSH_PLAN: "up:250,fail,up" }),
+    });
+    try {
+      const started = await tunnel.start();
+      assert.ok(started.ok, started.error);
+      const port = tunnel.localPort;
+      await waitUntil(() => ups > 0, 10_000, "the tunnel should reconnect on its own");
+      assert.equal(tunnel.localPort, port, "a reconnect must return to the SAME origin");
+      assert.equal(await fetch(`${tunnel.url}/`).then((r) => r.text()), "still here");
+      assert.equal(downs.length, 2, "both failures should have been reported to the window");
+      // The first report is the drop, not an auth failure: the host had
+      // already let us in.
+      assert.ok(!downs[0].error.includes("ssh-copy-id"), downs[0].error);
+      assert.ok(downs[1].error.includes("Permission denied"), downs[1].error);
+      assert.ok(downs.every((d) => d.delayMs > 0), "every report carries how long the next wait is");
+      assert.ok(downs[1].delayMs > downs[0].delayMs, "the wait should grow between attempts");
+      assert.ok(downs[0].stderr.length > 0, "and the last lines ssh printed");
+    } finally {
+      await tunnel.stop();
+      behind.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await test("stopping during a backoff does not wait it out, and does not reconnect", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-ssh-"));
+    let ups = 0;
+    const tunnel = new SshTunnel({
+      host: "build",
+      remotePort: 45380,
+      portBase: 45381,
+      minBackoffMs: 30_000, // long enough that only the cancel can end it
+      onUp: () => (ups += 1),
+      ...fakeSshOptions(dir, { STUB_SSH_PLAN: "up:150,up" }),
+    });
+    const started = await tunnel.start();
+    assert.ok(started.ok, started.error);
+    await waitUntil(() => !tunnel.up, 5_000, "the stub should have dropped the forward");
+    const began = Date.now();
+    await tunnel.stop();
+    assert.ok(Date.now() - began < 5_000, "stop() must cut the backoff short");
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(ups, 0, "a stopped tunnel must never reconnect");
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  await test("an ssh instance survives the instance file, and cannot smuggle an ssh option", async () => {
+    const state = normalizeState({
+      active: "9c2e",
+      instances: [
+        { id: "local", kind: "local" },
+        { id: "9c2e", kind: "ssh", name: "Build box", ssh: { host: "build", remotePort: 3000 } },
+        // The one input rule that is about safety, not typos: this value
+        // becomes an argv entry, and ssh reads a leading `-` as an option.
+        { id: "bad1", kind: "ssh", name: "Sneaky", ssh: { host: "-oProxyCommand=touch /tmp/pwned" } },
+        { id: "bad2", kind: "ssh", name: "No host", ssh: {} },
+        { id: "bad3", kind: "ssh", name: "Bad port", ssh: { host: "build", remotePort: 99999 } },
+      ],
+    });
+    assert.deepEqual(
+      state.instances.map((i) => i.id),
+      [LOCAL_ID, "9c2e"],
+      "only the well-formed ssh entry should survive",
+    );
+    assert.equal(state.active, "9c2e");
+    assert.deepEqual(state.instances[1].ssh, { host: "build", remotePort: 3000 });
+    // A saved localPort is kept: it is how someone pins the origin.
+    const pinned = normalizeState({
+      instances: [{ id: "aa11", kind: "ssh", ssh: { host: "me@build", remotePort: 8080, localPort: 3199 } }],
+    });
+    assert.deepEqual(pinned.instances[1].ssh, { host: "me@build", remotePort: 8080, localPort: 3199 });
+    // An unnamed one is named after its host, as a url one is after its origin.
+    assert.equal(pinned.instances[1].name, "me@build");
+    assert.equal(instanceMenuItems(pinned)[1].label, "me@build (me@build)");
+    assert.equal(instanceAddress(pinned.instances[1]), "ssh://me@build:8080");
+    assert.equal(partitionFor(pinned.instances[1]), "persist:instance-aa11", "ssh gets its own cookie jar too");
+  });
+
+  await test("one address field reads both kinds", async () => {
+    assert.deepEqual(parseInstanceAddress("ssh://build"), {
+      kind: "ssh",
+      ssh: { host: "build", remotePort: DEFAULT_REMOTE_PORT },
+    });
+    assert.deepEqual(parseInstanceAddress("ssh://me@build:8080"), {
+      kind: "ssh",
+      ssh: { host: "me@build", remotePort: 8080 },
+    });
+    // Everything else still means what it meant in phase 1, bare host included.
+    assert.deepEqual(parseInstanceAddress("lab.example.com"), { kind: "url", url: "https://lab.example.com" });
+    assert.throws(() => parseInstanceAddress("ssh://-oProxyCommand=x"), /is not a host/);
+    assert.throws(() => parseInstanceAddress(""), /Enter the address/);
+
+    let state = normalizeState({});
+    let added;
+    ({ state, instance: added } = addInstance(state, { name: "", address: "ssh://build:3000" }));
+    assert.equal(added.kind, "ssh");
+    assert.equal(added.name, "build");
+    assert.deepEqual(added.ssh, { host: "build", remotePort: 3000 });
+    ({ state, instance: added } = addInstance(state, { name: "Lab", address: "https://lab.example.com" }));
+    assert.equal(added.kind, "url");
+  });
+
+  await test("main.js wires the ssh transport to the one attach path", async () => {
+    const src = fs.readFileSync(path.join(HERE, "main.js"), "utf8");
+    const attach = src.indexOf("async function attach(inst)");
+    assert.notEqual(attach, -1);
+    const body = src.slice(attach, attach + 2000);
+    assert.ok(/inst\.kind === "ssh"/.test(body) && /attachSsh\(/.test(body), "attach() should dispatch the ssh kind");
+    // Every attach, including a retry of the same instance: a forward whose
+    // window has moved on is a port nobody reads and a child nobody reaps.
+    assert.ok(/await stopTunnel\(\)/.test(body), "an attach must close the forward it is replacing");
+
+    const ssh = src.indexOf("async function attachSsh(");
+    assert.notEqual(ssh, -1, "main.js should have an ssh attach path");
+    const sshBody = src.slice(ssh, ssh + 2200);
+    assert.ok(/new SshTunnel\(/.test(sshBody));
+    // The point of the shape: once there is an origin, an ssh instance is a url
+    // instance. A second copy of the handshake here would be a second thing to
+    // get wrong.
+    assert.ok(/attachOrigin\(inst, t\.url, seq\)/.test(sshBody), "a live forward proceeds as a url instance");
+    assert.ok(/showAttachFailure\(/.test(sshBody), "a forward that never came up asks the user");
+    assert.ok(/onDown:/.test(sshBody) && /showLoading\(/.test(sshBody), "a dropped forward shows the loading page");
+    assert.ok(/onUp:/.test(sshBody), "and a recovered one reloads the app");
+
+    // Quit reaps the child. An `ssh -N` that outlives the app holds the local
+    // port until the user finds it with lsof.
+    const quit = src.indexOf('app.on("before-quit"');
+    assert.ok(/await stopTunnel\(\)/.test(src.slice(quit, quit + 1800)), "quitting must kill the ssh child");
   });
 
   // ---- updater.js ---------------------------------------------------------
@@ -1024,7 +1813,7 @@ function hold(port) {
     // A quit is not consent to be upgraded.
     assert.equal(quitAction({ installRequested: false, phase: "ready" }), "exit");
     // And a stale request with nothing downloaded would hang the quit on an
-    // empty installer path rather than fail it.
+    // empty installer path instead of failing it.
     assert.equal(quitAction({ installRequested: true, phase: "downloading" }), "exit");
     assert.equal(quitAction({}), "exit");
   });
@@ -1065,15 +1854,15 @@ function hold(port) {
 
   await test("every local module the desktop entrypoints require is one electron-builder packs", async () => {
     // electron-builder.cjs's `files` is an explicit whitelist, and asar packs
-    // exactly what it names. A new sibling module — env-file.js was the one
-    // that prompted this — resolves fine from a checkout under `npm start` and
-    // from `node test-supervisor.js`, and then throws MODULE_NOT_FOUND inside
-    // the packaged .app, at boot, with a stack nobody can reproduce locally.
-    // Nothing else catches it: the unit tests run from source and the packaged
-    // e2e (06-packaged.spec.ts) only runs on a labelled CI lane.
+    // exactly what it names. A new sibling module resolves fine from a
+    // checkout under `npm start` and from `node test-supervisor.js`, but
+    // throws MODULE_NOT_FOUND inside the packaged .app at boot, with a stack
+    // nobody can reproduce locally. Nothing else catches it: the unit tests
+    // run from source and the packaged e2e (06-packaged.spec.ts) only runs
+    // on a labelled CI lane.
     const { files } = require("./electron-builder.cjs");
     const packed = new Set(files.filter((f) => f.endsWith(".js")));
-    const entrypoints = ["main.js", "supervisor.js", "notifier.js", "tray-residency.js", "updater.js"];
+    const entrypoints = ["main.js", "supervisor.js", "notifier.js", "tray-residency.js", "updater.js", "instances.js"];
     for (const entry of entrypoints) {
       const src = fs.readFileSync(path.join(__dirname, entry), "utf8");
       for (const m of src.matchAll(/require\(["']\.\/([^"']+)["']\)/g)) {
@@ -1088,6 +1877,510 @@ function hold(port) {
     // stops being readable as the answer to "what ships".
     for (const f of packed) {
       assert.ok(fs.existsSync(path.join(__dirname, f)), `files names ${f}, which is not in desktop/`);
+    }
+  });
+
+  /* ----------------------------------------------------------------------- *
+   * oauth.js: the RFC 8252 loopback sign-in flow.
+   * ----------------------------------------------------------------------- */
+
+  await test("createPkce returns a base64url verifier and the real S256 challenge of it", async () => {
+    const { verifier, challenge, method } = createPkce();
+    assert.equal(method, "S256");
+    for (const v of [verifier, challenge]) {
+      assert.ok(v.length > 0, "must not be empty");
+      assert.ok(!/[+/=]/.test(v), `"${v}" is not base64url`);
+    }
+    const expected = crypto
+      .createHash("sha256")
+      .update(verifier)
+      .digest("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+    assert.equal(challenge, expected);
+  });
+
+  await test("createState returns a fresh value every call", async () => {
+    const a = createState();
+    const b = createState();
+    assert.notEqual(a, b);
+    assert.ok(a.length > 0 && b.length > 0);
+  });
+
+  await test("discoveryUrl appends the well-known path, keeps a path already there, and leaves a full discovery URL alone", async () => {
+    assert.equal(discoveryUrl("sso.example.com"), `https://sso.example.com${DISCOVERY_PATH}`);
+    assert.equal(discoveryUrl("https://sso.x/application/o/cal/"), "https://sso.x/application/o/cal/.well-known/openid-configuration");
+    const already = "https://sso.x/application/o/cal/.well-known/openid-configuration";
+    assert.equal(discoveryUrl(already), already);
+    assert.throws(() => discoveryUrl(""), /issuer/i);
+    assert.throws(() => discoveryUrl("ftp://sso.example.com"), /http/i);
+  });
+
+  await test("discover() reads the metadata document over a real HTTP request", async () => {
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          issuer: `http://127.0.0.1:${server.address().port}`,
+          authorization_endpoint: "https://sso.example.com/authorize",
+          token_endpoint: "https://sso.example.com/token",
+          code_challenge_methods_supported: ["S256"],
+        }),
+      );
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const issuer = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const doc = await discover(issuer, { fetchImpl: globalThis.fetch });
+      assert.equal(doc.authorizationEndpoint, "https://sso.example.com/authorize");
+      assert.equal(doc.tokenEndpoint, "https://sso.example.com/token");
+    } finally {
+      server.close();
+    }
+  });
+
+  await test("discover() throws when the document's issuer disagrees with the one requested, naming both", async () => {
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          issuer: "https://not-the-one.example.com",
+          authorization_endpoint: "https://sso.example.com/authorize",
+          token_endpoint: "https://sso.example.com/token",
+        }),
+      );
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const issuer = `http://127.0.0.1:${server.address().port}`;
+    try {
+      await assert.rejects(
+        () => discover(issuer, { fetchImpl: globalThis.fetch }),
+        (err) => {
+          assert.ok(err.message.includes("not-the-one.example.com"), `should name the document's issuer: ${err.message}`);
+          assert.ok(err.message.includes(issuer), `should name the requested issuer: ${err.message}`);
+          return true;
+        },
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  await test("discover() refuses a provider that does not advertise PKCE with S256", async () => {
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          authorization_endpoint: "https://sso.example.com/authorize",
+          token_endpoint: "https://sso.example.com/token",
+          code_challenge_methods_supported: ["plain"],
+        }),
+      );
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const issuer = `http://127.0.0.1:${server.address().port}`;
+    try {
+      await assert.rejects(() => discover(issuer, { fetchImpl: globalThis.fetch }), /S256/);
+    } finally {
+      server.close();
+    }
+  });
+
+  await test("discover() throws naming the status on a non-200", async () => {
+    const server = http.createServer((req, res) => {
+      res.writeHead(404, { "content-type": "text/plain" });
+      res.end("not found");
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const issuer = `http://127.0.0.1:${server.address().port}`;
+    try {
+      await assert.rejects(() => discover(issuer, { fetchImpl: globalThis.fetch }), /404/);
+    } finally {
+      server.close();
+    }
+  });
+
+  await test("discover() throws its own error on an HTML body rather than leaking a JSON parse error", async () => {
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end("<html><body>not json</body></html>");
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const issuer = `http://127.0.0.1:${server.address().port}`;
+    try {
+      await assert.rejects(
+        () => discover(issuer, { fetchImpl: globalThis.fetch }),
+        (err) => {
+          assert.ok(!/Unexpected token/i.test(err.message), `a raw JSON parse error escaped: ${err.message}`);
+          assert.match(err.message, /not JSON/i);
+          return true;
+        },
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  await test("authorizeUrl sets response_type=code and S256, and omits audience unless given", async () => {
+    const url = new URL(
+      authorizeUrl({
+        authorizationEndpoint: "https://sso.example.com/authorize",
+        clientId: "cal",
+        redirectUri: "http://127.0.0.1:9999/callback",
+        scope: "openid",
+        state: "st4t3",
+        challenge: "ch4ll",
+      }),
+    );
+    assert.equal(url.searchParams.get("response_type"), "code");
+    assert.equal(url.searchParams.get("code_challenge_method"), "S256");
+    assert.equal(url.searchParams.has("audience"), false);
+
+    const withAudience = new URL(
+      authorizeUrl({
+        authorizationEndpoint: "https://sso.example.com/authorize",
+        clientId: "cal",
+        redirectUri: "http://127.0.0.1:9999/callback",
+        state: "st4t3",
+        challenge: "ch4ll",
+        audience: "https://api.example.com",
+      }),
+    );
+    assert.equal(withAudience.searchParams.get("audience"), "https://api.example.com");
+  });
+
+  await test("parseCallback checks state before code, and surfaces the provider's own refusal", async () => {
+    assert.equal(parseCallback(new URLSearchParams({ state: "s1", code: "abc" }), "s1").code, "abc");
+    assert.throws(() => parseCallback(new URLSearchParams({ state: "wrong", code: "abc" }), "s1"), /wrong state/i);
+    assert.throws(
+      () => parseCallback(new URLSearchParams({ state: "s1", error: "access_denied", error_description: "the user said no" }), "s1"),
+      /the user said no/,
+    );
+    assert.throws(() => parseCallback(new URLSearchParams({ state: "s1" }), "s1"), /without an authorization code/i);
+  });
+
+  await test("exchangeCode POSTs a form-encoded authorization_code grant and returns a credential with expiresAt/tokenType", async () => {
+    let received = null;
+    const server = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        received = { contentType: req.headers["content-type"], body };
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ access_token: "at1", token_type: "Bearer", expires_in: 3600, refresh_token: "rt1" }));
+      });
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const tokenEndpoint = `http://127.0.0.1:${server.address().port}/token`;
+    try {
+      const now = Date.now();
+      const cred = await exchangeCode(
+        { tokenEndpoint, clientId: "cal", code: "c0d3", verifier: "v3r1f13r", redirectUri: "http://127.0.0.1:9/callback" },
+        { fetchImpl: globalThis.fetch, now },
+      );
+      assert.match(received.contentType, /application\/x-www-form-urlencoded/);
+      const params = new URLSearchParams(received.body);
+      assert.equal(params.get("grant_type"), "authorization_code");
+      assert.equal(params.get("code_verifier"), "v3r1f13r");
+      assert.equal(params.get("client_id"), "cal");
+      assert.equal(cred.tokenType, "Bearer");
+      assert.ok(Math.abs(cred.expiresAt - (now + 3600 * 1000)) < 2000, `expiresAt looks wrong: ${cred.expiresAt}`);
+    } finally {
+      server.close();
+    }
+  });
+
+  await test("refreshCredential POSTs a refresh_token grant and keeps the previous refresh token when none comes back", async () => {
+    let received = null;
+    const server = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        received = body;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ access_token: "at2", token_type: "Bearer", expires_in: 60 }));
+      });
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const tokenEndpoint = `http://127.0.0.1:${server.address().port}/token`;
+    try {
+      const previous = { kind: "oauth", refreshToken: "rt-old", accessToken: "old" };
+      const cred = await refreshCredential({ tokenEndpoint, clientId: "cal", credential: previous }, { fetchImpl: globalThis.fetch });
+      const params = new URLSearchParams(received);
+      assert.equal(params.get("grant_type"), "refresh_token");
+      assert.equal(params.get("refresh_token"), "rt-old");
+      assert.equal(params.get("client_id"), "cal");
+      assert.equal(cred.refreshToken, "rt-old", "no refresh_token in the response should keep the previous one");
+    } finally {
+      server.close();
+    }
+  });
+
+  await test("a token-endpoint refusal throws with both the error code and description", async () => {
+    const server = http.createServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "invalid_grant", error_description: "the code was already used" }));
+      });
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const tokenEndpoint = `http://127.0.0.1:${server.address().port}/token`;
+    try {
+      await assert.rejects(
+        () =>
+          exchangeCode(
+            { tokenEndpoint, clientId: "cal", code: "c", verifier: "v", redirectUri: "http://127.0.0.1:9/callback" },
+            { fetchImpl: globalThis.fetch },
+          ),
+        (err) => {
+          assert.ok(err.message.includes("invalid_grant"));
+          assert.ok(err.message.includes("the code was already used"));
+          return true;
+        },
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  await test("LoopbackReceiver answers the real callback, 404s a wrong path, refuses a non-GET, and never resolves on those", async () => {
+    const receiver = new LoopbackReceiver({ timeoutMs: 5000 });
+    try {
+      const uri = await receiver.start();
+      assert.match(uri, /^http:\/\/127\.0\.0\.1:\d+\/callback$/);
+
+      const other = await fetch(uri.replace("/callback", "/nope"));
+      assert.equal(other.status, 404);
+
+      const posted = await fetch(uri, { method: "POST" });
+      assert.equal(posted.status, 405);
+
+      const resolved = fetch(`${uri}?state=s1&code=abc`);
+      const params = await receiver.wait();
+      assert.equal(params.get("state"), "s1");
+      assert.equal(params.get("code"), "abc");
+      const res = await resolved;
+      assert.equal(res.status, 200);
+      assert.match(await res.text(), /Signed in/);
+    } finally {
+      receiver.close();
+    }
+  });
+
+  await test("LoopbackReceiver.cancel() rejects wait()", async () => {
+    const receiver = new LoopbackReceiver({ timeoutMs: 5000 });
+    try {
+      await receiver.start();
+      const waiting = receiver.wait();
+      receiver.cancel("nope, changed my mind");
+      await assert.rejects(() => waiting, /nope, changed my mind/);
+    } finally {
+      receiver.close();
+    }
+  });
+
+  await test("LoopbackReceiver.close() frees the port it bound", async () => {
+    const receiver = new LoopbackReceiver({ timeoutMs: 5000 });
+    const uri = await receiver.start();
+    const port = Number(new URL(uri).port);
+    receiver.close();
+    let rebound;
+    await waitUntil(async () => {
+      try {
+        rebound = await hold(port);
+        return true;
+      } catch {
+        return false;
+      }
+    }, 2000, "the loopback port to be freed");
+    rebound.close();
+  });
+
+  /* ----------------------------------------------------------------------- *
+   * instance-auth.js: the per-instance sign-in config and stored credentials.
+   * ----------------------------------------------------------------------- */
+
+  await test("normalizeAuth: none/null/undefined collapse to null, and a valid oauth block round-trips minus empty fields", async () => {
+    assert.equal(normalizeAuth(null), null);
+    assert.equal(normalizeAuth(undefined), null);
+    assert.equal(normalizeAuth({ kind: "none" }), null);
+    const bare = normalizeAuth({ kind: "oauth", issuer: "https://sso.x", clientId: "cal", scope: "", audience: "", redirectPort: "" });
+    assert.deepEqual(bare, { kind: "oauth", issuer: "https://sso.x", clientId: "cal" });
+    const full = normalizeAuth({ kind: "oauth", issuer: "https://sso.x", clientId: "cal", scope: "openid", audience: "aud", redirectPort: "8123" });
+    assert.deepEqual(full, { kind: "oauth", issuer: "https://sso.x", clientId: "cal", scope: "openid", audience: "aud", redirectPort: 8123 });
+  });
+
+  await test("normalizeAuth refuses a missing issuer/clientId, a client secret, a bad redirect port and an unknown kind", async () => {
+    assert.throws(() => normalizeAuth({ kind: "oauth", clientId: "cal" }), /issuer/i);
+    assert.throws(() => normalizeAuth({ kind: "oauth", issuer: "https://sso.x" }), /client id/i);
+    assert.throws(
+      () => normalizeAuth({ kind: "oauth", issuer: "https://sso.x", clientId: "cal", clientSecret: "s3cret" }),
+      /public client/i,
+    );
+    assert.throws(() => normalizeAuth({ kind: "oauth", issuer: "https://sso.x", clientId: "cal", redirectPort: 99999 }), /port/i);
+    assert.deepEqual(normalizeAuth({ kind: "header" }), { kind: "header" });
+    assert.throws(() => normalizeAuth({ kind: "smoke-signal" }), /kind of sign-in/i);
+  });
+
+  await test("parseHeaderLines parses multiple lines, skips comments/blanks, and refuses everything it will not send", async () => {
+    const headers = parseHeaderLines("# a comment\n\nAuthorization: Bearer abc\nCF-Access-Client-Id: id1\n");
+    assert.deepEqual(headers, { Authorization: "Bearer abc", "CF-Access-Client-Id": "id1" });
+    assert.throws(() => parseHeaderLines("nocolonhere"), /Name: value/);
+    assert.throws(() => parseHeaderLines("Cookie: a=b"), /Cookie/);
+    assert.throws(() => parseHeaderLines("Host: evil.example.com"), /Host/);
+    assert.throws(() => parseHeaderLines("X-Thing: has\ra carriage return"), /cannot be sent/);
+    assert.throws(() => parseHeaderLines("X-Thing: héllo"), /cannot be sent/);
+    assert.throws(() => parseHeaderLines(""), /at least one header/i);
+  });
+
+  await test("formatHeaderLines round-trips with parseHeaderLines", async () => {
+    const headers = { Authorization: "Bearer abc", "X-Thing": "1" };
+    assert.deepEqual(parseHeaderLines(formatHeaderLines(headers)), headers);
+  });
+
+  await test("authHeaders: a bearer token for a live oauth credential, null for an expired one, a copy for a header credential, null for none", async () => {
+    const now = Date.now();
+    assert.equal(authHeaders(null), null);
+    const oauth = { kind: "oauth", tokenType: "Bearer", accessToken: "at1", expiresAt: now + 60000 };
+    assert.deepEqual(authHeaders(oauth, now), { Authorization: "Bearer at1" });
+    const expired = { kind: "oauth", tokenType: "Bearer", accessToken: "at1", expiresAt: now - 1000 };
+    assert.equal(authHeaders(expired, now), null);
+    const headerCred = { kind: "header", headers: { "X-Thing": "1" } };
+    const got = authHeaders(headerCred, now);
+    assert.deepEqual(got, { "X-Thing": "1" });
+    got.mutated = "yes";
+    assert.equal(headerCred.headers.mutated, undefined, "mutating the result must not mutate the credential");
+  });
+
+  await test("credentialExpired/refreshDelay: no expiry never expires and never schedules; the floor and ceiling clamp the delay", async () => {
+    const now = Date.now();
+    assert.equal(credentialExpired({}, now), false);
+    assert.equal(refreshDelay({}, now), null);
+
+    const farFuture = now + 365 * 24 * 60 * 60 * 1000;
+    assert.equal(refreshDelay({ refreshToken: "rt", expiresAt: farFuture }, now), MAX_REFRESH_DELAY_MS);
+    assert.equal(refreshDelay({ refreshToken: "rt", expiresAt: now + 1000 }, now), 5000);
+    assert.equal(refreshDelay({ expiresAt: farFuture }, now), null, "no refresh token, so never scheduled");
+
+    assert.equal(credentialExpired({ expiresAt: now + 1000 }, now), true, "inside the skew window is expired");
+    assert.equal(credentialExpired({ expiresAt: now + REFRESH_SKEW_MS + 60000 }, now), false);
+  });
+
+  await test("saveCredentials/loadCredentials round-trip through NO_CIPHER at 0600, and a corrupt file loads empty", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-creds-"));
+    const file = path.join(dir, "credentials.json");
+    try {
+      const missing = loadCredentials({ file });
+      assert.equal(missing.found, false);
+      assert.equal(missing.credentials.size, 0);
+
+      const cred = { kind: "oauth", tokenType: "Bearer", accessToken: "at1", expiresAt: Date.now() + 60000 };
+      saveCredentials(new Map([["a1", cred]]), { file });
+      if (process.platform !== "win32") {
+        assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+      }
+      const loaded = loadCredentials({ file });
+      assert.equal(loaded.found, true);
+      assert.deepEqual(loaded.credentials.get("a1"), cred);
+      assert.deepEqual(loaded.plain, ["a1"]);
+
+      fs.writeFileSync(file, "{ not json");
+      const corrupt = loadCredentials({ file });
+      assert.equal(corrupt.found, false);
+      assert.equal(corrupt.credentials.size, 0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await test("a real cipher round-trips its entries, and NO_CIPHER sees none of them rather than throwing", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-creds-"));
+    const file = path.join(dir, "credentials.json");
+    try {
+      const fakeCipher = {
+        available: true,
+        encrypt: (s) => Buffer.from(s).reverse(),
+        decrypt: (b) => Buffer.from(b).reverse().toString(),
+      };
+      const cred = { kind: "header", headers: { Authorization: "Bearer abc" } };
+      saveCredentials(new Map([["a1", cred]]), { file, cipher: fakeCipher });
+      const loaded = loadCredentials({ file, cipher: fakeCipher });
+      assert.deepEqual(loaded.credentials.get("a1"), cred);
+      assert.deepEqual(loaded.plain, [], "encrypted entries must not be reported plain");
+
+      const withNoCipher = loadCredentials({ file, cipher: NO_CIPHER });
+      assert.equal(withNoCipher.credentials.size, 0, "NO_CIPHER cannot decrypt these entries and must not throw");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await test("credentialsFilePath honours CALANDRIA_CREDENTIALS_FILE, and otherwise sits beside instances.json", async () => {
+    assert.equal(credentialsFilePath({ CALANDRIA_CREDENTIALS_FILE: "/tmp/creds.json" }), "/tmp/creds.json");
+    const env = { XDG_CONFIG_HOME: "/x/cfg" };
+    assert.equal(path.dirname(credentialsFilePath(env)), path.dirname(instancesFilePath(env)));
+    assert.equal(credentialsFilePath(env), path.join(path.dirname(instancesFilePath(env)), "credentials.json"));
+  });
+
+  /* ----------------------------------------------------------------------- *
+   * instances.js: the `auth` block on an instance (normalizeState, setInstanceAuth).
+   * ----------------------------------------------------------------------- */
+
+  await test("normalizeState keeps a valid auth block on a url and an ssh instance, and drops a malformed one while keeping the instance", async () => {
+    const state = normalizeState({
+      instances: [
+        { id: "a1f3", kind: "url", name: "Lab", url: "https://lab.example.com", auth: { kind: "oauth", issuer: "https://sso.x", clientId: "cal" } },
+        { id: "9c2e", kind: "ssh", name: "Build", ssh: { host: "build" }, auth: { kind: "header" } },
+        { id: "beef", kind: "url", name: "Broken auth", url: "https://broken.example.com", auth: { kind: "oauth", clientId: "cal" } },
+      ],
+    });
+    assert.deepEqual(findInstance(state, "a1f3").auth, { kind: "oauth", issuer: "https://sso.x", clientId: "cal" });
+    assert.deepEqual(findInstance(state, "9c2e").auth, { kind: "header" });
+    const broken = findInstance(state, "beef");
+    assert.ok(broken, "the instance itself must survive a malformed auth block");
+    assert.ok(!("auth" in broken), "a malformed auth block must be dropped, not the whole instance");
+  });
+
+  await test("setInstanceAuth sets, replaces and clears an instance's auth, refuses local/unknown, and never mutates its input on a bad config", async () => {
+    let state = normalizeState({});
+    const { state: withLab, instance: lab } = addUrlInstance(state, { name: "Lab", url: "https://lab.example.com" });
+    state = withLab;
+
+    state = setInstanceAuth(state, lab.id, { kind: "header" });
+    assert.deepEqual(findInstance(state, lab.id).auth, { kind: "header" });
+
+    state = setInstanceAuth(state, lab.id, { kind: "oauth", issuer: "https://sso.x", clientId: "cal" });
+    assert.deepEqual(findInstance(state, lab.id).auth, { kind: "oauth", issuer: "https://sso.x", clientId: "cal" });
+
+    state = setInstanceAuth(state, lab.id, null);
+    assert.ok(!("auth" in findInstance(state, lab.id)), "null clears the auth block entirely");
+
+    // `local` is refused: the same state comes back, unchanged.
+    assert.equal(setInstanceAuth(state, LOCAL_ID, { kind: "header" }), state);
+    // An unknown id is a no-op too.
+    assert.equal(setInstanceAuth(state, "nope", { kind: "header" }), state);
+
+    // A config normalizeAuth will not accept throws, and must not have mutated
+    // the state object handed in.
+    const snapshot = JSON.parse(JSON.stringify(state));
+    assert.throws(() => setInstanceAuth(state, lab.id, { kind: "oauth", clientId: "cal" }));
+    assert.deepEqual(state, snapshot);
+  });
+
+  await test("a save/load round trip through a temp instances file preserves auth", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-instances-auth-"));
+    const file = path.join(dir, "instances.json");
+    try {
+      let state = normalizeState({});
+      const { state: withLab, instance: lab } = addUrlInstance(state, { name: "Lab", url: "https://lab.example.com" });
+      state = setInstanceAuth(withLab, lab.id, { kind: "oauth", issuer: "https://sso.x", clientId: "cal", scope: "openid" });
+      saveInstances(state, { file });
+      const loaded = loadInstances({ file });
+      assert.deepEqual(findInstance(loaded.state, lab.id).auth, { kind: "oauth", issuer: "https://sso.x", clientId: "cal", scope: "openid" });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 

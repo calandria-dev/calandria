@@ -51,9 +51,9 @@ would in a word processor:
 Both tabs share the same document state, so you can edit and comment in one
 pass. **Send to agent** composes one message (`lib/collab.ts`,
 `buildCollabPacket`) and sends it through the ordinary chat path, so it queues
-behind a running turn like any other message. **Cancel** discards your edits
-and the general note, asking for confirmation if there are any. Passage
-comments are already saved and remain when you reopen the document.
+behind a running turn like any other message. **Cancel** just closes the
+modal: edits, the general note, and passage comments are already saved and
+remain when you reopen the document.
 
 What the agent receives in patch mode (in direct mode the "My edits" preamble
 says the file on disk already has the changes and the diff must not be
@@ -117,7 +117,7 @@ DOMPurify, since the source is whatever the agent or the user wrote) and
 follows the app theme. `mermaid` loads on first use through a dynamic import,
 so its ~2MB never reaches a session that opens no diagram.
 
-## Comments are saved as you go
+## The review is saved as you go
 
 Passage comments persist the moment you add them, to `task_doc_comments` via
 `/api/tasks/[id]/doc-comments`, so a review survives a reload or the Changes
@@ -136,7 +136,42 @@ against text they weren't written for.
 
 Drafts stay live regardless of their anchor. They can be removed, and each
 Send folds in whatever is still open so you decide whether it still applies.
-A draft is flagged "not found" if its passage isn't in the current text.
+A draft is flagged "not found" if its passage isn't in the current text. An
+unsent draft can also be edited: a pencil button on its card reopens it in
+the compose box tagged "editing", and Save rewrites it in place
+(`PATCH /api/tasks/[id]/doc-comments/[cid]` with `{ body }`). Sent comments
+stay read-only; the server refuses editing them with 409, the same rule as
+deletion. Selecting a different passage and pressing "Add comment" while one
+is still being typed saves it first, rather than dropping it, and reopens the
+compose box empty against the new quote; if that save fails, the box stays as
+it was with the error beside it.
+
+The Edit tab's text and the General comments note are saved the same way, as
+one draft row per (task, file) in `task_doc_drafts`, via
+`/api/tasks/[id]/doc-draft` (`GET ?file=`, `PUT`, `DELETE ?file=`). The modal
+autosaves on change, debounced about 600ms, and flushes whatever is pending
+when it unmounts, whether that's a rail collapse, a tab switch, Escape, or
+Cancel. The footer status reads "saving…" then "saved", or "not saved" with
+the error alongside it when a save fails. Send clears the draft once the
+message goes out. A "Discard edits" button appears in the footer while there
+is an edit or a note, and throws the draft away after a confirm; passage
+comments aren't touched by it.
+
+The edit draft carries the same anchor as a comment: the file's blob sha as
+it was loaded. On open, the general note is always restored, but the edited
+text is only dropped back into the editor if the file's sha still matches
+what the draft was written against. If the file changed since, the modal
+shows the current file and a banner ("You have unsent edits to this file
+from before it last changed…") instead of silently patching the old edit
+onto the new text. **Restore edits** puts the saved version in the editor,
+so the diff is then computed against the current file and whatever changed
+on disk since shows up as removed; **Discard them** throws the stale draft
+away.
+
+Closing the modal (Cancel, Escape, the scrim, or a rail collapse) never
+discards anything by itself. A confirmation appears only when something
+would actually be lost: a comment still sitting in the compose box, or an
+edit draft whose save just failed.
 
 ## Editor choice: source over WYSIWYG
 
@@ -179,8 +214,6 @@ the same lazy way on the first diagram.
 
 ## What the spike does not do (yet)
 
-- Edits in the Edit tab and the General comments box are modal-only: closing
-  discards them, after a confirmation.
 - A direct write isn't versioned or undoable beyond what git offers. The
   worktree is the task's branch, so `git diff` in the task terminal shows the
   change and `git checkout -- <file>` reverts it, but there is no in-app

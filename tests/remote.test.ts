@@ -1,11 +1,13 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { ensureWorktree, remoteBaseStatus, advanceBaseBranch, pushBaseBranch, prRequiredMessage, baseRemote, fetchBase, mergeTask } from "../lib/git";
+import { ensureWorktree, remoteBaseStatus, advanceBaseBranch, pushBaseBranch, prRequiredMessage, baseRemote, fetchBase, mergeTask, prepareWorktreeMerge, worktreeSyncStatus } from "../lib/git";
+import { POST as projectBaseBranchRoute } from "../app/api/projects/[id]/base-branch/route";
+import { createProject } from "../lib/store";
 import { git, uid, commitFile, makeRepo, makeRepoWithOrigin, pushFromColleague } from "./helpers";
 import { onPosix } from "./platform";
 
-describe("ensureWorktree — remote-aware base", () => {
+describe("ensureWorktree: remote-aware base", () => {
   it("branches from the fetched remote tip when the local base branch is behind", async () => {
     const { repo, colleague } = await makeRepoWithOrigin();
     const remoteSha = await pushFromColleague(colleague, "remote.txt", "landed on origin\n");
@@ -128,6 +130,76 @@ describe("remoteBaseStatus", () => {
   it("says there is no remote for a purely local repo", async () => {
     expect(await remoteBaseStatus(await makeRepo(), "main")).toMatchObject({ hasRemote: false, behind: 0 });
   });
+
+  // A branch the repo has only ever seen on the remote reports "couldn't
+  // compare" (baseMissing) instead of an all-zero "in sync", the way
+  // SyncStatus.baseMissing does.
+  it("flags a base branch with no local ref instead of an all-zero 'in sync'", async () => {
+    const { repo, colleague } = await makeRepoWithOrigin();
+    await git(colleague, "checkout", "-b", "pr-workflow");
+    await commitFile(colleague, "pr-workflow.txt", "on the tag branch\n", "pr-workflow: first");
+    await git(colleague, "push", "origin", "pr-workflow");
+    await git(repo, "fetch", "origin");
+    await expect(git(repo, "rev-parse", "--verify", "refs/heads/pr-workflow")).rejects.toThrow();
+
+    const st = await remoteBaseStatus(repo, "pr-workflow");
+
+    expect(st).toMatchObject({ hasRemote: true, tracked: true, baseMissing: true, localTip: "" });
+    expect(st.remoteTip).toBeTruthy();
+    expect(st.canFastForward).toBe(false);
+  });
+
+  it("leaves baseMissing absent for an ordinary comparison", async () => {
+    const { repo, colleague } = await makeRepoWithOrigin();
+    await pushFromColleague(colleague, "a.txt", "one\n");
+    await fetchBase(repo, "main");
+
+    expect((await remoteBaseStatus(repo, "main")).baseMissing).toBeUndefined();
+  });
+});
+
+// The banner's one-click catch-up. advanceBaseBranchLocked refuses a base
+// branch it can't resolve, and a missing local ref must not report an
+// all-zero "up to date" before that refusal runs, or a project pointed at a
+// remote-only branch would show in sync with its remote while the button
+// does nothing.
+describe("POST /api/projects/[id]/base-branch: fast-forward", () => {
+  const ff = (id: string) =>
+    projectBaseBranchRoute(
+      new Request("http://localhost/api/projects/x/base-branch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "fast-forward" }),
+      }),
+      { params: Promise.resolve({ id }) }
+    );
+
+  it("refuses, naming the branch, when it has no local ref", async () => {
+    const { repo, colleague } = await makeRepoWithOrigin();
+    await git(colleague, "checkout", "-b", "pr-workflow");
+    await commitFile(colleague, "pr-workflow.txt", "on the tag branch\n", "pr-workflow: first");
+    await git(colleague, "push", "origin", "pr-workflow");
+    const project = createProject({ name: `ff-missing-${uid()}`, repo_path: repo, branch: "pr-workflow" });
+
+    const res = await ff(project.id);
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("pr-workflow");
+    expect(body.upToDate).toBeUndefined();
+  });
+
+  it("still fast-forwards an ordinary behind base branch", async () => {
+    const { repo, colleague } = await makeRepoWithOrigin();
+    const remoteSha = await pushFromColleague(colleague, "remote.txt", "landed on origin\n");
+    const project = createProject({ name: `ff-ok-${uid()}`, repo_path: repo, branch: "main" });
+
+    const body = await (await ff(project.id)).json();
+
+    expect(body.ok).toBe(true);
+    expect(await git(repo, "rev-parse", "main")).toBe(remoteSha);
+  });
 });
 
 describe("advanceBaseBranch", () => {
@@ -165,7 +237,7 @@ describe("advanceBaseBranch", () => {
   });
 });
 
-describe("mergeTask — landing a task cut from the remote tip", () => {
+describe("mergeTask: landing a task cut from the remote tip", () => {
   // A task branched from origin/main carries the remote's commits as well as its
   // own. Fast-forwarding the base past those first keeps the merge honest.
   async function taskAheadOfLocalMain() {
@@ -241,7 +313,7 @@ describe("pushBaseBranch", () => {
   });
 
   // The project's landing policy can be wrong or simply not set yet, so the
-  // remote still gets the last word — and GH006 is not a sentence to show anyone.
+  // remote still gets the last word, and GH006 is not a sentence to show anyone.
   onPosix("turns a protected-branch rejection into the same sentence, keeping the forge's words as detail", async () => {
     const { repo, origin } = await makeRepoWithOrigin();
     // tests/setup.ts points core.hooksPath at the null device for the whole
@@ -267,5 +339,83 @@ describe("pushBaseBranch", () => {
     expect(res).toMatchObject({ ok: false, prRequired: true, error: prRequiredMessage("main") });
     expect(res.error).not.toMatch(/GH006/);
     expect(res.detail).toContain("GH006");
+  });
+});
+
+// `pr-workflow` can exist only as refs/remotes/origin/pr-workflow, with no
+// local ref, when nobody in this checkout has asked for it yet. Every
+// base-branch check goes through the local-only `branchExists`, so this
+// materializes the branch locally instead of falling back to HEAD.
+describe("ensureWorktree: a base branch that exists only on the remote", () => {
+  const pushBranch = async (colleague: string, branch: string) => {
+    await git(colleague, "checkout", "-b", branch);
+    await commitFile(colleague, `${branch}.txt`, "on the tag branch\n", `${branch}: first`);
+    await git(colleague, "push", "origin", branch);
+    return git(colleague, "rev-parse", "HEAD");
+  };
+
+  it("materialises it as a tracked local branch and cuts from its tip", async () => {
+    const { repo, colleague } = await makeRepoWithOrigin();
+    const tip = await pushBranch(colleague, "pr-workflow");
+    // The premise: no local ref for it at all.
+    await expect(git(repo, "rev-parse", "--verify", "refs/heads/pr-workflow")).rejects.toThrow();
+
+    const wt = await ensureWorktree(repo, uid(), "pr-workflow");
+
+    expect(await git(repo, "rev-parse", "refs/heads/pr-workflow")).toBe(tip);
+    expect(await git(repo, "config", "--get", "branch.pr-workflow.remote")).toBe("origin");
+    // The cut used it instead of falling back to the checkout's HEAD.
+    expect(wt?.baseBranch).toBe("pr-workflow");
+    expect(wt?.baseSha).toBe(tip);
+    expect(fs.existsSync(path.join(wt!.path, "pr-workflow.txt"))).toBe(true);
+  });
+
+  it("lets prepareWorktreeMerge run, the Fix-with-AI path that used to refuse", async () => {
+    const { repo, colleague } = await makeRepoWithOrigin();
+    await pushBranch(colleague, "pr-workflow");
+    const wt = await ensureWorktree(repo, uid(), "pr-workflow");
+    await commitFile(wt!.path, "task.txt", "task work\n", "task edit");
+    // The base moves on, the way it does while a task is in flight.
+    await commitFile(colleague, "base.txt", "base moved\n", "pr-workflow: second");
+    await git(colleague, "push", "origin", "pr-workflow");
+    await git(repo, "fetch", "origin", "pr-workflow:pr-workflow");
+
+    const res = await prepareWorktreeMerge({
+      repoPath: repo,
+      worktreePath: wt!.path,
+      baseBranch: "pr-workflow",
+      message: "sync base",
+    });
+
+    expect(res).toEqual({ ok: true, clean: true, conflicts: [], binaryConflicts: [] });
+    expect(fs.existsSync(path.join(wt!.path, "base.txt"))).toBe(true);
+  });
+
+  it("reports a real sync status for it instead of a silent 'in sync'", async () => {
+    const { repo, colleague } = await makeRepoWithOrigin();
+    await pushBranch(colleague, "pr-workflow");
+    const wt = await ensureWorktree(repo, uid(), "pr-workflow");
+    await commitFile(wt!.path, "task.txt", "task work\n", "task edit");
+    await commitFile(colleague, "base.txt", "base moved\n", "pr-workflow: second");
+    await git(colleague, "push", "origin", "pr-workflow");
+    await git(repo, "fetch", "origin", "pr-workflow:pr-workflow");
+
+    const st = await worktreeSyncStatus({
+      repoPath: repo,
+      worktreePath: wt!.path,
+      workBranch: wt!.branch,
+      baseBranch: "pr-workflow",
+    });
+
+    expect(st.baseMissing).toBeUndefined();
+    expect(st.behind).toBe(1);
+    expect(st.ahead).toBe(1);
+  });
+
+  it("still falls back to HEAD when the branch is nowhere at all", async () => {
+    const { repo } = await makeRepoWithOrigin();
+    const wt = await ensureWorktree(repo, uid(), "never-existed");
+    expect(wt?.baseBranch).toBe("");
+    expect(wt?.baseSha).toBe(await git(repo, "rev-parse", "HEAD"));
   });
 });

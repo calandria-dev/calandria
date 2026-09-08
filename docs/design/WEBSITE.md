@@ -299,9 +299,9 @@ All of these landed in phase 1.
   `push`/`pull_request` triggers, so a site-only PR spends neither the Windows
   lanes nor a multi-arch container build; `website.yml` runs the site build
   instead. Note the filter skips only when EVERY changed file is under
-  `website/`, so a mixed PR still runs the full gate. `test-shuffle.yml` and
-  `security-scan.yml` need nothing — both are `schedule`-only, and a path filter
-  has no meaning on a cron trigger.
+  `website/`, so a mixed PR still runs the full gate. `test-shuffle.yml`,
+  `test-clock.yml` and `security-scan.yml` need nothing — all three are
+  `schedule`-only, and a path filter has no meaning on a cron trigger.
 - Dependabot: `/website` is added as the file's one npm ecosystem, grouped into
   a single weekly PR. This is a deliberate exception to that file's blanket npm
   exclusion, because nothing else watches the site — both `npm audit` runs are

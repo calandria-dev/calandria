@@ -1,7 +1,5 @@
-// The tag context block — what a MEMBER session is told about each feature it
-// is a step of (docs/superpowers/specs/2026-08-27-tags-design.md; the
-// one-tag-per-task ancestor is docs/superpowers/specs/2026-08-24-task-grouping-design.md).
-// Pure read: nothing here launches a turn.
+// The tag context block: what a member session is told about each feature it
+// is a step of (docs/FEATURES.md). Pure read: nothing here launches a turn.
 import { describe, expect, it } from "vitest";
 import { createProject, createTask, createTag, getProject, getTask, setTaskDeps, setTaskTags, updateTask } from "@/lib/store";
 import { tagContextBlock } from "@/lib/tagContext";
@@ -28,8 +26,8 @@ describe("tagContextBlock", () => {
       .split("\n")
       .filter((l) => /^ {2}[✓·→✗] /.test(l))
       .map((l) => l.replace(/^ {2}[✓·→✗] /, "").split(" (")[0].replace(/ {3}← this task$/, ""));
-    // c before a (the edge), then b — which is tied with c and therefore falls
-    // where the tray already shows it, after nothing and before a's dependents.
+    // c before a (the edge), then b, which ties with c and falls where the
+    // tray already shows it, after nothing and before a's dependents.
     expect(order).toEqual(["Remove legacy middleware", "Introduce AuthService", "Port login route"]);
     expect(order.indexOf("Introduce AuthService")).toBeLessThan(order.indexOf("Port login route"));
     expect(b.id).toBeTruthy();
@@ -69,8 +67,8 @@ describe("tagContextBlock", () => {
     // The relationship worth stating: finishing here releases that sibling.
     expect(block).toContain("  · Port signup route (not started, blocked by this task)");
     expect(block).toContain("  ✗ Drop the old table (withdrawn)");
-    // Sibling BRIEFS are deliberately absent — a seven-task tag would spend a
-    // fifth of the session's context on work this task isn't doing.
+    // Sibling briefs are absent: a seven-task tag would spend a fifth of the
+    // session's context on work this task isn't doing.
     expect(block).not.toContain("brief for Port signup route");
     expect(block).toContain("get_task");
   });
@@ -115,9 +113,9 @@ describe("tagContextBlock", () => {
     updateTask(quiet.id, { send_context: 0 });
 
     expect(tagContextBlock(getTask(quiet.id)!)).toBe("");
-    // …and through the real prompt builder, where the two opt-outs must agree:
-    // a task run deliberately context-free must not get the plan it belongs to
-    // smuggled back in under a different heading.
+    // And through the real prompt builder, where the two opt-outs must agree:
+    // a context-free task run must not receive the plan it belongs to under a
+    // different heading.
     const off = buildProjectContext(getProject(pid)!, getTask(quiet.id)!);
     expect(off).not.toContain("the project context");
     expect(off).not.toContain("the tag description");
@@ -134,7 +132,7 @@ describe("tagContextBlock", () => {
     const prompt = buildProjectContext(getProject(pid)!, getTask(self.id)!);
     expect(prompt).toContain('This task is tagged "Auth migration" (step 2 of 2)');
     expect(prompt).toContain("Sessions move behind AuthService.");
-    // Framing for the brief, so it sits with it rather than after the tool docs.
+    // Framing for the brief: it sits with it, ahead of the tool docs.
     expect(prompt.indexOf('tagged "Auth migration"')).toBeGreaterThan(prompt.indexOf("The current task is"));
     expect(prompt.indexOf('tagged "Auth migration"')).toBeLessThan(prompt.indexOf("suggest_task"));
   });

@@ -5,8 +5,8 @@ export const dynamic = "force-dynamic";
 
 const SHA = /^[0-9a-f]{40}$/;
 
-// List a task's document (collaboration modal) comments, optionally for one
-// file — the modal only ever wants the document it has open.
+// List a task's document (collaboration modal) comments, optionally scoped to
+// one file: the modal only ever needs the document it has open.
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!getTask(id)) return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -16,10 +16,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
 // File a passage comment: the rendered text the user selected, the nearest
 // heading above it, the note, and the file's blob sha as the modal loaded it
-// (anchorSha, from GET /file) — see TaskDocComment in lib/types.ts. Always
-// created UNSENT: sending is a separate step (POST ./sent) taken when the
-// user presses Send, because the packet that reaches the agent is built by
-// the client from the whole draft list and goes through its runTurn path.
+// (anchorSha, from GET /file); see TaskDocComment in lib/types.ts. Always
+// created unsent: sending is a separate step (POST ./sent) taken when the
+// user presses Send, since the packet that reaches the agent is built by the
+// client from the whole draft list and goes through its runTurn path.
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!getTask(id)) return NextResponse.json({ error: "not found" }, { status: 404 });

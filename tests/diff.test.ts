@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { ensureWorktree, mergeTask, taskDiff } from "../lib/git";
-import { commitFile, git, makeRepo, makeRepoWithWorktree, uid, writeFile } from "./helpers";
+import { ensureWorktree, mergeTask, taskDiff, taskDiffStat } from "../lib/git";
+import { commitFile, git, makeRepo, makeRepoWithOrigin, makeRepoWithWorktree, pushFromColleague, uid, writeFile } from "./helpers";
 import { onPosix } from "./platform";
 
 describe("taskDiff", () => {
@@ -137,9 +137,9 @@ describe("taskDiff", () => {
 
   // The exec bit is its own case because it is the one assertion here that
   // cannot hold on Windows: NTFS has no executable bit, `chmod` is a no-op, and
-  // git therefore records the file 100644. Skipped rather than ported —
-  // synthesizing a mode git itself wouldn't record proves nothing
-  // (docs/WINDOWS.md §7). The rest of the untracked-patch synthesis below is
+  // git therefore records the file 100644. It is skipped there instead of
+  // ported, since synthesizing a mode git itself would not record proves
+  // nothing. The rest of the untracked-patch synthesis below is
   // platform-independent and still runs everywhere.
   onPosix("synthesizes an untracked patch with the executable bit git records", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
@@ -186,8 +186,8 @@ describe("taskDiff", () => {
     const diff = await taskDiff(repo, wt.path, wt.baseSha, "main");
     expect(diff.alreadyMerged).toBe(true);
     // The live merge-base advanced to the merged tip, so landed work no longer
-    // reads as residual task changes — same as the app's managed merge, which
-    // moves base_sha forward.
+    // reads as residual task changes, the same as the app's managed merge,
+    // which moves base_sha forward.
     expect(diff.ahead).toBe(0);
     expect(diff.files).toEqual([]);
   });
@@ -237,5 +237,74 @@ describe("taskDiff", () => {
     const diff = await taskDiff(repo, wt.path, wt.baseSha, "main");
     expect(diff.base).toBe(wt.baseSha); // goalposts stay put
     expect(diff.files.map((f) => f.path)).toEqual(["work.txt"]);
+  });
+});
+
+// A base that is a feature branch is often known only by its remote copy: the
+// local branch is deleted once the integration PR lands, or it sits days
+// behind because the user only ever pulls main. A worktree that merged
+// origin/<base> in the terminal then shares history the local branch has no
+// record of, so a resolver that asks only the local branch keeps diffing from
+// the cut-point snapshot and reports every commit the base gained as the
+// task's own work.
+describe("taskDiff against a base branch known through its remote-tracking ref", () => {
+  async function featureFixture() {
+    const { repo, colleague } = await makeRepoWithOrigin();
+    await git(colleague, "checkout", "-b", "feature");
+    await commitFile(colleague, "feature-base.txt", "base\n", "feature base");
+    await git(colleague, "push", "-u", "origin", "feature");
+    const taskId = uid();
+    const wt = await ensureWorktree(repo, taskId, "feature");
+    if (!wt) throw new Error("ensureWorktree returned null in fixture");
+    // The base advances on the remote (a sibling PR landed), and the worktree
+    // catches up from the remote-tracking ref, the way `git merge origin/feature`
+    // in the terminal does, then does its own work.
+    const landed = await pushFromColleague(colleague, "landed.txt", "landed on feature\n", "feature");
+    await git(repo, "fetch", "origin");
+    return { repo, colleague, wt, landed };
+  }
+
+  it("advances past the snapshot when the local base branch is gone and only origin/<base> remains", async () => {
+    const { repo, wt, landed } = await featureFixture();
+    await git(repo, "branch", "-D", "feature");
+    await git(wt.path, "merge", "--ff-only", "origin/feature");
+    await commitFile(wt.path, "own.txt", "own work\n", "task commit");
+
+    const diff = await taskDiff(repo, wt.path, wt.baseSha, "feature");
+    expect(diff.base).toBe(landed);
+    expect(diff.files.map((f) => f.path)).toEqual(["own.txt"]);
+    expect(diff.ahead).toBe(1);
+
+    const stat = await taskDiffStat(repo, wt.path, wt.baseSha, "feature");
+    expect(stat).toEqual({ additions: 1, deletions: 0, files: 1 });
+  });
+
+  it("advances past the snapshot when the local base branch exists but is behind origin/<base>", async () => {
+    const { repo, wt, landed } = await featureFixture();
+    expect(await git(repo, "rev-parse", "feature")).toBe(wt.baseSha); // local copy never moved
+    await git(wt.path, "merge", "--ff-only", "origin/feature");
+    await commitFile(wt.path, "own.txt", "own work\n", "task commit");
+
+    const diff = await taskDiff(repo, wt.path, wt.baseSha, "feature");
+    expect(diff.base).toBe(landed);
+    expect(diff.files.map((f) => f.path)).toEqual(["own.txt"]);
+
+    const stat = await taskDiffStat(repo, wt.path, wt.baseSha, "feature");
+    expect(stat).toEqual({ additions: 1, deletions: 0, files: 1 });
+  });
+
+  it("keeps the snapshot when origin/<base> was rewritten and the worktree never caught up", async () => {
+    const { repo, colleague, wt } = await featureFixture();
+    // Rewrite the remote base so the snapshot is no longer an ancestor of it.
+    await git(colleague, "reset", "--hard", "main");
+    await commitFile(colleague, "rewritten.txt", "rewritten\n", "rewritten feature");
+    await git(colleague, "push", "--force", "origin", "feature");
+    await git(repo, "fetch", "origin");
+    await git(repo, "branch", "-D", "feature");
+    await commitFile(wt.path, "own.txt", "own work\n", "task commit");
+
+    const diff = await taskDiff(repo, wt.path, wt.baseSha, "feature");
+    expect(diff.base).toBe(wt.baseSha);
+    expect(diff.files.map((f) => f.path)).toEqual(["own.txt"]);
   });
 });

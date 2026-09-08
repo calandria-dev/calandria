@@ -1,15 +1,15 @@
-// The macOS window chrome, which is one layout split across two files.
+// The macOS window chrome, one layout split across two files.
 //
 // `titleBarStyle: "hiddenInset"` takes the native title bar away, and what
-// replaces it is the app's OWN titlebar — a web page. That makes two facts
+// replaces it is the app's own titlebar: a web page. That makes two facts
 // shared between desktop/main.js and app/globals.css rather than owned by
 // either, and both fail silently when they drift:
 //
-//   1. Where the traffic lights sit. They now float over the page's top-left
+//   1. Where the traffic lights sit. They float over the page's top-left
 //      corner, so the page has to reserve room for them; too little and the
 //      Calandria logo renders underneath the close button.
 //   2. That the titlebar is a drag region. With no native bar there is nothing
-//      else to move the window by, and a window you cannot move is not a
+//      else to move the window by, and a window that cannot be moved is not a
 //      cosmetic defect. Every control inside it has to opt back out, or a
 //      click on Terminal drags the window instead of opening it.
 //
@@ -25,8 +25,8 @@ import { describe, expect, it } from "vitest";
 const ROOT = path.resolve(__dirname, "..");
 
 // desktop/main.js is heavily commented and the comment above trafficLightPosition
-// names the very CSS selector asserted on below, so read the code, not the prose
-// — the same strip tests/desktopUpdater.test.ts uses, and for the same reason.
+// names the very CSS selector asserted on below, so read the code, not the prose:
+// the same strip tests/desktopUpdater.test.ts uses, and for the same reason.
 const mainSource = fs
   .readFileSync(path.join(ROOT, "desktop", "main.js"), "utf8")
   .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -45,7 +45,7 @@ const TRAFFIC_LIGHT_CLUSTER_PX = 52;
 describe("the page's titlebar stands in for the native one macOS took away", () => {
   it("pins the traffic lights instead of inheriting hiddenInset's default", () => {
     // Inheriting the default would work until it changed, and the page has no
-    // way to read it — so the position is stated, and stated only for darwin,
+    // way to read it, so the position is stated, and stated only for darwin,
     // since Windows and Linux keep the native frame that owns their controls.
     expect(mainSource).toMatch(/titleBarStyle:\s*process\.platform === "darwin" \? "hiddenInset"/);
     expect(mainSource).toMatch(/process\.platform === "darwin"[\s\S]{0,80}trafficLightPosition/);
@@ -57,8 +57,8 @@ describe("the page's titlebar stands in for the native one macOS took away", () 
 
     expect(Number.isFinite(x)).toBe(true);
     expect(Number.isFinite(padding)).toBe(true);
-    // The failure this catches is the one the user reported: content starting
-    // before x + 52 is content underneath the window controls.
+    // The failure this catches is content starting before x + 52: content
+    // underneath the window controls.
     expect(padding).toBeGreaterThanOrEqual(x + TRAFFIC_LIGHT_CLUSTER_PX);
   });
 

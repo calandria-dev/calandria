@@ -12,9 +12,9 @@ function cssVar(name: string, fallback = ""): string {
   return v || fallback;
 }
 
-// Resolves a color-mix()/var() expression to a literal computed color — xterm's
+// Resolves a color-mix()/var() expression to a literal computed color: xterm's
 // theme fields need concrete values, not CSS custom properties. Browsers resolve
-// color-mix() at computed-style time, so a throwaway probe element gets us the
+// color-mix() at computed-style time, so a throwaway probe element gets the
 // literal color for whatever palette/mode is active without hand-maintaining a
 // theme object per [data-theme] combination.
 function resolveColor(expr: string, fallback = ""): string {
@@ -27,8 +27,8 @@ function resolveColor(expr: string, fallback = ""): string {
   return resolved || fallback;
 }
 
-// Builds an xterm theme from the current design-system tokens (globals.css) —
-// read fresh whenever the palette or mode changes, since xterm themes are
+// Builds an xterm theme from the current design-system tokens (globals.css).
+// Read fresh whenever the palette or mode changes, since xterm themes are
 // literal-color objects, not CSS that re-resolves on its own.
 function buildXtermTheme(): ITheme {
   return {
@@ -64,8 +64,8 @@ export function TerminalView({ cwd, port, fontSize = 12.5, monoFontFamily, onRea
   const fontRef = useRef(fontSize);
   fontRef.current = fontSize;
   // No monoFontFamily prop wired from a caller yet (Terminal.tsx has two call
-  // sites — Shell.tsx's drawer and shell/Layout.tsx's — neither
-  // currently threads prefs through); fall back to the --mono custom property
+  // sites, Shell.tsx's drawer and shell/Layout.tsx's, and neither currently
+  // threads prefs through); fall back to the --mono custom property
   // usePrefs.ts sets on <html>, which already tracks the selected mono font.
   const monoRef = useRef(monoFontFamily);
   monoRef.current = monoFontFamily;
@@ -77,7 +77,7 @@ export function TerminalView({ cwd, port, fontSize = 12.5, monoFontFamily, onRea
     let ro: ResizeObserver | null = null;
     let mo: MutationObserver | null = null;
     let disposed = false;
-    let dead = false; // shell gone (exit or sidecar drop) — awaiting Enter to respawn
+    let dead = false; // shell gone (exit or sidecar drop), awaiting Enter to respawn
 
     (async () => {
       const [{ Terminal }, { FitAddon }, { WebLinksAddon }] = await Promise.all([
@@ -98,7 +98,7 @@ export function TerminalView({ cwd, port, fontSize = 12.5, monoFontFamily, onRea
       fit = new FitAddon();
       term.loadAddon(fit);
       // Retheme (and, absent an explicit monoFontFamily prop, refont) live
-      // whenever the palette or resolved mode flips — usePrefs.ts writes
+      // whenever the palette or resolved mode flips. usePrefs.ts writes
       // data-theme/data-mode on <html>, and the --mono custom property when the
       // mono font selection changes.
       mo = new MutationObserver(() => {
@@ -107,8 +107,8 @@ export function TerminalView({ cwd, port, fontSize = 12.5, monoFontFamily, onRea
         if (!monoRef.current) term.options.fontFamily = cssVar("--mono", term.options.fontFamily as string);
       });
       mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-mode", "style"] });
-      // Tappable links — the whole point of the mobile terminal's login flow is
-      // opening the OAuth URL Claude prints, so route clicks/taps to a new tab.
+      // Tappable links: the mobile terminal's login flow depends on opening the
+      // OAuth URL Claude prints, so route clicks/taps to a new tab.
       term.loadAddon(new WebLinksAddon((_e, uri) => window.open(uri, "_blank", "noopener,noreferrer")));
       term.open(hostRef.current);
       termRef.current = term;

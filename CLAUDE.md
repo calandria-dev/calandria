@@ -164,7 +164,9 @@ Two drivers ship: `lib/agents/claude/` (Claude Code, via `@anthropic-ai/claude-a
 Calandria tools, plus `ask_user`, through the stdio MCP bridge `scripts/calandria-mcp.mjs` →
 `/api/internal/agent-tools/*`. `ask_user` restores interactive asks: the card is persisted and
 published by `lib/agentTools.startAskUser`, and the bridge polls the `wait` endpoint for the
-answer.
+answer. Claude can be put on that same bridge —
+`CALANDRIA_CLAUDE_TOOL_TRANSPORT=stdio`, the escape hatch from the resumed-session cut-off — and
+is then the one agent it withholds `ask_user` from, having its own.
 
 **`lib/agents/CLAUDE.md` holds the per-driver detail** — permission modes, model catalog and
 Vertex corrections, MCP inheritance, one-shot isolation, slash-command discovery, and how to add a
@@ -183,7 +185,7 @@ rather than reaching a dead CLI. Unattended work is gated server-side by `backgr
 (default `on`), and recap scheduling additionally by `recap_mode` (`automatic` default, `on_open`,
 `off`); explicit `/clear`, Refresh with AI and manual recap refreshes still run. A driver that
 doesn't implement a helper is backstopped by the utility agent. Every one-shot funnels through one
-`run()` wrapper that records the agent that **actually** ran it plus `fallback` via
+`run()` wrapper that records the agent and MODEL that **actually** ran it plus `fallback` via
 `addInternalUsage()`, since both fallback paths are invisible otherwise. `resolveUtilityAgent()`
 reports the same resolution without throwing, so `GET /api/agents` can hand Settings the effective
 utility agent and its `(fallback)` hint.
@@ -198,12 +200,20 @@ sends `buildConflictPrompt()` output as an ordinary message through `startTurn()
 
 ### The permission gate
 
-Under every mode but `bypassPermissions`, the SDK's `canUseTool` is a real gate
-(**`lib/permissions.ts`**): a read-only allowlist, then the project's remembered Bash rules
-(`permission_rules`), then a permission card that parks the turn on the user through the same
-`lib/asks.ts` and `/answer` machinery an AskUserQuestion uses. Every non-answer path denies (Stop,
-expiry, unwatched turn, unparseable answer), and an unattended auto-deny parks the pending queue
-the way a dead login does.
+Under every mode but `bypassPermissions`, the SDK's `canUseTool` is a real gate: a read-only
+allowlist, then the project's remembered Bash rules (`permission_rules`), then a permission card
+that parks the turn on the user through the same `lib/asks.ts` and `/answer` machinery an
+AskUserQuestion uses. Every non-answer path denies (Stop, expiry, unwatched turn, unparseable
+answer), and an unattended auto-deny parks the pending queue the way a dead login does.
+
+That sequence is **`lib/permissionPrompt.ts`** (`promptPermission()`), and it is not the Claude
+driver's: the Codex app-server's three approval requests call the same function. Each driver only
+translates the verdict into its own protocol — `canUseTool`'s `PermissionResult`, the app-server's
+accept / acceptForSession / decline / cancel — and passes in what only it knows, which is the
+whole of the difference: `blockedPath`, the CLI's `suggestions` payload and its own prompt
+sentence for Claude, an explicit session-scoped offer for a Codex grant no durable rule fits. The
+policy underneath stays in **`lib/permissions.ts`**, which is pure; the prompt module is that plus
+the store and the turn's event queue.
 
 Rules are minted from the card and, since the card is unreachable on a turn nobody is watching, by
 typing one into Settings → Run defaults (`POST /api/settings/permissions`). The typed path is not
@@ -265,6 +275,19 @@ is reached out of band with no tool_use id, so it patches the newest unclaimed `
 instead — which is why the runner re-reads that one field before writing a `tool_result` over the
 top.
 
+**Every tool answers through `lib/agentToolGuard.mjs`, and adding one must not opt out.** Twice
+(2026-08-24, 2026-08-30) a live turn's tool calls started coming back with no content and no error
+for 20-50 minutes before healing themselves, and the sessions reported a withdrawal, a runbook and
+a pull request that were never written — an empty result is indistinguishable from a quiet success,
+so the model cannot notice. The guard rewrites a throw, an over-long call and a blank result as a
+sentence naming the tool, and passes a healthy answer through untouched. It is applied to the whole
+tools ARRAY in the Claude driver and to `registerTool` itself in the bridge, so a tool added later
+cannot forget; both use the one `.mjs` copy, because a guard on one end only is one the other
+loses. The bound (`CALANDRIA_AGENT_TOOL_TIMEOUT_MS`, 10 min; 0 for `ask_user`, which waits on a
+human) exists because nothing below has a usable one — the CLI's per-call MCP timeout defaults to
+~27.7 hours and can't be set per in-process server. `create_pr` names its PR by number and URL for
+the same reason: it is the only way a session says in git that its work is finished.
+
 Reads range as widely as filing does: `list_tasks` takes the same optional `project` and flags the
 caller `current: true`, and `get_task` reads any id, defaulting to the session's own.
 
@@ -275,7 +298,8 @@ id, including ones the user accepted or started. The only refusal is `running=1`
 agent" chip with per-edit Revert and a Keep-changes ack (`GET`/`POST /api/tasks/[id]/agent-edits`).
 Visibility and undo replaced the narrower gate. It covers title, description, priority and status
 minus `cancelled`: on the own row that would `abortTurn()` the very turn calling it, and on
-anyone else's it needs a stated reason, which is `withdraw_suggestion` below.
+anyone else's it needs a stated reason, which is `withdraw_suggestion` below. It does NOT carry
+the project — re-parenting is `move_task`, below.
 
 It also covers **`blocked_by`, the only way an agent can order a plan at all.** `suggest_task`
 takes blockers in the call that INVENTS the task, before any of them has an id, so a planning turn
@@ -306,6 +330,19 @@ carry, and returns an `autoStartDependents` flag instead of calling `maybeAutoSt
 itself, because `lib/autoStart.ts` reaches the runner while `lib/agentTools.ts` is pinned SDK-free.
 `tests/codexUpdateTaskPolicy.test.ts` runs the real stdio bridge against the real endpoint and
 asserts on the DB, because Codex is the path where the MODEL names the target.
+
+**`move_task(tasks, project)`** re-parents tasks (issue #24), running `lib/taskMove.ts` — the
+board's own operation — so a move keeps the row rather than retyping it into a new one. A separate
+verb for `set_base_branch`'s reason and one more: it's async and locking, and it's a SET operation,
+since a `blocked_by` edge survives iff BOTH ends move in the same call. Chains go whole; every
+dropped edge is named, because a task that looks ready and isn't is the issue's one stated failure
+mode. **It takes no discard acknowledgement**: the bulk route asks for those as lists of ids so one
+switch can't answer for eleven checkouts, and an agent verb must not be the shortcut past that —
+started tasks (and anything mid-turn, including the caller) are refused per task while the rest
+still move, and the internal endpoint ignores a flag sent anyway. A move off a row the user had
+accepted is recorded like an `update_task` edit under a new `project` field, and its Revert re-runs
+the move backwards rather than writing `project_id`, which would strand the task's sessions and
+spend.
 
 **`withdraw_suggestion(task, reason)`** is the retraction verb, on the SAME `isInertSuggestion()`
 screen (shared, so the two policies can't drift): an agent reaching for `status: "done"` to mean
@@ -416,8 +453,11 @@ the UI can start work, which is what "Start when unblocked" promised. The note d
   `lib/dispatch.ts` — the mint-a-task-and-launch-its-first-turn core shared by runbooks and the
   scheduler; it reaches the runner, so it is not pinned.
 - `lib/contextRefresh.ts` — "Refresh with AI" as a detached background job, polled via GET rather
-  than held open. `lib/recap.ts` — the staleness and activity sweep. Both are project-scoped
-  one-shots that run on the utility agent via `lib/agents/oneshots.ts`.
+  than held open. `lib/tagRefresh.ts` — the same shape for a tag ("Refresh tag"), except that it
+  APPLIES its outcome instead of drafting one: task edits go through `lib/agentTools.ts` and land
+  as revertable "Changed by agent" rows, and only work with nothing in it may be retired.
+  `lib/recap.ts` — the staleness and activity sweep. All three are project-scoped one-shots that
+  run on the utility agent via `lib/agents/oneshots.ts`.
 - `lib/retention.ts` — the scheduled prune of the tables that used to grow forever (issue #15),
   riding `lib/scheduler.ts`'s ticker on its own much longer clock, because this process owns the
   database and a second daemon would need a second lock. `prunableTaskIds()` is the whole policy,
@@ -452,8 +492,9 @@ the UI can start work, which is what "Start when unblocked" promised. The note d
   A merged PR (`pr_state`) and a local merge (`merged_at`) are one fact arriving two ways
   (`landedVia()`), so ONE path does the whole tail: fast-forward the local base from origin
   (`fetchBase` grew `force` — this runs BECAUSE something just landed, so the launch-time fetch
-  is stale by definition), remove the worktree, delete the LOCAL branch (the remote one is
-  GitHub's, via `delete_branch_on_merge`), mark the task done. `maybeAutoReclaim()` is the
+  is stale by definition), remove the worktree, delete the LOCAL branch (the remote one went
+  with the merge: `mergeTaskPr` passes `--delete-branch`; a github.com merge instead needs the
+  repo's `delete_branch_on_merge`, off by default), mark the task done. `maybeAutoReclaim()` is the
   silent-unless-`projects.auto_reclaim` trigger the three merge routes and `refreshPrState`
   call; `POST /api/tasks/[id]/reclaim` is the session header's button, and the only place the
   unsafe acknowledgement can be given. `worktreePruneSafety()` stays in the loop but is READ

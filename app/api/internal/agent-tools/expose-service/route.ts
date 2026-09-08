@@ -1,11 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getProject } from "@/lib/store";
 import { registerExposedService } from "@/lib/agentTools";
+import { logAgentToolArrival } from "@/lib/agentToolLog";
 
 export const dynamic = "force-dynamic";
 
 // Internal endpoint the stdio MCP bridge (scripts/calandria-mcp.mjs) proxies the
-// `expose_service` tool call to — the HTTP counterpart of the Claude driver's
+// `expose_service` tool call to, the HTTP counterpart of the Claude driver's
 // in-process tool. Auth is the per-instance SERVICE_TOKEN (middleware.ts).
 export async function POST(req: NextRequest) {
   let body: { projectId?: string; name?: string; port?: number };
@@ -14,6 +15,7 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
+  logAgentToolArrival("expose_service", "bridge", undefined);
 
   const project = body.projectId ? getProject(body.projectId) : undefined;
   if (!project) return NextResponse.json({ error: "unknown project" }, { status: 404 });

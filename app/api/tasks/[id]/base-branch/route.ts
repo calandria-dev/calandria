@@ -8,17 +8,17 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 /**
- * Point this task at a different base branch — what it was cut from, what Sync
+ * Point this task at a different base branch: what it was cut from, what Sync
  * catches it up to, and what Merge lands it into.
  *
- * Deliberately NOT part of `PATCH /api/tasks/[id]`: that route is a synchronous
- * field write, and this can create a local ref, `reset --hard` a worktree and
- * fail halfway. All of the policy lives in `lib/baseBranch.ts`, so this route
- * and the `set_base_branch` agent tool cannot drift.
+ * Not part of `PATCH /api/tasks/[id]`, since that route is a synchronous field
+ * write and this can create a local ref, `reset --hard` a worktree, and fail
+ * halfway. The policy lives in `lib/baseBranch.ts`, so this route and the
+ * `set_base_branch` agent tool share it.
  *
  * Runs under the per-task lock shared with the turn-launch path, so the running
- * check inside stays true for the whole reconciliation — a turn can't start
- * writing into the worktree while it's being re-cut.
+ * check inside stays true for the whole reconciliation: a turn cannot start
+ * writing into the worktree while it is being re-cut.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -31,10 +31,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const project = getProject(task.project_id);
     if (!project) return NextResponse.json({ error: "no project" }, { status: 400 });
 
-    // An empty branch is "go back to inheriting", which is not a column write —
-    // the task may be pinned to a branch it is now leaving, so it reconciles
-    // under the inherited name first. setTaskBaseBranch owns that, shared with
-    // the `set_base_branch` agent tool so the two cannot drift.
+    // An empty branch means "go back to inheriting", which is not a plain column
+    // write: the task may be pinned to a branch it is now leaving, so it
+    // reconciles under the inherited name first. setTaskBaseBranch owns that,
+    // shared with the `set_base_branch` agent tool.
     const result = await setTaskBaseBranch(task, project, branch);
     if (!result.ok) return NextResponse.json(result, { status: 409 });
     return NextResponse.json(result);

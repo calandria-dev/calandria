@@ -1,11 +1,9 @@
 // What PATCH /api/tasks/[id] announces on the bus.
 //
-// The coarse /api/events payload only carries running/awaiting_input/status, so
-// a rename or a reprioritisation is unpatchable by listeners — it has to arrive
-// as `task_edited` ("refetch the row"). Without that, a user renaming a task in
-// one tab leaves every OTHER tab showing the old title until it reloads; the
-// editing tab looks fine because it patched its own state optimistically, which
-// is exactly what makes the bug easy to miss by hand.
+// The coarse /api/events payload only carries running/awaiting_input/status,
+// so a rename or a reprioritization arrives as `task_edited` ("refetch the
+// row") instead. Other tabs depend on that event to pick up a title change
+// made elsewhere, since each tab only patches its own state optimistically.
 import { afterEach, describe, expect, it } from "vitest";
 import { PATCH as patchTask } from "@/app/api/tasks/[id]/route";
 import { createProject, createTask, getTaskDeps, updateTask } from "@/lib/store";
@@ -45,7 +43,7 @@ describe("PATCH /api/tasks/[id] mutation events", () => {
 
   it("publishes only task_edited when one patch changes both a field and the status", async () => {
     // task_edited makes the client refetch the row, which settles the status
-    // too — a second task_updated alongside it would be a duplicate refresh.
+    // too, so a second task_updated alongside it would be a duplicate refresh.
     const project = createProject({ name: "Both" });
     const task = createTask({ project_id: project.id, title: "Rename and park" });
 
@@ -62,8 +60,8 @@ describe("PATCH /api/tasks/[id] mutation events", () => {
     updateTask(task.id, { awaiting_input: 1 });
 
     expect(await published(() => patch(task.id, { status: "on_hold" }))).toEqual(["task_updated"]);
-    // Re-asserting the same status is still a settle — it clears awaiting_input,
-    // which is the half the badges actually read.
+    // Re-asserting the same status is still a settle: it clears awaiting_input,
+    // which is the half the badges read.
     updateTask(task.id, { awaiting_input: 1 });
     expect(await published(() => patch(task.id, { status: "on_hold" }))).toEqual(["task_updated"]);
   });
@@ -81,10 +79,10 @@ describe("PATCH /api/tasks/[id] mutation events", () => {
   });
 
   it("stays silent on a no-op save", async () => {
-    // The edit dialog submits every field on every save, touched or not — and
-    // setTaskDeps drops unusable refs, so a submitted list often lands
-    // identical. Publishing on the submission rather than the change would make
-    // every tab refetch its tray for nothing.
+    // The edit dialog submits every field on every save, whether touched or
+    // not, and setTaskDeps drops unusable refs, so a submitted list often
+    // lands identical. Publishing only on an actual change keeps a no-op save
+    // from making every tab refetch its tray for nothing.
     const project = createProject({ name: "No-op" });
     const other = createProject({ name: "Elsewhere" });
     const stranger = createTask({ project_id: other.id, title: "Not reachable" });
@@ -103,8 +101,8 @@ describe("PATCH /api/tasks/[id] mutation events", () => {
   });
 
   it("publishes task_edited when a suggestion is accepted out of the tray", async () => {
-    // `suggested: 0` moves the card from the Suggested tray into the board —
-    // invisible to a listener that can only see running/awaiting_input/status.
+    // `suggested: 0` moves the card from the Suggested tray into the board, a
+    // change invisible to a listener that only sees running/awaiting_input/status.
     const project = createProject({ name: "Suggestions" });
     const task = createTask({ project_id: project.id, title: "Filed by an agent", suggested: true });
 

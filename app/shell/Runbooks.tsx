@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
-import { agentLabel, capsFor, defaultAgentFor } from "./agents";
+import { agentLabel, capsFor, defaultAgentFor, pickerAgents } from "./agents";
 import { relTime } from "./format";
 import { ErrNote } from "./shared";
 import { Modal, PrioritySeg } from "./Modal";
@@ -34,12 +34,12 @@ export function defaultRunTitle(name: string, now = new Date()): string {
 /**
  * Create/edit form for a runbook.
  *
- * Deliberately close to ScheduleForm, minus the clock — the two are the same
- * object with and without one. The slash validation is the same call for the
- * same reason it exists there: an unknown command is a SUCCESS at run time
- * ("Unknown command: /x"), so a dispatch would report green having done
- * nothing, and this is the cheap place to catch a typo. Save is never blocked:
- * the probe reads one session's registry and can be wrong.
+ * Close to ScheduleForm, minus the clock: the two are the same object with
+ * and without one. The slash validation is the same call for the same reason
+ * it exists there: an unknown command is a SUCCESS at run time ("Unknown
+ * command: /x"), so a dispatch would report green having done nothing, and
+ * this is the cheap place to catch a typo. Save is never blocked: the probe
+ * reads one session's registry and can be wrong.
  */
 function RunbookForm({
   projectId, project, agents, initial, onCancel, onSaved,
@@ -138,7 +138,7 @@ function RunbookForm({
         <textarea id={`${uid}-prompt`} value={prompt} placeholder="/push-and-watch, or plain instructions"
           onChange={(e) => setPrompt(e.target.value)}
           onBlur={() => void validate(prompt, agent)} />
-        <div className="hlp">Sent as the first message of every task this dispatches, so a slash command expands.</div>
+        <div className="hlp">Sent as the first message of every task this dispatches.</div>
         {checking && <div className="hlp">Checking this project&rsquo;s slash commands…</div>}
         {check && !check.ok && (
           <div className="rb-check bad" role="alert">
@@ -152,8 +152,8 @@ function RunbookForm({
               </div>
             )}
             <div className="rb-note">
-              Save still works. The check reads one session&rsquo;s command list and can be wrong. If it isn&rsquo;t,
-              dispatching will fail rather than report success having done nothing.
+              Save still works even if this check is wrong: it only reads one session&rsquo;s command list. If the
+              command doesn&rsquo;t exist, dispatching will fail with an error, not silently do nothing.
             </div>
           </div>
         )}
@@ -167,7 +167,7 @@ function RunbookForm({
       <div className="field">
         <label className="lab" htmlFor={`${uid}-agent`}>Agent</label>
         <select id={`${uid}-agent`} value={agent} onChange={(e) => { setAgent(e.target.value); void validate(prompt, e.target.value); }}>
-          {agents.agents.map((a) => (
+          {pickerAgents(agents, agent).map((a) => (
             <option key={a.id} value={a.id}>{a.label}{a.authenticated ? "" : " (not connected)"}</option>
           ))}
         </select>
@@ -177,8 +177,8 @@ function RunbookForm({
         {modeCaps.length > 0 ? (
           <select id={`${uid}-perm`} value={permissionMode ?? ""} onChange={(e) => setPermissionMode(e.target.value || null)}>
             {/* Same word the task pickers' head uses (INHERIT_LABEL), so "inherit
-                the app default" and Claude's own mode spelled "default" — right
-                below in the provider's list — can't read as the same entry. */}
+                the app default" and Claude's own mode spelled "default", right
+                below in the provider's list, can't read as the same entry. */}
             <option value="">{INHERIT_LABEL}: use the app-level default</option>
             {modeCaps.map((m) => <option key={m.value} value={m.value} title={m.sub}>{m.label}</option>)}
           </select>
@@ -209,8 +209,8 @@ function RunbookForm({
 
 /**
  * The dispatch sheet: what this run will be called, what it will send, and one
- * box for anything extra. Everything else is already decided by the runbook —
- * that is the point of having saved it.
+ * box for anything extra. Everything else is already decided by the runbook,
+ * which is the point of having saved it.
  */
 function RunSheet({ runbook, agents, onCancel, onRan }: {
   runbook: RunbookRow;
@@ -227,7 +227,7 @@ function RunSheet({ runbook, agents, onCancel, onRan }: {
 
   const go = async () => {
     // A double-click is two tasks and two live turns, so the button latches for
-    // the whole round trip rather than only while React re-renders.
+    // the whole round trip, not only while React re-renders.
     if (running) return;
     setRunning(true);
     setErr("");
@@ -285,7 +285,7 @@ function RunSheet({ runbook, agents, onCancel, onRan }: {
   );
 }
 
-/** "Copy to…" — the same destination list the move flows render. */
+/** "Copy to…": the same destination list the move flows render. */
 function CopySheet({ runbook, projects, onCancel, onCopied }: {
   runbook: RunbookRow;
   projects: ProjectRow[];
@@ -364,8 +364,8 @@ export function Runbooks({ project, projects, agents, onOpenTask }: {
 
   useEffect(() => { void load(); }, [load]);
 
-  // Another tab — or an agent's create_runbook — changed this project's
-  // runbooks. A window event rather than a prop: the card owns its own fetch,
+  // Another tab, or an agent's create_runbook, changed this project's
+  // runbooks. A window event, not a prop: the card owns its own fetch,
   // and threading a refresh counter through ProjectLanding for one rare
   // mutation would put this component's state in its grandparent.
   useEffect(() => {

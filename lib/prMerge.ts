@@ -1,24 +1,16 @@
-// May this pull request be squash-merged from here, and if not, why not?
+// Decides whether a pull request can be squash-merged right now, and if not,
+// why not.
 //
-// One predicate, shared by the button and the route it calls, for the usual
-// reason two copies of a policy are one too many: the button is enabled off
-// REAL PR state rather than optimistically, and the route re-screens against a
-// freshly refreshed row before it shells out — so a snapshot that went stale
-// while the rail was on screen is refused with the same sentence the tooltip
-// would have shown, instead of being merged on the strength of a five-minute-old
-// answer.
+// The button and the route it calls share this one predicate, evaluated
+// against the real PR state each time, so the button's tooltip and the
+// route's 409 body always give the same answer for the same state.
 //
-// Pure (types only, no DB, no gh, no SDK), so the client bundles it the way it
-// bundles lib/contextWindow.ts and lib/usageReset.ts. Pinned SDK-free in
-// tests/importGraph.test.ts.
+// Pure (types only, no DB, no gh, no SDK), so the client can bundle it. Pinned
+// SDK-free in tests/importGraph.test.ts.
 //
-// What this file does NOT do is decide WHO may click. That is the route's job,
-// and the answer is: a person, in a browser, on a task with no turn running.
-// `.github/CLAUDE.md` sets out the standard for this repo's own release merges
-// — an agent may merge only on an explicit human answer through its ask tool,
-// never on its own initiative and never unattended — and a merge button is the
-// same act with the human already in the loop. There is deliberately no agent
-// tool and no scheduled path here; adding one would be that gate's back door.
+// This file does not decide who may click: that is the route's job, which
+// requires a person, in a browser, on a task with no turn running. There is
+// no agent tool and no scheduled path here.
 
 /** The PR facts the decision reads. Satisfied by lib/types' Task and by the client's TaskRow alike. */
 export interface PrMergeFacts {
@@ -39,7 +31,7 @@ export interface PrMergeFacts {
  * wording per refusal and no chance of the UI and the server disagreeing about
  * what is wrong.
  *
- * Order matters — the first true thing is the one a human would act on. A
+ * Order matters: the first true thing is the one a human would act on. A
  * closed PR is worth saying before its checks, and "we haven't asked GitHub
  * yet" outranks everything, because every field below it is still "".
  */

@@ -1,8 +1,8 @@
-// "Start at the usage-window reset": tasks.start_at + the sweep that honours it
-// (lib/deferredStart.ts). Pinned at the runner boundary, like tests/autoStart —
-// the module's job is deciding WHAT to launch when a deadline passes and
-// handing the runner a correctly prepared launch; the turn itself is the
-// driver-contract test's problem.
+// Pins "start at the usage-window reset": tasks.start_at and the sweep that
+// honors it (lib/deferredStart.ts). Pinned at the runner boundary, like
+// tests/autoStart: this module's job is deciding what to launch when a
+// deadline passes and handing the runner a correctly prepared launch; the turn
+// itself is the driver-contract test's problem.
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/runner", () => ({ startTurn: vi.fn(), startResumeTurn: vi.fn(), publishTurnError: vi.fn() }));
@@ -106,7 +106,7 @@ describe("listDueDeferredStarts (selection rules)", () => {
   });
 });
 
-describe("sweepDeferredStarts — a never-started task", () => {
+describe("sweepDeferredStarts, a never-started task", () => {
   it("launches its first turn like Start session would, then consumes the deadline", async () => {
     const { task } = queued();
     const events = await busEventsFor(task.id, () => sweepDeferredStarts());
@@ -116,7 +116,7 @@ describe("sweepDeferredStarts — a never-started task", () => {
     const [launched, project, userText, note, controller] = calls[0];
     expect(launched.id).toBe(task.id);
     expect(project.id).toBe(task.project_id);
-    // Same generic opener the POST route sends — the brief travels in the
+    // Same generic opener the POST route sends: the brief travels in the
     // injected project context, never in the prompt.
     expect(userText).toBe(INITIAL_TASK_PROMPT);
     expect(note).toBe(DEFERRED_START_NOTE);
@@ -140,7 +140,7 @@ describe("sweepDeferredStarts — a never-started task", () => {
     expect(getTask(task.id)!.start_at).toBeGreaterThan(0);
   });
 
-  it("won't start a task another task still blocks — it drops the deadline and says why", async () => {
+  it("won't start a task another task still blocks, dropping the deadline and saying why", async () => {
     const { project, task } = queued();
     const blocker = createTask({ project_id: project.id, title: "first" });
     setTaskDeps(task.id, [blocker.id]);
@@ -151,7 +151,7 @@ describe("sweepDeferredStarts — a never-started task", () => {
     expect(systemLines(task.id)).toEqual([expect.stringContaining("still blocked")]);
   });
 
-  it("won't start into a project with no working directory — same drop, different reason", async () => {
+  it("won't start into a project with no working directory, the same drop for a different reason", async () => {
     const project = makeProject("");
     const task = createTask({ project_id: project.id, title: "nowhere" });
     updateTask(task.id, { start_at: Date.now() - 1 });
@@ -162,7 +162,7 @@ describe("sweepDeferredStarts — a never-started task", () => {
   });
 });
 
-describe("sweepDeferredStarts — a started task", () => {
+describe("sweepDeferredStarts, a started task", () => {
   it("resumes with the oldest parked follow-up, popping it from the queue", async () => {
     const { task } = queued({ started: 1, status: "in_progress" });
     addPendingMessage(task.id, task.generation, "first queued");

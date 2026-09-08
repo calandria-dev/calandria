@@ -9,9 +9,9 @@ contains the longer feature inventory kept out of the project README.
 
 ## Parallel work without collisions
 
-Each task runs in its own git worktree and branch, with an independent Claude Code or Codex
-session. Projects and tasks share one workspace, so you can run many sessions without mixing
-their files, terminals, or transcripts.
+Each task runs in its own git worktree and branch, with an independent Claude Code, Codex or
+Antigravity session. Projects and tasks share one workspace, so you can run many sessions
+without mixing their files, terminals, or transcripts.
 
 The cross-project **Needs you** signal identifies sessions waiting for input. Turns run on
 the server and their events are persisted, so reloading the page or sleeping your laptop
@@ -51,15 +51,17 @@ Calandria puts the task conversation and git diff side by side. From there you c
 
 ![Diff review beside the agent session](images/changes.png)
 
-Once a task has a PR, its session header carries a live chip: the PR number, whether it is
-open, merged or closed, how its checks are doing, and the review decision. Calandria keeps
-that current by re-reading the PR from GitHub (`gh pr view`) in the background — when the PR
-is created, when you open the task, when you press the chip's Refresh button, and on a timer
-while the PR is still open. Nothing polls from the browser: a change reaches every open tab
-over the same event stream every other lifecycle fact uses. A merged or closed PR is never
-re-read, and a sweep is skipped entirely when no tab is open, so the cost is bounded by open
-work rather than by how many PRs the instance has ever opened. `CALANDRIA_PR_POLL_MS=0`
-turns the timer off and leaves the other three triggers.
+Once a task has a PR, the diff view's toolbar carries a live chip: the PR number, whether it
+is open, merged or closed, how its checks are doing, and the review decision. It sits with the
+diff rather than in the session header so the PR's state and the buttons that act on it are in
+one place, which matters most on a phone, where the diff and the chat are separate views.
+Calandria keeps that current by re-reading the PR from GitHub (`gh pr view`) in the background
+— when the PR is created, when you open the task, when you press the chip's Refresh button,
+and on a timer while the PR is still open. Nothing polls from the browser: a change reaches
+every open tab over the same event stream every other lifecycle fact uses. A merged or closed
+PR is never re-read, and a sweep is skipped entirely when no tab is open, so the cost is
+bounded by open work rather than by how many PRs the instance has ever opened.
+`CALANDRIA_PR_POLL_MS=0` turns the timer off and leaves the other three triggers.
 
 **A red PR is treated as work that needs you.** When the check rollup on a task's open PR
 goes failing, the task is raised into the same cross-project **Needs you** inbox a parked
@@ -111,8 +113,10 @@ refresh that records the merge and leaves the worktree to the reclaim path.
 A merged PR is a definitive signal that a task's checkout is disposable, so the session header
 grows a **Reclaim** button the moment the work lands — whether GitHub merged the pull request
 or Calandria merged the branch locally. One click does the whole tail: fast-forward the local
-base branch from origin, remove the worktree, delete the **local** branch (the remote one is
-GitHub's job, via the repository's `delete_branch_on_merge`) and mark the task done.
+base branch from origin, remove the worktree, delete the **local** branch (the remote one went
+with the merge: landing the PR from Calandria passes `--delete-branch`, while a PR merged on
+github.com instead needs the repository's `delete_branch_on_merge`, which is off by default)
+and mark the task done.
 
 Project settings has a **Reclaim a task's worktree when its work lands** checkbox that has the
 server do it by itself. It is off by default and per project, because an unattended reclaim
@@ -142,9 +146,12 @@ beside it for markdown, and ```mermaid fences drawn as diagrams) and **Comment**
 passage and attach a note, plus a general comments box). **Send to agent** turns your edits
 into a unified diff (or writes them straight into the worktree, the default) and your
 comments into located, quoted feedback, sent as one message through the ordinary chat path.
-Passage comments save as you add them and survive a reload. Sent comments stay listed
-against the document, read-only, and collapse into an outdated group once the document
-changes. See [DOCUMENT_COLLABORATION.md](DOCUMENT_COLLABORATION.md) for details.
+Passage comments, the edit, and the general note all save as you go and are restored when
+you reopen the modal; a draft comment can still be edited up until it's sent. Sent comments
+stay listed against the document, read-only, and collapse into an outdated group once the
+document changes; an edit made against an older version of the file is offered back as
+stale, with a choice to restore or discard it, rather than being reapplied silently. See
+[DOCUMENT_COLLABORATION.md](DOCUMENT_COLLABORATION.md) for details.
 
 ### Base branches
 
@@ -180,6 +187,31 @@ base branch, the **first tag on the task** (in the order its badges render) wins
 strip names it. Resolution order: the task's own base, then the first of its tags that sets
 one, then the project's default. Moving a task to another project clears both, since a
 branch name doesn't carry over to a different repository.
+
+**And the strip says when that branch has fallen behind** — "3 behind main", with a **Sync**
+beside it. A long-lived integration branch drifts as work lands on the default, and every new
+task the tag cuts is then minted stale: the session builds on superseded commits and its pull
+request proposes reverting whatever landed in between. The reading is taken against the
+commit a new task would actually be cut from (the fetched remote tip when your local default
+is merely behind it), so a stale checkout of your own can't hide it.
+
+Sync **merges the default into the tag's branch**. It never resets it: proving a branch has been
+fully superseded is unreliable under squash merges — `git cherry` called 30 and 10 commits "not
+upstream" on two branches `main` had in fact entirely absorbed — and a reset also force-moves a ref
+a live session may have checked out. A merge needs no such proof and can't drop a commit. If a
+worktree is holding the branch, the merge happens inside it so its files move too, and is refused
+outright when that worktree has uncommitted work, naming it. A conflict is reported and changes
+nothing. A tag pinned to a branch that **doesn't exist here** says so too, rather than silently
+cutting new tasks from whatever `HEAD` is. The usual case is a base typed into the editor before
+anything created it: the field accepts a branch that doesn't exist yet on purpose, and a **Create
+from main** button beside the line makes it, at the commit a new task would otherwise have been cut
+from. A branch that lives only on the remote counts as existing, and gets a local ref the way a task
+cut would give it one.
+
+The strip is the half of this you can act on; the other half reaches the session. A task whose
+worktree was cut from a base branch already behind the default is told so in its opening
+context, before it writes a pull request — same measurement, said in the two places it
+matters.
 
 ### How work lands: merge or pull request
 
@@ -219,6 +251,19 @@ in git and landing was entirely a human click. It is registered only on a `pr` p
 `merge` project there is nothing for it to open, so it is absent rather than
 present-and-refusing. There is deliberately no `merge_pr` — opening a PR is proposing,
 merging is deciding, and that stays yours.
+
+A PR that a session opened **by hand** is linked to its task anyway. `create_pr` can be cut
+off by the CLI before it reaches Calandria, and a session that sees that failure falls back to
+`git push` plus `gh pr create` in a terminal. That opens a real PR, but nothing on the task
+row knows about it: no chip in the session header, no state polling, no auto-reclaim when it
+lands, and you relink it by hand. So at the end of every turn, a task on a `pr` project that
+has a work branch and no PR yet is checked: if the branch was pushed, one `gh pr list --head
+<branch> --state open` asks whether a PR for it exists, and an open one whose head is exactly
+that branch is recorded the way `create_pr` records its own. The branch check is local, so a
+task that never pushed costs nothing, and a PR whose head is any other branch is never
+adopted. It is best-effort like the rest of the network git: bounded, never prompting, and a
+`gh` that is missing, logged out or offline leaves the task exactly as it was. The link is
+logged as one line.
 
 **Detect** asks GitHub which it is, reading both mechanisms — a branch ruleset with a
 `pull_request` rule, and classic branch protection, neither of which reports the other. It
@@ -285,7 +330,19 @@ Needs input, Ran clean, Snoozed, and Done states. Tasks can depend on other task
 **Start when unblocked** launches an opted-in task as soon as its final blocker is marked
 done. Opt in from the edit dialog's dependency picker, or straight from the blocked task's
 own start screen: its "Blocked until …" notice carries a **Start when unblocked** button, and
-the queued notice it becomes carries **Cancel** to hand the start back to you.
+the queued notice it becomes carries **Cancel** to hand the start back to you. The block is
+enforced by the server on the start itself, not just by the disabled button, so a stale tab or
+a scripted call is refused too — and only for a task's first turn, since blockers order starts
+rather than conversations.
+
+A blocker doesn't have to be a task you accepted. An agent ordering a plan draws its edges
+while every step is still an unreviewed suggestion, so an accepted task can be waiting on
+siblings still sitting in the Suggested tray. Those blockers count — the chip names them
+`(suggested)` and server-side auto-start honors them — and the dependency picker lists them
+with a **Suggested** tag, so you can either accept them from the tray and work the plan in
+order, or untick them and start now. What the picker won't do is OFFER a suggestion you
+haven't already linked: waiting on work nobody has agreed to do yet isn't a choice worth
+putting on a menu.
 
 Everywhere tasks are listed (every group in the list, every board column, the Suggested
 tray), the top one is the most recently active: whatever was last created, edited, or worked
@@ -334,10 +391,24 @@ during a search.
 Lighting exactly one chip opens the **tag strip** beneath the bar: the description, a
 progress bar reading `3 done · 2 withdrawn`, a link back to the planning session
 (**Planned in …**, when an agent filed it), and its tasks in dependency order, each with a
-status dot and a step number. Its two actions are **Edit** (rename, describe, recolor from
-the badge palette) and **Delete tag**, which asks twice and names how many tasks stay;
-deleting a tag removes the label from its tasks without deleting them or touching their other
-tags. With two chips lit, the strip stays shut.
+status dot and a step number. Its three actions are **Refresh tag** (below), **Edit** (rename,
+describe, recolor from the badge palette) and **Delete tag**, which asks twice and names how
+many tasks stay; deleting a tag removes the label from its tasks without deleting them or
+touching their other tags. With two chips lit, the strip stays shut.
+
+**Refresh tag** checks the whole plan against the code. The utility agent explores the
+repository read-only, reads every member task's brief against what it finds, and reports what
+has drifted; the app applies the report. A brief pointing at files or an approach that no
+longer exists is reworded, the tag's description is rewritten to say where the plan actually
+stands, and a task the code shows is already handled is retired. Every task change lands as a
+**Changed by agent** edit with a per-field before/after and a one-click Revert, so the review
+happens after the write rather than in a second approval queue. Retiring is limited to work
+that has none in it: an unreviewed suggestion is withdrawn into the tray with the reason on
+it, a task accepted but never started is cancelled (revertably), and a task that has been
+started — it has a checkout and probably a diff — is only *named* in the report, never
+touched. The run is a detached background job: an inline bar under the progress bar says which
+phase it is in, and it keeps going if you light another chip, switch project or reload the
+tab. Spend shows up in **Insights** as *Tag refreshes*.
 
 Tags are reachable outside the task list too. The project landing page has a **Tags** card
 between the recap and Runbooks, showing active tags with their progress and what needs you (a
@@ -415,6 +486,17 @@ each row with a worktree gets its own checkbox (off by default) showing what tha
 holds: clean and merged, or the uncommitted edits and unmerged commits it would destroy, in
 red. Leaving all of them unticked is a plain move. Three worktrees with unsaved work in a
 selection of eleven don't block the other eight; those three are reported and left in place.
+
+Agents can move tasks between projects too, with `move_task(tasks, project)`. It runs the
+same operation the board does, so a moved task keeps its id, brief, transcript, cost history
+and comments rather than being retyped into a new one, and a blocked-by link survives when
+both of its ends are in the same call — pass a whole chain together. What an agent is *not*
+given is the discard confirmation. A task you have already started can only move by having
+its worktree destroyed, and that answer is yours to give per checkout from the board, so the
+tool refuses those (and anything mid-turn) and names them instead. Every edge it had to drop
+is reported back, since a task that looks ready and isn't is worse than a refusal. Moving a
+task you had already accepted shows on the board as an agent change with a one-click revert,
+which moves it back the same way rather than rewriting a column.
 
 Agents can suggest follow-up tasks into their own project or any other one. When a session
 spots work that belongs to a different repo, it looks up the project and files the suggestion
@@ -542,21 +624,33 @@ Two things an agent cannot do:
 
 ## Scheduled tasks
 
-A schedule is a saved prompt plus a recurring day and time, owned by the project it lives in.
-Find it on the project landing pane, under **Schedules**; click the project's name at the top
-of the task list to get there from anywhere. A schedule fires with no browser tab open: it's
-driven by a ticker in the server process, not a timer in your browser.
+A schedule is a saved prompt plus a day and time, owned by the project it lives in. Find it
+on the project landing pane, under **Schedules**; click the project's name at the top of the
+task list to get there from anywhere. A schedule fires with no browser tab open: it's driven
+by a ticker in the server process, not a timer in your browser.
+
+Every schedule has **Edit**, **Pause**, **Run now** and **Delete**. Deleting is a hard delete
+with no undo, like everything else here, but it only removes the *schedule*: the tasks it
+already minted are kept, so deleting tomorrow's job never deletes last week's work.
 
 Each firing mints a fresh task with its own transcript, worktree, and turn, rather than
 reusing one across occurrences, so every run is reviewable like a task you started by hand
 and a bad run doesn't contaminate the next one's context.
 
+**Weekly or once.** The default is recurring: pick the days of the week it runs. Switch
+**Repeats** to **Once** and you pick a single date instead — "there's a release going out
+overnight, check on it at 04:00" — and the schedule fires exactly one time. Afterwards it
+doesn't vanish: it stays on the card reading **Ran — one-time**, disabled, with its run
+history intact, because the outcome of a 04:00 job is the thing you came to read at 09:00.
+Delete it when you're done with it, or edit it to a later date to arm it again. A date that
+has already passed is refused on the spot rather than saved as a job that can never fire.
+
 **Timezone** is picked explicitly (defaulting to your browser's) rather than inferred from
 the server, since the server may run in a different zone than the person who set up the
 schedule (a container on UTC, a user on Pacific). The time is wall-clock, so "08:30" keeps
 meaning 08:30 across a Daylight Saving transition. The editor previews the next three
-occurrences as you set the days, time, and timezone, so you can catch a mistake on the form
-instead of the following Monday.
+occurrences (or the single one, for a one-off) as you set the days, time, and timezone, so
+you can catch a mistake on the form instead of the following Monday.
 
 **Catching up**: if the app was asleep or down when a firing was due, the next tick runs the
 most recent missed slot once, marked `catch_up` (useful for a morning run discovered at noon,
@@ -566,10 +660,12 @@ due, the new slot is recorded `skipped_overlap` instead of piling a second turn 
 first.
 
 **Permission mode is a required, explicit choice**, because a scheduled run can't answer a
-permission prompt. Any mode other than the agent's never-asks mode (Claude's
-**bypassPermissions**, Codex's **workspace-write**) declines every prompt automatically
-instead of parking, so the turn can stop early with the job half done. Only the never-asks
-mode runs a schedule all the way through unattended.
+permission prompt. Any mode that would ask you (Claude's **auto**, **acceptEdits**,
+**default** and **plan**; Codex's **default**) declines every prompt automatically instead
+of parking, so the turn can stop early with the job half done. Only a mode that never asks
+you runs a schedule all the way through unattended: **bypassPermissions** on either agent,
+and on Codex also **acceptEdits** (the sandbox refuses instead of asking) and **auto**
+(Codex's own reviewer decides escalations).
 
 When a prompt gets declined, the run is recorded **failed**, with a note that the agent
 needed approval and nobody was watching. The same goes for a question: if the agent asks one
@@ -686,7 +782,9 @@ the task list.
 Two surfaces differ from desktop. The terminal is a full-screen sheet with its own font
 sizing and a Paste / Ctrl-C / Enter key row, with its own tab, instead of the desktop's
 bottom drawer. The ⌘K command palette is desktop-only, since there's no keyboard to summon it
-with.
+with. When the sheet is closed and the page goes to the background, its shell, xterm buffer and
+WebSocket are torn down; opening the sheet again spawns a fresh one. A sheet left open on screen
+is not affected.
 
 **Managed services** have no phone UI yet. The Services drawer is mouse-resizable and lays
 its service list beside its log pane, which doesn't fit a 390px screen, so it stays
@@ -719,6 +817,12 @@ not you ever subscribe. The desktop app never subscribes itself: it raises the s
 notifications natively, so its Settings say so and withhold the button, while still listing
 (and removing) the phones subscribed elsewhere.
 
+Settings → Diagnostics keeps a page-lifecycle log (visibility, focus, freeze/resume, heartbeat
+gaps) for tracking down an installed app that comes back from the background unresponsive, and a
+per-device "Reload after a long background" setting for iOS. See
+[iOS home-screen app comes back frozen](docs/TROUBLESHOOTING.md#ios-home-screen-app-comes-back-frozen)
+in the troubleshooting guide.
+
 ## Workspace tools
 
 The integrated terminal provides a real shell for each project. It opens in the project's
@@ -740,9 +844,24 @@ See [Insights and usage](INSIGHTS.md) for how to read the numbers.
 
 ## Agent connections
 
-Claude Code and Codex are first-class agent drivers. Calandria detects expired connections,
-preserves queued follow-ups, and provides a reconnect action. Background jobs choose a
-connected agent automatically, so a Claude-only or Codex-only installation works without
-special configuration.
+Claude Code, OpenAI Codex and Google's Antigravity are first-class agent drivers. Calandria
+detects expired connections, preserves queued follow-ups, and provides a reconnect action.
+Background jobs choose a connected agent automatically, so an installation with only one of
+the three connected works without special configuration, and each can be pinned to its own
+models — a small one for the short summarizing jobs, a stronger one for the draft that reads
+your repository.
 
 See [Supported agents](AGENTS.md) for capabilities and upstream limitations.
+
+### Routing through a LiteLLM gateway
+
+An instance can point Claude Code at a self-hosted [LiteLLM](https://docs.litellm.ai) proxy
+instead of the agent's own cloud login — a fourth "Model provider" preset alongside a local
+model server and a custom base URL. The gateway adds a real model catalog with context windows
+and prices, per-task spend attribution, and budgets, so a project's turns can be billed to a
+shared key or metered without leaving your own login. A project's settings can also mount the
+gateway's own **hosted MCP servers** on every task: pick which of the gateway's servers a
+project uses, optionally trust one to skip its permission prompts, and Calandria mounts it
+alongside its own tools with no extra configuration in the task's checkout.
+
+See [Supported agents](AGENTS.md#litellm-gateway) for setup and current provider coverage.

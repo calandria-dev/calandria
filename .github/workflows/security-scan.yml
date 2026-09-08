@@ -3,9 +3,10 @@
 # against code that hasn't changed, which push-triggered CI by definition
 # can't see.
 #
-#   npm-audit   — same command as the `audit` job in test.yml, repeated on a
-#                 schedule so a fresh advisory is caught between pushes. Its
-#                 display name carries a ", weekly" suffix so the two are
+#   npm-audit   — same command as the `audit` job in test.yml (must not
+#                 drift — test.yml's job comment says so explicitly), repeated
+#                 on a schedule so a fresh advisory is caught between pushes.
+#                 Its display name carries a ", weekly" suffix so the two are
 #                 distinguishable as status checks; see the job.
 #   image-scan  — trivy scan of the published :edge image, failing on
 #                 fixable HIGH/CRITICAL findings. Nothing else in the
@@ -36,17 +37,21 @@ jobs:
     # it is rather than which command it runs; the command is the same one.
     name: Audit (npm, weekly)
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # See test.yml's `audit` job: no install happens here, so 5 minutes is
+    # ample for the audit call itself.
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # No `cache: npm` — no `npm ci` runs here for it to speed up.
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: .nvmrc
-          cache: npm
 
-      - run: npm ci --omit=dev
-      - run: npm audit --omit=dev --audit-level=high
+      # --package-lock-only: the advisory set is keyed off the lockfile
+      # against the registry, not off an installed tree, so there's no need
+      # to `npm ci` first. See test.yml's `audit` job for the measurement.
+      - run: npm audit --package-lock-only --omit=dev --audit-level=high
 
   image-scan:
     name: Image scan (trivy)

@@ -43,12 +43,22 @@ it, only the shutdown-path difference noted below.
 ┌─ Electron main (desktop/main.js) ──────────────────────────────┐
 │  window · menu · single-instance lock · quit drains first      │
 │                                                                 │
+│  instances.js   ── which server is the window on? ──┐          │
+│  (no electron)                                       │          │
+│                                                      ▼          │
 │  supervisor.js  ── spawn ──►  node server.js     (:3000+)      │
 │  (no electron)  ── spawn ──►  node pty-server.js (:3001+)      │
+│                        …for the `local` instance only          │
 │                                                                 │
 │  BrowserWindow ──── http/SSE/WS ───► http://127.0.0.1:<port>   │
+│                                  or  https://<remote origin>   │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+The window is not necessarily on a server this process started. `desktop/instances.js`
+holds a saved list; `local` is the pair of sidecars above, and a `url` instance is an
+origin the shell attaches to over the network, each in its own persistent session
+partition. §8 has the whole of it.
 
 The renderer is an ordinary hardened browser tab: `contextIsolation: true`,
 `sandbox: true`, `nodeIntegration: false`, no preload and no IPC. The app talks to its
@@ -56,8 +66,8 @@ server over HTTP/SSE/WebSocket already and gains nothing from a bridge, while a 
 would hand any XSS in the transcript renderer the whole Node API. External links open in
 the user's real browser.
 
-`supervisor.js` contains no `require("electron")`. That makes the risky half testable on a
-headless box (34 assertions, `node test-supervisor.js`, ~9s, no display), and means a later
+`supervisor.js` and `instances.js` contain no `require("electron")`. That makes the risky
+half testable on a headless box (`node test-supervisor.js`, no display), and means a later
 swap to Tauri or a tray-only launcher can reuse it whole.
 
 ## 2. Measured findings
@@ -108,7 +118,7 @@ longer reproduces.
 | **Tauri / Wails** | Much smaller, but uses the *system* webview: WKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux. This app is not a form (xterm.js, CodeMirror, mermaid, SSE, service worker, Web Push), so three engines means three rendering bug surfaces plus a Rust/Go toolchain in CI, to save disk the app payload dwarfs anyway (§2). `supervisor.js` is Electron-free, so this stays a cheap reversal if the calculus changes. |
 | **Menubar/tray-only launcher** | Same supervisor, no `BrowserWindow`: start/stop the server, open the browser. Keeps the user's browser (GitHub session, devtools) and drops the renderer surface entirely. A reasonable variant of phase 1, ~60 lines on top of what exists. |
 | **PWA ("Install app" in Chrome/Edge)** | Free, today, no code: a windowed, dock-able Calandria with notifications. Doesn't start the server, which is the actual complaint. Worth documenting either way. |
-| **Just a browser tab** | The status quo. Costs nothing and works remotely, which the desktop app does not replace. |
+| **Just a browser tab** | The status quo. Costs nothing, and remains the answer for anyone who wants a second view, their own extensions, or devtools they already have open. It is no longer the only way to reach a Calandria on another machine — the shell attaches to one by URL (§8). |
 
 ## 4. What the prototype does, and what is unverified
 
@@ -133,6 +143,12 @@ Working and tested (`desktop/test-supervisor.js`, 34 assertions; `desktop/test-r
   passes 12s. The sidecar logs still stream into it, off screen, where the tests
   read them and a `--inspect` session can see them.
 - The notification and badge policy (§5.1): which events raise a toast, what the instance-wide "needs you" count adds up to, when a toast would be redundant, and a reconnecting subscription to `/api/events` driven against a stub server.
+- The instance list (§8): the file's two invariants against a hand-edited file, URL
+  normalization, add/switch/remove, one partition per instance, the window title, and the
+  version handshake including the versions it must NOT warn about. Plus the two rules that
+  only exist in `main.js` and are pinned on its source — `SERVICE_TOKEN` has exactly one
+  reader and it refuses any non-`local` instance, and every main-process request goes
+  through the active instance's session rather than the global `fetch`.
 
 Also working and tested, since 2026-08-27, by the Playwright `_electron` suite in
 `desktop/e2e/` under a virtual display — the `desktop` job in
@@ -161,6 +177,14 @@ carrying the `e2e` label ([`DESKTOP_E2E.md`](DESKTOP_E2E.md)):
 - Copy and paste: Ctrl/Cmd+C in the renderer reaches the OS clipboard and
   Ctrl/Cmd+V comes back. The menu test above asserts the Edit roles exist; this
   asserts they do something.
+- Right-click: a context menu built from what is under the cursor. Electron
+  shows none on its own, so before `wireContextMenu` in `desktop/main.js` the
+  mouse half of copy and paste did nothing. An editable field gets Undo, Redo,
+  Cut, Copy, Paste and Select all, each enabled by Chromium's `editFlags`, plus
+  the spellchecker's suggestions; a selection gets Copy; a link gets Copy link
+  and Open in browser. xterm stages the terminal selection in its hidden
+  textarea on a right-click and relies on the native menu from there, so the
+  terminal is covered by the same template.
 - One smoke path through the app inside the window, so SSE and the renderer are
   known to work under Electron's own network stack — plus the terminal panel,
   which is xterm over the `/pty` upgrade `server.js` proxies to the sidecar and
@@ -327,6 +351,8 @@ serves the shell and ordinary browser tabs at the same moment.
 Menu roles run under a real menubar there too, which
 matters more here than anywhere else: on macOS `{ role: "editMenu" }` *is*
 Cmd+C/V/A, so a missing menu is a broken app rather than a cosmetic gap.
+The right-click menu is separate from the menubar and is missing on every
+platform until main builds one; see the "Right-click" item above.
 
 What remains open is distribution, not behaviour. Signing + notarization are
 required for anything downloaded (Gatekeeper blocks unsigned apps by default);
@@ -1299,6 +1325,59 @@ of these variables and none should; `macos-desktop` asserts that Gatekeeper
 refuses what it built, precisely so that a certificate reaching the test lane is
 noticed.
 
+#### 6.4.1 The keychain patch macOS signing currently depends on
+
+`desktop/scripts/patch-electron-builder-keychain.js` runs from `desktop`'s
+`postinstall` and edits three lines of the installed
+`app-builder-lib/out/codeSign/macCodeSign.js`. Without it no macOS build signs at
+all on a current runner. This is temporary, and the file's own header carries the
+full reasoning.
+
+The defect is upstream. `createKeychain()` creates a throwaway keychain with a
+random password, imports the `.p12` into it, then runs `security
+set-key-partition-list -k <password>` to grant `codesign` access to the key.
+`-k` takes the keychain's unlock password. It is handed the `.p12`'s import
+password, `CSC_KEY_PASSWORD`, because `createKeychain` never passes its own
+`keychainPassword` down into `importCerts()`. The argument has always been the
+wrong string.
+
+It went unnoticed because the keychain is already unlocked by the time that
+command runs. Through macOS 26.5 the already-unlocked case ignored `-k`. macOS
+26.6.2, which reached the GitHub `macos-26-arm64` image in build
+`20260831.0337.3`, checks it regardless, and the build fails with:
+
+```
+security: SecKeychainUnlock: The user name or passphrase you entered is not correct.
+```
+
+v0.9.0 signed on image `20260728.0273.1`. v0.10.0 failed twice on
+`20260831.0337.3` with an identical tree, which is why v0.10.0 has no macOS
+assets.
+
+There is no released version to upgrade to. The fix is electron-builder PR
+#10101 (issue #10066), which shipped to the v27 alpha line only; PR #10172
+backports it to the v26 branch but is unpublished, and npm's `v26` dist-tag is
+still `26.16.0`.
+
+Setting `CSC_KEYCHAIN` and importing the certificate by hand also avoids the bug,
+because `macPackager.js` skips `createKeychain()` entirely when `CSC_LINK` is
+unset. It was not taken. That path also skips `bundledCertKeychainAdded`, which
+is what puts Apple's roots on the keychain search list and so what makes
+`security find-identity -v` report the Developer ID identity as valid. Changing
+one argument to one command leaves the path that signed every release through
+v0.9.0 otherwise untouched.
+
+**Remove it when a fixed version is pinned.** The script recognises the patched
+shape and no-ops with a message saying so, so the bump that makes it unnecessary
+does not also make it a failure.
+
+**It never fails an install.** It runs from `postinstall`, so exiting non-zero
+would stop `npm install` in `desktop/` for everybody: the Linux and Windows
+release legs, which do not sign, and anyone who only wants to run the app. An
+unrecognised file is a warning naming the error it expects to see later. That
+error is loud and specific when it arrives, which is a better trade than
+breaking every install the day upstream reorganises a file.
+
 ### 6.5 The release lane
 
 `.github/workflows/release-desktop.yml` is what puts a binary in anybody's hands.
@@ -1774,7 +1853,341 @@ Against all of that: the wrapper removes a terminal and a URL from the daily loo
 adds reliable OS notifications. That's a real improvement for a daily driver and a thin
 one for an occasional user.
 
-## 8. Next steps
+## 8. Remote instances
+
+The shell is no longer a wrapper around *this machine's* server. It keeps a list of
+instances and attaches its window to one of them; `local` — the pair of sidecars
+`supervisor.js` spawns — is the first entry and the default, and any number of `url` and
+`ssh` entries point at a Calandria running somewhere else. The design and its phasing are in
+[`superpowers/specs/2026-09-02-remote-instances-design.md`](superpowers/specs/2026-09-02-remote-instances-design.md);
+what follows is what all three phases shipped.
+
+Nothing about the server changed. Every URL the web client builds is relative
+(`app/shell/api.ts`), turns run detached and server-owned, and transcripts live in the
+server's SQLite — so a Calandria reached over the network is the same product as one on
+loopback, and the desktop app is one more browser pointed at it. Reaching a server from
+another machine is already documented for browsers in
+[`SELF_HOSTING.md`](SELF_HOSTING.md): a reverse proxy on the LAN, a Cloudflare Tunnel with
+Access, or an SSH port-forward. The shell expects the same setup a browser would.
+
+### 8.1 The instance list
+
+`~/.config/calandria/instances.json`, beside the env file `desktop/env-file.js` reads and
+resolved the same way (`CALANDRIA_INSTANCES_FILE` wins, then `XDG_CONFIG_HOME`):
+
+```json
+{
+  "active": "a1f3",
+  "instances": [
+    { "id": "local", "kind": "local", "name": "This computer" },
+    { "id": "a1f3", "kind": "url", "name": "Lab", "url": "https://calandria.example.com" },
+    { "id": "9c2e", "kind": "ssh", "name": "Build box", "ssh": { "host": "build", "remotePort": 3000 } }
+  ]
+}
+```
+
+`desktop/instances.js` owns the file and holds two invariants on every read and every
+write, because the file is one people are invited to edit: `local` always exists, is
+always first, and is always kind `local`; and `active` always names an instance that is
+present. A file that breaks either is repaired rather than rejected, so a stray comma
+cannot leave the app with nowhere to go. An unknown kind is dropped, and so is a malformed
+entry of a known one, which is how a list written by a newer shell degrades on an older one
+instead of stopping it.
+
+Adding an instance takes a name and an address, one field for both kinds. A bare host is
+read as `https`, because the two things that is for are a tunnel hostname and a LAN box
+behind TLS, and defaulting to `http` would send an Access cookie over plaintext on a typo.
+The path is dropped; only the origin is saved. An address beginning `ssh://` is the other
+kind: `ssh://build`, `ssh://me@build`, or `ssh://build:3000` when the Calandria over there
+is not on the default port. The port in an `ssh://` address is the **remote server's**, not
+sshd's — how to reach the host is `~/.ssh/config`'s business, and any `Host` alias defined
+there works as the host.
+
+An `ssh` entry may also carry `"localPort"`, which pins the local end of the forward. It is
+not offered in the dialog because the app picks a free port from 3100 upward and that is
+the right answer nearly always; it is there for someone who needs the origin to be a
+constant. A pinned port that is busy fails the attach rather than moving, since the reason
+to pin one is that something else expects the forward to be there.
+
+### 8.2 Attaching
+
+| kind | what happens |
+|-|-|
+| `local` | `supervisor.start()` as before, then load its ready URL. Started on demand, so a shell whose active instance is a `url` one never spawns a server at all. |
+| `url` | `GET /api/version` through the instance's own session, then `loadURL`. |
+| `ssh` | Spawn `ssh -L`, wait for the local port to accept, then proceed exactly as `url` on `http://127.0.0.1:<localPort>`. |
+
+`attach()` in `desktop/main.js` is the one door all three go through, and `attachOrigin()`
+is where the two remote kinds converge: past "we have an origin" an `ssh` instance **is** a
+`url` instance, with the same handshake, the same cookie jar and the same event stream. The
+forward is the only thing that kind adds.
+
+The handshake is one-directional. The shell declares a `minServerVersion`
+(`MIN_SERVER_VERSION` in `desktop/instances.js`); a server older than that still **loads**,
+with a dismissible banner naming both versions, because refusing to open a working
+Calandria over a number is worse than whatever the mismatch breaks. A version that cannot
+be parsed at all — a fork, a dev build — is not treated as old, or the banner would fire
+on exactly the installs most likely to see it. The server never learns the client's
+version, and does not need to: the web UI it serves is always its own.
+
+A **login** in front of the server is not a failure and does not stop the attach. Cloudflare
+Access refuses an uncredentialed API call outright (401/403); most other identity providers
+redirect, and Electron's `net.fetch` follows the redirect, so their login page arrives as a
+200 that is not this route's JSON. Both are read the same way and answered the same way:
+skip the handshake, load the page, and let the user sign in — this window is a browser, and
+that is the only place the login can happen. The notifier behind it reconnects with backoff,
+so the badge fills in on its own once the cookie lands.
+
+An unreachable instance — no answer at all, or an answer that is neither Calandria nor a
+login — lands on the boot screen's failure state with the error and two buttons,
+**Retry** and **Switch instance**. Not a modal, because the two things a person
+wants there are "try that again" and "go somewhere that works", and a dialog can only
+offer OK. There is no background reconnect loop for this kind — there is no transport to
+reconnect, only an origin that did not answer.
+
+**The SSH transport** (`desktop/ssh-tunnel.js`) is the user's own `ssh` binary, shelled out
+to rather than reimplemented:
+
+```
+ssh -N -o ExitOnForwardFailure=yes -o BatchMode=yes \
+    -L 127.0.0.1:<localPort>:127.0.0.1:<remotePort> <host>
+```
+
+Their config, agent, jump hosts, `ControlMaster` sockets and hardware keys already work
+there, and none of that survives being reimplemented against an SSH library.
+`ExitOnForwardFailure=yes` is what makes the wait terminate: without it an ssh whose local
+port is taken stays up with no forward, and "connected" would mean nothing. Both ends of
+`-L` are loopback — the local one so the forward is not offered to the LAN, the remote one
+because the server over there is bound to loopback in local mode. That is what makes SSH
+the credential: the window's `Host` is `127.0.0.1`, so `lib/auth/local-origin.mjs` passes
+with no configuration at all, and no origin has to be allowlisted anywhere.
+
+`BatchMode=yes` follows from the same decision in the other direction. A GUI has no
+terminal to type a password or a 2FA code into, so a host that wants one has to be told
+rather than left at an invisible prompt: when ssh exits before the port opens, the failure
+state carries ssh's own last lines **and** names the two ways out — set up key
+authentication (`ssh-copy-id <host>`) or leave a `ControlMaster` session open
+(`ssh -fN <host>`). Anything the user could have answered in a terminal is a setup step
+here, and saying so is the whole difference between an app that looks broken and one that
+looks configurable.
+
+A forward that comes up and then **drops** is a different case and is not a question for
+the user: the host demonstrably worked a minute ago. The window goes back to the boot
+screen with ssh's last stderr lines and how long until the next try, and the tunnel
+reconnects on its own with backoff (1 s doubling to 15 s, matching `notifier.js`'s stream
+loop). The local port is chosen once and kept for the life of the tunnel, so a reconnect
+returns to the **same origin** the window was already on — the web UI keeps per-origin
+state in `localStorage`, and a port that moved on every reconnect would quietly reset the
+user's theme and selection. A recovered forward re-enters `attachOrigin()`, because the
+page behind it has a transcript stream and a WebSocket that both died with the tunnel.
+
+The ssh child belongs to the attach, not to the saved list: `attach()` closes the previous
+forward before starting anything, and `before-quit` closes the live one. An orphaned
+`ssh -N` would hold the local port for the rest of the login session and the next launch
+would fail to bind it.
+
+### 8.3 Sessions, cookies and the service token
+
+Every non-`local` instance gets its own persistent Electron partition,
+`persist:instance-<id>`. That is a correctness property rather than tidiness: under
+Cloudflare Access the credential is a `CF_Authorization` cookie the edge set, and two
+instances behind the same Access team sharing one cookie jar would send each other's
+assertion. It also makes **Sign out** a single operation — delete the partition's storage
+and auth cache — instead of a guess about which cookies belonged to whom. Calandria has no
+logout of its own to call: under Access the cookie is the edge's, and under local mode
+there is no login at all.
+
+`desktop/notifier.js` fetches through that session rather than `globalThis.fetch`. This is
+load-bearing, not hygiene. The badge and the OS notifications come from `/api/events` read
+by the **main process**, and the main process is not in the window's cookie jar: without
+this the badge sits at zero and no toast ever fires while the page beside it works
+perfectly. `session.fetch` with `credentials: "include"` is what carries the cookie.
+
+`SERVICE_TOKEN` is scoped to `local` and to nothing else. It is a bearer credential for the
+database *this* machine's server owns, and it used to be read from the supervisor env for
+every main-process request. `serviceTokenFor()` in `desktop/main.js` is now the only reader
+and refuses any instance that is not `local`;
+`desktop/test-supervisor.js` pins that there is exactly one reader and that it is gated.
+
+### 8.4 Switching
+
+The tray menu and the app menu both carry an **Instance** submenu: a radio list of the
+saved instances, then "Add instance…" and "Manage instances…". Radio because one window
+shows one instance — VS Code's one-remote-per-window rule, and simpler than it, since
+switching here is a page load rather than a second backend.
+
+Switching tears down as little as it can. The local server keeps running when the window
+leaves it, exactly as it does on hide-to-tray: turns are detached and server-owned, and
+stopping them because somebody looked at another machine would be the opposite of what the
+app is for. Switching back re-uses it rather than starting a second one. The window itself
+is rebuilt only when the session partition changes, which is the one `BrowserWindow`
+property Electron fixes at construction.
+
+The window title is `<instance name> · Calandria`, so which server is on screen is legible
+without opening a menu. The web UI carries the same fact independently, for the case where
+the client is a browser tab rather than this shell: an instance that sets
+`CALANDRIA_INSTANCE_NAME` puts it in the document title and at the root of the app's
+breadcrumb, and reports it on `GET /api/version` as `instanceName`. The shell reads it off
+the handshake it already makes, so an instance added by URL with the name field left blank
+is labelled with the name its server calls itself rather than its hostname. A name the user
+typed is never overwritten — `adoptServerName()` in `desktop/instances.js` adopts only over
+a name that is still exactly what the address would have derived.
+
+### 8.5 The badge counts every instance
+
+There is one `/api/events` subscriber per reachable instance, not one for the active one,
+and the dock badge is the sum of their "needs you" counts. That is the only cross-instance
+surface in the design and it is entirely client-side: the shell holds a list of origins and
+adds up what each one told it. No server learns about another server.
+
+The reason it is a sum rather than the active instance's count is that the dock icon is not
+per instance. A badge that only counted the window on screen would go quiet the moment you
+switched away from the machine that wanted you, which is the case a badge exists for.
+Switching therefore stops nothing: `applyActiveInstance()` leaves every subscriber running,
+because a subscriber is bound to an instance's *session*, not to the window.
+
+An OS notification from a background instance carries its name in the title
+(`notificationText()` in `desktop/notifier.js`), and clicking it switches to that instance.
+The switch is a page load in another session partition, so unlike a same-instance click
+there is no running app to dispatch `calandria:goto-task` into — the selection rides in the
+`?project=&task=` query the app restores from, on the URL the switch was going to load
+anyway. Single-instance shells are unchanged: with one instance saved, a toast reads exactly
+as it did before.
+
+**Which instances are watched.** A `url` instance always, whether or not the window is on
+it: its origin is in the saved list and costs nothing to read. `local` while its server is
+up, which includes after the window has moved away. An `ssh` instance **only while it is
+attached** — its transport is a spawned `ssh -N` child holding a local port, so a background
+subscriber would need one of its own, and watching every saved ssh host would mean opening
+an SSH connection per host, on every launch, to machines nobody is looking at. That is a
+bigger decision than a badge is worth, and `BatchMode` makes its failures silent besides.
+So an ssh instance contributes to the badge while you are on it and drops out when you
+leave.
+
+### 8.6 The two local pages
+
+`loading.html` and `instances.html` are static documents whose CSP is `default-src 'none'`,
+including their own scripts; `main.js` injects their behaviour with `executeJavaScript`,
+which is not subject to a page's CSP. That is the same no-preload, no-IPC rule the shell
+has always had, stated from the other side: the dialog needs a form and a list, and it gets
+them without shipping a bridge into every page the window later loads.
+
+### 8.7 What this does not do
+
+- **A background subscriber for an unattached `ssh` instance** — see §8.5 for why.
+- **Installing or launching a server on a remote host from the client.** That is the
+  self-hosting story, and doing it from a desktop app duplicates `SELF_HOSTING.md` in
+  JavaScript.
+- **Anything server-side.** No cross-instance inbox, no task list spanning servers, no
+  login for local mode. The saved list is a client-side bookmark file, not a control plane.
+
+**Exposed services do not traverse an `ssh` forward.** A managed service is published on a
+hostname, `<slug>--<appHost>`, and `lib/service-router.mjs` dispatches on it — a forwarded
+loopback port has no such hostname, so the Services panel's links do not open through the
+tunnel. Three ways round it, in the order they are usually wanted: forward that service's
+own port too (`ssh -L 8080:127.0.0.1:8080 build`) and open `127.0.0.1:8080`; reach the
+remote's public service hostname in an ordinary browser, which is what the operator set the
+wildcard DNS up for; or attach that instance as a `url` one, where services work exactly as
+they do in a browser tab. This is a property of hostname-based routing rather than a bug in
+the forward, and it is the one thing an `ssh` instance does not carry.
+
+### 8.8 Signing in to an instance
+
+An instance behind a forward-auth proxy renders its identity provider's login page inside
+the window, and that is fine for a password or an emailed code. It fails for a passkey, a
+security key or a phone-based ceremony, because Electron has no WebAuthn implementation:
+the provider's page hands off to the **system browser** for the ceremony, and the window
+and the browser are two separate cookie jars. The callback then arrives carrying a
+different session than the `state` was minted against. Measured against an authentik
+forward-auth outpost (`sso-hypercube-blue`, `mode: forward_domain`): the outpost logged
+`mismatched session ID` and `record not found` for the session the state named, and
+answered the OAuth callback HTTP 400. The worse half is the second one — even after a
+retry that succeeded in the browser, the window fired roughly twenty forward-auth requests
+in three seconds that all failed, because the cookie the browser had just been issued
+never reached it. No server-side configuration fixes this: forward-auth assumes one
+continuous browser context, and an embedded webview breaks that by design. See
+`desktop/oauth.js`'s own header for the same finding.
+
+Per instance, stored on the row as `auth`, the shell now offers two kinds of sign-in:
+
+| kind | what it is |
+|-|-|
+| `oauth` | RFC 8252: the whole flow runs in the user's real browser, with a loopback redirect back to the app and PKCE (S256, mandatory). Needs a dedicated OAuth2 provider registered as a **public** client — no client secret; the app refuses one and says why. |
+| `header` | A credential the user already holds, sent verbatim as one or more request headers — an authentik app password, Cloudflare Access's two service-token headers, a PAT. Weakest on revocation, and the option when whatever is out front speaks no OIDC. |
+
+No `auth` at all is still the default, and it is not a stopgap: the in-window login path
+is not removed. A Cloudflare Access PIN, a plain password form or an OTP all complete fine
+inside the window today, and regressing them to force every instance through a native flow
+would be worse than the bug this fixes.
+
+**Both kinds produce request headers, and that is the whole of how the credential reaches
+the app.** `armAuthHeaders()` in `desktop/main.js` installs `session.webRequest.onBeforeSendHeaders`
+on the instance's own partition and stamps the headers on every request that partition
+makes — a page load, the `/api/events` stream, the `/pty` WebSocket upgrade — because all
+three are ordinary HTTP as far as that listener is concerned. Nothing in the web app knows
+or changes. The listener is scoped to the instance's own origin (`authOriginFor()`, reusing
+the same `subscriberOrigin` an `ssh` instance's forward already resolves to), so a
+third-party fetch the page makes — an avatar, a font — never receives the token. And it is
+synchronous on purpose: `onBeforeSendHeaders` can wait on an async callback, but stalling
+every page load on a possible token renewal turns one expiring credential into a hung
+window. An expired token contributes nothing instead, the request 401s, and the user lands
+on the sign-in screen either way.
+
+**The flow, on an attach.** `probeVersion()` reads the instance's `/api/version`; a 401,
+403, or a 200 that is not Calandria's JSON, both mean "this wants a sign-in." If the
+instance has one configured, `resolveSignIn()` tries silently first — renewing from a
+stored refresh token — and only shows the sign-in screen when that is not possible: no
+credential yet, a revoked refresh token, or a first run. Running the OAuth flow
+(`signInToInstance()` in `main.js`, backed by `desktop/oauth.js`) goes: discovery at
+`/.well-known/openid-configuration`, with the returned `issuer` checked against the one
+that was asked for (RFC 8414 §3.3, so a typo'd host can't hand back somebody else's
+authorization endpoint); a PKCE verifier and S256 challenge; a one-shot HTTP server on
+`127.0.0.1` port 0 (`LoopbackReceiver`); `shell.openExternal()` to the authorization URL;
+the callback's `state` compared constant-time against the one that was sent; and the code
+exchange. Register `http://127.0.0.1/callback` as the redirect URI — RFC 8252 §7.3 requires
+the authorization server to accept any port on a loopback redirect, since a fixed port is
+one the app may not be able to bind and one another process can squat first. The
+**Redirect port** field in the sign-in dialog is the escape hatch for a provider that
+insists on an exact URI rather than a pattern.
+
+**Renewal and sign-out.** A refresh is single-flight (`refreshNow()`): the timer, an
+attach and a failed probe can all notice an expiring credential within the same second, and
+a provider that rotates refresh tokens treats the second concurrent request as a replay and
+revokes the whole grant rather than failing loudly. `scheduleRefresh()` arms the next
+renewal at the token's expiry minus sixty seconds, clamped to at most six hours out, so a
+credential minted with a long lifetime — or under a wrong clock — is still re-examined the
+same afternoon. Sign-out (`signOutOfInstance()`) now clears the stored credential as well
+as the partition: emptying the cookie jar and leaving the token behind would
+re-authenticate on the very next request, which is a sign-out button that visibly does
+nothing.
+
+**Where the secrets live.** `~/.config/calandria/credentials.json`, beside
+`instances.json` and resolved the same way, keyed by instance id. Not in
+`instances.json` itself, since that file is documented as hand-editable and written in the
+clear on every change — a refresh token in it would be a credential sitting in a config
+file the user is invited to open. Entries are encrypted with Electron's `safeStorage` when
+the platform has a keyring to back it; where it does not, the file is still written 0600,
+but each entry carries a `plain` marker and the app logs a line saying so, since a
+safeStorage fallback that looked identical to the encrypted path would leave a refresh
+token readable by anything running as the user with nothing said about it.
+`CALANDRIA_CREDENTIALS_FILE` overrides the path, the same way `CALANDRIA_INSTANCES_FILE`
+does for the file beside it.
+
+**A worked example, against authentik**, the provider that motivated this: create an
+OAuth2/OpenID provider whose client type is **public** (no client secret), and set its
+redirect-URI matching to whatever mode matches by pattern rather than an exact string, with
+a pattern matching `http://127.0.0.1:[0-9]+/callback` — the port changes on every sign-in,
+so an exact match refuses every one of them. Note the issuer authentik prints for that
+provider's application (`https://<host>/application/o/<slug>/`) and the client ID it
+generated, then fill both into **Manage instances → Sign-in…** for the instance, as `oauth`.
+Leave the redirect port field blank; authentik does not need an exact one.
+
+**What this does not do.** No device-code flow, and no client-credentials grant — both are
+for something other than a person sitting at this window. The app never becomes an OAuth
+resource server itself: Calandria's own two auth modes (`lib/auth/`) are untouched, and
+this is purely a client talking to whatever sits in front of them.
+
+## 9. Next steps
 
 1. Run `desktop/` on a machine with a display; fix what the window layer gets wrong.
 2. Decide between window-first and tray-first for phase 1 (both use the same supervisor).

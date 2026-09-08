@@ -23,6 +23,69 @@ function pinNextFire(id: string, ms: number) {
   return getSchedule(id)!;
 }
 
+describe("adjudicate, one-time schedules", () => {
+  const dayOffset = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+  // Evaluated ONCE: called twice it can straddle UTC midnight and compare
+  // tomorrow's date against the day after.
+  const TOMORROW = dayOffset(1);
+
+  function makeOnce() {
+    const pid = createProject({ name: `once-${Math.random().toString(36).slice(2)}` }).id;
+    return createSchedule({
+      project_id: pid, name: "Check the overnight release", prompt: "How did the release go?",
+      days_mask: 62, time_of_day: "04:00", timezone: LA, once_date: TOMORROW,
+    });
+  }
+
+  it("fires its one occurrence, then spends the schedule", () => {
+    const s = makeOnce();
+    const slot = s.next_fire_at;
+    const verdict = adjudicate(pinNextFire(s.id, slot), slot + 1_000, never);
+    expect(verdict.kind).toBe("fire");
+    // Firing spends the schedule: enabled goes to 0 and next_fire_at to 0, so
+    // the ticker skips it afterward, while the run ledger and the row remain
+    // for the user to read.
+    const after = getSchedule(s.id)!;
+    expect(after.enabled).toBe(0);
+    expect(after.next_fire_at).toBe(0);
+    expect(after.once_date).toBe(TOMORROW);
+  });
+
+  it("never fires twice, even if the ticker comes round again", () => {
+    const s = makeOnce();
+    const slot = s.next_fire_at;
+    expect(adjudicate(pinNextFire(s.id, slot), slot + 1_000, never).kind).toBe("fire");
+    // Disabled now, so the second pass is a no-op.
+    expect(adjudicate(getSchedule(s.id)!, slot + 2_000, never).kind).toBe("none");
+    expect(listRuns(s.id)).toHaveLength(1);
+  });
+
+  it("records a one-time missed past its catch-up window, and still spends it", () => {
+    const s = makeOnce();
+    const slot = s.next_fire_at;
+    const pinned = pinNextFire(s.id, slot);
+    // A whole day late: the 04:00 check-in is worthless at 04:00 the next day.
+    const verdict = adjudicate(pinned, slot + 86_400_000, never);
+    expect(verdict.kind).toBe("missed");
+    expect(listRuns(s.id)[0].status).toBe("missed");
+    // Spent regardless: a missed one-time schedule already had its slot, and
+    // leaving it enabled would re-adjudicate the same dead slot forever.
+    expect(getSchedule(s.id)!.enabled).toBe(0);
+  });
+
+  it("walks no backlog, since there is only ever the one slot", () => {
+    const s = makeOnce();
+    const slot = s.next_fire_at;
+    // Late but inside a generous window: fires as catch_up, and the missed-slot
+    // loop that a weekly schedule would run has nothing to consume.
+    updateSchedule(s.id, { catch_up_ms: 7 * 86_400_000 });
+    const verdict = adjudicate(pinNextFire(s.id, slot), slot + 2 * 3_600_000, never);
+    expect(verdict.kind).toBe("fire");
+    if (verdict.kind === "fire") expect(verdict.run.trigger).toBe("catch_up");
+    expect(listRuns(s.id)).toHaveLength(1);
+  });
+});
+
 describe("adjudicate", () => {
   let s: ReturnType<typeof makeSchedule>;
   beforeEach(() => { s = makeSchedule(); });
@@ -37,7 +100,7 @@ describe("adjudicate", () => {
     const verdict = adjudicate(pinned, slot + 1_000, never);
     expect(verdict.kind).toBe("fire");
     if (verdict.kind === "fire") expect(verdict.run.trigger).toBe("scheduled");
-    // and the schedule has moved on, so the same slot can't be re-adjudicated
+    // and the schedule points past that slot, so it can't be re-adjudicated
     expect(getSchedule(s.id)!.next_fire_at).toBeGreaterThan(slot);
   });
 
@@ -66,12 +129,12 @@ describe("adjudicate", () => {
     expect(verdict.kind).toBe("fire");
     if (verdict.kind === "fire") {
       expect(verdict.run.trigger).toBe("catch_up");
-      expect(verdict.run.scheduled_for).toBe(at("2026-08-17T15:30:00Z")); // Monday's slot, not Friday's
+      expect(verdict.run.scheduled_for).toBe(at("2026-08-17T15:30:00Z")); // Monday's slot
     }
-    // Friday is on the record as missed, not quietly dropped.
+    // Friday is recorded as missed.
     const statuses = listRuns(s.id, 10).map((r) => r.status);
     expect(statuses).toContain("missed");
-    // Next up is Tuesday — the backlog is fully consumed.
+    // Next up is Tuesday: the backlog is fully consumed.
     expect(getSchedule(s.id)!.next_fire_at).toBe(at("2026-08-18T15:30:00Z"));
   });
 
@@ -81,7 +144,7 @@ describe("adjudicate", () => {
     const verdict = adjudicate(pinned, slot + 1_000, () => true);
     expect(verdict.kind).toBe("skipped");
     expect(listRuns(s.id, 10)[0].status).toBe("skipped_overlap");
-    // It still moves on, or one wedged turn would freeze the schedule forever.
+    // The schedule still advances, or one wedged turn would freeze it forever.
     expect(getSchedule(s.id)!.next_fire_at).toBeGreaterThan(slot);
   });
 
@@ -108,8 +171,8 @@ describe("adjudicate", () => {
     const stale = pinNextFire(s.id, slot);
     updateSchedule(s.id, { enabled: 0 });
     expect(adjudicate(stale, slot + 1_000, never).kind).toBe("none");
-    // And a paused schedule accrues NO missed rows — unpausing must not greet
-    // the user with a wall of red for slots they deliberately skipped.
+    // A paused schedule accrues no missed rows, so unpausing does not show the
+    // user a wall of red for skipped slots.
     expect(listRuns(s.id, 10)).toHaveLength(0);
   });
 
@@ -126,7 +189,7 @@ describe("adjudicate", () => {
       project_id: pid, name: "gap", prompt: "x",
       days_mask: 127, time_of_day: "02:30", timezone: LA,
     });
-    const slot = nextFireAt({ daysMask: 127, timeOfDay: "02:30", timezone: LA }, at("2026-03-08T00:00:00Z"));
+    const slot = nextFireAt({ daysMask: 127, timeOfDay: "02:30", timezone: LA }, at("2026-03-08T00:00:00Z"))!;
     const pinned = pinNextFire(gap.id, slot.ms);
     const verdict = adjudicate(pinned, slot.ms + 1_000, never);
     if (verdict.kind === "fire") expect(verdict.run.dst_adjusted).toBe("gap_forward");

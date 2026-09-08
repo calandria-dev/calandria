@@ -2,18 +2,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { DB_DIR, MAX_UPLOAD_MB } from "@/lib/config";
 
-// Chat attachments. Uploaded files live under the DB dir, deliberately OUTSIDE
-// the task's git worktree — a pasted screenshot, a 500 KB log dump or a vendor
-// PDF must never show up in the task's diff or get swept into a merge. The
-// message text carries a marker line with the absolute path (see
-// attachmentMarker / fileAttachmentMarker in app/shell/format.ts), so the bytes
-// never enter the prompt: the agent is told a file is staged at a path and
-// decides for itself how to open it — Read for text and images, a shell tool
-// for anything else. That also keeps queued/pending messages working as plain
-// text, with no SDK content-block plumbing anywhere.
+// Chat attachments. Uploaded files live under the DB dir, outside the task's
+// git worktree, so a pasted screenshot, a 500 KB log dump or a vendor PDF
+// never shows up in the task's diff or gets swept into a merge. The message
+// text carries a marker line with the absolute path (see attachmentMarker /
+// fileAttachmentMarker in app/shell/format.ts), so the bytes never enter the
+// prompt: the agent is told a file is staged at a path and decides for itself
+// how to open it, Read for text and images, a shell tool for anything else.
+// That also keeps queued/pending messages working as plain text, with no SDK
+// content-block plumbing anywhere.
 //
-// ANY file type is accepted. What a file IS lives in lib/uploadTypes.ts (shared
-// with the client); what it costs is bounded by MAX_UPLOAD_BYTES below.
+// Any file type is accepted. What a file is lives in lib/uploadTypes.ts
+// (shared with the client); what it costs is bounded by MAX_UPLOAD_BYTES below.
 
 export const UPLOADS_DIR = path.join(DB_DIR, "uploads");
 
@@ -27,8 +27,8 @@ export function taskUploadsDir(taskId: string): string {
 /**
  * Best-effort removal of a task's attachment dir. Fires on task/project hard
  * delete; on the retention sweep (lib/retention.ts) for a finished task whose
- * transcript has aged out — the marker lines that pointed at these files live
- * in those messages, so the two go together; and on the worktree sweep
+ * transcript has aged out, since the marker lines that pointed at these files
+ * live in those messages, so the two go together; and on the worktree sweep
  * (lib/worktreeSweep.ts), which reclaims the disk of a long-dead task and has
  * no reason to keep its staged uploads once the checkout they were staged for
  * is gone.
@@ -43,7 +43,7 @@ export function removeTaskUploads(taskId: string): boolean {
     fs.rmSync(dir, { recursive: true, force: true });
     return true;
   } catch {
-    // best-effort — orphaned files are harmless
+    // best-effort: orphaned files are harmless
     return false;
   }
 }

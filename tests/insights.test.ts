@@ -16,8 +16,8 @@ import { addInternalUsage } from "../lib/internalUsage";
 import type { TurnUsage } from "../lib/types";
 
 const DAY = 24 * 60 * 60 * 1000;
-// Pinned to TurnUsage rather than derived from addUsage's param: the ledger
-// accepts a null cost (an unpriced endpoint — see LedgerUsage) and internal
+// Pinned to TurnUsage instead of derived from addUsage's param: the ledger
+// accepts a null cost (an unpriced endpoint, see LedgerUsage) and internal
 // usage does not, so deriving would make every one of these rows nullable for
 // no reason. Everything here is ordinary priced cloud spend.
 const usage = (over: Partial<TurnUsage> = {}): TurnUsage => ({
@@ -31,10 +31,10 @@ function makeProjectTask(agent = "claude") {
   return { project, task };
 }
 
-// The dashboard reads `cost` as the period's spend, so a bucket that quietly
-// omitted an unpriced turn would be the same under-report this feature exists
-// to end — just one layer further out. `unp` is what lets the KPI and the
-// leaderboards mark the figure as a floor.
+// The dashboard reads `cost` as the period's spend, so a bucket that omitted
+// an unpriced turn without saying so would be the same under-report this
+// feature exists to end, just one layer further out. `unp` is what lets the
+// KPI and the leaderboards mark the figure as a floor.
 describe("unpriced turns in the insights aggregates", () => {
   it("counts a null-cost turn without letting it touch the spend or the tokens", () => {
     const { project } = makeProjectTask();
@@ -44,8 +44,8 @@ describe("unpriced turns in the insights aggregates", () => {
     addUsage({
       project_id: project.id, task_id: task.id, generation: 1, agent: "claude",
       provider: "openrouter.ai",
-      // What lib/runner.ts writes for a custom base URL: tokens measured, price
-      // unknown. NOT 0 — that would assert the turn was free.
+      // What lib/runner.ts writes for a custom base URL: tokens measured,
+      // price unknown. Not 0; that would assert the turn was free.
       usage: { ...usage({ input_tokens: 7 }), cost_usd: null },
     });
 
@@ -53,7 +53,7 @@ describe("unpriced turns in the insights aggregates", () => {
     const mine = data.usage.filter((r) => r.p === project.id);
     expect(mine).toHaveLength(1);
     // Two turns, one price. The dollar figure is the priced turn alone, and the
-    // tokens are both — an unpriced turn still filled a context window.
+    // tokens are both, since an unpriced turn still filled a context window.
     expect(mine[0].cost).toBe(2);
     expect(mine[0].unp).toBe(1);
     expect(mine[0].inp).toBe(107);
@@ -77,7 +77,7 @@ describe("merge line stats", () => {
   it("mergeTask reports the additions/deletions the merge landed", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
     await commitFile(wt.path, "a.txt", "one\ntwo\nthree\n", "add a");
-    writeFile(wt.path, "b.txt", "x\n"); // uncommitted — committed by mergeTask
+    writeFile(wt.path, "b.txt", "x\n"); // uncommitted, committed by mergeTask
 
     const res = await mergeTask({
       repoPath: repo, worktreePath: wt.path, workBranch: wt.branch,
@@ -104,21 +104,32 @@ describe("merge line stats", () => {
 describe("getInsightsData", () => {
   it("buckets usage by local day and stamps the agent", () => {
     const { project, task } = makeProjectTask();
+    const dayKey = (t: number) => {
+      const d = new Date(t);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    };
+    const before = dayKey(Date.now());
     addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "claude", usage: usage() });
     addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "codex", usage: usage({ cost_usd: 0.5 }) });
+    // A third agent id is a third bucket and nothing else: the ledger stores
+    // whatever the driver is called, and the view reads the ids back off the
+    // rows instead of from a fixed pair (app/shell/InsightsView.tsx).
+    addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "gemini", usage: usage({ cost_usd: 0.25 }) });
 
     const data = getInsightsData(Date.now() - DAY);
     const mine = data.usage.filter((u) => u.p === project.id);
-    expect(mine).toHaveLength(2); // grouped by (day, project, agent)
+    expect(mine).toHaveLength(3); // grouped by (day, project, agent)
+    expect(mine.find((u) => u.a === "gemini")!.cost).toBeCloseTo(0.25);
     const claude = mine.find((u) => u.a === "claude")!;
     expect(claude.cost).toBeCloseTo(1.5);
     expect(claude.inp).toBe(100);
     expect(claude.cr).toBe(1000);
     expect(mine.find((u) => u.a === "codex")!.cost).toBeCloseTo(0.5);
-    // local-day key, not UTC: matches what the client generates from new Date()
-    const today = new Date();
-    const key = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-    expect(claude.d).toBe(key);
+    // local-day key, not UTC: matches what the client generates from new Date().
+    // Bracketed rather than pinned to one instant, because addUsage stamps its
+    // own Date.now() and a run crossing local midnight in between would compare
+    // two different days.
+    expect([before, dayKey(Date.now())]).toContain(claude.d);
   });
 
   it("aggregates merges and shipped tasks, and honors the since cutoff", () => {
@@ -147,11 +158,11 @@ describe("getInsightsData", () => {
     const { project, task } = makeProjectTask("codex");
     addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "codex", usage: usage() });
     addInternalUsage({
-      job: "draftProjectContext", agent: "codex", requested_agent: "codex",
+      job: "draftProjectContext", agent: "codex", requested_agent: "codex", model: "gpt-5.1-codex-max",
       project_id: project.id, usage: usage({ cost_usd: 0.4, input_tokens: 20, output_tokens: 10 }),
     });
     addInternalUsage({
-      job: "draftProjectContext", agent: "codex", requested_agent: "codex",
+      job: "draftProjectContext", agent: "codex", requested_agent: "codex", model: "gpt-5.1-codex-max",
       project_id: project.id, usage: usage({ cost_usd: 0.6, input_tokens: 30, output_tokens: 15 }),
     });
     addInternalUsage({
@@ -172,9 +183,14 @@ describe("getInsightsData", () => {
     expect(drafts.inp).toBe(50);
     expect(drafts.out).toBe(25);
 
+    // Both drafts ran on one model, so they stay one row and it's named.
+    expect(drafts.m).toBe("gpt-5.1-codex-max");
+
     const verify = data.internal.find((r) => r.job === "verify" && r.a === "claude")!;
     expect(verify.p).toBe("");
     expect(verify.n).toBe(1);
+    // Nothing recorded a model for it, which is a different fact from a guess.
+    expect(verify.m).toBe("");
 
     // Calandria convenience work must never change the existing task-turn cube.
     const taskRows = data.usage.filter((r) => r.p === project.id);
@@ -184,7 +200,7 @@ describe("getInsightsData", () => {
   });
 
   // The Tags leaderboard ("what did the auth migration cost") reads a SEPARATE
-  // cube (tagUsage), one dimension finer than `usage` — folding it into `usage`
+  // cube (tagUsage), one dimension finer than `usage`. Folding it into `usage`
   // would double-count a task carrying more than one tag.
   it("attributes spend to tags in a separate cube, leaving `usage` untouched and unsummed", () => {
     const { project, task } = makeProjectTask();
@@ -195,12 +211,12 @@ describe("getInsightsData", () => {
     addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "claude", usage: usage({ cost_usd: 2 }) });
     addUsage({ project_id: project.id, task_id: doomed.id, generation: 1, agent: "claude", usage: usage({ cost_usd: 4 }) });
     // A deleted task takes its usage with it (ON DELETE CASCADE), so this row
-    // is gone from both buckets — what matters is that the JOIN doesn't drop
+    // is gone from both buckets. What matters is that the JOIN doesn't drop
     // spend that IS still there.
     deleteTask(doomed.id);
 
     const data = getInsightsData(Date.now() - DAY);
-    // `usage` (the existing task-turn cube) has no `g` field at all any more —
+    // `usage` (the existing task-turn cube) has no `g` field at all any more;
     // it must not change shape just because tags exist.
     expect((data.usage[0] as unknown as { g?: unknown }).g).toBeUndefined();
     const usageRows = data.usage.filter((r) => r.p === project.id);
@@ -208,7 +224,7 @@ describe("getInsightsData", () => {
 
     const tagRows = data.tagUsage.filter((r) => r.p === project.id);
     expect(tagRows.find((r) => r.g === tag.id)!.cost).toBeCloseTo(1.5);
-    // Untagged spend keys on "" rather than vanishing — the day/project/agent
+    // Untagged spend keys on "" instead of vanishing. The day/project/agent
     // totals every chart above the leaderboard is built on must not change.
     expect(tagRows.find((r) => r.g === "")!.cost).toBeCloseTo(2);
     expect(tagRows.reduce((n, r) => n + r.cost, 0)).toBeCloseTo(3.5);
@@ -216,7 +232,7 @@ describe("getInsightsData", () => {
     expect(data.tags.find((g) => g.id === tag.id)).toMatchObject({ name: "Auth migration", project_id: project.id });
   });
 
-  it("a task with two tags contributes usage to BOTH — tagUsage does not sum to `usage`", () => {
+  it("a task with two tags contributes usage to BOTH: tagUsage does not sum to `usage`", () => {
     const { project } = makeProjectTask();
     const first = createTag({ project_id: project.id, name: "Auth migration" });
     const second = createTag({ project_id: project.id, name: "Flaky tests" });
@@ -228,11 +244,52 @@ describe("getInsightsData", () => {
     expect(usageRows.reduce((n, r) => n + r.cost, 0)).toBeCloseTo(3);
 
     const tagRows = data.tagUsage.filter((r) => r.p === project.id);
-    // Both tags get the full $3 — the row genuinely belongs to both plans.
+    // Both tags get the full $3; the row genuinely belongs to both plans.
     expect(tagRows.find((r) => r.g === first.id)!.cost).toBeCloseTo(3);
     expect(tagRows.find((r) => r.g === second.id)!.cost).toBeCloseTo(3);
     // So the tag cube's total (6) does NOT equal the task cube's total (3).
     expect(tagRows.reduce((n, r) => n + r.cost, 0)).toBeCloseTo(6);
+  });
+
+  // gatewayCache is a SEPARATE cube keyed on task_usage.provider, read only
+  // when a gateway host is passed. It is the same field ordinary cloud-billed
+  // rows leave "" on, so an unguarded query would double-count cloud spend as
+  // gateway cache reads.
+  describe("gatewayCache", () => {
+    it("sums input/cache-read tokens for the given gateway host, excluding ordinary cloud-billed rows", () => {
+      const { project, task } = makeProjectTask();
+      const host = "litellm.example.com";
+      addUsage({
+        project_id: project.id, task_id: task.id, generation: 1, agent: "claude", provider: host,
+        usage: usage({ input_tokens: 1000, cache_read_tokens: 400 }),
+      });
+      addUsage({
+        project_id: project.id, task_id: task.id, generation: 1, agent: "claude", provider: host,
+        usage: usage({ input_tokens: 500, cache_read_tokens: 100 }),
+      });
+      // An ordinary cloud-billed turn, provider "", must not be counted.
+      addUsage({
+        project_id: project.id, task_id: task.id, generation: 1, agent: "claude",
+        usage: usage({ input_tokens: 9999, cache_read_tokens: 9999 }),
+      });
+
+      const data = getInsightsData(Date.now() - DAY, host);
+      const mine = data.gatewayCache.filter((r) => r.a === "claude");
+      expect(mine).toHaveLength(1);
+      expect(mine[0].inp).toBe(1500);
+      expect(mine[0].cr).toBe(500);
+    });
+
+    it("returns nothing when no gateway host is given, rather than matching the cloud-billed rows", () => {
+      const { project, task } = makeProjectTask();
+      addUsage({
+        project_id: project.id, task_id: task.id, generation: 1, agent: "claude", provider: "litellm.example.com",
+        usage: usage({ input_tokens: 1000, cache_read_tokens: 400 }),
+      });
+
+      expect(getInsightsData(Date.now() - DAY).gatewayCache).toEqual([]);
+      expect(getInsightsData(Date.now() - DAY, "").gatewayCache).toEqual([]);
+    });
   });
 });
 // SUM() over zero rows is NULL, not 0, and `unpriced_turns` is typed a number.

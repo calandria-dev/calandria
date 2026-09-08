@@ -71,8 +71,8 @@ describe("editing a task's agent", () => {
   });
 });
 
-// The model id is the one whitelisted field with an open-ended value — the
-// picker offers a catalog, but nothing stops a direct call to this route, and
+// The model id is a whitelisted field with an open-ended value: the picker
+// offers a catalog, but a direct call to this route can set any string, and
 // whatever lands in the column is handed to the CLI on the next turn.
 describe("editing a task's model", () => {
   it("accepts a provider-native model id, trimmed", async () => {

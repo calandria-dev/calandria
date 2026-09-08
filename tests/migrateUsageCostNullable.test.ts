@@ -2,17 +2,15 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { init, migrate } from "../lib/db";
 
-// task_usage.cost_usd shipped REAL NOT NULL DEFAULT 0, so there was no way to
-// record "this endpoint's price is unknown" — every turn against a custom
-// provider override got billed a silent, wrong $0. SQLite cannot drop a NOT
-// NULL constraint in place, so the fix (lib/db.ts, search "cost_usd shipped
-// NOT NULL DEFAULT 0") is a guarded table rebuild: rename, recreate with
-// cost_usd nullable, copy every row by NAME in rowid order, drop the old
-// table, reindex — all inside one transaction with foreign_keys OFF, restored
-// ON in a finally. This is the house pattern from tests/migrateBuildingFold.ts
-// adapted to a rebuild rather than a data fold: the thing worth proving isn't
-// that the column becomes nullable (trivial), it's that the rebuild doesn't
-// quietly lose, reorder or coerce a single row on the way through.
+// task_usage.cost_usd was REAL NOT NULL DEFAULT 0, so there was no way to
+// record "this endpoint's price is unknown": a turn against a custom
+// provider override was billed a wrong $0 instead. SQLite cannot drop a NOT
+// NULL constraint in place, so lib/db.ts rebuilds the table under a guard:
+// rename, recreate with cost_usd nullable, copy every row by name in rowid
+// order, drop the old table, reindex, all inside one transaction with
+// foreign_keys off and restored on in a finally. These tests, following the
+// same pattern as tests/migrateBuildingFold.ts, prove the rebuild does not
+// lose, reorder or coerce a single row on the way through.
 
 const COLUMNS = [
   "id",
@@ -35,7 +33,7 @@ const COLUMNS = [
 // agent/subagent_tokens/provider columns added by earlier ALTERs. To exercise
 // the guarded rebuild for real we have to roll the table back to the exact
 // legacy shape the guard keys off (PRAGMA table_info(task_usage).cost_usd.
-// notnull), but with those later columns already present — a real pre-upgrade
+// notnull), but with those later columns already present. A real pre-upgrade
 // database has both facts true at once, since those ALTERs shipped before this
 // one.
 function legacyDb() {
@@ -83,10 +81,10 @@ function insertTask(db: Database.Database, id: string, projectId: string, create
 
 type Row = [string, string, string, number, number, number, number, number, number, number, string, number | null, string];
 
-// Four rows with distinct values in every column — two projects, two tasks,
-// two agents — so a rebuild that mixed up a column or a foreign key would show
-// up as a mismatch rather than being masked by repeated values. u1 and u4
-// carry a NULL subagent_tokens (the exact "unknown, not zero" shape this
+// Four rows with distinct values in every column (two projects, two tasks,
+// two agents), so a rebuild that mixed up a column or a foreign key would
+// show up as a mismatch instead of being masked by repeated values. u1 and
+// u4 carry a NULL subagent_tokens (the same "unknown, not zero" shape this
 // migration extends to cost_usd), and u3/u4 carry a non-empty provider.
 const ROWS: Row[] = [
   ["u1", "p1", "t1", 1, 0.5, 100, 50, 10, 5, 1000, "claude", null, ""],
@@ -114,8 +112,8 @@ const costNotNull = (db: Database.Database) =>
     ?.notnull;
 
 // PRAGMA index_list also reports the implicit sqlite_autoindex_* backing the
-// TEXT PRIMARY KEY, which the rebuild neither drops nor needs to recreate —
-// filter it out so this only asserts on the two explicit indexes the
+// TEXT PRIMARY KEY, which the rebuild neither drops nor needs to recreate.
+// Filtering it out means this only asserts on the two explicit indexes the
 // migration is responsible for.
 const indexNames = (db: Database.Database) =>
   (db.prepare("PRAGMA index_list(task_usage)").all() as { name: string }[])
@@ -138,12 +136,12 @@ describe("task_usage.cost_usd NOT NULL → nullable rebuild", () => {
     expect(costNotNull(db)).toBe(false);
 
     // Row-for-row against the pre-migration snapshot, not a COUNT(*): a rebuild
-    // that silently dropped a row, swapped two columns, or coerced a NULL to 0
-    // would still pass a count check. Comparing the full projected row set in
-    // rowid order is what actually proves the copy-by-name step moved every
-    // value untouched — including the legacy NULL subagent_tokens, which a
-    // careless numeric copy could turn into 0, and the row ORDER, since the
-    // rebuild assigns the new table fresh rowids as it copies.
+    // that dropped a row, swapped two columns, or coerced a NULL to 0 would
+    // still pass a count check. Comparing the full projected row set in rowid
+    // order proves the copy-by-name step moved every value untouched,
+    // including the legacy NULL subagent_tokens, which a careless numeric
+    // copy could turn into 0, and the row order, since the rebuild assigns
+    // the new table fresh rowids as it copies.
     const after = snapshot(db);
     expect(after).toEqual(before);
     expect((after as { id: string }[]).map((r) => r.id)).toEqual(["u1", "u2", "u3", "u4"]);
@@ -165,8 +163,8 @@ describe("task_usage.cost_usd NOT NULL → nullable rebuild", () => {
     // mid-flight by FK enforcement) and must come back ON in the finally, or
     // every write after boot would run unchecked.
     expect(db.pragma("foreign_keys", { simple: true })).toBe(1);
-    // And the rebuilt rows must actually still satisfy the constraints the old
-    // table enforced — an empty result means no dangling task_id/project_id.
+    // The rebuilt rows must still satisfy the constraints the old table
+    // enforced; an empty result means no dangling task_id/project_id.
     expect(db.pragma("foreign_key_check")).toEqual([]);
   });
 
@@ -176,9 +174,8 @@ describe("task_usage.cost_usd NOT NULL → nullable rebuild", () => {
     migrate(db);
 
     // Before the migration this INSERT would have thrown NOT NULL constraint
-    // failed: task_usage.cost_usd. That it succeeds, and that SUM treats the
-    // NULL row as absent rather than as $0, is the entire point of widening
-    // the column.
+    // failed: task_usage.cost_usd. Widening the column lets it succeed and
+    // lets SUM treat the NULL row as absent instead of as $0.
     db.prepare(
       `INSERT INTO task_usage (${COLUMNS.join(", ")}) VALUES (${COLUMNS.map(() => "?").join(", ")})`
     ).run("u5", "p1", "t1", 3, 2, 50, 25, 5, 2, 2000, "claude", null, "");
@@ -203,8 +200,8 @@ describe("task_usage.cost_usd NOT NULL → nullable rebuild", () => {
     const after1 = snapshot(db);
 
     // Second pass sees cost_usd already nullable, so the guard's `costCol.
-    // notnull` check is false and the whole rebuild block is skipped — this is
-    // what makes calling migrate() on every boot safe rather than merely fast.
+    // notnull` check is false and the whole rebuild block is skipped. That is
+    // what keeps calling migrate() on every boot safe as well as fast.
     migrate(db);
 
     expect(costNotNull(db)).toBe(false);
@@ -213,9 +210,9 @@ describe("task_usage.cost_usd NOT NULL → nullable rebuild", () => {
   });
 
   it("leaves an already-nullable (post-migration) database untouched", () => {
-    // A database created fresh by init() never has the legacy NOT NULL shape
-    // at all — the CREATE TABLE itself already declares cost_usd nullable —
-    // so migrate() must be a no-op for it too, not just for one it just fixed.
+    // A database created fresh by init() never has the legacy NOT NULL shape:
+    // the CREATE TABLE itself already declares cost_usd nullable. migrate()
+    // must be a no-op for it too, not just for one it just fixed.
     const db = (open = new Database(":memory:"));
     init(db);
     expect(costNotNull(db)).toBe(false);

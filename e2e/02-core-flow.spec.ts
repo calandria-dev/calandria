@@ -75,15 +75,15 @@ test("the task description stays viewable after the session starts", async ({ pa
   await gotoApp(page);
   await page.getByText(PROJECT).first().click();
   await page.getByText(TASK_TITLE).first().click();
-  // TaskHero — the only surface showing the description — is gone once the
-  // session starts, so the session header's Edit button is the only way left
-  // to read or copy the original brief.
+  // TaskHero is the only surface showing the description, and it is gone
+  // once the session starts, so the session header's Edit button is the only
+  // way left to read or copy the original brief.
   await page.getByRole("button", { name: "Edit", exact: true }).click();
   await expect(page.getByText("Edit task").first()).toBeVisible();
   await expect(page.getByPlaceholder("e.g. Add rate-limiting to auth endpoints")).toHaveValue(TASK_TITLE);
   await expect(page.getByPlaceholder(/Describe the feature or task/)).toHaveValue(/e2e:write=greeting\.txt/);
-  // Started task → the helper explains edits land on future sessions, not the
-  // one whose transcript is on screen.
+  // On a started task, the helper explains edits land on future sessions,
+  // and the current transcript on screen is unaffected.
   await expect(page.getByText(/Already sent to the agent/)).toBeVisible();
 });
 

@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
  * out per project.
  *
  * Like /api/version this is exempt from the Access/origin gate ONLY for
- * callers presenting SERVICE_TOKEN (or the fleet read token) — see
+ * callers presenting SERVICE_TOKEN (or the fleet read token), see
  * middleware.ts. It exposes counts and spend, never task titles or content.
  */
 export async function GET() {

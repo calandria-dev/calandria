@@ -1,20 +1,21 @@
 // "Changed by agent" (app/shell/AgentEdits.tsx): a task the user already
-// accepted can still be rewritten by an agent — its own session's update_task,
-// or another task's, per lib/agentTools.ts updateTaskForAgent. Every such write
-// is recorded in task_agent_edits and raises a chip on the card; the panel shows
-// the diff with a per-edit Revert, and "Keep changes" clears the chip without
-// undoing anything. The write is driven straight at the real internal endpoint
-// behind the tool (POST /api/internal/agent-tools/update-task) — in this
-// hermetic instance (local-origin auth, no Cloudflare Access) that route is
-// reachable the same way the stdio MCP bridge reaches it in production, with no
-// SERVICE_TOKEN needed, exactly like every other REST call these specs make.
+// accepted can still be rewritten by an agent, whether its own session's
+// update_task or another task's, per lib/agentTools.ts updateTaskForAgent.
+// Every such write is recorded in task_agent_edits and raises a chip on the
+// card; the panel shows the diff with a per-edit Revert, and "Keep changes"
+// clears the chip without undoing anything. The write is driven straight at
+// the real internal endpoint behind the tool
+// (POST /api/internal/agent-tools/update-task). In this hermetic instance
+// (local-origin auth, no Cloudflare Access) that route is reachable the same
+// way the stdio MCP bridge reaches it in production, with no SERVICE_TOKEN
+// needed, exactly like every other REST call these specs make.
 
 import { expect, test, type Page } from "@playwright/test";
 import { createProject, createTask, ensureOnboarded, getTask, gotoApp, makeFixtureRepo, sendMessage, uid } from "./helpers";
 
 const PROJECT = `Agent Edits ${uid()}`;
 let projectId: string;
-// The "another task's session" that makes the writes below — never itself
+// The "another task's session" that makes the writes below, never itself
 // edited, so its own row never carries a chip.
 let callerId: string;
 
@@ -41,8 +42,8 @@ const openProject = async (page: Page) => {
   await page.getByTitle("List view").click();
 };
 
-// Cards re-title themselves mid-test (that's the point), so a card is located
-// by a stable fragment (the uid) rather than the whole title, which changes.
+// Cards re-title themselves mid-test, so a card is located by a stable
+// fragment (the uid) instead of the whole title, which changes.
 const card = (page: Page, fragment: string) =>
   page.locator(".task-row").filter({ has: page.locator(".ttitle", { hasText: fragment }) });
 const chip = (page: Page, fragment: string) => card(page, fragment).locator(".blocked-chip.changed");
@@ -56,15 +57,15 @@ test("the chip appears live, the panel shows the diff, and Revert restores the o
   await expect(card(page, stamp).locator(".ttitle")).toHaveText(`Ship checkout redesign ${stamp}`);
   await expect(chip(page, stamp)).toHaveCount(0);
 
-  // Accepted already (suggested: 0, per createTask's default) — this is the
-  // write the old ownership gate refused and now lands, recorded.
+  // Accepted already (suggested: 0, per createTask's default). This write
+  // lands and is recorded.
   const res = await updateTaskAsAgent(request, { task: original.id, title: renamed, priority: "hi" });
   expect(res.ok()).toBeTruthy();
   const body = await res.json();
   expect(body).toMatchObject({ ok: true, id: original.id, title: renamed });
 
-  // Live wiring: no reload — the write publishes task_edited and the client
-  // refetches, which is what turns the title AND raises the chip here.
+  // Live wiring, no reload: the write publishes task_edited and the client
+  // refetches, which turns the title and raises the chip here.
   await expect(card(page, stamp).locator(".ttitle")).toHaveText(renamed, { timeout: 15_000 });
   await expect(chip(page, stamp)).toBeVisible();
 
