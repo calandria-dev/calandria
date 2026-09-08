@@ -137,6 +137,22 @@ export function recordClaudeRateLimit(info: unknown): void {
   };
 }
 
+/**
+ * When the last rate_limit_event said the current window resets, or null when
+ * no event has arrived (or the one that did is already stale, its window
+ * having rolled over). Synchronous and cache-only, never a fetch: the driver
+ * reads it inside a turn's own failure path, where an HTTP round trip would be
+ * a hang, and the runner's settle block is synchronous besides. This is the
+ * fallback behind the turn's own `limitResetsAt` (./driver.ts), for the case
+ * where the rejection arrives with no rate_limit_event beside it but an
+ * earlier turn on the same instance already learned when the window heals.
+ */
+export function claudeLimitResetAt(now: number = Date.now()): number | null {
+  const p = state().passive;
+  if (!p || p.resetsAt == null || p.resetsAt <= now) return null;
+  return p.resetsAt;
+}
+
 // ---------- the OAuth credential the CLI already maintains ----------
 
 interface OauthCreds {

@@ -15,6 +15,7 @@ import { AgentConnect } from "./AgentConnect";
 import { endpointSummary } from "./modelEndpoint";
 import { ErrNote, LoadNote } from "./shared";
 import { usePlanUsage, planUsageShown } from "./PlanUsage";
+import { autoResumeOnLimitKey } from "@/lib/usageReset";
 import { jget, jsend } from "./api";
 import { notificationPermission, type BrowserNotificationState } from "./useNotifications";
 import { disablePush, enablePush, pushSupport, syncPushSubscription, type PushSupportState } from "./usePush";
@@ -778,6 +779,10 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   // by. Agent-scoped like the model default above, and for the same reason.
   const lightJobModel = appDefaults[`job_model_light:${editAgent}`] ?? null;
   const heavyJobModel = appDefaults[`job_model_heavy:${editAgent}`] ?? null;
+  // Opt-in: when a turn on this agent dies on its spent plan quota, the runner
+  // queues the resume for the reset itself (lib/usageReset.ts). Stored "on" or
+  // absent, so an instance that never opens this page keeps the click.
+  const autoResume = appDefaults[autoResumeOnLimitKey(editAgent)] === "on";
   // What the agent being edited calls its never-asks mode. The labels are the
   // provider's own vocabulary (Claude: "bypassPermissions", Codex:
   // "danger-full-access"), so the help copy resolves the name per agent instead of
@@ -1078,6 +1083,26 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                         {p.value === null && <span className="seg-sep" aria-hidden />}
                       </Fragment>
                     ))}
+                  </div>
+                </div>
+                <div className="field">
+                  <div className="lab" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {Icon.clock()} Resume automatically when the limit resets
+                    <button
+                      role="switch"
+                      aria-label={`Resume ${agentLabel(agents, editAgent)} tasks automatically when the usage limit resets`}
+                      aria-checked={autoResume}
+                      className={`in-switch${autoResume ? " on" : ""}`}
+                      style={{ marginLeft: "auto" }}
+                      onClick={() => setAppDefault(autoResumeOnLimitKey(editAgent), autoResume ? null : "on")}
+                    ><span /></button>
+                  </div>
+                  <div className="hlp" style={{ marginTop: 0 }}>
+                    When a turn dies because {agentLabel(agents, editAgent)}&apos;s plan quota is spent, queue the task to resume on its
+                    own once the window resets, instead of leaving the <strong>Resume when the limit resets</strong> button on the
+                    transcript for you to press. Off by default: the next window&apos;s quota is finite, and pressing that button is
+                    where you decide this task is what it should go on. Needs a reset time from the agent, so a task whose agent
+                    reports none keeps the button.
                   </div>
                 </div>
                 <PermissionRules />

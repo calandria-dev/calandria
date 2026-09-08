@@ -148,7 +148,8 @@ already queued. The transcript records that it was sent.
 - **Start at the usage-window reset:** when a subscription limit stops your
   turns, queue a task to start (or a stalled session to resume) a minute
   after the reset the plan meter reports. This runs server-side with no tab
-  open.
+  open. Settings → Run defaults can queue that resume for you whenever a turn
+  dies on the limit, per agent, off by default.
 - **Persistent context:** reuse project knowledge and continue long-running
   work across fresh context windows.
 - **Review-to-merge workflow:** inspect diffs, sync branches, resolve
