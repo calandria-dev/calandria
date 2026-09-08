@@ -51,13 +51,13 @@ interface AllowEntry {
 
 // file:line -> why the hit there is a verbatim quote, not prose.
 const ALLOWLIST: Record<string, AllowEntry> = {
-  ".github/CLAUDE.md:37": {
+  ".github/CLAUDE.md:36": {
     reason:
       'Quotes GitHub\'s own PR-checks UI text ("Expected — waiting for status") verbatim; ' +
       "it's GitHub's copy, not this repo's code, so there is no in-repo file:line to check it against.",
   },
-  ".github/rulesets/README.md:54": {
-    reason: "Same GitHub PR-checks UI quote as .github/CLAUDE.md:37.",
+  ".github/rulesets/README.md:57": {
+    reason: "Same GitHub PR-checks UI quote as .github/CLAUDE.md:36.",
   },
 };
 
