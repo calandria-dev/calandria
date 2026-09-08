@@ -630,10 +630,13 @@ Inheritance grants nothing on its own. Those servers' tools go through `canUseTo
 other call: auto-approved under `bypassPermissions`, classifier-screened under `auto`, a
 permission card otherwise.
 
-A **Codex** task gets the Calandria bridge plus the user's own servers, by a different route. The
-SDK flattens our `config` into leaf-level `--config mcp_servers.calandria.…` overrides, which
-the CLI merges into `~/.codex/config.toml`, so the user's servers arrive whether we ask or not,
-and `CODEX_INHERIT_MCP` (default on) leaves them mounted. The driver used to unmount them by
+A **Codex** task gets the Calandria bridge plus the external MCP servers Codex reports from the
+user's config and enabled plugins, by a different route. The SDK flattens our `config` into
+leaf-level `--config mcp_servers.calandria.…` overrides, which the CLI merges into its existing
+MCP configuration, so those servers arrive whether we ask or not, and `CODEX_INHERIT_MCP`
+(default on) leaves them mounted. App-connector tools exposed through Codex's separate
+`codex_apps` server are not entries in `codex mcp list` and are not what this flag controls. The
+driver used to unmount reported external servers by
 default, on the belief that `codex exec` had no approver and every inherited tool call returned
 `user cancelled MCP tool call` (observed once on codex-cli 0.146.0); Codex tasks do call inherited
 tools, so that default was wrong. `CODEX_INHERIT_MCP=0` is the opt-out: `codex/mcp.ts`
@@ -680,8 +683,12 @@ do the work, none of which was set before:
   0 MCP servers. Isolating there would break recap and `/clear` for every Bedrock, Vertex or
   proxy user while their ordinary turns kept working.
 
-This is the same split Codex's `oneShot()` already makes: read-only sandbox, no network, MCP
-unmounted, `~/.codex/config.toml` still read.
+Codex's `oneShot()` has a different boundary: it uses a read-only sandbox with network disabled
+and mounts no Calandria bridge, but it follows the same `CODEX_INHERIT_MCP` choice as a task turn.
+External MCP servers therefore remain mounted by default and receive the inert disabled overrides
+only when the instance opts out. Live verification on codex-cli 0.153.4 confirmed both modes start
+and complete; the default one-shot initialized inherited stdio and streamable-HTTP servers, while
+the opt-out one-shot started neither.
 
 So `summarizeTranscript` and `summarizeProjectRecap` get `TEXT_ONE_SHOT`: no tools, `maxTurns: 1`,
 `["user"]` only, since `project`'s only remaining contribution is the repo's CLAUDE.md and a text

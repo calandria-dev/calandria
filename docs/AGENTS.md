@@ -168,17 +168,19 @@ one of them needs both files present, even if one is a stub pointing at the othe
 ships a skill for preparing a repo to be worked on in many worktrees at once;
 `skills/README.md` covers installing it for both directories.
 
-Calandria's own background jobs don't inherit any of this. A `/clear` handoff note, a
-project recap, a "Refresh with AI" context draft and a "Refresh tag" plan check are internal
-transformations, not
-sessions you're sitting in, so they run with your MCP servers, plugins, skills, and hooks
-switched off. Otherwise every four-bullet recap would start your entire MCP fleet to offer
-tools it can never call. They still read `~/.claude/settings.json`, because that's also
-where a Bedrock/Vertex/proxy setup keeps its `env` block and `apiKeyHelper`, so they
-authenticate the same way your ordinary turns do. The two repo-reading jobs additionally load
-the repository's `CLAUDE.md`, since judging the repo is their job, and can read, search, and
-list files, but not run commands or write anything. Which model each of them runs on is the
-two-tier setting described under "Choosing a model" above.
+Calandria's own background jobs are isolated according to the agent that runs them. Claude
+one-shots (`/clear` handoff notes, project recaps, "Refresh with AI" context drafts and "Refresh
+tag" plan checks) run with MCP servers, plugins, skills, and hooks switched off. Otherwise every
+four-bullet recap would start your entire MCP fleet to offer tools it can never call. They still
+read `~/.claude/settings.json`, because that's also where a Bedrock/Vertex/proxy setup keeps its
+`env` block and `apiKeyHelper`, so they authenticate the same way ordinary turns do. The two
+repo-reading jobs additionally load the repository's `CLAUDE.md`, since judging the repo is their
+job, and can read, search, and list files, but not run commands or write anything.
+
+Codex one-shots always omit Calandria's bridge and run read-only with network disabled, but their
+external MCP servers follow `CODEX_INHERIT_MCP` just like task turns: mounted by default, inertly
+disabled when the instance opts out. Which model each background job runs on is the two-tier
+setting described under "Choosing a model" above.
 
 ## OpenAI Codex
 
@@ -222,11 +224,13 @@ Three upstream differences are visible:
   the never-asking modes from then on, which parks escalations on a card instead of failing
   them; that first turn gets a one-click Retry. `CODEX_APPROVAL_POLICY` is the manual
   override for those modes.
-- Codex tasks get Calandria's own tools and, like Claude tasks, the MCP servers from your
-  `~/.codex/config.toml`. Set `CODEX_INHERIT_MCP=0` to keep your servers off task sessions.
-  Calandria then overrides each one with `enabled = false` plus an inert transport, since
-  Codex validates every override before merging plugin-provided servers and rejects one with
-  no transport. Each agent's card in **Settings → Agents** states whether your servers are
+- Codex tasks get Calandria's own tools and, like Claude tasks, the external MCP servers Codex
+  reports from your config and enabled plugins. Set `CODEX_INHERIT_MCP=0` to keep those servers
+  off task sessions and Codex one-shots. Calandria then overrides each one with `enabled = false`
+  plus an inert transport, since Codex validates every override before merging plugin-provided
+  servers and rejects one with no transport. Codex app-connector plugins exposed through the
+  separate `codex_apps` server are not entries in `codex mcp list` and are outside this flag.
+  Each agent's card in **Settings → Agents** states whether inherited external MCP servers are
   mounted, so you can check before picking an agent for a task.
 
 ### Linux sandbox
@@ -604,11 +608,12 @@ check reads the response body for the real reason rather than trusting the statu
 (`docs/design/litellm.md`, "Hosted MCP servers").
 
 Codex gates MCP calls with its own per-server approval mode, which the turn's approval policy
-doesn't reach, so every mounted server also carries `default_tools_approval_mode: "approve"`, which
-auto-approves every one of its tools for the task the moment it mounts. That is offered under every
-permission mode but `plan`, which runs read-only and mounts none of them, the same reason
-`codex/mcp.ts` unmounts the user's own inherited servers under a mode with nothing to call them. Settings → Agents states
-the gate on Codex's card. Before relying on this in production, test `gpt-5-codex` plus a mounted
+doesn't reach, so every mounted hosted server also carries `default_tools_approval_mode: "approve"`,
+which auto-approves every one of its tools for the task the moment it mounts. Hosted servers are
+offered under every permission mode but `plan`, which runs read-only and mounts none of them.
+User-configured and plugin-provided external servers follow `CODEX_INHERIT_MCP` independently of
+the permission mode. Settings → Agents states the hosted-server gate on Codex's card. Before
+relying on this in production, test `gpt-5-codex` plus a mounted
 MCP server on your pinned LiteLLM and codex versions — BerriAI/litellm#14846 recorded silent empty
 completions for exactly that combination.
 
