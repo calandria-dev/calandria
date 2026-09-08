@@ -2519,8 +2519,18 @@ button.gbadge{cursor:pointer;transition:background .12s,border-color .12s;}
 button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,transparent);border-color:var(--gc,var(--ink-3));}
 /* "+N": the badges TagBadges' `max` cropped off a row with several tags. No
    single tag's tint applies to a pill naming more than one, so it stays the
-   neutral ink rather than reading as an untinted tag of its own. */
-.gbadge.more{color:var(--ink-4);background:var(--surface-2);border-color:var(--line-2);cursor:default;}
+   neutral ink rather than reading as an untinted tag of its own, including on
+   hover, where the generic button.gbadge rule would tint it with the --gc
+   fallback. It opens the cropped names in a popover, so it takes a real tap
+   target under a finger: the 16px line box is half the 24px minimum. */
+.gbadge.more{color:var(--ink-4);background:var(--surface-2);border-color:var(--line-2);}
+button.gbadge.more:hover,button.gbadge.more[aria-expanded="true"]{color:var(--ink-3);background:var(--line-2);border-color:var(--ink-4);}
+.gmore{position:relative;display:inline-flex;flex:0 0 auto;}
+@media (pointer:coarse){button.gbadge.more{padding:5px 10px;}}
+/* The cropped names, one badge per line, each still a way into that tag's
+   filter. Stacked rather than wrapped so a long name reads whole. */
+.gmore-list{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:8px;}
+.gmore-list .gbadge{max-width:100%;}
 .task .task-top .gbadge{min-width:0;flex:0 1 auto;}
 .bcard .bc-meta .gbadge{font-size:9.5px;line-height:14px;}
 .sug .sg-name .gbadge{margin-left:6px;vertical-align:1px;}
