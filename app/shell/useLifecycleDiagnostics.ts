@@ -23,6 +23,21 @@ function heapMB(): number | undefined {
   return typeof used === "number" ? Math.round(used / 1_048_576) : undefined;
 }
 
+// Appends one event to the persisted log. Exported so a component that isn't
+// the hook can record something the hook can't see (Terminal.tsx records a
+// socket stuck at CONNECTING) without owning the listeners.
+//
+// Re-reads before every append rather than holding the log in memory: Clear in
+// the panel empties storage, and a cached copy would write the old entries
+// straight back on the next event.
+export function recordLifecycleEvent(ev: Omit<LifecycleEvent, "t">): void {
+  if (typeof window === "undefined") return;
+  const heap = heapMB();
+  const log = pushLifecycleEvent(readLifecycleLog(), { t: Date.now(), ...ev, ...(heap === undefined ? {} : { heapMB: heap }) });
+  try { localStorage.setItem(LIFECYCLE_LS, JSON.stringify(log)); } catch {}
+  window.dispatchEvent(new Event(LIFECYCLE_CHANGED));
+}
+
 // Records page-lifecycle events into a small persisted log and decides the
 // one recovery the page can attempt on its own (lifecycle.ts has the policy).
 // Every write lands in localStorage at once, so the record survives the
@@ -33,15 +48,7 @@ export function useLifecycleDiagnostics({ resumeReloadMinutes }: { resumeReloadM
   thresholdRef.current = resumeReloadMinutes;
 
   useEffect(() => {
-    // Re-read before every append rather than holding the log in memory:
-    // Clear in the panel empties storage, and a cached copy would write the
-    // old entries straight back on the next event.
-    const record = (ev: Omit<LifecycleEvent, "t">) => {
-      const heap = heapMB();
-      const log = pushLifecycleEvent(readLifecycleLog(), { t: Date.now(), ...ev, ...(heap === undefined ? {} : { heapMB: heap }) });
-      try { localStorage.setItem(LIFECYCLE_LS, JSON.stringify(log)); } catch {}
-      window.dispatchEvent(new Event(LIFECYCLE_CHANGED));
-    };
+    const record = recordLifecycleEvent;
 
     const standalone = isStandaloneDisplay(navigator as { standalone?: boolean }, (q) => window.matchMedia(q).matches);
     const ios = isIOS(navigator.userAgent, navigator.maxTouchPoints);

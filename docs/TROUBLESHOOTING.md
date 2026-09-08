@@ -420,7 +420,12 @@ relaunching is the only fix.
    to the background while the sheet is hidden, and respawned fresh the next time it's opened. A
    sheet that's open on screen when the page backgrounds is left alone. The desktop terminal
    drawer is unaffected.
-3. Settings → Diagnostics shows a page-lifecycle log: the last 80 events (visible/hidden,
+3. A sheet that was open on screen respawns its shell when the page comes back, but only if the
+   old socket had closed. Any terminal socket that sits at `CONNECTING` for 8 seconds is given up
+   on: the terminal prints that the connection never opened and that reloading the app fixes it,
+   Enter retries, and a `ws_stuck` entry lands in the lifecycle log below. That is WebKit bug
+   308073 (see the references at the end of this section), and only a page reload clears it.
+4. Settings → Diagnostics shows a page-lifecycle log: the last 80 events (visible/hidden,
    pageshow/pagehide, focus/blur, online/offline, Chromium freeze/resume, and a "heartbeat gap"
    when a 5-second timer fires at least 10 s late, with how far the wall clock jumped versus how
    far `performance.now()` moved). Each entry carries the JS heap size where the browser reports
@@ -428,7 +433,7 @@ relaunching is the only fix.
    survives a force-quit, and contains no task content. The panel has Copy log and Clear buttons.
    The boot entry records whether the page is running as an installed app and whether the device is
    iOS.
-4. Settings → Diagnostics also has "Reload after a long background," a per-device setting: Off
+5. Settings → Diagnostics also has "Reload after a long background," a per-device setting: Off
    (default), 5 min, 30 min, 2 h. When on, the installed iOS app reloads itself on returning from
    at least that long in the background. It's inert in a browser tab and on non-iOS devices, and it
    can only work when JavaScript is running on resume.

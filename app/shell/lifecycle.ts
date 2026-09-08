@@ -23,7 +23,8 @@ export type LifecycleKind =
   | "freeze"         // Page Lifecycle API (Chromium only)
   | "resume"
   | "heartbeat_gap"  // the 5s ticker fired late: timers were suspended or throttled
-  | "resume_reload"; // the shell decided to reload itself on resume
+  | "resume_reload"  // the shell decided to reload itself on resume
+  | "ws_stuck";      // a terminal socket sat at CONNECTING past its deadline (WebKit 308073)
 
 export interface LifecycleEvent {
   /** Wall-clock ms. */
@@ -45,6 +46,8 @@ export interface LifecycleEvent {
   ua?: string;
   /** resume_reload: how long the page had been hidden. */
   hiddenMs?: number;
+  /** ws_stuck: how long the socket was given to open before it was given up on. */
+  waitMs?: number;
 }
 
 export const LIFECYCLE_LOG_LIMIT = 80;
@@ -135,6 +138,7 @@ export function formatLifecycleLog(log: readonly LifecycleEvent[]): string {
     if (e.gapMs !== undefined) parts.push(`gap=${e.gapMs}ms`);
     if (e.monoMs !== undefined) parts.push(`mono=${e.monoMs}ms`);
     if (e.hiddenMs !== undefined) parts.push(`hidden=${e.hiddenMs}ms`);
+    if (e.waitMs !== undefined) parts.push(`wait=${e.waitMs}ms`);
     if (e.heapMB !== undefined) parts.push(`heap=${e.heapMB}MB`);
     if (e.online !== undefined) parts.push(`online=${e.online}`);
     if (e.persisted !== undefined) parts.push(`persisted=${e.persisted}`);

@@ -36,6 +36,13 @@ describe("lifecycle log: bounded, content-free, and readable after a force-quit"
       "2026-09-07T12:30:00.000Z heartbeat_gap gap=1800000ms mono=12ms",
     ]);
   });
+
+  it("formats a socket that never opened", () => {
+    const text = formatLifecycleLog([
+      { t: Date.UTC(2026, 8, 7, 12, 0, 8), kind: "ws_stuck", waitMs: 8000, online: true },
+    ]);
+    expect(text).toBe("2026-09-07T12:00:08.000Z ws_stuck wait=8000ms online=true");
+  });
 });
 
 describe("heartbeat: a late tick says timers were suspended, and the two clocks say how", () => {
