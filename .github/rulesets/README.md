@@ -13,10 +13,13 @@ gh api repos/calandria-dev/calandria/rulesets/<id>
 
 ## What exists
 
-| Ruleset | Targets | Rules |
-|-|-|-|
-| `main-require-pr` | `~DEFAULT_BRANCH` | `deletion`, `pull_request` (squash only, 0 approvals, empty bypass list) |
-| `integration-require-checks` | `refs/heads/integration/**` | `required_status_checks` |
+State as of 2026-09-07. The API above is authoritative; re-read it rather than trusting this
+table.
+
+| Ruleset | Targets | Rules | Live |
+|-|-|-|-|
+| `main-require-pr` | `~DEFAULT_BRANCH` | `deletion`, `pull_request` (squash only, 0 approvals, empty bypass list), `required_status_checks` | id `21757704`, carrying the first two rules; `required_status_checks` waits on the PUT below |
+| `integration-require-checks` | `refs/heads/integration/**` | `required_status_checks` | not created yet, waits on the POST below |
 
 ## The five required checks
 
@@ -54,9 +57,29 @@ one of its siblings lands.
 every PR into it, permanently.** The check never reports, and the PR sits on "Expected — waiting
 for status" with no way forward but an admin bypass.
 
-So the order is always: land the workflow change on the branch first, *then* add the rule. That is
-why `integration-require-checks` targets only `refs/heads/integration/**` — a namespace with no
-branches in it — rather than also naming the integration branches that exist today.
+So the order is always: land the workflow change on the branch first, *then* add the rule.
+
+`integration-require-checks` targets `refs/heads/integration/**` rather than naming individual
+branches because the namespace was empty when this payload was written, so the rule could strand
+nothing. **It is no longer empty.** Before creating or widening this ruleset, check that every
+branch it matches already produces all five contexts, and that no open PR into one is sitting on a
+head that predates the workflow change:
+
+```sh
+gh pr list --repo calandria-dev/calandria --state all --limit 60 \
+  --json number,state,baseRefName \
+  --jq '.[] | select(.baseRefName | startswith("integration/")) | "\(.number) \(.state) -> \(.baseRefName)"'
+gh pr checks <N> --repo calandria-dev/calandria
+```
+
+Checked 2026-09-07: `integration/docs-cleanup` (PR #271) and `integration/model-providers`
+(PR #256) both report all five as `pass`, and both carry `pull_request: branches: ["**"]` in
+`test.yml`. `main` produces them too, on the one open PR into it (#241).
+
+The same check is what unblocks the `main-require-pr` half. It was held back while PR #142 was
+unmerged, because the required `Changed paths` context did not exist on `main` and the then-open
+release PR #108 would have hung on it forever. #142 landed 2026-09-02 and #108 merged the same
+day, so neither is a constraint now.
 
 Same reason `test.yml`'s `pull_request` trigger has no `paths-ignore`. A workflow-level path
 filter and a required check are incompatible: filtering the workflow out is indistinguishable, to
@@ -64,6 +87,10 @@ the merge gate, from a check that never ran. The website-only saving lives in th
 instead, which reports `skipped` where a filter reported nothing at all.
 
 ## Applying
+
+**This is a human step.** A `gh api` write to `repos/.../rulesets` is refused by Claude Code's
+auto-mode classifier, so an agent session can prepare and verify these payloads but cannot apply
+them. Reads of the same endpoint go through fine.
 
 Create the integration ruleset:
 
@@ -102,6 +129,18 @@ gh api repos/calandria-dev/calandria/rulesets/<id> --jq '.rules[].type'
 fast-forward of an integration branch to a `main` commit is fine — that SHA already carries
 `main`'s green run — but a *merge commit* produced by syncing one is a new SHA with no checks, and
 the push is refused. Sync an `integration/**` branch by fast-forward, or open a PR for it.
+
+A branch that is both ahead of and behind `main` cannot fast-forward at all, so for it the PR is
+the only route. That is the normal state of a working integration branch: on 2026-09-07
+`integration/docs-cleanup` was 23 ahead and 11 behind. Check before reaching for a sync:
+
+```sh
+git rev-list --left-right --count origin/main...origin/integration/<name>
+```
+
+The left column is commits on `main` only (behind), the right is commits on the branch only
+(ahead). Getting them backwards is easy and turns "fully merged, safe to delete" into its
+opposite.
 
 `do_not_enforce_on_create: true` is set so creating a new `integration/**` branch is not itself
 refused for having no checks.
