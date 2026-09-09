@@ -345,6 +345,58 @@ function disabledLabel(code) {
 }
 
 /**
+ * The page's view of the updater, pushed into the SPA by evaluating in the
+ * page (see gotoTask() in main.js for why: no preload, no IPC). Total: every
+ * field is always present, with a fixed set of types, so the page never has
+ * to test anything for undefined before rendering the pill.
+ *
+ * `phase` collapses main.js's "none" (checked, nothing found) into "idle",
+ * since the page has no separate rendering for that and would otherwise have
+ * to learn a phase updateMenuItem() does not use either. Any phase this
+ * function does not recognise also becomes "idle", so a future addition here
+ * fails safe instead of reaching the page as a raw, unstyled string.
+ */
+function pageUpdateState(state = {}, disposition = {}, shellVersion) {
+  const s = state || {};
+  const d = disposition || {};
+  const knownPhases = new Set(["idle", "checking", "downloading", "ready", "error"]);
+  const phase = knownPhases.has(s.phase) ? s.phase : "idle";
+  const percent = Number.isFinite(s.percent) ? s.percent : null;
+  return {
+    shellVersion: String(shellVersion || ""),
+    phase,
+    version: s.version || null,
+    percent,
+    disposition: { enabled: !!d.enabled, code: d.code || "", reason: d.reason || "" },
+    error: phase === "error" ? s.error || null : null,
+  };
+}
+
+/**
+ * What a `calandria-desktop:` URL asks the shell to do, or null for anything
+ * else (another scheme, an unrecognised path, garbage that does not parse as
+ * a URL at all).
+ *
+ * This scheme is never registered with the OS; it exists only so the page can
+ * ask the shell for something by opening a URL that the shell's own
+ * navigation hooks (setWindowOpenHandler, will-navigate in main.js) already
+ * intercept and deny. Nothing outside this file ever sees the request reach a
+ * real navigation.
+ */
+function parseDesktopCommand(url) {
+  let parsed;
+  try {
+    parsed = new URL(String(url));
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "calandria-desktop:") return null;
+  if (parsed.host === "update" && parsed.pathname === "/install") return { command: "install" };
+  if (parsed.host === "update" && parsed.pathname === "/check") return { command: "check" };
+  return null;
+}
+
+/**
  * `calandria_turns_active` out of GET /api/instance/metrics, served as
  * Prometheus text. Read-only and side-effect free, unlike POST
  * /api/instance/drain, which reads the same number and answers it by aborting
@@ -418,8 +470,10 @@ module.exports = {
   installStageTimeout,
   macBundlePath,
   macDisposition,
+  pageUpdateState,
   parseActiveTurns,
   parseCodesign,
+  parseDesktopCommand,
   quitAction,
   restartNotice,
   updateMenuItem,
