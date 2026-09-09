@@ -24,7 +24,10 @@ export const dynamic = "force-dynamic";
 // `default_model`; unset means "inherit the driver's own default".
 // The notify_* keys and their master switch (`notifications`) gate
 // lib/notifications, enforced server-side because the webhook channel planned
-// next must obey the same policy. All default on.
+// next must obey the same policy. All default on. `notify_queued_start` and
+// `notify_queued_start_skipped` cover the two outcomes of a deadline coming
+// due in lib/deferredStart.ts, which is the sweep `auto_resume_on_limit`
+// below feeds.
 // `plan_usage:<agent>` is display-only, "off" hiding that agent's titlebar
 // usage tracker; it lives here instead of browser storage so the choice
 // follows the instance to every device it's opened from, like every other
@@ -34,7 +37,7 @@ export const dynamic = "force-dynamic";
 // instead of waiting for a click on the transcript notice (lib/usageReset.ts,
 // lib/deferredStart.ts). Off by default, since an unattended resume spends the
 // next window's quota on whichever task happened to fail.
-const ALLOWED = /^(background_jobs|recap_mode|notifications|notify_awaiting_input|notify_turn_failed|notify_schedule_failed|default_agent|utility_agent|default_reasoning(:[a-z0-9_-]+)?|default_permission_mode(:[a-z0-9_-]+)?|default_model:[a-z0-9_-]+|job_model_(light|heavy):[a-z0-9_-]+|plan_usage:[a-z0-9_-]+|auto_resume_on_limit:[a-z0-9_-]+)$/;
+const ALLOWED = /^(background_jobs|recap_mode|notifications|notify_awaiting_input|notify_turn_failed|notify_schedule_failed|notify_queued_start|notify_queued_start_skipped|default_agent|utility_agent|default_reasoning(:[a-z0-9_-]+)?|default_permission_mode(:[a-z0-9_-]+)?|default_model:[a-z0-9_-]+|job_model_(light|heavy):[a-z0-9_-]+|plan_usage:[a-z0-9_-]+|auto_resume_on_limit:[a-z0-9_-]+)$/;
 
 export async function GET() {
   return NextResponse.json(getSettings());
