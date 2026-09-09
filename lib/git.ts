@@ -2947,6 +2947,33 @@ async function committerIdentityArgs(worktreePath: string): Promise<string[]> {
 // brought up to date before follow-up work piles more changes on top of
 // stale code.
 
+/**
+ * Has the base branch's history been rewritten out from under a cut point?
+ *
+ * `baseSha` is the commit a task was cut from (or last synced to). It must
+ * still be reachable from the base branch tip, or the base was rebased,
+ * amended or force-pushed. This is the one test that separates a rewrite from
+ * an ordinary "base moved on": forward movement keeps the old tip an ancestor,
+ * a rebase or an amend does not.
+ *
+ * Best-effort: an absent, unknown or garbage-collected SHA returns undefined
+ * rather than reporting a rewrite over a ref that cannot be resolved.
+ * `git()` rejects on any non-zero exit, and `merge-base --is-ancestor` exits 1
+ * for "not an ancestor" and 128 for "not a valid object", which a bare catch
+ * cannot tell apart. So the object is verified first; only once it resolves
+ * does a caught rejection unambiguously mean "not an ancestor".
+ *
+ * Reads only the repository, never a worktree, so a caller sweeping every task
+ * that shares a base branch can ask it about a task it is not checked out in
+ * (lib/baseRewrite.ts).
+ */
+export async function baseShaRewritten(repoPath: string, baseSha: string | undefined, baseBranch: string): Promise<boolean | undefined> {
+  if (!baseSha) return undefined;
+  const resolved = await git(repoPath, ["rev-parse", "--verify", `${baseSha}^{commit}`]).then(() => true).catch(() => false);
+  if (!resolved) return undefined;
+  return git(repoPath, ["merge-base", "--is-ancestor", baseSha, baseBranch]).then(() => false).catch(() => true);
+}
+
 export interface SyncStatus {
   behind: number; // commits on the base branch not yet in the work branch
   ahead: number; // divergent commits on the work branch not in the base branch
@@ -3005,25 +3032,10 @@ export async function worktreeSyncStatus(input: {
   if (!baseOk) return { ...none, baseMissing: true };
   if (!workOk) return none;
 
-  // The task's cut point (or the tip it last synced to) must still be reachable
-  // from the base branch, or the base's history was rewritten under it. This is
-  // the one test that separates a rewrite from an ordinary "base moved on":
-  // forward movement keeps the old tip an ancestor, a rebase or an amend does
-  // not. Best-effort: an unknown or garbage-collected SHA leaves it unset
-  // rather than reporting a rewrite over a ref we cannot resolve.
-  //
-  // `git()` rejects on any non-zero exit, and `merge-base --is-ancestor` exits
-  // 1 for "not an ancestor" and 128 for "not a valid object", which a bare
-  // catch cannot tell apart. So the object is verified first; only once it
-  // resolves does a caught rejection unambiguously mean "not an ancestor".
-  const baseShaResolved = baseSha
-    ? await git(repoPath, ["rev-parse", "--verify", `${baseSha}^{commit}`]).then(() => true).catch(() => false)
-    : false;
-  const baseRewritten = baseShaResolved
-    ? await git(repoPath, ["merge-base", "--is-ancestor", baseSha!, baseBranch])
-        .then(() => false)
-        .catch(() => true)
-    : undefined;
+  // The task's cut point must still be reachable from the base branch, or the
+  // base's history was rewritten under it. Undefined when there is no cut
+  // point to test; see baseShaRewritten for why the object is verified first.
+  const baseRewritten = await baseShaRewritten(repoPath, baseSha, baseBranch);
 
   const countOf = async (range: string) => parseInt(await git(repoPath, ["rev-list", "--count", range]).catch(() => "0"), 10) || 0;
   const [baseTip, behind, ahead, isDirty] = await Promise.all([

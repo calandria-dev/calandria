@@ -302,6 +302,17 @@ board as an agent change with a one-click revert. **`update_tag(tag, {name?, des
 color?, base_branch?})`** edits a tag's own fields, separately from a task's `tags` list; there
 is no tool to delete a tag, since deleting is a manual, hard-delete action with no undo.
 
+**`report_base_rewrite(branch?)`** is the last step of a task that lands an integration branch.
+A task that rebases a branch and force-pushes it leaves every other task cut from that branch
+pinned to commits that no longer exist. This tool names the branch that was rewritten (defaulting
+to the calling task's own base) and flags each affected task with a **Base rewritten** chip on
+the board plus the exact `git rebase --onto` line in its transcript. It rebases nothing: each
+flagged task runs its own rebase from its own sync banner, where uncommitted work and an open
+pull request are decided by whoever owns that task. Every task it names is verified against git
+first, so a branch that only moved forward flags nobody, and the chip clears itself the moment
+that task's cut point is reachable from the base again. See
+`docs/design/specs/2026-09-09-landing-task-catch-up.md`.
+
 ### Staying level with the remote
 
 **What it is:** Calandria fetches the base branch on its own so a new task is cut from the real

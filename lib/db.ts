@@ -187,6 +187,19 @@ export function init(db: Database.Database) {
       -- "ran, unread", not a status of its own, so acknowledging it is an
       -- ordinary status write rather than a restore.
       unread_run_at INTEGER NOT NULL DEFAULT 0,
+      -- ms epoch when a landing task reported that the branch this task is
+      -- based on had its history rewritten (rebased and force-pushed) under it,
+      -- and nobody has caught this task up yet; 0 = nothing outstanding.
+      -- Written by lib/baseRewrite.ts on the report_base_rewrite tool, cleared
+      -- by GET /api/tasks/[id]/sync the moment the cut point is reachable from
+      -- the base again (a rebase, or a retarget onto another branch).
+      --
+      -- The sync banner already detects a rewrite, but it only mounts for the
+      -- SELECTED task, so a sibling left pinned to replaced history said
+      -- nothing until somebody happened to open it. This column is what puts
+      -- the same fact on the board, where the user can see which tasks a
+      -- landing left behind without opening each one.
+      base_rewritten_at INTEGER NOT NULL DEFAULT 0,
       -- Queued to start on its own at this instant (ms epoch; 0 = not queued).
       -- The one stored fact behind "start at the usage-window reset": a server
       -- sweep (lib/deferredStart.ts) launches an unstarted task's first turn or
@@ -994,6 +1007,7 @@ export function migrate(db: Database.Database) {
   // "In progress" would resurface months of finished runs as an unread pile,
   // and this state is about the run that just happened.
   if (!taskCols.includes("unread_run_at")) db.exec("ALTER TABLE tasks ADD COLUMN unread_run_at INTEGER NOT NULL DEFAULT 0");
+  if (!taskCols.includes("base_rewritten_at")) db.exec("ALTER TABLE tasks ADD COLUMN base_rewritten_at INTEGER NOT NULL DEFAULT 0");
   // Queued-to-start deadline (see the CREATE TABLE note). 0 on every existing
   // row is right for the same reason as snoozed_until: nothing was queued.
   if (!taskCols.includes("start_at")) db.exec("ALTER TABLE tasks ADD COLUMN start_at INTEGER NOT NULL DEFAULT 0");

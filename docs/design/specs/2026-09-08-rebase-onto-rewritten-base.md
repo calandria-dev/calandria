@@ -87,7 +87,9 @@ command that fixes it printed, which is the same posture the detection change to
 
 **Catching up sibling tasks.** A landing task that rebases and force-pushes a branch other tasks
 are based on should catch those tasks up as its last step. That is the second task under the
-`base-rewrite-sync` tag.
+`base-rewrite-sync` tag, done in `2026-09-09-landing-task-catch-up.md`. It flags each affected
+task and leaves the rebase to that task's own banner, so each of the four decisions above is
+answered once per task by whoever owns it.
 
 ## Verification
 

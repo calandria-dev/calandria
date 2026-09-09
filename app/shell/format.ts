@@ -374,6 +374,19 @@ export function prFailingChecks(t: Pick<TaskRow, "pr_failing">): { name: string;
 export const isUnreadRun = (t: TaskRow) =>
   t.status === "in_progress" && t.unread_run_at > 0 && !t.running && !t.awaiting_input;
 
+// A task whose base branch was rewritten under it by the task that landed that
+// branch (lib/baseRewrite.ts), and which nobody has caught up yet. It is not
+// "needs you": nothing is waiting on an answer, and the remedy is the rebase
+// button in the task's own sync banner. It earns a chip because that banner
+// only mounts for the selected task, so without it the fact is invisible until
+// somebody opens the task.
+//
+// The flag clears itself on the next sync read once the cut point is reachable
+// from the base again, so a terminal task is screened here only to keep a chip
+// off a card nobody will act on.
+export const isBaseRewritten = (t: TaskRow) =>
+  t.base_rewritten_at > 0 && t.status !== "done" && t.status !== "cancelled";
+
 // A tray suggestion an agent has retracted (the withdraw_suggestion tool):
 // still `suggested`, so it stays in the tray for the user to revive or
 // dismiss, but cancelled, so it no longer proposes anything. Without this the
