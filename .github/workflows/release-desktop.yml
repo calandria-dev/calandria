@@ -37,7 +37,8 @@
 # push-to-main Test run to conclude and fails unless it succeeded. That action's
 # header carries the reasoning — why it waits rather than querying for a
 # completed run, why the filter is `event=push`, why `cancelled` is not a red
-# verdict, and why the 45-minute ceiling sits where it does. Read it there.
+# verdict, and why the wait budget restarts when the run leaves the queue. Read
+# it there.
 #
 # SIGNING IS SUPPLIED HERE, NOT WRITTEN HERE. desktop/signing.js decides the
 # policy and desktop/electron-builder.cjs assembles it; this workflow only puts
@@ -175,10 +176,10 @@ jobs:
   gate:
     name: Gate
     runs-on: ubuntu-24.04
-    # Above the gate action's 2700-second wait, or the job timeout becomes the
+    # Above the gate action's 7200-second ceiling, or the job timeout becomes the
     # thing that fails releases. Same reasoning, same shape, as publish-image.yml's
     # `prepare`.
-    timeout-minutes: 50
+    timeout-minutes: 130
     permissions:
       contents: read
       # The gate polls test.yml's run history for this SHA.
