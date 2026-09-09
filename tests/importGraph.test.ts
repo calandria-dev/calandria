@@ -44,6 +44,7 @@ const PINNED = [
   "lib/tagContext.ts", //        the tag blocks buildProjectContext appends; store + types only
   "lib/taskMove.ts", //          behind both move routes; store + locks + bus, no driving
   "lib/baseBranch.ts", //        which branch a task is based on + the retarget policy; store + git + bus, no driving
+  "lib/baseRewrite.ts", //     which sibling tasks a rewritten base orphaned + the flag; store + git + baseBranch + bus, no driving
   "lib/baseDrift.ts", //         the stale-base note a cut records for the opening turn; git + globalThis, no driving
   "lib/prMerge.ts", //          may this PR be squash-merged, and if not why not; pure types-only policy the client bundles alongside the route that enforces it
   "lib/prTools.ts", //          the commit/push/`gh pr create` both POST /api/tasks/[id]/pr and the create_pr tool run; store + git + github, no driving
@@ -92,6 +93,7 @@ const PINNED = [
   "app/api/services/grant/route.ts",
   "app/api/instance/services-restore/route.ts",
   "app/api/instance/metrics/route.ts", // the scrape target; a "which agents are configured?" series later must use capabilities.ts
+  "lib/updates/check.ts", // imported by the update routes and by the scheduler boot ping; needs only the database, the event bus and fetch
 ];
 
 // Modules that MAY reach an SDK, but only ever through a dynamic `import()`.

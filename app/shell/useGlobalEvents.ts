@@ -64,6 +64,14 @@ export function useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProje
       window.dispatchEvent(new CustomEvent("calandria:runbooks", { detail: ev.projectId }));
       return;
     }
+    // The instance's release check found something different, or somebody
+    // skipped a version or turned the check off. Relayed for the same reason
+    // as runbooks above: useUpdates owns its own fetch, and this hook holds
+    // nothing of the update state. No project id, since there isn't one.
+    if (ev.type === "updates_changed") {
+      window.dispatchEvent(new CustomEvent("calandria:updates"));
+      return;
+    }
     // A project's tags changed (create, rename, recolor, delete, or
     // membership moved by a task write or the bulk tag route), here, in
     // another tab, or by an agent. Tags ride the project GET with their

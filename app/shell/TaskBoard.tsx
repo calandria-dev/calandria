@@ -3,7 +3,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import type { Status } from "@/lib/types";
 import { Icon } from "../icons";
-import { blockedNote, isAwaiting, isPrRed, isUnreadRun, isWithdrawn, needsYou, relTime, withdrawnLast } from "./format";
+import { blockedNote, isAwaiting, isBaseRewritten, isPrRed, isUnreadRun, isWithdrawn, needsYou, relTime, withdrawnLast } from "./format";
 import { AgentEditedChip } from "./AgentEdits";
 import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
 import { isQueuedStart } from "./queuedStart";
@@ -265,7 +265,7 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
         </div>
       )}
       {!mini && <DiffFooter task={task} points={sparkline} projectBranch={projectBranch} />}
-      {(!!task.agent_edited_at || blocked || queued || sessionCount > 0) && !mini && (
+      {(!!task.agent_edited_at || blocked || queued || isBaseRewritten(task) || sessionCount > 0) && !mini && (
         <div className="bc-foot">
           <AgentEditedChip task={task} variant="board" />
           {queued && (
@@ -282,6 +282,14 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
               {Icon.lock()} Blocked by {blockedBy!.length === 1 ? "1 task" : `${blockedBy!.length} tasks`}
             </span>
           ))}
+          {isBaseRewritten(task) && (
+            <span
+              className="bc-chip rewritten"
+              title={`${task.base_branch || "This task's base branch"} was rewritten since this task was cut. Open the task and rebase from the sync banner.`}
+            >
+              {Icon.git()} Base rewritten
+            </span>
+          )}
           <span className="sp" />
           {sessionCount > 0 && <span className="bc-sess" title={`${sessionCount} session${sessionCount !== 1 ? "s" : ""}`}>{Icon.clock()} {sessionCount}</span>}
         </div>

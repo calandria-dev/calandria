@@ -41,6 +41,9 @@ import { topoMembers } from "./tagContext";
 // never reimplements the fallback chain); `setTaskBaseBranch` is the whole
 // retarget policy behind `set_base_branch`, shared with the route.
 import { resolveBaseBranch, setTaskBaseBranch } from "./baseBranch";
+// The report_base_rewrite tool's whole policy: flagBaseRewrite re-derives every
+// affected task from git, describeSweep renders the result for the model.
+import { flagBaseRewrite, describeSweep } from "./baseRewrite";
 // One name check, shared with PATCH /api/tags/[id]: a tag's base branch is a
 // string that reaches a `git` argv later, and `--upload-pack=evil` is a
 // perfectly ordinary-looking one.
@@ -1348,6 +1351,33 @@ export async function setBaseBranchForAgent(
         ? ""
         : " The user can see this on their board as a change made by an agent, with a one-click revert that retargets it back."),
   };
+}
+
+/**
+ * The `report_base_rewrite` tool: flag every other task in the project still
+ * based on a branch this task just rewrote (a rebase plus a force-push).
+ *
+ * This only flags; it never rebases anything and never touches another
+ * task's branch or worktree. The branch name is the model's word, but
+ * `flagBaseRewrite` re-derives which tasks were actually orphaned from git,
+ * one task at a time, so a wrong or stale name flags nobody.
+ */
+export async function reportBaseRewriteForAgent(
+  caller: Task,
+  branchRef: string | undefined
+): Promise<{ ok: boolean; text: string }> {
+  const project = getProject(caller.project_id);
+  if (!project) return { ok: false, text: "Could not report the rewrite: this task's project no longer exists." };
+
+  const branch = branchRef?.trim() || resolveBaseBranch(caller, project);
+  if (!branch)
+    return {
+      ok: false,
+      text: "Could not report the rewrite: name the branch you rewrote, this task has no base branch to fall back on.",
+    };
+
+  const sweep = await flagBaseRewrite({ project, baseBranch: branch, caller });
+  return { ok: true, text: describeSweep(sweep) };
 }
 
 /**

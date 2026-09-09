@@ -16,6 +16,8 @@ import { ProjectLanding } from "./shell/ProjectLanding";
 import { selectOneTag } from "./shell/TagChips";
 import { SettingsView } from "./shell/SettingsView";
 import { InsightsView } from "./shell/InsightsView";
+import { UpdatePill } from "./shell/UpdatePill";
+import { useUpdates } from "./shell/useUpdates";
 import { AppearancePanel } from "./shell/AppearancePanel";
 import { ColResize, ColRail, TerminalDrawer, BootSkeleton } from "./shell/Layout";
 import { ServicesDrawer } from "./shell/Services";
@@ -197,6 +199,9 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
   const tagsById = useMemo(() => new Map(o.tags.map((t) => [t.id, t])), [o.tags]);
   const isMobile = useIsMobile();
   const macChrome = useMacDesktopChrome();
+  // One instance-wide fact, read once here and handed to the two places that
+  // render it: the titlebar pill and the Updates field in Settings.
+  const updates = useUpdates();
 
   // Auto-collapse: the shed set the window width implies, plus the columns the
   // user has re-opened from their spine in spite of it. The override is what
@@ -662,6 +667,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
       onRerunSetup={o.rerunOnboarding}
       onClose={() => o.setView("workspace")}
       initialSection={settingsSection}
+      updates={updates}
     />
   );
 
@@ -696,6 +702,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
         )}
 
         <div className="tb-right">
+          <UpdatePill updates={updates} isMobile={isMobile} />
           <PlanUsagePill agents={o.agents} appDefaults={o.appDefaults} />
           {o.needsYouTotal > 0 && (
             <div style={{ position: "relative" }}>

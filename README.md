@@ -221,6 +221,11 @@ already queued. The transcript records that it was sent.
 - **A complete workspace:** chat, terminal, managed services, live logs, and
   token and usage insights in one place, including a live session/week
   plan-usage meter for a Claude Pro/Max or ChatGPT login.
+- **Update notifications:** a titlebar pill when a newer release exists, with
+  the release notes behind it and the upgrade steps for how this instance was
+  installed. The server does the checking, six-hourly, so no browser tab calls
+  github.com, and `CALANDRIA_UPDATE_CHECK=off` turns it off.
+  ([Update notifications](docs/SELF_HOSTING.md#update-notifications))
 
 <p align="center">
   <img src="docs/images/mobile-tasks.png" width="300" alt="Task list on a phone">

@@ -144,8 +144,8 @@ appended to the system prompt.
 - Auth delegates to `lib/claude-auth.ts`.
 
 Tools mounted in-process: `suggest_task`, `list_tasks`, `list_tags`, `get_task`,
-`update_task`, `move_task`, `withdraw_suggestion`, `set_base_branch`, `create_pr`
-(conditional), `update_tag`, `list_projects`, `expose_service`, `create_runbook`,
+`update_task`, `move_task`, `withdraw_suggestion`, `set_base_branch`, `report_base_rewrite`,
+`create_pr` (conditional), `update_tag`, `list_projects`, `expose_service`, `create_runbook`,
 `list_runbooks`, `update_runbook`.
 
 ### Codex (`lib/agents/codex/driver.ts`)
@@ -300,8 +300,8 @@ own `canUseTool` denials never emit this message, so the two paths cannot double
 ## Agent tools (`lib/agentTools.ts`)
 
 The tool roster is the same across drivers: `suggest_task`, `list_tasks`, `get_task`,
-`update_task`, `move_task`, `withdraw_suggestion`, `set_base_branch`, `create_pr`,
-`list_tags`, `update_tag`, `list_projects`, `expose_service`, `create_runbook`,
+`update_task`, `move_task`, `withdraw_suggestion`, `set_base_branch`, `report_base_rewrite`,
+`create_pr`, `list_tags`, `update_tag`, `list_projects`, `expose_service`, `create_runbook`,
 `list_runbooks`, `update_runbook`, `ask_user`.
 
 - Claude mounts every tool but `ask_user` in-process (`createSdkMcpServer`) and gets asks
