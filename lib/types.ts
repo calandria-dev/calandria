@@ -130,6 +130,9 @@ export interface Task {
   // starts on the task and by any explicit status write. `status` itself is
   // untouched, the same as a snooze.
   unread_run_at: number;
+  // ms epoch of an unaddressed base-branch rewrite reported by the task that
+  // did the rewriting (lib/baseRewrite.ts); 0 = nothing outstanding.
+  base_rewritten_at: number;
   // When this task is queued to start on its own (ms epoch; 0 = not queued):
   // "start at the usage-window reset" (lib/deferredStart.ts). For a
   // never-started task the sweep launches its first turn; for a started one

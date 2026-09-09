@@ -761,6 +761,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .bc-foot .sp{flex:1;}
 .bc-chip{font-family:var(--mono);font-size:9px;letter-spacing:.04em;color:var(--ink-3);border:1px solid var(--line);border-radius:5px;padding:2.5px 6px;display:flex;align-items:center;gap:5px;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
 .bc-chip.block{color:var(--amber);border-color:var(--amber);background:var(--amber-soft);}
+.bc-chip.rewritten{color:var(--amber);border-color:var(--amber);background:var(--amber-soft);}
 .bc-chip.autostart{color:var(--blue);border-color:var(--blue);background:var(--blue-soft);}
 /* an agent edited this task since you accepted it: see .blocked-chip.changed */
 .bc-chip.changed{color:var(--violet);border-color:var(--violet);background:var(--violet-soft);}

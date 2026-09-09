@@ -38,12 +38,13 @@ import {
   resolveTagRefs,
   resolveTargetProject,
   resolveTitleRefs,
+  reportBaseRewriteForAgent,
   setBaseBranchForAgent,
   updateTagForAgent,
   updateTaskForAgent,
   withdrawSuggestionForAgent,
 } from "../../agentTools";
-import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../../agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, REPORT_BASE_REWRITE, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../../agentToolDefs.mjs";
 import { createPrForAgent } from "../../prTools";
 import { createRunbookForAgent, listRunbooksForAgent, updateRunbookForAgent } from "../../runbookTools";
 import { publishGlobal } from "../../events";
@@ -507,6 +508,17 @@ function calandriaServer(
           // lib/baseBranch.ts, shared with POST /api/tasks/[id]/base-branch.
           const { task: updated, text } = await setBaseBranchForAgent(task, args.task, args.branch);
           return { content: [{ type: "text", text }], ...(updated ? {} : { isError: true }) };
+        }
+      ),
+      tool(
+        REPORT_BASE_REWRITE.name,
+        REPORT_BASE_REWRITE.description,
+        { branch: z.string().optional().describe(REPORT_BASE_REWRITE.params.branch) },
+        async (args: { branch?: string }) => {
+          // The caller is the server's word, closed over from the turn. `branch` is
+          // the model's, and every task the sweep flags is re-checked against git.
+          const { ok, text } = await reportBaseRewriteForAgent(task, args.branch);
+          return { content: [{ type: "text", text }], ...(ok ? {} : { isError: true }) };
         }
       ),
       // Only on a project that lands by pull request. On a merge project there

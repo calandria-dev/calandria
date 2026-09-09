@@ -36,7 +36,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../lib/agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, REPORT_BASE_REWRITE, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../lib/agentToolDefs.mjs";
 import { guardToolHandler, DEFAULT_AGENT_TOOL_TIMEOUT_MS } from "../lib/agentToolGuard.mjs";
 
 const TASK_ID = process.env.CALANDRIA_TASK_ID || "";
@@ -308,6 +308,23 @@ server.registerTool(
     // (any task in the same project, never one with a live turn that isn't
     // the caller's own), against CALANDRIA_TASK_ID as the trusted caller identity.
     const data = await callInternal("set-base-branch", { branch, task });
+    return { content: [{ type: "text", text: data.text }] };
+  }
+);
+
+server.registerTool(
+  REPORT_BASE_REWRITE.name,
+  {
+    description: REPORT_BASE_REWRITE.description,
+    inputSchema: {
+      branch: z.string().optional().describe(REPORT_BASE_REWRITE.params.branch),
+    },
+  },
+  async ({ branch }) => {
+    // `branch` is the model's word for what it rewrote and is forwarded
+    // unvalidated; the endpoint re-derives which tasks were actually
+    // orphaned from git, against CALANDRIA_TASK_ID as the trusted caller.
+    const data = await callInternal("report-base-rewrite", { branch });
     return { content: [{ type: "text", text: data.text }] };
   }
 );

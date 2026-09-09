@@ -99,6 +99,7 @@ export interface TaskRow {
   auto_start: number; // 1 = start automatically when the last unfinished blocker is marked done
   withdrawn_reason: string; // an agent retracted this suggestion and said why ("" = live); pairs with status "cancelled" + suggested 1
   agent_edited_at: number; // ms epoch of the most recent agent edit the user hasn't reviewed yet (0 = nothing outstanding), see AgentEdits.tsx
+  base_rewritten_at: number; // ms epoch of an unaddressed base-branch rewrite reported by the task that rewrote it (0 = nothing outstanding), see format.ts isBaseRewritten
   context_tokens: number; // current context-window occupancy: the latest main-session request's input-side tokens
   context_window: number; // the window those tokens sit in; 0 = unknown, which a local-model override always is (see lib/store.ts taskContextWindow)
   context_pct: number; // context_tokens as a percent (0–100) of the model's window; 0 when the window is unknown

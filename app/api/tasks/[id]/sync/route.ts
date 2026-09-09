@@ -5,6 +5,7 @@ import {
   rebaseWorktreeOntoBase, continueWorktreeRebase, abortWorktreeRebase,
 } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
+import { clearBaseRewriteFlag, cutPointOrphaned } from "@/lib/baseRewrite";
 import { buildConflictPrompt, buildRebaseConflictPrompt } from "@/lib/agents/shared";
 import { hasTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
@@ -45,6 +46,20 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const baseRemote = remote && remote.hasRemote && !remote.unknown
     ? { label: remote.label, behind: remote.behind, ahead: remote.ahead, diverged: remote.diverged }
     : undefined;
+
+  // The board chip a landing task raised (lib/baseRewrite.ts) is a claim about
+  // git, and this is the one read that has just checked it. Clearing it here
+  // means a task that rebased, or was retargeted onto another branch, drops the
+  // chip the first time anybody looks, with no acknowledgement of its own.
+  //
+  // On the same predicate the flag was raised with, not on `status.baseRewritten`.
+  // That one asks only about the local ref, so a chip raised off a force-push
+  // this box has fetched but not merged into its own branch would clear itself
+  // on the first read, which is the case the chip is most useful for. The extra
+  // subprocesses cost nothing on a task carrying no flag. `fetchBase` above has
+  // already refreshed the tracking ref this reads.
+  if (task.base_rewritten_at && !(await cutPointOrphaned(project.repo_path, task.base_sha, baseBranch)))
+    clearBaseRewriteFlag(id);
 
   return NextResponse.json({
     isolated: true, baseBranch, projectBranch: project.branch,
@@ -137,6 +152,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (action === "rebase-continue") {
       const res = await continueWorktreeRebase(task.worktree_path);
       if (res.done && status.baseTip) updateTask(id, { base_sha: status.baseTip });
+      if (res.done) clearBaseRewriteFlag(id);
       if (!res.ok) return NextResponse.json(res, { status: 409 });
       return NextResponse.json(
         res.done
@@ -180,6 +196,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // recorded cut point is reachable from the base again.
       if (res.clean) {
         if (res.onto) updateTask(id, { base_sha: res.onto });
+        clearBaseRewriteFlag(id);
         return NextResponse.json({
           ...res, rebased: true, baseBranch,
           ...(prOpen ? { forcePushNeeded: true, forcePushCommand: `git push --force-with-lease origin ${task.work_branch}` } : {}),
