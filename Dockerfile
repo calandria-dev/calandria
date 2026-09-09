@@ -303,8 +303,11 @@ VOLUME ["/home/calandria"]
 # layer's cache.
 ARG GIT_SHA=unknown
 ARG BUILT_AT=unknown
+# CALANDRIA_CONTAINER tells the update check this is an image install, so the
+# update popover offers the compose upgrade steps.
 ENV CALANDRIA_GIT_SHA=$GIT_SHA \
-    CALANDRIA_BUILT_AT=$BUILT_AT
+    CALANDRIA_BUILT_AT=$BUILT_AT \
+    CALANDRIA_CONTAINER=1
 
 # /api/version doubles as the health probe: it exercises Next and
 # SQLite-backed routing. It presents SERVICE_TOKEN, the one path middleware.ts
