@@ -61,7 +61,14 @@ async function rebaseAndForcePush(colleague: string) {
   return await git(colleague, "rev-parse", "integration");
 }
 
-describe("a task whose base branch is rewritten upstream", () => {
+// Every case below drives a real local `origin` through many git subprocesses
+// and at least one fetch. On Linux each runs in under a second, but the Windows
+// CI runner spawns processes far more slowly and these sit past vitest's 30 s
+// default under load, reddening PRs whose diff cannot reach git (issue #261).
+// The ceiling here is headroom, not a measured bound.
+const GIT_HEAVY_TIMEOUT = 120_000;
+
+describe("a task whose base branch is rewritten upstream", { timeout: GIT_HEAVY_TIMEOUT }, () => {
   it("reports a flat 'in sync' when the local base ref never saw the force-push", async () => {
     const { repo, colleague, wt, preRewriteTip } = await cutTaskFromIntegration();
     const postRewriteTip = await rebaseAndForcePush(colleague);
@@ -218,7 +225,7 @@ const syncPost = (id: string, body?: Record<string, unknown>) =>
     { params: Promise.resolve({ id }) }
   );
 
-describe("rebasing a task onto a base branch that was rewritten under it", () => {
+describe("rebasing a task onto a base branch that was rewritten under it", { timeout: GIT_HEAVY_TIMEOUT }, () => {
   it("replays the task's own commits cleanly where a merge would have conflicted", async () => {
     const fx = await cutTaskWithWork(); // its work is in task.txt, the rewrite's is in shared.txt
     await rebaseAndForcePush(fx.colleague);

@@ -5,6 +5,13 @@ import { ensureWorktree, mergeTask, taskDiff, taskDiffStat } from "../lib/git";
 import { commitFile, git, makeRepo, makeRepoWithOrigin, makeRepoWithWorktree, pushFromColleague, uid, writeFile } from "./helpers";
 import { onPosix } from "./platform";
 
+// Every case below drives a real local `origin` through many git subprocesses
+// and at least one fetch. On Linux each runs in under a second, but the Windows
+// CI runner spawns processes far more slowly and these sit past vitest's 30 s
+// default under load, reddening PRs whose diff cannot reach git (issue #261).
+// The ceiling here is headroom, not a measured bound.
+const GIT_HEAVY_TIMEOUT = 120_000;
+
 describe("taskDiff", () => {
   it("reports a clean, up-to-date worktree as empty", async () => {
     const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
@@ -247,7 +254,7 @@ describe("taskDiff", () => {
 // record of, so a resolver that asks only the local branch keeps diffing from
 // the cut-point snapshot and reports every commit the base gained as the
 // task's own work.
-describe("taskDiff against a base branch known through its remote-tracking ref", () => {
+describe("taskDiff against a base branch known through its remote-tracking ref", { timeout: GIT_HEAVY_TIMEOUT }, () => {
   async function featureFixture() {
     const { repo, colleague } = await makeRepoWithOrigin();
     await git(colleague, "checkout", "-b", "feature");
