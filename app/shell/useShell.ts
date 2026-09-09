@@ -1030,6 +1030,7 @@ export function useShell() {
   const RESET_KEYS = new Set([
     "utility_agent", "background_jobs", "recap_mode",
     "notifications", "notify_awaiting_input", "notify_turn_failed", "notify_schedule_failed",
+    "notify_queued_start", "notify_queued_start_skipped",
   ]);
   const resetSettings = () => {
     setSettings(DEFAULT_SETTINGS);

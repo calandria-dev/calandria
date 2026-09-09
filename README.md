@@ -198,7 +198,8 @@ already queued. The transcript records that it was sent.
   ![Project page with a tag, two runbooks, and a weekday schedule](docs/images/project.png)
 
 - **Notifications:** when a task stops and waits for you, when a turn fails,
-  or when a scheduled run fails. Calandria delivers these as a browser
+  when a scheduled run fails, and when a start queued for the usage-window
+  reset fires or is skipped. Calandria delivers these as a browser
   notification in any open tab and as a push to your phone with the app
   closed, and stays silent only when you're already looking at that task.
 - **Installable app:** a PWA with its own icon and standalone window. Install

@@ -512,7 +512,8 @@ window resets, instead of babysitting the clock yourself.
 Until the reset fires, the task's card reads *Starts at 4:49 PM* (or *Resumes …*). A queued task
 that is still blocked by another, or whose turn is already live when its time comes, is skipped
 with a note instead of started. When the queued start fires, the transcript records that the
-session moved on its own.
+session moved on its own. Both outcomes are also a notification, since the reset lands at
+whatever hour the window expires: see [Notifications](#notifications) for the two switches.
 
 **What it does not do:**
 
@@ -749,14 +750,16 @@ completing, a banner says so instead of showing a next-run time that will never 
 
 ![The Needs you dropdown listing sessions waiting on an answer across projects](images/inbox.png)
 
-**What it is:** an alert whenever a task stops and needs you, over a browser notification, push
-to a subscribed device, or both.
+**What it is:** an alert whenever a task stops and needs you, or moves on its own while you are
+away, over a browser notification, push to a subscribed device, or both.
 
 | Notification | When it fires |
 |-|-|
 | A task is waiting for input | An agent asked a question, needs a tool approved, or finished its turn without finishing the job. |
 | A turn failed | The session died: a dead login, a spent quota, a full context window, or a crash. |
 | A scheduled run failed | A schedule fired and got nowhere, with nobody watching to see it fail. |
+| A queued start fired | A task queued for the usage-window reset started or resumed on its own. See [Starting at the usage-window reset](#starting-at-the-usage-window-reset). |
+| A queued start was skipped | The reset came and the task launched nothing: a turn was already running, another task still blocks it, or the project has no working directory. |
 
 **How to use it:**
 

@@ -158,10 +158,11 @@ jobs:
   prepare:
     runs-on: ubuntu-24.04
     # Generous only for the release path: the gate below WAITS for this
-    # commit's Test run to conclude (up to 45 minutes), so the job timeout has
-    # to sit above that wait or it would become the thing that fails releases.
-    # Every other event skips that step and this job still finishes in seconds.
-    timeout-minutes: 50
+    # commit's Test run to conclude (up to the action's max-wait-seconds, 120
+    # minutes of queue plus test time), so the job timeout has to sit above that
+    # wait or it would become the thing that fails releases. Every other event
+    # skips that step and this job still finishes in seconds.
+    timeout-minutes: 130
     permissions:
       contents: read
       # The nightly freshness check reads the registry.

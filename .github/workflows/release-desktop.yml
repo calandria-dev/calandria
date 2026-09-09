@@ -37,7 +37,8 @@
 # push-to-main Test run to conclude and fails unless it succeeded. That action's
 # header carries the reasoning — why it waits rather than querying for a
 # completed run, why the filter is `event=push`, why `cancelled` is not a red
-# verdict, and why the 45-minute ceiling sits where it does. Read it there.
+# verdict, and why the wait budget restarts when the run leaves the queue. Read
+# it there.
 #
 # SIGNING IS SUPPLIED HERE, NOT WRITTEN HERE. desktop/signing.js decides the
 # policy and desktop/electron-builder.cjs assembles it; this workflow only puts
@@ -85,7 +86,7 @@
 # rather than the merge to main, because this is the first thing that puts a
 # binary in anybody's hands and a binary that cannot update itself is one people
 # keep. `electron-updater` landed on 2026-08-30 (desktop/updater.js,
-# docs/DESKTOP_APP.md §6.6), so a release cut through this lane now ships
+# desktop/README.md, "Updates"), so a release cut through this lane now ships
 # downloads that read the feed it publishes.
 #
 # NOTHING HERE CHANGED TO MAKE THAT TRUE, which was the prediction and is worth
@@ -100,7 +101,7 @@
 #
 # WHAT STILL HAS TO HAPPEN AFTER THIS LANE'S FIRST REAL RUN, recorded because
 # both places say they are waiting on exactly this: the quarantine workaround in
-# docs/DESKTOP_APP.md §6.3 and desktop/README.md is the correct instruction for a
+# docs/DESKTOP_APP.md, "Installing", is the correct instruction for a
 # self-built or CI-pulled ad-hoc bundle and stays until a notarized artifact
 # exists AND somebody has confirmed it opens after a browser download on a
 # machine that has never seen it. A `curl` or an `scp` does not reproduce that —
@@ -175,10 +176,10 @@ jobs:
   gate:
     name: Gate
     runs-on: ubuntu-24.04
-    # Above the gate action's 2700-second wait, or the job timeout becomes the
+    # Above the gate action's 7200-second ceiling, or the job timeout becomes the
     # thing that fails releases. Same reasoning, same shape, as publish-image.yml's
     # `prepare`.
-    timeout-minutes: 50
+    timeout-minutes: 130
     permissions:
       contents: read
       # The gate polls test.yml's run history for this SHA.
@@ -413,7 +414,8 @@ jobs:
       # Unpatched, every signed macOS build fails on the current runner image with
       # "SecKeychainUnlock: The user name or passphrase you entered is not
       # correct" — the reason v0.10.0 has no macOS assets. The script's header and
-      # docs/DESKTOP_APP.md §6.4.1 carry the why, and both say when to delete it.
+      # desktop/README.md, "Signing and publishing", carry the why, and both say
+      # when to delete it.
       - name: Install Electron
         run: npm run desktop:install
 
@@ -536,7 +538,7 @@ jobs:
 
           echo "--- Gatekeeper assessment (must ACCEPT) ---"
           if ! spctl --assess --type execute -vvv "$app"; then
-            echo "::error::Gatekeeper REFUSED a build this lane signed and notarized. The artifact would show 'Calandria is damaged and can't be opened' on a downloaded copy. See docs/DESKTOP_APP.md §6.3."
+            echo "::error::Gatekeeper REFUSED a build this lane signed and notarized. The artifact would show 'Calandria is damaged and can't be opened' on a downloaded copy. See desktop/README.md, Signing and publishing."
             exit 1
           fi
 

@@ -109,7 +109,7 @@ const {
 // Persistent logging, set up before anything else writes a line. Everything
 // logged through `console.log`, including sidecar lines the Supervisor
 // relays through it, lands in electron-log's file as well as on stdout (path
-// differs per platform, see docs/DESKTOP_APP.md §6.6), which captures
+// differs per platform, see desktop/README.md, "Updates"), which captures
 // failures after the drain with no terminal attached. The console transport
 // stays plain text so stdout is byte-identical: desktop/e2e reads `[shell]`
 // lines off it with `startsWith`.
@@ -294,8 +294,8 @@ if (!app.requestSingleInstanceLock()) {
 function main() {
   app.on("window-all-closed", () => {
     // Normally unreachable: the close handler hides the window instead of
-    // destroying it, on every platform (see "Close vs quit" in
-    // docs/DESKTOP_APP.md §5.1). Reached when a close arrives before boot()
+    // destroying it, on every platform (see "Notifications, tray, and close vs
+    // quit" in docs/DESKTOP_APP.md). Reached when a close arrives before boot()
     // finished (no server to keep alive, no confirmed tray yet) or when an
     // instance switch destroys the old window and builds a new one in the
     // same tick, which also fires this event. Checking for a live window
@@ -442,7 +442,8 @@ function serviceTokenFor(inst) {
 /* ------------------------------------------------------------------------- *
  * Instance sign-in: the Electron half. instance-auth.js and oauth.js hold
  * everything that can be decided without a display; this is the part that
- * needs a session, a browser and a window. docs/DESKTOP_APP.md §8.8.
+ * needs a session, a browser and a window. See "Signing in to an instance" in
+ * docs/DESKTOP_APP.md.
  * ------------------------------------------------------------------------- */
 
 /** The keyring's answer, once it has given one. See `credentialCipher`. */
@@ -917,8 +918,9 @@ function createWindow() {
 
   // Close vs quit, one rule on all three platforms: the X button (and Cmd+W)
   // hides the window, and quitting is something you ask for by name (see
-  // "Close vs quit" in docs/DESKTOP_APP.md §5.1). A hidden window keeps
-  // working, the tray icon still shows the "N need you" count, and Show is
+  // "Notifications, tray, and close vs quit" in docs/DESKTOP_APP.md). A hidden
+  // window keeps working, the tray icon still shows the "N need you" count,
+  // and Show is
   // one click away, so this avoids an absent-minded X killing an in-flight
   // agent turn (desktop/e2e/03-quit-drain.spec.ts pins the drain). Hiding
   // instead of destroying also preserves renderer state (open transcript,
@@ -2502,7 +2504,7 @@ function applyBadge() {
  * background subscriber for every saved ssh host would mean opening an SSH
  * connection per host, to machines the user isn't looking at, on every
  * launch. So it contributes to the badge while attached and drops out on
- * leaving; see docs/DESKTOP_APP.md §8.
+ * leaving; see docs/DESKTOP_APP.md, "Instances".
  */
 function subscriberOrigin(inst) {
   if (!inst) return null;
