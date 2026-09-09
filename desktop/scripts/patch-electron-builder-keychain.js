@@ -88,8 +88,9 @@ function replaceOnce(source, from, to) {
 //
 // An unpatched macOS build still fails, at the "Package and publish" step,
 // with the SecKeychainUnlock error quoted above, documented in
-// docs/DESKTOP_APP.md §6.4.1. A named, specific failure on the affected
-// platform only is preferable to breaking `npm install` for everyone the day
+// desktop/README.md, "Signing and publishing". A named, specific failure on
+// the affected platform only is preferable to breaking `npm install` for
+// everyone the day
 // upstream reorganizes a file.
 function giveUp(reason) {
   console.warn(

@@ -258,7 +258,7 @@ test("a GUI-launched .app boots, and the supervisor repairs launchd's stub PATH"
       `${priorDomainPath ?? "(none: a GUI launch on this machine gets launchd's stub unprompted)"}\n\n` +
       `planted for the app under test: ${STUB_PATH}\n` +
       `PATH withheld from open(1)'s environment: ${callerHadPath ? "yes" : "no, the caller had none to withhold"}\n\n` +
-      `Read the first line as the premise check docs/DESKTOP_APP.md §2 asks for:\n` +
+      `Read the first line as the premise check this spec cannot make itself:\n` +
       `"none" means this machine would have handed a double-clicked .app the\n` +
       `stub on its own and the plant was redundant. Any other value means the\n` +
       `plant is what put the app in the state the assertions below measure.\n`,

@@ -15,7 +15,7 @@
 // the console and concurrently spawns them with `detached: false`), but
 // concurrently's own SIGINT handler force-terminates the whole tree in the
 // same tick, and the drain loses the race against `taskkill /F`. See
-// docs/WINDOWS.md §8.
+// docs/WINDOWS.md, "Known limits".
 //
 // The two platform rules this file exists for:
 //

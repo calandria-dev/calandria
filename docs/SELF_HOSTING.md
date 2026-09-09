@@ -439,8 +439,8 @@ two different cookie jars. For that case, configure the instance's sign-in
 settings in "Manage instances…" instead: the whole login runs in your real
 browser and a token comes back to the app over a loopback redirect, or you
 supply a credential you already hold as request headers. See
-[`docs/DESKTOP_APP.md`](DESKTOP_APP.md) §8.8 for how it works and which case
-it is for.
+[`docs/DESKTOP_APP.md`](DESKTOP_APP.md#signing-in-to-an-instance) for how it
+works and which case it is for.
 
 ### Naming an instance
 
@@ -475,7 +475,8 @@ unchanged for every self-hosted deployment. The desktop app has no launcher
 script sourcing anything in front of it: a Finder/Dock/Login Item launch
 hands it launchd's own minimal environment, so it reads `$CALANDRIA_ENV_FILE`
 (default `~/.config/calandria/env`) as its own substitute for the launcher
-this section assumes. See [`DESKTOP_APP.md`](DESKTOP_APP.md) §5.2 for the
+this section assumes. See
+[`DESKTOP_APP.md`](DESKTOP_APP.md#setting-environment-variables) for the
 file format and how it layers with the app's own env.
 
 Every variable below also answers to an older `ORCH_*` spelling (a uniform

@@ -5,7 +5,7 @@
  * security key can be used since Electron has no WebAuthn implementation,
  * never delivers a usable session back to the window: the callback carries a
  * session the state was never minted against, and the proxy rejects it. See
- * docs/DESKTOP_APP.md §8.8.
+ * docs/DESKTOP_APP.md, "Signing in to an instance".
  *
  * The fix is the native-app pattern the RFC was written for: the whole flow
  * runs in the system browser, in one cookie jar, so passkeys, security keys,
