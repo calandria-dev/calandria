@@ -1520,6 +1520,16 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .md code{font-family:var(--mono);font-size:12.5px;background:var(--surface-2);border:1px solid var(--line-2);padding:1px 5px;border-radius:5px;color:var(--accent-ink);}
 .md pre{margin:0 0 12px;background:var(--panel-2);border:1px solid var(--line-2);border-radius:var(--r);padding:12px 14px;overflow-x:auto;}
 .md pre code{display:block;background:none;border:none;padding:0;color:var(--ink);font-size:12.5px;line-height:1.55;}
+/* Copy-on-hover for a fenced block. The wrapper carries the positioning; the
+   <pre> keeps its own margin, which collapses through the wrapper unchanged. */
+.md-pre{position:relative;}
+.md-copy{position:absolute;top:7px;right:7px;display:grid;place-items:center;width:26px;height:26px;padding:0;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--surface);color:var(--ink-3);cursor:pointer;opacity:0;transition:opacity .12s ease,color .12s ease,border-color .12s ease;}
+.md-copy svg{width:14px;height:14px;}
+.md-pre:hover .md-copy,.md-pre:focus-within .md-copy{opacity:1;}
+.md-copy:hover{color:var(--ink);border-color:var(--line-strong);}
+.md-copy.on{opacity:1;color:var(--green);border-color:var(--green);}
+/* No hover to reveal it on touch, so it stays visible there. */
+@media (hover:none){.md-copy{opacity:1;}}
 .md blockquote{margin:8px 0;padding:2px 0 2px 14px;border-left:3px solid var(--line-strong);color:var(--ink-2);}
 .md hr{border:none;border-top:1px solid var(--line);margin:14px 0;}
 .md table{border-collapse:collapse;margin:8px 0;font-size:13px;width:100%;}

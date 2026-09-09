@@ -314,17 +314,25 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
               // held to the box's one line instead of being wrapped out of
               // sight (see autosize).
               className={val ? undefined : "blank"}
-              // These attributes state the field's intent and are correct on
-              // their own merits, not because they fix a mobile bug: some iOS
-              // PWA installs show a one-time-code suggestion above the
-              // keyboard and lose autocorrect. No attribute combination tried
-              // here reproduces or fixes it and the mechanism is unidentified,
-              // so do not "fix" it by editing this line again. The probe used
-              // to test it lives at
-              // https://github.com/calandria-dev/calandria-notes/blob/main/tools/kbprobe.html
-              // (copy it into public/ and restart to re-run it).
+              // These attributes state the field's intent. Some iOS PWA
+              // installs still give this field a one-time-code keyboard (a
+              // verification-code suggestion above the keyboard, no
+              // autocorrect). WebKit derives that keyboard only from a literal
+              // autocomplete="one-time-code" token (WebCore/html/Autofill.cpp,
+              // WKContentViewInteraction.mm contentTypeFromFieldName), so the
+              // source is Safari's own AutoFill classifier. That classifier
+              // reads the field's label, aria-label, title and placeholder:
+              // aria-label="verification code" reproduces both symptoms on any
+              // textarea, and a diluted sentence does not. The aria-label below
+              // is the accessible name this field always lacked; it also hands
+              // the classifier an explicit name so it has nothing to infer from
+              // the transcript rendered just above. The five on-device probe
+              // rounds and the WebKit reading are recorded in the notes repo,
+              // measurements/2026-09-08-ios-composer-otp-classification.md.
+              // Retest on a task whose transcript never mentions codes before
+              // touching these attributes again.
               autoComplete="off" autoCorrect="on" autoCapitalize="sentences" spellCheck={true}
-              // Not required for this field's behavior; harmless, so left in place.
+              aria-label="Message"
               name="message"
               // Short enough to fit the one line the empty box now is (see
               // autosize). A textarea placeholder can't ellipsize, so anything

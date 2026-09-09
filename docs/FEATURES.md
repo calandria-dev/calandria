@@ -25,6 +25,9 @@ terminals, or transcripts.
    current turn ends.
 4. Reload the page, close the tab, or let your laptop sleep. Turns run on the server and every
    event is saved as it happens, so the transcript is exactly where you left it.
+5. Hover a fenced code block anywhere a message renders and click the copy button in its top
+   right corner to put the block's source on your clipboard. The button is reachable from the
+   keyboard, and stays visible on a touch screen that has no hover.
 
 ## Project context and long conversations
 
