@@ -341,10 +341,12 @@ jobs:
         with:
           node-version-file: .nvmrc
 
-      # dependabot.yml excludes npm on the claim that `npm audit` covers it —
-      # this job is what makes that claim true. --omit=dev matches what
-      # actually ships; --audit-level=high fails on HIGH/CRITICAL only, so a
-      # moderate advisory in a transitive dep doesn't red-flag every PR.
+      # dependabot.yml excludes root npm VERSION updates; repo-level Dependabot
+      # security updates deliver an advisory fix as a PR, and this job is the
+      # gate behind that, catching anything the bot has not opened a PR for
+      # yet. --omit=dev matches what actually ships; --audit-level=high fails
+      # on HIGH/CRITICAL only, so a moderate advisory in a transitive dep
+      # doesn't red-flag every PR.
       #
       # --package-lock-only, and deliberately no `npm ci` before it: the
       # advisory set npm reports is keyed off the lockfile against the

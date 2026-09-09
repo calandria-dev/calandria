@@ -12,11 +12,45 @@
 #
 # DELIBERATELY NOT COVERED:
 #
-# - npm, AT THE ROOT. The lockfile pins ~1k transitive packages and a personal
-#   fork does not want that PR volume; `npm audit` covers the security case —
-#   and actually runs now (the `audit` job in test.yml, on every push/PR, plus a
-#   weekly unattended run in security-scan.yml), not just claimed here. See
-#   issue #17. `/website` is the deliberate exception; its entry below says why.
+# - npm VERSION updates, AT THE ROOT. The lockfile pins ~1k transitive
+#   packages and a personal fork does not want that PR volume. See issue #17.
+#   `/website` is the deliberate exception; its entry below says why.
+#
+#   Root npm SECURITY updates ARE covered, by the repo-level "Dependabot
+#   security updates" toggle (Settings > Advanced Security, or
+#   `gh api -X PUT repos/calandria-dev/calandria/automated-security-fixes`).
+#   That is a different mechanism from the version updates this file
+#   configures, and it needs no entry here. It opens a PR only when a
+#   published advisory matches something already in the lockfile, so its
+#   volume is the advisory rate for this tree: zero PRs between the 0.11.0
+#   release and 2026-09-09, then one. The volume argument above is why root
+#   version updates stay off; it does not reach this.
+#
+#   Enabled 2026-09-09. Three advisories against `next`, `sharp` and `hono`
+#   published overnight and turned `Audit (npm)` red on every open PR at once,
+#   blocking work whose diffs did not touch a lockfile until a human bumped
+#   the deps by hand (issue #286, fixed by PR #289). The `audit` job found
+#   them correctly. What was missing was a PR that fixes them.
+#
+#   `npm audit` remains the gate, and now covers what security updates miss or
+#   have not opened a PR for yet: `npm audit --package-lock-only --omit=dev
+#   --audit-level=high`, in the `audit` job in test.yml on every push and PR,
+#   plus the weekly unattended run in security-scan.yml. It also still catches
+#   MODERATE and below, which security updates raise a PR for but the job's
+#   --audit-level does not fail on.
+#
+#   KNOWN MANUAL STEP on any Dependabot PR that touches the root lockfile: npm
+#   strips `"gypfile": false` from the `node_modules/better-sqlite3` entry
+#   every time it regenerates package-lock.json, so every such PR needs that
+#   one line re-added by hand before it can go green. Nothing automates it.
+#   The `Windows (types + unit)` job runs `npm ci` before any test, and a
+#   missing field fails the install itself with `gyp ERR! find VS`, so no
+#   test-side repair and no root `postinstall` runs early enough to prevent
+#   it; only a committed lockfile edit does.
+#   `tests/lockfileGypfile.test.ts` is what makes the omission visible on
+#   Linux, where `npm ci` exits 0 and only Windows would have failed. Its
+#   header comment has the full mechanism.
+#
 # - The agent CLI versions (CLAUDE_CODE_VERSION / CODEX_VERSION ARGs in the
 #   Dockerfile), bumped deliberately by hand — see the comment there.
 # - The build engine (buildx + BuildKit) in publish-image.yml. Dependabot's
@@ -53,9 +87,10 @@
 #      keeping the bot honest. (Config upkeep is not free either: fileMatch ->
 #      managerFilePatterns was already one breaking migration.)
 #   2. The Dockerfile ARGs are a trap, not a bonus. CODEX_VERSION has to move
-#      in step with @openai/codex-sdk in package-lock.json, and npm is excluded
-#      above, so Renovate would open CLI bumps that are unsafe to merge as
-#      written. @anthropic-ai/claude-code ships ~21 stable releases a month, so
+#      in step with @openai/codex-sdk in package-lock.json, and root npm
+#      version updates are excluded above, so Renovate would open CLI bumps
+#      that are unsafe to merge as written.
+#      @anthropic-ai/claude-code ships ~21 stable releases a month, so
 #      that PR would be rewritten several times a week. Both ARGs are bumped by
 #      hand BECAUSE the upgrade is a behavioural decision, not because no bot
 #      could see them.
@@ -102,16 +137,25 @@ updates:
       prefix: "ci"
     labels: [dependencies]
 
-  # The one npm ecosystem this file DOES cover, and the exception is narrow on
-  # purpose. The root exclusion above is about volume and about `npm audit`
-  # already covering the security case; neither applies here. website/ is the
-  # calandria.dev Astro site (design plan in the private notes repo at
+  # The one npm ecosystem this file DOES cover with version updates, and the
+  # exception is narrow on purpose. The root exclusion above is about the PR
+  # volume of a ~1k-package lockfile, which does not apply here. website/ is
+  # the calandria.dev Astro site (design plan in the private notes repo at
   # design/WEBSITE.md) with a single direct
   # dependency and ~190 transitive ones, and NOTHING else watches it — the
   # `audit` job in test.yml and the weekly one in security-scan.yml both run
   # against the root lockfile only, and test.yml now ignores website/** outright.
   # Grouped into one PR so the site can never contribute more than a single
   # weekly item to the queue.
+  #
+  # Repo-level security updates cover this directory too, so an advisory
+  # against a website dependency can open a security PR of its own alongside
+  # the weekly group PR. That overlap is accepted and this entry stays. The
+  # duplicate is capped at one extra PR per advisory, and whichever of the two
+  # is rebased second finds the bump already applied and gets closed. Dropping
+  # the version entry to avoid the overlap would leave the only tree with no
+  # audit gate behind it on advisory-only coverage, which is the thing this
+  # entry exists to prevent.
   - package-ecosystem: npm
     directory: /website
     schedule:
