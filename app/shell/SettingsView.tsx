@@ -23,6 +23,7 @@ import { modelLabel, relTime } from "./format";
 import type { PushDevice } from "@/lib/push/types";
 import type { AgentInfoT, AgentsResponseT, EndpointStatusT, GatewayHealthT } from "./types";
 import type { PermissionMatchKind, PermissionRule } from "@/lib/types";
+import type { Updates } from "./useUpdates";
 
 // Log out, at the foot of the settings nav rather than in a section of its own.
 // Calandria has no users, so there is no account to show: the only session that
@@ -731,6 +732,101 @@ function AppearanceSection({ appearance, setAppearance }: {
   );
 }
 
+// This is also the only place the app shows its own version. The check
+// itself runs in the server process (GET/POST /api/updates), so no browser
+// ever calls github.com; this only reads what the server found.
+function UpdatesField({ updates, appDefaults, setAppDefault }: {
+  updates: Updates;
+  appDefaults: Record<string, string>;
+  setAppDefault: (key: string, value: string | null) => void;
+}) {
+  const { state } = updates;
+  if (!state) return null;
+  const { current } = state;
+  // The setting isn't what turned the check off, so the env var did.
+  const envOff = state.enabled === false && appDefaults.update_check !== "off";
+  const on = appDefaults.update_check !== "off";
+  const installLabel = current.installMethod === "container"
+    ? "container"
+    : current.installMethod === "source"
+      ? "source checkout"
+      : "bundled";
+  const versionLine = [
+    current.version,
+    current.sha !== "unknown" ? current.sha.slice(0, 7) : null,
+    current.builtAt !== "unknown"
+      ? `built ${new Date(current.builtAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`
+      : null,
+    installLabel,
+    current.instanceName || null,
+  ].filter((part): part is string => !!part).join(" · ");
+
+  return (
+    <div className="field">
+      <div className="lab" style={{ display: "flex", alignItems: "center", gap: 8 }}>{Icon.arrowUp()} Updates</div>
+      <div className="hlp mono" style={{ marginTop: 0, marginBottom: 10 }}>{versionLine}</div>
+      {envOff ? (
+        <div className="hlp">
+          Update checks are off for this instance (<code>CALANDRIA_UPDATE_CHECK</code>).
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{ flex: 1 }}>
+              <div className="lab" style={{ marginBottom: 2 }}>Check for updates</div>
+              <div className="hlp" style={{ marginTop: 0 }}>
+                Asks github.com for the newest release every six hours. The request carries this instance&apos;s version and nothing else.
+              </div>
+            </div>
+            <button
+              role="switch"
+              aria-label="Check for updates"
+              aria-checked={on}
+              className={`in-switch${on ? " on" : ""}`}
+              onClick={() => setAppDefault("update_check", on ? "off" : null)}
+            ><span /></button>
+          </div>
+          <button
+            className="btn btn-line btn-sm"
+            style={{ marginTop: 10 }}
+            onClick={() => void updates.checkNow()}
+            disabled={updates.checking}
+          >
+            {Icon.arrowUp()} {updates.checking ? "Checking…" : "Check now"}
+          </button>
+        </>
+      )}
+      <div className="hlp" style={{ marginTop: 10 }}>
+        {state.error
+          ? `Last check failed: ${state.error}`
+          : state.available && state.latest
+            ? (
+              <button
+                onClick={() => window.dispatchEvent(new CustomEvent("calandria:open-updates"))}
+                style={{ background: "none", border: "none", padding: 0, color: "var(--accent)", textDecoration: "underline", cursor: "pointer", font: "inherit" }}
+              >
+                {state.latest.version} is available
+              </button>
+            )
+            : state.checkedAt
+              ? `Last checked ${relTime(new Date(state.checkedAt).getTime())} · up to date`
+              : "Not checked yet."}
+      </div>
+      {state.dismissedVersion && (
+        <div className="hlp" style={{ marginTop: 4 }}>
+          {state.dismissedVersion} is skipped.{" "}
+          <button
+            onClick={() => void updates.unskip()}
+            style={{ background: "none", border: "none", padding: 0, color: "var(--accent)", textDecoration: "underline", cursor: "pointer", font: "inherit" }}
+          >
+            Show again
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // The settings surface is a two-pane view that replaces the work area: a category
 // nav (left) + the active section's content (right). Sections are data-driven so
 // growing settings is adding an entry here plus a branch in renderSection, with
@@ -748,7 +844,7 @@ const SETTINGS_SECTIONS: { id: string; label: string; icon: () => React.ReactNod
   { id: "setup", label: "Setup", icon: Icon.bolt },
 ];
 
-export function SettingsView({ settings, setSetting, appearance, setAppearance, appDefaults, setAppDefault, agents, onAgentsRefresh, onReset, onRerunSetup, onClose, initialSection }: {
+export function SettingsView({ settings, setSetting, appearance, setAppearance, appDefaults, setAppDefault, agents, onAgentsRefresh, onReset, onRerunSetup, onClose, initialSection, updates }: {
   settings: Settings;
   setSetting: <K extends keyof Settings>(k: K, v: Settings[K]) => void;
   appearance: Appearance;
@@ -761,6 +857,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   onRerunSetup: () => void;
   onClose: () => void;
   initialSection?: string;
+  updates: Updates;
 }) {
   const [section, setSection] = useState<string>(
     initialSection && SETTINGS_SECTIONS.some((s) => s.id === initialSection) ? initialSection : SETTINGS_SECTIONS[0].id
@@ -876,33 +973,36 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
         <div className="scroll">
           <div className="settings-body">
             {section === "general" && (
-              <div className="field">
-                <div className="lab">{Icon.clear()} /clear recommendation threshold</div>
-                <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                  When a session&apos;s context window crosses either limit, the app nudges you to run <code>/clear</code> to start fresh. Whichever is hit first wins.
-                </div>
-                <div style={{ display: "flex", gap: 14, maxWidth: 420 }}>
-                  <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-                    <div className="lab">Percent of window <span className="opt">(%)</span></div>
-                    <input
-                      type="number" min={1} max={100} value={settings.clearThresholdPct}
-                      onChange={(e) => setSetting("clearThresholdPct", Number(e.target.value) || 0)}
-                      onBlur={(e) => setSetting("clearThresholdPct", clampPct(Number(e.target.value) || DEFAULT_SETTINGS.clearThresholdPct))}
-                    />
+              <>
+                <div className="field">
+                  <div className="lab">{Icon.clear()} /clear recommendation threshold</div>
+                  <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+                    When a session&apos;s context window crosses either limit, the app nudges you to run <code>/clear</code> to start fresh. Whichever is hit first wins.
                   </div>
-                  <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-                    <div className="lab">Absolute tokens <span className="opt">(count)</span></div>
-                    <input
-                      type="number" min={1000} step={1000} value={settings.clearThresholdTokens}
-                      onChange={(e) => setSetting("clearThresholdTokens", Number(e.target.value) || 0)}
-                      onBlur={(e) => setSetting("clearThresholdTokens", clampTokens(Number(e.target.value) || DEFAULT_SETTINGS.clearThresholdTokens))}
-                    />
+                  <div style={{ display: "flex", gap: 14, maxWidth: 420 }}>
+                    <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+                      <div className="lab">Percent of window <span className="opt">(%)</span></div>
+                      <input
+                        type="number" min={1} max={100} value={settings.clearThresholdPct}
+                        onChange={(e) => setSetting("clearThresholdPct", Number(e.target.value) || 0)}
+                        onBlur={(e) => setSetting("clearThresholdPct", clampPct(Number(e.target.value) || DEFAULT_SETTINGS.clearThresholdPct))}
+                      />
+                    </div>
+                    <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+                      <div className="lab">Absolute tokens <span className="opt">(count)</span></div>
+                      <input
+                        type="number" min={1000} step={1000} value={settings.clearThresholdTokens}
+                        onChange={(e) => setSetting("clearThresholdTokens", Number(e.target.value) || 0)}
+                        onBlur={(e) => setSetting("clearThresholdTokens", clampTokens(Number(e.target.value) || DEFAULT_SETTINGS.clearThresholdTokens))}
+                      />
+                    </div>
+                  </div>
+                  <div className="hlp" style={{ marginTop: 8 }}>
+                    Defaults: {DEFAULT_SETTINGS.clearThresholdPct}% or {DEFAULT_SETTINGS.clearThresholdTokens.toLocaleString()} tokens.
                   </div>
                 </div>
-                <div className="hlp" style={{ marginTop: 8 }}>
-                  Defaults: {DEFAULT_SETTINGS.clearThresholdPct}% or {DEFAULT_SETTINGS.clearThresholdTokens.toLocaleString()} tokens.
-                </div>
-              </div>
+                <UpdatesField updates={updates} appDefaults={appDefaults} setAppDefault={setAppDefault} />
+              </>
             )}
             {section === "appearance" && <AppearanceSection appearance={appearance} setAppearance={setAppearance} />}
             {section === "background" && (

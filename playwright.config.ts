@@ -1,5 +1,10 @@
 import { defineConfig } from "@playwright/test";
-import { E2E_BASE_URL, SERVER_ENV } from "./e2e/env";
+import {
+  E2E_BASE_URL,
+  E2E_FEED_PORT,
+  E2E_FEED_URL,
+  SERVER_ENV,
+} from "./e2e/env";
 
 // End-to-end suite: boots the real production server (server.js + pty
 // sidecar, the same `npm start` a self-hoster runs) against a fresh temp
@@ -48,15 +53,26 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
-  webServer: {
-    command: "npm start",
-    url: E2E_BASE_URL,
-    env: SERVER_ENV,
-    // A leftover dev server on this port would have the wrong DB and a
-    // completed onboarding, so always demand a fresh instance.
-    reuseExistingServer: false,
-    timeout: 120_000,
-    stdout: "pipe",
-    stderr: "pipe",
-  },
+  webServer: [
+    // The GitHub releases stand-in, started before the app so the app's first
+    // update check has something to ask. See e2e/releases-server.mjs.
+    {
+      command: "node e2e/releases-server.mjs",
+      url: E2E_FEED_URL,
+      env: { CALANDRIA_E2E_FEED_PORT: String(E2E_FEED_PORT) },
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
+    {
+      command: "npm start",
+      url: E2E_BASE_URL,
+      env: SERVER_ENV,
+      // A leftover dev server on this port would have the wrong DB and a
+      // completed onboarding, so always demand a fresh instance.
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  ],
 });

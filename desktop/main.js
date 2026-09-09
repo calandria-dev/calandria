@@ -98,8 +98,10 @@ const {
   installStageOf,
   installStageTimeout,
   macBundlePath,
+  pageUpdateState,
   parseActiveTurns,
   parseCodesign,
+  parseDesktopCommand,
   quitAction,
   restartNotice,
   updateMenuItem,
@@ -899,11 +901,29 @@ function createWindow() {
   // browser: GitHub PR links, docs, a task's exposed service. A new
   // BrowserWindow for those would be a browser this app then has to maintain.
   win.webContents.setWindowOpenHandler(({ url }) => {
+    // The page asking the shell to act, over a scheme never registered with
+    // the OS: the request never becomes a real navigation, only a call.
+    const cmd = parseDesktopCommand(url);
+    if (cmd) {
+      if (cmd.command === "install") void requestInstall();
+      else void checkForUpdates(true);
+      return { action: "deny" };
+    }
     if (isAppUrl(url)) return { action: "allow" };
     shell.openExternal(url);
     return { action: "deny" };
   });
   win.webContents.on("will-navigate", (event, url) => {
+    // Same recognition as setWindowOpenHandler above, for the case where the
+    // page's request arrives as a top-level navigation instead of a new
+    // window; always denied, since it is a call, not a page to load.
+    const cmd = parseDesktopCommand(url);
+    if (cmd) {
+      if (cmd.command === "install") void requestInstall();
+      else void checkForUpdates(true);
+      event.preventDefault();
+      return;
+    }
     if (isAppUrl(url) || url.startsWith("file://")) return;
     event.preventDefault();
     shell.openExternal(url);
@@ -914,6 +934,10 @@ function createWindow() {
   // and it is the only moment the shell can tell that the window is looking at
   // somebody else's login form.
   win.webContents.on("did-navigate", (_event, url) => maybeOfferNativeSignIn(url));
+  // A reload or a first paint starts with no state of its own; the shell
+  // re-announces what it already knows instead of leaving the pill blank
+  // until the next update event happens to fire.
+  win.webContents.on("did-finish-load", () => pushUpdateState());
   wireContextMenu(win);
 
   // Close vs quit, one rule on all three platforms: the X button (and Cmd+W)
@@ -2715,6 +2739,26 @@ function gotoTask(payload) {
     .catch(() => {});
 }
 
+/**
+ * Mirror the tray's update item into the page, the same way gotoTask() above
+ * mirrors a notification click: by evaluating in the page, since this file
+ * has no preload and no IPC. The page renders an update pill from this event
+ * instead of polling anything.
+ *
+ * Skipped when there is nothing to draw it on: no window, a destroyed one, no
+ * app URL yet, or a window currently showing something other than the app
+ * (the loading screen, a sign-in page), where the event would fire into a
+ * document with no listener for it.
+ */
+function pushUpdateState() {
+  if (!win || win.isDestroyed() || !appUrl) return;
+  if (!isAppUrl(win.webContents.getURL())) return;
+  const detail = JSON.stringify(pageUpdateState(updateState, updateDisposition, app.getVersion()));
+  win.webContents
+    .executeJavaScript(`window.dispatchEvent(new CustomEvent("calandria:desktop-update", { detail: ${detail} }))`)
+    .catch(() => {});
+}
+
 /* ------------------------------------------------------------------------- *
  * Auto-update.
  *
@@ -2844,8 +2888,12 @@ function setUpdateState(patch) {
     error: patch.phase === "error" ? patch.error || null : null,
   };
   const after = updateMenuItem({ ...updateState, disposition: updateDisposition });
-  if (after.label === before.label && after.enabled === before.enabled) return;
-  refreshUpdateMenus();
+  // The menus only redraw when the label or enabled flag actually moved, but
+  // the page push always runs: download progress moves `percent` on every
+  // event without ever moving the menu label, and the page needs each of
+  // those to animate the pill.
+  if (after.label !== before.label || after.enabled !== before.enabled) refreshUpdateMenus();
+  pushUpdateState();
 }
 
 // Both menus, since they cover different situations. The tray is what works

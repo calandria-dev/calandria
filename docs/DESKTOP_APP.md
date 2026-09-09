@@ -229,6 +229,15 @@ updates…** is available in both menus at any time. If a check or install fails
 app raises a notification saying it can't update itself, with a link to the releases page so
 you can grab the build by hand.
 
+The titlebar pill inside the app's own window mirrors this same state: it reads the tray
+menu's update item off the same electron-updater phase, so the two never disagree. Its
+**Restart to update** action runs the identical drain-and-install as the tray item, so a turn
+still running finishes first either way. When the window is attached to a remote instance,
+the pill's popover lists the server and the app as two separate targets, each behind its own
+action, since the app only ever updates itself: a server that's behind needs the steps in
+[`SELF_HOSTING.md`](SELF_HOSTING.md#update-notifications), not anything this app can do for
+it.
+
 Update support differs by platform and build:
 
 | Platform | Updates? |

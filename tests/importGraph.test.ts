@@ -93,6 +93,7 @@ const PINNED = [
   "app/api/services/grant/route.ts",
   "app/api/instance/services-restore/route.ts",
   "app/api/instance/metrics/route.ts", // the scrape target; a "which agents are configured?" series later must use capabilities.ts
+  "lib/updates/check.ts", // imported by the update routes and by the scheduler boot ping; needs only the database, the event bus and fetch
 ];
 
 // Modules that MAY reach an SDK, but only ever through a dynamic `import()`.

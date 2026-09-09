@@ -161,6 +161,8 @@ can be removed to reclaim disk.
 | `24-header-rail.spec.ts` | the session header's overflow rail: nothing is pushed out of reach at any pane width, and whatever gets tucked away stays one click away |
 | `25-project-restore.spec.ts` | a reload with no `?project=` returns to the last project open, not the first one in the list |
 | `26-ask-user.spec.ts` | the other half of `lib/asks.ts`: a turn parks on an AskUserQuestion card, it docks below the transcript while the answer is owed and settles back inline once given, and multi-select, "Other" and a two-question card all reach the model. Runs the `startAskUser` / `takeAskOutcome` pair the stdio bridge's `ask_user` uses, so it is the only browser coverage of the non-Claude ask path |
+| `27-code-copy.spec.ts` | the copy button on a transcript code block |
+| `28-updates.spec.ts` | the titlebar update pill: the popover's release notes and per-install upgrade steps, Skip this version and Show again, the Settings switch, and the narrow-window icon. Runs against `e2e/releases-server.mjs`, the releases stand-in `CALANDRIA_UPDATE_FEED_URL` points every server in the suite at, so no run calls github.com |
 
 The suite runs serially (one shared app instance + SQLite DB). Every spec after
 01 calls `ensureOnboarded()` in `beforeAll` and creates its own uniquely-named

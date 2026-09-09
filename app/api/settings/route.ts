@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSettings, setSetting } from "@/lib/store";
+import { publishGlobal } from "@/lib/events";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +38,15 @@ export const dynamic = "force-dynamic";
 // instead of waiting for a click on the transcript notice (lib/usageReset.ts,
 // lib/deferredStart.ts). Off by default, since an unattended resume spends the
 // next window's quota on whichever task happened to fail.
-const ALLOWED = /^(background_jobs|recap_mode|notifications|notify_awaiting_input|notify_turn_failed|notify_schedule_failed|notify_queued_start|notify_queued_start_skipped|default_agent|utility_agent|default_reasoning(:[a-z0-9_-]+)?|default_permission_mode(:[a-z0-9_-]+)?|default_model:[a-z0-9_-]+|job_model_(light|heavy):[a-z0-9_-]+|plan_usage:[a-z0-9_-]+|auto_resume_on_limit:[a-z0-9_-]+)$/;
+// `update_check` is "off" or unset and switches the release check off for this
+// instance; `update_dismissed` holds the version somebody pressed "Skip this
+// version" on, which hides the pill until something newer than it appears.
+// The check's own result rides `update_state`. The server writes that key and
+// this allowlist omits it, so no browser can overwrite the cache.
+const ALLOWED = /^(background_jobs|recap_mode|notifications|notify_awaiting_input|notify_turn_failed|notify_schedule_failed|notify_queued_start|notify_queued_start_skipped|default_agent|utility_agent|update_check|update_dismissed|default_reasoning(:[a-z0-9_-]+)?|default_permission_mode(:[a-z0-9_-]+)?|default_model:[a-z0-9_-]+|job_model_(light|heavy):[a-z0-9_-]+|plan_usage:[a-z0-9_-]+|auto_resume_on_limit:[a-z0-9_-]+)$/;
+
+/** The two keys the update pill re-reads when another tab writes them. */
+const UPDATE_KEYS = new Set(["update_check", "update_dismissed"]);
 
 export async function GET() {
   return NextResponse.json(getSettings());
@@ -45,8 +54,14 @@ export async function GET() {
 
 export async function PATCH(req: Request) {
   const body = (await req.json()) as Record<string, string | null>;
+  let updates = false;
   for (const k of Object.keys(body)) {
-    if (ALLOWED.test(k)) setSetting(k, body[k]);
+    if (!ALLOWED.test(k)) continue;
+    setSetting(k, body[k]);
+    if (UPDATE_KEYS.has(k)) updates = true;
   }
+  // The pill is instance-wide, so a skip or a switch here has to reach the
+  // other tabs. One event for the whole write, whichever of the two moved.
+  if (updates) publishGlobal("", { type: "updates_changed" });
   return NextResponse.json(getSettings());
 }
