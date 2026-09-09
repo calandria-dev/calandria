@@ -42,8 +42,8 @@
 # SIGNING IS SUPPLIED HERE, NOT WRITTEN HERE. desktop/signing.js decides the
 # policy and desktop/electron-builder.cjs assembles it; this workflow only puts
 # credentials in the environment and then asserts the result. Which credentials
-# and how to obtain each is docs/DESKTOP_APP.md §6.4. Two properties of that
-# policy shape the job below:
+# and how to obtain each is desktop/README.md, "Signing and publishing". Two
+# properties of that policy shape the job below:
 #
 #   - Signing is opt-in BY NAME. `CALANDRIA_MAC_SIGN_IDENTITY` is the only
 #     switch; unset or "-" is ad-hoc. So a fork, or this repository before the
@@ -277,11 +277,11 @@ jobs:
             fi
             echo "${platform}=false" >> "$GITHUB_OUTPUT"
             if [ ${#missing[@]} -eq $# ]; then
-              echo "::notice::${platform}: no signing credentials are configured; this release's ${platform} artifacts will be published unsigned. See docs/DESKTOP_APP.md §6.4."
+              echo "::notice::${platform}: no signing credentials are configured; this release's ${platform} artifacts will be published unsigned. See desktop/README.md 'Signing and publishing'."
             else
               # A partial set is a lapsed or mistyped secret, not a deliberate
               # choice, and it is worth a warning rather than a notice.
-              echo "::warning::${platform}: signing is only PARTLY configured — missing ${missing[*]}. Publishing unsigned rather than failing the release. See docs/DESKTOP_APP.md §6.4."
+              echo "::warning::${platform}: signing is only PARTLY configured — missing ${missing[*]}. Publishing unsigned rather than failing the release. See desktop/README.md 'Signing and publishing'."
             fi
           }
 
@@ -296,6 +296,17 @@ jobs:
     needs: gate
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout }}
+    # Azure's federated credential matches ONE exact subject string, and GitHub
+    # derives that string from the ref unless the job names an environment. This
+    # lane runs on `v*` tags, so a ref-scoped credential would need a new entry
+    # per release; naming an environment fixes the subject at
+    # `repo:<owner>/<repo>:environment:windows-signing` for every ref, and
+    # verify-signing-credentials.yml names the same one so it exercises the same
+    # credential. It applies to the whole matrix because `environment` is
+    # job-level, which is inert as long as the environment carries no protection
+    # rules. Adding a required reviewer to it would stall every platform leg of
+    # every release.
+    environment: windows-signing
     permissions:
       # electron-builder's github provider attaches artifacts to the Release.
       contents: write
@@ -436,7 +447,7 @@ jobs:
             printf '%s\n' "$APPLE_API_KEY_P8" > "$key"
           else
             printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$key" || {
-              echo "::error::APPLE_API_KEY_P8 is neither valid base64 nor a raw .p8. It should be the CONTENTS of AuthKey_<KEYID>.p8 — see docs/DESKTOP_APP.md §6.4."
+              echo "::error::APPLE_API_KEY_P8 is neither valid base64 nor a raw .p8. It should be the CONTENTS of AuthKey_<KEYID>.p8 — see desktop/README.md 'Signing and publishing'."
               exit 1
             }
           fi
