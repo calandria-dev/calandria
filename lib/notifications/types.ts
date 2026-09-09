@@ -6,6 +6,10 @@ export type NotificationKind =
   | "awaiting_input"
   | "turn_failed"
   | "schedule_failed"
+  /** A queued start fired: the task is running again (lib/deferredStart.ts). */
+  | "queued_start"
+  /** A queued start reached its deadline and launched nothing. */
+  | "queued_start_skipped"
   /** Settings' "Send test notification"; belongs to no task. */
   | "test";
 

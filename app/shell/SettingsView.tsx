@@ -488,6 +488,8 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
     ["notify_awaiting_input", "A task is waiting for input", "An agent asked a question, needs a tool approved, or ended its turn with the work back in your hands. Either way the task has stopped until you pick it up."],
     ["notify_turn_failed", "A turn failed", "The session died: a dead login, a spent quota, a full context window, or a crash."],
     ["notify_schedule_failed", "A scheduled run failed", "A schedule fired and got nowhere, with nobody watching to notice otherwise."],
+    ["notify_queued_start", "A queued start fired", "A task queued for the usage-window reset started or resumed on its own. The reset lands whenever the window expires, so this is how you learn the quota is being spent."],
+    ["notify_queued_start_skipped", "A queued start was skipped", "The reset came and the task launched nothing: a turn was already running, another task still blocks it, or the project has no working directory. The deadline is gone either way."],
   ];
 
   async function sendTest() {
@@ -602,7 +604,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
       <div className="field">
         <div className="lab">{Icon.list()} What to notify me about</div>
         <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-          Each of these means a task has STOPPED. Finished turns and new suggestions stay quiet.
+          Each of these means a task has STOPPED, or has moved on its own while you were away. Finished turns and new suggestions stay quiet.
         </div>
         {kinds.map(([key, label, help]) => {
           const kindOn = appDefaults[key] !== "off";
