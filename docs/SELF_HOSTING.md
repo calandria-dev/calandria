@@ -234,6 +234,24 @@ understands (`PRAGMA user_version`,
 pointed at that database then refuses to start instead of writing to a
 schema it has never seen. The next section covers that refusal.
 
+### Upgrading a source checkout
+
+A source checkout upgrades like any other Node app: pull, reinstall,
+rebuild, restart. Take a backup first, for the same reason as the container
+path above: the new build migrates your database on first boot, and
+there's no down-migration.
+
+```bash
+npm run backup -- --out <backup dir>
+git pull
+npm ci
+npm run build
+```
+
+Restart the server once the build finishes: stop the running `npm start`
+process and start it again, or restart whatever process manager or systemd
+unit runs it.
+
 ### Rolling back an upgrade
 
 A rollback is two moves: re-pin the image, and restore the database the old
@@ -307,6 +325,55 @@ A rollback costs three things:
 - **No backup, and you want the old version anyway?** There's no supported
   way to down-migrate. Stay on the newer version (A above), or start from a
   fresh database, backing up the current one first either way.
+
+## Update notifications
+
+A pill in the titlebar of every Calandria window announces a newer release
+when one exists. Click it for a popover with the release notes and, below
+them, whatever action fits how this server was installed.
+
+The server checks GitHub's releases feed for `calandria-dev/calandria`
+every six hours, in the server process only: browser tabs never call
+`github.com`. The first check runs 60 seconds after the server's tickers
+start; the result is cached, so a restart shows the last known answer
+immediately, with no fresh check to wait on. The request is:
+
+```
+GET https://api.github.com/repos/calandria-dev/calandria/releases?per_page=20
+User-Agent: calandria/<version>
+```
+
+Unauthenticated, with a 10 second timeout, and carrying nothing else about
+the instance: no name, no address, no usage. A failed check keeps the
+previous answer, shows nothing new in the titlebar, and Settings → General
+→ Updates reports "Last check failed" with the error.
+
+Set `CALANDRIA_UPDATE_CHECK=off` to stop the check for this instance
+entirely; it also hides the pill and hides the switch in Settings, since
+there is then nothing to switch. With the check left on, Settings → General
+→ Updates has its own **Check for updates** switch on top of the env var;
+either one off stops the checking.
+
+`CALANDRIA_UPDATE_FEED_URL` replaces the releases URL, for a fork or an
+internal mirror of the feed.
+
+**Skip this version**, in the popover or in Settings, hides the pill until
+a release newer than the skipped one appears. The skip is written to the
+instance's own settings (`update_dismissed`), so every browser open on that
+instance sees the same skip; it is not a per-browser preference.
+
+**Behind a proxy.** Node's `fetch` does not read `HTTPS_PROXY`. A host that
+can only reach the internet through a proxy sees every check fail with
+"Last check failed" in Settings and never shows a pill. Set
+`CALANDRIA_UPDATE_CHECK=off` there, or point `CALANDRIA_UPDATE_FEED_URL` at
+a mirror that host can already reach.
+
+**Rate limits.** Unauthenticated GitHub API calls are capped at 60 an hour
+per source IP. One call every six hours per instance is far under that on
+its own, but several self-hosted instances sharing one NAT address share
+the same 60-per-hour budget. The only symptom of running past it is a pill
+that stops updating; there's no distinct error for it beyond "Last check
+failed."
 
 ## Origin-side auth (Cloudflare Access)
 
