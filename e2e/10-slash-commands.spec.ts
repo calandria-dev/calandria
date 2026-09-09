@@ -30,15 +30,24 @@ test.beforeAll(async ({ request }) => {
   await waitForIdle(request, task.id);
 });
 
-// Open the task's session and return its composer textarea.
+// Open the task's session and return its composer.
 async function composer(page: import("@playwright/test").Page) {
   await gotoApp(page);
   await page.getByText(PROJECT).first().click();
   await page.getByText(TASK).first().click();
-  const box = page.getByPlaceholder(/Reply to/);
-  await expect(box).toBeVisible({ timeout: 20_000 });
+  const box = page.getByRole("textbox", { name: "Message" });
+  // The composer is a contenteditable div (see Composer.tsx), so its
+  // placeholder is a data attribute. Waiting for the repliable one is what says
+  // the session has loaded: the field is on screen before that, disabled and
+  // offering to start the session.
+  await expect(box).toHaveAttribute("data-placeholder", /Reply to/, { timeout: 20_000 });
   return box;
 }
+
+// The typed text, which is the field's textContent. Read directly because
+// toHaveText trims, and the trailing space a completed command leaves is
+// exactly what these tests are pinning.
+const textOf = (box: import("@playwright/test").Locator) => box.evaluate((el) => el.textContent ?? "");
 
 test("typing / lists the agent's own commands, not just /clear", async ({ page }) => {
   const box = await composer(page);
@@ -77,7 +86,7 @@ test("filtering matches aliases and completes with the keyboard", async ({ page 
   // Enter completes the highlighted row into the box (canonical name, trailing
   // space for arguments) instead of sending.
   await box.press("Enter");
-  await expect(box).toHaveValue("/mock-plugin:mock-deploy ");
+  await expect.poll(() => textOf(box)).toBe("/mock-plugin:mock-deploy ");
   await expect(menu).toBeHidden();
 });
 
@@ -91,7 +100,7 @@ test("arrow keys move the highlight and Tab commits it", async ({ page }) => {
   await expect(items.nth(1)).toHaveClass(/act/);
   await box.press("Tab");
   // Second row of the /mock- matches, completed into the box.
-  await expect(box).toHaveValue(/^\/mock-\S+ $/);
+  await expect.poll(() => textOf(box)).toMatch(/^\/mock-\S+ $/);
 });
 
 test("a fully typed command still sends as a message", async ({ page }) => {
@@ -100,15 +109,18 @@ test("a fully typed command still sends as a message", async ({ page }) => {
   // instead of re-completing, the same behavior /clear has.
   await box.fill("/mock-status");
   await box.press("Enter");
-  await expect(box).toHaveValue("");
+  await expect.poll(() => textOf(box)).toBe("");
   // It leaves as an ordinary user message: a slash command reaches the agent
   // by having the CLI expand it on the far side.
   await expect(page.locator(".msg.user", { hasText: "/mock-status" })).toBeVisible({ timeout: 20_000 });
 });
 
 // Geometry, here because this file already has a repliable composer on screen.
-// Pins that an empty composer's height matches its typed height, since
-// autosize's scrollHeight measurement in Chromium counts the placeholder text.
+// Pins that an empty composer's height matches its typed height. The
+// placeholder is a ::before on the empty field, so it has to lay out as one
+// line, and deleting the last character has to leave the field with no child
+// nodes at all: a stray <br> would hide the placeholder and stand a second line
+// tall.
 test("the empty composer is one line tall and doesn't snap on the first keystroke", async ({ page }) => {
   const box = await composer(page);
   const height = async () => (await box.boundingBox())!.height;
