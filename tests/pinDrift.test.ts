@@ -4,11 +4,15 @@ import path from "node:path";
 
 import {
   extractPins,
+  extractPackagePins,
+  npmPinEntries,
   byUpstreamValue,
   npmStaleness,
 } from "../scripts/check-pin-drift.mjs";
 
-const DOCKERFILE = path.join(__dirname, "..", "Dockerfile");
+const ROOT = path.join(__dirname, "..");
+const DOCKERFILE = path.join(ROOT, "Dockerfile");
+const PACKAGE_JSON = path.join(ROOT, "package.json");
 
 /**
  * scripts/check-pin-drift.mjs reads the Dockerfile with regexes, and the only
@@ -62,6 +66,100 @@ describe("pin drift extraction", () => {
     // Guard against the replace matching nothing and leaving the source unchanged.
     expect(renamed).not.toBe(source);
     expect(() => extractPins(renamed, "Dockerfile")).toThrow(/AGY_VERSION/);
+  });
+});
+
+/**
+ * `@anthropic-ai/claude-agent-sdk` is watched too, and it is the one pin with
+ * no Dockerfile ARG: the image installs no copy of it, so it is read out of
+ * package.json `dependencies` instead. It reached 104 patch releases behind
+ * before anyone counted, and now that it is pinned exactly nothing floats it,
+ * so this check is the only thing that reports it is behind.
+ */
+describe("package.json pin extraction", () => {
+  const source = readFileSync(PACKAGE_JSON, "utf8");
+  const SDK = "@anthropic-ai/claude-agent-sdk";
+
+  it("finds the Agent SDK pin and points at its real line", () => {
+    const pins = extractPackagePins(source, "package.json");
+    const pkg = JSON.parse(source);
+
+    expect(pins[SDK].value).toBe(pkg.dependencies[SDK]);
+    expect(pins[SDK].value).toMatch(/^\d+\.\d+\.\d+$/);
+
+    const line = Number(pins[SDK].where.split(":")[1]);
+    expect(pins[SDK].where.split(":")[0]).toBe("package.json");
+    expect(source.split("\n")[line - 1]).toContain(`"${SDK}"`);
+  });
+
+  it("fails loudly when the dependency is renamed away", () => {
+    const renamed = source.replace(`"${SDK}"`, `"@anthropic-ai/agent-sdk"`);
+    expect(renamed).not.toBe(source);
+    expect(() => extractPackagePins(renamed, "package.json")).toThrow(
+      /claude-agent-sdk/,
+    );
+  });
+
+  it("refuses a range, which is not a pin it can report on", () => {
+    const declared = JSON.parse(source).dependencies[SDK];
+    const floated = source.replace(
+      `"${SDK}": "${declared}"`,
+      `"${SDK}": "^${declared}"`,
+    );
+    expect(floated).not.toBe(source);
+    expect(() => extractPackagePins(floated, "package.json")).toThrow(
+      /not an exact version/,
+    );
+  });
+
+  it("puts the SDK on the same staleness path as the two CLI pins", () => {
+    // One row per npm pin whichever file it lives in, so the SDK gets the same
+    // MAX_PIN_AGE_DAYS / MAX_MINORS_BEHIND rules and the same report tables.
+    const entries = npmPinEntries(
+      extractPins(readFileSync(DOCKERFILE, "utf8"), "Dockerfile"),
+      extractPackagePins(source, "package.json"),
+    );
+    expect(entries.map((e: { pkg: string }) => e.pkg)).toEqual([
+      "@anthropic-ai/claude-code",
+      "@openai/codex",
+      SDK,
+    ]);
+
+    const sdk = entries.find((e: { pkg: string }) => e.pkg === SDK)!;
+    expect(sdk.pinned).toBe(JSON.parse(source).dependencies[SDK]);
+    expect(sdk.where).toMatch(/^package\.json:\d+$/);
+    // No ARG to name, so the package names itself in the report tables.
+    expect(sdk.pin).toBe(`\`${SDK}\``);
+    expect(sdk.pinLabel).toBe(sdk.pinned);
+  });
+
+  it("can only ever fire on age, never on minors", () => {
+    // The SDK moves on the PATCH within one 0.3.x minor: 0.3.159 to 0.3.263 is
+    // 104 releases and zero newer minor lines. MAX_MINORS_BEHIND counts nothing
+    // here by construction, and no patch-distance trigger was added, so age is
+    // the only thing that reports this pin.
+    const versions = Array.from({ length: 264 }, (_, i) => `0.3.${i}`);
+    const NOW = Date.parse("2026-09-03T00:00:00Z");
+    const daysAgo = (n: number) => new Date(NOW - n * 86_400_000).toISOString();
+
+    const quiet = npmStaleness({
+      pinned: "0.3.159",
+      latest: "0.3.263",
+      pinnedAt: daysAgo(20),
+      versions,
+      now: NOW,
+    });
+    expect(quiet).toBeNull();
+
+    const aged = npmStaleness({
+      pinned: "0.3.159",
+      latest: "0.3.263",
+      pinnedAt: daysAgo(21),
+      versions,
+      now: NOW,
+    });
+    expect(aged?.minorsAhead).toBe(0);
+    expect(aged?.reasons).toEqual(["pinned 21 days ago"]);
   });
 });
 

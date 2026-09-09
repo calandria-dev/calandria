@@ -2,11 +2,14 @@
 // Checks the Dockerfile's pinned CLI versions against upstream. A pin that's
 // GONE (`gh=`, `AGY_VERSION`: their upstreams serve only the newest build)
 // fails the image build outright; a pin that's merely BEHIND
-// (CLAUDE_CODE_VERSION, CODEX_VERSION) still builds but can ship a model the
-// CLI is too old to run, so it's reported on staleness instead. Run daily by
-// .github/workflows/pin-drift.yml, which files or updates one labeled issue.
+// (CLAUDE_CODE_VERSION, CODEX_VERSION, and the exactly pinned
+// `@anthropic-ai/claude-agent-sdk` in package.json) still builds but can ship a
+// model the CLI is too old to run, so it's reported on staleness instead. Run
+// daily by .github/workflows/pin-drift.yml, which files or updates one labeled
+// issue.
 //
-// Usage: node scripts/check-pin-drift.mjs [--dockerfile <path>] [--report <path>]
+// Usage: node scripts/check-pin-drift.mjs [--dockerfile <path>]
+//        [--package-json <path>] [--report <path>]
 // Exit codes: 0 = current, 1 = drift found (report written), 2 = check itself failed.
 
 import { readFile, writeFile } from "node:fs/promises";
@@ -30,6 +33,22 @@ const NPM_PINS = [
   { pkg: "@openai/codex", pin: "codexVersion", arg: "CODEX_VERSION" },
 ];
 
+// npm packages pinned in package.json `dependencies` instead of by a
+// Dockerfile ARG. The Agent SDK has no ARG because the image installs no copy
+// of it. It is an ordinary dependency, and it is the turn contract itself, not
+// a subprocess. `tests/cliPins.test.ts` holds it to an exact version, so
+// nothing floats it and nothing else reports that it is behind.
+//
+// Only age can fire for this one. The SDK moves on the PATCH inside a single
+// 0.3.x minor (0.3.159 to 0.3.263 is 104 patches and zero minors), so
+// MAX_MINORS_BEHIND never counts anything. This check adds no patch-distance
+// trigger: a threshold low enough to catch a real gap fires every few days on
+// this cadence, which is the noise MAX_MINORS_BEHIND is shaped to avoid, and
+// there is no measured number to set one at. Age is
+// bounded to one notice per package per MAX_PIN_AGE_DAYS and the issue closes
+// itself on the bump, so a stalled pin still surfaces within three weeks.
+const PACKAGE_JSON_PINS = [{ pkg: "@anthropic-ai/claude-agent-sdk" }];
+
 // A class-two pin is reported once it reaches this age, regardless of
 // whether something newer exists. Age is the only metric that stays quiet
 // under a fast release cadence on one minor line: each package can produce
@@ -52,13 +71,22 @@ const FETCH_TIMEOUT_MS = 20_000;
 const FETCH_ATTEMPTS = 3;
 
 function parseArgs(argv) {
-  const opts = { dockerfile: "Dockerfile", report: null };
+  const opts = {
+    dockerfile: "Dockerfile",
+    packageJson: "package.json",
+    report: null,
+  };
+  const paths = {
+    "--dockerfile": "dockerfile",
+    "--package-json": "packageJson",
+    "--report": "report",
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "--dockerfile" || arg === "--report") {
+    if (paths[arg]) {
       const value = argv[++i];
       if (!value) throw new Error(`${arg} needs a path`);
-      opts[arg === "--dockerfile" ? "dockerfile" : "report"] = value;
+      opts[paths[arg]] = value;
     } else {
       throw new Error(`unrecognized argument: ${arg}`);
     }
@@ -97,6 +125,55 @@ export function extractPins(source, dockerfilePath) {
     ),
     codexVersion: find(/^ARG CODEX_VERSION=(\S+)/m, "`ARG CODEX_VERSION`"),
   };
+}
+
+/**
+ * The PACKAGE_JSON_PINS half, keyed by package name. Separate from
+ * extractPins() so that function's signature and return shape stay exactly
+ * what tests/cliPins.test.ts imports and reads.
+ *
+ * The version must be exact: a range means the drift check would report a pin
+ * that npm is already free to move, and the exactness is what
+ * tests/cliPins.test.ts asserts in the first place.
+ *
+ * @returns {Record<string, { value: string, where: string }>}
+ */
+export function extractPackagePins(source, packageJsonPath) {
+  let json;
+  try {
+    json = JSON.parse(source);
+  } catch {
+    throw new Error(`${packageJsonPath} is not JSON`);
+  }
+  const out = {};
+  for (const { pkg } of PACKAGE_JSON_PINS) {
+    const value = json.dependencies?.[pkg];
+    if (!value) {
+      throw new Error(
+        `could not find \`${pkg}\` in ${packageJsonPath} dependencies: the ` +
+          "dependency moved or was renamed, so this check is no longer " +
+          "looking at the real thing",
+      );
+    }
+    if (!/^\d+\.\d+\.\d+$/.test(value)) {
+      throw new Error(
+        `\`${pkg}\` is \`${value}\` in ${packageJsonPath}, not an exact ` +
+          "version: a range floats on its own and is not a pin this check " +
+          "can report on",
+      );
+    }
+    // The dependency block is one entry per line, so locating the key in the
+    // raw text gives a `package.json:32` an issue body can be clicked through.
+    const index = source.indexOf(`"${pkg}"`);
+    out[pkg] = {
+      value,
+      where:
+        index === -1
+          ? packageJsonPath
+          : `${packageJsonPath}:${lineOf(source, index)}`,
+    };
+  }
+  return out;
 }
 
 async function fetchText(url) {
@@ -195,7 +272,8 @@ function compareVersions(a, b) {
  * the prerelease handling without reaching the registry.
  *
  * Returns null when the pin is current enough to stay quiet: being merely
- * behind is the normal state of these two and doesn't warrant an issue.
+ * behind is the normal state of every npm pin here and doesn't warrant an
+ * issue.
  */
 export function npmStaleness({ pinned, latest, pinnedAt, versions, now }) {
   if (pinned === latest) return null;
@@ -246,7 +324,32 @@ export function byUpstreamValue(perArch) {
   }));
 }
 
-async function collectFindings(pins) {
+/**
+ * One row per npm pin, whichever file it lives in, so the staleness loop and
+ * the observed-upstream table read both sources the same way. `pinLabel` is
+ * what the tables print: an ARG carries its name, a package.json dependency is
+ * already named by its package.
+ */
+export function npmPinEntries(pins, packagePins) {
+  return [
+    ...NPM_PINS.map(({ pkg, pin, arg }) => ({
+      pkg,
+      pin: `\`${arg}\``,
+      where: pins[pin].where,
+      pinned: pins[pin].value,
+      pinLabel: `${arg}=${pins[pin].value}`,
+    })),
+    ...PACKAGE_JSON_PINS.map(({ pkg }) => ({
+      pkg,
+      pin: `\`${pkg}\``,
+      where: packagePins[pkg].where,
+      pinned: packagePins[pkg].value,
+      pinLabel: packagePins[pkg].value,
+    })),
+  ];
+}
+
+async function collectFindings(pins, packagePins) {
   const findings = [];
 
   const gh = Object.fromEntries(
@@ -317,27 +420,28 @@ async function collectFindings(pins) {
   // model releases behind" are different jobs for whoever reads the issue.
   const stale = [];
   const npm = {};
-  for (const { pkg, pin, arg } of NPM_PINS) {
-    const up = await upstreamNpm(pkg);
-    npm[pkg] = up.latest;
+  const entries = npmPinEntries(pins, packagePins);
+  for (const entry of entries) {
+    const up = await upstreamNpm(entry.pkg);
+    npm[entry.pkg] = up.latest;
     const verdict = npmStaleness({
-      pinned: pins[pin].value,
+      pinned: entry.pinned,
       latest: up.latest,
-      pinnedAt: up.time[pins[pin].value],
+      pinnedAt: up.time[entry.pinned],
       versions: up.versions,
     });
     if (!verdict) continue;
     stale.push({
-      pin: `\`${arg}\``,
-      pkg,
-      where: pins[pin].where,
-      pinned: pins[pin].value,
+      pin: entry.pin,
+      pkg: entry.pkg,
+      where: entry.where,
+      pinned: entry.pinned,
       upstream: up.latest,
       why: verdict.reasons.join(", "),
     });
   }
 
-  return { findings, stale, observed: { gh, agy, npm } };
+  return { findings, stale, entries, observed: { gh, agy, npm } };
 }
 
 // The step no job can take. Exercising an agent CLI needs a real Claude or
@@ -345,7 +449,7 @@ async function collectFindings(pins) {
 // a documented manual step, carried in the issue body itself instead of a
 // doc that would go stale unopened.
 const BUMP_CHECKLIST = [
-  "### Before merging a bump",
+  "### Before merging a CLI bump",
   "",
   "No job can do this part: exercising an agent CLI needs a real Claude or",
   "ChatGPT login. Do it by hand on the bump PR.",
@@ -354,7 +458,9 @@ const BUMP_CHECKLIST = [
   "   commit (`npm install --save-exact @openai/codex-sdk@<version>`): the SDK",
   "   exact-depends on `@openai/codex`, and outside the image, where",
   "   `CODEX_CLI_PATH` is empty, that vendored copy is the binary that runs.",
-  "   `tests/cliPins.test.ts` fails if the two disagree.",
+  "   `tests/cliPins.test.ts` fails if the two disagree. Any `npm install` here",
+  "   rewrites the lockfile, so the `gypfile` step below applies to this bump",
+  "   too.",
   "2. `npm run typecheck && npm test`.",
   "3. Build the image and run one real turn per bumped agent against a live",
   "   login: a plain prompt, one tool call, one `/clear`. A CLI too old for a",
@@ -363,9 +469,28 @@ const BUMP_CHECKLIST = [
   "4. Check the driver's model catalog against what the new CLI actually",
   "   offers, and add anything it has gained.",
   "",
+  "### Before merging an `@anthropic-ai/claude-agent-sdk` bump",
+  "",
+  "Different work from the CLI above. The CLI is a subprocess; the SDK is the",
+  "turn contract, so a bump can change how any turn behaves without changing a",
+  "line of this repo. Bump it with",
+  "`npm install --save-exact @anthropic-ai/claude-agent-sdk@<version>`, then:",
+  "",
+  '1. Re-add `"gypfile": false` to the `node_modules/better-sqlite3` entry in',
+  "   `package-lock.json`. `npm install` strips it every time it rewrites the",
+  "   lockfile, and `tests/lockfileGypfile.test.ts` goes red until it is put",
+  "   back by hand.",
+  "2. `npm run typecheck && npm test`.",
+  "3. Run one real turn against a live login, covering all six of these:",
+  "   a plain prompt; a tool call; a `/clear`; a turn resuming after that",
+  "   `/clear`; a permission card under a NON-bypass permission mode, so",
+  "   `canUseTool` actually gates instead of being skipped; and a",
+  "   background/lingering turn with a mid-turn message injection. The 0.3.263",
+  "   bump proved each of these is a distinct path through the SDK.",
+  "",
 ];
 
-function buildReport({ findings, stale, observed }, pins) {
+function buildReport({ findings, stale, entries, observed }, pins) {
   const lines = [];
 
   if (findings.length) {
@@ -396,6 +521,8 @@ function buildReport({ findings, stale, observed }, pins) {
       "npm keeps old versions, so these still install. What goes wrong is",
       "behaviour: a new model can require a newer CLI, not just a catalog",
       "entry, so a pin this far back can make a shipped feature fail outright.",
+      "The Agent SDK is the same problem one layer in, since it is the turn",
+      "contract every Claude session runs through.",
       "",
       "| Pin | Where | Pinned | Latest | Why now |",
       "|-|-|-|-|-|",
@@ -424,9 +551,9 @@ function buildReport({ findings, stale, observed }, pins) {
     "",
     "| Package | Latest | Pinned |",
     "|-|-|-|",
-    ...NPM_PINS.map(
-      ({ pkg, pin, arg }) =>
-        `| \`${pkg}\` | \`${observed.npm[pkg]}\` | \`${arg}=${pins[pin].value}\` |`,
+    ...entries.map(
+      ({ pkg, pinLabel }) =>
+        `| \`${pkg}\` | \`${observed.npm[pkg]}\` | \`${pinLabel}\` |`,
     ),
     "",
     `Dockerfile pins: \`gh=${pins.gh.value}\`, \`AGY_VERSION=${pins.agyVersion.value}\`.`,
@@ -449,7 +576,11 @@ async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const source = await readFile(opts.dockerfile, "utf8");
   const pins = extractPins(source, opts.dockerfile);
-  const result = await collectFindings(pins);
+  const packagePins = extractPackagePins(
+    await readFile(opts.packageJson, "utf8"),
+    opts.packageJson,
+  );
+  const result = await collectFindings(pins, packagePins);
 
   const total = result.findings.length + result.stale.length;
   if (total === 0) {
@@ -457,7 +588,11 @@ async function main() {
       `Pins are current: gh=${pins.gh.value}, ` +
         `AGY_VERSION=${pins.agyVersion.value}, ` +
         `CLAUDE_CODE_VERSION=${pins.claudeCode.value}, ` +
-        `CODEX_VERSION=${pins.codexVersion.value}.`,
+        `CODEX_VERSION=${pins.codexVersion.value}, ` +
+        PACKAGE_JSON_PINS.map(
+          ({ pkg }) => `${pkg}=${packagePins[pkg].value}`,
+        ).join(", ") +
+        ".",
     );
     return 0;
   }
