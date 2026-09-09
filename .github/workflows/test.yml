@@ -54,7 +54,7 @@
 #           same specs and can say nothing about any of it.
 #   macos-desktop — the `desktop` suite on macos-latest against the dev shell
 #           and then the packaged .app, plus a launch of the .app unpacked from
-#           the .dmg that same build produced (docs/DESKTOP_APP.md §6.1).
+#           the .dmg that same build produced (desktop/README.md, "Packaging").
 #           Plus the two behaviours
 #           that exist nowhere else: the launchd PATH repair (a .app opened
 #           through LaunchServices inherits /usr/bin:/bin:/usr/sbin:/sbin, not
@@ -955,7 +955,8 @@ jobs:
       # observed from a runner is SmartScreen. It fires on the `Zone.Identifier`
       # stream a DOWNLOAD attaches, so an installer built here carries no mark
       # and never trips the interstitial a user gets. That cost is documented
-      # (docs/WINDOWS.md "Known limits", docs/DESKTOP_APP.md §6/§7) rather than
+      # (docs/WINDOWS.md, "Known limits"; docs/DESKTOP_APP.md, "Installing";
+      # desktop/README.md, "What signing costs") rather than
       # tested, and stays that way until the artifacts are signed.
       #
       # Each command is exit-checked by hand because this job's shell is pwsh,
@@ -1000,8 +1001,9 @@ jobs:
       # installer honours it. Deliberately no `/D=`: pinning the directory would
       # test that the flag works, where the interesting fact is where a
       # `perMachine: false` build goes when nobody tells it — the per-user
-      # location §6 documents. So the path is READ BACK from the uninstall
-      # registry entry the installer wrote (the same entry Settings → Apps
+      # location documented in desktop/README.md, "Packaging". So the path is
+      # READ BACK from the uninstall registry entry the installer wrote (the
+      # same entry Settings → Apps
       # reads, found by DisplayName because electron-builder keys it under a
       # GUID derived from appId) and then asserted against
       # %LOCALAPPDATA%\Programs\Calandria.
@@ -1278,7 +1280,8 @@ jobs:
       #
       # All three of `mac.target`, and DELIBERATELY ad-hoc rather than
       # Developer ID signed. This is the test lane; the release lane is what
-      # holds the certificate and notarizes (docs/DESKTOP_APP.md §6.2, §7).
+      # holds the certificate and notarizes (desktop/README.md, "Signing and
+      # publishing").
       # `dir` is what the packaged pass below launches and the only form the
       # launchd spec can `open`; `dmg` and `zip` are what a person would
       # actually download, and building them here is the only way to find out
@@ -1352,15 +1355,17 @@ jobs:
       # This step used to BE the ad-hoc signing (`codesign --force --deep --sign
       # -`). It moved into the build — `mac.identity: "-"` in
       # desktop/package.json — and what is left here is the assertion that it
-      # happened. docs/DESKTOP_APP.md §6 records why; the short version is that
-      # signing here is too late for an installer. electron-builder cuts the
+      # happened. desktop/README.md, "Signing and publishing", records why; the
+      # short version is that signing here is too late for an installer.
+      # electron-builder cuts the
       # .dmg and the .zip from the .app during the packaging step above, so a
       # signature applied afterwards, to a bundle already moved out of
       # desktop/dist, reaches the copy this lane tests and NOT the copies a user
       # would download. Both would ship an app the kernel kills.
       #
-      # An ad-hoc signature is still not code signing in the sense §6 is about:
-      # it carries no identity, satisfies no Gatekeeper policy and notarizes
+      # An ad-hoc signature is still not code signing in the sense that section
+      # is about: it carries no identity, satisfies no Gatekeeper policy and
+      # notarizes
       # nothing. It is only what makes the file runnable at all, because arm64
       # macOS will not exec a Mach-O with NO signature and electron-builder
       # invalidates the one Electron's prebuilt arrived with.
@@ -1388,7 +1393,7 @@ jobs:
       # domain's own PATH is printed every run as the evidence for it — to this
       # job's log, not only to an attachment, since a green run uploads no
       # artifacts. Grep for `[08-macos-launchd]`.
-      # See the spec header and docs/DESKTOP_APP.md §5.
+      # See the spec header and docs/DESKTOP_APP.md, "Known limitations".
       - name: Run the desktop suite against the package
         run: npm run test:desktop:window
 
@@ -1462,7 +1467,7 @@ jobs:
           # a notarized artifact, and expects the opposite answer.
           echo "--- spctl assessment (a refusal here is the expected result) ---"
           if spctl --assess --type execute --verbose=4 "$dest"/*.app; then
-            echo "::error::Gatekeeper ACCEPTED an app this lane is supposed to sign ad-hoc. A Developer ID reached the test lane; signing belongs in the release lane only. See docs/DESKTOP_APP.md §6.2."
+            echo "::error::Gatekeeper ACCEPTED an app this lane is supposed to sign ad-hoc. A Developer ID reached the test lane; signing belongs in the release lane only. See desktop/README.md, Signing and publishing."
             exit 1
           fi
 
@@ -1522,10 +1527,9 @@ jobs:
 
       # `always()`, not `failure()`, unlike every other lane here.
       # 07-macos.spec.ts attaches a screenshot of the hiddenInset title bar and
-      # the element stack underneath the traffic lights, and the whole point of
-      # those is that a human looks at them once on a GREEN run —
-      # docs/DESKTOP_APP.md §5 has carried "needs a look on a real screen" since
-      # the spike, and a failure-only upload would never deliver it.
+      # the element stack underneath the traffic lights. Those exist for a human
+      # to look at once on a GREEN run, and a failure-only upload would never
+      # deliver them.
       - name: Upload desktop artifacts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

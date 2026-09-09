@@ -23,7 +23,7 @@
 // Dependency-free (node:child_process only). Every function takes its
 // platform, and the win32 paths their command runner, as arguments, so the
 // Windows branches are unit-testable from the Linux/macOS suite. See
-// docs/WINDOWS.md §2.
+// docs/WINDOWS.md, "Platform behavior".
 
 import { execFileSync } from "node:child_process";
 

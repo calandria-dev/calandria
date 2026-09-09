@@ -12,7 +12,7 @@
  *     handed to taskkill/tasklist/PowerShell is the contract, and it's the
  *     part a Windows CI lane will later confirm end to end.
  *
- * See docs/WINDOWS.md §2.
+ * See docs/WINDOWS.md, "Platform behavior".
  */
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";

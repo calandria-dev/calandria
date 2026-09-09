@@ -12,7 +12,7 @@
 // SDK-free and dependency-free (node:fs + node:path) so anything can import
 // it, and every function takes its platform/PATH/PATHEXT as arguments so the
 // win32 behavior is unit-testable from the Linux/macOS suite. See
-// docs/WINDOWS.md §6.
+// docs/WINDOWS.md, "Platform behavior".
 
 import fs from "node:fs";
 import path from "node:path";

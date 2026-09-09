@@ -86,7 +86,7 @@
 # rather than the merge to main, because this is the first thing that puts a
 # binary in anybody's hands and a binary that cannot update itself is one people
 # keep. `electron-updater` landed on 2026-08-30 (desktop/updater.js,
-# docs/DESKTOP_APP.md §6.6), so a release cut through this lane now ships
+# desktop/README.md, "Updates"), so a release cut through this lane now ships
 # downloads that read the feed it publishes.
 #
 # NOTHING HERE CHANGED TO MAKE THAT TRUE, which was the prediction and is worth
@@ -101,7 +101,7 @@
 #
 # WHAT STILL HAS TO HAPPEN AFTER THIS LANE'S FIRST REAL RUN, recorded because
 # both places say they are waiting on exactly this: the quarantine workaround in
-# docs/DESKTOP_APP.md §6.3 and desktop/README.md is the correct instruction for a
+# docs/DESKTOP_APP.md, "Installing", is the correct instruction for a
 # self-built or CI-pulled ad-hoc bundle and stays until a notarized artifact
 # exists AND somebody has confirmed it opens after a browser download on a
 # machine that has never seen it. A `curl` or an `scp` does not reproduce that —
@@ -414,7 +414,8 @@ jobs:
       # Unpatched, every signed macOS build fails on the current runner image with
       # "SecKeychainUnlock: The user name or passphrase you entered is not
       # correct" — the reason v0.10.0 has no macOS assets. The script's header and
-      # docs/DESKTOP_APP.md §6.4.1 carry the why, and both say when to delete it.
+      # desktop/README.md, "Signing and publishing", carry the why, and both say
+      # when to delete it.
       - name: Install Electron
         run: npm run desktop:install
 
@@ -537,7 +538,7 @@ jobs:
 
           echo "--- Gatekeeper assessment (must ACCEPT) ---"
           if ! spctl --assess --type execute -vvv "$app"; then
-            echo "::error::Gatekeeper REFUSED a build this lane signed and notarized. The artifact would show 'Calandria is damaged and can't be opened' on a downloaded copy. See docs/DESKTOP_APP.md §6.3."
+            echo "::error::Gatekeeper REFUSED a build this lane signed and notarized. The artifact would show 'Calandria is damaged and can't be opened' on a downloaded copy. See desktop/README.md, Signing and publishing."
             exit 1
           fi
 

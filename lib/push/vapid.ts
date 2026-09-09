@@ -112,8 +112,9 @@ export function vapidKeys(): VapidKeys {
   const keys = generateVapidKeys();
   // Owner-only, and on Windows that means an ACL: `mode: 0o600` there only
   // toggles the read-only attribute, leaving the signing key readable by every
-  // other local account (docs/WINDOWS.md §3). Non-fatal, unlike a pasted API
-  // key: nobody is in the loop when this is minted, so failing closed on a
+  // other local account (docs/WINDOWS.md, "Platform behavior"). Non-fatal,
+  // unlike a pasted API key: nobody is in the loop when this is minted, so
+  // failing closed on a
   // filesystem with no ACLs would turn off push for the whole instance with no
   // one to notice.
   writeSecretFile(file, JSON.stringify({ ...keys, createdAt: new Date().toISOString() }, null, 2) + "\n", {
