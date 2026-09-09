@@ -39,6 +39,14 @@ const SCANNED_FILES = new Set([".env.example"]);
 const EXCLUDED = new Set(["CHANGELOG.md"]);
 const EXCLUDED_PREFIXES = ["docs/design/", "node_modules/"];
 
+/**
+ * Files whose hits are allowed. This guard has to spell out and demonstrate
+ * what it forbids: the header's examples and the sanity case below both carry
+ * citations that resolve to nothing on purpose. Same self-exemption
+ * tests/commentStyle.test.ts takes, for the same reason.
+ */
+const ALLOWED = new Set(["tests/docCitations.test.ts"]);
+
 function isScanned(file: string): boolean {
   if (SCANNED_FILES.has(file)) return true;
   if (EXCLUDED.has(file)) return false;
@@ -68,6 +76,7 @@ function trackedFiles(): string[] | null {
     .split("\0")
     .filter(Boolean)
     .filter(isScanned)
+    .filter((f) => !ALLOWED.has(f))
     .filter((f) => {
       const abs = path.join(ROOT, f);
       return fs.existsSync(abs) && fs.statSync(abs).isFile();
@@ -154,6 +163,11 @@ describe("doc citation guard (a cited section number has to exist)", () => {
             `A number is only allowed when the target doc numbers its own headings.`
         : undefined
     ).toEqual([]);
+  });
+
+  it("the allowlist has no dead entries", () => {
+    const dead = [...ALLOWED].filter((file) => !fs.existsSync(path.join(ROOT, file)));
+    expect(dead, `ALLOWED entries that no longer match anything: ${dead.join(", ")}`).toEqual([]);
   });
 
   it("reads a doc's numbered headings", () => {
