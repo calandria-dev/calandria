@@ -37,8 +37,8 @@ export function detectInstallMethod({
 /** The bound form the server uses: real env, real filesystem, real cwd. */
 export default function installMethod(): InstallMethod {
   return detectInstallMethod({
-    // Through readEnv, so the flag answers to the legacy ORCH_ spelling like
-    // every other name in lib/env.mjs's alias table.
+    // Through readEnv, so the flag answers to its legacy name like every other
+    // knob in lib/env.mjs's alias table.
     env: { CALANDRIA_CONTAINER: readEnv("CALANDRIA_CONTAINER") },
     exists: (p) => {
       try {

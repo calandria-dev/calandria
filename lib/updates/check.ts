@@ -69,7 +69,7 @@ export type UpdateCheckDeps = {
 /**
  * An injected env is the whole environment, so a test cannot be reached by an
  * ambient variable. The real one goes through readEnv, which also answers to
- * the legacy ORCH_ spelling.
+ * the legacy variable names in lib/env.mjs's alias table.
  */
 function readFrom(env: EnvLike | undefined, name: string): string {
   return String((env ? env[name] : readEnv(name)) ?? "").trim();
