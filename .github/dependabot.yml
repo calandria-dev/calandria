@@ -39,17 +39,47 @@
 #   MODERATE and below, which security updates raise a PR for but the job's
 #   --audit-level does not fail on.
 #
-#   KNOWN MANUAL STEP on any Dependabot PR that touches the root lockfile: npm
-#   strips `"gypfile": false` from the `node_modules/better-sqlite3` entry
-#   every time it regenerates package-lock.json, so every such PR needs that
-#   one line re-added by hand before it can go green. Nothing automates it.
+#   MANUAL STEP, ONE COMMAND, on any Dependabot PR that touches the root
+#   lockfile: npm strips `"gypfile": false` from the
+#   `node_modules/better-sqlite3` entry every time it regenerates
+#   package-lock.json, so every such PR needs that field re-added before it
+#   can go green. On the PR branch, run `npm run fix-lockfile` and commit the
+#   one-line change; `npm run fix-lockfile -- --check` reports without
+#   writing. The script is `scripts/fix-lockfile-gypfile.mjs`, and its
+#   detection mirrors the test below, so a future package with the same shape
+#   is repaired by the same command.
 #   The `Windows (types + unit)` job runs `npm ci` before any test, and a
 #   missing field fails the install itself with `gyp ERR! find VS`, so no
 #   test-side repair and no root `postinstall` runs early enough to prevent
 #   it; only a committed lockfile edit does.
-#   `tests/lockfileGypfile.test.ts` is what makes the omission visible on
-#   Linux, where `npm ci` exits 0 and only Windows would have failed. Its
-#   header comment has the full mechanism.
+#   `tests/lockfileGypfile.test.ts` reports the omission on Linux, where `npm
+#   ci` exits 0 and only Windows would have failed. Its header comment has
+#   the full mechanism.
+#
+#   NOT AUTOMATED, decided 2026-09-09. A bot that re-adds the field on a
+#   Dependabot PR has to push to that PR's branch, and the push has to re-run
+#   the check it is fixing. A push made with GITHUB_TOKEN triggers no
+#   workflow run, so `Windows (types + unit)` would sit at its old red result
+#   and a human would rerun it by hand, which is the step the automation was
+#   supposed to remove. Making the push retrigger CI needs a repo-scoped PAT
+#   held as a secret and exposed to a `pull_request_target` job that runs
+#   against a branch a bot writes. That is a standing repo-write credential
+#   on an automated code path, bought for roughly one PR per advisory (zero
+#   between the 0.11.0 release and 2026-09-09, then one), on a PR a human
+#   reviews and merges either way. The one-command script above collects the
+#   part of the value that does not need the credential.
+#
+#   RETIRED WHEN npm SHIPS THE FIX. npm/cli#9837 tracks this exact defect and
+#   npm/cli#9859 is the fix, open and unmerged as of 2026-09-09. arborist's
+#   `shrinkwrap.js` still omits `gypfile` from the fields it copies into a
+#   lock entry, and `rebuild.js` still schedules `node-gyp rebuild` when the
+#   field reads undefined. Confirmed against npm 10.9.3 on 2026-09-09: a
+#   fresh `npm install better-sqlite3@13.0.3` writes no `gypfile` into the
+#   lockfile it generates. better-sqlite3 13.0.3 still ships `binding.gyp`
+#   alongside its prebuilds and declares no install script, so nothing on
+#   that side retires it either. Once npm/cli#9859 is in a released npm that
+#   both this repo and Dependabot run, delete the script, this note and
+#   `tests/lockfileGypfile.test.ts` together.
 #
 # - The agent CLI versions (CLAUDE_CODE_VERSION / CODEX_VERSION ARGs in the
 #   Dockerfile), bumped deliberately by hand — see the comment there.
