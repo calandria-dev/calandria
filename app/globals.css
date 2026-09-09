@@ -1652,24 +1652,23 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .comp-box{border:1px solid var(--line-strong);border-radius:var(--r-lg);background:var(--raise);box-shadow:var(--sh-1);transition:border-color .12s,box-shadow .12s;overflow:hidden;}
 .comp-box:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
 /* The row bottom-aligns so the send button hugs the last line as the box grows.
-   The textarea's vertical padding is sized so ONE line of text stands as tall
+   The field's vertical padding is sized so ONE line of text stands as tall
    as the send button (21px line + 2×6.5 = 34px desktop; 24px + 2×8 = 40px
-   mobile, see the phone block). Without it the empty-ish textarea bottom-aligns
+   mobile, see the phone block). Without it the short field bottom-aligns
    inside the taller row and the first line of text sits at the bottom of the
-   box. scrollHeight includes the padding, so autosize keeps working. */
+   box. .comp-input is the contenteditable message field (see Composer.tsx): it
+   grows with its own content to max-height and scrolls past it, so nothing
+   measures or sets its height. */
 .comp-area{display:flex;align-items:flex-end;gap:10px;padding:11px 12px 11px 15px;}
-.comp-area textarea{flex:1;border:none;background:none;resize:none;outline:none;font-family:var(--font-prompt);font-size:14px;line-height:1.5;color:var(--ink);max-height:160px;min-height:22px;padding:6.5px 0;}
-.comp-area textarea::placeholder{color:var(--ink-4);}
-/* Empty box: the placeholder is the only text in it, so keep it on the one line
-   the box is (see autosize in Composer.tsx) rather than letting it wrap into a
-   second line the box doesn't have and a scrollbar nobody can use. The
-   placeholders are written to fit that line; this is the guarantee for the ones
-   that can't be (a long agent label, a hand-narrowed rail). No text-overflow:
-   Chromium ignores it on a textarea placeholder. Dropped the moment there's a
-   value, so typed text wraps normally. Named "blank" rather than "empty":
-   .empty above is the empty-STATE panel, and its text-align:center reached the
-   textarea's placeholder through the shared class name. */
-.comp-area textarea.blank{white-space:nowrap;overflow:hidden;}
+.comp-area .comp-input{flex:1;min-width:0;border:none;background:none;outline:none;font-family:var(--font-prompt);font-size:14px;line-height:1.5;color:var(--ink);max-height:160px;min-height:22px;padding:6.5px 0;white-space:pre-wrap;overflow-wrap:break-word;overflow-x:hidden;overflow-y:auto;cursor:text;}
+.comp-area .comp-input[aria-disabled=true]{cursor:default;}
+/* Empty box: the placeholder is the only thing in it, so keep it on the one
+   line the box is, and ellipsize the placeholders that can't fit (a long agent
+   label, a hand-narrowed rail), which a textarea placeholder could not do. The
+   field is emptied down to zero child nodes on delete-to-empty (see the input
+   handler in Composer.tsx), so :empty stays true and the box stays one line
+   tall. */
+.comp-area .comp-input:empty::before{content:attr(data-placeholder);display:block;color:var(--ink-4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;}
 .send{width:34px;height:34px;flex:0 0 auto;border-radius:9px;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;box-shadow:var(--sh-1);transition:filter .12s,opacity .12s;}
 .send:hover{filter:brightness(1.07);}
 .send:disabled{opacity:.4;cursor:default;filter:none;}
@@ -2178,10 +2177,10 @@ button.tpeek-more:hover{color:var(--accent-ink);}
      keyboard up iOS reports the inset as 0, so that case costs nothing.
      The keyboard hints are mouse-era noise on a phone. */
   .app.mobile .composer{padding:10px 12px 12px;}
-  .app.mobile:has(textarea:focus, input:is([type=text],[type=search],[type=email],[type=url],[type=number],[type=password]):focus) .composer{padding-bottom:calc(12px + env(safe-area-inset-bottom));}
+  .app.mobile:has(textarea:focus, [contenteditable]:focus, input:is([type=text],[type=search],[type=email],[type=url],[type=number],[type=password]):focus) .composer{padding-bottom:calc(12px + env(safe-area-inset-bottom));}
   /* 16px stops iOS zooming on focus; 8px vertical padding centers a single
      line against the 40px send button (see .comp-area's comment). */
-  .app.mobile .comp-area textarea{font-size:16px;padding:8px 0;}
+  .app.mobile .comp-area .comp-input{font-size:16px;padding:8px 0;}
   .app.mobile .comp-foot{display:none;}
   .app.mobile .send{width:40px;height:40px;}
 
@@ -2242,7 +2241,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
    only: focusing a checkbox raises no keyboard and must not blink the bar.
    The composer's home-indicator rule (the phone block above) keys off this
    same selector, since while the bar is gone the composer is bottom-most. */
-.app.mobile:has(textarea:focus, input:is([type=text],[type=search],[type=email],[type=url],[type=number],[type=password]):focus) .mtabbar{display:none;}
+.app.mobile:has(textarea:focus, [contenteditable]:focus, input:is([type=text],[type=search],[type=email],[type=url],[type=number],[type=password]):focus) .mtabbar{display:none;}
 .mtabbar-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:44px;padding:8px 0;background:none;border:0;color:var(--dim);font-size:10px;cursor:pointer;}
 .mtabbar-item svg{width:18px;height:18px;}
 .mtabbar-item.on{color:var(--accent);}

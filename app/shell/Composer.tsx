@@ -70,10 +70,11 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
   // hold, and the send button is the one visible affordance for sending.
   // Enter-to-send stays a hardware-keyboard behavior.
   const coarse = useCoarsePointer();
-  // Tapping a button steals focus from the textarea, and on iOS that dismisses
-  // the keyboard before the click lands, so the tap closes the keyboard instead
-  // of sending. Cancelling mousedown (the compat event iOS fires on tap) keeps
-  // focus on the textarea so the keyboard stays up and the click lands normally.
+  // Tapping a button steals focus from the message field, and on iOS that
+  // dismisses the keyboard before the click lands, so the tap closes the
+  // keyboard instead of sending. Cancelling mousedown (the compat event iOS
+  // fires on tap) keeps focus on the field so the keyboard stays up and the
+  // click lands normally.
   const keepFocus = (e: React.MouseEvent) => e.preventDefault();
   const [slash, setSlash] = useState(false);
   // The agent's own slash commands, fetched once per task the first time the
@@ -99,21 +100,31 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
   useEffect(() => { if (!running) setStopping(false); }, [running]);
   // Mirror the draft to localStorage so it survives remounts/navigation.
   useEffect(() => { saveDraft(task.id, val); }, [task.id, val]);
-  const ref = useRef<HTMLTextAreaElement>(null);
-  // Chromium counts the placeholder in scrollHeight, so measuring an empty box
-  // measures how many lines the placeholder wraps to, not the message. An empty
-  // box therefore skips the measurement and stays at its rows={1} height, with
-  // the placeholder held to that one line (`.comp-area textarea.blank`). This
-  // matches what submit() already does: it resets height to "auto" and nothing
-  // re-measures it, so mount, /clear and delete-to-empty all agree with send.
-  const autosize = (el: HTMLTextAreaElement) => {
-    el.style.height = "auto";
-    if (!el.value) return;
-    el.style.height = Math.min(el.scrollHeight, 160) + "px";
+  const ref = useRef<HTMLDivElement>(null);
+  // Put the caret after the last character. Needed for the writes the app makes
+  // itself, since replacing the field's text drops the selection with it.
+  const caretToEnd = (el: HTMLElement) => {
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    r.collapse(false);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(r);
   };
-  // Grow the box to fit a restored draft and reflect the slash menu state.
+  // React does not control a contenteditable, so `val` is mirrored into the
+  // element by hand, and only when the two disagree. A keystroke sets `val`
+  // from the element's own text, so this effect finds them equal and leaves the
+  // node alone, which is what holds the caret still while the user types. It
+  // writes for the other direction: a restored draft, a completed command, the
+  // clear after a send.
   useEffect(() => {
-    if (ref.current) autosize(ref.current);
+    const el = ref.current;
+    if (!el || el.textContent === val) return;
+    el.textContent = val;
+    if (document.activeElement === el) caretToEnd(el);
+  }, [val]);
+  // Reflect the slash menu state of a restored draft.
+  useEffect(() => {
     setSlash(val.trim().startsWith("/"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.id]);
@@ -228,8 +239,9 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
     if (c.run) { c.run(); return; }
     setVal(`/${c.name} `);
     setSlash(false);
-    const el = ref.current;
-    if (el) { el.focus(); requestAnimationFrame(() => autosize(el)); }
+    // The mirror effect writes the text and lands the caret after it once this
+    // render commits, so focus is all this has to do.
+    ref.current?.focus();
   };
 
   // /clear can't run mid-turn, since it would collide with the live session. It
@@ -248,13 +260,12 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
   const submit = () => {
     const v = val.trim();
     if ((!v && ready.length === 0) || disabled || uploading || blockedClear) return;
-    if (v === "/clear" && ready.length === 0) { onClear(); setVal(""); setSlash(false); if (ref.current) ref.current.style.height = "auto"; return; }
+    if (v === "/clear" && ready.length === 0) { onClear(); setVal(""); setSlash(false); return; }
     // Attachments ride along as marker lines after the typed text: an image or
     // file marker depending on the attachment kind.
     onSend([v, ...ready.map((a) => (a.kind === "image" ? attachmentMarker(a.path) : fileAttachmentMarker(a.path)))].filter(Boolean).join("\n\n"));
     atts.forEach((a) => { if (a.preview) URL.revokeObjectURL(a.preview); });
     setAtts([]); setVal(""); setSlash(false);
-    if (ref.current) ref.current.style.height = "auto";
   };
   const canSend = (!!val.trim() || ready.length > 0) && !uploading && !blockedClear;
 
@@ -308,41 +319,50 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
             </div>
           )}
           <div className="comp-area">
-            <textarea
-              ref={ref} rows={1} value={val} disabled={disabled}
-              // Empty: the placeholder is the only thing to lay out, so it's
-              // held to the box's one line instead of being wrapped out of
-              // sight (see autosize).
-              className={val ? undefined : "blank"}
-              // These attributes state the field's intent. Some iOS PWA
-              // installs still give this field a one-time-code keyboard (a
-              // verification-code suggestion above the keyboard, no
-              // autocorrect). WebKit derives that keyboard only from a literal
+            <div
+              ref={ref}
+              className="comp-input"
+              // The message field is a contenteditable div so that it sits
+              // outside Safari's AutoFill classifier. As a textarea it drew a
+              // one-time-code keyboard on some iOS installs: a
+              // verification-code suggestion above the keys and no autocorrect.
+              // WebKit derives that keyboard only from a literal
               // autocomplete="one-time-code" token (WebCore/html/Autofill.cpp,
-              // WKContentViewInteraction.mm contentTypeFromFieldName), so the
-              // source is Safari's own AutoFill classifier. That classifier
-              // reads the field's label, aria-label, title and placeholder:
-              // aria-label="verification code" reproduces both symptoms on any
-              // textarea, and a diluted sentence does not. The aria-label below
-              // is the accessible name this field always lacked; it also hands
-              // the classifier an explicit name so it has nothing to infer from
-              // the transcript rendered just above. The five on-device probe
-              // rounds and the WebKit reading are recorded in the notes repo,
+              // WKContentViewInteraction.mm contentTypeFromFieldName), and five
+              // on-device probe rounds cleared the attributes, the geometry,
+              // the placeholder and the field count, which leaves Safari's own
+              // AutoFill client as the source. That client's surfaces are
+              // HTMLInputElement and HTMLTextAreaElement, and WebKit's
+              // contenteditable branch in
+              // focusedElementInformationWithoutLayout never fills in
+              // autofillFieldName, so this field is beyond its reach by
+              // construction. The chat products that never show the symptom all
+              // use a contenteditable editor. The probe rounds are recorded in
+              // the notes repo,
               // measurements/2026-09-08-ios-composer-otp-classification.md.
-              // Retest on a task whose transcript never mentions codes before
-              // touching these attributes again.
-              autoComplete="off" autoCorrect="on" autoCapitalize="sentences" spellCheck={true}
+              // plaintext-only keeps markup out of the editor; the paste
+              // handler below inserts the text itself for the engines that
+              // honor the value loosely.
+              contentEditable={disabled ? false : "plaintext-only"}
+              role="textbox"
+              aria-multiline="true"
               aria-label="Message"
-              name="message"
-              // Short enough to fit the one line the empty box now is (see
-              // autosize). A textarea placeholder can't ellipsize, so anything
-              // that doesn't fit is cut mid-word. Keep it short: the task title
-              // is already shown in the session header above, so don't repeat
-              // it here.
-              placeholder={disabled ? "Start the session to reply…" : lingering ? "Reply now: the session is held open…" : running ? "Queue a follow-up… (sent at turn end)" : `Reply to ${agentLabel}…`}
-              onChange={(e) => {
-                const v = e.target.value;
-                setVal(v); autosize(e.target); setActive(0);
+              aria-disabled={disabled || undefined}
+              autoCorrect="on" autoCapitalize="sentences" spellCheck={true}
+              // Drawn by CSS while the field is empty
+              // (`.comp-area .comp-input:empty::before`). Short enough to fit
+              // the one line the empty box is; anything longer ellipsizes.
+              // Keep it short: the task title is already shown in the session
+              // header above, so don't repeat it here.
+              data-placeholder={disabled ? "Start the session to reply…" : lingering ? "Reply now: the session is held open…" : running ? "Queue a follow-up… (sent at turn end)" : `Reply to ${agentLabel}…`}
+              onInput={(e) => {
+                const el = e.currentTarget;
+                // Deleting the last character can leave a <br> behind, which
+                // defeats :empty: the placeholder would stay hidden and the
+                // empty box would stand two lines tall.
+                if (!el.textContent && el.firstChild) el.replaceChildren();
+                const v = el.textContent ?? "";
+                setVal(v); setActive(0);
                 const open = v.trim().startsWith("/");
                 setSlash(open);
                 if (open) loadCommands();
@@ -378,7 +398,14 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
                 if (text.length > PASTE_ATTACH_THRESHOLD) {
                   e.preventDefault();
                   addFiles([new File([text], "pasted-text.txt", { type: "text/plain" })]);
+                  return;
                 }
+                // Firefox honors plaintext-only for typing and still drops rich
+                // markup in on a paste, so the plain text goes in by hand.
+                // execCommand keeps the browser's own undo stack, which a Range
+                // write does not.
+                e.preventDefault();
+                document.execCommand("insertText", false, text);
               }}
             />
             {running ? (
