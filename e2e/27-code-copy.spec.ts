@@ -47,7 +47,10 @@ test("a fenced block reveals a copy button on hover that copies its source", asy
   await button.click();
   await expect(button).toHaveAttribute("aria-label", "Copied");
   // The source, without the highlighter's markup and without the fence lines.
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(SOURCE);
+  // The Windows clipboard stores text with CRLF endings, so a value written as
+  // LF reads back as CRLF; compare on LF so the assertion is about the content.
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied.replace(/\r\n/g, "\n")).toBe(SOURCE);
 });
 
 test("the button is reachable from the keyboard with no pointer over the block", async ({ page }) => {
