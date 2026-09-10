@@ -383,7 +383,7 @@ because the credential is an OIDC token minted per run:
 | `AZURE_CODE_SIGNING_PUBLISHER_NAME` | The certificate subject, e.g. `CN=…, O=…, L=…, S=…, C=US`. The portal shows it as *Certificate subject preview* before the profile exists. |
 | `AZURE_CLIENT_ID` | The Entra ID app registration's *Application (client) ID*. |
 | `AZURE_TENANT_ID` | Its *Directory (tenant) ID*. |
-| `AZURE_SUBSCRIPTION_ID` | Read only by `azure/login`, and optional: the lane passes `allow-no-subscriptions: true`, and signing needs no subscription context. |
+| `AZURE_SUBSCRIPTION_ID` | **Leave this unset.** Only `azure/login` reads it, the lane passes `allow-no-subscriptions: true`, and signing reaches its endpoint with a token and never needs a subscription context. Setting it fails the login unless the service principal also holds a role on that subscription. |
 
 The first four are what `desktop/signing.js` reads: all four or none, three of
 four throws. electron-builder switches from `signtool` to
@@ -465,7 +465,6 @@ gh variable set AZURE_CODE_SIGNING_CERT_PROFILE_NAME --body '<profile>'
 gh variable set AZURE_CODE_SIGNING_PUBLISHER_NAME --body 'CN=..., O=..., L=..., S=..., C=US'
 gh variable set AZURE_CLIENT_ID --body '<application (client) id>'
 gh variable set AZURE_TENANT_ID --body '<directory (tenant) id>'
-gh variable set AZURE_SUBSCRIPTION_ID --body '<subscription id>'
 gh workflow run verify-signing-credentials.yml
 ```
 
