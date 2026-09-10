@@ -3,6 +3,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Skel, ErrNote, ErrDetail } from "./shell/shared";
 import { CollabDoc } from "./shell/CollabDoc";
+import type { MarkdownLinks } from "./Markdown";
 import { Icon } from "./icons";
 import { PrChip, type PrChipTask } from "./shell/PrChip";
 import type { LandingMode, TaskComment } from "@/lib/types";
@@ -615,6 +616,9 @@ export default function TaskChanges({
   const [comments, setComments] = useState<TaskComment[]>([]);
   const [sel, setSel] = useState<CommentSel | null>(null); // line range being commented on, if any
   const [collab, setCollab] = useState<string | null>(null); // file path open in collaboration mode, if any
+  // Links inside an open document to other files reopen the modal on them.
+  // No roots here: the tab knows only the task id, so only relative links resolve.
+  const collabLinks = useMemo<MarkdownLinks>(() => ({ taskId, roots: [], onOpen: setCollab }), [taskId]);
   const [draft, setDraft] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1258,7 +1262,7 @@ export default function TaskChanges({
         </div>
       )}
       {collab && onSend && (
-        <CollabDoc taskId={taskId} file={collab} running={running} onClose={() => setCollab(null)} onSend={onSend} onWritten={load} />
+        <CollabDoc key={collab} taskId={taskId} file={collab} running={running} onClose={() => setCollab(null)} onSend={onSend} onWritten={load} links={collabLinks} />
       )}
     </div>
   );

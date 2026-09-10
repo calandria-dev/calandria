@@ -160,8 +160,9 @@ already queued. The transcript records that it was sent.
   so nothing lands in the model's context until the agent opens it, and
   nothing lands in your diff. Staged files are swept with the task.
 - **Collaborate on documents:** open a file the agent wrote as a document
-  (mermaid fences render as diagrams), edit the text, attach comments to
-  passages, and send it all back as one message. Calandria saves comments,
+  (mermaid fences render as diagrams), or click a file link in any message,
+  then edit the text, attach comments to passages, and send it all back as
+  one message. Calandria saves comments,
   edits and the general note as you go, so a reload or closing the modal
   loses nothing, and writes your edits straight into the task's worktree
   (default) or sends them as a diff for the agent to apply. Open it from the

@@ -169,7 +169,9 @@ comments, without opening it in your own editor.
 
 1. Click **Collaborate** wherever it appears: on a changed file's diff header in the Changes
    tab, or on the **Write**/**Edit** tool card in the transcript. It shows up as soon as the
-   file is written, even under a gitignored directory that never appears in the diff.
+   file is written, even under a gitignored directory that never appears in the diff. A
+   markdown link to a file in the checkout, in a message or in an open document, opens it the
+   same way; a link to an image opens it in a new tab.
 2. Use the **Edit** tab to edit the file directly in a source editor. Markdown gets a live
    render beside it, and ` ```mermaid ` fences render as diagrams.
 3. Use the **Comment** tab to select a passage and attach a note, or leave a general comment.

@@ -3,7 +3,7 @@
 import { memo, useCallback, useEffect, useState } from "react";
 import type { ToolData, ToolPeek, AskQuestion, AskAnswers, PermissionDecision, SuggestionCard } from "@/lib/types";
 import { Icon } from "../icons";
-import { Markdown } from "../Markdown";
+import { Markdown, type MarkdownLinks } from "../Markdown";
 import { jget } from "./api";
 import { PriPill } from "./shared";
 import { blockedNote, clockTime, diffCls, isBlocking, splitAttachments, type MsgAttachment } from "./format";
@@ -523,7 +523,7 @@ function RepairWorktree({ msgId, running, onRepair }: { msgId: string; running?:
   );
 }
 
-export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onDecidePermission, onCancelQueued, onClear, onReconnect, onRetry, onRepairWorktree, onCollaborate, suggestionActions, limitResume }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onDecidePermission?: (permId: string, decision: PermissionDecision, note: string) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void; onRetry?: (msgId: string) => void; onRepairWorktree?: (msgId: string) => Promise<string | null>; onCollaborate?: (file: string) => void; suggestionActions?: SuggestionActions; limitResume?: LimitResume }) {
+export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onDecidePermission, onCancelQueued, onClear, onReconnect, onRetry, onRepairWorktree, onCollaborate, links, suggestionActions, limitResume }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onDecidePermission?: (permId: string, decision: PermissionDecision, note: string) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void; onRetry?: (msgId: string) => void; onRepairWorktree?: (msgId: string) => Promise<string | null>; onCollaborate?: (file: string) => void; links?: MarkdownLinks; suggestionActions?: SuggestionActions; limitResume?: LimitResume }) {
   if (m.role === "queued") {
     // A follow-up the user typed mid-turn, waiting its turn. Reads like a user
     // bubble but dimmed, tagged "Queued", with an × to drop it before it runs.
@@ -532,7 +532,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
       <div className="msg user queued">
         <div className="who"><Avatar who="user" /> You<span className="badge queued-badge">queued</span>{m.ts != null && <span className="msg-time">{clockTime(m.ts)}</span>}</div>
         <div className="msg-body">
-          {text && <Markdown>{text}</Markdown>}
+          {text && <Markdown links={links}>{text}</Markdown>}
           <AttachmentStrip items={attachments} />
           {onCancelQueued && <button className="queued-x" title="Remove from queue" aria-label="Remove from queue" onClick={() => onCancelQueued(m.id)}>{Icon.x()}</button>}
         </div>
@@ -710,7 +710,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
           <div className="who"><Avatar who="cc" agent={agent} /> {thinking ? "Thinking" : "Agent"}</div>
         )}
         <div className="msg-body">
-          {thinking ? <div className="stream-think">{m.content}</div> : <Markdown>{m.content}</Markdown>}
+          {thinking ? <div className="stream-think">{m.content}</div> : <Markdown links={links}>{m.content}</Markdown>}
           <span className="stream-caret" aria-hidden />
         </div>
       </div>
@@ -731,7 +731,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
       )}
       <div className="msg-body">
         {initial && <div className="initial-tag">{Icon.spark()} sent with project context</div>}
-        {text && <Markdown>{text}</Markdown>}
+        {text && <Markdown links={links}>{text}</Markdown>}
         <AttachmentStrip items={attachments} />
       </div>
     </div>

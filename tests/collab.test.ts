@@ -6,6 +6,7 @@ import { blobSha, resolveWorktreeFile } from "../lib/worktreeFile";
 import { describeToolUse } from "../lib/agents/shared";
 import { createProject, createTask, updateTask } from "../lib/store";
 import { GET as fileRoute } from "../app/api/tasks/[id]/file/route";
+import { GET as rawRoute } from "../app/api/tasks/[id]/file/raw/route";
 import { git, makeRepo, tmpDir, writeFile } from "./helpers";
 
 const DOC = [
@@ -264,5 +265,55 @@ describe("blobSha", () => {
     const expected = (await git(dir, "hash-object", abs)).trim();
     expect(expected).toBe("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391");
     expect(blobSha(fs.readFileSync(abs))).toBe(expected);
+  });
+});
+
+describe("GET /api/tasks/[id]/file/raw", () => {
+  const params = (id: string) => ({ params: Promise.resolve({ id }) });
+  const get = (id: string, p: string) => rawRoute(new Request(`http://x/api/tasks/${id}/file/raw?path=${encodeURIComponent(p)}`), params(id));
+
+  it("serves worktree bytes with a browser-safe type and the same path guard as the file route", async () => {
+    const wt = await makeRepo();
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 1, 2, 3]);
+    fs.mkdirSync(path.join(wt, "shots"), { recursive: true });
+    fs.writeFileSync(path.join(wt, "shots", "a.png"), png);
+    writeFile(wt, "docs/page.html", "<script>alert(1)</script>\n");
+    fs.writeFileSync(path.join(wt, "blob.bin"), Buffer.from([0, 1, 2]));
+
+    const outside = tmpDir("outside-");
+    fs.writeFileSync(path.join(outside, "secret.png"), "nope\n");
+
+    const project = createProject({ name: "RawRoute" });
+    const task = createTask({ project_id: project.id, title: "T" });
+
+    // No worktree yet: nothing to serve.
+    expect((await get(task.id, "shots/a.png")).status).toBe(409);
+    updateTask(task.id, { worktree_path: wt });
+
+    const image = await get(task.id, "shots/a.png");
+    expect(image.status).toBe(200);
+    expect(image.headers.get("content-type")).toBe("image/png");
+    expect(image.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(image.headers.get("cache-control")).toBe("private, no-store");
+    expect(image.headers.get("content-disposition")).toBeNull();
+    expect(Buffer.from(await image.arrayBuffer()).equals(png)).toBe(true);
+
+    // Markup in the checkout is previewed as text, never run on this origin.
+    const html = await get(task.id, "docs/page.html");
+    expect(html.status).toBe(200);
+    expect(html.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(await html.text()).toContain("<script>");
+
+    // An unknown type is an opaque download.
+    const bin = await get(task.id, "blob.bin");
+    expect(bin.status).toBe(200);
+    expect(bin.headers.get("content-type")).toBe("application/octet-stream");
+    expect(bin.headers.get("content-disposition")).toBe('attachment; filename="blob.bin"');
+
+    expect((await get(task.id, path.join(outside, "secret.png"))).status).toBe(400);
+    expect((await get(task.id, "../" + path.basename(outside) + "/secret.png")).status).toBe(400);
+    expect((await get(task.id, "shots/missing.png")).status).toBe(404);
+    expect((await get(task.id, "shots")).status).toBe(400);
+    expect((await get("nope", "shots/a.png")).status).toBe(404);
   });
 });

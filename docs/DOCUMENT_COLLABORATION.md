@@ -14,7 +14,7 @@ faster read.
 
 ## Open a document
 
-There are two ways in, and they see different files.
+There are three ways in, and they see different files.
 
 1. **From the Changes tab.** Select the task, open the **DIFF** tab in the
    session rail, and press **Collaborate** on a file's row.
@@ -22,6 +22,12 @@ There are two ways in, and they see different files.
    tool card. This one appears the moment the write lands, so you do not have
    to switch tabs, and it reaches files the diff never lists, such as notes the
    agent keeps under a gitignored `scratch/` directory.
+3. **From a link.** Click a markdown link that names a file in the checkout,
+   in a message, in the task description, or inside an open document. The
+   link may be relative (`docs/guide.md`), absolute under the worktree or the
+   project's repo, a `file:` URL, or a citation with a line number
+   (`lib/a.ts:42`). A text file opens here; an image opens in a new tab, and
+   an archive or other binary downloads. A web link opens as usual.
 
 Either way the file opens in a **Collaborate on document** window with two
 tabs, **EDIT** and **COMMENT**. Both tabs share one copy of the document, so

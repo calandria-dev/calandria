@@ -2,41 +2,23 @@ import fs from "node:fs";
 import { NextResponse } from "next/server";
 import { getTask } from "@/lib/store";
 import { hasTurn } from "@/lib/abort";
-import {
-  resolveWorktreeFile,
-  malformedWorktreePath,
-  blobSha,
-  MAX_COLLAB_BYTES,
-} from "@/lib/worktreeFile";
+import { locateWorktreeFile, blobSha, MAX_COLLAB_BYTES } from "@/lib/worktreeFile";
 
 export const dynamic = "force-dynamic";
 
 // Resolve the request's repo-relative path inside the task's worktree, or the
 // error response to send instead. Shared by GET and POST so the two can never
-// disagree about which paths are reachable.
-function locate(taskId: string, rel: string): { abs: string; worktree: string } | NextResponse {
+// disagree about which paths are reachable; the path rules themselves live in
+// locateWorktreeFile, shared with the raw route.
+function locate(taskId: string, rel: string): { abs: string } | NextResponse {
   const task = getTask(taskId);
   if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
-  if (!task.worktree_path) return NextResponse.json({ error: "task has no worktree" }, { status: 409 });
-  const abs = resolveWorktreeFile(task.worktree_path, rel);
-  if (!abs) {
-    // Either outside the worktree or nonexistent; the guard cannot tell the
-    // route which without leaking which paths exist, so both cases return
-    // "not found" unless the request was malformed on its face.
-    const malformed = malformedWorktreePath(rel);
-    return NextResponse.json({ error: malformed ? "bad path" : "file not found" }, { status: malformed ? 400 : 404 });
+  const hit = locateWorktreeFile(task.worktree_path, rel, MAX_COLLAB_BYTES);
+  if (!hit.ok) {
+    const error = hit.status === 413 ? `file too large for collaboration mode (max ${MAX_COLLAB_BYTES / 1024} KB)` : hit.error;
+    return NextResponse.json({ error }, { status: hit.status });
   }
-  let stat: fs.Stats;
-  try {
-    stat = fs.statSync(abs);
-  } catch {
-    return NextResponse.json({ error: "file not found" }, { status: 404 });
-  }
-  if (!stat.isFile()) return NextResponse.json({ error: "not a file" }, { status: 400 });
-  if (stat.size > MAX_COLLAB_BYTES) {
-    return NextResponse.json({ error: `file too large for collaboration mode (max ${MAX_COLLAB_BYTES / 1024} KB)` }, { status: 413 });
-  }
-  return { abs, worktree: task.worktree_path };
+  return { abs: hit.abs };
 }
 
 // Read one text file out of a task's worktree, for the document collaboration

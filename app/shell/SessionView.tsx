@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import { GATEWAY_PLAN_ID, type Status, type Priority, type AskQuestion, type AskAnswers, type PermissionDecision } from "@/lib/types";
 import { Icon } from "../icons";
 import TaskChanges, { type ResolveResult } from "../TaskChanges";
-import { Markdown } from "../Markdown";
+import { Markdown, type MarkdownLinks } from "../Markdown";
 import { fmtTokens, fmtCostTotal, fmtJobCost, modelLabel, isAwaiting, isPrRed, prFailingChecks, buildSessions, usageSplit, costDisplay, usageTooltip, blockedNote } from "./format";
 import { pendingPromptIds, promptsAreLive } from "./pendingPrompt";
 import {
@@ -430,7 +430,7 @@ function CiBanner({ task, running, onFixCi, onSwitchToChat }: {
   );
 }
 
-function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoStart, running, blockedBy, resetAt, onQueueStart, onCancelQueuedStart }: { task: TaskRow; project: ProjectRow; onStart: () => void; onEdit: () => void; onSetSendContext: (v: boolean) => void; onSetAutoStart: (v: boolean) => void; running: boolean; blockedBy?: string[]; resetAt: number | null; onQueueStart: (at: number) => void; onCancelQueuedStart: () => void }) {
+function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoStart, running, blockedBy, resetAt, onQueueStart, onCancelQueuedStart, links }: { task: TaskRow; project: ProjectRow; links?: MarkdownLinks; onStart: () => void; onEdit: () => void; onSetSendContext: (v: boolean) => void; onSetAutoStart: (v: boolean) => void; running: boolean; blockedBy?: string[]; resetAt: number | null; onQueueStart: (at: number) => void; onCancelQueuedStart: () => void }) {
   const carried = task.generation > 1;
   const blockNote = task.started ? undefined : blockedNote(blockedBy);
   const blocked = !!blockNote;
@@ -452,7 +452,7 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoS
        * the centred hero, since a bulleted list centred line by line is
        * unreadable.
        */}
-      {task.description && <div className="h-desc"><Markdown>{task.description}</Markdown></div>}
+      {task.description && <div className="h-desc"><Markdown links={links}>{task.description}</Markdown></div>}
       {/*
        * The card must not restate the brief above. The opening user turn is
        * the fixed INITIAL_TASK_PROMPT; title and details reach the session
@@ -706,6 +706,14 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   const [collab, setCollab] = useState<string | null>(null);
   useEffect(() => { setCollab(null); }, [task.id]);
   const closeCollab = useCallback(() => setCollab(null), []);
+  // A markdown link to a file in the checkout opens through the same setter.
+  // Memoized because Markdown is memo'd on it; an absolute path an agent
+  // names is re-rooted against the worktree first, then the project's repo.
+  const links = useMemo<MarkdownLinks>(() => ({
+    taskId: task.id,
+    roots: [task.worktree_path, project.repo_path].filter((r) => !!r),
+    onOpen: setCollab,
+  }), [task.id, task.worktree_path, project.repo_path]);
   useEffect(() => {
     if (!clearConfirming) { setClearEstimate(null); return; }
     let alive = true;
@@ -848,7 +856,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
                 // still sees it, so the assistant run's header stays collapsed
                 // exactly as it would have with the card in place.
                 if (pendingSet.has(m.id)) return null;
-                return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} onRetry={stableRetry} onRepairWorktree={stableRepairWorktree} onCollaborate={setCollab} suggestionActions={suggestionActions} limitResume={last ? limitResume : undefined} />;
+                return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} onRetry={stableRetry} onRepairWorktree={stableRepairWorktree} onCollaborate={setCollab} links={links} suggestionActions={suggestionActions} limitResume={last ? limitResume : undefined} />;
               })}
             </div>
           ))}
@@ -874,7 +882,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
           {/* Follow-ups queued mid-turn, pinned below the live turn. They
               send in order once it ends. */}
           {messages.filter((m) => m.role === "queued").map((m) => (
-            <MessageView key={m.id} m={m} initial={false} hideWho={false} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} suggestionActions={suggestionActions} />
+            <MessageView key={m.id} m={m} initial={false} hideWho={false} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} links={links} suggestionActions={suggestionActions} />
           ))}
         </div>
       </div>
@@ -900,7 +908,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
         <div className="prompt-dock" role="group" aria-label="Waiting for your answer">
           <div className="prompt-dock-in">
             {pendingMsgs.map((m) => (
-              <MessageView key={m.id} m={m} initial={false} hideWho agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} suggestionActions={suggestionActions} />
+              <MessageView key={m.id} m={m} initial={false} hideWho agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} links={links} suggestionActions={suggestionActions} />
             ))}
           </div>
         </div>
@@ -1217,7 +1225,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
         )}
 
         {!hasSession ? (
-          <TaskHero task={task} project={project} onStart={onStart} onEdit={onEdit} onSetSendContext={onSetSendContext} onSetAutoStart={onSetAutoStart} running={running} blockedBy={blockedBy} resetAt={resetAt} onQueueStart={onQueueStart} onCancelQueuedStart={onCancelQueuedStart} />
+          <TaskHero task={task} project={project} onStart={onStart} onEdit={onEdit} onSetSendContext={onSetSendContext} onSetAutoStart={onSetAutoStart} running={running} blockedBy={blockedBy} resetAt={resetAt} onQueueStart={onQueueStart} onCancelQueuedStart={onCancelQueuedStart} links={links} />
         ) : !mobile ? (
           // Desktop: transcript beside the DIFF / PREVIEW / CONTEXT rail. The
           // zero-width seam between them holds the drag handle (a 0px grid track),
@@ -1259,7 +1267,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
       {/* Collaboration mode opened from a transcript tool card (the Changes
           tab mounts its own for files it lists). Same modal, same send path. */}
       {collab && (
-        <CollabDoc taskId={task.id} file={collab} running={running} onClose={closeCollab} onSend={onSend} />
+        <CollabDoc key={collab} taskId={task.id} file={collab} running={running} onClose={closeCollab} onSend={onSend} links={links} />
       )}
       </div>
   );

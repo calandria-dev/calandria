@@ -1,7 +1,7 @@
 "use client";
 
-import { memo, useEffect, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import type { ComponentProps } from "react";
@@ -9,6 +9,7 @@ import type { ExtraProps } from "react-markdown";
 import { Mermaid } from "./Mermaid";
 import { mermaidSourceOf } from "@/lib/mermaid";
 import { codeBlockTextOf } from "@/lib/codeBlock";
+import { isFileLink, localLinkTarget, rawFileUrl } from "@/lib/localLink";
 import { Icon } from "./icons";
 
 // Renders an agent's markdown output: headings, lists, tables, fenced code blocks
@@ -24,7 +25,44 @@ import { Icon } from "./icons";
 // half-written diagram would fail to parse on each one, and the mermaid
 // chunk would load for every session that mentions a flowchart. The
 // collaboration modal turns it on, since a document there is read whole.
-const link = (props: ComponentProps<"a">) => <a {...props} target="_blank" rel="noreferrer" />;
+//
+// `links` makes a link that names a file in the task's checkout open in the
+// app: text in the collaboration modal through `onOpen`, an image or other
+// binary from the raw file route in a new tab. Without it every link is a
+// plain new-tab anchor, and a relative `docs/x.md` would navigate to
+// `<origin>/docs/x.md` and 404. See lib/localLink.ts for what counts.
+export type MarkdownLinks = {
+  taskId: string;
+  /** Absolute directories an absolute path is re-rooted against, in order:
+   *  the task's worktree, then the project's repo. */
+  roots: string[];
+  /** Worktree-relative directory a relative href resolves against: "" for a
+   *  transcript message, the document's own directory inside the modal. */
+  baseDir?: string;
+  onOpen: (rel: string) => void;
+};
+
+const link = ({ node: _node, ...props }: ComponentProps<"a"> & ExtraProps) => <a {...props} target="_blank" rel="noreferrer" />;
+
+function fileAwareLink(links: MarkdownLinks) {
+  return function FileLink({ node: _node, href, children, ...props }: ComponentProps<"a"> & ExtraProps) {
+    const hit = href ? localLinkTarget(href, links.roots, links.baseDir) : null;
+    if (!hit) return <a {...props} href={href} target="_blank" rel="noreferrer">{children}</a>;
+    if (hit.open === "raw") {
+      return <a {...props} href={rawFileUrl(links.taskId, hit.rel)} className="md-file" title={hit.rel} target="_blank" rel="noreferrer">{children}</a>;
+    }
+    const open = (e: React.MouseEvent) => {
+      e.preventDefault();
+      links.onOpen(hit.rel);
+    };
+    return <a {...props} href={href} className="md-file" title={`Open ${hit.rel} in collaboration mode`} onClick={open}>{children}</a>;
+  };
+}
+
+// react-markdown blanks any href whose scheme it doesn't know, which takes
+// `file:///…`, `C:\…` and `lib/a.ts:42` with it. Those are the links this
+// component wants to see; everything else keeps the default filter.
+const urlTransform = (url: string) => (isFileLink(url) ? url : defaultUrlTransform(url));
 
 const COPIED_MS = 1400;
 
@@ -76,13 +114,20 @@ const diagramPre = (props: ComponentProps<"pre"> & ExtraProps) => {
 const PLAIN = { a: link, pre: codePre };
 const WITH_DIAGRAMS = { a: link, pre: diagramPre };
 
-export const Markdown = memo(function Markdown({ children, diagrams = false }: { children: string; diagrams?: boolean }) {
+export const Markdown = memo(function Markdown({ children, diagrams = false, links }: { children: string; diagrams?: boolean; links?: MarkdownLinks }) {
+  // The components map is identity-compared by react-markdown, so it is
+  // built once per `links` value; callers keep that object stable (useMemo).
+  const components = useMemo(() => {
+    if (!links) return diagrams ? WITH_DIAGRAMS : PLAIN;
+    return { a: fileAwareLink(links), pre: diagrams ? diagramPre : codePre };
+  }, [links, diagrams]);
   return (
     <div className="md">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[[rehypeHighlight, { detect: false, ignoreMissing: true }]]}
-        components={diagrams ? WITH_DIAGRAMS : PLAIN}
+        components={components}
+        urlTransform={urlTransform}
       >
         {children}
       </ReactMarkdown>

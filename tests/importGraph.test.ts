@@ -87,6 +87,7 @@ const PINNED = [
   "lib/push/send.ts", //          the push channel notify.ts fans out to; fetch only
   "app/api/notifications/push/route.ts",
   "lib/collab.ts", //             document-collaboration packet; pure (jsdiff only), bundled for the client too
+  "lib/localLink.ts", //          markdown file-link resolver; string-only, bundled for the client too
   "lib/worktreeFile.ts", //       the collaboration modal's worktree read guard; fs only
   "lib/paths.ts", //              case-folded path identity + EBUSY-tolerant rm; fs + path only, and lib/git.ts and lib/repoLock.ts both sit on it
   "app/api/settings/permissions/route.ts",
