@@ -219,6 +219,12 @@ function AgentPlanPill({ agentId, label, snap }: { agentId: string; label: strin
                 Usage limit reached. Turns resume{snap.statusResetsAt != null ? ` at ${fmtReset(snap.statusResetsAt)}` : " when the limit resets"}.
               </div>
             )}
+            {snap.scope?.kind === "some" && (
+              <div className="pu-note scoped">
+                {snap.scope.redirected} of {snap.scope.redirected + snap.scope.onPlan} projects point{snap.scope.redirected === 1 ? "s" : ""} {who} at
+                another endpoint. Those turns do not draw on this plan.
+              </div>
+            )}
             {snap.windows.map((w) => (
               <Meter key={w.id} w={w} rejected={rejected && snap.statusWindow === w.id} />
             ))}

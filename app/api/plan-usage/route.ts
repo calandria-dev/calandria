@@ -4,6 +4,8 @@ import { LITELLM_BASE_URL } from "@/lib/config";
 import { gatewayHealth } from "@/lib/gatewayHealth";
 import { gatewayKey } from "@/lib/litellm-key";
 import { GATEWAY_PLAN_ID, type PlanUsageSnapshot } from "@/lib/types";
+import { agentPlanScope } from "@/lib/planScope";
+import { listProjectsPlain } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +19,10 @@ export const dynamic = "force-dynamic";
  * off, API-key auth), are simply absent from the map.
  */
 export async function GET() {
+  // Read once for the whole fan-out. Which projects point at an agent's own
+  // login is instance state no driver can see (lib/planScope.ts), and the
+  // drivers below would otherwise each re-query the same table.
+  const projects = listProjectsPlain();
   // Concurrently, not in sequence: the drivers' sources are unrelated, and
   // they are not equally fast. Claude answers from a cached HTTP fetch while
   // Codex spawns a short-lived `codex app-server`. Serially, one slow agent's
@@ -24,9 +30,17 @@ export async function GET() {
   const settled = await Promise.all(
     listDrivers().map(async (d): Promise<[string, PlanUsageSnapshot] | null> => {
       if (!d.planUsage) return null;
+      // Nothing on this instance runs on the agent's own login, so every
+      // percentage the driver reports is about turns that happen elsewhere.
+      // Dropping the agent here hides the pill through the client's existing
+      // "no metered agents" path, rather than adding a second hide rule to it.
+      const scope = agentPlanScope(d.id, projects);
+      if (scope.kind === "none") return null;
       try {
         const snap = await d.planUsage();
-        return snap ? [d.id, snap] : null;
+        // A mixed instance keeps its numbers, which are true about the plan,
+        // and the popover names how much of the instance they cover.
+        return snap ? [d.id, { ...snap, scope }] : null;
       } catch {
         // One driver's broken usage source must not blank the others' meters.
         return null;

@@ -60,6 +60,7 @@ const PINNED = [
   "lib/agents/codex/bin.ts", //  which `codex` to spawn; config + binPath, no driving
   "lib/worktreeFailure.ts", //   how a failed worktree prep is classified + its recovery notice, which the client imports to render the button
   "lib/usageReset.ts", //        which usage-window reset a queued start targets, which the client derives the button from
+  "lib/planScope.ts", //         which projects still run an agent on its own login; store + agentEnv only, no driving
   "lib/agents/claude/planUsage.ts", // plan-usage cache + fetch policy, fs/fetch only, no driving
   "lib/schedule/time.ts", //     pure wall-clock math, no DB, no SDK
   "lib/retention.ts", //         the scheduled prune of the unbounded tables; DB + fs only, no driving

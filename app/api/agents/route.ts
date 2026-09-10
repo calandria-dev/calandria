@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { listDrivers, DEFAULT_AGENT } from "@/lib/agents/registry";
-import { getSetting } from "@/lib/store";
+import { getSetting, listProjectsPlain } from "@/lib/store";
+import { agentPlanScope } from "@/lib/planScope";
 import { getAgentConnection, getAgentAuthBroken, getAgentSandboxBroken } from "@/lib/agents/connections";
 import { resolveUtilityAgent } from "@/lib/agents/oneshots";
 import { LITELLM_ADMIN_KEY_SET, LITELLM_BASE_URL, LITELLM_MCP, LOCAL_MODEL_BASE_URL } from "@/lib/config";
@@ -53,6 +54,8 @@ export async function GET() {
   // connected or isn't installed: agyModelSlugs() returns null and the field
   // stays null instead of claiming every model is missing.
   if (LITELLM_BASE_URL) void geminiGatewayModelCheck(LITELLM_BASE_URL, gatewayKey());
+  // Read once, shared by every agent's scope below (lib/planScope.ts).
+  const projects = listProjectsPlain();
   return NextResponse.json({
     // The app-level default agent (Settings → Run defaults) is the client's
     // ultimate fallback when a project hasn't set its own; unset → the built-in.
@@ -117,6 +120,14 @@ export async function GET() {
         // (lib/agents/codex/sandbox.ts). Drives the card's warning, and the
         // driver refuses the affected modes rather than running them.
         sandboxBroken: getAgentSandboxBroken(d.id),
+        // How much of the instance this login actually runs. `connected` and
+        // `account` describe the login itself, which a project's agent_env
+        // override cannot invalidate: the credentials stay good and Reconnect
+        // must keep working. What the override changes is whether the plan
+        // named beside them has anything to do with this instance's turns, so
+        // the card states that separately. Same source as the titlebar meter's
+        // hide rule (app/api/plan-usage/route.ts), so the two never disagree.
+        planScope: agentPlanScope(d.id, projects),
       };
     }),
   });

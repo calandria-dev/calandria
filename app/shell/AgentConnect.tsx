@@ -250,6 +250,13 @@ export function AgentConnect({
           <div className="hlp" style={{ margin: "3px 0 0" }}>
             <button className="linkbtn" onClick={() => setReconnect(true)}>Reconnect a different account</button>
           </div>
+          {agent.planScope && agent.planScope.kind !== "all" && (
+            <div className="hlp">
+              {agent.planScope.kind === "none"
+                ? `No project runs ${agent.label} on this login. Every project points it at another endpoint.`
+                : `${agent.planScope.redirected} of ${agent.planScope.redirected + agent.planScope.onPlan} projects point ${agent.label} at another endpoint.`}
+            </div>
+          )}
         </div>
       </div>
       </>

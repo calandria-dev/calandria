@@ -878,6 +878,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .pu-menu{width:270px;padding-bottom:8px;}
 .pu-note{margin:2px 13px 8px;padding:7px 9px;border-radius:var(--r-sm);font-size:11.5px;line-height:1.4;}
 .pu-note.limit{background:var(--red-soft);color:var(--err);}
+.pu-note.scoped{background:var(--surface-2);color:var(--ink-2);border:1px solid var(--line);}
 .pu-row{padding:5px 13px 7px;}
 .pu-row-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;}
 .pu-label{font-size:12px;font-weight:600;color:var(--ink);}

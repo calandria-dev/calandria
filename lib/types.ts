@@ -601,6 +601,26 @@ export interface PlanUsageWindow {
  *  so the writer and both readers use the same string. */
 export const GATEWAY_PLAN_ID = "gateway";
 
+/**
+ * How much of this instance's work for one agent actually runs on that agent's
+ * own login, counted over the projects that are not deprecated.
+ *
+ * A project can redirect an agent's turns to a local, custom or gateway
+ * endpoint through `agent_env` (lib/agentEnv.ts). The login stays valid and its
+ * plan windows stay true, and they stop describing what this instance spends.
+ * The meter is one pill for the whole instance, so the three cases get three
+ * answers: `all` renders as before, `some` renders with a note naming the
+ * count, `none` hides the meter, since every percentage in it would be about
+ * turns this instance never runs.
+ */
+export interface PlanScope {
+  kind: "all" | "some" | "none";
+  /** Projects whose turns for this agent still bill the agent's own login. */
+  onPlan: number;
+  /** Projects that point this agent at another endpoint. */
+  redirected: number;
+}
+
 // Instance-wide snapshot of one agent's subscription-plan usage, what the
 // titlebar meter renders. Two sources merged server-side (see
 // lib/agents/claude/planUsage.ts): `windows` come from the provider's usage
@@ -625,6 +645,12 @@ export interface PlanUsageSnapshot {
   fetchedAt: number | null;
   /** The last refetch failed; `windows` is being served from an older fetch. */
   stale: boolean;
+  /** How much of this instance points at the login these windows describe.
+   *  Set by GET /api/plan-usage, never by a driver: a driver reads one login,
+   *  while which projects aim at it is instance state the driver seam can't
+   *  see (lib/agents/types.ts: `planUsage()` takes no arguments on purpose).
+   *  Absent, or `kind: "all"`, means every project does. */
+  scope?: PlanScope | null;
 }
 
 // One rendered diff line: added (+, green), removed (-, red), or unchanged

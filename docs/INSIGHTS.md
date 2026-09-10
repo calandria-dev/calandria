@@ -176,6 +176,22 @@ reached limit can show up before the next scheduled poll. Codex's turn stream ca
 telemetry, so its figures come only from that periodic read and can be one interval old. The
 meter doesn't render at all under API-key auth, since there's no plan to meter.
 
+A project can also point one agent's turns at a different endpoint instead of its own login, with
+an `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`/`CODEX_OSS_BASE_URL`, or `GOOGLE_GEMINI_BASE_URL`
+override, and the meter accounts for that, counted per agent across your non-deprecated projects.
+If every project redirects an agent, its pill disappears entirely: every percentage in it would
+describe turns the instance never runs, and the per-task "resume when your usage window resets"
+offer goes with it, since it reads the same snapshot. If only some projects redirect the agent,
+the pill keeps its numbers, which stay true about the plan, and its popover adds a line naming how
+many projects point the agent elsewhere. If no project redirects the agent, the meter is
+unchanged. Settings → Agents shows the same split as a line under the connected account, so
+Settings and the meter never disagree; the login itself still reports as connected and Reconnect
+still works, since a project override doesn't invalidate your credentials. A gateway endpoint
+counts as redirected too, with one exception: Claude with `CALANDRIA_GATEWAY_BILLING:
+"subscription"` still spends the plan, since that setting forwards the turn to your own
+subscription login instead of billing the gateway's key. Deprecated projects aren't counted
+either way.
+
 ## Settings and environment variables
 
 | Name | Default | Effect |

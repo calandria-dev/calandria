@@ -654,6 +654,50 @@ export function planWindowApplies(provider: AgentProvider, agent?: string | null
   return agent === "claude" && provider.gateway_billing === "subscription";
 }
 
+/**
+ * The base URLs that redirect one agent's turns away from its own login. An
+ * agent absent here has no known redirect key, so nothing on this list can
+ * say its plan is untouched and `planLoginBills` leaves its meter alone.
+ *
+ * Codex takes two: OPENAI_BASE_URL is what the settings form and the presets
+ * write, and CODEX_OSS_BASE_URL is the hand-typed CLI spelling that
+ * `codexProviderConfig()` honours as a fallback. Both reach the same
+ * `calandria-local` model provider, so both count.
+ */
+const PLAN_REDIRECT_KEYS: Record<string, readonly AgentEnvKey[]> = {
+  claude: ["ANTHROPIC_BASE_URL"],
+  codex: ["OPENAI_BASE_URL", "CODEX_OSS_BASE_URL"],
+  gemini: ["GOOGLE_GEMINI_BASE_URL"],
+};
+
+/**
+ * Whether turns for one agent under this override still bill that agent's own
+ * subscription login, which is what the plan meter and the Settings connection
+ * card report on.
+ *
+ * Per-agent, not per-override: `describeProvider().kind` is one answer for a
+ * merged env that can name three different vendors' endpoints at once, so a
+ * project that points Claude at Ollama and leaves Codex alone reads as `local`
+ * while its Codex turns still spend the ChatGPT plan. Asking one key set at a
+ * time is the only way to get that project right.
+ *
+ * The gateway arm restates `planWindowApplies`'s rule, since a gateway that
+ * forwards a Claude login upstream does spend the plan. The two functions
+ * answer different questions (that one is about a usage-window reset, this one
+ * about whether the meter describes this instance's work at all), so they stay
+ * separate; keep the gateway arms in step.
+ */
+export function planLoginBills(env: AgentEnv, agent: string, gateway: string | null = gatewayBaseUrl()): boolean {
+  const keys = PLAN_REDIRECT_KEYS[agent];
+  if (!keys) return true;
+  const url = keys.map((k) => env[k]).find((v) => v) || null;
+  if (!url) return true;
+  if (isGatewayEndpoint(url, gateway))
+    return agent === "claude" && env.CALANDRIA_GATEWAY_BILLING === "subscription";
+  // A local or custom endpoint bills whoever runs it, and never the plan.
+  return false;
+}
+
 /** The provider a task's turns run against: the project's override with the
  *  task's laid over it, then described. */
 export function taskProvider(

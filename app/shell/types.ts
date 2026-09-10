@@ -1,9 +1,9 @@
 // Client-side shapes + UI constants shared across the shell modules.
 // Pure data only (no React / no Icon) so any module can import freely.
 import { PRIORITIES, TAG_COLORS, tagIsDone } from "@/lib/types";
-import type { LandingMode, Priority, Status, Tag } from "@/lib/types";
+import type { LandingMode, PlanScope as PlanScopeT, Priority, Status, Tag } from "@/lib/types";
 export { PRIORITIES, TAG_COLORS, tagIsDone };
-export type { LandingMode };
+export type { LandingMode, PlanScopeT };
 /** A tag as the project GET embeds it: lib/types' row plus its derived counts. */
 export type TagRow = Tag;
 import type { InternalUsageEstimate } from "@/lib/internalUsage";
@@ -373,6 +373,11 @@ export type AgentInfoT = {
   account: { email: string | null; plan: string | null; method: "subscription" | "api_key" } | null;
   authBroken?: AgentAuthBrokenT | null;
   sandboxBroken?: AgentSandboxBrokenT | null;
+  /** How much of this instance's work for the agent runs on its own login.
+   *  A project's agent_env can point the agent at a local, custom or gateway
+   *  endpoint; the login stays valid and its plan stops describing this
+   *  instance's turns. See lib/planScope.ts. */
+  planScope?: PlanScopeT | null;
 };
 // Connected, but its login stopped working mid-flight (see lib/authFailure.ts).
 // `reason` is the provider's own error text; `at` is when it was first seen.
