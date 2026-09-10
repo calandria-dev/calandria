@@ -43,11 +43,18 @@ step, not a one-time fix: do it again on any other machine that didn't build the
 
 ### Windows
 
-Windows builds are not code-signed yet. The first time you run a downloaded installer or the
-zipped executable, Windows Defender SmartScreen shows a full-screen "Windows protected your
-PC" warning whose only obvious button is Don't run. Click **More info**, then **Run anyway**.
-The zip target does not avoid this: Windows tags anything extracted from a browser download
-the same way it tags the installer.
+Release builds are code-signed, with a certificate issued to the publisher named in the
+installer's UAC prompt. Releases up to and including v0.11.0 are not; signing starts with the
+first release after 2026-09-10.
+
+Signing does not silence Windows Defender SmartScreen straight away. SmartScreen builds its
+reputation from how many people download a given signed identity, so early downloads of a new
+certificate can still get the full-screen "Windows protected your PC" warning, whose only
+obvious button is Don't run. Click **More info**, then **Run anyway**. That warning fades as
+downloads accumulate, which an unsigned build could never do, since there was no identity for
+the reputation to attach to. Unsigned builds you make yourself behave the old way, and the zip
+target is not a way around it: Windows tags anything extracted from a browser download the
+same way it tags the installer.
 
 ### Linux
 
