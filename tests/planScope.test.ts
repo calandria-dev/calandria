@@ -38,8 +38,8 @@ describe("planLoginBills", () => {
   });
 
   it("holds for codex when only ANTHROPIC_BASE_URL is redirected, since the check is per agent", () => {
-    // The whole point: an override that redirects Claude says nothing about
-    // codex, which has no OpenAI key set here at all.
+    // An override that redirects Claude says nothing about codex, which has no
+    // OpenAI key set here at all.
     expect(planLoginBills({ ANTHROPIC_BASE_URL: LOCAL }, "codex", null)).toBe(true);
   });
 
