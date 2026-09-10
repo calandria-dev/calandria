@@ -587,7 +587,9 @@ remembers its verdict against this base URL separately from the local endpoint's
   available yet.
 - A plan-usage meter. Codex's rate-limit snapshot is empty behind a gateway, and the key's spend is
   not a plan window, so a gateway Codex task offers no "resume when your window resets". The
-  titlebar meter still reports the ChatGPT login for whatever cloud Codex tasks the instance runs.
+  titlebar meter still reports the ChatGPT login while at least one project still runs Codex on
+  it; once every project routes Codex through the gateway or another endpoint, the Codex pill
+  disappears (see [Plan usage meter](INSIGHTS.md#plan-usage-meter)).
 
 Codex retries a failed request several times on its own, so the cooldown behavior above hits it
 hardest: one upstream error can turn every retry into `429 No deployments available` until the CLI
@@ -615,8 +617,9 @@ itself for a gateway task; there is nothing to set up beyond picking the Gateway
   session immediately" is disabled and the reason is stated.
 - A plan-usage meter. `agy -p "/usage"` reports Google's own plan windows, which a gateway turn
   never spends, so a gateway Antigravity task offers no "resume when your window resets". The
-  titlebar meter still reports the Google account for whatever cloud Antigravity tasks the
-  instance runs.
+  titlebar meter still reports the Google account while at least one project still runs
+  Antigravity on it; once every project routes Antigravity through the gateway or another
+  endpoint, the Antigravity pill disappears (see [Plan usage meter](INSIGHTS.md#plan-usage-meter)).
 
 **The health card names a missing side model.** `agy` calls a flash-lite side model on every turn
 in addition to whichever model the task picked, and a turn whose side model is absent from the
