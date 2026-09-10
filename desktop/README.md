@@ -383,7 +383,7 @@ because the credential is an OIDC token minted per run:
 | `AZURE_CODE_SIGNING_PUBLISHER_NAME` | The certificate subject, e.g. `CN=…, O=…, L=…, S=…, C=US`. The portal shows it as *Certificate subject preview* before the profile exists. |
 | `AZURE_CLIENT_ID` | The Entra ID app registration's *Application (client) ID*. |
 | `AZURE_TENANT_ID` | Its *Directory (tenant) ID*. |
-| `AZURE_SUBSCRIPTION_ID` | Read only by `azure/login`, and optional: the lane passes `allow-no-subscriptions: true`, and signing needs no subscription context. |
+| `AZURE_SUBSCRIPTION_ID` | **Leave this unset.** Only `azure/login` reads it, the lane passes `allow-no-subscriptions: true`, and signing reaches its endpoint with a token and never needs a subscription context. Setting it fails the login unless the service principal also holds a role on that subscription. |
 
 The first four are what `desktop/signing.js` reads: all four or none, three of
 four throws. electron-builder switches from `signtool` to
@@ -465,7 +465,6 @@ gh variable set AZURE_CODE_SIGNING_CERT_PROFILE_NAME --body '<profile>'
 gh variable set AZURE_CODE_SIGNING_PUBLISHER_NAME --body 'CN=..., O=..., L=..., S=..., C=US'
 gh variable set AZURE_CLIENT_ID --body '<application (client) id>'
 gh variable set AZURE_TENANT_ID --body '<directory (tenant) id>'
-gh variable set AZURE_SUBSCRIPTION_ID --body '<subscription id>'
 gh workflow run verify-signing-credentials.yml
 ```
 
@@ -538,7 +537,7 @@ Re-checked 2026-08-29.
 | Item | Cost |
 |-|-|
 | Apple Developer Program + notarization | $99/yr, paid. An individual membership is enough and grants up to five Developer ID Application certificates; notarization is included. |
-| Windows code signing | Azure Artifact Signing, $9.99/month (Basic, 5,000 signatures/month), not yet purchased. |
+| Windows code signing | Azure Artifact Signing, $9.99/month (Basic, 5,000 signatures/month), paid. |
 | Auto-update | Free once signing is in place: `electron-updater` reads the feed the release lane already writes. Windows and Linux AppImage work as-is; macOS needs the $99 above, since Squirrel.Mac refuses to install into an unsigned build. |
 
 **EV is not worth the premium on Windows.** Microsoft's Trusted Root Program
@@ -559,16 +558,35 @@ macOS simply doesn't function.
 Linux costs nothing to enroll with; publishing SHA-256 checksums beside the
 artifacts is the whole convention.
 
-**What is bought** (checked 2026-09-08). The Apple Developer Program membership
-is active and its six credentials are repository secrets, so a release publishes
-a signed, notarized macOS build. Azure Artifact Signing is not enrolled: the
-seven Azure variables are unset, the release lane's `gate` job says so in the
-log, and Windows artifacts publish unsigned with the release notes stating it.
-Its identity validation is a person with a phone and a passport, and Microsoft
-states 1 to 20 business days for it, so the enrolment is a calendar item and not
-a build step. "Setting it up" above is the sequence, and nothing in the build
-changes until it finishes: `desktop/signing.js` reads "none of the four" as "do
-not sign", not as an error.
+**What is bought** (checked 2026-09-10). Both platforms are paid for and both
+are verified working, so a release publishes a signed, notarized macOS build and
+a signed Windows build.
+
+- **Apple Developer Program**, $99/yr, individual membership. Its six
+  credentials are repository secrets.
+- **Azure Artifact Signing**, Basic tier at $9.99/month, bought 2026-09-10.
+  Signing account `calandria` in East US, certificate profile `calandria`, both
+  in resource group `calandria-signing`. Identity validation was the individual
+  public-trust path and took two days. The certificate subject is
+  `CN=John Graham, O=John Graham, L=Tacoma, S=wa, C=US`, which is the validated
+  legal name and cannot be customised. Authentication is an Entra app
+  registration with a federated credential; there is no certificate file and no
+  secret anywhere in this path.
+
+Verified rather than assumed: `verify-signing-credentials.yml` run 34496108658
+signed a file with that profile, and `signtool` accepted the result. The four
+Azure variables and `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` are set;
+`AZURE_SUBSCRIPTION_ID` is left unset, for the reason in the table above.
+
+Releases up to and including **v0.11.0 are unsigned on Windows**. Signing
+applies from the first release cut after 2026-09-10.
+
+Two things this does not buy. SmartScreen reputation accrues through download
+volume, so early downloads of a signed build can still see the warning, and only
+a real browser download shows what a user gets. And the certificate a profile
+issues lives about three days, which is why every signature is timestamped: an
+untimestamped one stops verifying within the week on machines that already have
+the installer.
 
 ## Updates
 

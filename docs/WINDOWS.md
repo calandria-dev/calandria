@@ -129,12 +129,13 @@ Concrete differences between running Calandria on Windows and on Linux/macOS:
   both drain gracefully first, then kill. A system shutdown or logout doesn't: Electron gets no
   `before-quit`/`will-quit` event for that case on Windows, so a session ending underneath the app
   drains nothing.
-- **The desktop app's Windows installer and zip are unsigned**, so Windows SmartScreen warns on
-  every download: *"Windows protected your PC"*, with **More info → Run anyway** as the way past
-  it. The zip doesn't avoid this either, since Explorer copies the download mark onto whatever it
-  extracts. Every release re-triggers the warning, since there's no publisher identity for
-  SmartScreen's reputation system to build on. Signing removes the warning; see
-  [desktop/README.md → What signing costs](../desktop/README.md#what-signing-costs) for what
-  that costs.
+- **SmartScreen can still warn on a signed download.** Release builds after 2026-09-10 are
+  signed, v0.11.0 and earlier are not, and a build you make yourself never is. Where the warning
+  appears it reads *"Windows protected your PC"*, with **More info → Run anyway** as the way past
+  it; the zip doesn't avoid it either, since Explorer copies the download mark onto whatever it
+  extracts. The difference signing makes is that the warning now fades: SmartScreen accrues
+  reputation per publisher identity and downloads of a signed build count toward it, where an
+  unsigned one re-triggered the warning on every release forever. See
+  [desktop/README.md → What signing costs](../desktop/README.md#what-signing-costs).
 - **Service hostnames** (`<slug>--<host>`) need the same wildcard DNS as on any platform;
   `localhost` subdomains won't resolve without a `hosts` entry.
