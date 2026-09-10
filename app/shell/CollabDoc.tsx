@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../icons";
-import { Markdown } from "../Markdown";
+import { Markdown, type MarkdownLinks } from "../Markdown";
 import { Modal } from "./Modal";
 import { Skel, ErrNote } from "./shared";
 import { buildCollabPacket, isMarkdownPath, locateQuote, DEFAULT_COLLAB_EDIT_MODE, type CollabEditMode } from "@/lib/collab";
@@ -142,13 +142,14 @@ function draftPayload(file: string, text: string | null, general: string, anchor
   return JSON.stringify({ file, text, general, anchorSha });
 }
 
-export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }: {
+export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten, links }: {
   taskId: string;
   file: string;
   running?: boolean; // a turn is live: direct writes are refused server-side, so the picker says so up front
   onClose: () => void;
   onSend: (text: string) => void;
   onWritten?: () => void; // the file on disk changed under the Changes tab: refetch the diff
+  links?: MarkdownLinks; // a link in the rendered document to another file opens it in this modal (the host keys the modal on `file`)
 }) {
   const [original, setOriginal] = useState<string | null>(null);
   const [sha, setSha] = useState<string | null>(null); // blob sha of `original`: the anchor new comments and the draft get
@@ -317,15 +318,28 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
   // Closing loses only what isn't on the server: a comment still in the
   // compose box, and the edit draft if saving it failed. Everything else is
   // saved as it's typed, so the scrim, Escape and Cancel just close.
-  const close = useCallback(() => {
+  const leave = useCallback((then: () => void) => {
     const losing: string[] = [];
     if (composing && draft.trim() && !(composing.id && draft.trim() === commentBodyOf(composing.id))) {
       losing.push(composing.id ? "your changes to the comment" : "the comment you're writing");
     }
     if (dirty && (draftErr || !draftLoaded) && !staleDraft) losing.push("your unsent edits, which couldn't be saved");
     if (losing.length && !window.confirm(`Discard ${losing.join(" and ")}? Everything else is saved.`)) return;
-    onClose();
-  }, [composing, draft, comments, dirty, draftErr, draftLoaded, staleDraft, onClose]);
+    then();
+  }, [composing, draft, comments, dirty, draftErr, draftLoaded, staleDraft]);
+  const close = useCallback(() => leave(onClose), [leave, onClose]);
+  // Following a link to another document leaves this one the same way closing
+  // does, so the same guard runs first. Relative links resolve against the
+  // document's own directory, as they would on disk.
+  // `leave` changes with every keystroke in the comment box; read through a
+  // ref so the links object, which Markdown memoizes on, stays put.
+  const leaveRef = useRef(leave);
+  leaveRef.current = leave;
+  const docLinks = useMemo<MarkdownLinks | undefined>(() => {
+    if (!links) return undefined;
+    const slash = file.lastIndexOf("/");
+    return { ...links, baseDir: slash >= 0 ? file.slice(0, slash) : "", onOpen: (rel) => leaveRef.current(() => links.onOpen(rel)) };
+  }, [links, file]);
 
   // Selection → "Add comment" affordance. Runs on mouseup/keyup inside the
   // rendered view; anything collapsed or outside it clears the affordance.
@@ -619,14 +633,14 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
             </div>
             {markdown && (
               <div className="collab-pane collab-render">
-                <Markdown diagrams>{text}</Markdown>
+                <Markdown diagrams links={docLinks}>{text}</Markdown>
               </div>
             )}
           </div>
         ) : (
           <div className="collab-split">
             <div className="collab-pane collab-render collab-selectable" ref={docRef} onMouseUp={onSelect} onKeyUp={onSelect}>
-              {markdown ? <Markdown diagrams>{text}</Markdown> : <pre className="collab-plain">{text}</pre>}
+              {markdown ? <Markdown diagrams links={docLinks}>{text}</Markdown> : <pre className="collab-plain">{text}</pre>}
               {pending && (
                 <button className="collab-addc" style={{ top: pending.top, left: pending.left }} onMouseDown={(e) => e.preventDefault()} onClick={startComment}>
                   {Icon.plus()} Add comment
