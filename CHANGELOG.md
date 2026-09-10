@@ -8,6 +8,29 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.12.0](https://github.com/calandria-dev/calandria/compare/v0.11.0...v0.12.0) (2026-09-10)
+
+
+### Features
+
+* **ci:** sign Windows artifacts with Azure Artifact Signing ([#301](https://github.com/calandria-dev/calandria/issues/301)) ([e31563d](https://github.com/calandria-dev/calandria/commit/e31563de22234a90c27038927073cefb7b8eab1a))
+* **ci:** verify the Windows signing credential actually signs ([#284](https://github.com/calandria-dev/calandria/issues/284)) ([89bce6a](https://github.com/calandria-dev/calandria/commit/89bce6a81c527e880a6994c8b734811dc4240b66))
+* **notifications:** report a queued start firing or being skipped ([#297](https://github.com/calandria-dev/calandria/issues/297)) ([4c3f5a4](https://github.com/calandria-dev/calandria/commit/4c3f5a4980d421b05f084f3dda5fbd39bca54e77))
+* **pin-drift:** watch @anthropic-ai/claude-agent-sdk for staleness ([#294](https://github.com/calandria-dev/calandria/issues/294)) ([176a0a7](https://github.com/calandria-dev/calandria/commit/176a0a743305c4c4e889c592eee93c21e116bd0e))
+* **sync:** flag the tasks a landing task's force-push orphaned ([#298](https://github.com/calandria-dev/calandria/issues/298)) ([e6d739f](https://github.com/calandria-dev/calandria/commit/e6d739f4692bd3501207ab762df39507006f6c7b))
+* **transcript:** copy a fenced code block on hover ([#285](https://github.com/calandria-dev/calandria/issues/285)) ([1c4784a](https://github.com/calandria-dev/calandria/commit/1c4784a0a00e4b031827f5dc32384237790f7147))
+* **updates:** titlebar update notifications, server check and desktop bridge ([#300](https://github.com/calandria-dev/calandria/issues/300)) ([7f4c542](https://github.com/calandria-dev/calandria/commit/7f4c542c88495754657fae4f77d5bf8ef9494ada))
+
+
+### Bug Fixes
+
+* **ci:** stop charging runner queue time to the release Test gate ([#293](https://github.com/calandria-dev/calandria/issues/293)) ([404713c](https://github.com/calandria-dev/calandria/commit/404713c3ca95c85d60f0191bee6afd0c91dab422))
+* **composer:** give the message field an accessible name ([#287](https://github.com/calandria-dev/calandria/issues/287)) ([e27c25d](https://github.com/calandria-dev/calandria/commit/e27c25dfa1f09c483d5ada4f13570564c5357523))
+* **composer:** make the message field a contenteditable editor ([#295](https://github.com/calandria-dev/calandria/issues/295)) ([9297967](https://github.com/calandria-dev/calandria/commit/92979675c3de204747a0cab38e45b2158428ff2e))
+* **deps:** bump next, sharp and hono to clear the critical advisories ([#289](https://github.com/calandria-dev/calandria/issues/289)) ([a230698](https://github.com/calandria-dev/calandria/commit/a230698f2e613f0a8b58354225773fe87d7970a2))
+* **plan-usage:** scope the plan meter and auth status to projects on the login ([#302](https://github.com/calandria-dev/calandria/issues/302)) ([67d230e](https://github.com/calandria-dev/calandria/commit/67d230eb8897dd7d005da6d22c29016b495ee6be))
+* **transcript:** open file links in the app instead of a 404 popup ([#303](https://github.com/calandria-dev/calandria/issues/303)) ([236daa4](https://github.com/calandria-dev/calandria/commit/236daa41b202fbfebc8223e062903ae38c36c21b))
+
 ## [0.11.0](https://github.com/calandria-dev/calandria/compare/v0.10.0...v0.11.0) (2026-09-08)
 
 
