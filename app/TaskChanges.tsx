@@ -3,6 +3,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Skel, ErrNote, ErrDetail } from "./shell/shared";
 import { CollabDoc } from "./shell/CollabDoc";
+import { Modal } from "./shell/Modal";
 import type { MarkdownLinks } from "./Markdown";
 import { Icon } from "./icons";
 import { PrChip, type PrChipTask } from "./shell/PrChip";
@@ -87,6 +88,7 @@ export interface ResolveResult {
 }
 
 const STATUS_LABEL: Record<string, string> = { A: "added", M: "modified", D: "deleted", R: "renamed", "?": "new" };
+const CONVENTIONAL_COMMIT_TITLE = /^[a-z][a-z0-9-]*(?:\([^)]+\))?!?: \S.*$/;
 
 // The merge routes always answer JSON, but a layer above them can still hand
 // back HTML (a tunnel 502, a request killed at maxDuration). Parse defensively
@@ -548,6 +550,7 @@ function PushBaseBranch({ projectId }: { projectId: string }) {
 
 export default function TaskChanges({
   taskId,
+  taskTitle,
   projectId,
   running,
   pr,
@@ -560,6 +563,7 @@ export default function TaskChanges({
   landingMode = "merge",
 }: {
   taskId: string;
+  taskTitle: string;
   projectId: string;
   running?: boolean;
   // The project's landing policy. Under "pr" the base branch only moves through a
@@ -593,6 +597,8 @@ export default function TaskChanges({
   const [loading, setLoading] = useState(true);
   const [merging, setMerging] = useState(false);
   const [prBusy, setPrBusy] = useState(false);
+  const [prTitleOpen, setPrTitleOpen] = useState(false);
+  const [prTitle, setPrTitle] = useState("");
   const [prErr, setPrErr] = useState<string | null>(null);
   const [prDetail, setPrDetail] = useState<string | undefined>(undefined);
   const [prMerging, setPrMerging] = useState(false);
@@ -658,6 +664,8 @@ export default function TaskChanges({
   useEffect(() => {
     setMergeRes(null);
     setPrErr(null);
+    setPrTitleOpen(false);
+    setPrTitle("");
     setToggled(new Set());
     setManualOpen(false);
     setLocalMergeOpen(false);
@@ -801,12 +809,17 @@ export default function TaskChanges({
   // Review-on-GitHub path: push the branch + open (or update) a PR. The server
   // commits any dirty work first and is idempotent, so a second click on an
   // already-open PR just pushes the new commits to it.
-  const doCreatePr = async () => {
+  const doCreatePr = async (title?: string) => {
     setPrBusy(true);
     setPrErr(null);
     setPrDetail(undefined);
     try {
-      const r = await fetch(`/api/tasks/${taskId}/pr`, { method: "POST" });
+      const r = await fetch(`/api/tasks/${taskId}/pr`, {
+        method: "POST",
+        ...(title !== undefined
+          ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) }
+          : {}),
+      });
       const res: { ok?: boolean; url?: string; error?: string; detail?: string } = await r.json();
       if (res.ok && res.url) onPrCreated?.(res.url);
       else {
@@ -944,6 +957,7 @@ export default function TaskChanges({
   // A conflict resolution is staged in the worktree, awaiting accept/discard.
   const reviewing = !!data.mergeInProgress;
   const prUrl = pr?.pr_url || "";
+  const prTitleIsConventional = CONVENTIONAL_COMMIT_TITLE.test(prTitle.trim());
   // Why the PR can't be landed right now, or null when it can. Same predicate
   // the route re-runs server-side (lib/prMerge.ts), so the tooltip on the
   // disabled button is literally the refusal the POST would have returned.
@@ -1014,7 +1028,13 @@ export default function TaskChanges({
             {(data.ahead > 0 || data.isDirty) && (
               <button
                 className={`tc-btn${prMode ? " primary" : ""}`}
-                onClick={doCreatePr}
+                onClick={() => {
+                  if (prUrl) void doCreatePr();
+                  else {
+                    setPrTitle(taskTitle);
+                    setPrTitleOpen(true);
+                  }
+                }}
                 disabled={prBusy || merging}
                 title={prUrl ? "Push the branch's new commits to the open PR" : "Push the branch to origin and open a GitHub PR"}
               >
@@ -1061,6 +1081,42 @@ export default function TaskChanges({
           </>
         )}
       </div>
+
+      {prTitleOpen && !prUrl && (
+        <Modal
+          title="Create pull request"
+          sub="Review the title before opening the PR on GitHub."
+          onClose={() => setPrTitleOpen(false)}
+          width={480}
+          footer={<>
+            <span className="spacer" />
+            <button className="btn btn-ghost" onClick={() => setPrTitleOpen(false)}>Cancel</button>
+            <button
+              className="btn btn-accent"
+              onClick={() => {
+                setPrTitleOpen(false);
+                void doCreatePr(prTitle);
+              }}
+            >
+              Create PR
+            </button>
+          </>}
+        >
+          <div className="field">
+            <label className="lab" htmlFor="create-pr-title">Title</label>
+            <input
+              id="create-pr-title"
+              type="text"
+              value={prTitle}
+              onChange={(e) => setPrTitle(e.target.value)}
+              autoFocus
+            />
+            {!prTitleIsConventional && (
+              <div className="hlp">Conventional Commit format: &lt;type&gt;[(scope)][!]: &lt;description&gt;</div>
+            )}
+          </div>
+        </Modal>
+      )}
 
       {localMergeOpen && !merging && (
         <div className="tc-mergebar review">

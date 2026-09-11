@@ -633,7 +633,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
     <div className="col col-diffs">
       {task && project ? (
         <TaskChanges
-          taskId={task.id} projectId={project.id} running={o.running.has(task.id)} pr={task} landingMode={project.landing_mode}
+          taskId={task.id} taskTitle={task.title} projectId={project.id} running={o.running.has(task.id)} pr={task} landingMode={project.landing_mode}
           onMerged={o.onMerged} onPrCreated={o.onPrCreated}
           onSend={(text) => o.runTurn(task.id, text, false)}
           onResolveWithAI={o.resolveConflictsWithAI}

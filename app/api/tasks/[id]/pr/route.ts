@@ -31,7 +31,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 // The guards are here because they are HTTP statuses; everything after them is
 // in lib/prTools.openTaskPr, shared with the `create_pr` agent tool so a human's
 // PR and a session's cannot mean two different things.
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const task = getTask(id);
   if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -41,8 +41,12 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({ error: "this task has no isolated branch to open a PR from" }, { status: 400 });
   const project = getProject(task.project_id);
   if (!project) return NextResponse.json({ error: "no project" }, { status: 400 });
+  const body: unknown = await req.json().catch(() => ({}));
+  const title = typeof body === "object" && body !== null && "title" in body && typeof body.title === "string"
+    ? body.title
+    : undefined;
 
-  const result = await openTaskPr(task, project, {}, (id) => {
+  const result = await openTaskPr(task, project, { title }, (id) => {
     // First read of the PR's actual state, detached: the response returns now,
     // and the chip fills in over /api/events. startPrPolling restarts a sweep
     // that had stopped when the last open PR landed.
