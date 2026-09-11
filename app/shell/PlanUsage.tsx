@@ -17,9 +17,9 @@ import { GATEWAY_PLAN_ID, type PlanUsageSnapshot, type PlanUsageWindow } from "@
 //
 // One pill per agent that reports usage, driven entirely by the keys in the
 // response: a driver that implements planUsage() appears here with no client
-// edit. Only the pill's two headline numbers need per-provider knowledge, and
-// that is the id lists below; everything else, labels included, comes from the
-// driver.
+// edit. Drivers identify the two headline windows by semantic kind, with id
+// lists below for older snapshots. Everything else, labels included, comes
+// from the driver.
 //
 // Polls GET /api/plan-usage once a minute while the tab is visible. Cheap on
 // purpose: the server answers from an instance-wide cache and only reads a
@@ -125,14 +125,19 @@ function Meter({ w, rejected }: { w: PlanUsageWindow; rejected: boolean }) {
 // Which window is "the session" and which is "the week", across providers.
 // The popover renders every window the agent reports and takes its labels from
 // the driver, but the pill has room for two numbers and has to know which two.
-// Claude and Antigravity tag every window with `kind` directly; Codex's
-// app-server names its windows by rank instead of duration (`primary` /
-// `secondary`, the ~5h and weekly limits) and reports no kind at all, so these
-// id lists are `AgentPlanPill`'s fallback. A provider whose keys match neither
-// still gets a pill: the single worst-window percentage below, instead of
-// being dropped.
+// Drivers tag known windows with `kind`. These id lists keep older snapshots
+// and providers without a kind compatible. A typed window never falls back to
+// an id with a conflicting meaning. A provider whose keys match neither still
+// gets a pill: the single worst-window percentage below, instead of being
+// dropped.
 const SESSION_IDS = ["five_hour", "primary"];
 const WEEK_IDS = ["seven_day", "secondary"];
+
+export function headlineWindows(windows: PlanUsageWindow[]): { session?: PlanUsageWindow; week?: PlanUsageWindow } {
+  const session = windows.find((w) => w.kind === "session") ?? windows.find((w) => w.kind == null && SESSION_IDS.includes(w.id));
+  const week = windows.find((w) => w.kind === "week") ?? windows.find((w) => w.kind == null && WEEK_IDS.includes(w.id));
+  return { session, week };
+}
 
 /**
  * Whether an agent's titlebar usage tracker is shown. Settings → Agents writes
@@ -173,12 +178,9 @@ export function PlanUsagePill({ agents, appDefaults }: { agents: AgentsBundle; a
 function AgentPlanPill({ agentId, label, snap }: { agentId: string; label: string; snap: PlanUsageSnapshot }) {
   const [open, setOpen] = useState(false);
 
-  // By kind where the driver says so: every metered plan has a session window
-  // and a week window, but each provider spells them its own way ("five_hour",
-  // "gemini-5h"), and Codex's app-server reports no kind at all. The id lists
-  // above are the fallback, covering both providers' spellings.
-  const session = snap.windows.find((w) => w.kind === "session") ?? snap.windows.find((w) => SESSION_IDS.includes(w.id));
-  const week = snap.windows.find((w) => w.kind === "week") ?? snap.windows.find((w) => WEEK_IDS.includes(w.id));
+  // By kind where the driver says so. The id lists above cover older snapshots
+  // and providers that have not declared a kind.
+  const { session, week } = headlineWindows(snap.windows);
   // Session reset countdown, on the pill itself: the 5-hour window is the one
   // you pace work against ("can I dispatch another batch before it rolls?"),
   // so its time-to-reset earns pill space where the week's doesn't. The
