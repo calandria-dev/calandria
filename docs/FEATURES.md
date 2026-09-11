@@ -270,7 +270,8 @@ because a protected branch rejects a direct merge.
 Every session is told the setting as plain instructions: under **Merge** it reads "Merge lands
 into it"; under **Pull request** it is told the branch is protected, that Merge will be
 rejected, and that finishing means opening a PR. The Changes tab's buttons follow the setting
-too: under **Pull request**, **Create PR** becomes the primary action and **Merge** is relabeled
+too: under **Pull request**, **Create PR** becomes the primary action and opens an editable title
+field with an optional Conventional Commit format hint. **Merge** is relabeled
 **Merge locally…**, whose first click opens a note explaining that a local merge only moves the
 branch in your own checkout and can never be pushed, instead of merging outright. The **Push to
 origin** offer that follows an ordinary merge is replaced under **Pull request** by a line

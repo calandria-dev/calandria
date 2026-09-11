@@ -28,8 +28,9 @@ const log = createLogger("pr");
  * createTaskPr failure, since both are the same 409 to the caller.
  *
  * `title`/`body` override the task's default title and body. The user-facing
- * route passes neither; the agent tool may pass both, since the session that
- * did the work can describe it more precisely than the stored description.
+ * route may pass a reviewed title; the agent tool may pass both, since the
+ * session that did the work can describe it more precisely than the stored
+ * description.
  */
 export async function openTaskPr(
   task: Task,
