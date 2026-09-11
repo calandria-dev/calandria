@@ -353,7 +353,7 @@ jobs:
       # is version-pinned but not digest-pinned. That trades a binary GitHub
       # ships for one this job pulls over the network, which is the wrong
       # direction, and adds a second unbotted pin. Engine rationale: see header.
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         id: buildx
 
       # The engine is not pinned, so record which one ran. This is the only
@@ -511,7 +511,7 @@ jobs:
       # `driver-opts` digest nothing in this repo can update. Do not "restore"
       # the default driver: it would add back a privileged container that this
       # job has no use for.
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         with:
           driver: docker
 
@@ -762,7 +762,7 @@ jobs:
       contents: read
       issues: write
     steps:
-      - uses: jayqi/failed-build-issue-action@1a893bbf43ef1c2a8705e2b115cd4f0fe3c5649b # v1.2.0
+      - uses: jayqi/failed-build-issue-action@940568ce50eeef3f31a920614cefcc6102d2f930 # v1.3.0
         with:
           # Required, and the action has no default for it: without this it
           # throws "Parameter token or opts.auth is required" before making any
