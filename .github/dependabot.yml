@@ -16,9 +16,10 @@
 #   packages and a personal fork does not want that PR volume. See issue #17.
 #   `/website` is the deliberate exception; its entry below says why.
 #
-#   Root npm SECURITY updates ARE covered, by the repo-level "Dependabot
-#   security updates" toggle (Settings > Advanced Security, or
-#   `gh api -X PUT repos/calandria-dev/calandria/automated-security-fixes`).
+#   Root npm SECURITY updates ARE covered when both dependency alerts and
+#   Dependabot security updates are enabled:
+#   `gh api --method PUT repos/calandria-dev/calandria/vulnerability-alerts`
+#   and `gh api --method PUT repos/calandria-dev/calandria/automated-security-fixes`.
 #   That is a different mechanism from the version updates this file
 #   configures, and it needs no entry here. It opens a PR only when a
 #   published advisory matches something already in the lockfile, so its
@@ -26,8 +27,11 @@
 #   release and 2026-09-09, then one. The volume argument above is why root
 #   version updates stay off; it does not reach this.
 #
-#   Enabled 2026-09-09. Three advisories against `next`, `sharp` and `hono`
-#   published overnight and turned `Audit (npm)` red on every open PR at once,
+#   Both settings were verified enabled on 2026-09-11 after this audit found
+#   them disabled while the prior note said they were enabled.
+#
+#   Three advisories against `next`, `sharp` and `hono` published overnight and
+#   turned `Audit (npm)` red on every open PR at once,
 #   blocking work whose diffs did not touch a lockfile until a human bumped
 #   the deps by hand (issue #286, fixed by PR #289). The `audit` job found
 #   them correctly. What was missing was a PR that fixes them.
