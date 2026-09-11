@@ -25,6 +25,15 @@ const win = windowsSigning(process.env);
 
 module.exports = {
   appId: "dev.calandria.desktop",
+  // `productName` is the app exe's FileDescription and ProductName
+  // (out/winPackager.js, signAndEditResources). package.json's `description`
+  // is user-facing too and has no override here: it becomes the NSIS
+  // installer exe's FileDescription, which is the program name Windows shows
+  // in the UAC elevation prompt (out/targets/nsis/NsisTarget.js), the Start
+  // Menu and desktop shortcut tooltips, the uninstall entry's Comments value
+  // (templates/nsis/include/installer.nsh) and the deb package description
+  // (out/targets/LinuxTargetHelper.js). Keep it one short product sentence.
+  // Notes about how this package is built belong in desktop/README.md.
   productName: "Calandria",
   copyright: "Copyright © Calandria contributors",
   directories: {
