@@ -1,4 +1,5 @@
 import { readEnv } from "./env.mjs";
+import { GATEWAY_PLAN_ID } from "./types";
 import type { Project, Task } from "./types";
 
 /**
@@ -624,37 +625,6 @@ export function describeProvider(env: AgentEnv, gateway: string | null = gateway
 }
 
 /**
- * Whether the agent's own subscription plan window says anything about THIS
- * task's turns, which decides if the plan meter's reset time may be offered as
- * "resume when the window rolls" (`lib/usageReset.ts`).
- *
- * Behind a gateway it usually does not, since the meter would describe a quota
- * the turn never touches:
- *
- * - Billed to the gateway's key, the turn draws on that key's account and no
- *   subscription is consumed at all.
- * - Billed to your own plan, only Claude Code forwards its login for the
- *   gateway to pass upstream. Codex's equivalent (`requires_openai_auth`)
- *   sends no `Authorization` header, so its gateway support bills the key in
- *   both modes, its ChatGPT window stays untouched, and its rate-limit
- *   snapshot behind a gateway is empty besides (docs/AGENTS.md, "Codex").
- *
- * Every other kind is left alone. A local endpoint consumes no plan either,
- * but that is a separate question from this one, and an agent whose driver
- * does not route through the gateway at all keeps its meter, since a gateway
- * project changes nothing about the turns it runs.
- */
-export function planWindowApplies(provider: AgentProvider, agent?: string | null): boolean {
-  if (provider.kind !== "gateway") return true;
-  // Add an agent here only once its driver honours the gateway address; until
-  // then a gateway project's tasks on that agent run on its own login and
-  // spend its own plan.
-  const routed = agent === "claude" || agent === "codex" || agent === "gemini";
-  if (!routed) return true;
-  return agent === "claude" && provider.gateway_billing === "subscription";
-}
-
-/**
  * The base URLs that redirect one agent's turns away from its own login. An
  * agent absent here has no known redirect key, so nothing on this list can
  * say its plan is untouched and `planLoginBills` leaves its meter alone.
@@ -681,11 +651,16 @@ const PLAN_REDIRECT_KEYS: Record<string, readonly AgentEnvKey[]> = {
  * while its Codex turns still spend the ChatGPT plan. Asking one key set at a
  * time is the only way to get that project right.
  *
- * The gateway arm restates `planWindowApplies`'s rule, since a gateway that
- * forwards a Claude login upstream does spend the plan. The two functions
- * answer different questions (that one is about a usage-window reset, this one
- * about whether the meter describes this instance's work at all), so they stay
- * separate; keep the gateway arms in step.
+ * Behind a gateway the login is spent only when Claude Code forwards it
+ * upstream for the gateway to pass on, which is what the `subscription`
+ * billing marker names. Codex's equivalent (`requires_openai_auth`) sends no
+ * `Authorization` header, so its gateway support bills the key in both modes
+ * and its ChatGPT window stays untouched (docs/AGENTS.md, "Codex"); `agy` has
+ * no equivalent at all.
+ *
+ * Two readers: `agentPlanScope()` (lib/planScope.ts), for whether the meter
+ * describes this instance's work at all, and `planResetKeyFor()` below, for
+ * whether one task may be offered a resume at that meter's reset.
  */
 export function planLoginBills(env: AgentEnv, agent: string, gateway: string | null = gatewayBaseUrl()): boolean {
   const keys = PLAN_REDIRECT_KEYS[agent];
@@ -706,4 +681,34 @@ export function taskProvider(
   gateway: string | null = gatewayBaseUrl(),
 ): AgentProvider {
   return describeProvider(providerEnvFor(project, task), gateway);
+}
+
+/**
+ * Which plan-usage snapshot gates THIS task's next turn, as a key into the map
+ * `GET /api/plan-usage` returns, or null when nothing metered does. It decides
+ * whether the session offers "resume when your usage window resets"
+ * (app/shell/SessionView.tsx, `lib/usageReset.ts`): a window nobody is
+ * spending is not a window to wait on, and offering it would strand the task
+ * until a reset that changes nothing for it.
+ *
+ * A gateway task reads the gateway's own key budget, since that is the budget
+ * its next turn has to clear. This is decided from `describeProvider().kind`,
+ * one answer for the whole merged override, because the gateway preset writes
+ * all three vendors' base URLs together.
+ *
+ * Everything else is per agent, through `planLoginBills`. The override that
+ * matters is the one the turn will actually run under, so it is the project's
+ * with the task's laid over it, and it is asked about the task's OWN agent: a
+ * project that points Codex at Ollama leaves its Claude tasks on the Claude
+ * plan, and its Codex tasks can never die on a ChatGPT usage limit, so they
+ * get no offer.
+ */
+export function planResetKeyFor(
+  project: Pick<Project, "agent_env"> | null | undefined,
+  task: Pick<Task, "agent_env"> & Pick<Task, "agent">,
+  gateway: string | null = gatewayBaseUrl(),
+): string | null {
+  const env = providerEnvFor(project, task);
+  if (describeProvider(env, gateway).kind === "gateway") return GATEWAY_PLAN_ID;
+  return planLoginBills(env, task.agent, gateway) ? task.agent : null;
 }

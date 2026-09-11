@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { GATEWAY_PLAN_ID, type Status, type Priority, type AskQuestion, type AskAnswers, type PermissionDecision } from "@/lib/types";
+import { type Status, type Priority, type AskQuestion, type AskAnswers, type PermissionDecision } from "@/lib/types";
 import { Icon } from "../icons";
 import TaskChanges, { type ResolveResult } from "../TaskChanges";
 import { Markdown, type MarkdownLinks } from "../Markdown";
@@ -23,7 +23,7 @@ import { usageResetAt, deferredStartFor } from "@/lib/usageReset";
 import { capsFor, agentLabel, findAgent } from "./agents";
 import { StatusDot, Avatar, Popover, AgentBadge, ProviderBadge, Skel } from "./shared";
 import { useEndpointModels } from "./modelEndpoint";
-import { planWindowApplies, taskProvider } from "@/lib/agentEnv";
+import { planResetKeyFor, taskProvider } from "@/lib/agentEnv";
 import { MessageView, SessionBreak, type LimitResume, type SuggestionActions } from "./Transcript";
 import { CollabDoc } from "./CollabDoc";
 import { Composer } from "./Composer";
@@ -639,20 +639,18 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   const stableClear = useStableHandler(onClear);
   const stableReconnect = useStableHandler(onReconnect);
   const provider = useMemo(() => taskProvider(project, task), [project, task]);
-  // When this task's agent says its usage window resets: the plan meter's
-  // snapshot, keyed by agent, so only an agent that reports one gets the
-  // queue-at-reset offers (the hero's button, the usage-limit notice's).
+  // The plan meter's snapshots, keyed by agent id plus the gateway's own, so
+  // only a snapshot that reports a reset gets the queue-at-reset offers (the
+  // hero's button, the usage-limit notice's).
   const planUsage = usePlanUsage();
-  // Applies only when this task's turns actually draw on that plan. Behind a
-  // LiteLLM gateway a vendor window usually doesn't apply (`planWindowApplies`):
-  // the turn bills the gateway key, not the agent's own subscription, so
-  // offering to resume when a window rolls that the turn never touched would
-  // strand the task until a reset that changes nothing for it. There the key's
-  // own budget gates the next turn, so this reads the synthetic "gateway"
-  // snapshot instead (app/api/plan-usage/route.ts).
-  const resetAt = provider.kind === "gateway"
-    ? usageResetAt(planUsage[GATEWAY_PLAN_ID] ?? null)
-    : planWindowApplies(provider, task.agent) ? usageResetAt(planUsage[task.agent] ?? null) : null;
+  // Applies only when this task's turns actually draw on that plan.
+  // `planResetKeyFor` reads the project's override with the task's laid over
+  // it, per agent, and answers with the snapshot that gates the next turn: the
+  // agent's own, the gateway key's budget (app/api/plan-usage/route.ts), or
+  // none at all when the turns run against a local or custom endpoint that
+  // spends no subscription.
+  const resetKey = useMemo(() => planResetKeyFor(project, task), [project, task]);
+  const resetAt = resetKey ? usageResetAt(planUsage[resetKey] ?? null) : null;
   const stableQueueStart = useStableHandler(onQueueStart);
   const stableCancelQueuedStart = useStableHandler(onCancelQueuedStart);
   const limitResume = useMemo<LimitResume>(

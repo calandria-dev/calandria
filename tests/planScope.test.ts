@@ -59,10 +59,10 @@ describe("planLoginBills", () => {
     expect(planLoginBills({ ANTHROPIC_BASE_URL: CUSTOM }, "claude", null)).toBe(false);
   });
 
-  // The gateway arm restates planWindowApplies's rule (lib/agentEnv.ts): a
-  // gateway that forwards a Claude login upstream does spend the plan, so the
-  // two must stay in step. See the "planWindowApplies" describe block in
-  // tests/agentEnv.test.ts for the sibling coverage.
+  // Only Claude Code forwards its own login for a gateway to pass upstream,
+  // and only when the billing marker says so. Codex and Antigravity bill the
+  // gateway's key in both modes (lib/agents/CLAUDE.md), so their plan windows
+  // stay untouched behind one.
   describe("the gateway arm", () => {
     it("holds for claude billed subscription on the gateway", () => {
       const env: AgentEnv = { ANTHROPIC_BASE_URL: GW, CALANDRIA_GATEWAY_BILLING: "subscription" };
@@ -83,6 +83,13 @@ describe("planLoginBills", () => {
       expect(planLoginBills({ OPENAI_BASE_URL: GW, CALANDRIA_GATEWAY_BILLING: "subscription" }, "codex", GW)).toBe(
         false
       );
+    });
+
+    it("drops for gemini on the gateway in both billing modes", () => {
+      expect(planLoginBills({ GOOGLE_GEMINI_BASE_URL: GW, CALANDRIA_GATEWAY_BILLING: "key" }, "gemini", GW)).toBe(false);
+      expect(
+        planLoginBills({ GOOGLE_GEMINI_BASE_URL: GW, CALANDRIA_GATEWAY_BILLING: "subscription" }, "gemini", GW)
+      ).toBe(false);
     });
   });
 });

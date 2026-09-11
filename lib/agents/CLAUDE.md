@@ -336,8 +336,9 @@ certify a local endpoint. It carries `env_key` (naming `CALANDRIA_GATEWAY_KEY`, 
 `applyGatewayEnv`) and `http_headers` with the same `x-litellm-tags` list Claude Code sends, built
 by one shared function. Codex bills the key in both billing modes; `requires_openai_auth`
 (ChatGPT-forwarding) sends no `Authorization` header through a gateway and stays disabled until
-verified otherwise. `planWindowApplies()` is where that reaches the UI: a gateway Codex task offers
-no queue-at-reset, since its rate-limit snapshot is empty behind a gateway. `docs/AGENTS.md` has
+verified otherwise. `planLoginBills()` is where that reaches the UI, read by `planResetKeyFor()`: a
+gateway Codex task is offered the gateway key's budget and never the ChatGPT window, whose
+rate-limit snapshot is empty behind a gateway. `docs/AGENTS.md` has
 the three operational hazards (deployment cooldown, LiteLLM's `reasoning.summary` injection,
 `gpt-5-codex` with MCP servers attached).
 
