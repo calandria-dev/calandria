@@ -367,7 +367,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # Not `.nvmrc`. See CALANDRIA_DESKTOP_NODE_VERSION at the top: the Node
           # that installs the payload and the Node the packaged app runs it under
