@@ -8,6 +8,26 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.13.0](https://github.com/calandria-dev/calandria/compare/v0.12.0...v0.13.0) (2026-09-11)
+
+
+### Features
+
+* Add files and images in the new/edit task modal (calandria task c0nTUFRrFwCrpBS6Vxo_4) ([080d00d](https://github.com/calandria-dev/calandria/commit/080d00d899f1f10264e2c8928a700ab325b55258))
+* prompt for pull request title ([#310](https://github.com/calandria-dev/calandria/issues/310)) ([d7f490c](https://github.com/calandria-dev/calandria/commit/d7f490cc4ddbc540d361ca3d797475dd24144bef))
+* support multi-tag task filters ([#312](https://github.com/calandria-dev/calandria/issues/312)) ([99b7c63](https://github.com/calandria-dev/calandria/commit/99b7c6320493c1d53ce95bf50eb17dc30471ffde))
+* **tags:** let a task's primary tag be starred, deciding what its session reads first ([#313](https://github.com/calandria-dev/calandria/issues/313)) ([6da4477](https://github.com/calandria-dev/calandria/commit/6da44775818ac6fdb02cafa03cc89db14c1619a7))
+* **tasks:** attach files and images in the task dialogs and agent tools ([#306](https://github.com/calandria-dev/calandria/issues/306)) ([080d00d](https://github.com/calandria-dev/calandria/commit/080d00d899f1f10264e2c8928a700ab325b55258))
+
+
+### Bug Fixes
+
+* **agents:** explain chat attachments to Codex and Gemini turns ([#309](https://github.com/calandria-dev/calandria/issues/309)) ([ebd1b47](https://github.com/calandria-dev/calandria/commit/ebd1b479c6d1d26c680514f1e1e9f8d1be52195c))
+* classify Codex plan windows by duration ([#304](https://github.com/calandria-dev/calandria/issues/304)) ([f23cb5c](https://github.com/calandria-dev/calandria/commit/f23cb5ceabb5030f58c5b89f9b55ed2cf4cb67d0))
+* **desktop:** name the product in the Windows installer UAC prompt ([#308](https://github.com/calandria-dev/calandria/issues/308)) ([2f8fb39](https://github.com/calandria-dev/calandria/commit/2f8fb39bf45a53fd1e6184c0077e6ba383b737ce))
+* **desktop:** remember the window's size and position across instance switches and restarts ([#307](https://github.com/calandria-dev/calandria/issues/307)) ([f87f117](https://github.com/calandria-dev/calandria/commit/f87f11764f2a68784572dbe2e89731882f9a6871))
+* **usage:** stop offering a usage-window resume for a redirected task ([#311](https://github.com/calandria-dev/calandria/issues/311)) ([bc8e92d](https://github.com/calandria-dev/calandria/commit/bc8e92d82769e17e4acdd6bd5819c05396f0d47c))
+
 ## [0.12.0](https://github.com/calandria-dev/calandria/compare/v0.11.0...v0.12.0) (2026-09-10)
 
 
