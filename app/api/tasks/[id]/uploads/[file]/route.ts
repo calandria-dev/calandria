@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { NextResponse } from "next/server";
-import { taskUploadsDir } from "@/lib/uploads";
+import { removeTaskUpload, taskUploadsDir } from "@/lib/uploads";
 import { parseStagedFile, servedType } from "@/lib/uploadTypes";
 
 export const dynamic = "force-dynamic";
@@ -42,4 +42,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       ...(download ? { "Content-Disposition": `attachment; filename="${file}"` } : {}),
     },
   });
+}
+
+/**
+ * Remove one attachment: the edit dialog dropping a file off the task's
+ * description, or a dialog cancel discarding what it uploaded. The marker
+ * line is the description's to keep or drop; this only reclaims the bytes.
+ * Idempotent: a name that's already gone answers the same as one removed.
+ */
+export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string; file: string }> }) {
+  const { id, file } = await params;
+  return NextResponse.json({ ok: true, removed: removeTaskUpload(id, file) });
 }

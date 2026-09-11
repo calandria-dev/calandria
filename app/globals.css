@@ -2684,3 +2684,12 @@ button.gbadge.more:hover,button.gbadge.more[aria-expanded="true"]{color:var(--in
 .diag-kind{font-weight:600;color:var(--ink-2);}
 .diag-kind.warn{color:var(--warn);}
 .diag-detail{color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;}
+
+/* ---------- task dialog attachments (app/shell/modals.tsx DescriptionField) ---------- */
+.desc-drop{border-radius:8px;}
+.desc-drop.dropping{box-shadow:0 0 0 3px var(--accent-soft);}
+.desc-drop .attach-row{padding:8px 0 0;}
+.desc-tools{display:flex;align-items:center;gap:10px;margin-top:6px;}
+.task .tdesc .tdesc-att{display:inline-flex;align-items:center;gap:3px;margin-left:6px;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
+.task .tdesc .tdesc-att svg{width:11px;height:11px;}
+.hero .msg-attachments{justify-content:center;margin-bottom:12px;}

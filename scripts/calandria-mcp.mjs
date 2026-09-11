@@ -155,9 +155,10 @@ server.registerTool(
       tags: z.array(z.string()).optional().describe(SUGGEST_TASK.params.tags),
       provider: z.enum(SUGGEST_TASK.providers).optional().describe(SUGGEST_TASK.params.provider),
       model: z.string().optional().describe(SUGGEST_TASK.params.model),
+      attachments: z.array(z.string()).optional().describe(SUGGEST_TASK.params.attachments),
     },
   },
-  async ({ title, description, priority, project, blocked_by, tags, provider, model }) => {
+  async ({ title, description, priority, project, blocked_by, tags, provider, model, attachments }) => {
     // Resolve refs before handing off (an id passes through; a title filed
     // earlier this turn into the same project resolves to its id). The
     // endpoint just forwards ids to setTaskDeps, which only keeps
@@ -169,7 +170,10 @@ server.registerTool(
     // `tags` are forwarded as the model typed them: the endpoint resolves
     // them in the project the task actually lands in (creating it on a
     // miss), which is where `project` resolves to a real row.
-    const data = await callInternal("suggest-task", { title, description, priority, project, blocked_by: deps, tags, provider, model });
+    // `attachments` are forwarded as typed: the endpoint resolves them
+    // against the caller's worktree (CALANDRIA_TASK_ID's), never this
+    // process's cwd.
+    const data = await callInternal("suggest-task", { title, description, priority, project, blocked_by: deps, tags, provider, model, attachments });
     if (data.id) {
       // The ref as typed is the alias that always exists ("" when omitted).
       // The resolved id/name (echoed by the endpoint) additionally let a
@@ -242,15 +246,16 @@ server.registerTool(
       // next; the two-phase recipe hands the model real ids anyway.
       blocked_by: z.array(z.string()).optional().describe(UPDATE_TASK.params.blocked_by),
       tags: z.array(z.string()).optional().describe(UPDATE_TASK.params.tags),
+      attachments: z.array(z.string()).optional().describe(UPDATE_TASK.params.attachments),
     },
   },
-  async ({ task, title, description, priority, status, blocked_by, tags }) => {
+  async ({ task, title, description, priority, status, blocked_by, tags, attachments }) => {
     // `task` is the target the model chose and is forwarded unvalidated;
     // this bridge holds no policy. The endpoint decides what may be written
     // (any task in any project, refused only while it has a turn running
     // right now), against CALANDRIA_TASK_ID (sent by callInternal as the
     // trusted caller identity, which nothing here can override).
-    const data = await callInternal("update-task", { task, title, description, priority, status, blocked_by, tags });
+    const data = await callInternal("update-task", { task, title, description, priority, status, blocked_by, tags, attachments });
     return { content: [{ type: "text", text: data.text }] };
   }
 );

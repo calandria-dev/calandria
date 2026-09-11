@@ -5,7 +5,8 @@ import { GATEWAY_PLAN_ID, type Status, type Priority, type AskQuestion, type Ask
 import { Icon } from "../icons";
 import TaskChanges, { type ResolveResult } from "../TaskChanges";
 import { Markdown, type MarkdownLinks } from "../Markdown";
-import { fmtTokens, fmtCostTotal, fmtJobCost, modelLabel, isAwaiting, isPrRed, prFailingChecks, buildSessions, usageSplit, costDisplay, usageTooltip, blockedNote } from "./format";
+import { fmtTokens, fmtCostTotal, fmtJobCost, modelLabel, isAwaiting, isPrRed, prFailingChecks, buildSessions, usageSplit, costDisplay, usageTooltip, blockedNote, splitAttachments } from "./format";
+import { AttachmentStrip } from "./attachments";
 import { pendingPromptIds, promptsAreLive } from "./pendingPrompt";
 import {
   SLABEL, SSUB, AWAIT_LABEL, STATUSES, PLABEL, PRIORITIES,
@@ -439,6 +440,7 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoS
   const queued = isQueuedStart(task);
   const sendContext = task.send_context !== 0;
   const tagCount = task.tag_ids.length;
+  const brief = splitAttachments(task.description);
   const statusLine = carried ? "Fresh window · summary carried" : `${SLABEL[task.status]} · no session yet`;
   return (
     <div className="hero">
@@ -452,7 +454,11 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoS
        * the centred hero, since a bulleted list centred line by line is
        * unreadable.
        */}
-      {task.description && <div className="h-desc"><Markdown links={links}>{task.description}</Markdown></div>}
+      {brief.text && <div className="h-desc"><Markdown links={links}>{brief.text}</Markdown></div>}
+      {/* Files attached to the task itself, staged the way a chat attachment
+          is and named in the description as marker lines. Same strip as a
+          transcript message. */}
+      <AttachmentStrip items={brief.attachments} />
       {/*
        * The card must not restate the brief above. The opening user turn is
        * the fixed INITIAL_TASK_PROMPT; title and details reach the session

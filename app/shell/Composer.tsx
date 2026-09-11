@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
 import { attachmentMarker, fileAttachmentMarker } from "./format";
+import { AttachmentChips, uploadToTask, useAttachments } from "./attachments";
 import { useCoarsePointer } from "./shared";
 import { PASTE_ATTACH_THRESHOLD } from "@/lib/promptLimits";
-import { isImageExt, maxUploadBytes, uploadExtension } from "@/lib/uploadTypes";
 import type { AgentCommand } from "@/lib/agents/types";
 import type { TaskRow } from "./types";
 
@@ -40,24 +40,6 @@ const saveDraft = (taskId: string, v: string) => {
   } catch { /* private mode / quota: drafts just won't persist */ }
 };
 
-// An attachment on the draft. Any file type is accepted (drop/paste/pick), and a
-// large text paste is diverted to a .txt file (see PASTE_ATTACH_THRESHOLD) so it
-// doesn't bloat the prompt. It uploads on attach, and on send its server path is
-// appended to the message as a marker line (attachmentMarker for images,
-// fileAttachmentMarker for everything else); the bytes never enter the prompt,
-// the agent gets a staged path to open. Not persisted with the draft: object
-// URLs don't survive a remount, and an unsent upload is an orphaned file the
-// task's hard delete removes.
-type Attachment = {
-  key: string;
-  kind: "image" | "file";
-  name: string;
-  preview: string; // local object URL for the image thumbnail ("" for text files)
-  path: string; // absolute server path once uploaded
-  status: "uploading" | "ready" | "error";
-  error?: string;
-};
-
 // One row in the "/" menu. Calandria's own commands carry a `run`: this
 // component performs the action directly instead of expanding text. Agent
 // commands have no `run`; picking one completes it into the box and the
@@ -89,13 +71,12 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
   const cancelLoad = useRef<(() => void) | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [stopping, setStopping] = useState(false);
-  const [atts, setAtts] = useState<Attachment[]>([]);
-  const [dragging, setDragging] = useState(false);
-  // dragenter/dragleave fire per child element, so depth-count to know when the
-  // pointer has really left the drop zone.
-  const dragDepth = useRef(0);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const attSeq = useRef(0);
+  // Attachments on the draft (./attachments.tsx): any file type, uploaded on
+  // attach, appended to the message as marker lines on send. Not persisted
+  // with the draft: object URLs don't survive a remount, and an unsent upload
+  // is an orphaned file the task's hard delete removes.
+  const files = useAttachments({ upload: uploadToTask(task.id), disabled });
+  const { atts, ready, uploading, dragging } = files;
   // Reset the stopping state once the turn actually ends.
   useEffect(() => { if (!running) setStopping(false); }, [running]);
   // Mirror the draft to localStorage so it survives remounts/navigation.
@@ -147,49 +128,6 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
   // than let one task's commands land in another's menu.
   useEffect(() => () => cancelLoad.current?.(), []);
 
-  const addFiles = (files: File[]) => {
-    if (disabled) return;
-    const cap = maxUploadBytes();
-    for (const f of files) {
-      // Extension-first, matching the server (lib/uploadTypes.ts): a dragged
-      // .png whose MIME the OS didn't fill in is still a picture.
-      const isImage = f.type.startsWith("image/") || isImageExt(uploadExtension(f.name || "", f.type || ""));
-      const key = `att-${++attSeq.current}`;
-      const kind = isImage ? "image" : "file";
-      const name = f.name || (isImage ? "image" : "attachment");
-      // Only images get a local object-URL thumbnail; file chips render a label.
-      const preview = isImage ? URL.createObjectURL(f) : "";
-      // Refuse an oversized file here instead of pushing it over the wire for
-      // the route to reject: the chip is the same either way, the upload isn't.
-      if (f.size > cap) {
-        setAtts((prev) => [...prev, { key, kind, name, preview, path: "", status: "error", error: `Too large (max ${Math.round(cap / 1024 / 1024)} MB).` }]);
-        continue;
-      }
-      setAtts((prev) => [...prev, { key, kind, name, preview, path: "", status: "uploading" }]);
-      const body = new FormData();
-      body.append("file", f, name);
-      fetch(`/api/tasks/${task.id}/uploads`, { method: "POST", body })
-        .then(async (res) => {
-          const j = await res.json().catch(() => ({} as { path?: string; error?: string }));
-          if (!res.ok || !j.path) throw new Error(j.error || `Upload failed (${res.status})`);
-          setAtts((prev) => prev.map((a) => (a.key === key ? { ...a, path: j.path as string, status: "ready" } : a)));
-        })
-        .catch((err: unknown) => {
-          setAtts((prev) => prev.map((a) => (a.key === key ? { ...a, status: "error", error: err instanceof Error ? err.message : String(err) } : a)));
-        });
-    }
-  };
-  const removeAtt = (key: string) => {
-    setAtts((prev) => {
-      const gone = prev.find((a) => a.key === key);
-      if (gone?.preview) URL.revokeObjectURL(gone.preview);
-      return prev.filter((a) => a.key !== key);
-    });
-  };
-  const hasFileDrag = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
-
-  const ready = atts.filter((a) => a.status === "ready");
-  const uploading = atts.some((a) => a.status === "uploading");
   // Calandria's own commands, then the agent's. /clear is Calandria's only: it
   // summarizes the transcript and starts the next generation of the task's
   // session lineage, which the CLI's same-named command does not do, so the
@@ -264,8 +202,7 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
     // Attachments ride along as marker lines after the typed text: an image or
     // file marker depending on the attachment kind.
     onSend([v, ...ready.map((a) => (a.kind === "image" ? attachmentMarker(a.path) : fileAttachmentMarker(a.path)))].filter(Boolean).join("\n\n"));
-    atts.forEach((a) => { if (a.preview) URL.revokeObjectURL(a.preview); });
-    setAtts([]); setVal(""); setSlash(false);
+    files.clear(); setVal(""); setSlash(false);
   };
   const canSend = (!!val.trim() || ready.length > 0) && !uploading && !blockedClear;
 
@@ -294,30 +231,8 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
             ))}
           </div>
         )}
-        <div
-          className={`comp-box${dragging ? " dropping" : ""}`}
-          onDragEnter={(e) => { if (!disabled && hasFileDrag(e)) { e.preventDefault(); dragDepth.current++; setDragging(true); } }}
-          onDragOver={(e) => { if (!disabled && hasFileDrag(e)) e.preventDefault(); }}
-          onDragLeave={() => { if (dragDepth.current > 0 && --dragDepth.current === 0) setDragging(false); }}
-          onDrop={(e) => { if (disabled || !hasFileDrag(e)) return; e.preventDefault(); dragDepth.current = 0; setDragging(false); addFiles(Array.from(e.dataTransfer.files)); }}
-        >
-          {atts.length > 0 && (
-            <div className="attach-row">
-              {atts.map((a) => (
-                <div key={a.key} className={`attach-chip ${a.kind} ${a.status}`} title={a.error || a.name}>
-                  {a.kind === "image" ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={a.preview} alt={a.name} />
-                  ) : (
-                    <span className="attach-file">{Icon.clip()} {a.name}</span>
-                  )}
-                  {a.status === "uploading" && <span className="attach-badge">uploading…</span>}
-                  {a.status === "error" && <span className="attach-badge err">failed</span>}
-                  <button className="attach-x" title="Remove" aria-label={`Remove ${a.name}`} onClick={() => removeAtt(a.key)}>×</button>
-                </div>
-              ))}
-            </div>
-          )}
+        <div className={`comp-box${dragging ? " dropping" : ""}`} {...files.dropProps}>
+          <AttachmentChips atts={atts} onRemove={files.remove} />
           <div className="comp-area">
             <div
               ref={ref}
@@ -389,15 +304,14 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
               onPaste={(e) => {
                 // Any pasted file attaches: a screenshot from the clipboard, or
                 // a file copied out of a file manager.
-                const files = Array.from(e.clipboardData?.files ?? []);
-                if (files.length) { e.preventDefault(); addFiles(files); return; }
+                if (files.pasteFiles(e)) return;
                 // A huge text paste would balloon the prompt and can permanently
                 // poison the session ("Prompt is too long"). Divert anything over
                 // the threshold to a .txt attachment instead of inlining it.
                 const text = e.clipboardData?.getData("text/plain") ?? "";
                 if (text.length > PASTE_ATTACH_THRESHOLD) {
                   e.preventDefault();
-                  addFiles([new File([text], "pasted-text.txt", { type: "text/plain" })]);
+                  files.addFiles([new File([text], "pasted-text.txt", { type: "text/plain" })]);
                   return;
                 }
                 // Firefox honors plaintext-only for typing and still drops rich
@@ -435,12 +349,9 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
               </>
             )}
             <span className="spacer" />
-            <input
-              ref={fileRef} type="file" multiple hidden
-              onChange={(e) => { addFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }}
-            />
+            {files.fileInput}
             {!disabled && (
-              <button className="hint" style={{ cursor: "pointer" }} title="Attach a file, or drag, drop, or paste one. It's saved to disk for the agent to open, not inlined into the prompt." onMouseDown={(e) => { e.preventDefault(); fileRef.current?.click(); }}>{Icon.clip()} attach</button>
+              <button className="hint" style={{ cursor: "pointer" }} title="Attach a file, or drag, drop, or paste one. It's saved to disk for the agent to open, not inlined into the prompt." onMouseDown={(e) => { e.preventDefault(); files.openPicker(); }}>{Icon.clip()} attach</button>
             )}
             <button className="hint" style={{ cursor: "pointer" }} onMouseDown={(e) => { e.preventDefault(); onClear(); }}>{Icon.clear()} /clear</button>
           </div>

@@ -32,6 +32,7 @@ export async function POST(req: NextRequest) {
     tags?: string[];
     provider?: "local" | "cloud";
     model?: string;
+    attachments?: string[];
   };
   try {
     body = await req.json();
@@ -64,6 +65,9 @@ export async function POST(req: NextRequest) {
     origin_task_id: body.taskId ?? null,
     provider: body.provider === "local" || body.provider === "cloud" ? body.provider : undefined,
     model: typeof body.model === "string" ? body.model : undefined,
+    // Resolved against the CALLER's worktree (taskId, trusted) inside
+    // createSuggestedTask, never against anything the bridge process sees.
+    attachments: Array.isArray(body.attachments) ? body.attachments : undefined,
   });
   if (!task) return NextResponse.json({ error: text }, { status: 404 });
 

@@ -803,13 +803,13 @@ export function useShell() {
     }
   }, [loadTasks]);
 
-  const createTask = async (input: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; permission_mode: string | null; tag_ids: string[] }) => {
+  const createTask = async (input: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; permission_mode: string | null; tag_ids: string[]; attachments: string[] }) => {
     if (!project) return;
     // model and permission_mode go in the create call, since `startNow` below
     // launches the first turn, and either applied as a follow-up PATCH would
     // miss the very turn the user picked it for. The tags ride the create too,
     // so the first turn's context (phase 2 of the tags spec) sees them.
-    const t = await jsend<TaskRow>("/api/tasks", "POST", { project_id: project.id, title: input.title, description: input.desc, priority: input.priority, agent: input.agent, send_context: input.sendContext, ...(input.model ? { model: input.model } : {}), ...(input.permission_mode ? { permission_mode: input.permission_mode } : {}), tag_ids: input.tag_ids });
+    const t = await jsend<TaskRow>("/api/tasks", "POST", { project_id: project.id, title: input.title, description: input.desc, priority: input.priority, agent: input.agent, send_context: input.sendContext, ...(input.model ? { model: input.model } : {}), ...(input.permission_mode ? { permission_mode: input.permission_mode } : {}), tag_ids: input.tag_ids, attachments: input.attachments });
     // Dependencies (and the auto-start opt-in that rides on them) are an
     // edit-after-create step (the task id doesn't exist until now).
     if (input.depends_on.length) await jsend(`/api/tasks/${t.id}`, "PATCH", { depends_on: input.depends_on, auto_start: input.auto_start ? 1 : 0 });

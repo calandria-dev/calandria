@@ -158,7 +158,11 @@ already queued. The transcript records that it was sent.
   spreadsheet, or a PDF, up to 25 MB (`CALANDRIA_MAX_UPLOAD_MB`). The file is
   staged on disk outside the worktree and the message carries only its path,
   so nothing lands in the model's context until the agent opens it, and
-  nothing lands in your diff. Staged files are swept with the task.
+  nothing lands in your diff. Staged files are swept with the task. The New
+  task and Edit task dialogs take the same attachments on the task itself
+  (drag, paste, or the Attach files button under the description); each one
+  is named as a line in the description, and shown as a thumbnail or file
+  chip on the task header and a paperclip count on its board card.
 - **Collaborate on documents:** open a file the agent wrote as a document
   (mermaid fences render as diagrams), or click a file link in any message,
   then edit the text, attach comments to passages, and send it all back as

@@ -4,7 +4,10 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { LandingMode, Priority } from "@/lib/types";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
-import { relTime, duration, fmtJobCost, alphabetical, isBlocking } from "./format";
+import { nanoid } from "nanoid";
+import { relTime, duration, fmtJobCost, alphabetical, isBlocking, splitAttachments } from "./format";
+import { AttachmentChips, stagedAttachment, uploadToDraft, uploadToTask, useAttachments } from "./attachments";
+import { joinAttachmentText } from "@/lib/uploadTypes";
 import { SLABEL, modelOptions, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate, type TagRow } from "./types";
 import { tagProgress } from "./TagChips";
 import { agentLabel, agentPickerNeeded, defaultAgentFor, findAgent, pickerAgents } from "./agents";
@@ -129,7 +132,43 @@ export function TagsField({ tags, value, onChange, onCreate, label = "Tags", hin
   );
 }
 
-export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, onCreateTag, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; tags: TagRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; permission_mode: string | null; tag_ids: string[] }) => void; onCreateTag: (name: string) => Promise<TagRow>; onOpenSetup?: () => void }) {
+/**
+ * The description box of both task dialogs: a textarea that is also a drop
+ * zone, with the attachment chips under it and an attach button, the same
+ * machinery the composer uses (./attachments.tsx). An attachment uploads on
+ * attach and is written into the description as a marker line on save, after
+ * the prose, so the session's context, the task header and get_task all
+ * read the same text.
+ */
+function DescriptionField({ value, onChange, placeholder, files, help }: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  files: ReturnType<typeof useAttachments>;
+  help: React.ReactNode;
+}) {
+  return (
+    <div className="field">
+      <div className="lab">Description <span className="opt">(what to do)</span></div>
+      <div className={`desc-drop${files.dragging ? " dropping" : ""}`} {...files.dropProps}>
+        <textarea value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)}
+          onPaste={(e) => { files.pasteFiles(e); }} />
+        <AttachmentChips atts={files.atts} onRemove={files.remove} />
+      </div>
+      <div className="desc-tools">
+        {files.fileInput}
+        <button type="button" className="btn btn-ghost btn-sm" onClick={files.openPicker}
+          title="Attach a file or image, or drag, drop, or paste one. It's saved to disk for the agent to open, not inlined into the prompt.">
+          {Icon.clip()} Attach files
+        </button>
+        {files.uploading && <span className="hlp" style={{ margin: 0 }}>Uploading…</span>}
+      </div>
+      {help}
+    </div>
+  );
+}
+
+export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, onCreateTag, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; tags: TagRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; permission_mode: string | null; tag_ids: string[]; attachments: string[] }) => void; onCreateTag: (name: string) => Promise<TagRow>; onOpenSetup?: () => void }) {
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
@@ -150,13 +189,23 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   // of this dialog: a rail pick afterwards would land a model behind the turn
   // that already ran on the default one.
   const [model, setModel] = useState<string | null>(null);
+  // Attachments stage under a draft id (POST /api/uploads) since the task has
+  // no id yet; POST /api/tasks adopts them into the new task's dir. Cancel
+  // drops the draft, and a draft this dialog never closes is swept server-side.
+  const draft = useRef(nanoid());
+  const files = useAttachments({ upload: uploadToDraft(draft.current) });
+  const close = () => {
+    if (files.atts.length) void fetch(`/api/uploads/${draft.current}`, { method: "DELETE" }).catch(() => {});
+    onClose();
+  };
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => { ref.current?.focus(); }, []);
   // The bundle can arrive after mount; adopt the resolved default until the user picks.
   const touched = useRef(false);
   useEffect(() => { if (!touched.current) setAgent(defaultAgentFor(agents, project.default_agent)); }, [agents, project.default_agent]);
   const pickAgent = (id: string) => { touched.current = true; setAgent(id); };
-  const can = title.trim().length > 0;
+  // An upload still in flight has no path to write yet, so Create waits for it.
+  const can = title.trim().length > 0 && !files.uploading;
   // A task with unfinished blockers can't start now, so the two options are exclusive.
   // One rule, shared with the "Blocked by" chip and with blocks() server-side:
   // terminal doesn't block, and neither does a ref that resolves to nothing
@@ -204,9 +253,9 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   // (null) can resolve to one that does, so it counts as unsafe for unattended
   // too: what it resolves to isn't guessed at here.
   const unattendedRisk = willAutoStart && permission !== "bypassPermissions";
-  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: willAutoStart, model, permission_mode: permission, tag_ids: tagIds });
+  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: willAutoStart, model, permission_mode: permission, tag_ids: tagIds, attachments: files.ready.map((a) => a.path) });
   return (
-    <Modal title="New task" sub={`${project.name} · title + description define ${agentLabel(agents, agent)}'s task context`} onClose={onClose}
+    <Modal title="New task" sub={`${project.name} · title + description define ${agentLabel(agents, agent)}'s task context`} onClose={close}
       footer={<>
         <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: !canStart ? "var(--ink-4)" : "var(--ink-2)", cursor: !canStart ? "not-allowed" : "pointer" }}
           title={blocked ? "Can't start now. This task is blocked by unfinished tasks" : !agentReady ? `Connect ${selAgent?.label} to start a session`
@@ -214,7 +263,7 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
           <input type="checkbox" checked={startNow && canStart} disabled={!canStart} onChange={(e) => setStartNow(e.target.checked)} /> Start session immediately
         </label>
         <span className="spacer" />
-        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="btn btn-ghost" onClick={close}>Cancel</button>
         <button className="btn btn-accent" disabled={!can} onClick={create}>{Icon.plus()} Create task</button>
       </>}>
       <div className="field">
@@ -222,16 +271,16 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
         <input ref={ref} type="text" value={title} placeholder="e.g. Add rate-limiting to auth endpoints"
           onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && can) create(); }} />
       </div>
-      <div className="field">
-        <div className="lab">Description <span className="opt">(what to do)</span></div>
-        <textarea value={desc} placeholder="Describe the feature or task. The agent receives this in its injected task context." onChange={(e) => setDesc(e.target.value)} />
-        {sendContext && <div className="hlp">Project context is prepended automatically. No need to restate the stack or conventions.</div>}
-        <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 12.5, color: "var(--ink-2)", cursor: "pointer" }}
-          title="Uncheck to start this task's sessions without the saved project context. Task details and Calandria tools are always included.">
-          <input type="checkbox" checked={sendContext} onChange={(e) => setSendContext(e.target.checked)} />
-          Send saved project context to the agent
-        </label>
-      </div>
+      <DescriptionField value={desc} onChange={setDesc} files={files}
+        placeholder="Describe the feature or task. The agent receives this in its injected task context."
+        help={<>
+          {sendContext && <div className="hlp">Project context is prepended automatically. No need to restate the stack or conventions.</div>}
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 12.5, color: "var(--ink-2)", cursor: "pointer" }}
+            title="Uncheck to start this task's sessions without the saved project context. Task details and Calandria tools are always included.">
+            <input type="checkbox" checked={sendContext} onChange={(e) => setSendContext(e.target.checked)} />
+            Send saved project context to the agent
+          </label>
+        </>} />
       <AgentPicker agents={agents} value={agent} onChange={pickAgent} onConnect={onOpenSetup} />
       {gatewayInsecure && (
         <div className="hlp" style={{ color: "var(--amber)" }}>
@@ -870,7 +919,23 @@ export function TagTasksModal({ selected, tags, onClose, onApply, onCreateTag }:
 
 export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, onSave, onDelete, onMove, onCreateTag, onOpenSetup }: { task: TaskRow; tasks: TaskRow[]; tags: TagRow[]; projects: ProjectRow[]; agents: AgentsBundle; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; model: string | null; depends_on: string[]; auto_start: boolean; tag_ids: string[] }, action?: SaveAction) => void; onCreateTag: (name: string) => Promise<TagRow>; onDelete: (id: string) => void; onMove: (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => Promise<void>; onOpenSetup?: () => void }) {
   const [title, setTitle] = useState(task.title);
-  const [desc, setDesc] = useState(task.description);
+  // The stored description is prose plus one marker line per attachment
+  // (lib/uploadTypes.ts). The textarea edits the prose; the attachments are
+  // chips, seeded from the markers and written back as markers on save.
+  const seed = useMemo(() => splitAttachments(task.description), [task.description]);
+  const [desc, setDesc] = useState(seed.text);
+  const files = useAttachments({ upload: uploadToTask(task.id), initial: seed.attachments.map((a, i) => stagedAttachment(a, `seed-${i}`)) });
+  const seedPaths = useMemo(() => new Set(seed.attachments.map((a) => a.path)), [seed]);
+  // The bytes of an attachment the dialog drops (a seeded one removed and
+  // saved, or a fresh upload cancelled) are reclaimed right away; the
+  // description is the only thing that names them, and it no longer will.
+  const discard = (paths: string[]) => {
+    for (const p of paths) void fetch(`/api/tasks/${task.id}/uploads/${p.split(/[\\/]/).pop()}`, { method: "DELETE" }).catch(() => {});
+  };
+  const close = () => {
+    discard(files.ready.filter((a) => !seedPaths.has(a.path)).map((a) => a.path));
+    onClose();
+  };
   const [priority, setPriority] = useState<Priority>(task.priority);
   const [agent, setAgent] = useState(task.agent);
   // Not gated the way the agent picker below is: a session's model is chosen
@@ -883,10 +948,15 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
   const [confirmDel, setConfirmDel] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => { ref.current?.focus(); }, []);
-  const can = title.trim().length > 0;
+  const can = title.trim().length > 0 && !files.uploading;
   const canChangeAgent = task.started === 0 && task.running === 0;
   const candidates = useMemo(() => tasks.filter((t) => t.id !== task.id), [tasks, task.id]);
-  const save = (action?: SaveAction) => can && onSave(task.id, { title: title.trim(), description: desc.trim(), priority, agent: canChangeAgent ? agent : undefined, model, depends_on: deps, auto_start: autoStart && deps.length > 0, tag_ids: tagIds }, action);
+  const save = (action?: SaveAction) => {
+    if (!can) return;
+    const kept = files.ready;
+    discard([...seedPaths].filter((p) => !kept.some((a) => a.path === p)));
+    onSave(task.id, { title: title.trim(), description: joinAttachmentText(desc, kept), priority, agent: canChangeAgent ? agent : undefined, model, depends_on: deps, auto_start: autoStart && deps.length > 0, tag_ids: tagIds }, action);
+  };
   // Editing a suggestion is usually the last step before deciding on it, so the
   // tray's two verbs live here too: sharpen the brief and accept it in one
   // gesture, instead of saving, closing, and hunting for the row again.
@@ -930,7 +1000,7 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
     : gatewayInsecure ? "This gateway is http:// and not loopback. Antigravity needs an https:// address." : undefined;
   const canStartNow = can && !blocked && agentReady && !gatewayInsecure;
   return (
-    <Modal title="Edit task" sub="Title + description define the agent's task context" onClose={onClose}
+    <Modal title="Edit task" sub="Title + description define the agent's task context" onClose={close}
       footer={<>
         {confirmDel ? (
           <button className="btn-danger on" onClick={() => onDelete(task.id)} title="Permanently remove this task, its session and worktree">{Icon.x()} Delete task permanently</button>
@@ -938,7 +1008,7 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
           <button className="btn-danger" onClick={() => setConfirmDel(true)}>{Icon.x()} Delete task</button>
         )}
         <span className="spacer" />
-        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="btn btn-ghost" onClick={close}>Cancel</button>
         {/* Save stays the primary action only when it's the only one: on an
             unstarted task, launching it is what the dialog is usually open for.
             Its label shortens beside the tray verbs so five buttons still fit
@@ -964,20 +1034,18 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
         <input ref={ref} type="text" value={title} placeholder="e.g. Add rate-limiting to auth endpoints"
           onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && can) save(); }} />
       </div>
-      <div className="field">
-        <div className="lab">Description <span className="opt">(what to do)</span></div>
-        <textarea value={desc} placeholder="Describe the feature or task. This is the body of the prompt the agent starts with." onChange={(e) => setDesc(e.target.value)} />
-        {/* The description is injected into each SESSION's system prompt at
-            session start, so once a task has run this field is no longer the
-            thing steering the agent in front of you. It's the brief the NEXT
-            session gets. Said plainly, because the pre-start wording ("the body
-            of the prompt the agent starts with") invites the opposite reading. */}
-        {task.started === 1 ? (
+      {/* The description is injected into each SESSION's system prompt at
+          session start, so once a task has run this field is no longer the
+          thing steering the agent in front of you. It's the brief the NEXT
+          session gets. Said plainly, because the pre-start wording ("the body
+          of the prompt the agent starts with") invites the opposite reading. */}
+      <DescriptionField value={desc} onChange={setDesc} files={files}
+        placeholder="Describe the feature or task. This is the body of the prompt the agent starts with."
+        help={task.started === 1 ? (
           <div className="hlp">Already sent to the agent. Edits here update the task record and any future sessions, not the running one.</div>
         ) : (
           <div className="hlp">Project context is prepended automatically. No need to restate the stack or conventions.</div>
-        )}
-      </div>
+        )} />
       {canChangeAgent && <AgentPicker agents={agents} value={agent} onChange={setAgent} onConnect={onOpenSetup} />}
       {gatewayInsecure && (
         <div className="hlp" style={{ color: "var(--amber)" }}>

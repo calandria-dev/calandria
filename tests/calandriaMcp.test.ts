@@ -198,7 +198,7 @@ describe("calandria-mcp stdio bridge", () => {
       const schema = tools.find((t) => t.name === "update_task")!.inputSchema as {
         properties?: Record<string, { enum?: string[] }>;
       };
-      expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["blocked_by", "description", "priority", "status", "tags", "task", "title"]);
+      expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["attachments", "blocked_by", "description", "priority", "status", "tags", "task", "title"]);
       // Cancelling is the user's call: on the caller's own row it would abort
       // the very turn making the call.
       expect(schema.properties!.status.enum).not.toContain("cancelled");

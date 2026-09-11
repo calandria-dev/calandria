@@ -290,7 +290,7 @@ What doesn't survive: every project and task, every transcript and generation su
 session/thread ids (an old `claude` session on disk can no longer be resumed through the app),
 usage and cost history, merge records, schedules and their run ledger, runbooks, remembered
 permission rules, and the agent-connection/onboarding state in `settings` (cosmetic; re-verify to
-restore the "connected" badge). Chat attachments under `CALANDRIA_DB_DIR/uploads`
+restore the "connected" badge). Chat and task attachments under `CALANDRIA_DB_DIR/uploads`
 (`lib/uploads.ts`) sit inside the same directory tree as the DB by default, so a wholesale wipe
 takes them too; deleting only the `.db*` files leaves them orphaned on disk.
 
@@ -341,7 +341,11 @@ can't disappear out from under an agent mid-turn.
 bounded of the three (25MB per attachment by default, configurable via `CALANDRIA_MAX_UPLOAD_MB`)
 and are removed automatically (`removeTaskUploads()`) whenever the task or its project is
 hard-deleted. The worktree-reclaim path above doesn't clear them, since a merged/Done task can
-still be opened to review its history; they only disappear with the task itself.
+still be opened to review its history; they only disappear with the task itself. Attachments on
+the task itself (New task, Edit task, or an agent tool's `attachments` parameter) share this same
+per-task directory. A New task dialog has no task id yet, so its uploads stage under
+`CALANDRIA_DB_DIR/uploads/_drafts/<draft>/` until the task is created; an abandoned draft older
+than 24 hours is swept on the next draft upload, so it never accumulates unbounded.
 
 **Rough sizing guidance:** budget generously for worktrees, since they scale with repo size times
 parallel task count, not with chat volume. A few hundred MB is plenty for the database on almost
