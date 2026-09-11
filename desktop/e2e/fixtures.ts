@@ -254,6 +254,13 @@ function launchEnv(root: string, port: number, opts: LaunchOptions): Record<stri
     // instance, and written synchronously by main.js so it survives a main
     // thread that stopped.
     CALANDRIA_DESKTOP_LOG_FILE: bootTracePath(root),
+    // Per instance, for the same reason as the user-data dir: the default is
+    // the developer's own `~/.config/calandria/window-state.json`, which a
+    // suite would both read (opening at whatever size their real app was left
+    // at, and every lane's specs assume 1440x900, see docs/DESKTOP_E2E.md) and
+    // write. A spec that wants geometry to survive a relaunch overrides this
+    // with a path it keeps, through `opts.env` below.
+    CALANDRIA_WINDOW_STATE_FILE: path.join(root, "window-state.json"),
     ...(opts.env ?? {}),
   };
 }

@@ -28,6 +28,7 @@ const {
   shell,
   dialog,
   safeStorage,
+  screen,
   session,
   clipboard,
 } = require("electron");
@@ -107,6 +108,14 @@ const {
   updateMenuItem,
   updaterDisposition,
 } = require("./updater");
+const {
+  MIN_SIZE,
+  fitToWorkAreas,
+  loadWindowState,
+  normalizeWindowState,
+  sameWindowState,
+  saveWindowState,
+} = require("./window-state");
 
 // Persistent logging, set up before anything else writes a line. Everything
 // logged through `console.log`, including sidecar lines the Supervisor
@@ -216,6 +225,15 @@ let attachSeq = 0;
 // different partition means a new window; this is how that decision is made
 // without recreating one when nothing changed.
 let winPartition = null;
+// The size and position the window should open at, in memory so a rebuild
+// mid-session never has to wait on a disk read. Kept current by the handlers
+// `trackWindowGeometry()` wires onto every window, written to
+// `window-state.json` a moment after it settles, and read back at boot. See
+// window-state.js for why it exists at all.
+let windowGeometry = normalizeWindowState({});
+// The last state written, so an idle app rewrites nothing.
+let savedGeometry = null;
+let geometryFlushTimer = null;
 // The modal instance dialog, at most one. Held so a second "Add instance…"
 // focuses it instead of stacking a second copy on the same list.
 let instanceDialog = null;
@@ -322,6 +340,12 @@ function main() {
     quitting = true;
     console.log("[shell] quitting");
     event.preventDefault();
+    // Read off the live window and written synchronously, before the drain
+    // gets a chance to fail or the update installer replaces the process. A
+    // debounced flush from the last resize may still be pending, and its
+    // timer is unref'd, so this is the only guaranteed write.
+    captureWindowGeometry(win);
+    flushWindowGeometry();
     // Nothing that arrives from here on has anywhere to go: the badge is
     // about to disappear with the process, and a toast raised during a
     // shutdown is one the user cannot act on. Stops every instance's stream,
@@ -365,6 +389,9 @@ function main() {
     loadInstanceList();
     Menu.setApplicationMenu(buildMenu());
     announceShell();
+    // Before the window, for the same reason as the instance list: the size
+    // and position are constructor options Electron will not revisit.
+    loadWindowGeometry();
     createWindow();
     // AFTER the window, and before the first attach.
     //
@@ -850,13 +877,114 @@ function wireContextMenu(window) {
   });
 }
 
+/* ------------------------------------------------------------------------- *
+ * Window geometry.
+ *
+ * A window this shell builds is not the window the user left: an instance
+ * switch across partitions destroys and rebuilds it (`applyActiveInstance`),
+ * an update installs by restarting the process, and macOS destroys it
+ * outright when the last window closes. All three used to open at the
+ * constructor's literals. These four functions keep one geometry alive across
+ * every one of them.
+ * ------------------------------------------------------------------------- */
+
+/** Read the saved geometry, once, before the first window is built. */
+function loadWindowGeometry() {
+  const loaded = loadWindowState();
+  windowGeometry = loaded.state;
+  savedGeometry = loaded.found ? loaded.state : null;
+  if (loaded.error) console.log(`[shell] could not read ${loaded.path}: ${loaded.error.message || loaded.error}`);
+}
+
+/** Write it, best-effort: a read-only config dir must not break the window. */
+function flushWindowGeometry() {
+  if (geometryFlushTimer) {
+    clearTimeout(geometryFlushTimer);
+    geometryFlushTimer = null;
+  }
+  if (sameWindowState(windowGeometry, savedGeometry)) return;
+  try {
+    savedGeometry = saveWindowState(windowGeometry).state;
+  } catch (err) {
+    console.log(`[shell] could not save the window geometry: ${err?.message || err}`);
+  }
+}
+
+/**
+ * Write it a moment after the window stops moving.
+ *
+ * A drag emits `resize` per frame, and each one would otherwise be a
+ * synchronous write plus a rename. The timer is unref'd so a pending flush
+ * cannot hold the process open; the quit path calls `flushWindowGeometry()`
+ * directly for the same reason.
+ */
+function scheduleGeometryFlush() {
+  if (geometryFlushTimer) clearTimeout(geometryFlushTimer);
+  geometryFlushTimer = setTimeout(flushWindowGeometry, 500);
+  geometryFlushTimer.unref?.();
+}
+
+/**
+ * Copy a live window's geometry into `windowGeometry`.
+ *
+ * `getNormalBounds()`, not `getBounds()`: while a window is maximized or
+ * full-screen, `getBounds()` reports the screen, and restoring that would
+ * leave a window with nothing left to un-maximize into.
+ */
+function captureWindowGeometry(window) {
+  if (!window || window.isDestroyed() || window.isMinimized()) return;
+  try {
+    windowGeometry = normalizeWindowState({
+      ...window.getNormalBounds(),
+      maximized: window.isMaximized(),
+      fullScreen: window.isFullScreen(),
+    });
+  } catch {
+    // A window torn down between the check and the read: keep what we had.
+  }
+}
+
+/** Follow a window for as long as it lives. */
+function trackWindowGeometry(window) {
+  const record = () => {
+    captureWindowGeometry(window);
+    scheduleGeometryFlush();
+  };
+  for (const event of ["resize", "move", "maximize", "unmaximize", "enter-full-screen", "leave-full-screen"]) {
+    window.on(event, record);
+  }
+  // Hiding to the tray is where a session usually ends, and the process can
+  // then be killed without another chance to write.
+  window.on("hide", () => flushWindowGeometry());
+}
+
+/**
+ * The geometry to build the next window with, fitted to the displays that are
+ * attached right now. Asked per window, not cached: a monitor can be unplugged
+ * between two of them.
+ */
+function openingGeometry() {
+  let workAreas = [];
+  try {
+    workAreas = screen.getAllDisplays().map((d) => d.workArea);
+  } catch {
+    // Before `app.whenReady()`, or a platform with no display server: the
+    // saved state is used unchecked, which is what an empty list means.
+  }
+  return fitToWorkAreas(windowGeometry, workAreas, MIN_SIZE);
+}
+
 function createWindow() {
   winPartition = partitionFor(instance || activeInstance(instancesState));
+  const geometry = openingGeometry();
   win = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 720,
-    minHeight: 480,
+    width: geometry.width,
+    height: geometry.height,
+    // Absent on a first launch and whenever the saved position no longer
+    // lands on a screen, which is Electron's cue to place the window itself.
+    ...(geometry.x !== undefined ? { x: geometry.x, y: geometry.y } : {}),
+    minWidth: MIN_SIZE.width,
+    minHeight: MIN_SIZE.height,
     backgroundColor: "#0b0d10",
     show: true,
     title: windowTitle(instance || activeInstance(instancesState)),
@@ -884,6 +1012,14 @@ function createWindow() {
       ...(winPartition ? { partition: winPartition } : {}),
     },
   });
+
+  // After construction, since neither is a constructor option that also
+  // remembers what to restore into: the bounds above are the shape the window
+  // takes when the user leaves either state. Maximize first, so leaving
+  // full-screen lands back on a maximized window when it was saved as both.
+  if (geometry.maximized) win.maximize();
+  if (geometry.fullScreen) win.setFullScreen(true);
+  trackWindowGeometry(win);
 
   // Per session, not once per process: a partition is its own cookie jar and
   // permission store, so an instance added after launch would otherwise get
@@ -1469,6 +1605,10 @@ async function applyActiveInstance() {
     // screen instead, which the attach is about to show anyway.
     appUrl = null;
     const old = win;
+    // Before `createWindow()` reads it, and before the destroy below takes the
+    // window it has to be read off. The replacement opens on the size and
+    // position the user left, so switching servers is not a resize.
+    captureWindowGeometry(old);
     // Build the replacement first. Electron emits `window-all-closed`
     // synchronously from the destroy below, and this shell quits on that
     // event when no status area hosts its tray icon; building first means

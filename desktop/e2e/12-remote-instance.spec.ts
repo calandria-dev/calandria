@@ -245,6 +245,43 @@ test("switching back leaves the local server running", async () => {
 });
 
 /**
+ * The window's size and position survive the rebuild a switch performs.
+ *
+ * Every switch between instances in different partitions destroys the window
+ * and builds another (`applyActiveInstance` in desktop/main.js), so the size
+ * and position are read off the outgoing window and passed to the replacement
+ * (desktop/window-state.js). Without that, changing servers silently threw
+ * the user's window size away and reopened at the default.
+ *
+ * 900x600, and not something roomier, because the hosted macOS and Windows
+ * runners have a 1024x768 virtual display: a saved geometry is clamped to the
+ * work area it lands on, which would show up here as a size that did not
+ * survive the switch.
+ */
+test("the window keeps its size and position across a switch", async () => {
+  await shell.app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0].setBounds({ x: 60, y: 60, width: 900, height: 600 });
+  });
+  // Polled, not read straight back: a window manager applies a resize on its
+  // own schedule, and the shell records what the window reports, not what it
+  // was asked for.
+  await expect.poll(() => normalBounds(), { timeout: 15_000 }).toMatchObject({ width: 900, height: 600 });
+  const bounds = await normalBounds();
+
+  await switchInstance("local");
+  await expect.poll(() => normalBounds(), { timeout: 30_000 }).toEqual(bounds);
+
+  // And back, so the next test starts on the instance it expects.
+  await switchInstance("a1f3");
+  await expect.poll(() => normalBounds(), { timeout: 30_000 }).toEqual(bounds);
+});
+
+/** The current window's size and position as Electron itself reports them. */
+function normalBounds(): Promise<{ x: number; y: number; width: number; height: number }> {
+  return shell.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getNormalBounds());
+}
+
+/**
  * The Add-instance dialog, driven the way a user drives it.
  *
  * This is the only way an instance gets onto the list, and it has no other

@@ -171,7 +171,7 @@ DISPLAY=:1 CALANDRIA_DESKTOP_BENCH=1 npm run test:desktop:window
 | `09-bench-notifications.spec.ts` | Bench-only (`CALANDRIA_DESKTOP_BENCH=1`). A parked turn's notification reaches a real notification daemon over D-Bus, which accepts it and hands back an id |
 | `10-bench-tray.spec.ts` | Bench-only. The tray icon is registered with the panel (`org.kde.StatusNotifierWatcher`), and its menu (read over `com.canonical.dbusmenu`, since `Tray` has no getter) carries the "N need you" count |
 | `11-bench-window.spec.ts` | Bench-only. Minimize/restore, close-hides-without-quitting, and a second launch focusing the existing window, each paired with the window manager's own `_NET_*` properties |
-| `12-remote-instance.spec.ts` | Attaching the shell to a **second** production server by URL |
+| `12-remote-instance.spec.ts` | Attaching the shell to a **second** production server by URL, and the window keeping its geometry across the rebuild a switch performs |
 | `13-ssh-instance.spec.ts` | Attaching through a real `ssh localhost` forward; skipped where key-based ssh to localhost isn't already set up |
 | `14-multi-instance-badge.spec.ts` | A task parked on each of two servers proves the dock badge is their sum |
 
@@ -199,7 +199,10 @@ DISPLAY=:1 CALANDRIA_DESKTOP_BENCH=1 npm run test:desktop:window
 | `macos-desktop` | `macos-latest` (`.github/workflows/test.yml`) | Weekly cron, dispatch, or the `macos` label; does **not** ride the shared `e2e` label |
 | bench | self-hosted, labels `self-hosted, linux, x64, desktop-bench` (`.github/workflows/desktop-bench.yml`) | `workflow_dispatch` + nightly cron `37 3 * * *`; **no `pull_request` trigger** |
 
-**Viewport clamping on hosted runners.** The hosted macOS and Windows runners have a 1024x768
+**Viewport clamping on hosted runners.** Each shell gets its own
+`CALANDRIA_WINDOW_STATE_FILE` under its instance root (`fixtures.ts`), so every launch starts at
+the default 1440x900. Without it, a launch would open at whatever size the last spec, or the
+developer's own installed app, left behind. The hosted macOS and Windows runners have a 1024x768
 virtual display and clamp the app's requested 1440x900 window down to fit it; `xvfb-run`'s screen
 is larger with no window manager to clamp anything, so the Linux lane really gets 1440x900. A spec
 that fails on the windowed lanes and passes under Xvfb is a size question first. Consequence for
