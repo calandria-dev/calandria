@@ -136,5 +136,18 @@ export function tagContextBlock(task: Task): string {
   // doesn't pay for four identical listTasks calls, each carrying the usage
   // subqueries.
   const projectTasks = listTasks(task.project_id);
-  return tags.map((tag) => blockFor(tag, task, projectTasks)).join("\n");
+  const blocks = tags.map((tag) => blockFor(tag, task, projectTasks));
+  // Each block's fraction is already qualified by the tag named on the same
+  // line, so two plans both calling this task step 3 is not ambiguous. What is
+  // missing without this line is that the order is deliberate: the user picks
+  // which tag leads (the star in the Tags field), and a session reading two
+  // blocks would otherwise take the sequence for filing order and weigh both
+  // plans the same.
+  if (tags.length > 1) {
+    blocks.unshift(
+      `\nThis task carries ${tags.length} tags, the one it is most about first: it is mainly the ` +
+        `"${tags[0].name}" work. Each block below counts steps within its own tag.`
+    );
+  }
+  return blocks.join("\n");
 }
