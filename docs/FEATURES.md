@@ -604,6 +604,14 @@ existing tasks and dependencies across the whole board, subject to review contro
   showing who made the edit and when, with a per-edit **Revert** and a **Keep changes** button to
   clear the chip. Correcting your own row, or a suggestion still sitting unreviewed in the tray,
   does not raise the chip.
+- **Attaching files.** `suggest_task` and `update_task` both take an optional `attachments`
+  parameter: paths relative to the calling session's own worktree (or absolute). Each path is
+  copied into the target task's upload directory and named as an attachment line in its brief. A
+  path must resolve inside the calling worktree or the session's own staged uploads (so an
+  attachment the session was sent can be forwarded on); anything else, a non-file, or a file over
+  the upload size cap refuses the whole call, naming every bad path. `update_task`'s attachments
+  are additive, so existing ones stay; removing one is only ever your call, from the Edit task
+  dialog.
 - **Re-parenting.** `move_task(tasks, project)` runs the same move the board does, keeping the
   task's id, brief, transcript, cost history, and comments, and keeping a blocked-by link when
   both ends move in the same call. It refuses to move a started task's checkout (that discard

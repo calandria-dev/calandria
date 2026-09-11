@@ -1,4 +1,5 @@
 // Pure formatting + derivation helpers shared across the shell modules.
+import { splitAttachmentText, type AttachmentRef } from "@/lib/uploadTypes";
 import type { AskQuestion, AskAnswers, ToolPeek } from "@/lib/types";
 import { contextWindowFor } from "@/lib/contextWindow";
 import type { AgentProvider } from "@/lib/agentEnv";
@@ -493,41 +494,24 @@ export function buildSessions(messages: Msg[]) {
 }
 
 // ---------- chat attachments (images + large text pastes) ----------
-// An upload travels inside the message text as one marker line per file:
-// "[Attached image: /abs/path.png]" for images, "[Attached file: /abs/path.ext]"
-// for every other type (any file may be attached; a big text paste is also
-// diverted here, see PASTE_ATTACH_THRESHOLD). The same string serves both
-// sides: the agent gets an absolute path to a file staged outside the worktree
-// and decides how to open it, and the transcript strips the marker back out to
-// render an inline thumbnail (image) or a named file chip. The serving URL is
-// derived from the path's uploads/<task>/<file> tail, so no extra columns or
-// event fields are needed.
-export const attachmentMarker = (absPath: string) => `[Attached image: ${absPath}]`;
-export const fileAttachmentMarker = (absPath: string) => `[Attached file: ${absPath}]`;
-const ATTACHMENT_RE = /^\[Attached (image|file): (.+)\]$/;
+// An upload travels inside the message text (or a task's description) as one
+// marker line per file; lib/uploadTypes.ts owns the format and the parser, so
+// the composer, the task dialogs, the server and the agent tools all read the
+// same line. This half adds the serving URL, derived from the path's
+// uploads/<task>/<file> tail, so no extra columns or event fields are needed.
+export { attachmentMarker, fileAttachmentMarker } from "@/lib/uploadTypes";
 
 export interface MsgAttachment { path: string; url: string; kind: "image" | "file"; name: string }
 
-// Split a user message into displayable text + attachment chips. Marker lines
-// whose path doesn't end in uploads/<task>/<file> (hand-typed lookalikes) stay
-// in the text untouched.
+/** The serving URL for a recognized marker. */
+export const attachmentUrl = (a: Pick<AttachmentRef, "taskId" | "file">) => `/api/tasks/${a.taskId}/uploads/${a.file}`;
+
+// Split a user message (or a task description) into displayable text +
+// attachment chips. Marker lines whose path doesn't end in
+// uploads/<task>/<file> (hand-typed lookalikes) stay in the text untouched.
 export function splitAttachments(content: string): { text: string; attachments: MsgAttachment[] } {
-  if (!content.includes("[Attached image: ") && !content.includes("[Attached file: ")) {
-    return { text: content, attachments: [] };
-  }
-  const attachments: MsgAttachment[] = [];
-  const kept: string[] = [];
-  for (const line of content.split("\n")) {
-    const m = ATTACHMENT_RE.exec(line.trim());
-    const parts = m ? m[2].split(/[\\/]/).filter(Boolean) : [];
-    if (m && parts.length >= 3 && parts[parts.length - 3] === "uploads") {
-      const [taskId, file] = parts.slice(-2);
-      attachments.push({ path: m[2], url: `/api/tasks/${taskId}/uploads/${file}`, kind: m[1] === "image" ? "image" : "file", name: file });
-    } else {
-      kept.push(line);
-    }
-  }
-  return { text: kept.join("\n").trim(), attachments };
+  const { text, attachments } = splitAttachmentText(content);
+  return { text, attachments: attachments.map((a) => ({ path: a.path, url: attachmentUrl(a), kind: a.kind, name: a.file })) };
 }
 
 // ---------- pull-request state ----------

@@ -690,6 +690,13 @@ export function setTaskGatewayKeySpend(id: string, spend: number): void {
 }
 
 export function createTask(input: {
+  /**
+   * The id to mint the row under, when the caller has to know it before the
+   * insert: a task created with attachments stages them under uploads/<id>
+   * and writes those paths into the description in the same call. Omitted
+   * everywhere else.
+   */
+  id?: string;
   project_id: string;
   title: string;
   description?: string;
@@ -726,7 +733,7 @@ export function createTask(input: {
   agent_env?: string | Record<string, string> | null;
 }): Task {
   const now = Date.now();
-  const id = nanoid();
+  const id = input.id || nanoid();
   const project = getProject(input.project_id);
   // Which agent driver the task runs under: explicit choice, else the owning
   // project's default (see lib/agents/registry.ts for resolution).

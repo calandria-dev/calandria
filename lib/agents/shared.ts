@@ -11,6 +11,7 @@ import { hasOwnBase, resolveBaseBranch } from "../baseBranch";
 import { takeBaseCutNote } from "../baseDrift";
 import { getCapabilities } from "./capabilities";
 import { BACKGROUND_LINGER_MS, DELEGATE_COLLECTION } from "../config";
+import { ATTACHMENT_NUDGE, hasAttachmentMarkers } from "../uploadTypes";
 
 // A fresh agent session still needs a user turn to begin, but task metadata is
 // already supplied by buildProjectContext(). This prompt stays generic so the
@@ -68,6 +69,11 @@ export function buildProjectContext(project: Project, task: Task): string {
   if (cutNote) lines.push(`\n${cutNote}`);
   lines.push(`\n---\nThe current task is: "${task.title}"`);
   if (task.description) lines.push(`Task details: ${task.description}`);
+  // A description can carry attachments as marker lines, staged the way a
+  // chat attachment is (the task dialogs, or suggest_task / update_task's
+  // `attachments`). Every driver sends this context, so the one sentence
+  // about what those lines mean lives here.
+  if (hasAttachmentMarkers(task.description)) lines.push(`\n${ATTACHMENT_NUDGE}`);
 
   // Each tag's name, description and sibling order, one block per tag
   // (lib/tagContext.ts). Placed right after the brief, since it frames it.
@@ -130,7 +136,11 @@ export function buildProjectContext(project: Project, task: Task): string {
       `Independent tasks stay unblocked; dependencies never cross projects.\n\n` +
       `Name the plan: pass the same \`tags\` to every task of one feature, migration or refactor. ` +
       `A tag is created on first use; the user gets one chip for the plan, and each session ` +
-      `learns which step it is.`
+      `learns which step it is.\n\n` +
+      `Hand over files: pass \`attachments\` (paths in your worktree, or absolute) to ` +
+      `\`suggest_task\` or \`update_task\` and each is copied into the task's own staging area ` +
+      `and named in its brief, so the next session opens it by path. Files outside your worktree ` +
+      `are refused.`
   );
   lines.push(
     `\n\`update_task\` also reaches any task on the board, in any project, including ones the ` +

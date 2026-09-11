@@ -11,8 +11,12 @@
 // (scripts/calandria-mcp.mjs) import the defs without pulling in the TS/SQLite
 // graph.
 
+import fs from "node:fs";
+import path from "node:path";
 import { nanoid } from "nanoid";
 import { PRIORITIES, parseTagColor, tagIsDone } from "./types";
+import { copyIntoTaskUploads, MAX_UPLOAD_BYTES, plannedTaskUpload, taskUploadsDir } from "./uploads";
+import { attachmentKindOf, joinAttachmentText, splitAttachmentText } from "./uploadTypes";
 import type { Project, Task, Tag, ServiceInfo, Priority, Status, AskQuestion, PermissionOutcome, PermissionRequest, ToolData, AgentEditChange } from "./types";
 import {
   createTask,
@@ -307,6 +311,56 @@ export interface SuggestTaskInput {
   provider?: "local" | "cloud";
   /** The model to run on: an Ollama tag for local, a catalog id for cloud. */
   model?: string;
+  /** Files to attach, as the model named them; resolved by resolveAgentAttachments against the CALLER's worktree. */
+  attachments?: string[];
+}
+
+/**
+ * Resolve the paths an agent wants to attach to a task, and refuse the ones it
+ * may not hand over. A path is taken relative to the calling session's
+ * worktree and must resolve (symlinks followed) inside that worktree or inside
+ * the session's own staged uploads, so an attachment it received can be
+ * forwarded. Nothing else on the machine is reachable this way: the server
+ * runs as the user, so a tool that copied any path the model named would turn
+ * a prompt injection into a download link for whatever the user can read.
+ * Each must be a regular file under the upload cap. The whole list resolves or
+ * the whole call is refused, named per path, so a task is never created with
+ * half its attachments.
+ */
+export function resolveAgentAttachments(
+  callerId: string,
+  refs: readonly unknown[]
+): { files: string[] } | { error: string } {
+  const caller = getTask(callerId);
+  const root = caller?.worktree_path || "";
+  if (!caller || !root) return { error: "`attachments` needs a session with a worktree to read them from, and this caller has none" };
+  const roots = [root, taskUploadsDir(caller.id)].flatMap((r) => {
+    try { return [fs.realpathSync(r)]; } catch { return []; }
+  });
+  const inside = (abs: string) => roots.some((r) => abs === r || abs.startsWith(r + path.sep));
+  const files: string[] = [];
+  const problems: string[] = [];
+  for (const ref of refs) {
+    const wanted = typeof ref === "string" ? ref.trim() : "";
+    if (!wanted) { problems.push("an empty path"); continue; }
+    const abs = path.resolve(root, wanted);
+    let real: string;
+    try {
+      real = fs.realpathSync(abs);
+    } catch {
+      problems.push(`"${wanted}" doesn't exist`);
+      continue;
+    }
+    if (!inside(real)) { problems.push(`"${wanted}" is outside this session's worktree`); continue; }
+    let st: fs.Stats;
+    try { st = fs.statSync(real); } catch { problems.push(`"${wanted}" doesn't exist`); continue; }
+    if (!st.isFile()) { problems.push(`"${wanted}" isn't a file`); continue; }
+    if (st.size > MAX_UPLOAD_BYTES) { problems.push(`"${wanted}" is over the ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB attachment cap`); continue; }
+    files.push(real);
+  }
+  if (problems.length)
+    return { error: `${problems.join("; ")}. \`attachments\` takes files inside this session's worktree (or attachments it was sent), relative to the worktree or absolute` };
+  return { files };
 }
 
 /**
@@ -367,12 +421,30 @@ export function createSuggestedTask(project: Project, input: SuggestTaskInput): 
   } else if (input.provider === "cloud") {
     agentEnv = cloudOverrideEnv();
   }
+  // Attachments, resolved against the CALLER's worktree before the insert so
+  // a bad path refuses the whole call with nothing created. Staged under the
+  // id the row is about to be minted with, and written into the description
+  // as the marker lines the session's context, the task header and the edit
+  // dialog all read (lib/uploadTypes.ts).
+  const id = nanoid();
+  let description = input.description;
+  if (input.attachments?.length) {
+    const hit = resolveAgentAttachments(input.origin_task_id ?? "", input.attachments);
+    if ("error" in hit) return { task: null, text: `Could not add "${input.title}": ${hit.error}. Nothing was created.` };
+    const staged = hit.files.map((f) => {
+      const dest = plannedTaskUpload(id, f);
+      copyIntoTaskUploads(f, dest);
+      return { kind: attachmentKindOf(dest), path: dest };
+    });
+    description = joinAttachmentText(description, staged);
+  }
   const task = createTask({
+    id,
     model,
     agent_env: agentEnv,
     project_id: project.id,
     title: input.title,
-    description: input.description,
+    description,
     priority: input.priority ?? "med",
     suggested: true,
     // Connected-first, matching the New-task dialog (defaultAgentFor). A task's
@@ -397,9 +469,11 @@ export function createSuggestedTask(project: Project, input: SuggestTaskInput): 
   const providerNote = agentEnv
     ? ` Runs against ${input.provider === "cloud" ? "the agent's own cloud login" : `the local model server (${describeProvider(agentEnv).host}, model ${describeProvider(agentEnv).model})`}.`
     : "";
+  const attached = input.attachments?.length ?? 0;
+  const attachNote = attached ? ` Attached ${attached} file${attached === 1 ? "" : "s"}.` : "";
   return {
     task,
-    text: `Suggested task "${input.title}" added to ${project.name}'s tray (id: ${task.id}).${depNote(task, project, input.blocked_by)}${tagNote}${providerNote}`,
+    text: `Suggested task "${input.title}" added to ${project.name}'s tray (id: ${task.id}).${depNote(task, project, input.blocked_by)}${tagNote}${providerNote}${attachNote}`,
   };
 }
 
@@ -623,6 +697,13 @@ export interface UpdateTaskInput {
    * the block in the body for why this one won't create.
    */
   tags?: string[];
+  /**
+   * Files to ADD to the task's attachments, resolved against the caller's
+   * worktree (resolveAgentAttachments). Additive, unlike every other list
+   * here: an attachment is a staged file, and dropping one is the user's
+   * call from the edit dialog.
+   */
+  attachments?: string[];
 }
 
 /** ", tagged \"a\", \"b\"" / ", untagged": the tail the no-change reply reads back. */
@@ -771,11 +852,39 @@ export function updateTaskForAgent(
       changes.push({ field: "title", before: cur.title, after: title, before_value: cur.title });
     }
   }
-  if (input.description !== undefined && input.description !== cur.description) {
-    patch.description = input.description;
-    changed.push("description rewritten");
-    // Full text, not a preview: the diff panel is what truncates, not the store.
-    changes.push({ field: "description", before: cur.description, after: input.description, before_value: cur.description });
+  // The description is prose plus the marker lines of its attachments
+  // (lib/uploadTypes.ts). `description` replaces the prose and keeps the
+  // attachments: they are staged files the user or another session put
+  // there, and a brief rewritten from the tool's own text would otherwise
+  // silently drop every one. `attachments` appends, resolved against the
+  // caller's worktree before anything is written, so a bad path refuses the
+  // whole call.
+  // The copies themselves wait until every field below has passed, so a
+  // refusal leaves no orphaned file behind; only the destination paths are
+  // decided here, since the description has to name them.
+  const copies: { from: string; to: string }[] = [];
+  if (input.description !== undefined || input.attachments?.length) {
+    const cut = splitAttachmentText(cur.description);
+    // The new text is split too: get_task hands the description back with
+    // its marker lines in place, and a brief edited from that copy would
+    // otherwise carry them into the prose and duplicate every one below.
+    const given = input.description !== undefined ? splitAttachmentText(input.description) : cut;
+    if (input.attachments?.length) {
+      const hit = resolveAgentAttachments(caller.id, input.attachments);
+      if ("error" in hit) return fail(`Could not update ${what}: ${hit.error}. Nothing was changed.`);
+      for (const from of hit.files) copies.push({ from, to: plannedTaskUpload(cur.id, from) });
+    }
+    const staged = copies.map((c) => ({ kind: attachmentKindOf(c.to), path: c.to }));
+    const seen = new Set<string>();
+    const kept = [...cut.attachments, ...given.attachments, ...staged].filter((a) => !seen.has(a.path) && seen.add(a.path));
+    const description = joinAttachmentText(given.text, kept);
+    if (description !== cur.description) {
+      patch.description = description;
+      if (given.text !== cut.text) changed.push("description rewritten");
+      if (staged.length) changed.push(`${staged.length} file${staged.length === 1 ? "" : "s"} attached`);
+      // Full text, not a preview: the diff panel is what truncates, not the store.
+      changes.push({ field: "description", before: cur.description, after: description, before_value: cur.description });
+    }
   }
   if (input.priority !== undefined) {
     if (!PRIORITIES.includes(input.priority))
@@ -948,6 +1057,9 @@ export function updateTaskForAgent(
       return fail(`Could not update ${what}: ${(e as Error).message}. Nothing was changed.`);
     }
   }
+  // The attachment copies, now that nothing below can refuse: the row patch
+  // names these paths, so they exist before it lands.
+  for (const c of copies) copyIntoTaskUploads(c.from, c.to);
   const updated = updateTask(cur.id, patch);
   if (!updated) return fail(`Could not update ${what}: its row no longer exists.`);
 

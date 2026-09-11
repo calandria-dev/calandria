@@ -92,6 +92,7 @@ import {
 import { claudeUsage, claudeSubagentTokens, claudeMessageModel } from "./usage";
 import { agentTurnEnv } from "../../agentEnv";
 import { gatewayMcpServersFor } from "../../gatewayMcp";
+import { ATTACHMENT_NUDGE, hasAttachmentMarkers } from "../../uploadTypes";
 
 const log = createLogger("claude");
 
@@ -347,8 +348,9 @@ function calandriaServer(
           tags: z.array(z.string()).optional().describe(SUGGEST_TASK.params.tags),
           provider: z.enum(["local", "cloud"]).optional().describe(SUGGEST_TASK.params.provider),
           model: z.string().optional().describe(SUGGEST_TASK.params.model),
+          attachments: z.array(z.string()).optional().describe(SUGGEST_TASK.params.attachments),
         },
-        async (args: { title: string; description: string; priority: "hi" | "med" | "lo"; project?: string; blocked_by?: string[]; tags?: string[]; provider?: "local" | "cloud"; model?: string }) => {
+        async (args: { title: string; description: string; priority: "hi" | "med" | "lo"; project?: string; blocked_by?: string[]; tags?: string[]; provider?: "local" | "cloud"; model?: string; attachments?: string[] }) => {
           // Resolve which project this lands in before anything else: the
           // task's agent, send_context and board position all come from it,
           // and a wrong answer is a misfiled task, not a visible
@@ -376,6 +378,8 @@ function calandriaServer(
             origin_task_id: originTaskId,
             provider: args.provider,
             model: args.model,
+            // Resolved against the caller's worktree inside createSuggestedTask.
+            attachments: args.attachments,
           });
           // A null task means the project was deleted mid-turn; `text` already says so.
           if (created) {
@@ -445,8 +449,9 @@ function calandriaServer(
           status: z.enum(["not_started", "in_progress", "on_hold", "done"]).optional().describe(UPDATE_TASK.params.status),
           blocked_by: z.array(z.string()).optional().describe(UPDATE_TASK.params.blocked_by),
           tags: z.array(z.string()).optional().describe(UPDATE_TASK.params.tags),
+          attachments: z.array(z.string()).optional().describe(UPDATE_TASK.params.attachments),
         },
-        async (args: { task?: string; title?: string; description?: string; priority?: Priority; status?: TaskStatus; blocked_by?: string[]; tags?: string[] }) => {
+        async (args: { task?: string; title?: string; description?: string; priority?: Priority; status?: TaskStatus; blocked_by?: string[]; tags?: string[]; attachments?: string[] }) => {
           // The closed-over `task` is the caller: the snapshot taken at turn
           // start, and the one identity the model can't influence. `args.task`
           // is the target it named; updateTaskForAgent decides whether that may
@@ -764,14 +769,12 @@ async function* runTurn(
 
   // Chat attachments travel as "[Attached image: /abs/path]" (images) or
   // "[Attached file: /abs/path]" (any other type) marker lines in the message
-  // text (composed in app/shell/format.ts; files live outside the worktree, see
+  // text (lib/uploadTypes.ts; files live outside the worktree, see
   // lib/uploads.ts). The bytes are not in the prompt: the nudge hands over a
   // staged path and leaves the how to Claude, since Read renders images and
   // text natively but a PDF, an archive or a spreadsheet needs a shell tool.
   // Prompt-only: the persisted transcript keeps the bare markers.
-  const prompt = /^\[Attached (image|file): .+\]$/m.test(userText)
-    ? `${userText}\n\nEach attachment above is a file staged on disk at that absolute path, outside the worktree. Inspect the ones you need before responding: the Read tool handles images and text, and any other format needs whatever shell tooling suits it. Don't assume the contents from the filename.`
-    : userText;
+  const prompt = hasAttachmentMarkers(userText) ? `${userText}\n\n${ATTACHMENT_NUDGE}` : userText;
 
   const permissionMode = permissionModeFor(permission);
 

@@ -260,6 +260,14 @@ Three processes and entrypoints, one origin:
   teardown's re-read and reported in the response's `skipped` field. A move off an accepted row is
   recorded like an `update_task` edit under a `project` field; Revert re-runs the move backward.
   It never writes `project_id` directly.
+- Both `suggest_task` and `update_task` take `attachments`: paths the calling session may hand
+  over, confined by `resolveAgentAttachments()` to its own worktree or its own staged uploads
+  (symlinks followed), copied into the target's `uploads/<id>/` and written into the description
+  as the same `[Attached ...]` marker lines a chat message carries (`lib/uploadTypes.ts` owns the
+  format; the task dialogs write the same lines, the New-task dialog through a draft dir that
+  `POST /api/tasks` adopts). `update_task`'s `description` replaces the prose and keeps the
+  markers, and `attachments` is additive. `buildProjectContext()` appends one nudge sentence when
+  the description carries any.
 - `withdraw_suggestion(task, reason)` is the retraction verb, on the same `isInertSuggestion()`
   screen `update_task` uses. `reason` is required and non-empty. Not a delete: the row goes
   `cancelled` with `suggested` left at 1, struck through with `tasks.withdrawn_reason` shown and

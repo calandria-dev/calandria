@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
+import { nanoid } from "nanoid";
 import { createTask, getProject, listAllTasksLite, listAllTagsLite, getTag } from "@/lib/store";
+import { adoptDraftUploads, removeTaskUploads } from "@/lib/uploads";
+import { attachmentKindOf, joinAttachmentText } from "@/lib/uploadTypes";
 
 export const dynamic = "force-dynamic";
 
@@ -30,10 +33,32 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "tag belongs to another project. A tag can't span projects" }, { status: 400 });
     }
   }
-  const task = createTask({
+  // Files the dialog staged through POST /api/uploads before the task had
+  // an id. They move into the new task's own dir and land in the description
+  // as marker lines after the brief (lib/uploadTypes.ts), the same lines a
+  // chat attachment uses, so the session's context and the task header both
+  // read them the way the transcript does. A path that isn't a staged draft
+  // file is a 400 and nothing is created.
+  if (body.attachments !== undefined && (!Array.isArray(body.attachments) || body.attachments.some((a: unknown) => typeof a !== "string")))
+    return NextResponse.json({ error: "attachments must be an array of staged paths" }, { status: 400 });
+  const id = nanoid();
+  let description: string = typeof body.description === "string" ? body.description : "";
+  if (Array.isArray(body.attachments) && body.attachments.length) {
+    let staged: string[];
+    try {
+      staged = adoptDraftUploads(id, body.attachments);
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 400 });
+    }
+    description = joinAttachmentText(description, staged.map((p) => ({ kind: attachmentKindOf(p), path: p })));
+  }
+  let task;
+  try {
+    task = createTask({
+    id,
     project_id: body.project_id,
     title: body.title.trim(),
-    description: body.description ?? "",
+    description,
     priority: body.priority ?? "med",
     suggested: !!body.suggested,
     // Agent is chosen at creation and fixed for the task's life (sessions can't
@@ -57,6 +82,12 @@ export async function POST(req: Request) {
       ? body.model.trim()
       : undefined,
     tag_ids: tagIds,
-  });
+    });
+  } catch (e) {
+    // The files moved under the id that now has no row: reclaim them, since
+    // nothing else will ever name that dir.
+    removeTaskUploads(id);
+    throw e;
+  }
   return NextResponse.json(task, { status: 201 });
 }
