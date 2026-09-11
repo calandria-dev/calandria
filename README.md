@@ -179,8 +179,10 @@ already queued. The transcript records that it was sent.
   release") and filter the list or board by tag, one or several at once
   (union by default, intersection behind an any/all toggle). Each task shows
   a tinted badge per tag, progress comes from the tasks, and finished tags
-  fold away. One lit chip expands into a strip with the tag's brief and its
-  steps in dependency order, plus **Refresh tag**: an agent reads the whole
+  fold away. Star one of a task's tags to put it first: its badge leads the
+  row, and its plan is the first one the task's session is told about. One
+  lit chip expands into a strip with the tag's brief and its steps in
+  dependency order, plus **Refresh tag**: an agent reads the whole
   plan against the code, rewords briefs that point at things that no longer
   exist, retires work the repo shows is already done, and rewrites the
   description. Every task change arrives as a revertable "Changed by agent"

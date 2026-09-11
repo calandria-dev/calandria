@@ -299,3 +299,35 @@ test.describe("mobile: the +N pill", () => {
     expect(box.y + box.height).toBeLessThanOrEqual(844);
   });
 });
+
+test("starring a tag in the Tags field makes it the one the row and the session lead with", async ({ page, request }) => {
+  const readTask = async (title: string) =>
+    (await request.get(`/api/projects/${projectId}`).then((r) => r.json())).tasks.find((t: { title: string }) => t.title === title);
+
+  await openProject(page);
+  await row(page, bothTitle).click();
+  // bothTitle was seeded with tagId first, so TAG leads SECOND.
+  await expect(badges(page, bothTitle)).toHaveText([TAG, SECOND]);
+
+  await page.getByTitle("Edit title & description before starting").click();
+  const dialog = page.locator(".modal");
+  const field = dialog.locator(".tag-field");
+  const starFor = (name: string) => field.locator(".tagf-row").filter({ hasText: name }).locator(".tagf-star");
+  await expect(starFor(TAG)).toHaveAttribute("aria-pressed", "true");
+  await expect(starFor(SECOND)).toHaveAttribute("aria-pressed", "false");
+
+  // Starring SECOND hoists it to the front of the field's own value, live,
+  // before Save is even clicked.
+  await starFor(SECOND).click();
+  await expect(starFor(SECOND)).toHaveAttribute("aria-pressed", "true");
+  await expect(starFor(TAG)).toHaveAttribute("aria-pressed", "false");
+  await dialog.getByRole("button", { name: "Save changes" }).click();
+
+  // The row's badges and the persisted tag_ids both reflect the new order.
+  await expect(badges(page, bothTitle)).toHaveText([SECOND, TAG]);
+  expect((await readTask(bothTitle)).tag_ids).toEqual([secondTagId, tagId]);
+
+  // The order survives a fresh render, not just the in-memory update.
+  await openProject(page);
+  await expect(badges(page, bothTitle)).toHaveText([SECOND, TAG]);
+});

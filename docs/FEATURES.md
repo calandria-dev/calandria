@@ -204,11 +204,11 @@ different tasks in the same project can build against different branches.
    The form shows how many members are already past their worktree cut (they keep their
    existing branch) and how many take their base from a different tag.
 
-If a task carries several tags and more than one sets a base branch, the first tag on the task
-(in the order its badges render) wins, and the tag strip names it. Resolution order is: the
-task's own base branch, then the first of its tags that sets one, then the project's default.
-Moving a task to another project clears both, since a branch name does not carry over to a
-different repository.
+If a task carries several tags and more than one sets a base branch, the first tag on the task,
+the one starred in the task's Edit form Tags field, wins, and the tag strip names it. Resolution
+order is: the task's own base branch, then the first of its tags that sets one, then the
+project's default. Moving a task to another project clears both, since a branch name does not
+carry over to a different repository.
 
 **Retargeting a task:**
 
@@ -418,7 +418,9 @@ computed from its tasks every time you view it.
 
 1. In **New task** or **Edit task**, pick tags from the **Tags** field, above **Blocked by**.
    Click **New tag…** to mint one inline by name; names are unique per project, and a collision
-   with an existing name is flagged.
+   with an existing name is flagged. Once two or more tags are ticked, a star sits beside each
+   one; click a tag's star to hoist it to first position, and the rest keep their insertion
+   order. Unticking the starred tag promotes whichever tag now comes first.
 2. To tag several tasks at once, tick their rows in the list and click **Tags…** in the
    selection bar. This adds or removes tags across the selection in one write; it does not
    replace each task's tags outright.
@@ -438,8 +440,9 @@ computed from its tasks every time you view it.
    their other tags untouched).
 
 A blue dot marks a tag with a task waiting on you, and finished tags fold behind the **Done**
-chip. Each task shows a tinted badge per tag, capped at three with a `+2` pill. Press the pill to
-open the rest, each one still a badge you can click. Clicking a badge lights that tag alone.
+chip. Each task shows a tinted badge per tag, capped at three with a `+2` pill, in the task's tag
+order with the starred tag first. Press the pill to open the rest, each one still a badge you can
+click. Clicking a badge lights that tag alone.
 
 **Refresh tag** checks the whole plan against the code: the utility agent explores the
 repository read-only, reads every member task's brief against what it finds, and reports what
@@ -468,8 +471,11 @@ tag's description, counts, and every member task's status.
 
 A tagged session's context includes one block per tag: the tag's name and description, which
 step of how many it is, the sibling tasks with their statuses, and a link back to the planning
-session. Sibling descriptions are left out of the block. A task with **Send saved project
-context to the agent** off gets none of this.
+session. Sibling descriptions are left out of the block. The blocks follow the task's tag order,
+the starred tag's block first. A task carrying more than one tag opens with one line naming the
+leading tag, for example "This task carries 2 tags, the one it is most about first: it is mainly
+the 'Auth migration' work. Each block below counts steps within its own tag." A task with **Send
+saved project context to the agent** off gets none of this.
 
 **What it does not do:**
 

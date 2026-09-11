@@ -2674,6 +2674,17 @@ button.gbadge.more:hover,button.gbadge.more[aria-expanded="true"]{color:var(--in
    "New tag…" text field. */
 .model-field select{width:100%;max-width:520px;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--raise);padding:11px 13px;font-family:var(--sans);font-size:14px;color:var(--ink);outline:none;transition:border-color .12s,box-shadow .12s;}
 .model-field select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+/* The picked list's rows carry a star, so the row is a div with the checkbox
+   half wrapped in its own label: a button inside a label would toggle the
+   checkbox on every press. The `tagf-` prefix keeps these off `.tag-row`, the
+   project landing page's tag card, which is a column-flexed bordered box. */
+.tag-field .tagf-row{cursor:default;gap:6px;}
+.tag-field .tagf-pick{display:flex;align-items:center;gap:9px;flex:1;min-width:0;cursor:pointer;}
+.tag-field .tagf-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;}
+.tag-field .tagf-star{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;flex:0 0 auto;
+  border:none;background:none;border-radius:6px;color:var(--ink-4);font-size:13px;cursor:pointer;}
+.tag-field .tagf-star:hover{background:var(--raise);color:var(--ink);}
+.tag-field .tagf-star.on{color:var(--amber);}
 .tag-field .tag-new{display:flex;align-items:center;gap:6px;margin-top:8px;}
 .tag-field .tag-new input[type=text]{flex:1;min-width:0;}
 

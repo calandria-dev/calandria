@@ -66,10 +66,19 @@ export function AgentPicker({ agents, value, onChange, onConnect, help, label = 
 // dialogs, since which feature(s) is decided before which step. Without
 // `onCreate` (no project to mint into, or the bulk modal's Remove mode) it only
 // offers the existing tags.
-export function TagsField({ tags, value, onChange, onCreate, label = "Tags", hint = "(which features this is a step of)" }: {
+//
+// `primary` adds the star: the order of `value` is `task_tags.position`, which
+// decides both the badge order and the order lib/tagContext.ts hands the tag
+// blocks to the session, so the first tag is what a member session reads first
+// about which plan it is part of. Starring a tag hoists it to index 0 and
+// leaves the rest in insertion order. There is no separate "primary" column;
+// primary IS first, so unticking the starred tag promotes the next one with no
+// second state to keep in step. Off for the bulk modal, whose `value` is a list
+// of tags to add or remove across a selection, with no one task's order to set.
+export function TagsField({ tags, value, onChange, onCreate, primary = false, label = "Tags", hint = "(which features this is a step of)" }: {
   tags: TagRow[]; value: string[]; onChange: (ids: string[]) => void;
   onCreate?: (name: string) => Promise<TagRow>;
-  label?: string; hint?: string;
+  primary?: boolean; label?: string; hint?: string;
 }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -78,6 +87,7 @@ export function TagsField({ tags, value, onChange, onCreate, label = "Tags", hin
   // Alphabetical, not the strip's manual order: the user is scanning for a tag
   // name they already have in mind.
   const rows = useMemo(() => [...tags].sort((a, b) => alphabetical(a.name, b.name)), [tags]);
+  const showStars = primary && value.length > 1;
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
   const cancel = () => { setCreating(false); setName(""); setErr(null); };
   const create = async () => {
@@ -103,14 +113,30 @@ export function TagsField({ tags, value, onChange, onCreate, label = "Tags", hin
       <div className="lab">{label} {hint && <span className="opt">{hint}</span>}</div>
       {tags.length > 0 ? (
         <div className="dep-list">
-          {rows.map((t) => (
-            <label key={t.id} className={`dep-row ${value.includes(t.id) ? "on" : ""}`}>
-              <input type="checkbox" checked={value.includes(t.id)} onChange={() => toggle(t.id)} />
-              <span aria-hidden style={{ width: 8, height: 8, borderRadius: "50%", background: t.color ?? "var(--ink-4)", flex: "0 0 auto" }} />
-              <span className="dep-title">{t.name}</span>
-              <span className="dep-status">{tagProgress(t).label}</span>
-            </label>
-          ))}
+          {rows.map((t) => {
+            const on = value.includes(t.id);
+            const isFirst = value[0] === t.id;
+            return (
+              <div key={t.id} className={`dep-row tagf-row ${on ? "on" : ""}`}>
+                <label className="tagf-pick">
+                  <input type="checkbox" checked={on} onChange={() => toggle(t.id)} />
+                  <span aria-hidden className="tagf-dot" style={{ background: t.color ?? "var(--ink-4)" }} />
+                  <span className="dep-title">{t.name}</span>
+                </label>
+                <span className="dep-status">{tagProgress(t).label}</span>
+                {/* Only with two or more picked: one tag is trivially first, and
+                    a star that can never be pressed is noise. */}
+                {showStars && on && (
+                  <button type="button" className={`tagf-star ${isFirst ? "on" : ""}`} aria-pressed={isFirst}
+                    aria-label={isFirst ? `${t.name} is read first` : `Read ${t.name} first`}
+                    title={isFirst ? "This task's sessions read about this tag first" : `Read about "${t.name}" first instead`}
+                    onClick={() => onChange([t.id, ...value.filter((x) => x !== t.id)])}>
+                    {Icon.star(isFirst ? { fill: "currentColor" } : undefined)}
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       ) : (
         <div className="hlp">No tags in this project yet.</div>
@@ -127,7 +153,10 @@ export function TagsField({ tags, value, onChange, onCreate, label = "Tags", hin
         <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => setCreating(true)}>{Icon.plus()} New tag…</button>
       )}
       {err && <ErrNote style={{ marginTop: 8 }}>{err}</ErrNote>}
-      <div className="hlp">A task can carry several tags. A tag never spans projects.</div>
+      <div className="hlp">
+        A task can carry several tags. A tag never spans projects.
+        {showStars && " The starred tag comes first: its badge leads the row, and its plan is the first one this task's sessions are told about."}
+      </div>
     </div>
   );
 }
@@ -318,7 +347,7 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
           </div>
         </div>
       )}
-      <TagsField tags={tags} value={tagIds} onChange={setTagIds} onCreate={onCreateTag} />
+      <TagsField tags={tags} value={tagIds} onChange={setTagIds} onCreate={onCreateTag} primary />
       <DepPicker candidates={tasks} value={deps} onChange={setDeps} autoStart={autoStart} onAutoStart={setAutoStart} />
       {unattendedRisk && (
         <div className="hlp" style={{ color: "var(--amber)" }}>
@@ -1060,7 +1089,7 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
         <div className="lab">Priority</div>
         <PrioritySeg value={priority} onChange={setPriority} />
       </div>
-      <TagsField tags={tags} value={tagIds} onChange={setTagIds} onCreate={onCreateTag} />
+      <TagsField tags={tags} value={tagIds} onChange={setTagIds} onCreate={onCreateTag} primary />
       <BaseBranchField task={task} project={taskProject} />
       <DepPicker candidates={candidates} value={deps} onChange={setDeps} autoStart={autoStart} onAutoStart={setAutoStart} />
       {/* Unlike the agent picker above, this is not gated on the task being

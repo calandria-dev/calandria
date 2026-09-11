@@ -124,6 +124,23 @@ describe("tags store", () => {
     expect(getTaskTagIds(t.id)).toEqual([g.id, h.id]);
   });
 
+  it("reordering the same tags is a real change, and the order reads back the way it went in", () => {
+    const g = createTag({ project_id: pid, name: "G" });
+    const h = createTag({ project_id: pid, name: "H" });
+    const t = createTask({ project_id: pid, title: "t", tag_ids: [g.id, h.id] });
+    // Same membership, new order. Rewritten and reported: position decides
+    // which badge leads the row and which tag block a session reads first
+    // (lib/tagContext.ts), so a reorder is not a no-op.
+    expect(setTaskTags([t.id], [h.id, g.id])).toEqual([t.id]);
+    expect(getTaskTagIds(t.id)).toEqual([h.id, g.id]);
+    // The same order again changes nothing.
+    expect(setTaskTags([t.id], [h.id, g.id])).toEqual([]);
+    // Untagging the leader promotes the next one. Primary is first, with no
+    // separate column that could fall out of step with the set.
+    expect(setTaskTags([t.id], [g.id])).toEqual([t.id]);
+    expect(getTaskTagIds(t.id)).toEqual([g.id]);
+  });
+
   it("addTaskTags/removeTaskTags leave a task's other tags alone; setTaskTags replaces", () => {
     const g = createTag({ project_id: pid, name: "G" });
     const h = createTag({ project_id: pid, name: "H" });
