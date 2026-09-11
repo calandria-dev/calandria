@@ -587,7 +587,7 @@ export interface PlanUsageWindow {
    * key's own budget (GET /key/info), synthesized by GET /api/plan-usage
    * under the `"gateway"` map key rather than reported by an agent driver. A
    * gateway task's turns don't draw on any agent's session/week window
-   * (lib/agentEnv.ts planWindowApplies), so the session header reads this one
+   * (lib/agentEnv.ts planResetKeyFor), so the session header reads this one
    * instead, where a vendor window would otherwise be shown but doesn't
    * apply.
    */

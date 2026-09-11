@@ -11,7 +11,7 @@ import {
   isLoopbackHost,
   providerPricing,
   parseAgentEnv,
-  planWindowApplies,
+  planResetKeyFor,
   providerEnvFor,
   providerPresetEnv,
   recordedCostUsd,
@@ -19,6 +19,7 @@ import {
   taskProvider,
 } from "@/lib/agentEnv";
 import type { ProviderKind } from "@/lib/agentEnv";
+import { GATEWAY_PLAN_ID } from "@/lib/types";
 import type { Project, Task } from "@/lib/types";
 
 // Pins that a main-turn agent process does not inherit the server's own
@@ -472,33 +473,70 @@ describe("the gateway header is not injectable", () => {
   });
 });
 
-// Which tasks the plan meter's reset time may be offered for (SessionView's
-// queue-at-reset). A window nobody is spending is not a window to wait on.
-describe("planWindowApplies", () => {
-  const gw = (billing: "key" | "subscription") =>
-    describeProvider(gatewayPresetEnv({ baseUrl: "http://gw.example:4000", billing }), "http://gw.example:4000");
+// Which snapshot the plan meter's reset time is read off for one task
+// (SessionView's queue-at-reset), and whether it is offered at all. A window
+// nobody is spending is not a window to wait on.
+describe("planResetKeyFor", () => {
+  const projEnv = (env: object) => ({ agent_env: serializeAgentEnv(env) }) as Pick<Project, "agent_env">;
+  const agentTask = (agent: string, env: object = {}) =>
+    ({ agent, agent_env: serializeAgentEnv(env) }) as Pick<Task, "agent_env" | "agent">;
+  const LOCAL = "http://localhost:11434/v1";
+  const CUSTOM = "https://openrouter.ai/api/v1";
+  const key = (project: Pick<Project, "agent_env"> | null, task: Pick<Task, "agent_env" | "agent">) =>
+    planResetKeyFor(project, task, GW);
 
-  it("holds for every non-gateway task", () => {
+  it("names the task's own agent when nothing is overridden", () => {
     for (const agent of ["claude", "codex", "gemini"]) {
-      expect(planWindowApplies(describeProvider({}), agent)).toBe(true);
-      expect(planWindowApplies(describeProvider({ ANTHROPIC_BASE_URL: "http://localhost:11434" }), agent)).toBe(true);
+      expect(key(null, agentTask(agent))).toBe(agent);
+      expect(key(projEnv({}), agentTask(agent))).toBe(agent);
     }
   });
 
-  it("drops for a key-billed gateway task on any routed agent", () => {
-    expect(planWindowApplies(gw("key"), "claude")).toBe(false);
-    expect(planWindowApplies(gw("key"), "codex")).toBe(false);
-    expect(planWindowApplies(gw("key"), "gemini")).toBe(false);
+  // The gap this function closes: a redirected turn can never die on the
+  // vendor's usage limit, so its reset is a dead affordance.
+  it("offers nothing for an agent the project points at a local endpoint", () => {
+    expect(key(projEnv({ OPENAI_BASE_URL: LOCAL }), agentTask("codex"))).toBe(null);
+    expect(key(projEnv({ CODEX_OSS_BASE_URL: LOCAL }), agentTask("codex"))).toBe(null);
+    expect(key(projEnv({ ANTHROPIC_BASE_URL: LOCAL }), agentTask("claude"))).toBe(null);
+    expect(key(projEnv({ GOOGLE_GEMINI_BASE_URL: LOCAL }), agentTask("gemini"))).toBe(null);
   });
 
-  it("holds for Claude on a subscription-billed gateway, and never for Codex or Antigravity", () => {
-    expect(planWindowApplies(gw("subscription"), "claude")).toBe(true);
-    // `requires_openai_auth` is unimplemented, so Codex bills the key here
-    // too and its ChatGPT window is untouched.
-    expect(planWindowApplies(gw("subscription"), "codex")).toBe(false);
-    // `agy` has no equivalent of Claude Code's own-plan forwarding, so it
-    // always bills the gateway's key regardless of the billing marker.
-    expect(planWindowApplies(gw("subscription"), "gemini")).toBe(false);
+  it("offers nothing for a custom endpoint that is neither local nor the gateway", () => {
+    expect(key(projEnv({ ANTHROPIC_BASE_URL: CUSTOM }), agentTask("claude"))).toBe(null);
+  });
+
+  // Per agent, not per override: one project can redirect one vendor and
+  // leave the others on their own logins.
+  it("keeps the offer for an agent the same project leaves alone", () => {
+    const redirectsCodex = projEnv({ OPENAI_BASE_URL: LOCAL });
+    expect(key(redirectsCodex, agentTask("claude"))).toBe("claude");
+    expect(key(redirectsCodex, agentTask("codex"))).toBe(null);
+  });
+
+  it("lays the task's own override over the project's", () => {
+    const onPlan = projEnv({});
+    expect(key(onPlan, agentTask("codex", { OPENAI_BASE_URL: LOCAL }))).toBe(null);
+    // A task can also opt back out of its project's redirect. An empty value
+    // is the "unset this" spelling applyProviderEnv gives the turn's real
+    // environment, and it reads the same way here: no base URL is named, so
+    // the agent is back on its own login.
+    const redirected = projEnv({ OPENAI_BASE_URL: LOCAL });
+    expect(key(redirected, agentTask("codex", { OPENAI_BASE_URL: "" }))).toBe("codex");
+  });
+
+  it("reads the gateway's own key budget for every agent on a gateway project", () => {
+    for (const billing of ["key", "subscription"] as const) {
+      const gw = projEnv(gatewayPresetEnv({ baseUrl: GW, billing }));
+      for (const agent of ["claude", "codex", "gemini"]) {
+        expect(key(gw, agentTask(agent))).toBe(GATEWAY_PLAN_ID);
+      }
+    }
+  });
+
+  it("names an unknown agent id, which has no known redirect key to read", () => {
+    expect(key(projEnv({ ANTHROPIC_BASE_URL: LOCAL, OPENAI_BASE_URL: LOCAL }), agentTask("some-future-agent"))).toBe(
+      "some-future-agent",
+    );
   });
 });
 
