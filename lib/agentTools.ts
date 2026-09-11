@@ -40,6 +40,7 @@ import {
   updateTag,
 } from "./store";
 import { topoMembers } from "./tagContext";
+import { inTags, type TagFilter } from "./tagFilter";
 // SDK-free, and already pinned that way. `resolveBaseBranch` is what puts the
 // EFFECTIVE base on every task row an agent reads (never the raw column, so it
 // never reimplements the fallback chain); `setTaskBaseBranch` is the whole
@@ -628,17 +629,23 @@ function tagNames(projectId: string): Map<string, string> {
  * The caller's own row is exempt from the terminal-status filter: a session that
  * has just marked itself done should still see itself in the list it gets back.
  *
- * `tagId` is an already-resolved filter (resolveTagRefs, so an unknown ref is
- * the caller's own refusal, not an unfiltered board). null lists everything;
- * every row carries its own tags either way, filtered or not. The caller's own
- * row is NOT exempt from this one: a filter that always included a task from
- * another feature would misreport the tag.
+ * `tagFilter.ids` are already resolved (resolveTagRefs, so an unknown ref is the
+ * caller's own refusal, not an unfiltered board). Empty ids list everything;
+ * every row carries its own tags either way. The caller's own row is NOT exempt
+ * from this filter: including a task from another feature would misreport the
+ * selected tags.
  */
-export function listTasksForAgent(project: Project, currentTaskId: string, includeDone = false, tagId: string | null = null): AgentTaskInfo[] {
+export function listTasksForAgent(
+  project: Project,
+  currentTaskId: string,
+  includeDone = false,
+  tagFilter: TagFilter = { ids: [], match: "any" }
+): AgentTaskInfo[] {
   const names = tagNames(project.id);
-  return listTasks(project.id)
-    .filter((t) => includeDone || !TERMINAL.includes(t.status) || t.id === currentTaskId)
-    .filter((t) => !tagId || t.tag_ids.includes(tagId))
+  return inTags(
+    listTasks(project.id).filter((t) => includeDone || !TERMINAL.includes(t.status) || t.id === currentTaskId),
+    tagFilter
+  )
     .map((t) => taskInfo(t, t.depends_on, currentTaskId, names, project.branch));
 }
 

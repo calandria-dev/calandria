@@ -41,6 +41,7 @@ const PINNED = [
   "lib/agentTools.ts", //        behind the internal agent-tools routes (stdio bridge)
   "lib/agentToolLog.ts", //      the arrival/settle log line every agent-tool call gets; log.mjs only, no driving
   "lib/suggestionCard.ts", //    which transcript row a filed suggestion settles onto; store + types only, and the bridge's suggest-task route sits on it
+  "lib/tagFilter.ts", //         pure any/all tag predicate shared by agent routes and the client
   "lib/tagContext.ts", //        the tag blocks buildProjectContext appends; store + types only
   "lib/taskMove.ts", //          behind both move routes; store + locks + bus, no driving
   "lib/baseBranch.ts", //        which branch a task is based on + the retarget policy; store + git + bus, no driving

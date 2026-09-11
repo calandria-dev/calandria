@@ -304,6 +304,10 @@ describe("calandria-mcp stdio bridge", () => {
     calls.length = 0;
     const { client, close } = await connectBridge();
     try {
+      const listTasksTool = (await client.listTools()).tools.find((t) => t.name === "list_tasks")!;
+      const schema = listTasksTool.inputSchema as { properties?: Record<string, unknown> };
+      expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["include_done", "match", "project", "tags"]);
+
       const res = (await client.callTool({ name: "list_tasks", arguments: {} })) as { content: { text: string }[] };
       const call = calls.find((c) => c.path.endsWith("/list-tasks"))!;
       expect(call.body).toMatchObject({ projectId: "proj-abc", taskId: "task-xyz" });
@@ -313,10 +317,17 @@ describe("calandria-mcp stdio bridge", () => {
       expect(parsed.tasks[0].current).toBe(true);
 
       // A `project` ref travels through for the server to resolve strictly.
-      await client.callTool({ name: "list_tasks", arguments: { project: "Other Project", include_done: true } });
+      await client.callTool({ name: "list_tasks", arguments: {
+        project: "Other Project",
+        include_done: true,
+        tags: ["Auth migration", "Mobile PWA"],
+        match: "all",
+      } });
       expect(calls.filter((c) => c.path.endsWith("/list-tasks"))[1].body).toMatchObject({
         project: "Other Project",
         include_done: true,
+        tags: ["Auth migration", "Mobile PWA"],
+        match: "all",
       });
     } finally {
       await close();

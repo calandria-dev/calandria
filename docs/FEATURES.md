@@ -462,8 +462,9 @@ counts toward all three, so the column does not sum to the project total).
 Agents can plan directly into tags: `suggest_task` takes a `tags` parameter (ids or names,
 creating a new name if it does not exist yet); `update_task`'s `tags` field only accepts
 existing ids or exact names and replaces the whole set (`[]` clears it), refusing the whole call
-on an unknown tag. `list_tasks` takes a `tag` filter, and `list_tags` reports each tag's
-description, counts, and every member task's status.
+on an unknown tag. `list_tasks` takes a `tags` filter and combines it with `match: "any" |
+"all"`, defaulting to `any`. One unknown tag refuses the whole filter. `list_tags` reports each
+tag's description, counts, and every member task's status.
 
 A tagged session's context includes one block per tag: the tag's name and description, which
 step of how many it is, the sibling tasks with their statuses, and a link back to the planning

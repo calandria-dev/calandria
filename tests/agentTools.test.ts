@@ -776,25 +776,32 @@ describe("tags on the agent tools", () => {
     expect(getTaskTagIds(target.id)).toEqual([tag.id]);
   });
 
-  it("list_tasks carries every row's tags and filters by one", () => {
+  it("list_tasks carries every row's tags and filters by any or all tags", () => {
     const project = createProject({ name: "T-List" });
-    const tag = createTag({ project_id: project.id, name: "Auth migration" });
-    const mine = createTask({ project_id: project.id, title: "Mine", description: "", tag_ids: [tag.id] });
-    createTask({ project_id: project.id, title: "Sibling", description: "", tag_ids: [tag.id] });
+    const auth = createTag({ project_id: project.id, name: "Auth migration" });
+    const mobile = createTag({ project_id: project.id, name: "Mobile PWA" });
+    const mine = createTask({ project_id: project.id, title: "Mine", description: "", tag_ids: [auth.id, mobile.id] });
+    createTask({ project_id: project.id, title: "Auth only", description: "", tag_ids: [auth.id] });
+    createTask({ project_id: project.id, title: "Mobile only", description: "", tag_ids: [mobile.id] });
     createTask({ project_id: project.id, title: "Unrelated", description: "" });
 
     const all = listTasksForAgent(project, mine.id);
-    expect(all.map((t) => t.title).sort()).toEqual(["Mine", "Sibling", "Unrelated"]);
+    expect(all.map((t) => t.title).sort()).toEqual(["Auth only", "Mine", "Mobile only", "Unrelated"]);
     // Name as well as id, on every row: an id alone would need a list_tags
     // call to mean anything.
-    expect(all.find((t) => t.id === mine.id)!.tags).toEqual([{ id: tag.id, name: "Auth migration" }]);
+    expect(all.find((t) => t.id === mine.id)!.tags).toEqual([
+      { id: auth.id, name: "Auth migration" },
+      { id: mobile.id, name: "Mobile PWA" },
+    ]);
     expect(all.find((t) => t.title === "Unrelated")!.tags).toEqual([]);
 
-    const filtered = listTasksForAgent(project, mine.id, false, tag.id);
-    expect(filtered.map((t) => t.title).sort()).toEqual(["Mine", "Sibling"]);
+    const any = listTasksForAgent(project, mine.id, false, { ids: [auth.id, mobile.id], match: "any" });
+    expect(any.map((t) => t.title).sort()).toEqual(["Auth only", "Mine", "Mobile only"]);
+    const allFiltered = listTasksForAgent(project, mine.id, false, { ids: [auth.id, mobile.id], match: "all" });
+    expect(allFiltered.map((t) => t.title)).toEqual(["Mine"]);
     // The caller's own row is exempt from the STATUS filter but not this one: a
     // filtered list that always contained the caller would misreport membership.
-    const other = listTasksForAgent(project, mine.id, false, tag.id).filter((t) => t.title === "Unrelated");
+    const other = listTasksForAgent(project, mine.id, false, { ids: [auth.id], match: "any" }).filter((t) => t.title === "Unrelated");
     expect(other).toEqual([]);
   });
 
@@ -848,12 +855,13 @@ describe("tags on the agent tools", () => {
     const filtered = await post(listTasksEp, "/api/internal/agent-tools/list-tasks", {
       projectId: project.id,
       taskId: caller.id,
-      tag: "Auth migration",
+      tags: ["Auth migration"],
+      match: "any",
     });
     const filteredJson = (await filtered.json()) as { tasks: { title: string; tags: { name: string }[] }[] };
     expect(filteredJson.tasks.map((t) => t.title)).toEqual(["Tagged"]);
     expect(filteredJson.tasks[0].tags[0]!.name).toBe("Auth migration");
-    const badFilter = await post(listTasksEp, "/api/internal/agent-tools/list-tasks", { projectId: project.id, tag: "ghost" });
+    const badFilter = await post(listTasksEp, "/api/internal/agent-tools/list-tasks", { projectId: project.id, tags: ["Auth migration", "ghost"], match: "all" });
     expect(badFilter.status).toBe(400);
 
     // update-task: strict, and a refusal writes nothing.
