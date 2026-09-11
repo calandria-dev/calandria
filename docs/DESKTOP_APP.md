@@ -147,7 +147,9 @@ Switching instances uses an **Instance** submenu in both the tray menu and the a
 menu: a list of your saved instances, plus **Add instance…** and **Manage instances…**.
 Switching away from an instance doesn't stop anything running on it: the `local` server keeps
 running in the background, and an SSH tunnel you're not currently viewing stays open. The
-window title always shows which instance you're on, as "*&lt;instance name&gt;* · Calandria".
+window keeps the size and position it had, even where switching rebuilds it (see "Window size
+and position" below). The window title always shows which instance you're on, as
+"*&lt;instance name&gt;* · Calandria".
 
 The notification badge, dock or taskbar, is a sum across every reachable instance, not just
 the one on screen. A `url` instance counts toward it whether or not it's active, and so does
@@ -199,6 +201,24 @@ A credential nearing expiry renews itself in the background. Saved credentials l
 `instances.json` itself, since that file is meant to be hand-edited. They're encrypted where
 your operating system provides a keyring, and written with restricted file permissions and a
 visible warning where it doesn't.
+
+## Window size and position
+
+The window opens at the size and position you last left it, whether it was maximized, and
+whether it was full-screen. Resize or move it and the new geometry is written to
+`~/.config/calandria/window-state.json` a moment after the window settles;
+`CALANDRIA_WINDOW_STATE_FILE` overrides the path. Every path that builds a window reads it
+back: launching the app, relaunching after an update installs, switching to an instance that
+has its own cookie storage (which rebuilds the window, since Electron fixes a window's
+session when it is created), and the macOS case where the window is gone and a dock click
+brings it back.
+
+Geometry saved on a display you no longer have is checked before it is used. If no part of
+the saved rectangle lands on a screen that is attached now, the size is kept and the position
+is dropped, so the window opens where your desktop puts it instead of off-screen on an
+unplugged monitor. A window that hangs over the edge of a display it still touches is pulled
+back inside, and a window saved on a large screen is never restored larger than the screen it
+reopens on. Delete the file to start over at the default 1440x900.
 
 ## Notifications, tray, and close vs quit
 

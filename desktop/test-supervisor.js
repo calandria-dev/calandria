@@ -19,6 +19,15 @@ const { spawn } = require("node:child_process");
 const { Supervisor, pickPorts, preferredPorts, resolveNode, sidecarEnv, waitForReady, needsPathRepair, loginShellPath } = require("./supervisor");
 const { envFilePath, parseEnvFile, loadEnvFile } = require("./env-file");
 const {
+  MIN_SIZE,
+  fitToWorkAreas,
+  loadWindowState,
+  normalizeWindowState,
+  sameWindowState,
+  saveWindowState,
+  windowStateFilePath,
+} = require("./window-state");
+const {
   DEFAULT_REMOTE_PORT,
   LOCAL_ID,
   MIN_SERVER_VERSION,
@@ -1796,7 +1805,12 @@ function hold(port) {
     // Quit reaps the child. An `ssh -N` that outlives the app holds the local
     // port until the user finds it with lsof.
     const quit = src.indexOf('app.on("before-quit"');
-    assert.ok(/await stopTunnel\(\)/.test(src.slice(quit, quit + 1800)), "quitting must kill the ssh child");
+    // Bounded by the next top-level registration, not by a character count: a
+    // line added to the drain must not decide whether this assertion looks.
+    assert.ok(
+      /await stopTunnel\(\)/.test(src.slice(quit, src.indexOf("app.whenReady()"))),
+      "quitting must kill the ssh child",
+    );
   });
 
   // ---- updater.js ---------------------------------------------------------
@@ -2382,6 +2396,142 @@ function hold(port) {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  /* ----------------------------------------------------------------------- *
+   * window-state.js: the geometry that survives a rebuild or a restart.
+   * ----------------------------------------------------------------------- */
+
+  await test("windowStateFilePath sits beside the instance list and honours its own override", async () => {
+    const env = { XDG_CONFIG_HOME: "/x/cfg" };
+    assert.equal(windowStateFilePath(env), path.join("/x/cfg", "calandria", "window-state.json"));
+    assert.equal(path.dirname(windowStateFilePath(env)), path.dirname(instancesFilePath(env)));
+    assert.equal(windowStateFilePath({ CALANDRIA_WINDOW_STATE_FILE: "/tmp/geom.json" }), "/tmp/geom.json");
+  });
+
+  await test("normalizeWindowState repairs a hand-edited file into something a window can be built from", async () => {
+    const d = normalizeWindowState({});
+    assert.equal(d.width, 1440);
+    assert.equal(d.height, 900);
+    assert.equal(d.maximized, false);
+    assert.equal(d.fullScreen, false);
+    assert.ok(!("x" in d), "no saved position means the platform places the window");
+
+    // Junk sizes fall back to the default; a size under the floor is raised to
+    // it, since that is what Electron's minWidth/minHeight would do anyway.
+    assert.equal(normalizeWindowState({ width: "wide", height: null }).width, 1440);
+    assert.equal(normalizeWindowState({ width: -5, height: 0 }).height, 900);
+    assert.equal(normalizeWindowState({ width: 100, height: 100 }).width, MIN_SIZE.width);
+    assert.equal(normalizeWindowState({ width: 100, height: 100 }).height, MIN_SIZE.height);
+    // Fractional device pixels round, since BrowserWindow takes integers.
+    assert.equal(normalizeWindowState({ width: 1200.6, height: 800.4, x: 10.5, y: -0.4 }).width, 1201);
+    assert.deepEqual(
+      [normalizeWindowState({ x: 10.5, y: -0.4 }).x, normalizeWindowState({ x: 10.5, y: -0.4 }).y],
+      [11, 0],
+    );
+    // Half a position places a window nowhere useful, so it is dropped whole.
+    assert.ok(!("x" in normalizeWindowState({ x: 40 })), "x with no y is not a position");
+    // Only a real `true` sets a flag; a stringly-typed one does not.
+    assert.equal(normalizeWindowState({ maximized: "true", fullScreen: 1 }).maximized, false);
+    assert.equal(normalizeWindowState({ maximized: true, fullScreen: true }).fullScreen, true);
+  });
+
+  await test("fitToWorkAreas keeps a window that still fits where it was left", async () => {
+    const laptop = { x: 0, y: 25, width: 1512, height: 945 };
+    const state = { width: 1200, height: 800, x: 100, y: 60, maximized: false, fullScreen: false };
+    assert.deepEqual(fitToWorkAreas(state, [laptop]), state);
+    // Maximized and full-screen are carried through untouched: they are how
+    // the window opens, not where it sits.
+    assert.equal(fitToWorkAreas({ ...state, maximized: true }, [laptop]).maximized, true);
+    // No display list at all (asked before app.whenReady, or a headless box)
+    // means the saved state is used unchecked.
+    assert.deepEqual(fitToWorkAreas(state, []), state);
+  });
+
+  await test("fitToWorkAreas drops a position whose display is gone and clamps one that overhangs", async () => {
+    const laptop = { x: 0, y: 25, width: 1512, height: 945 };
+    // Saved on an external monitor to the right that has since been unplugged.
+    const external = fitToWorkAreas({ width: 1200, height: 800, x: 2400, y: 200 }, [laptop]);
+    assert.ok(!("x" in external), "an off-screen position must not be restored");
+    assert.equal(external.width, 1200, "the size the user chose is still theirs");
+
+    // Still mostly on screen, hanging off the bottom right: pushed back in, so
+    // the window lands close to where it was.
+    const nudged = fitToWorkAreas({ width: 1200, height: 800, x: 1400, y: 900 }, [laptop]);
+    assert.equal(nudged.x, 1512 - 1200);
+    assert.equal(nudged.y, 25 + 945 - 800);
+
+    // A window saved on a big screen and reopened on a small one is never
+    // larger than the display it lands on.
+    const small = fitToWorkAreas({ width: 2400, height: 1300, x: 0, y: 0 }, [{ x: 0, y: 0, width: 1280, height: 720 }]);
+    assert.deepEqual([small.width, small.height], [1280, 720]);
+
+    // The chosen display is the one the window mostly sat on, not the first.
+    const right = { x: 1512, y: 0, width: 2560, height: 1440 };
+    const onRight = fitToWorkAreas({ width: 1000, height: 800, x: 3000, y: 100 }, [laptop, right]);
+    assert.deepEqual([onRight.x, onRight.y], [3000, 100]);
+  });
+
+  await test("a save/load round trip through a temp window-state file preserves the geometry", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "calandria-window-"));
+    const file = path.join(dir, "window-state.json");
+    try {
+      // Nothing written yet: the default window, and no error to report.
+      const first = loadWindowState({ file });
+      assert.equal(first.found, false);
+      assert.equal(first.error, null);
+      assert.equal(first.state.width, 1440);
+
+      const state = { width: 1200, height: 820, x: 40, y: 60, maximized: true, fullScreen: false };
+      saveWindowState(state, { file });
+      assert.deepEqual(loadWindowState({ file }).state, state);
+
+      // A truncated or hand-mangled file is a default window, never a refusal
+      // to open one.
+      fs.writeFileSync(file, '{"width": 1200,', "utf8");
+      const broken = loadWindowState({ file });
+      assert.equal(broken.state.width, 1440);
+      assert.ok(broken.error, "an unparseable file is worth a log line");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await test("sameWindowState is what keeps an idle app from rewriting the file", async () => {
+    const a = normalizeWindowState({ width: 1200, height: 800, x: 10, y: 20 });
+    assert.ok(sameWindowState(a, normalizeWindowState({ width: 1200, height: 800, x: 10, y: 20 })));
+    assert.ok(!sameWindowState(a, normalizeWindowState({ width: 1201, height: 800, x: 10, y: 20 })));
+    assert.ok(!sameWindowState(a, normalizeWindowState({ width: 1200, height: 800 })), "position counts");
+    assert.ok(!sameWindowState(a, null), "nothing saved yet is never a match");
+  });
+
+  await test("main.js builds every window from the saved geometry and reads it off the one it replaces", async () => {
+    const src = fs
+      .readFileSync(path.join(__dirname, "main.js"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^[ \t]*\/\/.*$/gm, "");
+    const createWindow = src.slice(src.indexOf("function createWindow()"), src.indexOf("function isAppUrl("));
+    assert.ok(/width:\s*geometry\.width/.test(createWindow), "the window's size comes from the saved state");
+    assert.ok(/minWidth:\s*MIN_SIZE\.width/.test(createWindow), "the floor is the one window-state.js clamps to");
+    assert.ok(/trackWindowGeometry\(win\)/.test(createWindow), "and every window is followed from then on");
+
+    // The instance switch reads the outgoing window BEFORE it builds the
+    // replacement, which is also before `old.destroy()` takes it away. Wrong
+    // order and switching servers silently resizes the window, which is the
+    // bug this whole module exists for.
+    const apply = src.slice(src.indexOf("async function applyActiveInstance()"), src.indexOf("async function showBootScreen("));
+    assert.ok(apply.includes("captureWindowGeometry(old)"), "the outgoing window's geometry must be read");
+    assert.ok(
+      apply.indexOf("captureWindowGeometry(old)") < apply.indexOf("createWindow()"),
+      "capture must precede the rebuild",
+    );
+    assert.ok(apply.indexOf("createWindow()") < apply.indexOf("old?.destroy()"), "and the rebuild the destroy");
+
+    // The debounced flush is unref'd, so the only guaranteed write is the one
+    // the quit makes on its way out.
+    assert.ok(/geometryFlushTimer\.unref\?\.\(\)/.test(src), "a pending flush must not hold the process open");
+    const beforeQuit = src.slice(src.indexOf('app.on("before-quit"'), src.indexOf("app.whenReady()"));
+    assert.ok(beforeQuit.includes("flushWindowGeometry()"), "the quit writes the geometry synchronously");
   });
 
   console.log(failures ? `\n${failures} FAILED` : "\nall passed");

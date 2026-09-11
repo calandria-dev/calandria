@@ -66,6 +66,7 @@ module.exports = {
     "ssh-tunnel.js",
     "tray-residency.js",
     "updater.js",
+    "window-state.js",
     "loading.html",
     "assets/**",
     "package.json",
