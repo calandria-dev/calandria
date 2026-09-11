@@ -1,8 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { tagIsDone, type TagRow, type TaskRow } from "./types";
+import { inTags, type TagFilter } from "@/lib/tagFilter";
+import { tagIsDone, type TagRow } from "./types";
 import { Popover } from "./shared";
+
+export { inTags } from "@/lib/tagFilter";
+export type { TagFilter, TagMatch } from "@/lib/tagFilter";
 
 // Tags on the list and the board. A tag is a FILTER over the status buckets
 // both views are built on, plus a badge on every row and card; it never
@@ -34,15 +38,6 @@ export function tagProgress(t: Pick<TagRow, "counts">): { done: number; of: numb
   if (running) parts.push(`${running} running`);
   if (awaiting) parts.push(`${awaiting} need${awaiting === 1 ? "s" : ""} you`);
   return { done, of, label: total === 0 ? "no tasks yet" : `${done}/${of}`, detail: total === 0 ? "No tasks yet" : parts.join(" · ") };
-}
-
-/** How several lit chips combine. "any" = union (the default), "all" = intersection. */
-export type TagMatch = "any" | "all";
-
-/** What the bar and the views share: which tags are lit, and how they combine. */
-export interface TagFilter {
-  ids: string[];
-  match: TagMatch;
 }
 
 const EMPTY: TagFilter = { ids: [], match: "any" };
@@ -115,17 +110,6 @@ export function useTagFilter(projectId: string, tags: TagRow[]) {
   const toggle = (id: string) =>
     set({ ids: filter.ids.includes(id) ? filter.ids.filter((x) => x !== id) : [...filter.ids, id], match: filter.match });
   return { filter, set, toggle };
-}
-
-/**
- * The filter itself: no lit chips keeps everything; `any` keeps a task carrying
- * at least one of them, `all` only a task carrying every one.
- */
-export function inTags<T extends Pick<TaskRow, "tag_ids">>(tasks: T[], filter: TagFilter): T[] {
-  if (!filter.ids.length) return tasks;
-  return tasks.filter((t) =>
-    filter.match === "all" ? filter.ids.every((id) => t.tag_ids.includes(id)) : filter.ids.some((id) => t.tag_ids.includes(id))
-  );
 }
 
 /**

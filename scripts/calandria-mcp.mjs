@@ -198,11 +198,12 @@ server.registerTool(
     inputSchema: {
       project: z.string().optional().describe(LIST_TASKS.params.project),
       include_done: z.boolean().optional().describe(LIST_TASKS.params.include_done),
-      tag: z.string().optional().describe(LIST_TASKS.params.tag),
+      tags: z.array(z.string()).optional().describe(LIST_TASKS.params.tags),
+      match: z.enum(["any", "all"]).optional().describe(LIST_TASKS.params.match),
     },
   },
-  async ({ project, include_done, tag }) => {
-    const data = await callInternal("list-tasks", { project, include_done, tag });
+  async ({ project, include_done, tags, match }) => {
+    const data = await callInternal("list-tasks", { project, include_done, tags, match });
     return { content: [{ type: "text", text: JSON.stringify({ project: data.project, tasks: data.tasks ?? [] }, null, 2) }] };
   }
 );

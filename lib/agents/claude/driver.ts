@@ -395,9 +395,10 @@ function calandriaServer(
         {
           project: z.string().optional().describe(LIST_TASKS.params.project),
           include_done: z.boolean().optional().describe(LIST_TASKS.params.include_done),
-          tag: z.string().optional().describe(LIST_TASKS.params.tag),
+          tags: z.array(z.string()).optional().describe(LIST_TASKS.params.tags),
+          match: z.enum(["any", "all"]).optional().describe(LIST_TASKS.params.match),
         },
-        async (args: { project?: string; include_done?: boolean; tag?: string }) => {
+        async (args: { project?: string; include_done?: boolean; tags?: string[]; match?: "any" | "all" }) => {
           // Same strict resolution suggest_task uses. Reads are inert, but a
           // board listed from the wrong project is still a lie.
           const target = resolveTargetProject(project, args.project);
@@ -405,10 +406,15 @@ function calandriaServer(
           // Same for the tag filter: an unrecognized one must not hand back
           // the whole board as if the feature had that many members. Never
           // creates: this is a read.
-          const tag = resolveTagRefs(target.project, args.tag ? [args.tag] : []);
-          if ("error" in tag)
-            return { content: [{ type: "text", text: `Could not list tasks: ${tag.error}.` }], isError: true };
-          const tasks = listTasksForAgent(target.project, task.id, args.include_done ?? false, tag.tags[0]?.id ?? null);
+          const tagRefs = resolveTagRefs(target.project, args.tags ?? []);
+          if ("error" in tagRefs)
+            return { content: [{ type: "text", text: `Could not list tasks: ${tagRefs.error}.` }], isError: true };
+          const tasks = listTasksForAgent(
+            target.project,
+            task.id,
+            args.include_done ?? false,
+            { ids: tagRefs.tags.map((tag) => tag.id), match: args.match ?? "any" },
+          );
           return { content: [{ type: "text", text: JSON.stringify({ project: target.project.name, tasks }, null, 2) }] };
         }
       ),
