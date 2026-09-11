@@ -30,6 +30,7 @@ import { getSetting, setSetting, getThreadUsageCum, setThreadUsageCum } from "..
 import { AGENT_TOOL_TIMEOUT_MS, CODEX_CLI_PATH, CODEX_TRANSPORT, INTERNAL_BASE_URL, CALANDRIA_MCP_SCRIPT } from "../../config";
 import { isApprovalDowngrade } from "../../approvalFailure";
 import { buildProjectContext, buildTagRefreshPrompt } from "../shared";
+import { ATTACHMENT_NUDGE, hasAttachmentMarkers } from "../../uploadTypes";
 import { mapThreadEvent, newState, ZERO_CUM, type CodexCum } from "./events";
 import { inheritedServerOverrides, type DisabledMcpServer } from "./mcp";
 import { gatewayMcpServersForCodex, type GatewayMcpCodexServer } from "../../gatewayMcp";
@@ -279,9 +280,18 @@ async function* runTurn(
   // a ChatGPT login ignores OPENAI_BASE_URL outright (lib/agents/codex/provider.ts).
   const config = { ...calandriaMcpConfig(project, task, await inheritedServerOverrides(), gatewayServers), ...local.config };
 
+  // Chat attachments travel as "[Attached image: /abs/path]" (images) or
+  // "[Attached file: /abs/path]" (any other type) marker lines in the message
+  // text (lib/uploadTypes.ts; the files live outside the worktree, see
+  // lib/uploads.ts). The bytes are not in the prompt: the nudge hands over a
+  // staged path and leaves the how to the agent. Prompt-only, on both the
+  // fresh and the resumed path: the persisted transcript keeps the bare
+  // markers. Task-description attachments are covered by buildProjectContext().
+  const message = hasAttachmentMarkers(userText) ? `${userText}\n\n${ATTACHMENT_NUDGE}` : userText;
+
   // Fresh session: seed the opening prompt with the project context (project
   // description, task framing, and carried summaries from prior generations).
-  const prompt = (fresh: boolean) => (fresh ? `${buildProjectContext(project, task)}\n\n---\n\n${userText}` : userText);
+  const prompt = (fresh: boolean) => (fresh ? `${buildProjectContext(project, task)}\n\n---\n\n${message}` : message);
 
   yield { type: "model", model };
 

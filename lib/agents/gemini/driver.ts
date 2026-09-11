@@ -24,6 +24,7 @@ import { GEMINI_CAPABILITIES } from "./capabilities";
 import { getSetting, getThreadUsageCum, setThreadUsageCum } from "../../store";
 import { AGY_CLI_PATH } from "../../config";
 import { buildProjectContext } from "../shared";
+import { ATTACHMENT_NUDGE, hasAttachmentMarkers } from "../../uploadTypes";
 import { mapAgyEvent, newState, ZERO_CUM, type GeminiCum, type GeminiMapState } from "./events";
 import { resolveGeminiModel, DEFAULT_GEMINI_MODEL } from "./pricing";
 import { prepareTaskHome } from "./home";
@@ -101,12 +102,21 @@ async function* runTurn(
     (task.session_id ? getThreadUsageCum<GeminiCum>(task.session_id) : null) ?? ZERO_CUM
   );
 
+  // Chat attachments travel as "[Attached image: /abs/path]" (images) or
+  // "[Attached file: /abs/path]" (any other type) marker lines in the message
+  // text (lib/uploadTypes.ts; the files live outside the worktree, see
+  // lib/uploads.ts). The bytes are not in the prompt: the nudge hands over a
+  // staged path and leaves the how to the agent. Prompt-only, on both the
+  // fresh and the resumed path: the persisted transcript keeps the bare
+  // markers. Task-description attachments are covered by buildProjectContext().
+  const message = hasAttachmentMarkers(userText) ? `${userText}\n\n${ATTACHMENT_NUDGE}` : userText;
+
   // Fresh session: seed the opening prompt with the project context. `agy` has
   // no system-prompt append, so context rides the first message; resumed turns
   // rely on the CLI's own conversation persistence.
   const prompt = task.session_id
-    ? userText
-    : `${buildProjectContext(project, task)}\n\n---\n\n${userText}`;
+    ? message
+    : `${buildProjectContext(project, task)}\n\n---\n\n${message}`;
 
   const { home, cwd } = prepareTaskHome(project, task);
   const env = applyStoredApiKey({

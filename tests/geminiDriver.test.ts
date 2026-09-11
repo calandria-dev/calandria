@@ -26,6 +26,7 @@ import { prepareTaskHome } from "@/lib/agents/gemini/home";
 import { gatewayPresetEnv, serializeAgentEnv } from "@/lib/agentEnv";
 import type { GeminiCum } from "@/lib/agents/gemini/events";
 import type { StreamEvent, Project, Task } from "@/lib/types";
+import { ATTACHMENT_NUDGE, attachmentMarker } from "@/lib/uploadTypes";
 
 function fixtureText(name: string): string {
   return fs.readFileSync(path.join(__dirname, "fixtures", "gemini", name), "utf8");
@@ -233,6 +234,35 @@ describe("runTurn", () => {
     spawnMock.mockReturnValue(fakeChild({ stdout: "", code: 0 }));
     const events = await drain(geminiDriver.runTurn(task, project, "go"));
     expect(events.filter((e) => e.type === "done")).toHaveLength(1);
+  });
+
+  it("explains a chat attachment's marker line to the CLI, and only when one is there", async () => {
+    // The argv the CLI is handed carries the prompt right after -p. The nudge is
+    // prompt-only, so what the runner persists stays the bare marker line.
+    const sent = async (userText: string, over: Partial<Task> = {}): Promise<string> => {
+      const { project, task } = rows();
+      spawnMock.mockReset();
+      spawnMock.mockReturnValue(fakeChild({ stdout: "", code: 0 }));
+      await drain(geminiDriver.runTurn({ ...task, ...over }, project, userText));
+      const args = spawnMock.mock.calls[0][1] as string[];
+      return args[args.indexOf("-p") + 1];
+    };
+
+    const marker = attachmentMarker("/tmp/uploads/t1/shot.png");
+
+    // Fresh session: project context, the message, then the nudge.
+    const fresh = await sent(`look at this\n${marker}`);
+    expect(fresh).toContain(marker);
+    expect(fresh).toContain(ATTACHMENT_NUDGE);
+
+    // Resumed session: no project context, still nudged.
+    const resumed = await sent(`look at this\n${marker}`, { session_id: "conv-1" });
+    expect(resumed).toContain(marker);
+    expect(resumed).toContain(ATTACHMENT_NUDGE);
+
+    // No marker, no nudge, on either path.
+    expect(await sent("plain message")).not.toContain(ATTACHMENT_NUDGE);
+    expect(await sent("plain message", { session_id: "conv-1" })).not.toContain(ATTACHMENT_NUDGE);
   });
 });
 
