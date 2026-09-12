@@ -375,11 +375,12 @@ jobs:
 
           # The five required contexts (`.github/rulesets/README.md`) come from
           # test.yml's own run, not from the copy publish-image.yml calls, whose
-          # jobs report as `test / …` and match no rule. e2e is off: a Dockerfile
-          # ARG cannot change how the app behaves in a browser, and `auto` would
-          # opt a manual dispatch into half an hour of lanes that are not
-          # required and would tell nobody anything.
-          dispatch_and_confirm test.yml Test -f e2e=off
+          # jobs report as `test / …` and match no rule. Both slow-lane inputs
+          # are off: a Dockerfile ARG cannot change how the app behaves in a
+          # browser or in an Electron shell, and `auto` reads a manual dispatch
+          # as a person opting in. This one is a cron, and `macos=auto` would
+          # buy a 70-minute macOS runner on every bump.
+          dispatch_and_confirm test.yml Test -f e2e=off -f macos=off
 
           # The one check that actually reviews this change. `publish=false`
           # builds both arches and materializes nothing, so no sha- tag appears

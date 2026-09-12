@@ -333,6 +333,11 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       e2e: "off"
+      # A called workflow reads the CALLER's `github.event_name`, so a manual
+      # dispatch of this file used to satisfy `macos-desktop`'s own gate and buy
+      # a 70-minute macOS run on top of the multi-arch build. This path asked
+      # for the unit gate.
+      macos: "off"
 
   build:
     needs: [prepare, test]
