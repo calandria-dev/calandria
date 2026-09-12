@@ -265,7 +265,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   // launched. Fire-and-forget: the launch runs detached, since worktree
   // creation can take seconds, and must never delay or fail this status
   // change.
-  if (isTerminal(task.status) && !isTerminal(prevStatus)) maybeAutoStartDependents(id);
+  if (isTerminal(task.status) && !isTerminal(prevStatus)) {
+    maybeAutoStartDependents(id);
+    // A PR can land while its session is still open. Retry the same reclaim
+    // policy after the user finishes the task. Dynamic import keeps this
+    // route's synchronous import graph away from the agent runner.
+    void import("@/lib/reclaim")
+      .then(({ maybeAutoReclaim }) => maybeAutoReclaim(id))
+      .catch((e) => console.error(`[reclaim] terminal retry for ${id} failed:`, e));
+  }
   return NextResponse.json({ ...task, depends_on: getTaskDeps(id) });
 }
 

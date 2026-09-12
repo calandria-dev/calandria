@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { PATCH as patchTask } from "../app/api/tasks/[id]/route";
 import { GET, POST } from "../app/api/tasks/[id]/reclaim/route";
 import { ensureWorktree, unpushedCommits } from "../lib/git";
 import { getDb } from "../lib/db";
@@ -90,6 +91,12 @@ const req = (id: string, body?: object) =>
     ...(body ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {}),
   });
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
+const taskPatchReq = (id: string, body: object) =>
+  new Request(`http://test/api/tasks/${id}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
 
 const branchExists = async (repo: string, branch: string) =>
   git(repo, "rev-parse", "--verify", `refs/heads/${branch}`).then(() => true).catch(() => false);
@@ -391,6 +398,23 @@ describe("maybeAutoReclaim", () => {
     maybeAutoReclaim(task.id);
     await settle(task.id);
     expect(getTask(task.id)).toMatchObject({ worktree_path: "", work_branch: "" });
+    expect(fs.existsSync(wt.path)).toBe(false);
+  });
+
+  it("retries through the task PATCH after PR landing waited on the open session", async () => {
+    const { task, wt, land } = await taskAwaitingItsPr({ autoReclaim: true });
+    await land();
+    prMerged(task.id);
+
+    maybeAutoReclaim(task.id);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(fs.existsSync(wt.path)).toBe(true);
+    expect(getTask(task.id)!.status).toBe("in_progress");
+
+    const response = await patchTask(taskPatchReq(task.id, { status: "done" }), params(task.id));
+    expect(response.status).toBe(200);
+    await settle(task.id);
+    expect(getTask(task.id)).toMatchObject({ status: "done", worktree_path: "", work_branch: "" });
     expect(fs.existsSync(wt.path)).toBe(false);
   });
 
