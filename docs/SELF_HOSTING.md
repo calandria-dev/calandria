@@ -13,7 +13,7 @@ corruption, disk fill, headless re-auth, boot failures).
 ## Docker
 
 The [`Dockerfile`](../Dockerfile) builds a single-user image: a production
-Next.js build on Node 22, with git and the `claude` CLI installed.
+Next.js build on Node 22.12 or newer, with git and the `claude` CLI installed.
 [`docker/entrypoint.sh`](../docker/entrypoint.sh) runs both processes (app
 server and pty sidecar) under tini. All state lives under `/home/calandria`
 in one named volume: the SQLite database, worktrees, project repos, and the
