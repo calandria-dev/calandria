@@ -73,6 +73,55 @@ export function providerUsageCount(id: string): number {
 }
 
 /**
+ * Every model id whose continued visibility depends on this provider. A task,
+ * schedule or runbook may name the provider directly, or inherit it from its
+ * project. The provider's own default is the project-level default available
+ * in the landed schema, which has no separate projects.model column.
+ */
+export function pinnedModelsForProvider(provider: ModelProvider): string[] {
+  const db = getDb();
+  const ids = new Set<string>();
+  if (provider.config.default_model) ids.add(provider.config.default_model);
+
+  const queries = [
+    `SELECT t.model AS model
+       FROM tasks t JOIN projects p ON p.id = t.project_id
+      WHERE t.model IS NOT NULL AND (t.provider_id = ? OR (t.provider_id IS NULL AND p.default_provider_id = ?))`,
+    `SELECT s.model AS model
+       FROM schedules s JOIN projects p ON p.id = s.project_id
+      WHERE s.model IS NOT NULL AND (s.provider_id = ? OR (s.provider_id IS NULL AND p.default_provider_id = ?))`,
+    `SELECT r.model AS model
+       FROM runbooks r JOIN projects p ON p.id = r.project_id
+      WHERE r.model IS NOT NULL AND (r.provider_id = ? OR (r.provider_id IS NULL AND p.default_provider_id = ?))`,
+  ];
+  for (const sql of queries) {
+    const rows = db.prepare(sql).all(provider.id, provider.id) as { model: string }[];
+    for (const row of rows) if (row.model) ids.add(row.model);
+  }
+  if (provider.bundled) {
+    const inheritedQueries = [
+      `SELECT t.model AS model
+         FROM tasks t JOIN projects p ON p.id = t.project_id
+        WHERE t.model IS NOT NULL AND t.provider_id IS NULL
+          AND p.default_provider_id IS NULL AND t.agent = ?`,
+      `SELECT s.model AS model
+         FROM schedules s JOIN projects p ON p.id = s.project_id
+        WHERE s.model IS NOT NULL AND s.provider_id IS NULL
+          AND p.default_provider_id IS NULL AND s.agent = ?`,
+      `SELECT r.model AS model
+         FROM runbooks r JOIN projects p ON p.id = r.project_id
+        WHERE r.model IS NOT NULL AND r.provider_id IS NULL
+          AND p.default_provider_id IS NULL AND r.agent = ?`,
+    ];
+    for (const sql of inheritedQueries) {
+      const rows = db.prepare(sql).all(provider.bundled) as { model: string }[];
+      for (const row of rows) if (row.model) ids.add(row.model);
+    }
+  }
+  return [...ids];
+}
+
+/**
  * The row an environment's own login owns, created on demand. Signing in to a
  * CLI is what brings its models along, so lib/agents/connections.ts calls this
  * when a connection is recorded and removeBundledProvider() when one is

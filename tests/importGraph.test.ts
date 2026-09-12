@@ -62,6 +62,8 @@ const PINNED = [
   "lib/providers/rows.ts", //    the model_providers SQL over a caller's connection; better-sqlite3 + the registry, and lib/db.ts's init() reaches it through the seed
   "lib/providers/store.ts", //   the same CRUD on the shared connection; DB only, no driving, and lib/agents/connections.ts sits on it
   "lib/providers/seed.ts", //    first-boot provider rows from the env; reached from lib/db.ts's init(), so it must never grow an import that calls getDb()
+  "lib/providers/families.ts", // automatic family/version placement; registry types only
+  "lib/providers/catalog.ts", //  model source reads and picker-tree assembly behind sync route entries
   "lib/providerSecrets.ts", //   every provider credential in one 0600 file; fs + secretFile only, and lib/db.ts loads the legacy gateway key from it at boot
   "lib/litellm-key.ts", //       the gateway key as the rest of the app asks for it; wrappers over the litellm row's key field, and lib/gatewayMcp.ts sits on it
   "lib/agents/codex/bin.ts", //  which `codex` to spawn; config + binPath, no driving
