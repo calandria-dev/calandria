@@ -23,8 +23,9 @@ table.
 
 ## The six required checks
 
-`required-checks.json` holds the rule both rulesets use. The contexts are the job **display
-names** in `.github/workflows/test.yml`, not the job keys, and they must match byte-for-byte:
+`required-checks.json` holds the rule both rulesets use. The contexts are workflow job **display
+names** from `.github/workflows/test.yml` and `.github/workflows/publish-image.yml`, not job keys,
+and they must match byte-for-byte:
 
 - `Changed paths`
 - `Audit (npm)`
