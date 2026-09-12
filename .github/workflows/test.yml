@@ -1287,6 +1287,8 @@ jobs:
       # actually download, and building them here is the only way to find out
       # whether they open.
       - name: Package the desktop app
+        # Installer checks below require this step to produce the dmg and zip.
+        id: package
         working-directory: desktop
         env:
           # electron-builder otherwise scans the keychain for a Developer ID and
@@ -1409,10 +1411,11 @@ jobs:
       # $RUNNER_TEMP is where the `dir` bundle already went — desktop/e2e/
       # fixtures.ts refuses to launch a binary from inside this checkout.
       - name: Unpack the app from the dmg
-        # See the launch step below: the packaged pass carries a pre-existing
-        # failure, and gating the installer checks behind it would mean the .dmg
-        # goes unverified every run without saying so.
-        if: ${{ !cancelled() }}
+        # The packaged suite runs after packaging and can fail independently.
+        # That failure must not suppress installer checks.
+        # A failure before packaging leaves no dmg to inspect, so these checks
+        # must stay skipped in that case.
+        if: ${{ !cancelled() && steps.package.conclusion == 'success' }}
         run: |
           set -euo pipefail
           dmg=$(find desktop/dist -maxdepth 1 -name '*.dmg' -type f | head -n 1)
@@ -1497,9 +1500,9 @@ jobs:
       # `workers: 1`, so the two boots are sequential and cannot fight over the
       # single-instance lock.
       - name: Launch the app from the dmg
-        # This step's dependency is the packaging step, not the suite above: a
-        # skipped dmg check reads as "fine" when it is really "never ran".
-        if: ${{ !cancelled() }}
+        # This check depends on a successful packaging step. A red packaged
+        # suite still leaves a dmg available for verification.
+        if: ${{ !cancelled() && steps.package.conclusion == 'success' }}
         run: npx playwright test --config playwright.desktop.config.ts 06-packaged 08-macos-launchd
 
       # The .zip is the load-bearing macOS artifact even though nothing consumes
@@ -1508,7 +1511,9 @@ jobs:
       # at all. Checking it exists and holds an intact bundle is cheap; the feed
       # itself arrives with the publish block in the auto-update task.
       - name: Check the zip carries an intact bundle
-        if: ${{ !cancelled() }}
+        # A failed step before packaging means there is no zip to inspect.
+        # A later packaged-suite failure must not suppress this artifact check.
+        if: ${{ !cancelled() && steps.package.conclusion == 'success' }}
         run: |
           set -euo pipefail
           zip=$(find desktop/dist -maxdepth 1 -name '*.zip' -type f | head -n 1)
