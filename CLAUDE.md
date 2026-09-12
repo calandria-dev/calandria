@@ -520,6 +520,11 @@ Unmerged worktree changes aren't in it; verify locations against your working tr
   a clean checkout, layered on top by `vitest.config.ts`, the seam a downstream repo uses instead
   of forking `tests/setup.ts`.
 - **Delete is hard delete** throughout: no soft-delete, no undo.
+- **`app/globals.css` is one flat class namespace.** A new component-local class gets a
+  component-specific prefix (`tagf-`, `bc-`, `dl-`, and so on); scoping an override under a parent
+  selector (`.tag-field .tag-row`) does not undo an existing unscoped rule for that same class name
+  (`.tag-row`), since both still match and both still apply. `tests/cssComponentScope.test.ts`
+  guards against a new instance of this collision.
 - **Auth is layered.** Next middleware for HTTP, `server.js` for WebSocket upgrades, per-service
   visibility for public service hostnames. Both Cloudflare Access mode and no-login local mode
   have an origin boundary; keep `lib/auth/local-origin.mjs` shared instead of letting the HTTP and
