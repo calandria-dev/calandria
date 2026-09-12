@@ -8,7 +8,8 @@
       { "context": "Audit (npm)" },
       { "context": "Types (tsc)" },
       { "context": "Unit (vitest)" },
-      { "context": "Windows (types + unit)" }
+      { "context": "Windows (types + unit)" },
+      { "context": "Image build" }
     ]
   }
 }

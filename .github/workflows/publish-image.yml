@@ -12,7 +12,9 @@
 # registry: on `pull_request` (as opposed to `pull_request_target`) GitHub
 # already caps a fork's GITHUB_TOKEN at read-only, and this workflow adds the
 # belt to that brace by never running docker/login-action on the PR path.
-# PRs still build both arches, so a broken Dockerfile fails before merge.
+# PRs with application changes still build both arches, so a broken Dockerfile
+# fails before merge. Website-only PRs are detected in `prepare` and skip the
+# expensive build while still reporting the stable required check below.
 #
 # It is also gated on the unit suite and the typecheck (the `test` job below
 # calls test.yml, and waits on every job in it). A green `docker build` only
@@ -120,12 +122,8 @@ on:
     tags: ["v*"]
   pull_request:
     branches: ["**"]
-    # website/ is the calandria.dev static site, not part of the image (it is
-    # in .dockerignore). A site-only PR has nothing for a multi-arch container
-    # build to validate, and this is the most expensive lane in the repo.
-    # Only skipped when EVERY changed file is under website/.
-    paths-ignore:
-      - website/**
+    # No paths-ignore: a required check must report on website-only PRs too.
+    # prepare skips the expensive build after reporting an intentional skip.
   workflow_dispatch:
     inputs:
       no_cache:
@@ -181,9 +179,9 @@ jobs:
       actions: read
     outputs:
       publish: ${{ steps.gate.outputs.publish }}
-      # False only when a scheduled run finds HEAD already published; every
-      # other event always proceeds.
-      proceed: ${{ github.event_name != 'schedule' || steps.fresh.outputs.run == 'true' }}
+      # False when a scheduled run finds HEAD already published or a PR changes
+      # only website/. The workflow still reports the stable Image build check.
+      proceed: ${{ (github.event_name != 'schedule' || steps.fresh.outputs.run == 'true') && (github.event_name != 'pull_request' || steps.changes.outputs.app == 'true') }}
       tags: ${{ steps.meta.outputs.tags }}
       labels: ${{ steps.meta.outputs.labels }}
       annotations: ${{ steps.meta.outputs.annotations }}
@@ -203,6 +201,31 @@ jobs:
         id: gate
         run: |
           echo "publish=${{ (github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')) }}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+
+      # Replaces a workflow-level path filter so website-only PRs still produce
+      # the required Image build check. Fail open if the diff cannot be read:
+      # skipping an unknown change would falsely satisfy the merge gate.
+      - name: Detect application changes
+        id: changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          files=$(git diff --name-only "$BASE...$HEAD_SHA" 2>/dev/null || echo "")
+          if [ -z "$files" ] || printf '%s\n' "$files" | grep -qv '^website/'; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+            echo "application files changed; running the image build"
+          else
+            echo "app=false" >> "$GITHUB_OUTPUT"
+            echo "website/ only; skipping the image build"
+          fi
 
       # A release is only as trustworthy as the signal it's cut from (issue
       # #12): no image for a SHA whose push-to-main Test run is not green.
@@ -497,6 +520,35 @@ jobs:
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
+
+  # One stable required context for the two matrix legs. A skipped build is
+  # valid only when prepare deliberately identified a website-only PR (or a
+  # scheduled run whose image is already fresh). Any failed or cancelled leg,
+  # including one skipped behind a failed test job, fails this gate.
+  image-build:
+    name: Image build
+    needs: [prepare, build]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Require both architecture builds
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          PROCEED: ${{ needs.prepare.outputs.proceed }}
+        run: |
+          set -euo pipefail
+          if [ "$BUILD_RESULT" = "success" ]; then
+            exit 0
+          fi
+          if [ "$BUILD_RESULT" = "skipped" ] && [ "$PROCEED" = "false" ]; then
+            echo "Image build intentionally skipped"
+            exit 0
+          fi
+          echo "Image build did not complete successfully (result=$BUILD_RESULT)"
+          exit 1
 
   merge:
     needs: [prepare, build]

@@ -373,7 +373,7 @@ jobs:
             echo "- $label: $url" >> "$RUNNER_TEMP/runs.md"
           }
 
-          # The five required contexts (`.github/rulesets/README.md`) come from
+          # The six required contexts (`.github/rulesets/README.md`) come from
           # test.yml's own run, not from the copy publish-image.yml calls, whose
           # jobs report as `test / …` and match no rule. Both slow-lane inputs
           # are off: a Dockerfile ARG cannot change how the app behaves in a
