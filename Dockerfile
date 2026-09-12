@@ -21,7 +21,7 @@
 # digest (linux/amd64 + linux/arm64/v8), so both matrix legs resolve their own
 # manifest from it. .github/dependabot.yml bumps it weekly; keep the two FROM
 # lines identical or the runtime stage diverges from the build stage.
-FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS build
+FROM node:26-bookworm-slim@sha256:cd9f682fa2885cd1056e830424764158570061c59736a1da836bc3d73df095ae AS build
 WORKDIR /app
 
 # The toolchain is a fallback for node-pty, which fetches a per-ABI Linux
@@ -58,7 +58,7 @@ RUN npm prune --omit=dev && node scripts/fix-pty.js
 
 # ---- runtime stage -----------------------------------------------------------
 # Same digest as the build stage above.
-FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
+FROM node:26-bookworm-slim@sha256:cd9f682fa2885cd1056e830424764158570061c59736a1da836bc3d73df095ae
 
 # git: project repos and per-task worktrees. openssh-client: git over ssh.
 # tini: PID 1, reaps the pty shells' orphans. procps: ps for debugging shells.
