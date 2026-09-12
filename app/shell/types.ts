@@ -20,7 +20,7 @@ export interface ProjectRow {
   repo_path: string;
   branch: string;
   landing_mode: LandingMode; // how work lands on `branch`: "merge" (local merge) or "pr" (protected, finish by opening a PR)
-  auto_reclaim: number; // 1 = once a task's work lands, reclaim its checkout and delete its local branch without being asked (lib/reclaim.ts)
+  auto_reclaim: number; // 1 = once a task's work lands and no turn executes, close it and reclaim its checkout (lib/reclaim.ts)
   dev_command: string;
   setup_command: string;
   test_command: string;

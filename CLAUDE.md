@@ -353,15 +353,13 @@ Three processes and entrypoints, one origin:
   is deleted by the merge itself, not by reclaim: `mergeTaskPr` passes `--delete-branch`, while a
   plain github.com merge instead needs the repo's `delete_branch_on_merge` setting (off by
   default).
-  `maybeAutoReclaim()` fires silently on `projects.auto_reclaim`;
+  `maybeAutoReclaim()` fires silently on `projects.auto_reclaim` and closes a landed task as soon
+  as no turn is executing. A dirty worktree or commits never pushed to the merged PR still require
+  manual acknowledgement;
   `POST /api/tasks/[id]/reclaim` is the manual button and the only place the unsafe
-  acknowledgement is given. A landing is not a finish, so the unattended half also requires
-  `taskIsFinishedWith()`, `prunableTaskIds()`' predicate for one task (`lib/retention.ts`, reused
-  rather than restated, as the sweep reuses it). `reclaimTask` refuses only a turn EXECUTING, which
-  a session idle between two messages passes, and the teardown then deletes the branch the next turn
-  resumes onto; `ensureWorktree` self-heals it into a fresh branch off the new base tip, so the
-  session's diff and history vanish with no error. The cost is that nothing marks a landed task done
-  by itself any more; the button does. `worktreePruneSafety()` blocks a local merge on `ahead > 0` but must
+  acknowledgement is given. `reclaimTask` refuses while a turn executes. An idle session is
+  reclaimed immediately. An executing turn is retried from the internal `turn_end` event after its
+  slot is released. `worktreePruneSafety()` blocks a local merge on `ahead > 0` but must
   not block a PR (a squash leaves the branch permanently ahead); `unpushedCommits()` is used
   there instead. Only the status write stamps `updated_at`. In `DYNAMIC_ONLY` because it sweeps
   dependents; `lib/prState.ts` is there for the same reason.

@@ -1227,13 +1227,15 @@ export function setTaskPrState(
  * moment ago isn't re-fetched by the next tick. Oldest sync first, so a
  * capped batch always makes progress rather than re-serving the same rows.
  */
-export function stalePrTasks(staleBefore: number, limit: number): Task[] {
+export function stalePrTasks(staleBefore: number, limit: number, opts: { autoReclaimOnly?: boolean } = {}): Task[] {
+  const autoReclaim = opts.autoReclaimOnly ? " AND p.auto_reclaim = 1" : "";
   return getDb()
     .prepare(
-      `SELECT * FROM tasks
-       WHERE pr_url != '' AND pr_number > 0 AND pr_state NOT IN ('merged', 'closed')
-         AND pr_synced_at < ?
-       ORDER BY pr_synced_at ASC LIMIT ?`
+      `SELECT t.* FROM tasks t
+       JOIN projects p ON p.id = t.project_id
+       WHERE t.pr_url != '' AND t.pr_number > 0 AND t.pr_state NOT IN ('merged', 'closed')
+         AND t.pr_synced_at < ?${autoReclaim}
+       ORDER BY t.pr_synced_at ASC LIMIT ?`
     )
     .all(staleBefore, limit) as Task[];
 }
@@ -1243,6 +1245,19 @@ export function openPrTaskCount(): number {
   const row = getDb()
     .prepare(
       `SELECT COUNT(*) AS n FROM tasks WHERE pr_url != '' AND pr_number > 0 AND pr_state NOT IN ('merged', 'closed')`
+    )
+    .get() as { n: number };
+  return row.n;
+}
+
+/** How many open PRs belong to projects that need unattended merge detection. */
+export function openAutoReclaimPrTaskCount(): number {
+  const row = getDb()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM tasks t
+       JOIN projects p ON p.id = t.project_id
+       WHERE t.pr_url != '' AND t.pr_number > 0
+         AND t.pr_state NOT IN ('merged', 'closed') AND p.auto_reclaim = 1`
     )
     .get() as { n: number };
   return row.n;

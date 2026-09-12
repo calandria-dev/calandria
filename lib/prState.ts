@@ -3,12 +3,12 @@
 // bus so the board and session rail update without client polling.
 //
 // refreshPrState() returns early inside PR_STALE_MS unless forced. Terminal
-// states (merged/closed) are never re-polled, and the sweep skips a pass
-// when watcherCount() is zero. Statically SDK-free (DYNAMIC_ONLY in
+// states (merged/closed) are never re-polled. With no watchers, the sweep
+// continues for auto_reclaim projects and skips other projects. Statically SDK-free (DYNAMIC_ONLY in
 // tests/importGraph.test.ts): a merged PR reaches the runner via
 // lib/reclaim.ts's `await import()`.
 
-import { getProject, getTask, setTaskPrState, stalePrTasks, openPrTaskCount } from "./store";
+import { getProject, getTask, setTaskPrState, stalePrTasks, openPrTaskCount, openAutoReclaimPrTaskCount } from "./store";
 import { fetchPrState, type PrFailingCheck, type PrSnapshot } from "./github";
 import { maybeAutoReclaim } from "./reclaim";
 import { publishGlobal, watcherCount } from "./events";
@@ -249,11 +249,11 @@ export async function sweepPrs(): Promise<number> {
       stopPrPolling(); // every PR has landed; the next one restarts polling
       return 0;
     }
-    // Nobody is watching, so nothing renders the answer. The clock keeps
-    // ticking, and the first tab to open triggers its own refresh on the
-    // task it selects.
-    if (watcherCount() === 0) return 0;
-    const due = stalePrTasks(Date.now() - PR_POLL_MS, PR_POLL_BATCH);
+    // With no browser open, only projects that opted into automatic reclaim
+    // need an answer. Keep the no-watcher optimization for every other PR.
+    const unattended = watcherCount() === 0;
+    if (unattended && openAutoReclaimPrTaskCount() === 0) return 0;
+    const due = stalePrTasks(Date.now() - PR_POLL_MS, PR_POLL_BATCH, { autoReclaimOnly: unattended });
     let n = 0;
     for (const task of due) {
       const res = await refreshPrState(task.id, { force: true });

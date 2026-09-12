@@ -50,9 +50,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         message,
       });
       if (result.ok) {
-        // Record the merge and advance the diff base, but do not change status.
-        // Merging is a git action, not a declaration that the task is finished;
-        // the user may merge several rounds while still iterating. They own "done".
+        // Record the merge and advance the diff base. Status remains user-owned
+        // when auto_reclaim is off. An opted-in project closes the landed task
+        // through maybeAutoReclaim below.
         updateTask(id, {
           merged_at: Date.now(),
           ...(result.mergedSha ? { base_sha: result.mergedSha } : {}),

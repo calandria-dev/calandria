@@ -265,7 +265,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   // launched. Fire-and-forget: the launch runs detached, since worktree
   // creation can take seconds, and must never delay or fail this status
   // change.
-  if (isTerminal(task.status) && !isTerminal(prevStatus)) maybeAutoStartDependents(id);
+  if (isTerminal(task.status) && !isTerminal(prevStatus)) {
+    maybeAutoStartDependents(id);
+  }
   return NextResponse.json({ ...task, depends_on: getTaskDeps(id) });
 }
 

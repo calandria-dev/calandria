@@ -1535,18 +1535,17 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
       ) : probe && probeAsked ? (
         <div className="hlp" style={{ marginTop: 6 }}>{probe.reason}</div>
       ) : null}
-      {/* The tail of landing: what happens to the CHECKOUT once work lands. Off
-          by default, and per project, because it deletes a local branch without
-          being asked, see lib/reclaim.ts. The button in the session header
-          does the same thing on demand whether or not this is on. */}
+      {/* The tail of landing: what happens to the checkout once work lands.
+          Off by default and per project. It closes the task after the turn ends,
+          then removes the local branch without being asked. */}
       <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 12, fontSize: 12.5, color: "var(--ink-2)", cursor: "pointer" }}>
         <input type="checkbox" checked={autoReclaim} onChange={(e) => setAutoReclaim(e.target.checked)} />
         <span>
-          Reclaim a task&apos;s worktree when its work lands
+          Close and reclaim a task when its work lands
           <span className="hlp" style={{ display: "block", marginTop: 2 }}>
             {landing === "pr"
-              ? "When its pull request reports merged, this catches " + (branch || "the base branch") + " up with origin, removes the task's checkout, deletes its local branch, and marks it done. It never touches unsaved work; that still needs your say-so."
-              : "When it merges into " + (branch || "the base branch") + ", this removes the task's checkout, deletes its local branch, and marks it done. It never touches unsaved work; that still needs your say-so."}
+              ? "When its pull request reports merged, this closes the task, catches " + (branch || "the base branch") + " up with origin, removes the task's checkout, and deletes its local branch once no turn is executing. It never touches dirty or never-pushed work; that still needs your say-so."
+              : "When it merges into " + (branch || "the base branch") + ", this closes the task, removes its checkout, and deletes its local branch once no turn is executing. It never touches dirty or never-pushed work; that still needs your say-so."}
           </span>
         </span>
       </label>
