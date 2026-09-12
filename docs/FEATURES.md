@@ -139,10 +139,9 @@ Calandria merged the branch locally, its checkout is disposable and Calandria ca
    lands). It fast-forwards the local base branch from origin, removes the worktree, deletes the
    local branch, and marks the task done in one step.
 2. To do this automatically for every task in a project, open **Context** → check **Reclaim a
-   task's worktree when its work lands**. It is off by default and set per project. It waits until
-   the task is done or cancelled: landing means the work reached the base branch, not that you have
-   finished the session, and the branch a reclaim deletes is the one your next message resumes onto.
-   Use the button when you want a still-open session reclaimed now.
+   task's worktree when its work lands**. It is off by default and set per project. A landed task is
+   closed and reclaimed as soon as no turn is executing. If a turn is active, reclaim waits for its
+   `turn_end` event. Dirty or never-pushed work remains for manual acknowledgement.
 3. To reclaim several merged or finished tasks at once, go to Settings → Storage. Discarding
    unmerged work there requires the same explicit permanent-discard confirmation as the button.
 

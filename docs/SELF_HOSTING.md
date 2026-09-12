@@ -1076,11 +1076,10 @@ waits on that walk once, right after a restart.
   discards uncommitted edits or commits the remote never received without
   an explicit acknowledgement nobody can give unattended.
   The project's `auto_reclaim` setting (off by default) does the same
-  without being asked, but only for a task that is already done or
-  cancelled and that nothing else marks as live. A landed pull request
-  says the work reached the base branch, not that you have finished the
-  session, and the branch a reclaim deletes is the one your next message
-  resumes onto. Press the button to reclaim a session you are still in.
+  without being asked as soon as no turn is executing. If a pull request
+  lands during a turn, the reclaim retries after `turn_end`. Dirty worktrees
+  and commits never pushed to the merged pull request remain for manual
+  acknowledgement.
   See [Features](FEATURES.md).
   **The disk warning** runs whether or not the sweep does: see
   `CALANDRIA_WORKTREES_DISK_WARN_GB` in the Configuration table above.

@@ -16,7 +16,7 @@ vi.mock("@/lib/github", async (importOriginal) => ({
 }));
 
 import { getDb } from "@/lib/db";
-import { createProject, createTask, getTask, updateTask, stalePrTasks, openPrTaskCount } from "@/lib/store";
+import { createProject, createTask, getTask, updateTask, stalePrTasks, openPrTaskCount, openAutoReclaimPrTaskCount, updateProject } from "@/lib/store";
 import { subscribeGlobal, type BusEvent } from "@/lib/events";
 import { parsePrNumber, rollupChecks, type PrSnapshot } from "@/lib/github";
 import { refreshPrState, sweepPrs, prView } from "@/lib/prState";
@@ -35,8 +35,9 @@ const snapshot = (over: Partial<PrSnapshot> = {}): PrSnapshot => ({
 
 // A task that already has a PR, exactly as POST /api/tasks/[id]/pr leaves it:
 // url + number stored, and nothing yet heard back from GitHub.
-function taskWithPr(over: { number?: number; url?: string } = {}) {
+function taskWithPr(over: { number?: number; url?: string; autoReclaim?: boolean } = {}) {
   const project = createProject({ name: `pr-${Math.random()}`, repo_path: process.cwd(), branch: "main" });
+  if (over.autoReclaim) updateProject(project.id, { auto_reclaim: 1 });
   const task = createTask({ project_id: project.id, title: "work with a PR" });
   const number = over.number ?? 42;
   updateTask(task.id, { pr_url: over.url ?? `https://github.com/o/r/pull/${number}`, pr_number: number });
@@ -325,5 +326,21 @@ describe("the sweep's candidate set", () => {
 
     expect(await sweepPrs()).toBe(0);
     expect(fetchPrStateMock).not.toHaveBeenCalled();
+  });
+
+  it("polls only opted-in PRs when no tab is watching", async () => {
+    const automatic = taskWithPr({ number: 901, autoReclaim: true });
+    const ordinary = taskWithPr({ number: 902 });
+    // Older cases in this file may leave open PR fixtures behind. Make only
+    // these two rows due so the assertion is independent of test order.
+    getDb().prepare("UPDATE tasks SET pr_synced_at = ? WHERE id NOT IN (?, ?)").run(Date.now(), automatic.taskId, ordinary.taskId);
+    fetchPrStateMock.mockResolvedValue({ ok: true, snapshot: snapshot() });
+
+    expect(openAutoReclaimPrTaskCount()).toBeGreaterThan(0);
+    expect(await sweepPrs()).toBe(1);
+    expect(fetchPrStateMock).toHaveBeenCalledTimes(1);
+    expect(fetchPrStateMock.mock.calls[0][1]).toBe(901);
+    expect(getTask(ordinary.taskId)!.pr_synced_at).toBe(0);
+    expect(getTask(automatic.taskId)!.pr_synced_at).toBeGreaterThan(0);
   });
 });
