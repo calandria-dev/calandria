@@ -7,7 +7,8 @@ import { consumeDbRecoveryAuthorization, dbLockMode } from "./db-lock.mjs";
 import { SCHEMA_VERSION, schemaTooNew, schemaTooNewMessage } from "./schema-version.mjs";
 import { loadPersistedApiKey } from "./anthropic-key";
 import { loadPersistedOpenAiKey } from "./openai-key";
-import { loadPersistedGatewayKey } from "./litellm-key";
+import { loadPersistedGatewayKey } from "./providerSecrets";
+import { seedProvidersFromEnv } from "./providers/seed";
 
 // Single shared connection, stored outside the repo (CALANDRIA_DB_DIR, default
 // ~/.calandria) so a git clean or re-clone cannot wipe it. The file is
@@ -631,6 +632,27 @@ export function init(db: Database.Database) {
       PRIMARY KEY (task_id, file)
     );
 
+    -- A configured source of models: an endpoint, a credential and a model
+    -- policy (lib/providers/). Two groups, told apart by the type column: a
+    -- bundled row is created when a CLI signs in and removed when it signs out,
+    -- and a user-added row is created from Settings. config and model_policy are
+    -- type-specific JSON; config NEVER holds a secret, since GET /api/providers
+    -- serves the row to the browser. Credentials live in the 0600 file
+    -- lib/providerSecrets.ts owns, keyed by this id.
+    CREATE TABLE IF NOT EXISTS model_providers (
+      id            TEXT PRIMARY KEY,
+      type          TEXT NOT NULL,
+      label         TEXT NOT NULL,
+      config        TEXT NOT NULL DEFAULT '{}',
+      model_policy  TEXT NOT NULL DEFAULT '{}',
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL,
+      -- The last probe of this provider and when it ran (POST /api/providers/[id]/test).
+      last_test_at  INTEGER,
+      last_test     TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_model_providers_type ON model_providers(type);
     CREATE INDEX IF NOT EXISTS idx_services_project ON services(project_id);
     CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
     CREATE INDEX IF NOT EXISTS idx_task_deps_task ON task_dependencies(task_id);
@@ -664,9 +686,16 @@ export function init(db: Database.Database) {
   // Same for a persisted OpenAI API key (the Codex "I have a key instead" path)
   // so the `codex` children pick it up.
   loadPersistedOpenAiKey();
-  // And the LiteLLM gateway key. The Gateway model provider resolves it at
-  // turn time; no project row stores it (lib/litellm-key.ts).
+  // And the LiteLLM gateway key an older release wrote to its own file. The
+  // gateway provider resolves it at turn time; no project row stores it
+  // (lib/providerSecrets.ts, lib/litellm-key.ts).
   loadPersistedGatewayKey();
+
+  // Provider rows come from the database, with the env vars as a first-boot
+  // seed (lib/providers/seed.ts). Runs after the gateway key is in the
+  // environment, so the seeded row gets it, and takes this connection because
+  // global.__calandriaDb is not set until init() returns.
+  seedProvidersFromEnv(db);
 }
 
 /**
@@ -836,6 +865,11 @@ export function migrate(db: Database.Database) {
   // driver. '' = no override; every pre-existing project used the agent's own
   // cloud login.
   add("agent_env", "TEXT NOT NULL DEFAULT ''");
+  // The provider every task in this project runs against unless the task names
+  // its own (lib/providers/). NULL = the environment's own bundled row. SET
+  // NULL rather than cascade: removing a provider must not delete the project,
+  // it must drop the project back to its environment's login.
+  add("default_provider_id", "TEXT REFERENCES model_providers(id) ON DELETE SET NULL");
   add("deprecated", "INTEGER NOT NULL DEFAULT 0");
   add("seeded", "INTEGER NOT NULL DEFAULT 0");
   // Per-project managed-services config + the project's deterministic port.
@@ -1008,6 +1042,12 @@ export function migrate(db: Database.Database) {
   // (lib/gatewayKeys.ts): the baseline the next reconciliation diffs against
   // to record only the delta. Reset to 0 whenever a key is (re)minted.
   if (!taskCols.includes("gateway_key_spend")) db.exec("ALTER TABLE tasks ADD COLUMN gateway_key_spend REAL NOT NULL DEFAULT 0");
+  // The provider this task's turns run against (lib/providers/). NULL = the
+  // project's default_provider_id, else the environment's own bundled row.
+  // SET NULL keeps the task and drops it back to that chain.
+  if (!taskCols.includes("provider_id")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN provider_id TEXT REFERENCES model_providers(id) ON DELETE SET NULL");
+  }
   // Per-task override of the project's hosted-MCP selection (docs/AGENTS.md,
   // LiteLLM section). NULL (the column's default with no DEFAULT clause) =
   // inherit the project's gateway_mcp; a JSON array, including '[]', replaces
@@ -1093,6 +1133,20 @@ export function migrate(db: Database.Database) {
   // exactly right: they are all weekly, and '' is already what the recurring
   // path means by "no date pinned".
   if (!schedCols.includes("once_date")) db.exec("ALTER TABLE schedules ADD COLUMN once_date TEXT NOT NULL DEFAULT ''");
+  // Which provider and model a firing carries into the task it mints
+  // (lib/providers/, lib/dispatch.ts). Both NULL on every pre-existing row,
+  // which is the "inherit the project's default" the schedules have always had.
+  if (!schedCols.includes("provider_id")) {
+    db.exec("ALTER TABLE schedules ADD COLUMN provider_id TEXT REFERENCES model_providers(id) ON DELETE SET NULL");
+  }
+  if (!schedCols.includes("model")) db.exec("ALTER TABLE schedules ADD COLUMN model TEXT");
+  // The same pair on a runbook, for the same reason: pressing Run mints a task
+  // and has to know what to run it on.
+  const runbookCols = (db.prepare("PRAGMA table_info(runbooks)").all() as { name: string }[]).map((c) => c.name);
+  if (!runbookCols.includes("provider_id")) {
+    db.exec("ALTER TABLE runbooks ADD COLUMN provider_id TEXT REFERENCES model_providers(id) ON DELETE SET NULL");
+  }
+  if (!runbookCols.includes("model")) db.exec("ALTER TABLE runbooks ADD COLUMN model TEXT");
   // A tag's default base branch: where a whole plan's tasks are cut from,
   // set once instead of N times (docs/FEATURES.md). Same '' = inherit
   // convention as tasks.base_branch, so every existing row keeps behaving as

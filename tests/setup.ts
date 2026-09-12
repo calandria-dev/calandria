@@ -92,6 +92,25 @@ for (const v of [
   delete process.env[v];
 }
 
+// Hermetic model providers: these vars seed a provider row on the first
+// getDb() of every test file (lib/providers/seed.ts), so a developer who runs
+// a gateway or an Ollama server in their shell environment would have rows in
+// a database the suite expects to be empty. tests/providersSeed.test.ts passes
+// the seed its env explicitly instead of setting these.
+for (const v of [
+  "CALANDRIA_LITELLM_BASE_URL",
+  "CALANDRIA_LITELLM_KEY",
+  "CALANDRIA_LITELLM_ADMIN_KEY",
+  "CALANDRIA_LITELLM_MCP",
+  "CALANDRIA_LOCAL_MODEL_BASE_URL",
+  "ORCH_LITELLM_BASE_URL",
+  "ORCH_LITELLM_KEY",
+  "ORCH_LITELLM_ADMIN_KEY",
+  "ORCH_LOCAL_MODEL_BASE_URL",
+]) {
+  delete process.env[v];
+}
+
 // …and the other half of that descriptor's inputs: the alias probe
 // (lib/agents/claude/modelProbe.ts) would spawn the developer's real `claude`
 // five times to fill in what "Opus (latest)" resolves to, which is neither

@@ -254,6 +254,29 @@ This is a change to the "every knob is env-driven" rule in `CLAUDE.md`: provider
 configuration is per instance and user-editable, so the source of truth moves to the
 database with env as the seed. The rule stays for everything else.
 
+### As landed: phase 1, step 1
+
+The registry, the table, the store, the secrets file and the env seed have shipped. Five
+things differ from the description above, and the code is what is true.
+
+- There is a fourth module, `lib/providers/rows.ts`: the same CRUD over a connection the
+  caller passes in. `lib/db.ts` runs the seed from inside `init()`, before
+  `global.__calandriaDb` is set, so nothing the seed reaches may call `getDb()`, and a
+  static import of `lib/db.ts` from the seed would close a cycle back through it.
+  `lib/providers/store.ts` is that same API bound to `getDb()`, and is what routes and
+  the UI use.
+- `loadPersistedGatewayKey()` lives in `lib/providerSecrets.ts` and is re-exported by
+  `lib/litellm-key.ts`. `lib/db.ts` imports it from the secrets module for the same
+  reason: `lib/litellm-key.ts` now reads the `litellm` provider row.
+- A seeded `litellm` row gets `billing: "key"`. No environment variable chooses between
+  key and subscription billing, and the vars that do exist describe a gateway reached
+  with a key. The provider's detail modal is where an instance says otherwise.
+- A seeded local row on a port that is neither 11434 nor 1234 is a `custom` row with
+  `api: "openai"`, the surface Ollama and LM Studio both expose. Its label is the type's
+  name plus the host, as in "Ollama (mac-mini.local)".
+- `SCHEMA_VERSION` is 5. The table and the six new columns move the schema, so an older
+  build refuses the database instead of writing to it (`lib/schema-version.mjs`).
+
 ## The environment registry
 
 `AgentCapabilities` (`lib/agents/types.ts:48`) gains three fields:
