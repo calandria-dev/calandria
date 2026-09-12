@@ -40,6 +40,7 @@ export interface Project {
   default_agent: string; // agent driver new tasks in this project run under (lib/agents/registry.ts)
   send_context: number; // 1 = include the saved project context in new agent sessions (default for new tasks)
   agent_env: string; // provider override for every task's turns, as JSON over the lib/agentEnv.ts allowlist ("" = the agent's own cloud login)
+  default_provider_id: string | null; // the model provider every task in this project runs against (lib/providers/); null = the environment's own bundled row
   recap: string; // last LLM "where you left off" recap (auto-generated when idle)
   recap_at: number; // when the recap was generated (0 = none)
   recap_covers_at: number; // the project's last-activity ts the recap was based on
@@ -76,6 +77,7 @@ export interface Task {
   agent: string; // agent driver this task's sessions run under (default "claude"; see lib/agents/)
   send_context: number; // 1 = include the saved project context in this task's sessions (seeded from projects.send_context)
   agent_env: string; // per-task provider override laid over the project's (lib/agentEnv.ts); "" = inherit the project's
+  provider_id: string | null; // the model provider this task's turns run against (lib/providers/); null = the project's default, then the environment's bundled row
   model: string | null; // chosen model alias ("fable"|"opus"|"sonnet"|"haiku"); null = inherit default
   resolved_model: string | null; // model the SDK actually ran last turn (for the badge)
   reasoning: string | null; // thinking preset ("off"|"think"|"think_hard"|"ultrathink"); null = inherit default
@@ -976,6 +978,10 @@ export interface Schedule {
    * runbook if it is ever deleted (see deleteRunbook).
    */
   runbook_id: string | null;
+  /** The model provider a firing carries into the task it mints; null = the project's default. */
+  provider_id: string | null;
+  /** The model that task starts on; null = the project's default. */
+  model: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -995,6 +1001,10 @@ export interface Runbook {
   position: number;
   /** '' = written by the user; otherwise the agent id that filed it. */
   created_by: string;
+  /** The model provider a dispatch carries into the task it mints; null = the project's default. */
+  provider_id: string | null;
+  /** The model that task starts on; null = the project's default. */
+  model: string | null;
   created_at: number;
   updated_at: number;
 }
