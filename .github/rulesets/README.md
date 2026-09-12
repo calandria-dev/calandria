@@ -32,7 +32,7 @@ names** in `.github/workflows/test.yml`, not the job keys, and they must match b
 - `Unit (vitest)`
 - `Windows (types + unit)`
 
-Four facts about this list matter.
+Five facts about this list matter.
 
 **`Changed paths` is required because a failed `needs:` dependency makes GitHub report its
 dependents as `skipped`, and GitHub treats a skipped required check as satisfied.** Without this
@@ -46,6 +46,15 @@ rules that out.
 and the Windows e2e pair are label-gated (`e2e`, `macos`), so they report `skipped` on most PRs.
 Requiring a check that is usually skipped buys nothing, since skipped satisfies the gate, and it
 would make every labelled PR wait half an hour.
+
+**The bot PR from `Pin drift` reports these five from a `workflow_dispatch` run, not from a
+`pull_request` one.** A push made with `GITHUB_TOKEN` fires no `push` or `pull_request` workflow,
+so `.github/workflows/pin-drift.yml` dispatches `test.yml` and `publish-image.yml` against
+`bot/agy-pin` itself. Check runs attach to a commit, and the PR's head commit is that branch's
+head, so the same five contexts appear under the same display names and satisfy the same rule. The
+dispatch is why no PAT and no bypass entry are needed for that branch. If a `bot/agy-pin` PR ever
+shows an empty check list, read the `bump` job's log: it fails when a dispatch produces no run for
+the SHA it pushed.
 
 **`strict_required_status_checks_policy` is `false`.** True means "branch must be up to date with
 the base before merging", which in a stacked tag tree forces a rebase of every open PR each time

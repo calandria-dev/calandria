@@ -8,8 +8,18 @@
 // daily by .github/workflows/pin-drift.yml, which files or updates one labeled
 // issue.
 //
+// The agy pins are the exception. `--update-agy` rewrites AGY_VERSION and both
+// SHA-512 ARGs from the manifests this run already fetched, and the workflow
+// turns that into a pull request instead of an issue paragraph. All three ARGs
+// move together or none of them move, a manifest pair that disagrees on the
+// version is refused outright, and the agy findings drop out of the report so
+// the issue keeps reporting only the pins a human still has to bump. The
+// checksum a bump writes is reviewed by building the image on the bot branch,
+// which is what .github/workflows/pin-drift.yml dispatches.
+//
 // Usage: node scripts/check-pin-drift.mjs [--dockerfile <path>]
 //        [--package-json <path>] [--report <path>]
+//        [--update-agy] [--agy-summary <path>] [--apply-agy <path>]
 // Exit codes: 0 = current, 1 = drift found (report written), 2 = check itself failed.
 
 import { readFile, writeFile } from "node:fs/promises";
@@ -75,21 +85,38 @@ function parseArgs(argv) {
     dockerfile: "Dockerfile",
     packageJson: "package.json",
     report: null,
+    updateAgy: false,
+    agySummary: null,
+    applyAgy: null,
   };
   const paths = {
     "--dockerfile": "dockerfile",
     "--package-json": "packageJson",
     "--report": "report",
+    "--agy-summary": "agySummary",
+    "--apply-agy": "applyAgy",
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (paths[arg]) {
+    if (arg === "--update-agy") {
+      opts.updateAgy = true;
+    } else if (paths[arg]) {
       const value = argv[++i];
       if (!value) throw new Error(`${arg} needs a path`);
       opts[paths[arg]] = value;
     } else {
       throw new Error(`unrecognized argument: ${arg}`);
     }
+  }
+  if (opts.agySummary && !opts.updateAgy) {
+    throw new Error(
+      "--agy-summary describes what --update-agy wrote, so it needs --update-agy",
+    );
+  }
+  if (opts.applyAgy && opts.updateAgy) {
+    throw new Error(
+      "--apply-agy replays a decision --update-agy already made; pass one or the other",
+    );
   }
   return opts;
 }
@@ -125,6 +152,133 @@ export function extractPins(source, dockerfilePath) {
     ),
     codexVersion: find(/^ARG CODEX_VERSION=(\S+)/m, "`ARG CODEX_VERSION`"),
   };
+}
+
+// The three ARGs an agy bump moves, paired with the key each takes its new
+// value from. One list, so extraction and rewriting can never watch different
+// ARGs.
+const AGY_ARGS = [
+  { arg: "AGY_VERSION", key: "version" },
+  { arg: "AGY_SHA512_AMD64", key: "amd64" },
+  { arg: "AGY_SHA512_ARM64", key: "arm64" },
+];
+
+// What the Dockerfile will accept. The version goes into a `case` glob against
+// the manifest URL and the digests go into `sha512sum -c`, so anything outside
+// these shapes would fail the build after the PR is open rather than here.
+const AGY_VERSION_SHAPE = /^\d+(?:\.\d+){1,3}$/;
+const SHA512_SHAPE = /^[0-9a-f]{128}$/;
+
+/**
+ * What an agy bump would write, or null when the Dockerfile already says it.
+ * Pure, so tests/pinDrift.test.ts can drive every refusal without a network.
+ *
+ * Refuses rather than guesses. A manifest missing a field, a version or digest
+ * in a shape the Dockerfile could not use, and two arches advertising
+ * different versions are all upstream states this cannot turn into one
+ * reviewable commit, and half a bump is worse than none: the Dockerfile's own
+ * guard compares the manifest URL against AGY_VERSION, so a version written
+ * without its digests fails `sha512sum -c` on both arches.
+ *
+ * A version going BACKWARDS is not refused. The manifest is the only thing the
+ * build resolves against, so a vendor rollback has to be followed, not ignored.
+ */
+export function agyBumpPlan(pins, perArch) {
+  const seen = {};
+  for (const arch of ARCHES) {
+    const manifest = perArch?.[arch];
+    if (
+      !manifest ||
+      typeof manifest.version !== "string" ||
+      typeof manifest.sha512 !== "string"
+    ) {
+      throw new Error(
+        `the agy ${arch} manifest has no version/sha512, so there is nothing ` +
+          "safe to write into the Dockerfile",
+      );
+    }
+    const sha512 = manifest.sha512.trim().toLowerCase();
+    if (!AGY_VERSION_SHAPE.test(manifest.version)) {
+      throw new Error(
+        `the agy ${arch} manifest names version \`${manifest.version}\`, ` +
+          "which is not a shape the Dockerfile's AGY_VERSION guard can match",
+      );
+    }
+    if (!SHA512_SHAPE.test(sha512)) {
+      throw new Error(
+        `the agy ${arch} manifest's sha512 is not 128 hex characters, so ` +
+          "`sha512sum -c` could not read it",
+      );
+    }
+    seen[arch] = { version: manifest.version, sha512 };
+  }
+
+  if (seen.amd64.version !== seen.arm64.version) {
+    throw new Error(
+      "the agy manifests disagree on the version: amd64 serves " +
+        `${seen.amd64.version} and arm64 serves ${seen.arm64.version}. One ` +
+        "AGY_VERSION covers both arches, so this waits for upstream to settle",
+    );
+  }
+
+  const version = seen.amd64.version;
+  const from = pins.agyVersion.value;
+  const current =
+    version === from &&
+    seen.amd64.sha512 === pins.agySha.amd64.value.toLowerCase() &&
+    seen.arm64.sha512 === pins.agySha.arm64.value.toLowerCase();
+  if (current) return null;
+
+  return {
+    // A rebuilt tarball under an unchanged version is a different sentence for
+    // whoever reads the PR title, and it is the case worth looking at hardest.
+    kind: version === from ? "digest" : "version",
+    version,
+    from,
+    amd64: seen.amd64.sha512,
+    arm64: seen.arm64.sha512,
+  };
+}
+
+/**
+ * The bump applied to the Dockerfile source. Returns the whole new text, so
+ * the caller writes once and the three ARGs land together or not at all.
+ * `changed` is false when the source already carries every value, which is
+ * what makes re-running this a no-op.
+ */
+export function applyAgyPin(source, plan, dockerfilePath = "Dockerfile") {
+  // Located before anything is rewritten: a Dockerfile missing one of the
+  // three must not come back with the other two moved.
+  const sites = AGY_ARGS.map(({ arg, key }) => {
+    const value = plan?.[key];
+    if (typeof value !== "string" || !value) {
+      throw new Error(`the agy bump has no \`${key}\` to write into ${arg}`);
+    }
+    const match = new RegExp(`^ARG ${arg}=(\\S+)`, "m").exec(source);
+    if (!match) {
+      throw new Error(
+        `could not find \`ARG ${arg}\` in ${dockerfilePath}: the pin moved ` +
+          "or was renamed, so this check is no longer looking at the real thing",
+      );
+    }
+    return { match, value };
+  });
+
+  let out = source;
+  let changed = false;
+  // Highest offset first, so a replacement can never shift an offset that has
+  // not been used yet. Sorted rather than assumed: the offsets come from the
+  // file, and nothing says the ARGs appear in AGY_ARGS order.
+  const ordered = [...sites].sort((a, b) => b.match.index - a.match.index);
+  for (const { match, value } of ordered) {
+    if (match[1] === value) continue;
+    // Only the captured value is replaced, so anything the line carries after
+    // it survives.
+    const start = match.index + match[0].length - match[1].length;
+    out = out.slice(0, start) + value + out.slice(start + match[1].length);
+    changed = true;
+  }
+  return { source: out, changed };
 }
 
 /**
@@ -349,7 +503,14 @@ export function npmPinEntries(pins, packagePins) {
   ];
 }
 
-async function collectFindings(pins, packagePins) {
+/**
+ * `updateAgy` drops the agy rows from `findings`. Under --update-agy the bump
+ * is a pull request, and repeating it in the issue would ask a human to do
+ * work a branch is already carrying. The manifests are still fetched and still
+ * appear in the observed-upstream table, since that is what the bump is
+ * computed from.
+ */
+async function collectFindings(pins, packagePins, { updateAgy = false } = {}) {
   const findings = [];
 
   const gh = Object.fromEntries(
@@ -376,7 +537,7 @@ async function collectFindings(pins, packagePins) {
   const agyVersions = Object.fromEntries(
     ARCHES.map((a) => [a, agy[a].version]),
   );
-  for (const { value: upstream, label } of byUpstreamValue(agyVersions)) {
+  for (const { value: upstream, label } of updateAgy ? [] : byUpstreamValue(agyVersions)) {
     if (upstream === pins.agyVersion.value) continue;
     findings.push({
       pin: `\`AGY_VERSION\`${label}`,
@@ -395,7 +556,7 @@ async function collectFindings(pins, packagePins) {
   // Digests are inherently per-arch, so these are never collapsed. Only
   // meaningful where the version still matches; a moved version is already
   // reported above and takes both digests with it.
-  for (const arch of ARCHES) {
+  for (const arch of updateAgy ? [] : ARCHES) {
     if (agy[arch].version !== pins.agyVersion.value) continue;
     if (agy[arch].sha512 !== pins.agySha[arch].value) {
       // Same version, different digest: a rebuilt tarball. `sha512sum -c`
@@ -490,8 +651,10 @@ const BUMP_CHECKLIST = [
   "",
 ];
 
-function buildReport({ findings, stale, entries, observed }, pins) {
+function buildReport({ findings, stale, entries, observed }, pins, agyNote) {
   const lines = [];
+
+  if (agyNote) lines.push(agyNote, "");
 
   if (findings.length) {
     lines.push(
@@ -572,15 +735,83 @@ function buildReport({ findings, stale, entries, observed }, pins) {
   return lines.join("\n");
 }
 
+/**
+ * Replays a summary --update-agy already wrote, against whatever Dockerfile is
+ * on disk now. No network and no decision of its own: the branch a bump is cut
+ * on must carry the exact three values the check reported, not a second answer
+ * from a manifest that may have moved in between.
+ */
+async function applySavedBump(opts) {
+  const plan = JSON.parse(await readFile(opts.applyAgy, "utf8"));
+  if (!plan.changed) {
+    console.log("Nothing to apply: the summary records no bump.");
+    return 0;
+  }
+  const source = await readFile(opts.dockerfile, "utf8");
+  const applied = applyAgyPin(source, plan, opts.dockerfile);
+  if (applied.changed) await writeFile(opts.dockerfile, applied.source, "utf8");
+  console.log(
+    applied.changed
+      ? `Applied AGY_VERSION=${plan.version} and both SHA-512s to ${opts.dockerfile}.`
+      : `${opts.dockerfile} already carries AGY_VERSION=${plan.version} and both SHA-512s.`,
+  );
+  return 0;
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
-  const source = await readFile(opts.dockerfile, "utf8");
-  const pins = extractPins(source, opts.dockerfile);
+  if (opts.applyAgy) return applySavedBump(opts);
+  let source = await readFile(opts.dockerfile, "utf8");
+  let pins = extractPins(source, opts.dockerfile);
   const packagePins = extractPackagePins(
     await readFile(opts.packageJson, "utf8"),
     opts.packageJson,
   );
-  const result = await collectFindings(pins, packagePins);
+  const result = await collectFindings(pins, packagePins, {
+    updateAgy: opts.updateAgy,
+  });
+
+  let agyNote = null;
+  if (opts.updateAgy) {
+    // Throws on an upstream state no commit could be cut from, which exits 2
+    // and goes red rather than writing half a bump.
+    const plan = agyBumpPlan(pins, result.observed.agy);
+    if (plan) {
+      const applied = applyAgyPin(source, plan, opts.dockerfile);
+      if (applied.changed) {
+        await writeFile(opts.dockerfile, applied.source, "utf8");
+        source = applied.source;
+        // Re-read so the report's pin lines describe the file as it now
+        // stands, not the version this run replaced.
+        pins = extractPins(source, opts.dockerfile);
+      }
+      agyNote =
+        plan.kind === "version"
+          ? `The agy pins moved from \`${plan.from}\` to \`${plan.version}\` in a pull request, not here.`
+          : `The agy ${plan.version} digests were refreshed in a pull request, not here.`;
+      console.error(
+        `Wrote AGY_VERSION=${plan.version} and both SHA-512s to ${opts.dockerfile}.`,
+      );
+    }
+    if (opts.agySummary) {
+      await writeFile(
+        opts.agySummary,
+        `${JSON.stringify(
+          {
+            changed: Boolean(plan),
+            kind: plan?.kind ?? null,
+            version: plan?.version ?? pins.agyVersion.value,
+            from: plan?.from ?? pins.agyVersion.value,
+            amd64: plan?.amd64 ?? pins.agySha.amd64.value,
+            arm64: plan?.arm64 ?? pins.agySha.arm64.value,
+          },
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
+    }
+  }
 
   const total = result.findings.length + result.stale.length;
   if (total === 0) {
@@ -597,7 +828,7 @@ async function main() {
     return 0;
   }
 
-  const report = buildReport(result, pins);
+  const report = buildReport(result, pins, agyNote);
   if (opts.report) await writeFile(opts.report, report, "utf8");
   console.log(report);
   console.error(

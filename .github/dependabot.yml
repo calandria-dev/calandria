@@ -137,6 +137,16 @@
 #      the step-in-with-the-SDK constraint is `tests/cliPins.test.ts`, which
 #      fails on the PR that desynchronizes them; a Renovate PR touching only
 #      the ARG could not have satisfied it.
+#      AGY_VERSION is the exception, and it is the one case where "a bot should
+#      open the PR" was right. The vendor's manifest carries the version AND
+#      the SHA-512, so the bump is three values copied out of two JSON
+#      documents with nothing to judge, and the Dockerfile's own guard rejects
+#      any pair that is not what upstream serves. `Pin drift` owns those three
+#      ARGs outright: it force-pushes `bot/agy-pin` and opens one pull request
+#      per version, dispatches both architecture image builds against that
+#      branch to check the digests it wrote, and never automerges. That is
+#      forty lines in this repo running on `GITHUB_TOKEN`, with no standing PAT
+#      and no third-party app holding write access.
 #   3. The coverage bought is one image that is already recorded (versions plus
 #      resolved digest, to the run summary), floored (hard-fails below the
 #      type=gha minimums), and removed outright from the merge job.
@@ -151,8 +161,9 @@
 # or automerge (which removes the human gate the pin was meant to add).
 #
 # Re-open only if: Renovate is adopted for repo-wide coverage anyway — in which
-# case it takes EVERYTHING and this file is deleted, since one pin must have
-# exactly one owner and two bots on the same SHA is the real failure mode;
+# case it takes EVERYTHING except the three agy ARGs, which `Pin drift` owns and
+# must be excluded from any regex manager, since one pin must have exactly one
+# owner and two bots on the same SHA is the real failure mode;
 # deterministic builder identity becomes a compliance requirement; or
 # `buildx-stable-1` actually causes an incident.
 version: 2
