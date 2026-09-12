@@ -471,6 +471,46 @@ export const LITELLM_ADMIN_KEY_SET = !!LITELLM_ADMIN_KEY;
  */
 export const LITELLM_KEY_TIMEOUT_MS = ms(readEnv("CALANDRIA_LITELLM_KEY_TIMEOUT_MS"), 8000);
 
+/** Everything the provider env seed reads (lib/providers/seed.ts). */
+export interface ProviderSeedEnv {
+  /** The gateway to seed a `litellm` row from, or null when none is configured. */
+  litellmBaseUrl: string | null;
+  litellmKey: string;
+  litellmAdminKey: string;
+  litellmMcp: boolean;
+  litellmKeyTimeoutMs: number;
+  /** The local server to seed a row from. */
+  localBaseUrl: string;
+  /** Whether CALANDRIA_LOCAL_MODEL_BASE_URL names it, as opposed to the default. */
+  localBaseUrlSet: boolean;
+}
+
+/**
+ * The seed's view of the environment, read live rather than captured in a
+ * const, because it runs at boot AFTER the persisted gateway key has been
+ * mirrored into the environment (lib/providerSecrets.ts), and a value read at
+ * import time would miss it.
+ *
+ * `localBaseUrlSet` is the difference between "this instance runs a local
+ * server" and "nobody said". The default URL seeds nothing: a row for a
+ * server most instances do not run would be an unreachable provider on every
+ * fresh install.
+ */
+export function providerSeedEnv(): ProviderSeedEnv {
+  return {
+    litellmBaseUrl: gatewayBaseUrl(),
+    litellmKey: String(readEnv("CALANDRIA_LITELLM_KEY") || "").trim(),
+    litellmAdminKey: LITELLM_ADMIN_KEY,
+    litellmMcp: LITELLM_MCP,
+    litellmKeyTimeoutMs: LITELLM_KEY_TIMEOUT_MS,
+    localBaseUrl: String(readEnv("CALANDRIA_LOCAL_MODEL_BASE_URL") || "http://localhost:11434")
+      .trim()
+      .replace(/\/+$/, "")
+      .replace(/\/v1$/i, ""),
+    localBaseUrlSet: !!String(readEnv("CALANDRIA_LOCAL_MODEL_BASE_URL") || "").trim(),
+  };
+}
+
 /**
  * How long Calandria will wait for a local model server to say which models it
  * has (lib/modelEndpoint.ts) before calling it unreachable. Short on purpose:

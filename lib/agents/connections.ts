@@ -1,5 +1,8 @@
 import { getSetting, setSetting } from "../store";
 import { publish } from "../events";
+// DB-only too: a bundled provider row is the CLI's own login expressed as a
+// provider, so it is created and removed with the connection record below.
+import { ensureBundledProvider, removeBundledProvider } from "../providers/store";
 // SDK-free (fs + env only), the same file capabilities.ts reads the catalog
 // corrections from; see the note in claude/provider.ts.
 import { configuredProvider, type ClaudeProvider } from "./claude/provider";
@@ -172,6 +175,10 @@ export function setAgentConnection(agentId: string, conn: Omit<AgentConnection, 
   // A fresh login / verify / api-key save is the repair; never leave a stale
   // "reconnect me" banner up after the user just did.
   clearAgentAuthBroken(agentId);
+  // Signing in to a CLI is what brings its own models along, so the bundled
+  // provider row exists exactly as long as the connection does
+  // (lib/providers/store.ts). Idempotent: a re-login finds the row already there.
+  ensureBundledProvider(agentId);
 }
 
 export function clearAgentConnection(agentId: string): void {
@@ -179,6 +186,10 @@ export function clearAgentConnection(agentId: string): void {
   // Disconnected on purpose: the agent now reads as "not connected", which the
   // UI already explains, so a broken-connection banner on top would be noise.
   clearAgentAuthBroken(agentId);
+  // The endpoint and the credential belong to the CLI, so signing out takes
+  // the bundled provider with it. Everything that named it falls back through
+  // ON DELETE SET NULL.
+  removeBundledProvider(agentId);
 }
 
 // ---------- broken-connection flag (credentials died after connecting) ----------
