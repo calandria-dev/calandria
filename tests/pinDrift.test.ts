@@ -8,6 +8,8 @@ import {
   npmPinEntries,
   byUpstreamValue,
   npmStaleness,
+  agyBumpPlan,
+  applyAgyPin,
 } from "../scripts/check-pin-drift.mjs";
 
 const ROOT = path.join(__dirname, "..");
@@ -66,6 +68,168 @@ describe("pin drift extraction", () => {
     // Guard against the replace matching nothing and leaving the source unchanged.
     expect(renamed).not.toBe(source);
     expect(() => extractPins(renamed, "Dockerfile")).toThrow(/AGY_VERSION/);
+  });
+});
+
+/**
+ * The other half of check-pin-drift.mjs writes the Dockerfile: agyBumpPlan()
+ * decides what an agy bump would write, and applyAgyPin() writes it. Every
+ * refusal in that path has to be pinned here, where it costs nothing to run
+ * again, because the upstream manifest states that would trigger it in
+ * production cannot be replayed on demand.
+ */
+describe("agy bump", () => {
+  const source = readFileSync(DOCKERFILE, "utf8");
+  const pins = extractPins(source, "Dockerfile");
+  const AMD = "a".repeat(128);
+  const ARM = "b".repeat(128);
+
+  it("reads a bump out of the manifests both arches agree on", () => {
+    const plan = agyBumpPlan(pins, {
+      amd64: { version: "9.9.9", sha512: AMD },
+      arm64: { version: "9.9.9", sha512: ARM },
+    });
+    expect(plan?.kind).toBe("version");
+    expect(plan?.version).toBe("9.9.9");
+    expect(plan?.from).toBe(pins.agyVersion.value);
+    expect(plan?.amd64).toBe(AMD);
+    expect(plan?.arm64).toBe(ARM);
+  });
+
+  it("lowercases the digests it will hand to sha512sum", () => {
+    const plan = agyBumpPlan(pins, {
+      amd64: { version: "9.9.9", sha512: AMD.toUpperCase() },
+      arm64: { version: "9.9.9", sha512: ARM.toUpperCase() },
+    });
+    expect(plan?.amd64).toBe(AMD);
+    expect(plan?.arm64).toBe(ARM);
+  });
+
+  it("says nothing when the Dockerfile already carries the manifests", () => {
+    const plan = agyBumpPlan(pins, {
+      amd64: { version: pins.agyVersion.value, sha512: pins.agySha.amd64.value },
+      arm64: { version: pins.agyVersion.value, sha512: pins.agySha.arm64.value },
+    });
+    expect(plan).toBeNull();
+  });
+
+  it("calls a rebuilt tarball under an unchanged version a digest refresh", () => {
+    const plan = agyBumpPlan(pins, {
+      amd64: { version: pins.agyVersion.value, sha512: AMD },
+      arm64: { version: pins.agyVersion.value, sha512: ARM },
+    });
+    expect(plan?.kind).toBe("digest");
+    expect(plan?.version).toBe(plan?.from);
+  });
+
+  it("refuses two arches that advertise different versions", () => {
+    expect(() =>
+      agyBumpPlan(pins, {
+        amd64: { version: "9.9.9", sha512: AMD },
+        arm64: { version: "9.9.8", sha512: ARM },
+      }),
+    ).toThrow(/disagree/);
+  });
+
+  it("refuses a manifest missing its version or digest", () => {
+    expect(() =>
+      agyBumpPlan(pins, {
+        amd64: { version: "9.9.9" },
+        arm64: { version: "9.9.9", sha512: ARM },
+      }),
+    ).toThrow(/no version\/sha512/);
+
+    expect(() =>
+      agyBumpPlan(pins, {
+        amd64: { version: "9.9.9", sha512: AMD },
+        arm64: undefined,
+      }),
+    ).toThrow(/no version\/sha512/);
+  });
+
+  it("refuses a digest sha512sum could not read", () => {
+    expect(() =>
+      agyBumpPlan(pins, {
+        amd64: { version: "9.9.9", sha512: AMD.slice(0, 127) },
+        arm64: { version: "9.9.9", sha512: ARM },
+      }),
+    ).toThrow(/128 hex/);
+
+    expect(() =>
+      agyBumpPlan(pins, {
+        amd64: { version: "9.9.9", sha512: AMD },
+        arm64: { version: "9.9.9", sha512: "z".repeat(128) },
+      }),
+    ).toThrow(/128 hex/);
+  });
+
+  it("refuses a version the Dockerfile's guard could not match", () => {
+    expect(() =>
+      agyBumpPlan(pins, {
+        amd64: { version: "1.2.2-beta", sha512: AMD },
+        arm64: { version: "1.2.2-beta", sha512: ARM },
+      }),
+    ).toThrow(/AGY_VERSION guard/);
+  });
+
+  it("moves all three ARGs together", () => {
+    const plan = { version: "9.9.9", amd64: AMD, arm64: ARM };
+    const applied = applyAgyPin(source, plan, "Dockerfile");
+    expect(applied.changed).toBe(true);
+
+    const rewritten = extractPins(applied.source, "Dockerfile");
+    expect(rewritten.agyVersion.value).toBe("9.9.9");
+    expect(rewritten.agySha.amd64.value).toBe(AMD);
+    expect(rewritten.agySha.arm64.value).toBe(ARM);
+
+    expect(applied.source.split("\n").length).toBe(source.split("\n").length);
+  });
+
+  it("leaves an already-current Dockerfile byte-identical", () => {
+    const plan = {
+      version: pins.agyVersion.value,
+      amd64: pins.agySha.amd64.value,
+      arm64: pins.agySha.arm64.value,
+    };
+    const applied = applyAgyPin(source, plan, "Dockerfile");
+    expect(applied.changed).toBe(false);
+    expect(applied.source).toBe(source);
+  });
+
+  it("is idempotent", () => {
+    const plan = { version: "9.9.9", amd64: AMD, arm64: ARM };
+    const first = applyAgyPin(source, plan, "Dockerfile");
+    const second = applyAgyPin(first.source, plan, "Dockerfile");
+    expect(second.changed).toBe(false);
+    expect(second.source).toBe(first.source);
+  });
+
+  it("writes nothing when an ARG it must move has been renamed away", () => {
+    const renamed = source.replace(
+      "ARG AGY_SHA512_ARM64=",
+      "ARG AGY_SHA512_AARCH64=",
+    );
+    expect(renamed).not.toBe(source);
+    const plan = { version: "9.9.9", amd64: AMD, arm64: ARM };
+
+    expect(() => applyAgyPin(renamed, plan, "Dockerfile")).toThrow(
+      /AGY_SHA512_ARM64/,
+    );
+
+    // Nothing partial leaked: the string itself never changes, since it is a
+    // value, not a file the failed call could have half-written.
+    try {
+      applyAgyPin(renamed, plan, "Dockerfile");
+    } catch {
+      /* already asserted above */
+    }
+    expect(renamed).toContain(`AGY_VERSION=${pins.agyVersion.value}`);
+  });
+
+  it("refuses a plan that is missing one of the three values", () => {
+    expect(() =>
+      applyAgyPin(source, { version: "9.9.9", amd64: AMD }, "Dockerfile"),
+    ).toThrow(/AGY_SHA512_ARM64/);
   });
 });
 

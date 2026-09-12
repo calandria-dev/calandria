@@ -132,6 +132,16 @@ on:
         description: "Build without the layer cache (proves a cold build works)"
         type: boolean
         default: false
+      publish:
+        # Off is how a branch gets both arch builds as a REVIEW signal without
+        # a sha- tag appearing in the registry for a commit nobody has read.
+        # pin-drift.yml dispatches this way on its bot branch, where the build
+        # is the only thing that proves the checksums it just wrote are the
+        # ones the vendor is serving. Defaults to true so every dispatch that
+        # existed before this input behaves exactly as it did.
+        description: "Push the image (off = build both arches and materialize nothing)"
+        type: boolean
+        default: true
 
 # Workflow-level permissions are the floor; only the jobs that talk to the
 # registry raise them.
@@ -185,12 +195,14 @@ jobs:
       # workflow_dispatch stays on the list so a branch (or an untriggered tag —
       # see release-please.yml's header) can be test-published under its sha-
       # tag; it can only move `latest`/`edge` per the ref-type rules below, not
-      # by virtue of being a dispatch.
+      # by virtue of being a dispatch. A dispatch can also opt OUT with the
+      # `publish` input, which is the only way an event on the allowlist stops
+      # publishing; every other event decides by its name alone.
       # `schedule` publishes too: it only ever runs on the default branch.
       - name: Decide whether this event may publish
         id: gate
         run: |
-          echo "publish=${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}" >> "$GITHUB_OUTPUT"
+          echo "publish=${{ (github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')) }}" >> "$GITHUB_OUTPUT"
 
       # A release is only as trustworthy as the signal it's cut from (issue
       # #12): no image for a SHA whose push-to-main Test run is not green.
@@ -321,6 +333,11 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       e2e: "off"
+      # A called workflow reads the CALLER's `github.event_name`, so a manual
+      # dispatch of this file used to satisfy `macos-desktop`'s own gate and buy
+      # a 70-minute macOS run on top of the multi-arch build. This path asked
+      # for the unit gate.
+      macos: "off"
 
   build:
     needs: [prepare, test]

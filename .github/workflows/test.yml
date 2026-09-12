@@ -175,12 +175,26 @@ on:
         type: choice
         options: [auto, "on", "off"]
         default: auto
+      # `macos-desktop` has its own gate and its own cost, so it needs its own
+      # switch. `auto` is exactly what the gate did before this input existed:
+      # a manual dispatch opts in. A dispatch made by a WORKFLOW rather than by
+      # a person passes `off`, because a machine that runs daily cannot be the
+      # thing that decides to buy a Mac run (.github/workflows/pin-drift.yml).
+      macos:
+        description: "Run the macOS desktop lane (auto = yes for a manual run)"
+        type: choice
+        options: [auto, "on", "off"]
+        default: auto
   # Called by publish-image.yml, which wants the unit gate without paying for
   # e2e a second time on the publish path.
   workflow_call:
     inputs:
       e2e:
         description: "auto (main/dispatch/labelled PR) | on (always) | off (never)"
+        type: string
+        default: auto
+      macos:
+        description: "auto (schedule/dispatch/labelled PR) | on (always) | off (never)"
         type: string
         default: auto
 
@@ -1213,7 +1227,8 @@ jobs:
     # bills at roughly ten times a Linux one, and hanging it off the `e2e`
     # label would mean every PR that wanted a browser run silently bought a Mac
     # run too. So: the weekly cron, a manual dispatch, and a PR that asks for it
-    # by name with the `macos` label.
+    # by name with the `macos` label. The `macos` input above overrides all
+    # three, and `off` is what a dispatch made by another workflow passes.
     #
     # GITHUB-HOSTED, AND NOT NEGOTIABLE HERE. The homelab has no Apple hardware
     # and macOS cannot be virtualised on Proxmox/KVM with any legal path, so
@@ -1224,9 +1239,11 @@ jobs:
     if: >-
       ${{ needs.changes.outputs.app == 'true' && ((github.event_name != 'pull_request'
            || github.event.pull_request.state == 'open')
-          && (github.event_name == 'schedule'
-              || github.event_name == 'workflow_dispatch'
-              || contains(github.event.pull_request.labels.*.name, 'macos'))) }}
+          && (inputs.macos == 'on'
+              || (inputs.macos != 'off'
+                  && (github.event_name == 'schedule'
+                      || github.event_name == 'workflow_dispatch'
+                      || contains(github.event.pull_request.labels.*.name, 'macos'))))) }}
     runs-on: macos-latest
     # Above the Ubuntu desktop lane's 45 and the Windows one's 60. Ubuntu's two
     # passes (dev shell, then the packaged artifact) plus one extra GUI launch,

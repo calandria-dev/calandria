@@ -156,11 +156,22 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 # here against a pinned version instead of piping the script, so the build is
 # reproducible and the checksum is reviewed in this file rather than fetched.
 #
-# Refresh both digests together when bumping AGY_VERSION; they come from
+# These three ARGs are owned by `Pin drift` (.github/workflows/pin-drift.yml).
+# It reads both manifests daily and, when they have moved, force-pushes the
+# rewritten ARGs to the `bot/agy-pin` branch and opens or refreshes one pull
+# request titled `build(deps): bump Antigravity CLI to <version>`. That PR is
+# reviewed and merged by a human and is never automerged. Editing the three by
+# hand still works and costs nothing: the next run sees the pins are current,
+# closes the bot PR and deletes its branch.
+#
+# The values come from
 #   curl -fsSL https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json
-# (and .../linux_arm64.json), whose `version` field is what the ARG must match.
-# `Pin drift` (.github/workflows/pin-drift.yml) reads those same two manifests
-# daily and files an issue when this ARG or either digest falls behind.
+# (and .../linux_arm64.json). The `version` field is what AGY_VERSION must
+# match, the `sha512` field is the digest for that arch, and all three move
+# together: the guard below compares the manifest URL against AGY_VERSION, so
+# a version written without its digests fails `sha512sum -c` on both arches.
+# The bot refuses to write anything when the two manifests disagree on the
+# version, and files the usual issue for the other pins in this file.
 #
 # The binary self-updates in the background by default, which would replace
 # this pin mid-turn. AGY_CLI_DISABLE_AUTO_UPDATE below turns that off

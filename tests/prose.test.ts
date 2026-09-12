@@ -56,7 +56,7 @@ const ALLOWLIST: Record<string, AllowEntry> = {
       'Quotes GitHub\'s own PR-checks UI text ("Expected — waiting for status") verbatim; ' +
       "it's GitHub's copy, not this repo's code, so there is no in-repo file:line to check it against.",
   },
-  ".github/rulesets/README.md:57": {
+  ".github/rulesets/README.md:66": {
     reason: "Same GitHub PR-checks UI quote as .github/CLAUDE.md:36.",
   },
 };
