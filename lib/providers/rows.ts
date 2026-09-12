@@ -29,10 +29,10 @@ import {
  *  optional: a probe reports what it could learn. */
 export interface ProviderTestResult {
   reachable?: boolean;
-  api?: string;
-  version?: string;
+  api?: string | null;
+  version?: string | null;
   latency_ms?: number;
-  error?: string;
+  error?: string | null;
   [key: string]: unknown;
 }
 
