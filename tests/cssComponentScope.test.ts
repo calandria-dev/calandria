@@ -4,8 +4,8 @@
 // bordered/shadowed box). Every row in the Tags field silently inherited that card
 // layout. Scoping the new rules under `.tag-field .tag-row` did not help, since the
 // unscoped `.tag-row` rule still matched and its declarations still applied; the fix
-// was renaming to a `tagf-` prefix. `app/globals.css` is one flat class namespace (no
-// CSS modules, deliberately), so this class of collision has no compiler to catch it.
+// was renaming to a `tagf-` prefix. `app/globals.css` is one flat class namespace by
+// design (no CSS modules), so this class of collision has no compiler to catch it.
 //
 // This guard parses `app/globals.css` and flags a class whose *bare* form (no pseudo,
 // no chained modifier, just `.name`) is targeted by rules under two or more different
