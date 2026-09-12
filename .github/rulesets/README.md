@@ -73,8 +73,8 @@ aggregate still reports a check. This keeps the check present for every PR, incl
 ## Ordering: a required check must already exist on the base branch
 
 **Adding one of these rules to a branch whose workflows do not yet produce every check blocks
-every PR into it, permanently.** The check never reports, and the PR sits on "Expected — waiting
-for status" with no way forward but an admin bypass.
+every PR into it, permanently.** The check never reports, and the PR stays in the expected state
+waiting for status with no way forward but an admin bypass.
 
 The order is always: land the workflow change on the branch first, then add the rule.
 
