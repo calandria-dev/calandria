@@ -13,7 +13,7 @@ covers it. No API key needed.
 [**calandria.dev**](https://calandria.dev) · [**Docs**](https://calandria.dev/docs) · [**Run locally**](#run-locally) · [**Self-host**](docs/SELF_HOSTING.md) · [**Request a feature**](https://github.com/calandria-dev/calandria/discussions/categories/ideas)
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Node ≥22](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg)](package.json)
+[![Node ≥22.12](https://img.shields.io/badge/node-%E2%89%A522.12-brightgreen.svg)](package.json)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-8A2BE2.svg)](CONTRIBUTING.md)
 
 ![Calandria workspace showing projects and parallel agent tasks](docs/images/workspace.png)
@@ -318,7 +318,7 @@ Then ask a task in that project whether it's ready to run five at a time.
 
 ## Run locally
 
-You need Node 22+ on macOS, Linux, or Windows, and at least one supported
+You need Node 22.12+ on macOS, Linux, or Windows, and at least one supported
 agent CLI.
 
 ```bash
@@ -332,7 +332,7 @@ Codex and walks you through a short tutorial.
 
 Windows runs natively with the same three commands. It needs Windows 10
 1809+ or Server 2019+ (for ConPTY, which the terminal uses), Git for Windows
-on PATH, and Node 22+. The typecheck, unit, and end-to-end suites all run on
+on PATH, and Node 22.12+. The typecheck, unit, and end-to-end suites all run on
 `windows-latest` in CI. WSL2 also works; it runs the Linux build unchanged.
 See [Windows setup, both ways](docs/INSTALLATION.md#windows).
 

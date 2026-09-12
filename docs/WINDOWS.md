@@ -6,7 +6,7 @@ title: "Windows"
 
 Calandria runs on Windows two ways, and both are supported:
 
-- **Natively**: Windows 10 1809+ or Server 2019+, with Git for Windows on `PATH` and Node 22+.
+- **Natively**: Windows 10 1809+ or Server 2019+, with Git for Windows on `PATH` and Node 22.12+.
 - **Under WSL2**: the ordinary Linux build, unchanged.
 
 Setup for both is in [Installation → Windows](INSTALLATION.md#windows). Failure modes are in

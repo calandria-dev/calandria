@@ -53,7 +53,7 @@ function turnEnded(taskId: string): Promise<void> {
 type Line = Record<string, unknown>;
 function runnerLines(spies: ReturnType<typeof vi.spyOn>[]): Line[] {
   return spies
-    .flatMap((s) => s.mock.calls.map((c) => c[0] as string))
+    .flatMap((s) => s.mock.calls.map((c: unknown[]) => c[0] as string))
     .filter((l) => typeof l === "string" && l.startsWith("{"))
     .map((l) => JSON.parse(l) as Line)
     .filter((l) => l.component === "runner");
@@ -209,7 +209,7 @@ describe("turn lifecycle logging", () => {
     await startResumeTurn(getTask(task.id)!, project, "go");
     await ended;
 
-    const printed = spies.flatMap((s) => s.mock.calls.map((c) => String(c[0]))).filter((l) => l.startsWith("[runner]"));
+    const printed = spies.flatMap((s) => s.mock.calls.map((c: unknown[]) => String(c[0]))).filter((l) => l.startsWith("[runner]"));
     expect(printed.some((l) => l === `[runner] turn start task=${task.id} project=${project.id} agent=claude generation=1 origin=user resume=false`)).toBe(true);
     expect(printed.some((l) => l.startsWith(`[runner] turn ok task=${task.id}`) && l.includes("tokens_total=0"))).toBe(true);
   });
