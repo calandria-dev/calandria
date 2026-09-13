@@ -1,11 +1,10 @@
 /*
  * Server-side provider resolution for a turn.
  *
- * This module is deliberately separate from lib/agentEnv.ts. The latter is
- * imported by client components, while this file reads the database and the
- * provider secret file. Callers must keep the returned `extras` in the
- * spawned turn's environment and must never serialize them into a row or API
- * response.
+ * Client components import lib/agentEnv.ts, so database and provider-secret
+ * access stays in this server-only module. Callers must keep the returned
+ * `extras` in the spawned turn's environment and must never serialize them
+ * into a row or API response.
  */
 
 import type { AgentEnv } from "../agentEnv";
