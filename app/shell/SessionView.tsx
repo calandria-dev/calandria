@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { type Status, type Priority, type AskQuestion, type AskAnswers, type PermissionDecision } from "@/lib/types";
+import { GATEWAY_PLAN_ID, type Status, type Priority, type AskQuestion, type AskAnswers, type PermissionDecision } from "@/lib/types";
 import { Icon } from "../icons";
 import TaskChanges, { type ResolveResult } from "../TaskChanges";
 import { Markdown, type MarkdownLinks } from "../Markdown";
@@ -22,11 +22,9 @@ import { usePlanUsage } from "./PlanUsage";
 import { usageResetAt, deferredStartFor } from "@/lib/usageReset";
 import { capsFor, agentLabel, findAgent } from "./agents";
 import { StatusDot, Avatar, Popover, AgentBadge, ProviderBadge, Skel } from "./shared";
-import { useEndpointModels } from "./modelEndpoint";
 import { ModelPicker, useModelTree, resolveModelLabel, type ModelPickerValue, type ModelPickerEnvOption } from "./ModelPicker";
 import type { PresentedProvider } from "@/lib/providers/present";
-import { planWindowApplies, taskProvider } from "@/lib/agentEnv";
-import { planResetKeyFor } from "@/lib/agentEnv";
+import { taskProvider } from "@/lib/agentEnv";
 import { MessageView, SessionBreak, type LimitResume, type SuggestionActions } from "./Transcript";
 import { CollabDoc } from "./CollabDoc";
 import { Composer } from "./Composer";
@@ -646,13 +644,29 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   // only a snapshot that reports a reset gets the queue-at-reset offers (the
   // hero's button, the usage-limit notice's).
   const planUsage = usePlanUsage();
+  const [providersMap, setProvidersMap] = useState<Map<string, PresentedProvider>>(new Map());
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/providers")
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+      .then((body: { providers: PresentedProvider[] }) => {
+        if (alive) setProvidersMap(new Map(body.providers.map((p) => [p.id, p] as const)));
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
   // Applies only when this task's turns actually draw on that plan.
-  // `planResetKeyFor` reads the project's override with the task's laid over
-  // it, per agent, and answers with the snapshot that gates the next turn: the
-  // agent's own, the gateway key's budget (app/api/plan-usage/route.ts), or
-  // none at all when the turns run against a local or custom endpoint that
-  // spends no subscription.
-  const resetKey = useMemo(() => planResetKeyFor(project, task), [project, task]);
+  // The provider row selected on the task or project decides which snapshot
+  // gates the next turn. A bundled provider uses the environment's plan, a
+  // LiteLLM row uses the gateway budget, and every other row uses neither.
+  const effectiveProviderId = task.provider_id ?? project.default_provider_id;
+  const effectiveProvider = effectiveProviderId ? providersMap.get(effectiveProviderId) : null;
+  const resetKey = useMemo(() => {
+    if (!effectiveProviderId) return task.agent;
+    if (!effectiveProvider) return null;
+    if (effectiveProvider.type === "litellm") return GATEWAY_PLAN_ID;
+    return effectiveProvider.bundled === task.agent ? task.agent : null;
+  }, [effectiveProvider, effectiveProviderId, task.agent]);
   const resetAt = resetKey ? usageResetAt(planUsage[resetKey] ?? null) : null;
   const stableQueueStart = useStableHandler(onQueueStart);
   const stableCancelQueuedStart = useStableHandler(onCancelQueuedStart);
@@ -740,17 +754,6 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   // /api/providers cache internally, but doesn't export it, so this is a
   // second, page-scoped fetch rather than a shared cache.
   const { tree: modelTree } = useModelTree(task.agent);
-  const [providersMap, setProvidersMap] = useState<Map<string, PresentedProvider>>(new Map());
-  useEffect(() => {
-    let alive = true;
-    fetch("/api/providers")
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
-      .then((body: { providers: PresentedProvider[] }) => {
-        if (alive) setProvidersMap(new Map(body.providers.map((p) => [p.id, p] as const)));
-      })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, []);
   const modelLabelResolved = resolveModelLabel(modelTree, providersMap, { provider_id: task.provider_id, model: task.model });
   // ModelPicker's own connectedEnvOptions() takes AgentsResponseT (the raw
   // /api/agents shape); this component holds the client-normalized

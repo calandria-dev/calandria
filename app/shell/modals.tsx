@@ -8,7 +8,7 @@ import { nanoid } from "nanoid";
 import { relTime, duration, fmtJobCost, alphabetical, isBlocking, splitAttachments } from "./format";
 import { AttachmentChips, stagedAttachment, uploadToDraft, uploadToTask, useAttachments } from "./attachments";
 import { joinAttachmentText } from "@/lib/uploadTypes";
-import { SLABEL, modelOptions, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate, type TagRow } from "./types";
+import { SLABEL, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate, type TagRow } from "./types";
 import { tagProgress } from "./TagChips";
 import { agentLabel, agentPickerNeeded, defaultAgentFor, findAgent, pickerAgents } from "./agents";
 import { StatusDot, Skel, ErrNote } from "./shared";
