@@ -1,7 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import { INSTANCE_NAME, LITELLM_BASE_URL, MAX_UPLOAD_MB, PUBLIC_BASE_URL } from "@/lib/config";
+import { INSTANCE_NAME, MAX_UPLOAD_MB, PUBLIC_BASE_URL } from "@/lib/config";
 import { resolveFeatures } from "@/lib/features";
+import { gatewayBaseUrl } from "@/lib/providers/resolve";
 import { fontVariables } from "./fonts";
 
 export const metadata: Metadata = {
@@ -45,6 +46,7 @@ export const viewport: Viewport = {
 export const dynamic = "force-dynamic";
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const configuredGateway = gatewayBaseUrl();
   return (
     <html lang="en" data-theme="cherenkov-dark" data-mode="dark" className={fontVariables}>
       <head>
@@ -74,7 +76,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             since it's a project-settings-form concern that describeProvider()
             has no need of. */}
         <script
-          dangerouslySetInnerHTML={{ __html: `window.__PUBLIC_BASE_URL=${JSON.stringify(PUBLIC_BASE_URL)};window.__FEATURES=${JSON.stringify(resolveFeatures())};window.__MAX_UPLOAD_MB=${JSON.stringify(MAX_UPLOAD_MB)};window.__GATEWAY_BASE_URL=${JSON.stringify(LITELLM_BASE_URL ?? "")};` }}
+          dangerouslySetInnerHTML={{ __html: `window.__PUBLIC_BASE_URL=${JSON.stringify(PUBLIC_BASE_URL)};window.__FEATURES=${JSON.stringify(resolveFeatures())};window.__MAX_UPLOAD_MB=${JSON.stringify(MAX_UPLOAD_MB)};window.__GATEWAY_BASE_URL=${JSON.stringify(configuredGateway ?? "")};` }}
         />
         {/* Fonts are self-hosted via next/font (app/fonts.ts): no Google Fonts
             CDN request at runtime. Their CSS variables land on <html> via the

@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { getProject } from "@/lib/store";
-import { taskProvider, isGatewayEndpoint } from "@/lib/agentEnv";
+import { isGatewayEndpoint } from "@/lib/agentEnv";
+import { litellmRuntimeFor, resolveProviderEnv } from "@/lib/providers/resolve";
 import { endpointModels } from "@/lib/modelEndpoint";
 import { gatewayModelCatalog, gatewayModelOptions, type GatewayFitAgent } from "@/lib/gatewayModels";
-import { gatewayKey } from "@/lib/litellm-key";
 
 function fitAgentFor(id: string | null | undefined): GatewayFitAgent {
   return id === "codex" ? "codex" : id === "gemini" ? "gemini" : "claude";
@@ -34,8 +34,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
   const url = new URL(req.url);
   const asked = (url.searchParams.get("base_url") || "").trim();
-  const provider = taskProvider(project);
-  const base = asked || provider.anthropic_base_url || provider.openai_base_url || "";
+  const resolved = resolveProviderEnv({ project, environment: project.default_agent });
+  const base = asked || resolved.env.ANTHROPIC_BASE_URL || resolved.env.OPENAI_BASE_URL || resolved.env.GOOGLE_GEMINI_BASE_URL || "";
   if (!base) {
     return NextResponse.json({ base_url: "", reachable: false, api: null, models: [], error: null });
   }
@@ -52,9 +52,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   // gateway's own address into a project whose saved override is something
   // else must still hit this branch instead of 404ing the Ollama/OpenAI
   // probe against it.
-  if (isGatewayEndpoint(base)) {
-    const agent = fitAgentFor(url.searchParams.get("agent") || project.default_agent);
-    const catalog = await gatewayModelCatalog(base, gatewayKey());
+  const agent = fitAgentFor(url.searchParams.get("agent") || project.default_agent);
+  const gateway = litellmRuntimeFor(project, null, agent);
+  const rowGateway = !asked && resolved.provider?.type === "litellm";
+  if (rowGateway || isGatewayEndpoint(base, gateway?.baseUrl ?? null)) {
+    const catalog = await gatewayModelCatalog(base, gateway?.key ?? "");
     const model_options = gatewayModelOptions(catalog.models, agent);
     return NextResponse.json({
       base_url: catalog.base_url,

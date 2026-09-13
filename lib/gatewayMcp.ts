@@ -15,9 +15,9 @@
 // [...]}` envelope, so an unexpected shape degrades to an empty catalog
 // instead of throwing.
 
-import { MODEL_PROBE_MS, LITELLM_MCP } from "./config";
+import { MODEL_PROBE_MS } from "./config";
 import { gatewayBaseUrl, normalizeBaseUrl } from "./agentEnv";
-import { gatewayKey } from "./litellm-key";
+import { litellmRuntimeFor } from "./providers/resolve";
 import type { Project, Task } from "./types";
 
 // ---------- selection: projects.gateway_mcp / tasks.gateway_mcp ----------
@@ -273,20 +273,26 @@ type GatewayMount = { alias: string; url: string; key: string };
  * dropped here even if picked, so a badly-named alias can't shadow it on any
  * driver. Independent of the task's model-provider kind: a Cloud-login
  * Claude task can still reach the gateway's hosted tools, so this only gates
- * on CALANDRIA_LITELLM_MCP, a configured gateway, and a non-empty selection,
+ * on the selected LiteLLM row's MCP flag, a configured gateway, and a non-empty selection,
  * not on `describeProvider(...).kind === "gateway"`. No network call and no
  * catalog lookup: mounting is blind to whether the alias still exists, the
  * same way a driver doesn't re-verify a Bash binary exists before running it.
  */
 function resolvedGatewayMounts(
-  project: Pick<Project, "gateway_mcp"> | null | undefined,
-  task: (Pick<Task, "gateway_mcp"> & Partial<Pick<Task, "gateway_key">>) | null | undefined,
+  project: (Pick<Project, "gateway_mcp"> & Partial<Pick<Project, "default_provider_id">>) | null | undefined,
+  task: (Pick<Task, "gateway_mcp"> & Partial<Pick<Task, "gateway_key" | "provider_id" | "agent">>) | null | undefined,
   gateway: string | null,
 ): GatewayMount[] {
-  if (!LITELLM_MCP || !gateway) return [];
+  const runtime = litellmRuntimeFor(
+    project ? { default_provider_id: project.default_provider_id ?? null } : null,
+    task ? { provider_id: task.provider_id ?? null } : null,
+    (task?.agent as "claude" | "codex" | "gemini") ?? "claude",
+  );
+  const enabled = runtime?.mcp ?? (gateway ? true : false);
+  if (!enabled || !gateway) return [];
   const aliases = resolveGatewayMcp(project, task).filter((a) => a !== "calandria");
   if (!aliases.length) return [];
-  const key = (task?.gateway_key || gatewayKey()).trim();
+  const key = (task?.gateway_key || runtime?.key || "").trim();
   return aliases.map((alias) => ({ alias, url: `${gateway}/${encodeURIComponent(alias)}/mcp`, key }));
 }
 
@@ -298,9 +304,9 @@ function resolvedGatewayMounts(
  * server's own OAuth.
  */
 export function gatewayMcpServersFor(
-  project: Pick<Project, "gateway_mcp"> | null | undefined,
-  task?: (Pick<Task, "gateway_mcp"> & Partial<Pick<Task, "gateway_key">>) | null,
-  gateway: string | null = gatewayBaseUrl(),
+  project: (Pick<Project, "gateway_mcp"> & Partial<Pick<Project, "default_provider_id">>) | null | undefined,
+  task?: (Pick<Task, "gateway_mcp"> & Partial<Pick<Task, "gateway_key" | "provider_id" | "agent">>) | null,
+  gateway: string | null = litellmRuntimeFor(project ? { default_provider_id: project.default_provider_id ?? null } : null, task ? { provider_id: task.provider_id ?? null } : null, "claude")?.baseUrl ?? gatewayBaseUrl(),
 ): Record<string, GatewayMcpHttpServer> {
   const out: Record<string, GatewayMcpHttpServer> = {};
   for (const { alias, url, key } of resolvedGatewayMounts(project, task, gateway)) {
@@ -325,9 +331,9 @@ export interface GatewayMcpCodexServer {
  * would contradict.
  */
 export function gatewayMcpServersForCodex(
-  project: Pick<Project, "gateway_mcp"> | null | undefined,
-  task?: (Pick<Task, "gateway_mcp"> & Partial<Pick<Task, "gateway_key">>) | null,
-  gateway: string | null = gatewayBaseUrl(),
+  project: (Pick<Project, "gateway_mcp"> & Partial<Pick<Project, "default_provider_id">>) | null | undefined,
+  task?: (Pick<Task, "gateway_mcp"> & Partial<Pick<Task, "gateway_key" | "provider_id" | "agent">>) | null,
+  gateway: string | null = litellmRuntimeFor(project ? { default_provider_id: project.default_provider_id ?? null } : null, task ? { provider_id: task.provider_id ?? null } : null, "codex")?.baseUrl ?? gatewayBaseUrl(),
 ): Record<string, GatewayMcpCodexServer> {
   const out: Record<string, GatewayMcpCodexServer> = {};
   for (const { alias, url, key } of resolvedGatewayMounts(project, task, gateway)) {
@@ -364,9 +370,9 @@ export function slugifyGatewayAliasForGemini(alias: string): string {
  * (lib/agents/gemini/mcp.ts).
  */
 export function gatewayMcpServersForGemini(
-  project: Pick<Project, "gateway_mcp"> | null | undefined,
-  task?: (Pick<Task, "gateway_mcp"> & Partial<Pick<Task, "gateway_key">>) | null,
-  gateway: string | null = gatewayBaseUrl(),
+  project: (Pick<Project, "gateway_mcp"> & Partial<Pick<Project, "default_provider_id">>) | null | undefined,
+  task?: (Pick<Task, "gateway_mcp"> & Partial<Pick<Task, "gateway_key" | "provider_id" | "agent">>) | null,
+  gateway: string | null = litellmRuntimeFor(project ? { default_provider_id: project.default_provider_id ?? null } : null, task ? { provider_id: task.provider_id ?? null } : null, "gemini")?.baseUrl ?? gatewayBaseUrl(),
 ): Record<string, GatewayMcpGeminiServer> {
   const out: Record<string, GatewayMcpGeminiServer> = {};
   for (const { alias, url, key } of resolvedGatewayMounts(project, task, gateway)) {

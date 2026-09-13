@@ -226,7 +226,7 @@ export async function runScheduleNow(scheduleId: string): Promise<ScheduleRun | 
 }
 
 /** What a firing actually runs: the linked runbook's recipe, or the schedule's own. */
-export type ScheduleRecipe = Pick<Schedule, "prompt" | "agent" | "permission_mode" | "send_context" | "priority">;
+export type ScheduleRecipe = Pick<Schedule, "prompt" | "agent" | "permission_mode" | "send_context" | "priority" | "provider_id" | "model">;
 
 /**
  * A schedule may point at a runbook so "the morning sweep" is one recipe edited
@@ -281,6 +281,8 @@ export async function fireSchedule(schedule: Schedule, run: ScheduleRun): Promis
     permission_mode: recipe.permission_mode,
     send_context: recipe.send_context !== 0,
     priority: recipe.priority,
+    provider_id: recipe.provider_id,
+    model: recipe.model,
     note: `▶ Scheduled: ${schedule.name}, ${describeSpec(specOf(schedule))}${late}.`,
     runContext: { ...SCHEDULED_RUN_CONTEXT, scheduleRunId: run.id },
     schedule_id: schedule.id,
@@ -295,4 +297,3 @@ export async function fireSchedule(schedule: Schedule, run: ScheduleRun): Promis
 
   if (!result.ok) settleRun(run.id, "failed", result.error);
 }
-

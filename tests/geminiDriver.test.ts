@@ -19,11 +19,13 @@ vi.mock("node:child_process", async (importOriginal) => {
   return { ...actual, spawn: spawnMock };
 });
 
-import { createProject, createTask, updateTask, getThreadUsageCum, recordSession, setSetting } from "@/lib/store";
+import { createProject, createTask, updateTask, getThreadUsageCum, recordSession, setSetting, updateProject } from "@/lib/store";
+import { createProvider } from "@/lib/providers/store";
+import { setProviderSecret } from "@/lib/providerSecrets";
+import { resolvedTaskProvider } from "@/lib/providers/resolve";
 import { geminiDriver, turnArgs, permissionFlags } from "@/lib/agents/gemini/driver";
 import { bridgeConfig, BRIDGE_SERVER_NAME, type GeminiMcpServer } from "@/lib/agents/gemini/mcp";
 import { prepareTaskHome } from "@/lib/agents/gemini/home";
-import { gatewayPresetEnv, serializeAgentEnv } from "@/lib/agentEnv";
 import type { GeminiCum } from "@/lib/agents/gemini/events";
 import type { StreamEvent, Project, Task } from "@/lib/types";
 
@@ -288,16 +290,11 @@ describe("per-task MCP bridge", () => {
 // config, so bridgeConfig mounts the selection unconditionally.
 describe("hosted gateway MCP mount", () => {
   const GW = "http://gw.example.com:4000";
-  beforeEach(() => {
-    process.env.CALANDRIA_LITELLM_BASE_URL = GW;
-  });
-  afterEach(() => {
-    delete process.env.CALANDRIA_LITELLM_BASE_URL;
-  });
 
   it("mounts the resolved selection alongside the bridge, slugified to hyphens", () => {
     const { project, task } = rows();
-    const gwProject = { ...project, gateway_mcp: JSON.stringify(["ticket_system"]) } as Project;
+    const provider = createProvider({ type: "litellm", label: "Gateway", config: { base_url: GW, mcp: true } });
+    const gwProject = { ...project, default_provider_id: provider.id, gateway_mcp: JSON.stringify(["ticket_system"]) } as Project;
     const cfg = bridgeConfig(gwProject, task);
     expect(cfg.mcpServers["ticket-system"]).toEqual({ httpUrl: `${GW}/ticket_system/mcp` });
     expect(cfg.mcpServers[BRIDGE_SERVER_NAME]).toBeTruthy();
@@ -305,7 +302,8 @@ describe("hosted gateway MCP mount", () => {
 
   it("never lets a gateway alias shadow the bridge's own name", () => {
     const { project, task } = rows();
-    const gwProject = { ...project, gateway_mcp: JSON.stringify(["calandria"]) } as Project;
+    const provider = createProvider({ type: "litellm", label: "Gateway", config: { base_url: GW, mcp: true } });
+    const gwProject = { ...project, default_provider_id: provider.id, gateway_mcp: JSON.stringify(["calandria"]) } as Project;
     const cfg = bridgeConfig(gwProject, task);
     expect(Object.keys(cfg.mcpServers)).toEqual([BRIDGE_SERVER_NAME]);
     expect((cfg.mcpServers[BRIDGE_SERVER_NAME] as { command: string }).command).toBe(process.execPath);
@@ -367,8 +365,6 @@ describe("gateway routing", () => {
     process.env.HOME = tmpHome;
     // os.homedir() reads USERPROFILE on Windows, not HOME.
     process.env.USERPROFILE = tmpHome;
-    process.env.CALANDRIA_LITELLM_BASE_URL = GW;
-    process.env.CALANDRIA_LITELLM_KEY = "sk-litellm";
   });
 
   afterEach(() => {
@@ -376,22 +372,25 @@ describe("gateway routing", () => {
     else process.env.HOME = realHome;
     if (realUserProfile === undefined) delete process.env.USERPROFILE;
     else process.env.USERPROFILE = realUserProfile;
-    delete process.env.CALANDRIA_LITELLM_BASE_URL;
-    delete process.env.CALANDRIA_LITELLM_KEY;
     setSetting("gemini_api_key", "");
     fs.rmSync(tmpHome, { recursive: true, force: true });
   });
 
   function gatewayRows(): { project: Project; task: Task } {
     const project = createProject({ name: `Gem-gw-${Math.random().toString(36).slice(2, 8)}`, repo_path: "/tmp" });
+    const provider = createProvider({ type: "litellm", label: "Gateway", config: { base_url: GW, billing: "key" } });
+    setProviderSecret(provider.id, "key", "sk-litellm");
+    updateProject(project.id, { default_provider_id: provider.id });
     const task = createTask({
       project_id: project.id,
       title: "T",
       description: "",
       agent: "gemini",
-      agent_env: serializeAgentEnv(gatewayPresetEnv({ baseUrl: GW, billing: "key" })),
     });
-    return { project, task };
+    return {
+      project: { ...project, default_provider_id: provider.id, provider: resolvedTaskProvider({ default_provider_id: provider.id }, task, "gemini") } as Project,
+      task,
+    };
   }
 
   it("carries the gateway address and the instance key into the spawned CLI's env", async () => {

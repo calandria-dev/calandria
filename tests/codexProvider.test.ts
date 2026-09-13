@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { codexProviderConfig, CODEX_LOCAL_PROVIDER_ID, CODEX_GATEWAY_PROVIDER_ID, CODEX_GATEWAY_KEY_VAR } from "@/lib/agents/codex/provider";
-import { agentTurnEnv, gatewayPresetEnv, providerPresetEnv, serializeAgentEnv, cloudOverrideEnv } from "@/lib/agentEnv";
+import { agentTurnEnv as buildAgentTurnEnv, gatewayPresetEnv, providerPresetEnv, serializeAgentEnv, cloudOverrideEnv, providerEnvFor } from "@/lib/agentEnv";
 import type { Project, Task } from "@/lib/types";
+import type { ResolvedProviderEnv } from "@/lib/providers/resolve";
+import { resolveProviderEnv } from "@/lib/providers/resolve";
+import { createProvider } from "@/lib/providers/store";
+import { deleteProviderSecrets, setProviderSecret } from "@/lib/providerSecrets";
+import { getDb } from "@/lib/db";
 
 // The Codex half of a provider override (lib/agents/codex/provider.ts): the
 // codex CLI reads its provider from config.toml, not the environment, so the
@@ -10,6 +15,20 @@ import type { Project, Task } from "@/lib/types";
 
 const project = (agent_env: string) => ({ port: 0, agent_env }) as Pick<Project, "port" | "agent_env">;
 const task = (agent_env: string) => ({ agent_env }) as Pick<Task, "agent_env">;
+
+const agentTurnEnv = (
+  p: Parameters<typeof buildAgentTurnEnv>[0],
+  t: Parameters<typeof buildAgentTurnEnv>[1],
+  base: NonNullable<Parameters<typeof buildAgentTurnEnv>[2]>,
+  gateway?: Parameters<typeof buildAgentTurnEnv>[3],
+) => {
+  const resolved: ResolvedProviderEnv = {
+    provider: null,
+    env: providerEnvFor(p, t),
+    extras: base.CALANDRIA_LITELLM_KEY ? { CALANDRIA_LITELLM_KEY: base.CALANDRIA_LITELLM_KEY } : {},
+  };
+  return buildAgentTurnEnv(p, t, base, gateway, resolved);
+};
 
 describe("codexProviderConfig", () => {
   it("emits nothing for the cloud", () => {
@@ -48,6 +67,22 @@ describe("codexProviderConfig", () => {
     expect(local.model).toBe("qwen3-coder");
     const cloud = codexProviderConfig(agentTurnEnv(proj, task(serializeAgentEnv(cloudOverrideEnv())), { PATH: "/usr/bin" }));
     expect(cloud).toEqual({ config: {}, model: null });
+  });
+
+  it("maps an openai_key row to the vendor URL and OPENAI_API_KEY env_key", () => {
+    const provider = createProvider({ type: "openai_key", config: { default_model: "gpt-5.2" } });
+    setProviderSecret(provider.id, "key", "sk-row-secret");
+    const resolved = resolveProviderEnv({ project: { default_provider_id: provider.id }, environment: "codex" });
+    const out = codexProviderConfig({ ...resolved.env, ...resolved.extras });
+    const entry = (out.config.model_providers as Record<string, Record<string, unknown>>)[CODEX_LOCAL_PROVIDER_ID];
+    expect(out.model).toBe("gpt-5.2");
+    expect(entry).toMatchObject({
+      base_url: "https://api.openai.com/v1",
+      env_key: "OPENAI_API_KEY",
+      wire_api: "responses",
+    });
+    deleteProviderSecrets(provider.id);
+    getDb().prepare("DELETE FROM model_providers WHERE id = ?").run(provider.id);
   });
 });
 
