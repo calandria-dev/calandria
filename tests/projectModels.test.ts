@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { GET } from "@/app/api/projects/[id]/models/route";
 import { createProject, createTask, listTasks, getTaskContext, updateProject, updateTask } from "@/lib/store";
+import { createProvider } from "@/lib/providers/store";
 import { clearEndpointProbeCache } from "@/lib/modelEndpoint";
-import { cloudOverrideEnv, gatewayPresetEnv, providerPresetEnv, serializeAgentEnv } from "@/lib/agentEnv";
 import { clearGatewayModelCache, gatewayModelCatalog } from "@/lib/gatewayModels";
 import { clearGatewayRates } from "@/lib/gatewayPricing";
 import { startFakeGateway, type FakeGateway } from "./fakeGateway";
@@ -13,8 +13,10 @@ import { startFakeGateway, type FakeGateway } from "./fakeGateway";
 // the catalog can't size leaves the context gauge with no window, and it
 // reports that instead of guessing.
 
-const local = (baseUrl: string, model = "") => serializeAgentEnv(providerPresetEnv({ baseUrl, model, token: "ollama" }));
-const gateway = (baseUrl: string, model = "") => serializeAgentEnv(gatewayPresetEnv({ baseUrl, billing: "key", model }));
+const local = (type: "ollama" | "lmstudio" | "custom", baseUrl: string, model = "") =>
+  createProvider({ type, config: { base_url: baseUrl, ...(type === "custom" ? { api: "anthropic" } : {}), ...(model ? { default_model: model } : {}) } });
+const gateway = (baseUrl: string, model = "") =>
+  createProvider({ type: "litellm", config: { base_url: baseUrl, billing: "key", ...(model ? { default_model: model } : {}) } });
 
 // taskProvider()'s gateway classification (lib/agentEnv.ts isGatewayEndpoint)
 // compares a project's ANTHROPIC_BASE_URL against the instance's own
@@ -62,7 +64,7 @@ afterEach(() => {
 describe("GET /api/projects/[id]/models", () => {
   it("lists what the project's saved endpoint reports", async () => {
     const p = createProject({ name: "models-saved" });
-    updateProject(p.id, { agent_env: local("http://localhost:11434", "qwen3-coder") });
+    updateProject(p.id, { default_provider_id: local("ollama", "http://localhost:11434", "qwen3-coder").id });
     const f = server(["qwen3-coder:latest", "llama3.2:3b"]);
 
     const body = await (await call(p.id)).json();
@@ -94,7 +96,7 @@ describe("GET /api/projects/[id]/models", () => {
 
   it("reports an unreachable endpoint as an answer, not a 500", async () => {
     const p = createProject({ name: "models-down" });
-    updateProject(p.id, { agent_env: local("http://localhost:11434") });
+    updateProject(p.id, { default_provider_id: local("ollama", "http://localhost:11434").id });
     vi.stubGlobal("fetch", vi.fn(() => {
       const e = new TypeError("fetch failed");
       (e as { cause?: unknown }).cause = { code: "ECONNREFUSED" };
@@ -128,7 +130,7 @@ describe("GET /api/projects/[id]/models: gateway", () => {
       ],
     });
     const p = createProject({ name: "models-gateway" });
-    updateProject(p.id, { agent_env: gateway(gw.url) });
+    updateProject(p.id, { default_provider_id: gateway(gw.url).id });
 
     await withGatewayEnv(gw.url, async () => {
       const claude = await (await call(p.id, undefined, "claude")).json();
@@ -148,7 +150,7 @@ describe("GET /api/projects/[id]/models: gateway", () => {
   it("defaults to the project's own agent when ?agent= is absent", async () => {
     gw = await startFakeGateway({ models: [{ name: "gemini-3-flash", provider: "gemini" }] });
     const p = createProject({ name: "models-gateway-default" });
-    updateProject(p.id, { default_agent: "gemini", agent_env: gateway(gw.url) });
+    updateProject(p.id, { default_agent: "gemini", default_provider_id: gateway(gw.url).id });
 
     await withGatewayEnv(gw.url, async () => {
       const body = await (await call(p.id)).json();
@@ -158,7 +160,7 @@ describe("GET /api/projects/[id]/models: gateway", () => {
 
   it("reports an unreachable gateway as an answer, with model_options empty", async () => {
     const p = createProject({ name: "models-gateway-down" });
-    updateProject(p.id, { agent_env: gateway("http://127.0.0.1:1") });
+    updateProject(p.id, { default_provider_id: gateway("http://127.0.0.1:1").id });
 
     await withGatewayEnv("http://127.0.0.1:1", async () => {
       const body = await (await call(p.id)).json();
@@ -180,7 +182,7 @@ describe("context window under a provider override", () => {
     // so this task is not running the Opus its row still names. Sizing it
     // from the catalog would draw a 4% gauge on a 32K window about to
     // overflow.
-    updateProject(cloud.id, { agent_env: local("http://localhost:11434", "qwen3-coder") });
+    updateProject(cloud.id, { default_provider_id: local("ollama", "http://localhost:11434", "qwen3-coder").id });
     expect(getTaskContext(t.id).context_window).toBe(0);
     expect(getTaskContext(t.id).context_pct).toBe(0);
     expect(listTasks(cloud.id).find((r) => r.id === t.id)!.context_window).toBe(0);
@@ -190,14 +192,15 @@ describe("context window under a provider override", () => {
     const p = createProject({ name: "ctx-task" });
     const t = createTask({ project_id: p.id, title: "t", agent: "claude", model: "claude-opus-4-5" });
 
-    updateTask(t.id, { agent_env: local("http://localhost:11434", "qwen3-coder") });
+    updateTask(t.id, { provider_id: local("ollama", "http://localhost:11434", "qwen3-coder").id });
     expect(getTaskContext(t.id).context_window).toBe(0);
 
     // A task sent back to the cloud inside a local project is sizable again.
-    updateProject(p.id, { agent_env: local("http://localhost:11434", "qwen3-coder") });
+    updateProject(p.id, { default_provider_id: local("ollama", "http://localhost:11434", "qwen3-coder").id });
     const back = createTask({ project_id: p.id, title: "u", agent: "claude", model: "claude-opus-4-5" });
     expect(getTaskContext(back.id).context_window).toBe(0);
-    updateTask(back.id, { agent_env: serializeAgentEnv(cloudOverrideEnv()) });
+    updateTask(back.id, { provider_id: null });
+    updateProject(p.id, { default_provider_id: null });
     expect(getTaskContext(back.id).context_window).toBeGreaterThan(0);
   });
 
@@ -206,7 +209,7 @@ describe("context window under a provider override", () => {
     try {
       await withGatewayEnv(gw.url, async () => {
         const p = createProject({ name: "ctx-gateway" });
-        updateProject(p.id, { agent_env: gateway(gw.url, "claude-sonnet-4-5") });
+        updateProject(p.id, { default_provider_id: gateway(gw.url, "claude-sonnet-4-5").id });
         const t = createTask({ project_id: p.id, title: "t", agent: "claude", model: "claude-sonnet-4-5" });
         // Nothing probed yet: same "unknown" as any other override.
         expect(getTaskContext(t.id).context_window).toBe(0);

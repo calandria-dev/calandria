@@ -11,6 +11,19 @@ import {
   slugifyGatewayAliasForGemini,
 } from "../lib/gatewayMcp";
 import { startFakeGateway, type FakeGateway } from "./fakeGateway";
+import { getDb } from "../lib/db";
+import { createProvider } from "../lib/providers/store";
+import { setProviderSecret } from "../lib/providerSecrets";
+
+function gatewayProvider(baseUrl: string, config: Record<string, unknown> = {}, key = "") {
+  const provider = createProvider({ type: "litellm", config: { base_url: baseUrl, ...config } });
+  if (key) setProviderSecret(provider.id, "key", key);
+  return provider;
+}
+
+beforeEach(() => {
+  getDb().prepare("DELETE FROM model_providers").run();
+});
 
 // Hosted MCP servers from the LiteLLM gateway (docs/AGENTS.md,
 // "Hosted MCP servers"): the selection JSON round-trip, the catalog and
@@ -138,23 +151,48 @@ describe("gatewayMcpServersFor", () => {
   });
 
   it("prefers the task's own minted key over the instance key", () => {
-    vi.stubEnv("CALANDRIA_LITELLM_KEY", "sk-instance");
-    try {
-      const out = gatewayMcpServersFor({ gateway_mcp: JSON.stringify(["demo"]) }, { gateway_mcp: null, gateway_key: "sk-task" }, "http://gw.example");
-      expect(out.demo.headers).toEqual({ "x-litellm-api-key": "Bearer sk-task" });
-    } finally {
-      vi.unstubAllEnvs();
-    }
+    const provider = gatewayProvider("http://gw.example", {}, "sk-instance");
+    const out = gatewayMcpServersFor(
+      { gateway_mcp: JSON.stringify(["demo"]), default_provider_id: provider.id },
+      { gateway_mcp: null, gateway_key: "sk-task" },
+      "http://gw.example",
+    );
+    expect(out.demo.headers).toEqual({ "x-litellm-api-key": "Bearer sk-task" });
   });
 
   it("falls back to the instance key when the task has none", () => {
-    vi.stubEnv("CALANDRIA_LITELLM_KEY", "sk-instance");
-    try {
-      const out = gatewayMcpServersFor({ gateway_mcp: JSON.stringify(["demo"]) }, { gateway_mcp: null, gateway_key: "" }, "http://gw.example");
-      expect(out.demo.headers).toEqual({ "x-litellm-api-key": "Bearer sk-instance" });
-    } finally {
-      vi.unstubAllEnvs();
-    }
+    const provider = gatewayProvider("http://gw.example", {}, "sk-instance");
+    const out = gatewayMcpServersFor(
+      { gateway_mcp: JSON.stringify(["demo"]), default_provider_id: provider.id },
+      { gateway_mcp: null, gateway_key: "" },
+      "http://gw.example",
+    );
+    expect(out.demo.headers).toEqual({ "x-litellm-api-key": "Bearer sk-instance" });
+  });
+
+  it("uses the task provider row before the project row, including its MCP switch", () => {
+    const project = gatewayProvider("http://project-gw.example", { mcp: true }, "sk-project");
+    const task = gatewayProvider("http://task-gw.example", { mcp: false }, "sk-task");
+    expect(
+      gatewayMcpServersFor(
+        { gateway_mcp: JSON.stringify(["demo"]), default_provider_id: project.id },
+        { gateway_mcp: null, provider_id: task.id, gateway_key: "" },
+        "http://task-gw.example",
+      ),
+    ).toEqual({});
+  });
+
+  it("falls back to the oldest LiteLLM row when no task or project provider is selected", () => {
+    const oldest = gatewayProvider("http://old-gw.example", { mcp: false }, "sk-old");
+    gatewayProvider("http://new-gw.example", { mcp: true }, "sk-new");
+    expect(
+      gatewayMcpServersFor(
+        { gateway_mcp: JSON.stringify(["demo"]) },
+        { gateway_mcp: null, gateway_key: "" },
+        "http://old-gw.example",
+      ),
+    ).toEqual({});
+    expect(oldest.id).toBeTruthy();
   });
 
   it("mounts nothing without a configured gateway, even with a selection", () => {
@@ -247,21 +285,14 @@ describe("fake gateway JSON-RPC mount", () => {
   });
 });
 
-describe("gatewayMcpServersFor: CALANDRIA_LITELLM_MCP gate", () => {
-  let savedFlag: string | undefined;
-  beforeEach(() => {
-    savedFlag = process.env.CALANDRIA_LITELLM_MCP;
-  });
-  afterEach(() => {
-    if (savedFlag === undefined) delete process.env.CALANDRIA_LITELLM_MCP;
-    else process.env.CALANDRIA_LITELLM_MCP = savedFlag;
-  });
-
-  it("mounts nothing when the instance switch is off, even with a selection and a gateway", async () => {
-    process.env.CALANDRIA_LITELLM_MCP = "off";
-    vi.resetModules();
-    const mod = (await import("../lib/gatewayMcp")) as typeof import("../lib/gatewayMcp");
-    const out = mod.gatewayMcpServersFor({ gateway_mcp: JSON.stringify(["demo"]) }, null, "http://gw.example");
+describe("gatewayMcpServersFor: provider MCP gate", () => {
+  it("mounts nothing when the selected provider row switch is off", () => {
+    const provider = gatewayProvider("http://gw.example", { mcp: false }, "sk-instance");
+    const out = gatewayMcpServersFor(
+      { gateway_mcp: JSON.stringify(["demo"]), default_provider_id: provider.id },
+      null,
+      "http://gw.example",
+    );
     expect(out).toEqual({});
   });
 });

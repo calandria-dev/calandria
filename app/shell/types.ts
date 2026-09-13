@@ -2,6 +2,7 @@
 // Pure data only (no React / no Icon) so any module can import freely.
 import { PRIORITIES, TAG_COLORS, tagIsDone } from "@/lib/types";
 import type { LandingMode, Priority, Status, Tag } from "@/lib/types";
+import type { AgentProvider } from "@/lib/agentEnv";
 export { PRIORITIES, TAG_COLORS, tagIsDone };
 export type { LandingMode };
 /** A tag as the project GET embeds it: lib/types' row plus its derived counts. */
@@ -26,7 +27,9 @@ export interface ProjectRow {
   test_command: string;
   default_agent: string; // agent driver new tasks in this project default to (lib/agents/registry.ts)
   send_context: number; // 1 = new tasks default to sending the saved project context to the agent
-  agent_env: string; // provider override for the project's turns, JSON over lib/agentEnv.ts's allowlist ("" = the agent's own cloud login)
+  agent_env?: string; // legacy provider override, absent from current API responses
+  default_provider_id: string | null;
+  provider: AgentProvider;
   gateway_max_budget: number | null; // dollars; null = no max_budget sent to LiteLLM's /key/generate for this project's per-task keys
   gateway_key_duration: string; // a LiteLLM duration string like "30d"; "" = the key never auto-expires on LiteLLM's own clock
   gateway_mcp: string; // hosted MCP server aliases this project mounts, JSON array (lib/gatewayMcp.ts); "[]" = none
@@ -52,7 +55,9 @@ export interface TaskRow {
   suggested: number;
   agent: string; // agent driver this task's sessions run under (lib/agents/); fixed for the task's life
   send_context: number; // 1 = sessions get the saved project context (seeded from the project setting)
-  agent_env: string; // per-task provider override laid over the project's (lib/agentEnv.ts); "" = inherit
+  agent_env?: string; // legacy provider override, absent from current API responses
+  provider_id: string | null;
+  provider: AgentProvider;
   model: string | null;
   resolved_model: string | null;
   reasoning: string | null; // thinking preset; null = inherit default

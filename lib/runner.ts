@@ -10,7 +10,8 @@
 import fs from "node:fs";
 import { updateTask, addMessage, updateMessage, getMessage, recordSession, endSession, addUsage, getTask, getProject, addPendingMessage, popPendingMessage, listPendingMessages, deletePendingMessage, clearPendingMessages, getSetting, setSetting } from "@/lib/store";
 import { isSuggestTaskTool } from "@/lib/suggestionCard";
-import { recordedCostUsd, taskProvider } from "@/lib/agentEnv";
+import { recordedCostUsd } from "@/lib/agentEnv";
+import { resolvedTaskProvider } from "@/lib/providers/resolve";
 import { estimateCostUsd as estimateGatewayCostUsd } from "@/lib/gatewayPricing";
 import { ensureTaskGatewayKey, reconcileTaskGatewaySpend } from "@/lib/gatewayKeys";
 import { getDriver } from "@/lib/agents/registry";
@@ -1134,7 +1135,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         // cannot disagree about which endpoint a turn ran against. Tokens
         // are kept whichever way it lands: an unpriced turn still filled a
         // context window.
-        const provider = taskProvider(project, task);
+        const provider = resolvedTaskProvider(project, task, task.agent);
         const gatewayEstimate =
           provider.pricing === "gateway" ? estimateGatewayCostUsd(resolvedModel ?? provider.model, ev.usage) : undefined;
         const cost = recordedCostUsd(provider.pricing, ev.usage.cost_usd, gatewayEstimate);
@@ -1288,7 +1289,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // the task row may already be deleted underneath it.
     if (!isEmptyUsage(provisional)) {
       try {
-        const provider = taskProvider(project, task);
+        const provider = resolvedTaskProvider(project, task, task.agent);
         // No vendor figure to offer: this path exists precisely because the
         // turn ended without one. Asked through the same helper anyway, so
         // the free-endpoint zero and the unpriced null are decided in one
@@ -1384,7 +1385,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // `opened` gates it: a turn that never opened a session spent nothing to
     // reconcile.
     if (opened && task.gateway_key) {
-      const provider = taskProvider(project, task);
+      const provider = resolvedTaskProvider(project, task, task.agent);
       void reconcileTaskGatewaySpend({
         taskId: id,
         projectId: project.id,

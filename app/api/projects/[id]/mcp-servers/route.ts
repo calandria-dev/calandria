@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
 import { getProject, listPermissionRules, addPermissionRule } from "@/lib/store";
-import { gatewayBaseUrl } from "@/lib/agentEnv";
-import { gatewayKey } from "@/lib/litellm-key";
 import { gatewayMcpCatalog, probeGatewayMcpMount } from "@/lib/gatewayMcp";
 import { ruleForGatewayMcpServer } from "@/lib/permissions";
-import { LITELLM_MCP } from "@/lib/config";
+import { litellmRuntimeFor } from "@/lib/providers/resolve";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +13,7 @@ export const dynamic = "force-dynamic";
  * project has already trusted (a remembered `mcp_server` permission_rules
  * row) so the picker can show "Trusted" without a second round trip.
  *
- * Disabled instance-wide by CALANDRIA_LITELLM_MCP, or when no gateway is
+ * Disabled by the selected LiteLLM row's MCP flag, or when no gateway is
  * configured at all: both answer the same "not enabled" shape instead of a
  * 404, since the picker asks unconditionally and reads `enabled` either way,
  * the same contract GET /api/projects/[id]/models keeps for a cloud project.
@@ -30,19 +28,20 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const project = getProject(id);
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
-  const gateway = gatewayBaseUrl();
-  if (!LITELLM_MCP || !gateway) {
+  const runtime = litellmRuntimeFor(project, null, "claude");
+  const gateway = runtime?.baseUrl ?? null;
+  if (!runtime?.mcp || !gateway) {
     return NextResponse.json({ enabled: false, base_url: gateway, reachable: false, servers: [], error: null });
   }
 
   const url = new URL(req.url);
   const probeAlias = (url.searchParams.get("probe") || "").trim();
   if (probeAlias) {
-    const result = await probeGatewayMcpMount(gateway, probeAlias, gatewayKey());
+    const result = await probeGatewayMcpMount(gateway, probeAlias, runtime.key);
     return NextResponse.json({ alias: probeAlias, ...result });
   }
 
-  const catalog = await gatewayMcpCatalog(gateway, gatewayKey());
+  const catalog = await gatewayMcpCatalog(gateway, runtime.key);
   const trusted = new Set(
     listPermissionRules(id)
       .filter((r) => r.match_kind === "mcp_server")
@@ -66,8 +65,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  if (!getProject(id)) return NextResponse.json({ error: "Project not found" }, { status: 404 });
-  if (!LITELLM_MCP) return NextResponse.json({ error: "Hosted MCP servers are disabled on this instance." }, { status: 400 });
+  const project = getProject(id);
+  if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  if (!litellmRuntimeFor(project, null, "claude")?.mcp) return NextResponse.json({ error: "Hosted MCP servers are disabled on this instance." }, { status: 400 });
   const body = (await req.json().catch(() => ({}))) as { alias?: string };
   const drafted = ruleForGatewayMcpServer(body.alias ?? "");
   if (!drafted.ok) return NextResponse.json({ error: drafted.error }, { status: 400 });

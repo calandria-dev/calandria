@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createTask, getProject, listAllTasksLite, listAllTagsLite, getTag } from "@/lib/store";
+import { getProvider } from "@/lib/providers/store";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,8 @@ export async function POST(req: Request) {
   if (!body?.project_id || !getProject(body.project_id))
     return NextResponse.json({ error: "valid project_id required" }, { status: 400 });
   if (!body?.title?.trim()) return NextResponse.json({ error: "title required" }, { status: 400 });
+  if (body.provider_id !== undefined && body.provider_id !== null && (typeof body.provider_id !== "string" || !getProvider(body.provider_id)))
+    return NextResponse.json({ error: "valid provider_id required" }, { status: 400 });
   // Same screen the PATCH route applies: every tag must exist and belong to
   // this task's project, since a tag can't span repositories.
   let tagIds: string[] = [];
@@ -56,6 +59,7 @@ export async function POST(req: Request) {
     model: typeof body.model === "string" && body.model.trim() && body.model.length <= 2048 && !/[\0-\x1f\x7f]/.test(body.model)
       ? body.model.trim()
       : undefined,
+    provider_id: body.provider_id ?? null,
     tag_ids: tagIds,
   });
   return NextResponse.json(task, { status: 201 });

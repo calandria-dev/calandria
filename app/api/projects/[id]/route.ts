@@ -7,6 +7,8 @@ import { abortTurn } from "@/lib/abort";
 import { turnIdleSince } from "@/lib/turnActivity";
 import { removeProjectServices } from "@/lib/services";
 import type { Project } from "@/lib/types";
+import { getProvider } from "@/lib/providers/store";
+import { resolvedTaskProvider } from "@/lib/providers/resolve";
 
 export const dynamic = "force-dynamic";
 
@@ -68,12 +70,24 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   // a wedge shows a plain spinner until the turn does something, which it is
   // not going to.
   const tasks = (await withDiffStats(project, listTasks(id))).map((t) => ({ ...t, idle_since: turnIdleSince(t.id) }));
-  return NextResponse.json({ ...project, tasks, tags: listTags(id) });
+  const output = { ...project, provider: resolvedTaskProvider(project, null, project.default_agent) };
+  delete (output as Partial<typeof output>).agent_env;
+  const publicTasks = tasks.map((task) => {
+    const row = { ...task, provider: resolvedTaskProvider(project, task, task.agent) };
+    delete (row as Partial<typeof row>).agent_env;
+    return row;
+  });
+  return NextResponse.json({ ...output, tasks: publicTasks, tags: listTags(id) });
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const patch = await req.json();
+  const raw = await req.json();
+  const { agent_env: _legacyAgentEnv, ...patch } = raw ?? {};
+  if ("default_provider_id" in patch && patch.default_provider_id !== null) {
+    if (typeof patch.default_provider_id !== "string" || !getProvider(patch.default_provider_id))
+      return NextResponse.json({ error: "valid default_provider_id required" }, { status: 400 });
+  }
   // A branch key that's present but blank is refused with a message instead
   // of kept as-is (which is what updateProject does for it): the Settings
   // form should hear why nothing changed instead of nothing at all.
@@ -81,7 +95,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({ error: "branch is required" }, { status: 400 });
   const project = updateProject(id, patch);
   if (!project) return NextResponse.json({ error: "not found" }, { status: 404 });
-  return NextResponse.json(project);
+  const { agent_env: _storedLegacyEnv, ...publicProject } = project;
+  return NextResponse.json({
+    ...publicProject,
+    provider: resolvedTaskProvider(project, null, project.default_agent),
+  });
 }
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {

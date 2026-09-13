@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   AGENT_ENV_KEYS,
-  agentTurnEnv,
+  agentTurnEnv as buildAgentTurnEnv,
   applyProviderEnv,
   cloudOverrideEnv,
   describeProvider,
@@ -20,6 +20,10 @@ import {
 } from "@/lib/agentEnv";
 import type { ProviderKind } from "@/lib/agentEnv";
 import type { Project, Task } from "@/lib/types";
+import { resolvedAgentTurnEnv } from "@/lib/providers/resolve";
+import type { ResolvedProviderEnv } from "@/lib/providers/resolve";
+import { createProvider } from "@/lib/providers/store";
+import { getDb } from "@/lib/db";
 
 // Pins that a main-turn agent process does not inherit the server's own
 // NODE_ENV=production (it makes `npm install` in the user's project skip
@@ -34,6 +38,25 @@ import type { Project, Task } from "@/lib/types";
 const project = (port: number, agent_env = "") => ({ port, agent_env }) as Pick<Project, "port" | "agent_env">;
 const task = (agent_env: string) => ({ agent_env }) as Pick<Task, "agent_env">;
 
+// These tests exercise the pure environment-shape rules. Pass the old fixture
+// through the explicit resolver result so they do not accidentally depend on
+// agentTurnEnv reading the legacy columns.
+const legacyResolved = (
+  p: { agent_env?: unknown } | null | undefined,
+  t: { agent_env?: unknown } | null | undefined,
+  gatewayKey?: string,
+): ResolvedProviderEnv => ({
+  provider: null,
+  env: providerEnvFor(p, t),
+  extras: gatewayKey ? { CALANDRIA_LITELLM_KEY: gatewayKey } : {},
+});
+const agentTurnEnv = (
+  p: Parameters<typeof buildAgentTurnEnv>[0],
+  t: Parameters<typeof buildAgentTurnEnv>[1],
+  base: NonNullable<Parameters<typeof buildAgentTurnEnv>[2]>,
+  gateway?: Parameters<typeof buildAgentTurnEnv>[3],
+) => buildAgentTurnEnv(p, t, base, gateway, legacyResolved(p, t, base.CALANDRIA_LITELLM_KEY));
+
 // Gateway address every case below describes an override against. Passed
 // explicitly instead of set in the environment, keeping these tests pure:
 // the default is the instance's own CALANDRIA_LITELLM_BASE_URL, which a
@@ -41,6 +64,34 @@ const task = (agent_env: string) => ({ agent_env }) as Pick<Task, "agent_env">;
 const GW = "http://gw.example.com:4000";
 
 describe("agentTurnEnv", () => {
+  it("does not read legacy agent_env without an explicit resolved provider", () => {
+    const out = buildAgentTurnEnv(
+      project(4301, serializeAgentEnv(providerPresetEnv({ baseUrl: "http://legacy.example", model: "legacy-model" }))),
+      null,
+      { PATH: "/usr/bin" },
+      GW,
+    );
+    expect(out.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(out.ANTHROPIC_MODEL).toBeUndefined();
+  });
+
+  it("resolves the selected provider row at turn time", () => {
+    const provider = createProvider({
+      type: "ollama",
+      config: { base_url: "http://row.example:11434", default_model: "row-model" },
+    });
+    const out = resolvedAgentTurnEnv(
+      { id: "p-row", port: 4301, default_provider_id: provider.id },
+      { id: "t-row", agent: "claude", provider_id: null, gateway_key: "" },
+      "claude",
+      { PATH: "/usr/bin" },
+    );
+    expect(out.PORT).toBe("4301");
+    expect(out.ANTHROPIC_BASE_URL).toBe("http://row.example:11434");
+    expect(out.ANTHROPIC_MODEL).toBe("row-model");
+    getDb().prepare("DELETE FROM model_providers").run();
+  });
+
   it("drops NODE_ENV even when the base env carries it", () => {
     const out = agentTurnEnv(project(4301), null, { NODE_ENV: "production", PATH: "/usr/bin" });
     expect("NODE_ENV" in out).toBe(false);
