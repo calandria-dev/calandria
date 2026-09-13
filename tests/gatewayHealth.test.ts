@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { clearGatewayProbeCache, gatewayHealth, probeGateway } from "@/lib/gatewayHealth";
 import { startFakeGateway, type FakeGateway } from "./fakeGateway";
 
-// What Settings → Agents can say about a LiteLLM gateway, against the response
+// What Settings → Models can say about a LiteLLM gateway, against the response
 // shapes recorded in docs/AGENTS.md's appendix (tests/fakeGateway.ts). An
 // agent's `connected` reflects its CLI login only, not whether the gateway is
 // up, so probeGateway treats "unreachable" as an ordinary answer and never

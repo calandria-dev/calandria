@@ -11,17 +11,14 @@ import { ModelField } from "./Modal";
 import { GitHubSettings } from "./github";
 import { WorktreePrune } from "./WorktreePrune";
 import { Diagnostics } from "./Diagnostics";
-import { AgentConnect } from "./AgentConnect";
-import { endpointSummary } from "./modelEndpoint";
-import { ErrNote, LoadNote } from "./shared";
-import { usePlanUsage, planUsageShown } from "./PlanUsage";
+import { ModelsSection } from "./ModelsSection";
+import { ErrNote } from "./shared";
 import { autoResumeOnLimitKey } from "@/lib/usageReset";
 import { jget, jsend } from "./api";
 import { notificationPermission, type BrowserNotificationState } from "./useNotifications";
 import { disablePush, enablePush, pushSupport, syncPushSubscription, type PushSupportState } from "./usePush";
 import { modelLabel, relTime } from "./format";
 import type { PushDevice } from "@/lib/push/types";
-import type { AgentInfoT, AgentsResponseT, EndpointStatusT, GatewayHealthT } from "./types";
 import type { PermissionMatchKind, PermissionRule } from "@/lib/types";
 
 // Log out, at the foot of the settings nav rather than in a section of its own.
@@ -71,200 +68,6 @@ function NavLogout() {
   );
 }
 
-// The "Agents" section: connect coding agents beyond the required first-run
-// Claude one. Claude appears here as already-connected; Codex (and any future
-// agent) gets a "connect another agent" card driven by AgentConnect against the
-// generic /api/agents/[id]/* routes. Reads the same GET /api/agents the task
-// pickers gate on, so connecting here immediately un-grays the agent there.
-function AgentsSection({ defaultAgent, appDefaults, setAppDefault, onChanged }: {
-  defaultAgent: string;
-  appDefaults: Record<string, string>;
-  setAppDefault: (key: string, value: string | null) => void;
-  onChanged?: () => void;
-}) {
-  const [agents, setAgents] = useState<AgentInfoT[] | null>(null);
-  // Which agents the titlebar could meter, so the show/hide switch below only
-  // appears on cards where there is something to show. Same shared poll the
-  // pill itself subscribes to, and it lists an agent regardless of the setting
-  // (the server doesn't know about it), so hiding a tracker doesn't hide the
-  // switch that brings it back.
-  const planUsage = usePlanUsage();
-  const [def, setDef] = useState<string>(defaultAgent);
-  // Reachability of the instance's local model endpoint, which is NOT any
-  // agent's connection state: a project on Ollama runs through a Claude login
-  // it never uses, and fails with a perfectly good one when Ollama is down. The
-  // server probes it (lib/modelEndpoint.ts); this is the only place the
-  // instance-wide default endpoint is reported.
-  const [endpoint, setEndpoint] = useState<EndpointStatusT | null>(null);
-  // Same fact for the LiteLLM gateway, and null unless one is configured.
-  const [gateway, setGateway] = useState<GatewayHealthT | null>(null);
-
-  const load = () =>
-    jget<AgentsResponseT>("/api/agents")
-      .then((r) => { setAgents(r.agents); setDef(r.default); setEndpoint(r.local_endpoint ?? null); setGateway(r.gateway ?? null); })
-      .catch(() => setAgents([]));
-  useEffect(() => { load(); }, []);
-
-  if (agents == null) return <LoadNote style={{ padding: 0 }}>Loading agents…</LoadNote>;
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-      <div className="hlp" style={{ marginTop: 0 }}>
-        Each task runs as a coding agent. Connect a subscription login or API key once to make it selectable for new tasks. {def === "claude" ? "Claude is the default and runs Calandria's own jobs (summaries, recaps); keep it connected." : ""}
-      </div>
-      {agents.map((a) => (
-        <div key={a.id} className="field" style={{ marginBottom: 0 }}>
-          <div className="lab" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {Icon.spark()} {a.label}
-            {a.id === def && <span className="opt">(default)</span>}
-            {a.authBroken
-              // Its login died (still on record) or its record was dropped for
-              // a provider change. Either way a green check here would
-              // contradict the card below it (and the titlebar banner).
-              ? <span className="wiz-warn" style={{ marginLeft: "auto" }} title="Needs reconnecting">{Icon.bolt()}</span>
-              : a.connected && <span className="wiz-ok" style={{ marginLeft: "auto" }}>{Icon.check()}</span>}
-          </div>
-          <McpInheritance agent={a} />
-          {planUsage[a.id]?.available && planUsage[a.id].windows.length > 0 && (
-            <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 4 }}>
-              <div style={{ flex: 1 }}>
-                <div className="hlp" style={{ marginTop: 0 }}>
-                  Show {a.label}&apos;s plan usage in the titlebar.
-                </div>
-              </div>
-              <button
-                role="switch"
-                aria-label={`Show ${a.label}'s plan usage in the titlebar`}
-                aria-checked={planUsageShown(appDefaults, a.id)}
-                className={`in-switch${planUsageShown(appDefaults, a.id) ? " on" : ""}`}
-                onClick={() => setAppDefault(`plan_usage:${a.id}`, planUsageShown(appDefaults, a.id) ? "off" : null)}
-              ><span /></button>
-            </div>
-          )}
-          <AgentConnect agent={a} compact onConnected={() => { load(); onChanged?.(); }} />
-        </div>
-      ))}
-      {endpoint?.base_url && (
-        <div className="field" style={{ marginBottom: 0 }}>
-          <div className="lab" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {Icon.spark()} Local model endpoint
-            {endpoint.reachable
-              ? <span className="wiz-ok" style={{ marginLeft: "auto" }}>{Icon.check()}</span>
-              : <span className="wiz-warn" style={{ marginLeft: "auto" }} title="Nothing answered at this address">{Icon.bolt()}</span>}
-          </div>
-          <div className="hlp">
-            {endpointSummary(endpoint)}. A project runs here by setting its <strong>Model provider</strong> to
-            {" "}<em>Local model</em>; the address is <code className="ctx-mono">CALANDRIA_LOCAL_MODEL_BASE_URL</code>.
-          </div>
-        </div>
-      )}
-      {gateway?.base_url && <GatewayCard gateway={gateway} onChanged={load} />}
-    </div>
-  );
-}
-
-// The LiteLLM gateway's own card, beside the local-endpoint one above and for
-// the same reason: an agent's `connected` is its CLI login and says nothing
-// about whether the gateway is up. Rendered only when CALANDRIA_LITELLM_BASE_URL
-// is set, which is also what puts the Gateway preset in a project's settings.
-//
-// The three facts come from lib/gatewayHealth.ts. `database: false` is the
-// no-Postgres 500 from /key/info, and it is stated instead of shown as blank
-// rows: every key, budget and spend feature on a LiteLLM proxy needs that
-// database, so a card that just omitted them would read like a bug.
-function GatewayCard({ gateway, onChanged }: { gateway: GatewayHealthT; onChanged: () => void }) {
-  const [key, setKey] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const where = gateway.base_url.replace(/^https?:\/\//, "");
-
-  const save = async (clear: boolean) => {
-    setBusy(true);
-    setErr(null);
-    try {
-      if (clear) await jsend("/api/settings/gateway-key", "DELETE");
-      else await jsend("/api/settings/gateway-key", "POST", { key: key.trim() });
-      setKey("");
-      onChanged();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="field" style={{ marginBottom: 0 }}>
-      <div className="lab" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        {Icon.spark()} LiteLLM gateway
-        {gateway.reachable
-          ? <span className="wiz-ok" style={{ marginLeft: "auto" }}>{Icon.check()}</span>
-          : <span className="wiz-warn" style={{ marginLeft: "auto" }} title="Nothing answered at this address">{Icon.bolt()}</span>}
-      </div>
-      <div className="hlp">
-        {gateway.reachable
-          ? `${where}: reachable${gateway.version ? `, LiteLLM ${gateway.version}` : ""}${gateway.model_count === null ? "" : `, ${gateway.model_count} ${gateway.model_count === 1 ? "model" : "models"}`}.`
-          : `${where}: ${gateway.error || "not reachable"}.`}
-        {" "}A project runs here by setting its <strong>Model provider</strong> to <em>Gateway</em>; the address is
-        {" "}<code className="ctx-mono">CALANDRIA_LITELLM_BASE_URL</code>.
-      </div>
-      {gateway.database === false && (
-        <div className="hlp">Keys, budgets and spend need LiteLLM&apos;s database, which this proxy doesn&apos;t have. The card shows liveness, version and model count only.</div>
-      )}
-      {gateway.database === true && (
-        <div className="hlp">
-          {gateway.max_budget == null
-            ? `Spend so far: $${gateway.spend?.toFixed(2) ?? "0.00"} (no budget set on this key).`
-            : `Spend: $${gateway.spend?.toFixed(2) ?? "0.00"} of a $${gateway.max_budget.toFixed(2)} budget${gateway.spend != null && gateway.spend >= gateway.max_budget ? ", exhausted" : ""}.`}
-          {gateway.budget_reset_at && ` Resets ${new Date(gateway.budget_reset_at).toLocaleString()}.`}
-          {!!gateway.key_models?.length && ` Allowed models: ${gateway.key_models.join(", ")}.`}
-        </div>
-      )}
-      {!!gateway.gemini_missing_models?.length && (
-        <div className="hlp wiz-warn">
-          {Icon.bolt()} Antigravity uses <code className="ctx-mono">{gateway.gemini_missing_models.join(", ")}</code>, missing from this gateway&apos;s catalog.
-          Add {gateway.gemini_missing_models.length === 1 ? "it" : "them"} to LiteLLM&apos;s <code className="ctx-mono">model_list</code>, or Antigravity turns
-          against this gateway will fail.
-        </div>
-      )}
-      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-        <input type="password" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={key} autoComplete="off"
-          placeholder={gateway.has_key ? "a key is set, type a new one to replace it" : "virtual key (sk-…)"}
-          title="The instance's LiteLLM virtual key, stored 0600 and never sent to the browser."
-          onChange={(e) => setKey(e.target.value)} />
-        <button className="btn btn-line" disabled={busy || !key.trim()} onClick={() => save(false)}>{Icon.check()} Save key</button>
-        {gateway.has_key && <button className="btn btn-ghost" disabled={busy} onClick={() => save(true)}>{Icon.x()} Clear</button>}
-      </div>
-      {err && <div className="hlp wiz-warn">{Icon.bolt()} {err}</div>}
-      <div className="hlp">
-        Sent as <code className="ctx-mono">x-litellm-api-key</code> on every gateway turn, alongside tags naming the project, task and agent.
-        {" "}<code className="ctx-mono">CALANDRIA_LITELLM_KEY</code> sets the same thing from the environment.
-      </div>
-    </div>
-  );
-}
-
-// Whether a task on this agent can use the MCP servers the user configured for
-// its own CLI. This capability difference changes what a task can do, not just
-// how its controls look. A Claude task reaches the tools in ~/.claude; an
-// otherwise-identical Codex task reaches only Calandria's, so it's worth
-// knowing before choosing an agent for a task. Both the verdict and the
-// explanation come from the driver's descriptor (lib/agents/types.ts
-// AgentCapabilities), never from the agent's id, so a third agent states its
-// own position here with no edit to this file.
-function McpInheritance({ agent }: { agent: AgentInfoT }) {
-  const { inheritsUserMcpServers: inherits, userMcpServersNote: note, gatewayMcpNote } = agent.capabilities;
-  return (
-    <div className="hlp" style={{ marginTop: 2, marginBottom: 12 }}>
-      <strong style={{ color: "var(--ink-2)" }}>
-        {inherits ? "Uses your own MCP servers." : "Calandria's tools only."}
-      </strong>
-      {note ? ` ${note}` : ""}
-      {gatewayMcpNote && <div style={{ marginTop: 4 }}>{gatewayMcpNote}</div>}
-    </div>
-  );
-}
-
 // The effective utility agent, resolved connected-first by the server
 // (lib/agents/oneshots.ts). The buttons above show what's *configured*; this
 // line shows what will actually run. They diverge whenever the configured
@@ -277,7 +80,7 @@ function UtilityEffective({ agents }: { agents: AgentsBundle }) {
   if (!u.id)
     return (
       <div className="hlp" style={{ marginTop: 8 }}>
-        {Icon.bolt()} No agent is connected. Recaps and context refresh are paused. Connect one in Settings → Agents.
+        {Icon.bolt()} No agent is connected. Recaps and context refresh are paused. Connect one in Settings → Models.
       </div>
     );
   const label = agentLabel(agents, u.id);
@@ -739,7 +542,7 @@ const SETTINGS_SECTIONS: { id: string; label: string; icon: () => React.ReactNod
   { id: "background", label: "Background jobs", icon: Icon.clock },
   { id: "notifications", label: "Notifications", icon: Icon.bell },
   { id: "run", label: "Run defaults", icon: Icon.spark },
-  { id: "agents", label: "Agents", icon: Icon.bolt },
+  { id: "models", label: "Models", icon: Icon.bolt },
   { id: "storage", label: "Storage", icon: Icon.archive },
   { id: "github", label: "GitHub", icon: Icon.github },
   { id: "diagnostics", label: "Diagnostics", icon: Icon.chart },
@@ -862,7 +665,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
           ))}
           <NavLogout />
         </div>
-        <div className="settings-nav-foot">{section === "appearance" ? "theme, mode & fonts · saved on this browser" : section === "background" ? "agent utility work · saved to this workspace" : section === "notifications" ? "alerts · saved to this workspace" : section === "run" ? "run defaults · saved to this workspace" : section === "agents" ? "coding agent logins · stored in this workspace" : section === "storage" ? "disk cleanup · acts on this workspace" : section === "github" ? "GitHub connection · stored in this workspace" : section === "setup" ? "first-run setup · stored in this workspace" : "app-level preferences · saved on this browser"}</div>
+        <div className="settings-nav-foot">{section === "appearance" ? "theme, mode & fonts · saved on this browser" : section === "background" ? "agent utility work · saved to this workspace" : section === "notifications" ? "alerts · saved to this workspace" : section === "run" ? "run defaults · saved to this workspace" : section === "models" ? "environments & providers · stored in this workspace" : section === "storage" ? "disk cleanup · acts on this workspace" : section === "github" ? "GitHub connection · stored in this workspace" : section === "setup" ? "first-run setup · stored in this workspace" : "app-level preferences · saved on this browser"}</div>
       </div>
       <div className="col col-session">
         <div className="settings-head">
@@ -1108,7 +911,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                 <PermissionRules />
               </>
             )}
-            {section === "agents" && <AgentsSection defaultAgent="claude" appDefaults={appDefaults} setAppDefault={setAppDefault} onChanged={onAgentsRefresh} />}
+            {section === "models" && <ModelsSection appDefaults={appDefaults} setAppDefault={setAppDefault} onChanged={onAgentsRefresh} />}
             {section === "storage" && <WorktreePrune />}
             {section === "diagnostics" && <Diagnostics settings={settings} setSetting={setSetting} />}
             {section === "github" && <GitHubSettings />}

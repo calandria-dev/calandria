@@ -9,7 +9,7 @@ export type { LandingMode };
 export type TagRow = Tag;
 import type { InternalUsageEstimate } from "@/lib/internalUsage";
 import type { ProviderType } from "@/lib/providers/types";
-export type { InternalUsageEstimate };
+export type { InternalUsageEstimate, ProviderType };
 
 // ---------- client shapes ----------
 export interface ProjectRow {
@@ -513,6 +513,65 @@ export interface GatewayHealthT {
   gemini_missing_models?: string[] | null;
 }
 export const EMPTY_AGENTS: AgentsBundle = { default: "claude", agents: [] };
+
+// ---------- model providers (mirrors lib/providers/*) ----------
+// Settings → Models reads these off GET/POST /api/providers and its per-id
+// routes. Mirrored here rather than imported from lib/providers/* because
+// those modules pull in better-sqlite3 and the agent SDKs; the client only
+// ever needs their shapes.
+export type ProviderStatusT = "connected" | "reachable" | "unreachable" | "untested";
+export interface ProviderConfigT {
+  base_url?: string;
+  billing?: "key" | "subscription";
+  mcp?: boolean;
+  key_timeout_ms?: number;
+  api?: "anthropic" | "openai";
+  default_model?: string;
+}
+export interface ModelPolicyT { mode: "allow" | "deny"; ids: string[]; known: string[]; unavailable: string[] }
+export interface ProviderTestResultT {
+  reachable?: boolean; api?: string | null; version?: string | null; latency_ms?: number; error?: string | null;
+  [key: string]: unknown;
+}
+export interface ModelProviderT {
+  id: string;
+  type: ProviderType;
+  label: string;
+  config: ProviderConfigT;
+  model_policy: ModelPolicyT;
+  created_at: number;
+  updated_at: number;
+  last_test_at: number | null;
+  last_test: ProviderTestResultT | null;
+  /** The environment whose login owns this row, or null for a user-added one. */
+  bundled: string | null;
+  /** The environments this row serves, decided by its type. */
+  environments: string[];
+  has_key?: boolean;
+  has_admin_key?: boolean;
+}
+export interface PresentedProviderT extends ModelProviderT { status: ProviderStatusT; model_count: number }
+export interface ProviderProbeModelT {
+  id: string; context_window: number | null; family: string | null; version: string | null;
+  duplicate_of: string | null; chat: boolean;
+}
+export interface ProviderProbeResultT extends ProviderTestResultT {
+  reachable: boolean; api: string | null; version: string | null; latency_ms: number; error: string | null;
+  key: { spend: number | null; max_budget: number | null };
+  models: ProviderProbeModelT[];
+}
+export interface FlatProviderModelT {
+  id: string; ctx: number; family: string; version: string; on: boolean; duplicate_of: string | null; chat: boolean;
+}
+export interface ProviderModelsResponseT { mode: "allow" | "deny"; refreshed_at: number; models: FlatProviderModelT[] }
+export interface ProviderUsageT {
+  projects: { id: string; name: string }[];
+  tasks: { id: string; project_id: string; title: string }[];
+  schedules: { id: string; project_id: string; name: string }[];
+  runbooks: { id: string; project_id: string; name: string }[];
+}
+/** A local server GET /api/providers/detect found with no row yet. */
+export interface DetectedProviderT { type: ProviderType; base_url: string; model_count: number }
 
 // A picker option list. `value: null` is the synthetic inherit head: it
 // persists as null in tasks.model/reasoning/permission_mode, inheriting the

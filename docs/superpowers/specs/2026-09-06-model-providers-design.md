@@ -337,7 +337,13 @@ Both test routes return
 `{reachable, api, version, latency_ms, error, key: {spend, max_budget}, models: [{id, context_window, family, version, duplicate_of, chat}]}`,
 each field where it is known. The model list is there so the add page can render its
 Models section before the row exists, which is what the one-page add flow needs.
-`family`, `version`, `duplicate_of` and `chat` come from `placeModel()`. The probe reuses
+As landed, `family`, `version` and `duplicate_of` are always `null` on both test routes:
+`probeProvider()` (`lib/providers/probe.ts`) does not call `placeModel()`, so the add page's
+post-test Models preview has no family or duplicate-of grouping to show and renders a flat list
+instead. `chat` is populated. Placement only exists once a row is saved: `GET
+/api/providers/[id]/models` runs the real catalog read (`readProviderModels()` in
+`lib/providers/catalog.ts`), which does call `placeModel()`, so the detail modal's Models tab
+shows real family/version/duplicate-of data the add page's preview cannot. The probe reuses
 `probeGateway()` (`lib/gatewayHealth.ts`) for `litellm` and `endpointModels()`
 (`lib/modelEndpoint.ts`) for `ollama`, `lmstudio` and `custom`, lists models from the
 vendor API for `openai_key` and `gemini_key`, and reports the CLI connection from
@@ -440,7 +446,7 @@ subtitle and one action.
 
 | Status | Chip | Subtitle | Action |
 |-|-|-|-|
-| connected | Connected | signed in as, plan, config path | Disconnect |
+| connected | Connected | signed in as, plan (config path: not served, see note below) | Disconnect |
 | installed, not signed in | Installed, not signed in | the binary, then "sign in to use its models" | Sign in |
 | not installed | Not installed | the binary Calandria looked for | Install first, disabled |
 
@@ -448,7 +454,19 @@ A connected row also carries the line "Brings Anthropic models · listed under P
 with the provider's mark, which is how a user gets from one list to the other. Sign in
 opens the existing `AgentConnect` flow (`app/shell/AgentConnect.tsx`) in a modal, shared
 with the first-run wizard. The list refetches on the `agent_auth` global event, as the
-old section did.
+old section did. The `AgentsBundle` prop `SettingsView` already receives is missing the
+fields `AgentConnect` needs, so `ModelsSection` keeps its own fetch of `GET /api/agents`
+instead, the same one the old section made. `useGlobalEvents.ts` relays `agent_auth` to it
+as a `window` event (`calandria:agent_auth`), the same pattern `calandria:runbooks` uses.
+
+As landed, "config path" is not on the wire: neither `GET /api/agents` nor
+`AgentCapabilities` exposes a config directory or binary name, only
+`installedVersion`. The connected subtitle is "Signed in as `<email>` · `<plan>`" with no
+config path; the installed/absent subtitles restate the binary name from a small client
+map mirroring `lib/agents/detect.ts`'s `INSTALL_SPECS` (`claude`, `codex`, `agy`) instead
+of a served path. `Disconnect` calls `DELETE /api/agents/[id]/api-key`, which despite its
+path clears any connection method via `clearAgentConnection()` (the bundled provider row
+goes with it), not a new route.
 
 **Providers.** One row per row of `GET /api/providers`: `ProviderMark`, label, a status
 chip (Connected, Reachable, Untested), a type line ("Bundled with Claude Code · via
@@ -496,7 +514,8 @@ Connection tab and no Remove tab.
 
 **Connection.** For a user-added row this is the add form with the last test result shown
 in place, and a Done button; changes save when you close. For a bundled row it is
-read-only: managed by, account, config path, the one environment it serves, the
+read-only: managed by, account, config path (see the Environments note above: not served by
+the API, restated from a small client-side map), the one environment it serves, the
 plan-usage meter switch, and a line saying the endpoint and the credential belong to the
 CLI, so signing out there takes the provider with it.
 

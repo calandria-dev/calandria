@@ -123,7 +123,7 @@ function StepHead({ n, title, sub }: { n: number; title: string; sub: React.Reac
 // One tab per registered driver, each rendering the same generic AgentConnect
 // card (subscription sign-in + API-key path) the Settings surface uses, so a
 // third agent shows up here with zero wizard edits. Connecting any one agent
-// unlocks Continue; the rest can be added later from Settings → Agents.
+// unlocks Continue; the rest can be added later from Settings → Models.
 function ConnectStep({
   bundle,
   done,
