@@ -12,6 +12,9 @@ export const MOCK_CAPABILITIES: AgentCapabilities = {
   models: [{ value: "mock-1", label: "Mock 1", sub: "deterministic", contextWindow: 200_000 }],
   reasoningOptions: [],
   permissionModes: [],
+  providerTypes: ["anthropic", "litellm", "ollama", "lmstudio", "custom"],
+  bundledProvider: "anthropic",
+  endpointTransport: "the deterministic mock turn's environment",
   supportsAsks: false,
   supportsMcpTools: true,
   // Hermetic by construction: the mock agent reads no user configuration at all.

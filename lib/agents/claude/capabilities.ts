@@ -120,6 +120,9 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
     { value: "default", label: "default", sub: "Claude Code's standard prompting: ask before anything not already approved" },
     { value: "plan", label: "plan", sub: "propose a plan, don't edit" },
   ],
+  providerTypes: ["anthropic", "litellm", "ollama", "lmstudio", "custom"],
+  bundledProvider: "anthropic",
+  endpointTransport: "ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN in the turn's environment",
   supportsAsks: true,
   supportsMcpTools: true,
   // A task session loads the user's own ~/.claude configuration: settings, MCP
