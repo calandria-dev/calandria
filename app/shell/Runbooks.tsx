@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
-import { agentLabel, capsFor, defaultAgentFor, pickerAgents } from "./agents";
+import { agentEnvOptions, agentLabel, capsFor, defaultAgentFor } from "./agents";
+import { ModelPicker } from "./ModelPicker";
 import { relTime } from "./format";
 import { ErrNote } from "./shared";
 import { Modal, PrioritySeg } from "./Modal";
@@ -57,6 +58,8 @@ function RunbookForm({
   const [description, setDescription] = useState(initial?.description ?? "");
   const [prompt, setPrompt] = useState(initial?.prompt ?? "");
   const [agent, setAgent] = useState(initial?.agent ?? defaultAgentFor(agents, project.default_agent));
+  const [providerId, setProviderId] = useState(initial?.provider_id ?? null);
+  const [model, setModel] = useState(initial?.model ?? null);
   const [permissionMode, setPermissionMode] = useState<string | null>(initial?.permission_mode ?? null);
   const [priority, setPriority] = useState<Priority>(initial?.priority ?? "med");
   const [sendContext, setSendContext] = useState(initial ? initial.send_context !== 0 : project.send_context !== 0);
@@ -108,6 +111,7 @@ function RunbookForm({
     const body = {
       name: name.trim(), description, prompt, agent, priority,
       permission_mode: permissionMode, send_context: sendContext,
+      provider_id: providerId, model,
     };
     try {
       if (initial) await jsend(`/api/runbooks/${initial.id}`, "PATCH", body);
@@ -165,12 +169,18 @@ function RunbookForm({
         )}
       </div>
       <div className="field">
-        <label className="lab" htmlFor={`${uid}-agent`}>Agent</label>
-        <select id={`${uid}-agent`} value={agent} onChange={(e) => { setAgent(e.target.value); void validate(prompt, e.target.value); }}>
-          {pickerAgents(agents, agent).map((a) => (
-            <option key={a.id} value={a.id}>{a.label}{a.authenticated ? "" : " (not connected)"}</option>
-          ))}
-        </select>
+        <label className="lab">Agent</label>
+        <ModelPicker
+          variant="inline"
+          value={{ agent, provider_id: providerId, model }}
+          onChange={(v) => {
+            setAgent(v.agent ?? agent);
+            setProviderId(v.provider_id);
+            setModel(v.model);
+          }}
+          inherit={{ label: "Project default" }}
+          env={{ current: agent, options: agentEnvOptions(agents), projectDefault: project.default_agent }}
+        />
       </div>
       <div className="field">
         <label className="lab" htmlFor={`${uid}-perm`}>Permission mode</label>

@@ -22,6 +22,11 @@ export const dynamic = "force-dynamic";
 // handoff notes and recaps, heavy = the repo-exploring context draft; see
 // lib/agents/oneshots.ts). Agent-scoped and unvalidated for the same reasons as
 // `default_model`; unset means "inherit the driver's own default".
+// `default_provider:<agent>` / `job_provider_(light|heavy):<agent>` are the
+// provider id paired with the model above: a ModelPicker's value is always a
+// {provider_id, model} pair (the same model id can be served by more than one
+// provider), so every model-scoped setting above carries a matching provider
+// key written alongside it.
 // The notify_* keys and their master switch (`notifications`) gate
 // lib/notifications, enforced server-side because the webhook channel planned
 // next must obey the same policy. All default on.
@@ -34,7 +39,7 @@ export const dynamic = "force-dynamic";
 // instead of waiting for a click on the transcript notice (lib/usageReset.ts,
 // lib/deferredStart.ts). Off by default, since an unattended resume spends the
 // next window's quota on whichever task happened to fail.
-const ALLOWED = /^(background_jobs|recap_mode|notifications|notify_awaiting_input|notify_turn_failed|notify_schedule_failed|default_agent|utility_agent|default_reasoning(:[a-z0-9_-]+)?|default_permission_mode(:[a-z0-9_-]+)?|default_model:[a-z0-9_-]+|job_model_(light|heavy):[a-z0-9_-]+|plan_usage:[a-z0-9_-]+|auto_resume_on_limit:[a-z0-9_-]+)$/;
+const ALLOWED = /^(background_jobs|recap_mode|notifications|notify_awaiting_input|notify_turn_failed|notify_schedule_failed|default_agent|utility_agent|default_reasoning(:[a-z0-9_-]+)?|default_permission_mode(:[a-z0-9_-]+)?|default_model:[a-z0-9_-]+|default_provider:[a-z0-9_-]+|job_model_(light|heavy):[a-z0-9_-]+|job_provider_(light|heavy):[a-z0-9_-]+|plan_usage:[a-z0-9_-]+|auto_resume_on_limit:[a-z0-9_-]+)$/;
 
 export async function GET() {
   return NextResponse.json(getSettings());

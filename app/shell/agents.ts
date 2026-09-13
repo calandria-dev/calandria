@@ -3,6 +3,7 @@
 // of hardcoded per agent, so adding a driver server-side surfaces in the UI
 // with no client edits. Pure functions (no React) so any module can import them.
 import type { AgentsBundle, AgentInfo, AgentCapabilities } from "./types";
+import type { ModelPickerEnvOption } from "./ModelPicker";
 
 export function findAgent(bundle: AgentsBundle, id: string | null | undefined): AgentInfo | undefined {
   return bundle.agents.find((a) => a.id === id);
@@ -63,4 +64,14 @@ export function agentPickerNeeded(bundle: AgentsBundle, value: string | null | u
   const offered = pickerAgents(bundle, value);
   if (offered.length <= 1 && offered[0]?.id === value) return false;
   return true;
+}
+
+// The connected environments a ModelPicker's footer/environment pane may
+// switch between, from this client-side bundle. Mirrors ModelPicker's own
+// connectedEnvOptions(), which reads the wire-shaped AgentsResponseT that
+// Settings/Onboarding fetch separately; this bundle's AgentInfo has a
+// differently-shaped `capabilities` (models/permissionModes, not the
+// connect-card fields), so the two aren't interchangeable.
+export function agentEnvOptions(bundle: AgentsBundle): ModelPickerEnvOption[] {
+  return bundle.agents.filter((a) => a.status === "connected").map((a) => ({ id: a.id, label: a.label }));
 }

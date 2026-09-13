@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getProject } from "@/lib/store";
 import { publishGlobal } from "@/lib/events";
 import { createRunbook, lastRunOf, listRunbooks, schedulesUsing } from "@/lib/runbooks/store";
+import { getProvider } from "@/lib/providers/store";
 import { PRIORITIES } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -38,6 +39,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (body.priority !== undefined && !PRIORITIES.includes(body.priority)) {
     return NextResponse.json({ error: `priority must be one of: ${PRIORITIES.join(", ")}` }, { status: 400 });
   }
+  // Same screen as the task routes': a provider must exist, and model is a
+  // shape check only (provider-native ids and inference-profile ARNs are the
+  // driver's business); a control character would reach a spawned process.
+  if (body.provider_id !== undefined && body.provider_id !== null && (typeof body.provider_id !== "string" || !getProvider(body.provider_id)))
+    return NextResponse.json({ error: "valid provider_id required" }, { status: 400 });
+  if (body.model !== undefined && body.model !== null) {
+    if (typeof body.model !== "string") return NextResponse.json({ error: "model must be a string or null" }, { status: 400 });
+    if (body.model.length > 2048 || /[\0-\x1f\x7f]/.test(body.model))
+      return NextResponse.json({ error: "invalid model id" }, { status: 400 });
+  }
   const runbook = createRunbook({
     project_id: id,
     name: body.name.trim(),
@@ -50,6 +61,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     permission_mode: typeof body.permission_mode === "string" ? body.permission_mode : undefined,
     send_context: typeof body.send_context === "boolean" ? body.send_context : undefined,
     priority: body.priority,
+    provider_id: body.provider_id ?? null,
+    model: typeof body.model === "string" && body.model.trim() ? body.model.trim() : null,
   });
   // "" because no task published this; see the runbooks_changed note in lib/events.ts.
   publishGlobal("", { type: "runbooks_changed", projectId: id });

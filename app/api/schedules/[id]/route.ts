@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { deleteSchedule, getSchedule, listRuns, updateSchedule } from "@/lib/schedule/store";
 import { getRunbook } from "@/lib/runbooks/store";
+import { getProvider } from "@/lib/providers/store";
 import { PRIORITIES } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -22,13 +23,24 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (body.priority !== undefined && !PRIORITIES.includes(body.priority)) {
     return NextResponse.json({ error: `priority must be one of: ${PRIORITIES.join(", ")}` }, { status: 400 });
   }
+  // Same screen as the task routes': a provider must exist, and model is a
+  // shape check only (provider-native ids and inference-profile ARNs are the
+  // driver's business); a control character would reach a spawned process.
+  if ("provider_id" in body && body.provider_id !== null && (typeof body.provider_id !== "string" || !getProvider(body.provider_id)))
+    return NextResponse.json({ error: "valid provider_id required" }, { status: 400 });
+  if ("model" in body && body.model !== null) {
+    if (typeof body.model !== "string") return NextResponse.json({ error: "model must be a string or null" }, { status: 400 });
+    if (body.model.length > 2048 || /[\0-\x1f\x7f]/.test(body.model))
+      return NextResponse.json({ error: "invalid model id" }, { status: 400 });
+  }
   const fields: Record<string, unknown> = {};
   // once_date rides the same copy loop: '' switches a schedule back to weekly,
   // 'YYYY-MM-DD' makes it one-time, and updateSchedule validates the merged
   // spec before anything is written.
-  for (const k of ["name", "prompt", "days_mask", "time_of_day", "timezone", "agent", "permission_mode", "priority", "catch_up_ms", "once_date"]) {
+  for (const k of ["name", "prompt", "days_mask", "time_of_day", "timezone", "agent", "permission_mode", "priority", "catch_up_ms", "once_date", "provider_id"]) {
     if (body[k] !== undefined) fields[k] = body[k];
   }
+  if (body.model !== undefined) fields.model = typeof body.model === "string" ? (body.model.trim() || null) : null;
   // Pause/resume. Resuming recomputes from NOW, so unpausing a schedule parked
   // for a month does not surface a month of missed occurrences.
   if (body.enabled !== undefined) fields.enabled = body.enabled ? 1 : 0;
