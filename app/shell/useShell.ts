@@ -411,6 +411,12 @@ export function useShell() {
     const fresh = await jsend<Record<string, string>>("/api/settings", "PATCH", { [key]: value });
     setAppDefaults(fresh);
   };
+  // Same, for a picker that writes two keys at once (a ModelPicker's paired
+  // `model` and `provider_id`): one PATCH instead of two round trips.
+  const setAppDefaultMany = async (entries: Record<string, string | null>) => {
+    const fresh = await jsend<Record<string, string>>("/api/settings", "PATCH", entries);
+    setAppDefaults(fresh);
+  };
 
   // ---------- sending a turn ----------
   // POST hands the turn to a detached server-side runner and returns at once;
@@ -738,9 +744,16 @@ export function useShell() {
     const fresh = await jsend<TaskRow>(`/api/tasks/${task.id}`, "PATCH", { priority: p });
     setTasks((prev) => prev.map((x) => (x.id === task.id ? { ...x, ...fresh } : x)));
   };
-  const setModel = async (m: string | null) => {
+  // Persists a ModelPickerValue in one PATCH: model and provider_id always,
+  // agent only when it actually changed and the task hasn't started, since
+  // PATCH /api/tasks/[id] refuses ANY `agent` key once started=1 or running=1
+  // (the session's driver is fixed for its lifetime), even one that names the
+  // task's own current agent.
+  const setModel = async (v: { agent?: string | null; provider_id: string | null; model: string | null }) => {
     if (!task) return;
-    const fresh = await jsend<TaskRow>(`/api/tasks/${task.id}`, "PATCH", { model: m });
+    const body: Record<string, unknown> = { model: v.model, provider_id: v.provider_id };
+    if (v.agent && v.agent !== task.agent && task.started !== 1 && task.running !== 1) body.agent = v.agent;
+    const fresh = await jsend<TaskRow>(`/api/tasks/${task.id}`, "PATCH", body);
     setTasks((prev) => prev.map((x) => (x.id === task.id ? { ...x, ...fresh } : x)));
   };
   const setReasoning = async (r: string | null) => {
@@ -803,13 +816,13 @@ export function useShell() {
     }
   }, [loadTasks]);
 
-  const createTask = async (input: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; permission_mode: string | null; tag_ids: string[]; attachments: string[] }) => {
+  const createTask = async (input: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; provider_id: string | null; permission_mode: string | null; tag_ids: string[]; attachments: string[] }) => {
     if (!project) return;
-    // model and permission_mode go in the create call, since `startNow` below
+    // model, provider_id and permission_mode go in the create call, since `startNow` below
     // launches the first turn, and either applied as a follow-up PATCH would
     // miss the very turn the user picked it for. The tags ride the create too,
     // so the first turn's context (phase 2 of the tags spec) sees them.
-    const t = await jsend<TaskRow>("/api/tasks", "POST", { project_id: project.id, title: input.title, description: input.desc, priority: input.priority, agent: input.agent, send_context: input.sendContext, ...(input.model ? { model: input.model } : {}), ...(input.permission_mode ? { permission_mode: input.permission_mode } : {}), tag_ids: input.tag_ids, attachments: input.attachments });
+    const t = await jsend<TaskRow>("/api/tasks", "POST", { project_id: project.id, title: input.title, description: input.desc, priority: input.priority, agent: input.agent, send_context: input.sendContext, ...(input.model ? { model: input.model } : {}), ...(input.provider_id ? { provider_id: input.provider_id } : {}), ...(input.permission_mode ? { permission_mode: input.permission_mode } : {}), tag_ids: input.tag_ids, attachments: input.attachments });
     // Dependencies (and the auto-start opt-in that rides on them) are an
     // edit-after-create step (the task id doesn't exist until now).
     if (input.depends_on.length) await jsend(`/api/tasks/${t.id}`, "PATCH", { depends_on: input.depends_on, auto_start: input.auto_start ? 1 : 0 });
@@ -874,7 +887,7 @@ export function useShell() {
   // clears a withdrawal (reason + cancelled status) for free.
   const saveTask = async (
     id: string,
-    patch: { title: string; description: string; priority: Priority; agent?: string; model: string | null; depends_on: string[]; auto_start: boolean; tag_ids: string[] },
+    patch: { title: string; description: string; priority: Priority; agent?: string; model: string | null; provider_id: string | null; depends_on: string[]; auto_start: boolean; tag_ids: string[] },
     action?: SaveAction,
   ) => {
     const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", {
@@ -976,7 +989,7 @@ export function useShell() {
     if (selProj) await loadTasks(selProj, false);
   };
 
-  const saveContext = async (patch: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string; agent_env: string; gateway_max_budget: number | null; gateway_key_duration: string; gateway_mcp: string[] }) => {
+  const saveContext = async (patch: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string; default_provider_id: string | null; gateway_max_budget: number | null; gateway_key_duration: string; gateway_mcp: string[] }) => {
     if (!project) return;
     await jsend(`/api/projects/${project.id}`, "PATCH", patch);
     const ps = await jget<ProjectRow[]>("/api/projects");
@@ -1055,7 +1068,7 @@ export function useShell() {
     blockedBy, liveAwaiting, needsYouTotal,
     modal, setModal, editId, setEditId, view, setView, taskView, setTaskView,
     appearance, setAppearance, appearanceOpen, setAppearanceOpen,
-    settings, setSetting, appDefaults, setAppDefault, agents, refreshAgents, brokenAgents,
+    settings, setSetting, appDefaults, setAppDefault, setAppDefaultMany, agents, refreshAgents, brokenAgents,
     onboarding, wizardOpen, finishWizard, rerunOnboarding, nudge, setNudge, onMerged, onPrCreated, baseBranchTick,
     layout, setLayout, recaps,
     termOpen, setTermOpen, termMounted, setTermMounted, termHeight, setTermHeight,

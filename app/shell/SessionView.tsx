@@ -10,8 +10,8 @@ import { AttachmentStrip } from "./attachments";
 import { pendingPromptIds, promptsAreLive } from "./pendingPrompt";
 import {
   SLABEL, SSUB, AWAIT_LABEL, STATUSES, PLABEL, PRIORITIES,
-  modelOptions, reasoningOptions, permissionOptions, INHERIT_LABEL, RAIL_W, SESS_MAIN_MIN,
-  type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle, type InternalUsageEstimate, type TagRow, type PickerOption,
+  reasoningOptions, permissionOptions, INHERIT_LABEL, RAIL_W, SESS_MAIN_MIN,
+  type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle, type InternalUsageEstimate, type TagRow,
 } from "./types";
 import { TagBadges, selectOneTag } from "./TagChips";
 import { isSnoozed, wakeLabel } from "./snooze";
@@ -23,7 +23,10 @@ import { usageResetAt, deferredStartFor } from "@/lib/usageReset";
 import { capsFor, agentLabel, findAgent } from "./agents";
 import { StatusDot, Avatar, Popover, AgentBadge, ProviderBadge, Skel } from "./shared";
 import { useEndpointModels } from "./modelEndpoint";
-import { planResetKeyFor, taskProvider } from "@/lib/agentEnv";
+import { ModelPicker, useModelTree, resolveModelLabel, type ModelPickerValue, type ModelPickerEnvOption } from "./ModelPicker";
+import type { PresentedProvider } from "@/lib/providers/present";
+import { planWindowApplies, taskProvider } from "@/lib/agentEnv";
+import { planResetKeyFor } from "@/lib/agentEnv";
 import { MessageView, SessionBreak, type LimitResume, type SuggestionActions } from "./Transcript";
 import { CollabDoc } from "./CollabDoc";
 import { Composer } from "./Composer";
@@ -565,7 +568,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   clearConfirming?: boolean; onConfirmClear?: () => void; onCancelClear?: () => void;
   // Deep-link to Settings → Models, for the transcript's "your login died" recovery button.
   onReconnect?: () => void;
-  onSetStatus: (s: Status) => void; onSetPriority: (p: Priority) => void; onSetModel: (m: string | null) => void;
+  onSetStatus: (s: Status) => void; onSetPriority: (p: Priority) => void; onSetModel: (v: ModelPickerValue) => void;
   onSetReasoning: (r: string | null) => void; onSetPermission: (p: string | null) => void;
   onSetSendContext: (v: boolean) => void;
   // The blocked-task hero's "Start when unblocked" toggle (tasks.auto_start).
@@ -730,17 +733,32 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   // capabilities, not a hardcoded list, so the options always match the agent
   // it runs under.
   const caps = capsFor(agents, task.agent);
-  // The rail's model list. Under a provider override the driver's catalog is
-  // the vendor's cloud line-up, none of which is runnable here, so the list is
-  // what the endpoint itself reports instead, under the same inherit head. A
-  // model typed in the Edit dialog is kept as its own entry so the chip shows
-  // what will actually run instead of "Inherit".
-  const endpoint = useEndpointModels(project.id, "", provider.kind !== "cloud");
-  const models = useMemo<PickerOption[]>(() => {
-    if (provider.kind === "cloud") return modelOptions(caps);
-    const ids = endpoint.models.includes(task.model ?? "") || !task.model ? endpoint.models : [task.model, ...endpoint.models];
-    return [...modelOptions(undefined), ...ids.map((m) => ({ value: m, label: m, sub: `on ${provider.host}` }))];
-  }, [provider, endpoint.models, caps, task.model]);
+  // The model chip/picker: a tree for this task's own environment, and the
+  // provider catalog to resolve a {provider_id, model} pair into a label
+  // ("via Provider" only when the version has more than one source or the
+  // provider isn't the environment's bundled one). ModelPicker keeps its own
+  // /api/providers cache internally, but doesn't export it, so this is a
+  // second, page-scoped fetch rather than a shared cache.
+  const { tree: modelTree } = useModelTree(task.agent);
+  const [providersMap, setProvidersMap] = useState<Map<string, PresentedProvider>>(new Map());
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/providers")
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+      .then((body: { providers: PresentedProvider[] }) => {
+        if (alive) setProvidersMap(new Map(body.providers.map((p) => [p.id, p] as const)));
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  const modelLabelResolved = resolveModelLabel(modelTree, providersMap, { provider_id: task.provider_id, model: task.model });
+  // ModelPicker's own connectedEnvOptions() takes AgentsResponseT (the raw
+  // /api/agents shape); this component holds the client-normalized
+  // AgentsBundle instead, so the same "connected" filter is inlined here
+  // rather than fighting the two types' shapes into alignment.
+  const connectedEnvOptions: ModelPickerEnvOption[] = agents.agents
+    .filter((a) => a.status === "connected")
+    .map((a) => ({ id: a.id, label: a.label }));
   const reasoningOpts = reasoningOptions(caps);
   const permissionOpts = permissionOptions(caps);
   // Usage chip: tokens split into fresh work and re-read cache (the raw total
@@ -978,31 +996,27 @@ export function SessionView({ project, task, tagsById, agents, messages, running
         {Icon.spark()}
         {/*
          * The chip says INHERIT_LABEL, never "Default": the same word the
-         * picker's head uses, so the two read as the same state.
+         * picker's head uses, so the two read as the same state. "via
+         * Provider" only when resolveModelLabel says the version has more
+         * than one source or the provider isn't the environment's bundled one.
          */}
-        <span className="cv">{models.find((m) => m.value === task.model)?.label ?? task.model ?? INHERIT_LABEL}</span>
+        <span className="cv">
+          {modelLabelResolved
+            ? modelLabelResolved.via ? `${modelLabelResolved.name} via ${modelLabelResolved.via}` : modelLabelResolved.name
+            : INHERIT_LABEL}
+        </span>
         {task.resolved_model && <span className="model-badge" title={`Last ran on ${task.resolved_model}`}>{modelLabel(task.resolved_model, caps)}</span>}
         {Icon.chevDown()}
       </button>
       {modelOpen && (
-        <Popover onClose={() => setModelOpen(false)}>
-          {models.map((m, i) => (
-            <Fragment key={m.label}>
-              {/*
-               * Section header whenever the group changes: Claude Code's
-               * list runs to a dozen-plus pins, so it needs the structure.
-               */}
-              {m.group && m.group !== models[i - 1]?.group && <div className="pop-sec">{m.group}</div>}
-              <div className="pop-item" onClick={() => { onSetModel(m.value); setModelOpen(false); }}>
-                <div><div>{m.label}</div><div className="pi-sub">{m.sub}</div></div>
-                {(task.model ?? null) === m.value && <span className="pi-check">{Icon.check()}</span>}
-              </div>
-              {/* Rule under the inherit head: everything below it is the
-                  provider's own catalog, spelled the provider's way. */}
-              {m.value === null && <div className="divider" />}
-            </Fragment>
-          ))}
-        </Popover>
+        <ModelPicker
+          variant={mobile ? "sheet" : "popover"}
+          value={{ agent: task.agent, provider_id: task.provider_id, model: task.model }}
+          onChange={onSetModel}
+          onClose={() => setModelOpen(false)}
+          inherit={{ label: "Project default" }}
+          env={{ current: task.agent, options: connectedEnvOptions, projectDefault: project.default_agent }}
+        />
       )}
     </div>
   );

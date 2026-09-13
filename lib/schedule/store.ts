@@ -63,6 +63,10 @@ export function createSchedule(input: {
   runbook_id?: string | null;
   /** 'YYYY-MM-DD' for a one-time schedule; '' (the default) for a weekly one. */
   once_date?: string;
+  /** The model provider a firing carries into the task it mints; null/undefined = the project's default. */
+  provider_id?: string | null;
+  /** The model that task starts on; null/undefined = the project's default. */
+  model?: string | null;
 }): Schedule {
   const now = Date.now();
   const id = nanoid();
@@ -81,13 +85,15 @@ export function createSchedule(input: {
   getDb()
     .prepare(
       `INSERT INTO schedules (id, project_id, name, prompt, days_mask, time_of_day, timezone, enabled,
-                              agent, permission_mode, send_context, priority, catch_up_ms, runbook_id, once_date, next_fire_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                              agent, permission_mode, send_context, priority, catch_up_ms, runbook_id, once_date,
+                              provider_id, model, next_fire_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id, input.project_id, input.name, input.prompt, daysMask, input.time_of_day, input.timezone,
       input.agent || "claude", input.permission_mode ?? null, input.send_context === false ? 0 : 1,
-      input.priority ?? "med", input.catch_up_ms ?? -1, input.runbook_id ?? null, onceDate, next.ms, now, now
+      input.priority ?? "med", input.catch_up_ms ?? -1, input.runbook_id ?? null, onceDate,
+      input.provider_id ?? null, input.model ?? null, next.ms, now, now
     );
   return getSchedule(id)!;
 }
@@ -97,7 +103,8 @@ const SPEC_FIELDS = ["days_mask", "time_of_day", "timezone", "once_date"] as con
 export function updateSchedule(
   id: string,
   fields: Partial<Pick<Schedule, "name" | "prompt" | "days_mask" | "time_of_day" | "timezone" | "enabled"
-    | "agent" | "permission_mode" | "send_context" | "priority" | "catch_up_ms" | "runbook_id" | "once_date">>
+    | "agent" | "permission_mode" | "send_context" | "priority" | "catch_up_ms" | "runbook_id" | "once_date"
+    | "provider_id" | "model">>
 ): Schedule | null {
   const before = getSchedule(id);
   if (!before) return null;

@@ -597,8 +597,9 @@ const INHERIT_HEAD: PickerOption = { value: null, label: INHERIT_LABEL, sub: "us
 const withInherit = (opts: PickerOption[], sub?: string): PickerOption[] =>
   [sub ? { ...INHERIT_HEAD, sub } : INHERIT_HEAD, ...opts];
 // Build each picker's option list from a driver's capabilities. Undefined caps
-// (agent metadata not loaded yet) yields just the inherit head.
-export const modelOptions = (caps?: AgentCapabilities, sub?: string): PickerOption[] => withInherit(caps?.models ?? [], sub);
+// (agent metadata not loaded yet) yields just the inherit head. Model
+// selection moved to the provider tree (ModelPicker.tsx, GET /api/models);
+// `caps.models` itself survives only as modelLabel()'s display fallback.
 export const reasoningOptions = (caps?: AgentCapabilities, sub?: string): PickerOption[] => withInherit(caps?.reasoningOptions ?? [], sub);
 export const permissionOptions = (caps?: AgentCapabilities, sub?: string): PickerOption[] => withInherit(caps?.permissionModes ?? [], sub);
 
@@ -776,6 +777,10 @@ export interface ScheduleRow {
   next_fire_at: number;
   /** The runbook this schedule fires, if any: it supplies the prompt and config. */
   runbook_id: string | null;
+  /** The model provider a firing carries into the task it mints; null = the project's default. */
+  provider_id: string | null;
+  /** The model that task starts on; null = the project's default. */
+  model: string | null;
   last_run: ScheduleRunRow | null;
   runs: ScheduleRunRow[];
   // The row still `claimed`/`running` for this schedule, if any, served
@@ -815,6 +820,10 @@ export interface RunbookRow {
   priority: Priority;
   /** '' = the user wrote it; otherwise the agent id that filed it. */
   created_by: string;
+  /** The model provider a dispatch carries into the task it mints; null = the project's default. */
+  provider_id: string | null;
+  /** The model that task starts on; null = the project's default. */
+  model: string | null;
   /** The most recent task this dispatched; null until it has run once. */
   last_run: { id: string; title: string; status: string; created_at: number } | null;
   /**

@@ -657,6 +657,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
       setAppearance={o.setAppearance}
       appDefaults={o.appDefaults}
       setAppDefault={o.setAppDefault}
+      setAppDefaultMany={o.setAppDefaultMany}
       agents={o.agents}
       onAgentsRefresh={o.refreshAgents}
       onReset={o.resetSettings}
