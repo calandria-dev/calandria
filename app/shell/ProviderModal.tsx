@@ -314,9 +314,9 @@ function ModelsTab({ provider, onChanged }: { provider: PresentedProviderT; onCh
   useEffect(() => {
     setFlat(null);
     jget<ProviderModelsResponseT>(`/api/providers/${provider.id}/models`).then((r) => { setFlat(r); onChanged(); }).catch(() => setFlat(null));
-    // Deliberately keyed on provider.id alone: onChanged's identity changes
-    // every render (it closes over ProviderModal's loadProvider), and
-    // re-running this fetch on that alone would loop.
+    // onChanged closes over ProviderModal's loadProvider and gets a new
+    // identity every render; keying this effect on it as well as provider.id
+    // would refetch on every onChanged() call this effect itself triggers.
   }, [provider.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Every write here can move the header's "N models on" count (present.ts's
@@ -374,7 +374,7 @@ function BundledConnection({ provider, agents, appDefaults, setAppDefault }: {
       <div className="mv-rrow"><dt>Managed by</dt><dd>{env ? EnvMark[env.id]?.() : null} {env?.label ?? provider.bundled}</dd></div>
       <div className="mv-rrow">
         <dt>Account</dt>
-        <dd>{env?.account?.email ?? "—"}{env?.account?.plan ? ` · ${env.account.plan}` : ""}</dd>
+        <dd>{env?.account?.email ?? "not signed in"}{env?.account?.plan ? ` · ${env.account.plan}` : ""}</dd>
       </div>
       <div className="mv-rrow"><dt>Config</dt><dd className="ctx-mono">{provider.bundled ? CONFIG_DIR[provider.bundled] ?? "" : ""}</dd></div>
       <div className="mv-rrow">
