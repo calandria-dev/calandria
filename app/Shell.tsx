@@ -4,7 +4,6 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Icon } from "./icons";
 import { Logo } from "./Logo";
 import { TerminalView, type TermApi } from "./Terminal";
-import TaskChanges from "./TaskChanges";
 import { PROJ_W, TASK_W, DEFAULT_LAYOUT, AUTO_COLLAPSE_BELOW } from "./shell/types";
 import { INITIAL_POLICY, applyShed, applyOverride, isCollapsed, shedLabel, type Col, type CollapsePolicy } from "./shell/collapsePolicy";
 import { useShell } from "./shell/useShell";
@@ -20,7 +19,7 @@ import { UpdatePill } from "./shell/UpdatePill";
 import { useUpdates } from "./shell/useUpdates";
 import { AppearancePanel } from "./shell/AppearancePanel";
 import { ColResize, ColRail, TerminalDrawer, BootSkeleton } from "./shell/Layout";
-import { ServicesDrawer } from "./shell/Services";
+import { ServicesDrawer, ServicesPane } from "./shell/Services";
 import { clientFeatures } from "@/lib/features";
 import { NewTaskModal, EditTaskModal, MoveTasksModal, TagTasksModal, ContextModal, NewProjectModal, SessionsModal } from "./shell/modals";
 import { OnboardingWizard } from "./shell/OnboardingWizard";
@@ -336,7 +335,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
     !project ? "projects" : task ? "session" : o.projectHome ? "project" : "tasks";
 
   // Bottom tab bar (mobile only). Board reuses the drill-down above unchanged;
-  // Diffs/Terminals are new full-pane surfaces; Insights mirrors the existing
+  // Services/Terminals are full-pane surfaces; Insights mirrors the existing
   // o.view toggle so the URL and the desktop chart icon stay in sync with it.
   const [mobileTab, setMobileTab] = useState<MobileTabId>("board");
   useEffect(() => { if (isMobile && o.view === "insights") setMobileTab("insights"); }, [isMobile, o.view]);
@@ -351,7 +350,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
     prevSelTaskRef.current = selTask;
   }, [isMobile, selTask]);
   // …and the selTask watch above can't see a jump to the task that's ALREADY
-  // selected (needs-you row for the chat you left to look at Diffs), so every
+  // selected (needs-you row for the chat you left to look at Services), so every
   // goToTask also bumps navEpoch: an explicit "navigate somewhere" signal that
   // snaps the tab back to the board even when no selection changed.
   useEffect(() => {
@@ -461,16 +460,13 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
           </div>
         )}
       </div>
-      {/* Managed services: desktop only, and that is an unresolved gap, not a
-          decision. `.tb-actions` is `display:none` on a phone (globals.css) so
-          the Services button isn't even rendered there, and this gate then
-          declines to mount the drawer, so a phone has no way to start, stop or
-          read the log of a project's dev server. Unlike the terminal below
-          there is no mobile substitute. Fixing it needs real work to fit a
-          phone: a mouse-only drag-to-resize handle and a side-by-side
-          service-list/log split, its own task. When it is done, the project
-          pane above is where it belongs: it is the project-level surface a
-          phone now has. */}
+      {/* Managed services: this bottom drawer is desktop only. A
+          phone gets ServicesPane on its own Services tab instead, which is the
+          same stream and the same routes in a shape that fits 390px: a list,
+          then one service's log, rather than a pixel-height sheet with a
+          mouse-drag resize handle and a list sitting beside its log pane.
+          `.tb-actions` is `display:none` on a phone (globals.css), so the
+          Services button that toggles this drawer isn't rendered there either. */}
       {project && features.services && o.servicesMounted && !isMobile && (
         <ServicesDrawer
           key={`svc-${project.id}`}
@@ -627,24 +623,24 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
     </div>
   );
 
-  // Mobile Diffs tab: the same TaskChanges the desktop rail mounts, full-pane
-  // and task-scoped, wired to onSend the same way SessionView does.
-  const diffsColumn = (
-    <div className="col col-diffs">
-      {task && project ? (
-        <TaskChanges
-          taskId={task.id} taskTitle={task.title} projectId={project.id} running={o.running.has(task.id)} pr={task} landingMode={project.landing_mode}
-          onMerged={o.onMerged} onPrCreated={o.onPrCreated}
-          onSend={(text) => o.runTurn(task.id, text, false)}
-          onResolveWithAI={o.resolveConflictsWithAI}
-        />
-      ) : (
-        <div className="empty void" style={{ margin: "auto" }}>
-          <div className="e-ic"><Logo size={40} /></div>
-          <div className="e-t">No task selected</div>
-          <div className="e-s">Select a task to see its changes.</div>
-        </div>
-      )}
+  // Mobile Services tab: the project's managed services full-pane, the phone's
+  // substitute for the desktop bottom drawer (which stays desktop-only, see the
+  // ServicesDrawer mount above). Project-scoped, so it stands on its own with
+  // no task selected, and it is reachable from inside a task too.
+  const servicesColumn = project ? (
+    <ServicesPane
+      key={`msvc-${project.id}`}
+      projectId={project.id}
+      projectName={project.name}
+      hasConfig={!!(project.dev_command || project.setup_command || project.test_command)}
+    />
+  ) : (
+    <div className="col col-services">
+      <div className="empty void" style={{ margin: "auto" }}>
+        <div className="e-ic"><Logo size={40} /></div>
+        <div className="e-t">No project selected</div>
+        <div className="e-s">Pick a project to see its services.</div>
+      </div>
     </div>
   );
 
@@ -789,7 +785,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
         ) : isMobile ? (
           o.view === "settings" ? settingsColumn
             : mobileTab === "insights" ? insightsColumn
-            : mobileTab === "diffs" ? diffsColumn
+            : mobileTab === "services" ? servicesColumn
             : mobileTab === "terminals" ? null /* the full-screen terminal sheet below covers this pane */
             : mobilePane === "projects" ? projectsColumn
             : mobilePane === "tasks" ? tasksColumn
@@ -853,7 +849,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
       </div>
 
       {isMobile && o.booted && !o.bootError && (
-        <MobileTabBar active={o.view === "settings" ? null : mobileTab} onSelect={selectMobileTab} />
+        <MobileTabBar active={o.view === "settings" ? null : mobileTab} onSelect={selectMobileTab} services={features.services} />
       )}
 
       {o.modal === "task" && project && <NewTaskModal project={project} agents={o.agents} tasks={o.tasks} tags={o.tags} onClose={() => o.setModal(null)} onCreate={o.createTask} onCreateTag={o.createTag} onOpenSetup={o.rerunOnboarding} />}

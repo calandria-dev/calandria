@@ -334,7 +334,7 @@ async function idOf(page: import("@playwright/test").Page, title: string): Promi
 // active Board tab from inside a task pops back to the task list (the board
 // root), the way a native tab bar pops its stack. Tapping Board from another
 // tab only switches tabs, and the session you left stays where you left it,
-// so the pop takes one tap from Board, two from Diffs.
+// so the pop takes one tap from Board, two from Services.
 test.describe("mobile tab bar", () => {
   test.use({ viewport: { width: 390, height: 800 } });
 
@@ -358,10 +358,10 @@ test.describe("mobile tab bar", () => {
     await expect(listRow(page, "Alpha task")).toBeVisible();
     await expect(tab("Board")).toHaveClass(/\bon\b/);
 
-    // From Diffs, the first Board tap restores the session; the second pops.
+    // From Services, the first Board tap restores the session; the second pops.
     await listRow(page, "Alpha task").click();
     await expect(backToTasks).toBeVisible();
-    await tab("Diffs").click();
+    await tab("Services").click();
     await expect(backToTasks).toBeHidden();
     await tab("Board").click();
     await expect(backToTasks).toBeVisible();

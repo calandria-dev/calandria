@@ -850,7 +850,7 @@ Below certain widths the shell collapses a side column into a 30px spine instead
 
 **How to use it:**
 
-- Switch between **Board**, **Diffs**, **Terminals**, and **Insights** using the tab bar. The
+- Switch between **Board**, **Services**, **Terminals**, and **Insights** using the tab bar. The
   device Back button walks panes back out.
 
 <p align="center">
@@ -867,6 +867,12 @@ Below certain widths the shell collapses a side column into a 30px spine instead
   reload or a shared link lands back on it, and Back returns to the task list.
 - Use the terminal as a full-screen sheet with its own font sizing and a Paste / Ctrl-C / Enter
   key row, on its own tab, instead of desktop's bottom drawer.
+- Run a project's [managed services](SERVICES.md) from the Services tab, the phone's form of
+  desktop's Services drawer. It lists the project's dev, setup and test commands with a status
+  dot and a Start / Stop button on each card; tapping a card opens that service's live log
+  full-screen, with Restart, the service URL, a copy-link button and the visibility picker in
+  its header. The tab is project-scoped, so it works from the task list and from inside a
+  session alike.
 
 **What it does not do:**
 
@@ -874,8 +880,12 @@ Below certain widths the shell collapses a side column into a 30px spine instead
   while the terminal sheet is closed, its shell, xterm buffer, and WebSocket are torn down;
   reopening the sheet spawns a fresh one. A sheet left open on screen is not affected.
 - The ⌘K command palette is desktop-only, since there is no keyboard to summon it with.
-- Managed services have no phone UI yet: the Services drawer lays its service list beside its
-  log pane, which does not fit a 390px screen, so it stays desktop-only.
+- The desktop Services drawer itself stays desktop-only: it lays its service list beside its
+  log pane and resizes by a mouse drag, neither of which fits a 390px screen. The Services tab
+  is the phone's surface for the same processes, over the same stream and the same routes.
+- There is no Diffs tab. A task's changes are one tap away inside the session, on the
+  **Chat / Changes** switch in its header, and that switch is the only place changes live on a
+  phone.
 
 ## Install as an app
 

@@ -247,7 +247,9 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .col-projects{flex:0 0 var(--col-proj);min-width:0;border-right:1px solid var(--line);background:var(--panel-2);}
 .col-tasks{flex:0 0 var(--col-task);min-width:0;border-right:1px solid var(--line);}
 .col-session{flex:1;min-width:0;background:var(--surface);}
-.col-diffs{flex:1;min-width:0;background:var(--surface);}  /* mobile Diffs tab: full-pane TaskChanges */
+/* mobile Services tab: the service list or one service's log, full pane, with a
+   header of its own. Column so the header sits above the scrolling body. */
+.col-services{--term-bg:var(--term);flex:1;min-width:0;display:flex;flex-direction:column;background:var(--surface);}
 /* mobile project pane: ProjectLanding (recap, Tags, Runbooks, Schedules)
    with a header of its own. Column so the header sits above the scrolling body. */
 .col-project{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--surface);}
@@ -1997,6 +1999,46 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .svc-cfg-row input{flex:1;min-width:0;}
 @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.4;}}
 
+/* ============================ services on a phone ============================ */
+/* The Services tab (ServicesPane): one full-width card per service, then one
+   service's log. Same stream and routes as the drawer above, laid out in a
+   single column with touch-sized controls, because the drawer's 280px list
+   beside a log pane has no room on a 390px screen. */
+.msvc-bar{
+  display:flex;align-items:center;gap:8px;flex:0 0 auto;
+  min-height:46px;padding:8px 12px;
+  background:var(--chrome);border-bottom:1px solid var(--line);
+}
+.msvc-bar>svg{width:16px;height:16px;color:var(--ink-3);flex:0 0 auto;}
+.msvc-bar .msvc-status{margin-left:auto;}
+.msvc-title{font-size:14px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.msvc-sub{margin-left:auto;font-size:11.5px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.msvc-status{flex:0 0 auto;font-size:11.5px;color:var(--ink-3);}
+.msvc-list{flex:1;min-height:0;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px;}
+.msvc-empty{padding:18px 4px;font-size:13px;color:var(--ink-3);line-height:1.55;}
+.msvc-row{
+  display:flex;flex-direction:column;gap:5px;width:100%;text-align:left;
+  padding:12px;border-radius:var(--r-sm);border:1px solid var(--line);
+  background:var(--panel);color:var(--ink-2);
+}
+.msvc-row:active{background:var(--surface-2);}
+.msvc-row-top{display:flex;align-items:center;gap:8px;}
+.msvc-name{font-size:14px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.msvc-cmd{font-family:var(--mono);font-size:11px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.msvc-err{font-size:11.5px;line-height:1.45;color:var(--red);white-space:normal;}
+.msvc-act{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:0 0 auto;
+  min-height:36px;padding:0 14px;border-radius:var(--r-sm);
+  border:1px solid var(--line-strong);background:var(--raise);
+  font-size:12.5px;font-weight:600;color:var(--ink);
+}
+.msvc-act svg{width:13px;height:13px;}
+.msvc-act:active{background:var(--surface-2);}
+.msvc-controls{display:flex;align-items:center;flex-wrap:wrap;gap:8px;flex:0 0 auto;padding:10px 12px;border-bottom:1px solid var(--line);}
+.msvc-controls .btn{min-height:36px;}
+.msvc-vis{display:flex;align-items:center;gap:10px;flex:0 0 auto;padding:8px 12px;border-bottom:1px solid var(--line);font-size:12px;color:var(--ink-3);}
+.msvc-vis select{flex:1;min-width:0;min-height:34px;padding:0 8px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface);color:var(--ink-2);font-size:12.5px;}
+
 /* status menu (popover) */
 /* max-height + scroll: the model picker now carries Claude Code's full list
    (families, 1M variants, pinned versions), which is taller than a viewport. */
@@ -2255,7 +2297,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   .app.mobile .task-group-h{font-size:10.5px;}
 }
 
-/* ── Bottom tab bar (Board / Diffs / Terminals / Insights) ──────────────────
+/* ── Bottom tab bar (Board / Services / Terminals / Insights) ──────────────
    A plain flex sibling of .body inside .app.mobile (not a fixed overlay): it
    claims its own row and .body's flex:1 shrinks to fit above it, so no
    bottom-padding/z-index bookkeeping is needed. The full-screen terminal sheet

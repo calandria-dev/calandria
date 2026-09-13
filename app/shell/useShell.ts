@@ -581,7 +581,7 @@ export function useShell() {
   // navEpoch bumps on every jump, including one to the already-selected task:
   // the mobile shell watches selTask changes to snap its tab bar back to the
   // board, and a jump that changes nothing (you were in that chat, then went
-  // to Diffs) would otherwise leave the screen where it is, looking like the
+  // to Services) would otherwise leave the screen where it is, looking like the
   // tap did nothing.
   const [navEpoch, setNavEpoch] = useState(0);
   const goToTask = (projectId: string, taskId: string) => {

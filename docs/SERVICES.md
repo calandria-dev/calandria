@@ -11,7 +11,8 @@ their state and logs stay available when you reconnect.
 ## Configure a project
 
 Open the project's context editor and set its `dev`, `setup`, or `test` commands. The
-Services drawer can then start, stop, and restart them and display live logs.
+Services drawer can then start, stop, and restart them and display live logs. On a phone the
+same controls and logs are on the Services tab in the bottom tab bar.
 
 Each project receives a stable port derived from `CALANDRIA_SERVICE_PORT_BASE`. Calandria
 injects that value as `PORT` into managed services and the project's terminal. A service
