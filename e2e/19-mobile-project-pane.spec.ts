@@ -8,6 +8,10 @@
 // This spec runs at a phone viewport and drives the whole loop: cold load,
 // reach the Runbooks card, dispatch a runbook, and confirm the minted task
 // opens.
+//
+// It also covers the Services tab, the phone's surface for managed services
+// (the desktop Services drawer stays desktop-only). Same reason it lives here:
+// this is the only spec that runs narrow enough for the tab bar to exist.
 
 import { expect, test, type Page } from "@playwright/test";
 import { createProject, createTask, ensureOnboarded, gotoApp, makeFixtureRepo, uid } from "./helpers";
@@ -17,6 +21,12 @@ test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
 const PROJECT = `Mobile ${uid()}`;
 const RECIPE = "Linger self-test";
+// A dev "server" that prints one identifiable line and then stays up, so the
+// test can read its log and then stop it. It never binds the port, which the
+// supervisor does not require: status goes to running as soon as the spawn
+// succeeds (lib/services.ts).
+const DEV_MARKER = "calandria e2e dev server up";
+const DEV_COMMAND = `node -e "console.log('${DEV_MARKER}'); setInterval(()=>{}, 1000)"`;
 
 test.beforeAll(async ({ request }) => {
   await ensureOnboarded(request);
@@ -29,6 +39,9 @@ test.beforeAll(async ({ request }) => {
     data: { name: RECIPE, description: "Hold the session open and report.", prompt: "say hello" },
   });
   expect(res.status()).toBe(201);
+  // A dev command, so the project has exactly one managed service to drive.
+  const patched = await request.patch(`/api/projects/${project.id}`, { data: { dev_command: DEV_COMMAND } });
+  expect(patched.status()).toBe(200);
 });
 
 /**
@@ -106,4 +119,40 @@ test("a refresh on the project pane lands back on it", async ({ page }) => {
 
   await page.reload();
   await expect(page.getByRole("heading", { name: "Runbooks" })).toBeVisible();
+});
+
+test("managed services are reachable from a phone: start, read the log, stop", async ({ page }) => {
+  await openTaskList(page);
+
+  // The tab bar is the whole way in on a phone: the titlebar's Services toggle
+  // lives in .tb-actions, which is display:none below the breakpoint.
+  await page.getByRole("button", { name: "Services" }).click();
+
+  const row = page.locator(".msvc-row");
+  await expect(row).toHaveCount(1);
+  await expect(row).toContainText("dev");
+  await expect(row).toContainText("Stopped");
+
+  // Start from the card itself, without drilling into the log first.
+  await row.getByRole("button", { name: "Start" }).click();
+  await expect(row).toContainText("Running");
+
+  // Tapping the card opens that service's live log full-pane.
+  await row.locator(".msvc-name").click();
+  await expect(page.locator(".svc-logs")).toContainText(DEV_MARKER);
+
+  // Stop from the log view's own header. The settled status is asserted
+  // through the controls, not its label: a stopped service reads "Exited" on
+  // POSIX, where the tree gets SIGTERM, and "Error" on win32, where the only
+  // tree kill is `taskkill /T /F` and the exit carries a nonzero code with no
+  // signal (lib/processTree.ts). Either way it is no longer live, so the
+  // header offers Start again.
+  await page.getByRole("button", { name: "Stop" }).click();
+  await expect(page.locator(".msvc-controls").getByRole("button", { name: "Start" })).toBeVisible();
+  // The supervisor's own notice lands in the log it was stopped from.
+  await expect(page.locator(".svc-logs")).toContainText(/Stopped \(signal|Exited \(code/);
+
+  // Back returns to the list, which agrees the service is down.
+  await page.getByRole("button", { name: "Back to services" }).click();
+  await expect(page.locator(".msvc-row").getByRole("button", { name: "Start" })).toBeVisible();
 });
