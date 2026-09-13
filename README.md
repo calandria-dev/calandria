@@ -233,54 +233,79 @@ already queued. The transcript records that it was sent.
 
 ## Supported agents
 
-Calandria supports **Claude Code**, **OpenAI Codex** and Google's **Antigravity**
-(the CLI behind Gemini) end to end. Choose an agent per task, or connect only the
-one you use. All three work with subscription login, and API keys stay
+Calandria supports the **Claude Code**, **OpenAI Codex** and Google's **Antigravity**
+(the CLI behind Gemini) environments end to end. The UI calls each coding CLI an
+environment in Settings → Models. Some task editors still label it Agent. The API keeps
+the field name `agent`. Choose an environment per task,
+or connect only the one you use. All three work with subscription login, and API keys stay
 optional, except in a container, where Antigravity needs one because its CLI
 stores its token in the OS keyring. The same five permission modes apply to
-every agent: a Codex task maps them onto Codex's sandbox and approval policy,
+every environment: a Codex task maps them onto Codex's sandbox and approval policy,
 its approval requests land on the same permission card a Claude prompt does,
 and a sandboxed Codex turn can still commit from its worktree. On a Linux
 host that blocks the user namespaces Codex's sandbox needs, Settings →
-Agents says so on the Codex card with the fix, and refuses the sandboxed
+Models displays the fix when you connect the Codex environment. Calandria blocks the sandboxed
 modes instead of running turns whose every command fails.
+
+Settings → Models separates **Environments**, the coding CLIs that run tasks,
+from **Providers**, the endpoints, credentials and model policies that supply models.
+Signing in to an environment adds its bundled provider. You can add LiteLLM, Ollama,
+LM Studio, and custom providers separately.
 
 [Agent support, permissions, and usage details](docs/AGENTS.md)
 
 ### Local models
 
-Either agent can run against a local model server. Set a project's **Model
-provider** to *Local model*, point it at Ollama (`http://localhost:11434`) or
-LM Studio (`http://localhost:1234`), name a model, and every task in that
-project runs there: Claude Code through `ANTHROPIC_BASE_URL`, Codex through a
-provider entry Calandria adds for the turn. The model picker becomes a text box
-that suggests whatever the server reports it has, and Settings → Agents says
-whether that server is answering. A local turn is recorded at zero cost, because
-a model served off your own machine really is free. A **Custom base URL** may
-not be, so its turns are recorded as *unpriced* rather than $0. They're left
-out of every total, and the figures that omit them say so. Neither shows a
-context percentage: the window of a model the catalog has never seen is not
-knowable, so the chip reports tokens used instead. A cloud session can also
+Claude Code and Codex can run against a local model server. Open Settings →
+Models, select **Add provider**, and add Ollama (`http://localhost:11434`) or
+LM Studio (`http://localhost:1234`). Test the connection and choose which reported
+models stay on. Select the provider and model for a project or task. Claude Code
+uses `ANTHROPIC_BASE_URL`, and Codex uses a provider entry Calandria adds for the
+turn. The provider's Connection tab lets you test the server.
+
+Choose the model before the environment. In the model picker, choose a family, then a version,
+then a provider source when more than one provider serves that version. Calandria
+records Ollama and LM Studio turns at zero cost. It records every **Custom endpoint**
+turn as *unpriced*. Unpriced turns stay out of cost totals,
+and the figures that omit them say so. Local and custom providers show no context
+percentage when the catalog has no window size, so the chip reports tokens used.
+A cloud session can also
 delegate a single task to the local model with
-`suggest_task`'s `provider: "local"`. Set `CALANDRIA_LOCAL_MODEL_BASE_URL` once
-for a Docker instance.
+`suggest_task`'s `provider: "local"`. For self-hosting, set
+`CALANDRIA_LOCAL_MODEL_BASE_URL` to seed the first local provider row at boot.
+After that row exists, its Settings → Models configuration wins.
 
 [Recipes and the allowlist](docs/AGENTS.md#local-models)
 
 ### LiteLLM gateway
 
-A [LiteLLM](https://docs.litellm.ai) proxy is a fourth **Model provider**, on the same seam as the others, with no new driver needed. Set `CALANDRIA_LITELLM_BASE_URL` and a project routes its turns through the gateway.
+A [LiteLLM](https://docs.litellm.ai) proxy supplies models to the existing
+environments. Open Settings → Models, select
+**Add provider**, choose **LiteLLM gateway**, enter its endpoint and key, test the
+connection, and choose the models to allow. Select that provider and a model for
+a project or task. For self-hosting, `CALANDRIA_LITELLM_BASE_URL` and its related
+variables seed the first LiteLLM provider row at boot. After the row exists, its
+stored configuration wins.
 
-Two billing modes:
+Settings-created providers use the gateway key. The provider API also supports two billing modes:
 
 - Billed to the gateway's own virtual key.
 - Billed to your own plan, with the CLI's login forwarded through the gateway.
 
-Every turn carries tags naming the project, task and agent, so LiteLLM's spend views break down by task on their own. A Claude task also joins to LiteLLM's spend log by session id, with no configuration needed on either side. Codex and Antigravity tasks route through the gateway too, each on the credential its own CLI reads, always billed to the gateway key.
+Every turn carries tags naming the project, task and agent, so LiteLLM's spend
+views break down by task. A Claude task also joins to LiteLLM's spend log by
+session id, with no configuration needed on either side. Codex and Antigravity
+tasks route through the gateway too. Each uses the credential its CLI reads and
+always bills the gateway key.
 
-Settings → Agents shows whether the gateway answers, which LiteLLM version it runs, how many models it serves, and the key's own spend, budget and reset time. When the proxy has no database, it says so plainly, since it then has no keys, budgets or spend to report.
+The provider row in Settings → Models shows how many models are on. Its
+Connection tab tests reachability and authentication. Its Models tab manages the
+allowlist.
 
-A turn that exceeds the key's budget parks its queued follow-ups and offers a Retry, the same as a dead login, instead of retrying into the same rejection. Gateway spend is an estimate from the gateway's own price table, marked `≈` in Insights, where a cache-hit column also shows whether prompt caching survived the proxy's translation.
+A turn that exceeds the key's budget parks its queued follow-ups and offers a
+Retry, the same recovery path as a dead login. Gateway spend is an estimate from
+the gateway's own price table and is marked `≈` in Insights. A cache-hit column
+also shows whether prompt caching survived the proxy's translation.
 
 [Setup, billing modes and the two caveats](docs/AGENTS.md#litellm-gateway)
 

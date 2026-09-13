@@ -149,8 +149,9 @@ pasted code, and the setup wizard drives that flow from the browser.
 Antigravity's subscription sign-in cannot complete in a container: `agy`
 stores its OAuth token in the OS keyring over the D-Bus Secret Service, and
 this image ships no keyring daemon. Set `GEMINI_API_KEY` (or paste a key on
-the agent's card in Settings → Agents) and the driver points the CLI at it
-instead. That bills Google's API instead of an Antigravity subscription.
+the Antigravity environment in Settings → Models) and the driver points the
+CLI at it instead. That bills Google's API instead of an Antigravity
+subscription.
 
 For site-specific CLIs or config layered on the published image, see
 [`examples/overlay/`](../examples/overlay/). Keep real overlays in a private
@@ -488,6 +489,13 @@ own schedule. The compose-only variables in the Docker section above are the
 one exception: `docker compose` interpolates them itself with no aliasing
 mechanism, so they need the `sed` rename shown there instead.
 
+Configure model providers in Settings → Models. Select **Add provider** to
+add a LiteLLM gateway, Ollama, LM Studio, or a custom
+endpoint. The provider variables in the table are first-boot seeds for a
+LiteLLM or local provider row. If a row of that type already exists, the
+stored row wins, and the startup log reports that it ignored the environment
+input.
+
 | Variable | Default | Effect |
 |-|-|-|
 | `PORT` | `3000` | Port of the single public origin (Next.js + `/pty` proxy) |
@@ -519,7 +527,12 @@ mechanism, so they need the `sed` rename shown there instead.
 | `CALANDRIA_SERVICE_HOSTS` | *(off)* | Set `1` to serve each service on a public hostname `<slug>--<appHost>` with per-service visibility (private / shared link / public). Also needs `PUBLIC_BASE_URL` plus wildcard DNS/TLS |
 | `CALANDRIA_FEATURE_SERVICES` | `1` (on) | The managed-services feature (Services drawer, supervisor, persisted registry with boot auto-restart plus orphan reaping). Set `0` to disable |
 | `CLAUDE_CLI_PATH` | `~/.local/bin/claude` | Path to the logged-in `claude` CLI (pinned since Next's server may run with a trimmed `PATH`). On Windows: `%USERPROFILE%\.local\bin\claude.exe`, then `PATH` (point at a real `.exe`, not an npm `.cmd` shim) |
-| `CALANDRIA_LOCAL_MODEL_BASE_URL` | `http://localhost:11434` | Where a project's **Model provider → Local model** preset and `suggest_task`'s `provider: "local"` point by default: an Ollama or LM Studio server. A Docker instance reaches the host's Ollama at `http://host.docker.internal:11434`. Only the default is instance-wide; the preset copies the URL into the project. See [Local models](AGENTS.md#local-models) |
+| `CALANDRIA_LOCAL_MODEL_BASE_URL` | `http://localhost:11434` | First-boot seed for one local provider row. Port `11434` creates an Ollama row, port `1234` creates an LM Studio row, and any other port creates a custom OpenAI-compatible row. Leaving the variable unset creates no row. A Docker instance reaches the host's Ollama at `http://host.docker.internal:11434`. See [Local models](AGENTS.md#local-models) |
+| `CALANDRIA_LITELLM_BASE_URL` | *(unset)* | First-boot seed for one LiteLLM provider row. This address is required for the seed. The companion variables below populate the same row. See [LiteLLM gateway](AGENTS.md#litellm-gateway) |
+| `CALANDRIA_LITELLM_KEY` | *(unset)* | First-boot secret seed for the LiteLLM row created by `CALANDRIA_LITELLM_BASE_URL`. The seed stores it in the provider secrets file with mode `0600` |
+| `CALANDRIA_LITELLM_ADMIN_KEY` | *(unset)* | First-boot admin-key seed for the LiteLLM row created by `CALANDRIA_LITELLM_BASE_URL`. Leaving it unset disables per-task virtual keys and exact spend reconciliation |
+| `CALANDRIA_LITELLM_MCP` | `on` | First-boot seed for whether the LiteLLM row created by `CALANDRIA_LITELLM_BASE_URL` permits hosted MCP servers |
+| `CALANDRIA_LITELLM_KEY_TIMEOUT_MS` | `8000` | First-boot timeout seed for the LiteLLM row created by `CALANDRIA_LITELLM_BASE_URL`. It bounds each `/key/generate`, `/key/delete`, or `/key/info` call |
 | `CALANDRIA_GH_BIN` | *(auto-resolve)* | Path to the GitHub CLI (`gh`). Empty means bare `gh` if the server's `PATH` resolves it, else a probe of the usual install dirs (linuxbrew/Homebrew, `/usr/local/bin`, snap, `~/.local/bin`; Windows: winget Links, `%ProgramFiles%\GitHub CLI`, scoop shims). The server never reads a shell profile, so set this if the probe misses your `gh` |
 | `GEMINI_API_KEY` | *(unset)* | Google AI Studio key for the Antigravity driver, used when `agy`'s own subscription sign-in can't complete (for example inside a container with no keyring). Bills Google's API instead of an Antigravity subscription |
 | `CALANDRIA_PR_STALE_MS` | `60000` | How long a task's PR state counts as fresh. Opening a task, the chip's Refresh button and the create-PR trigger all skip `gh pr view` inside this window |

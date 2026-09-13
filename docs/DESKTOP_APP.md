@@ -71,6 +71,11 @@ looking like a crash.
 
 ## Setting environment variables
 
+Configure model providers from Settings → Models with **Add provider**. You
+can add a LiteLLM gateway, an Ollama or LM Studio server, or a custom endpoint
+there. Use the environment file for every other
+launch setting.
+
 A Finder, Dock, or Start Menu launch hands the app a minimal environment with nothing sourced
 and nothing exported, so a PATH addition, an `ANTHROPIC_API_KEY`, or anything else your shell
 profile normally sets is invisible to it. To pass variables in anyway, write `KEY=VALUE` lines,

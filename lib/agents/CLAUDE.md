@@ -134,6 +134,9 @@ which transport ran. The stdio entry also sets `timeout` 30s above the bridge's 
 
 ### Model catalog and Vertex corrections
 
+`lib/providers/catalog.ts` builds the provider catalog used by the model picker.
+`lib/providers/families.ts` places provider model ids into families and versions.
+
 The model half of the capability descriptor is computed per read, not held constant: which models
 exist and what an alias resolves to is instance config. `provider.ts` (SDK-free: fs and env only)
 reads the same surfaces Claude Code reads; `claudeCapabilities()` corrects the catalog when
@@ -474,8 +477,8 @@ are dropped at parse time and never reach an override. `default_tools_approval_m
 stays scoped to our own first-party bridge instead of becoming a global.
 
 Both halves are capability-descriptor data (`inheritsUserMcpServers`, `userMcpServersNote`), so
-`GET /api/agents` carries the difference and Settings → Agents states it on each agent's card
-(`McpInheritance` in `SettingsView.tsx`).
+`GET /api/agents` carries the difference. The current Settings → Models UI does not render these
+fields.
 
 ## One-shots isolate capability and inherit config
 

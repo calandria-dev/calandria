@@ -81,7 +81,7 @@ plus which project(s) it ran for and which model it actually ran on. A job run b
 recording shipped, or by a driver that can't report one, reads "model not recorded" but still
 counts toward the row's runs and cost. A job left on **Inherit** still reports which model it
 actually ran on. A "Settings →" link on each row jumps to where you'd change it: the
-background-jobs switch, the model picker under Run defaults, or the agent's own card. Your task
+background-jobs switch, the model picker under Run defaults, or Settings → Models. Your task
 chats never appear here.
 
 Settings also shows the last 30 days of this same utility-job activity, with the models behind
@@ -110,9 +110,9 @@ estimate here is standing in for. LiteLLM's `/spend/logs` has no tag filter of i
 (`BerriAI/litellm#14218`), so the tags give you coarse filtering across a project, task, and
 agent, and the session ID gives you an exact match on one session.
 
-Settings → Agents shows the gateway key's own spend, budget, and reset time when the proxy has a
-database behind it; without one it shows only whether the proxy is reachable and how many models
-it serves.
+The Gateway titlebar pill shows the gateway key's own spend, budget, and reset time when the proxy
+has a database behind it. Without one, the Gateway pill is absent. Settings → Models shows whether
+the provider is reachable and how many models it serves.
 
 ## Projects
 
@@ -165,8 +165,8 @@ pill each, distinguished by its brand mark; the tooltip and breakdown name the a
 your LiteLLM gateway key has a budget configured, its spend-to-budget ratio gets its own
 "Gateway" pill using the same meter.
 
-Settings → Agents has a switch per metered agent to hide or show its pill; hiding one only
-affects the titlebar, not what the server reads or records.
+Each metered bundled provider in Settings → Models has a **Titlebar usage** switch on its
+Connection tab. Hiding one only affects the titlebar. The server still reads and records its usage.
 
 Percentages are read conservatively: only while a tab is open, and only refetched from the
 provider at the floor in the table below, serving the cached value in between and backing off on
@@ -183,7 +183,7 @@ meter doesn't render at all under API-key auth, since there's no plan to meter.
 | Settings → Background jobs → "Let Calandria use your agent for background work" | On | Off stops unattended recap, context-draft, and tag-refresh jobs; explicit `/clear`, Refresh with AI, and a manual recap refresh still run |
 | Settings → Background jobs → Project recaps | Automatic | Automatic / Only when I open a project / Off |
 | Settings → Background jobs → Utility agent | Falls back through the app default agent | Which connected agent runs Calandria's own convenience jobs |
-| Settings → Agents → "Show \<agent\>'s plan usage in the titlebar" | On | Off hides that agent's meter pill only |
+| Settings → Models → bundled provider → Titlebar usage | On | Off hides that environment's meter pill only |
 | `CALANDRIA_PLAN_USAGE` | on | Set to `off` to hide the plan usage meter entirely and stop polling every provider for it |
 | `CALANDRIA_PLAN_USAGE_MIN_FETCH_MS` | `300000` (5 minutes) | Minimum time between live plan-usage reads per provider; cached value serves requests in between |
 

@@ -6,7 +6,8 @@ Revised: 2026-09-12, to Models v2. The anatomy here follows the handoff at
 (`docs/MODELS_V2_HANDOFF.md`, then `ui/Models v2.html` and `ui/Models v2 - Providers.html`),
 which supersedes the step 7 and step 8 handoffs.
 Status: spike. The two design passes and the removal of Settings → Account have landed.
-Nothing else in this document is implemented.
+The provider registry, routes, catalog, environment registry, Settings → Models, model picker,
+and provider-aware agent tools have also landed on `integration/model-providers`.
 Plan tag: `model-providers`, integration branch `integration/model-providers`.
 
 ## The problem
@@ -270,7 +271,8 @@ things differ from the description above, and the code is what is true.
   reason: `lib/litellm-key.ts` now reads the `litellm` provider row.
 - A seeded `litellm` row gets `billing: "key"`. No environment variable chooses between
   key and subscription billing, and the vars that do exist describe a gateway reached
-  with a key. The provider's detail modal is where an instance says otherwise.
+  with a key. The REST API accepts another billing mode. The provider detail modal does
+  not expose billing, hosted MCP, admin-key or key-timeout controls.
 - A seeded local row on a port that is neither 11434 nor 1234 is a `custom` row with
   `api: "openai"`, the surface Ollama and LM Studio both expose. Its label is the type's
   name plus the host, as in "Ollama (mac-mini.local)".
@@ -430,7 +432,12 @@ Surfaces the picker replaces:
 | Schedules, Runbooks | agent select only (`Schedules.tsx:411`, `Runbooks.tsx:169`) | `ModelPicker`; `model` and `provider_id` stored on the row and carried by `lib/dispatch.ts` | Project default |
 | Settings → Run defaults | per-agent selects (`SettingsView.tsx:996-1011`) | one pinned `ModelPicker` per connected environment, no footer and no environment pane, plus the two job-model pickers | Environment default |
 | Settings → Background jobs | agent select | a pinned `ModelPicker` for the utility agent | Environment default |
-| `suggest_task`, `create_runbook`, dispatch | `provider: "local" \| "cloud"` | `provider` takes a provider id or label; `local` and `cloud` stay as aliases for the first local row and the environment's bundled row | n/a |
+| `suggest_task`, `create_runbook`, dispatch | `provider: "local" \| "cloud"` | `provider` takes a provider id or label; `local` uses the first configured type in Ollama, LM Studio, custom order, and `cloud` uses the environment's bundled row | n/a |
+
+As landed, the `local` alias uses fixed type precedence: Ollama, then LM Studio, then custom. It
+uses the oldest row within the first type found. The `cloud` alias uses the selected environment's
+bundled provider. The API and stored columns keep `agent`. Settings → Models uses Environment,
+while Schedules, Runbooks, project settings, and Run defaults still label their CLI field Agent.
 
 ## Settings → Models
 
@@ -503,6 +510,12 @@ One modal page.
    returned, using the same policy block as the detail modal. You see and adjust what the
    provider will contribute before the row exists.
 
+As landed, the add page turns on every chat model returned by a successful test. The unsaved
+probe has no family or duplicate placement, so it cannot apply the recognized-family and
+nonduplicate initialization that a seeded LiteLLM row gets on its first catalog read. The direct
+OpenAI and Gemini key forms also send `base_url`, while their strict config schemas accept an
+empty object. Those add and edit requests currently return 400.
+
 The primary button stays disabled until a test has passed. Pressing it posts the config,
 the secrets and the policy the toggles built, then the modal switches to detail mode for
 the new row.
@@ -513,7 +526,8 @@ A modal with three tabs: Connection, Models and Remove. A bundled row gets a rea
 Connection tab and no Remove tab.
 
 **Connection.** For a user-added row this is the add form with the last test result shown
-in place, and a Done button; changes save when you close. For a bundled row it is
+in place, and a Done button; changes save when you press Done. Closing the modal without Done
+discards them. For a bundled row it is
 read-only: managed by, account, config path (see the Environments note above: not served by
 the API, restated from a small client-side map), the one environment it serves, the
 plan-usage meter switch, and a line saying the endpoint and the credential belong to the
@@ -529,6 +543,9 @@ that sits a header line ("N of M on", "N in Other", the refresh time, a Refresh 
 and one row per model: a switch, the id in mono, a duplicate tag where the id is dated,
 the context size, and the family and version it placed into, or Other. Non-chat rows are
 hidden.
+
+As landed, the Models tab filters out non-chat rows before it builds the policy block. It reports
+the chat-model count and cannot report the number of hidden non-chat models.
 
 **Remove.** A bordered block at the far end of the tab row. It says that tasks already
 running keep their model until they finish, and that defaults which pointed here fall
