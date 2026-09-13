@@ -63,6 +63,8 @@ export const Icon = {
   restore: (p?: P) => S(<><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v4h4" /><path d="M12 8v4l3 2" /></>, p),
   // Mobile tab bar's "Diffs" tab: a branch peeling off with a change-marker dot.
   diff: (p?: P) => S(<><path d="M7 3v9a4 4 0 0 0 4 4h4" /><circle cx={18} cy={17.5} r={2.3} /></>, p),
+  // A provider's API key field's reveal toggle.
+  eye: (p?: P) => S(<><path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z" /><circle cx={12} cy={12} r={2.6} /></>, p),
 };
 
 // ---- environment and provider marks ----

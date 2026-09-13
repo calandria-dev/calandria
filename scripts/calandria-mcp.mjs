@@ -36,7 +36,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../lib/agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_PROVIDERS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../lib/agentToolDefs.mjs";
 import { guardToolHandler, DEFAULT_AGENT_TOOL_TIMEOUT_MS } from "../lib/agentToolGuard.mjs";
 
 const TASK_ID = process.env.CALANDRIA_TASK_ID || "";
@@ -143,6 +143,15 @@ server.registerTool(
 );
 
 server.registerTool(
+  LIST_PROVIDERS.name,
+  { description: LIST_PROVIDERS.description, inputSchema: {} },
+  async () => {
+    const data = await callInternal("list-providers", {});
+    return { content: [{ type: "text", text: JSON.stringify(data.providers ?? [], null, 2) }] };
+  }
+);
+
+server.registerTool(
   SUGGEST_TASK.name,
   {
     description: SUGGEST_TASK.description,
@@ -153,7 +162,7 @@ server.registerTool(
       project: z.string().optional().describe(SUGGEST_TASK.params.project),
       blocked_by: z.array(z.string()).optional().describe(SUGGEST_TASK.params.blocked_by),
       tags: z.array(z.string()).optional().describe(SUGGEST_TASK.params.tags),
-      provider: z.enum(SUGGEST_TASK.providers).optional().describe(SUGGEST_TASK.params.provider),
+      provider: z.string().optional().describe(SUGGEST_TASK.params.provider),
       model: z.string().optional().describe(SUGGEST_TASK.params.model),
     },
   },
@@ -418,6 +427,8 @@ server.registerTool(
       priority: z.enum(["hi", "med", "lo"]).optional().describe(CREATE_RUNBOOK.params.priority),
       permission_mode: z.string().optional().describe(CREATE_RUNBOOK.params.permission_mode),
       project: z.string().optional().describe(CREATE_RUNBOOK.params.project),
+      provider: z.string().optional().describe(CREATE_RUNBOOK.params.provider),
+      model: z.string().optional().describe(CREATE_RUNBOOK.params.model),
     },
   },
   async (args) => {
@@ -451,6 +462,8 @@ server.registerTool(
       prompt: z.string().optional().describe(UPDATE_RUNBOOK.params.prompt),
       priority: z.enum(["hi", "med", "lo"]).optional().describe(UPDATE_RUNBOOK.params.priority),
       permission_mode: z.string().optional().describe(UPDATE_RUNBOOK.params.permission_mode),
+      provider: z.string().optional().describe(UPDATE_RUNBOOK.params.provider),
+      model: z.string().optional().describe(UPDATE_RUNBOOK.params.model),
     },
   },
   async (args) => {

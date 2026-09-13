@@ -416,7 +416,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
             onStart={() => o.runTurn(task.id, "", true)}
             onStop={() => o.stopTurn(task.id)}
             onClear={() => requestClear(task.id)} clearConfirming={clearRequest === task.id} onConfirmClear={confirmClear} onCancelClear={() => setClearRequest(null)} onEdit={() => o.setEditId(task.id)}
-            onReconnect={() => openSettings("agents")}
+            onReconnect={() => openSettings("models")}
             onSetStatus={o.setStatus} onSetPriority={o.setPriority} onSetModel={o.setModel}
             onSetReasoning={o.setReasoning} onSetPermission={o.setPermission} onSetSendContext={o.setSendContext} onSetAutoStart={o.setAutoStart}
                 onSnooze={(until) => o.snoozeTask(task.id, until)} onUnsnooze={() => o.unsnoozeTask(task.id)}
@@ -530,7 +530,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
                 onStart={() => o.runTurn(task.id, "", true)}
                 onStop={() => o.stopTurn(task.id)}
                 onClear={() => requestClear(task.id)} clearConfirming={clearRequest === task.id} onConfirmClear={confirmClear} onCancelClear={() => setClearRequest(null)} onEdit={() => o.setEditId(task.id)}
-                onReconnect={() => openSettings("agents")}
+                onReconnect={() => openSettings("models")}
                 onSetStatus={o.setStatus} onSetPriority={o.setPriority} onSetModel={o.setModel}
                 onSetReasoning={o.setReasoning} onSetPermission={o.setPermission} onSetSendContext={o.setSendContext} onSetAutoStart={o.setAutoStart}
                 onSnooze={(until) => o.snoozeTask(task.id, until)} onUnsnooze={() => o.unsnoozeTask(task.id)}
@@ -764,7 +764,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
       {/* An agent's login died, so nothing can run until it's reconnected, and
           that is true for every project. It lives above the whole workspace
           instead of inside the task that happened to hit it first. */}
-      <AgentAuthBanner broken={o.brokenAgents} onReconnect={() => openSettings("agents")} />
+      <AgentAuthBanner broken={o.brokenAgents} onReconnect={() => openSettings("models")} />
 
       {/* data-shed: the auto-collapse policy as the app currently sees it, its
           one observable (collapsePolicy.ts). */}
@@ -911,7 +911,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
             { id: "toggle-text-width", label: o.appearance.wide === "1" ? "Use reading-width text" : "Use full-width text", hint: o.appearance.wide === "1" ? "760px measure" : "fill the pane", keywords: "wide full width narrow measure transcript column appearance", icon: Icon.sliders(), run: () => o.setAppearance("wide", o.appearance.wide === "1" ? "0" : "1") },
             { id: "open-settings", label: "Open Settings", keywords: "preferences defaults setup", icon: Icon.gear(), run: () => openSettings() },
             { id: "open-insights", label: "Open Insights", keywords: "usage spend cost tokens analytics dashboard metrics stats", icon: Icon.chart(), run: () => o.setView("insights") },
-            { id: "connect-agent", label: "Connect an agent", keywords: "codex claude agent connect login subscription", icon: Icon.bolt(), run: () => openSettings("agents") },
+            { id: "connect-agent", label: "Connect an agent", keywords: "codex claude agent connect login subscription", icon: Icon.bolt(), run: () => openSettings("models") },
             { id: "open-appearance", label: "Open Appearance", keywords: "appearance density theme dark light mode width", icon: Icon.sliders(), run: () => o.setAppearanceOpen(true) },
             project && features.services && { id: "toggle-services", label: "Toggle Services", hint: o.servicesOpen ? "hide" : "show", keywords: "dev server setup test drawer", icon: Icon.sliders(), run: () => { o.setServicesMounted(true); o.setServicesOpen((s) => !s); } },
             project && { id: "toggle-terminal", label: "Toggle Terminal", hint: o.termOpen ? "hide" : "show", keywords: "shell console pty", icon: Icon.terminal(), run: () => { o.setTermMounted(true); o.setTermOpen((t) => !t); } },
@@ -949,7 +949,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
           the required first-run wizard is done, and never stacked on the wizard
           or the tutorial-payoff modal. Dismissible once (localStorage). */}
       {o.onboarding?.complete && !o.wizardOpen && !o.nudge && (
-        <AgentNudge ready onConnect={() => openSettings("agents")} />
+        <AgentNudge ready onConnect={() => openSettings("models")} />
       )}
 
       {/* Post-tutorial payoff: fires once the seeded "Welcome" task is merged. */}

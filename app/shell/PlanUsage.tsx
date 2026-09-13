@@ -135,7 +135,7 @@ const SESSION_IDS = ["five_hour", "primary"];
 const WEEK_IDS = ["seven_day", "secondary"];
 
 /**
- * Whether an agent's titlebar usage tracker is shown. Settings → Agents writes
+ * Whether an agent's titlebar usage tracker is shown. Settings → Models writes
  * `plan_usage:<agent>` = "off" to hide one; unset means shown, so an instance
  * that never opens the setting keeps every tracker it had.
  */
@@ -149,7 +149,7 @@ export function planUsageShown(appDefaults: Record<string, string>, agentId: str
 // + Claude workspace, or a Claude + ChatGPT one, meters two independent
 // quotas, and hiding either would misreport how much room the next batch of
 // turns has. Which of them earn titlebar space is the user's call
-// (`plan_usage:<agent>`, Settings → Agents): a second login you only use for
+// (`plan_usage:<agent>`, Settings → Models): a second login you only use for
 // utility jobs is worth metering on the server and not worth a pill.
 //
 // Each pill wears its agent's brand mark and no name; the marks are what tell
