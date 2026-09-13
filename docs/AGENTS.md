@@ -12,11 +12,14 @@ an agent that isn't.
 
 ## Support matrix
 
-| Agent | Authentication | Task support | Notes |
-|-|-|-|-|
-| Claude Code | Max/Pro login or optional API key | Full | Reference driver; supports interactive questions and reported cost data |
-| OpenAI Codex | ChatGPT login or optional API key | Full | Supports interactive questions through Calandria's bridge; estimated cost data |
-| Antigravity | Google login, or an API key (the only path in a container) | Full | Gemini models, plus Claude and GPT on the same subscription; estimated cost data |
+| Agent | Authentication | Task support | Anthropic | OpenAI | Google | OpenAI key | Gemini key | LiteLLM | Ollama | LM Studio | Custom | Notes |
+|-|-|-|-|-|-|-|-|-|-|-|-|-|
+| Claude Code | Max/Pro login or optional API key | Full | Yes |  |  |  |  | Yes | Yes | Yes | Yes | Reference driver; supports interactive questions and reported cost data |
+| OpenAI Codex | ChatGPT login or optional API key | Full |  | Yes |  | Yes |  | Yes | Yes | Yes | Yes | Supports interactive questions through Calandria's bridge; estimated cost data |
+| Antigravity | Google login, or an API key (the only path in a container) | Full |  |  | Yes |  | Yes | Yes |  |  |  | Gemini models, plus Claude and GPT on the same subscription; estimated cost data |
+
+The provider columns follow the environment lists in `lib/providers/types.ts`. A provider type
+appears here only when Calandria can route it through that coding environment.
 
 Connecting any one of them completes first-run setup and makes it the initial default. An
 instance with only Codex connected, or only Antigravity, is a supported configuration. Project

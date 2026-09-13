@@ -31,6 +31,7 @@ const PINNED = [
   "lib/storage.mjs", //          where the db/worktrees live incl. the pre-rename fallback; fs + env only, and server.js reads it before Next exists
   "lib/agents/capabilities.ts", // capability data with no SDK imports, why this module exists
   "lib/agents/connections.ts", // connection state is ID lookups only, no driving
+  "lib/agents/detect.ts", //      host CLI and config-directory detection; fs + child_process only
   "lib/agentEnv.ts", //          the main-turn process env (issue #102); types-only, no driving
   "lib/agents/codex/catalog.ts", // ~/.codex models_cache.json + config.toml; node:fs only, and ./capabilities.ts reads it on the request path
   "lib/agents/codex/provider.ts", // the override → codex config.toml mapping; pure data, tested without the SDK

@@ -107,6 +107,9 @@ export function codexCapabilities(): AgentCapabilities {
       { value: "bypassPermissions", label: "danger-full-access", sub: "no sandbox, never asks" },
       { value: "plan", label: "read-only", sub: "read-only sandbox: propose without editing" },
     ],
+    providerTypes: ["openai", "openai_key", "litellm", "ollama", "lmstudio", "custom"],
+    bundledProvider: "openai",
+    endpointTransport: "a model_providers entry written through the SDK's config overrides",
     // Interactive asks arrive via the MCP bridge's ask_user tool (the card UI and
     // /answer route are shared with Claude's AskUserQuestion flow).
     supportsAsks: true,

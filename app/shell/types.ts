@@ -8,6 +8,7 @@ export type { LandingMode, PlanScopeT };
 /** A tag as the project GET embeds it: lib/types' row plus its derived counts. */
 export type TagRow = Tag;
 import type { InternalUsageEstimate } from "@/lib/internalUsage";
+import type { ProviderType } from "@/lib/providers/types";
 export type { InternalUsageEstimate };
 
 // ---------- client shapes ----------
@@ -369,12 +370,28 @@ export type AgentCapabilitiesT = {
   // MCP selection, a separate mount from the two fields above. null = mounts
   // with no special behavior for this driver.
   gatewayMcpNote: string | null;
+  providerTypes: ProviderType[];
+  bundledProvider: ProviderType;
+  endpointTransport: string;
+};
+export type AgentEnvironmentStatusT = "connected" | "installed" | "absent";
+export type AgentProviderSummaryT = {
+  id: string;
+  label: string;
+  type: ProviderType;
+  status: "connected" | "reachable" | "unreachable" | "untested";
 };
 export type AgentInfoT = {
   id: string;
   label: string;
   capabilities: AgentCapabilitiesT;
   connected: boolean;
+  status: AgentEnvironmentStatusT;
+  installedVersion: string | null;
+  bundledProvider: ProviderType;
+  providerTypes: ProviderType[];
+  endpointTransport: string;
+  providers: AgentProviderSummaryT[];
   account: { email: string | null; plan: string | null; method: "subscription" | "api_key" } | null;
   authBroken?: AgentAuthBrokenT | null;
   sandboxBroken?: AgentSandboxBrokenT | null;
@@ -431,6 +448,9 @@ export interface AgentCapabilities {
   models: AgentModelOption[];
   reasoningOptions: AgentPickerOption[];
   permissionModes: AgentPickerOption[];
+  providerTypes: ProviderType[];
+  bundledProvider: ProviderType;
+  endpointTransport: string;
   supportsAsks: boolean;      // can surface interactive ask cards mid-turn
   supportsMcpTools: boolean;  // can mount the Calandria MCP tools
   reportsCostUsd: boolean;    // usage carries a real dollar cost (not just tokens)
@@ -443,7 +463,22 @@ export interface AgentCapabilities {
 // API-PRICE EQUIVALENT, not a charge; "api_key" means it really is billed.
 // Mirrors lib/agents/connections.ts AgentConnection; null when not connected.
 export interface AgentAccount { email: string | null; plan: string | null; method: "subscription" | "api_key" }
-export interface AgentInfo { id: string; label: string; capabilities: AgentCapabilities; authenticated: boolean; account?: AgentAccount | null; authBroken?: AgentAuthBrokenT | null; sandboxBroken?: AgentSandboxBrokenT | null }
+export interface AgentInfo {
+  id: string;
+  label: string;
+  capabilities: AgentCapabilities;
+  connected: boolean;
+  authenticated: boolean;
+  status: AgentEnvironmentStatusT;
+  installedVersion: string | null;
+  bundledProvider: ProviderType;
+  providerTypes: ProviderType[];
+  endpointTransport: string;
+  providers: AgentProviderSummaryT[];
+  account?: AgentAccount | null;
+  authBroken?: AgentAuthBrokenT | null;
+  sandboxBroken?: AgentSandboxBrokenT | null;
+}
 // `local_base_url` is where the project settings' "Local model" preset points
 // by default: the instance's CALANDRIA_LOCAL_MODEL_BASE_URL, served here so
 // the form writes the instance's answer instead of a guess.

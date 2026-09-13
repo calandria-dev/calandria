@@ -10,6 +10,9 @@ import { ensureClaudeModelIds } from "@/lib/agents/claude/modelProbe";
 import { claudeCapabilities } from "@/lib/agents/claude/capabilities";
 import { gatewayModelCatalog } from "@/lib/gatewayModels";
 import { geminiGatewayModelCheck, lastGeminiGatewayModelCheck } from "@/lib/agents/gemini/gatewayCheck";
+import { detectAgentInstallation } from "@/lib/agents/detect";
+import { listProviders } from "@/lib/providers/store";
+import { presentProvider } from "@/lib/providers/present";
 import { litellmRuntimeFor, localProviderBaseUrl } from "@/lib/providers/resolve";
 
 export const dynamic = "force-dynamic";
@@ -20,9 +23,9 @@ export const dynamic = "force-dynamic";
 // a "Connect" CTA for agents that aren't wired up yet, all from data with no
 // hardcoded per-agent lists in the UI. Connection state is read from the
 // settings record (lib/agents/connections.ts), written on a successful login,
-// verify or api-key save; the route never shells out to an agent's CLI on
-// each page load. `authenticated` mirrors `connected` for the run-control
-// pickers.
+// verify or api-key save. Installation detection checks the filesystem and
+// reads `--version` through a per-binary cache. `authenticated` mirrors
+// `connected` for the run-control pickers.
 export async function GET() {
   const gatewayRuntime = litellmRuntimeFor();
   const gatewayUrl = gatewayRuntime?.baseUrl ?? null;
@@ -62,6 +65,7 @@ export async function GET() {
   if (gatewayUrl) void geminiGatewayModelCheck(gatewayUrl, gatewayKeyValue);
   // Read once, shared by every agent's scope below (lib/planScope.ts).
   const projects = listProjectsPlain();
+  const providers = listProviders().map(presentProvider);
   return NextResponse.json({
     // The app-level default agent (Settings → Run defaults) is the client's
     // ultimate fallback when a project hasn't set its own; unset → the built-in.
@@ -101,14 +105,25 @@ export async function GET() {
       // the CALANDRIA_ALLOW_API_KEY_ENV opt-in) is what turns actually bill. It
       // outranks a stored subscription login, so the route reports the live key.
       const keyed = !!d.apiKey?.has();
+      const connected = keyed || !!conn;
+      const installation = detectAgentInstallation(d.id);
+      const capabilities = d.id === "claude" && gatewayUrl
+        ? claudeCapabilities({ ...process.env, ANTHROPIC_BASE_URL: gatewayUrl }, gatewayUrl)
+        : d.capabilities;
       return {
         id: d.id,
         label: d.label,
-        capabilities: d.id === "claude" && gatewayUrl
-          ? claudeCapabilities({ ...process.env, ANTHROPIC_BASE_URL: gatewayUrl }, gatewayUrl)
-          : d.capabilities,
-        connected: keyed || !!conn,
-        authenticated: keyed || !!conn,
+        capabilities,
+        connected,
+        authenticated: connected,
+        status: connected ? "connected" as const : installation.installed ? "installed" as const : "absent" as const,
+        installedVersion: installation.installedVersion,
+        bundledProvider: capabilities.bundledProvider,
+        providerTypes: capabilities.providerTypes,
+        endpointTransport: capabilities.endpointTransport,
+        providers: providers
+          .filter((provider) => capabilities.providerTypes.includes(provider.type))
+          .map(({ id, label, type, status }) => ({ id, label, type, status })),
         account: keyed
           ? { email: null, plan: "API", method: "api_key" as const }
           : conn
