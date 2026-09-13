@@ -138,7 +138,7 @@ shows up as every task launch and diff crawling. Fix: move the directories to `/
 **Agents report "not logged in" despite a working Windows login.** WSL2 has its own `$HOME`, so
 a Claude or Codex login done on the Windows side is invisible to the CLIs inside it. Run
 `claude` / `codex` from the WSL2 shell and complete the browser login there, or reconnect the
-agent from Settings → Agents. If a turn already failed, recover it the same way as
+environment from Settings → Models. If a turn already failed, recover it the same way as
 [Headless re-authentication](#headless-re-authentication).
 
 **Service hostnames don't open from the Windows browser.** `localhost:3000` is forwarded
@@ -385,7 +385,7 @@ agent fails the same way; the first one to run just reveals it first. Once detec
 
 **Recovery.** No shell access to the container is needed:
 
-1. Open the app in a browser and go to Settings → Agents (or click Reconnect on the banner or
+1. Open the app in a browser and go to Settings → Models (or click Reconnect on the banner or
    the failing task's notice).
 2. Click Sign in again. The app spawns `claude auth login` under a pseudo-tty inside the
    container and parses the authorize URL out of its output (`lib/claude-auth.ts`); `BROWSER=true`

@@ -907,36 +907,47 @@ See [Insights and usage](INSIGHTS.md) for how to read the numbers.
 
 ## Agent connections
 
-**What it is:** Claude Code, OpenAI Codex, and Google's Antigravity are all first-class agent
-drivers, and Calandria manages their logins and routes background jobs between whichever ones
-are connected.
+**What it is:** Settings → Models separates coding environments from model providers.
+Claude Code, OpenAI Codex, and Google's Antigravity are the environments that run tasks.
+Providers hold an endpoint, a credential, and a model policy. Signing in to an environment
+adds its bundled provider.
 
 **How to use it:**
 
-- Connect one or more agents from Settings. Calandria detects an expired connection, preserves
+- Connect one or more environments under **Environments**. Calandria detects an expired connection, preserves
   any queued follow-ups, and offers a reconnect action.
-- Background jobs pick a connected agent automatically, so an installation with only one of the
+- Add LiteLLM, Ollama, LM Studio, and custom providers under **Providers**.
+  Calandria shows each provider only in environments that can route through it.
+- Background jobs pick a connected environment automatically, so an installation with only one of the
   three connected works with no extra configuration.
-- Pin a specific model per agent, for example a small model for short summarizing jobs and a
+- Pin a specific model per environment, for example a small model for short summarizing jobs and a
   stronger one for a draft that reads your whole repository.
+- Pick models by family, version, and provider source. `lib/providers/families.ts` places model
+  ids from every provider into the shared family and version structure.
+- LiteLLM uses an allowlist. Turn on the models you want to
+  expose. Every other provider type exposes its catalog by default and lets you turn models off.
+
+Settings → Models calls each coding CLI an environment. Some task editors still label it Agent.
+The API keeps the field name `agent`.
 
 See [Supported agents](AGENTS.md) for capabilities and upstream limitations.
 
 ### Routing through a LiteLLM gateway
 
-**What it is:** an instance can point Claude Code at a self-hosted
-[LiteLLM](https://docs.litellm.ai) proxy instead of the agent's own cloud login, adding a real
-model catalog with context windows and prices, per-task spend attribution, and budgets.
+**What it is:** a LiteLLM provider routes Claude Code, Codex, or Antigravity through a
+self-hosted [LiteLLM](https://docs.litellm.ai) proxy. It adds a model catalog with context
+windows and prices, per-task spend attribution, and budgets.
 
 **How to use it:**
 
-1. In a project's **Context** dialog, set **Model provider** to **Gateway**, one of four presets
-   alongside the agent's own cloud login, a local model server, and a custom base URL.
-2. To mount one of the gateway's hosted MCP servers on every task in the project, pick it from
+1. Open Settings → Models, select **Add provider**, choose **LiteLLM gateway**, enter the
+   endpoint and key, test the connection, and turn on the models you want to expose.
+2. Choose that provider and a model in the project or task model picker.
+3. To mount one of the gateway's hosted MCP servers on every task in the project, pick it from
    the project's settings. Click **Trust this server** to skip its permission prompts, or leave
    it untrusted to approve each call.
 
-A project on the gateway can bill its turns to a shared key or have them metered, without
-touching your own agent login.
+A Claude Code project can bill gateway turns to a shared key or forward its subscription login.
+Codex and Antigravity gateway turns always use the gateway key.
 
 See [Supported agents](AGENTS.md#litellm-gateway) for setup and current provider coverage.

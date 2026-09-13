@@ -472,7 +472,8 @@ Unmerged worktree changes aren't in it; verify locations against your working tr
 - **Env-driven, zero code edits per instance.** Every per-instance knob is an env var with a
   documented default. Add new ones to `lib/config.ts` (or `lib/features.ts` for flags) **and**
   `.env.example`. `server.js` and `pty-server.js` can't import TS, so they read the same env names
-  directly; keep the names in sync.
+  directly; keep the names in sync. Provider configuration is DB-backed, with environment
+  variables as the first-boot seed.
 - **Plain-Node entrypoints stay plain.** `server.js` is CommonJS, so anything it needs from `lib/`
   must be `.mjs` and dynamic-imported, and every such `.mjs` file must be COPY'd into the runtime
   image in the `Dockerfile`. Next's build output doesn't include them.
