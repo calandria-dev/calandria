@@ -1258,7 +1258,7 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
    every row, and row highlights stay full-width across the scrolled area.
    container-type is what lets a review comment stay the width of the VISIBLE
    pane (100cqi) instead of stretching to that max-content width. */
-.tc-hunks{font-family:var(--mono);font-size:12px;line-height:1.75;background:var(--surface);overflow-x:auto;border-radius:0 0 var(--r) var(--r);container-type:inline-size;}
+.tc-hunks{font-family:var(--mono);font-size:12px;line-height:1.75;-webkit-text-size-adjust:100%;text-size-adjust:100%;background:var(--surface);overflow-x:auto;border-radius:0 0 var(--r) var(--r);container-type:inline-size;}
 .tc-rows,.tc-split{width:max-content;min-width:100%;}
 .dl{padding:0 12px;white-space:pre;color:var(--ink);}
 .dl.add{background:var(--diff-add-bg);color:var(--run);}
