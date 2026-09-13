@@ -141,11 +141,18 @@ test("managed services are reachable from a phone: start, read the log, stop", a
   await row.locator(".msvc-name").click();
   await expect(page.locator(".svc-logs")).toContainText(DEV_MARKER);
 
-  // Stop from the log view's own header, and the status follows.
+  // Stop from the log view's own header. The settled status is asserted
+  // through the controls, not its label: a stopped service reads "Exited" on
+  // POSIX, where the tree gets SIGTERM, and "Error" on win32, where the only
+  // tree kill is `taskkill /T /F` and the exit carries a nonzero code with no
+  // signal (lib/processTree.ts). Either way it is no longer live, so the
+  // header offers Start again.
   await page.getByRole("button", { name: "Stop" }).click();
-  await expect(page.locator(".msvc-bar")).toContainText("Exited");
+  await expect(page.locator(".msvc-controls").getByRole("button", { name: "Start" })).toBeVisible();
+  // The supervisor's own notice lands in the log it was stopped from.
+  await expect(page.locator(".svc-logs")).toContainText(/Stopped \(signal|Exited \(code/);
 
   // Back returns to the list, which agrees the service is down.
   await page.getByRole("button", { name: "Back to services" }).click();
-  await expect(page.locator(".msvc-row")).toContainText("Exited");
+  await expect(page.locator(".msvc-row").getByRole("button", { name: "Start" })).toBeVisible();
 });
