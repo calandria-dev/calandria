@@ -114,9 +114,11 @@ describe("codex inherits the user's MCP servers unless opted out", () => {
 
   it("is declared in the capability descriptors, both agents", () => {
     // app/api/agents hands these to the client, so the asymmetry is data, not
-    // per-agent knowledge hardcoded in a driver or the UI. Settings → Agents
-    // renders both halves verbatim (McpInheritance in SettingsView.tsx), so
-    // every driver owes the note as well as the verdict.
+    // per-agent knowledge hardcoded in a driver or the UI. Settings → Models
+    // does not surface this pair yet (the Models v2 rebuild dropped
+    // McpInheritance with no replacement slot in the new Environments row);
+    // every driver still owes the note as well as the verdict for whichever
+    // surface picks it back up.
     expect(getCapabilities("codex").inheritsUserMcpServers).toBe(true);
     expect(getCapabilities("claude").inheritsUserMcpServers).toBe(true);
     expect(getCapabilities("codex").userMcpServersNote).toContain("CODEX_INHERIT_MCP");
@@ -133,9 +135,9 @@ describe("codex inherits the user's MCP servers unless opted out", () => {
 
   it("tracks CODEX_INHERIT_MCP rather than claiming a flat yes", async () => {
     // With the opt-out set the driver really does unmount the user's servers,
-    // and the Settings line is rendered straight from this flag, so a
-    // hardcoded true would tell that user the opposite of what their own turns
-    // do. Read at import time via lib/config, hence the module reset.
+    // so a hardcoded true would report the opposite of what their own turns
+    // do, whichever surface reads this field. Read at import time via
+    // lib/config, hence the module reset.
     vi.stubEnv("CODEX_INHERIT_MCP", "0");
     vi.resetModules();
     try {
