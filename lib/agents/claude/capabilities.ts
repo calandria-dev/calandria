@@ -300,13 +300,16 @@ export function subscriptionModels(ids: Record<string, string>): AgentModelOptio
  *  read because the provider and its model mappings are instance config, not
  *  code, and because on the subscription path the alias resolution is a
  *  background probe's answer that may land at any point after boot. */
-export function claudeCapabilities(env: Record<string, string | undefined> = process.env): AgentCapabilities {
+export function claudeCapabilities(
+  env: Record<string, string | undefined> = process.env,
+  configuredGateway: string | null = gatewayBaseUrl(),
+): AgentCapabilities {
   // The gateway check comes first and reads ANTHROPIC_BASE_URL directly rather
   // than going through configuredProvider(env): a gateway override is a
   // Calandria-level redirect (lib/agentEnv.ts), invisible to the CLI's own
   // backend-selection env vars, so configuredProvider(env) would read it as a
   // bare "anthropic" login and miss it entirely.
-  const gateway = gatewayBaseUrl();
+  const gateway = configuredGateway;
   if (gateway && isGatewayEndpoint(env.ANTHROPIC_BASE_URL, gateway)) {
     const catalog = lastGatewayModelCatalog(gateway);
     // No probe yet (or the last one failed) is a supported state, same as

@@ -7,8 +7,10 @@ import { consumeDbRecoveryAuthorization, dbLockMode } from "./db-lock.mjs";
 import { SCHEMA_VERSION, schemaTooNew, schemaTooNewMessage } from "./schema-version.mjs";
 import { loadPersistedApiKey } from "./anthropic-key";
 import { loadPersistedOpenAiKey } from "./openai-key";
-import { loadPersistedGatewayKey } from "./providerSecrets";
+import { loadPersistedGatewayKey, setProviderSecret } from "./providerSecrets";
 import { seedProvidersFromEnv } from "./providers/seed";
+import { firstProviderRowOfType, getProviderRow, insertProviderRow } from "./providers/rows";
+import { bundledTypeFor, localTypeForPort, type ProviderType } from "./providers/types";
 
 // Single shared connection, stored outside the repo (CALANDRIA_DB_DIR, default
 // ~/.calandria) so a git clean or re-clone cannot wipe it. The file is
@@ -684,7 +686,10 @@ export function init(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_task_agent_edits_task ON task_agent_edits(task_id, created_at);
   `);
 
-  migrate(db);
+  // Load the legacy key before migration so the environment seed can create
+  // the LiteLLM row that legacy gateway selections must reference.
+  loadPersistedGatewayKey();
+  migrate(db, { seedProviders: true });
 
   // Crash recovery runs only for the process that owns this database, and
   // only on the boot that claimed it. See recoverFromCrash().
@@ -699,16 +704,6 @@ export function init(db: Database.Database) {
   // Same for a persisted OpenAI API key (the Codex "I have a key instead" path)
   // so the `codex` children pick it up.
   loadPersistedOpenAiKey();
-  // And the LiteLLM gateway key an older release wrote to its own file. The
-  // gateway provider resolves it at turn time; no project row stores it
-  // (lib/providerSecrets.ts, lib/litellm-key.ts).
-  loadPersistedGatewayKey();
-
-  // Provider rows come from the database, with the env vars as a first-boot
-  // seed (lib/providers/seed.ts). Runs after the gateway key is in the
-  // environment, so the seeded row gets it, and takes this connection because
-  // global.__calandriaDb is not set until init() returns.
-  seedProvidersFromEnv(db);
 }
 
 /**
@@ -851,7 +846,7 @@ export function assertSchemaVersionSupported(db: Database.Database) {
 }
 
 // Add columns introduced after a DB was first created (older database files).
-export function migrate(db: Database.Database) {
+export function migrate(db: Database.Database, options: { seedProviders?: boolean } = {}) {
   const cols = (db.prepare("PRAGMA table_info(projects)").all() as { name: string }[]).map((c) => c.name);
   const add = (name: string, def: string) => {
     if (!cols.includes(name)) db.exec(`ALTER TABLE projects ADD COLUMN ${name} ${def}`);
@@ -1372,6 +1367,13 @@ export function migrate(db: Database.Database) {
     `);
   }
 
+  // Seed before converting legacy selections. A legacy gateway preset points
+  // at the row described by CALANDRIA_LITELLM_* when those first-boot values
+  // are present. Both operations take this connection because getDb() is not
+  // available until init() returns.
+  if (options.seedProviders) seedProvidersFromEnv(db);
+  migrateLegacyAgentEnv(db);
+
   // Last, once everything above has actually run: stamp what this build
   // made of the file, so a later build older than this one refuses to open
   // it instead of writing to a schema it does not know
@@ -1486,6 +1488,129 @@ function scaffoldWelcomeRepo(): string {
   } catch {
     return "";
   }
+
+}
+
+/**
+ * Convert the endpoint presets stored by pre-provider releases into provider
+ * rows. The old columns stay in the schema for one release so an interrupted
+ * upgrade can be retried safely, but they are never read after this point.
+ *
+ * The environment seed runs first, so a legacy gateway selection points at
+ * the seeded row. Without a seed, the legacy gateway shape creates the row.
+ * All conversion writes share one transaction so a failed conversion cannot
+ * leave half of a project tree pointing at providers.
+ */
+function migrateLegacyAgentEnv(db: Database.Database): void {
+  const projects = db
+    .prepare("SELECT id, default_agent, agent_env, default_provider_id FROM projects WHERE agent_env != '' AND default_provider_id IS NULL ORDER BY rowid ASC")
+    .all() as { id: string; default_agent: string; agent_env: string; default_provider_id: string | null }[];
+  const tasks = db
+    .prepare("SELECT id, agent, agent_env, provider_id FROM tasks WHERE agent_env != '' AND provider_id IS NULL ORDER BY rowid ASC")
+    .all() as { id: string; agent: string; agent_env: string; provider_id: string | null }[];
+  if (!projects.length && !tasks.length) return;
+
+  const rowFor = new Map<string, string>();
+  const parseLegacy = (raw: string): Record<string, string> => {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+      return Object.fromEntries(Object.entries(parsed as Record<string, unknown>).filter(([, value]) => typeof value === "string")) as Record<string, string>;
+    } catch {
+      return {};
+    }
+  };
+  const normalize = (url: string): string => url.trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
+  const hostLabel = (type: ProviderType, baseUrl: string): string => {
+    let host = "";
+    try { host = new URL(baseUrl).hostname; } catch { /* label remains useful without a URL */ }
+    const labels: Record<ProviderType, string> = {
+      anthropic: "Anthropic", openai: "OpenAI", google: "Google", openai_key: "OpenAI API key",
+      gemini_key: "Gemini API key", litellm: "LiteLLM gateway", ollama: "Ollama",
+      lmstudio: "LM Studio", custom: "Custom endpoint",
+    };
+    return host ? `${labels[type]} (${host})` : labels[type];
+  };
+  const existingByBase = (baseUrl: string): string | null => {
+    const wanted = normalize(baseUrl);
+    const rows = db.prepare("SELECT id, type, config FROM model_providers WHERE type IN ('ollama', 'lmstudio', 'custom') ORDER BY created_at ASC, rowid ASC").all() as { id: string; type: string; config: string }[];
+    for (const row of rows) {
+      try {
+        const config = JSON.parse(row.config) as { base_url?: string };
+        if (config.base_url && normalize(config.base_url) === wanted) return row.id;
+      } catch { /* a malformed row is ignored and left for the normal store */ }
+    }
+    return null;
+  };
+  const bundled = (agent: string): string | null => {
+    const type = bundledTypeFor(agent);
+    if (!type) return null;
+    const existing = firstProviderRowOfType(db, type);
+    if (existing) return existing.id;
+    return insertProviderRow(db, { type }).id;
+  };
+  const providerFor = (raw: string, agent: string): string | null => {
+    const env = parseLegacy(raw);
+    const values = Object.values(env);
+    if (!values.length) return null;
+    // cloudOverrideEnv() explicitly blanks every allowlisted key.
+    if (values.every((value) => value === "")) return bundled(agent);
+
+    const anthropicUrl = env.ANTHROPIC_BASE_URL?.trim() || "";
+    const openaiUrl = env.OPENAI_BASE_URL?.trim() || "";
+    const firstUrl = anthropicUrl || openaiUrl || env.GOOGLE_GEMINI_BASE_URL?.trim() || "";
+    if (!firstUrl) return null;
+    const baseUrl = normalize(firstUrl);
+    const gatewayMarker = env.CALANDRIA_GATEWAY_BILLING === "key" || env.CALANDRIA_GATEWAY_BILLING === "subscription";
+    if (gatewayMarker) {
+      const existing = firstProviderRowOfType(db, "litellm");
+      if (existing) return existing.id;
+      const config: Record<string, unknown> = {
+        base_url: baseUrl,
+        billing: env.CALANDRIA_GATEWAY_BILLING === "subscription" ? "subscription" : "key",
+      };
+      const model = env.ANTHROPIC_MODEL || env.CODEX_MODEL || env.GEMINI_MODEL;
+      if (model) config.default_model = model;
+      return insertProviderRow(db, { type: "litellm", config }).id;
+    }
+
+    const localType = localTypeForPort(baseUrl);
+    const api = openaiUrl && !anthropicUrl ? "openai" : "anthropic";
+    const type: ProviderType = localType === "custom" ? "custom" : localType;
+    const key = `${type}:${normalize(baseUrl)}:${api}`;
+    const persistCustomSecret = (providerId: string): string => {
+      const token = env.ANTHROPIC_AUTH_TOKEN?.trim() || "";
+      const row = getProviderRow(db, providerId);
+      if (row?.type === "custom" && token && !row.has_key) {
+        setProviderSecret(providerId, "key", token);
+      }
+      return providerId;
+    };
+    const cached = rowFor.get(key);
+    if (cached) return persistCustomSecret(cached);
+    const existing = existingByBase(baseUrl);
+    if (existing) { rowFor.set(key, existing); return persistCustomSecret(existing); }
+    const config: Record<string, unknown> = { base_url: baseUrl };
+    if (type === "custom") config.api = api;
+    const model = env.ANTHROPIC_MODEL || env.CODEX_MODEL || env.GEMINI_MODEL;
+    if (model) config.default_model = model;
+    const row = insertProviderRow(db, { type, label: hostLabel(type, baseUrl), config });
+    rowFor.set(key, row.id);
+    return persistCustomSecret(row.id);
+  };
+
+  db.transaction(() => {
+    const projectUpdate = db.prepare("UPDATE projects SET default_provider_id = ? WHERE id = ? AND default_provider_id IS NULL");
+    const taskUpdate = db.prepare("UPDATE tasks SET provider_id = ? WHERE id = ? AND provider_id IS NULL");
+    for (const project of projects) {
+      const id = providerFor(project.agent_env, project.default_agent || "claude");
+      if (id) projectUpdate.run(id, project.id);
+    }
+    for (const task of tasks) {
+      const id = providerFor(task.agent_env, task.agent || "claude");
+      if (id) taskUpdate.run(id, task.id);
+    }
+  })();
 }
 
 // The scaffolded site: plain HTML/CSS with no build step, so a task's edit

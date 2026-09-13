@@ -1,8 +1,9 @@
-import { serializeAgentEnv, taskProvider, type ProviderKind } from "./agentEnv";
+import type { ProviderKind } from "./agentEnv";
 import { gatewayContextWindow } from "./gatewayModels";
 import { serializeGatewayMcp } from "./gatewayMcp";
 import { nanoid } from "nanoid";
 import { getDb } from "./db";
+import { getProviderRow } from "./providers/rows";
 // Capability data comes from the SDK-free lib/agents/capabilities.ts. Importing the
 // driver registry here would drag the agent SDKs (async Turbopack externals) into
 // every module that touches the store and break sync route entries at runtime (see
@@ -291,16 +292,12 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
   getDb()
     .prepare(
       `UPDATE projects SET name = ?, icon = ?, sub = ?, color = ?, context = ?, repo_path = ?, branch = ?, landing_mode = ?,
-        auto_reclaim = ?, dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, send_context = ?, deprecated = ?, agent_env = ?,
+        auto_reclaim = ?, dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, send_context = ?, deprecated = ?, default_provider_id = ?,
         gateway_max_budget = ?, gateway_key_duration = ?, gateway_mcp = ? WHERE id = ?`
     )
     // landing_mode is normalized, not trusted as given: the column has no CHECK
     // constraint and this is reached straight from PATCH /api/projects/[id].
-    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.auto_reclaim ? 1 : 0, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0,
-      // agent_env is normalized, not trusted: the allowlist in lib/agentEnv.ts is
-      // enforced here, so nothing unlisted reaches the DB regardless of what a
-      // PATCH body (object or JSON text) carried.
-      serializeAgentEnv(n.agent_env),
+    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.auto_reclaim ? 1 : 0, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0, n.default_provider_id ?? null,
       // A budget of 0 is a legitimate (if pointless) cap, so only null/undefined
       // clear it, matching gateway_max_budget's own null-is-unlimited contract.
       n.gateway_max_budget ?? null, n.gateway_key_duration?.trim() ?? "",
@@ -394,7 +391,6 @@ export function listTasks(projectId: string): TaskWithUsage[] {
   // where neither carries one skip the describe entirely, which is almost every
   // row on almost every instance, and this runs on every task-list load.
   const project = getProject(projectId);
-  const anyOverride = !!project?.agent_env;
   const rows = db
     .prepare(
       `SELECT t.*,
@@ -450,8 +446,8 @@ export function listTasks(projectId: string): TaskWithUsage[] {
   }
   return rows.map((r) => {
     redactGatewayKey(r);
-    const kind = (anyOverride || !!r.agent_env) ? taskProvider(project, r).kind : "cloud";
-    const window = taskContextWindow(r.agent, r.model, kind);
+    const provider = providerRuntimeForTask(project, r);
+    const window = taskContextWindow(r.agent, r.model, provider.kind, provider.gatewayBaseUrl);
     return {
       ...r,
       context_window: window,
@@ -718,19 +714,16 @@ export function createTask(input: {
    * the inherit-the-default behavior (agent's Settings default, then the CLI's).
    */
   model?: string | null;
+  /** The provider override for this task. null inherits the project provider. */
+  provider_id?: string | null;
+  /** @deprecated Legacy callers may still supply this during migration. It is ignored. */
+  agent_env?: string | Record<string, string> | null;
   /** The schedule that minted this task (lib/scheduler.ts). null for hand-made tasks. */
   schedule_id?: string | null;
   /** The runbook that dispatched this task (lib/dispatch.ts). null for hand-made tasks. */
   runbook_id?: string | null;
   /** The tags it carries at birth (validated against the project by the caller). */
   tag_ids?: string[];
-  /**
-   * A provider override laid over the project's (lib/agentEnv.ts), settable at
-   * creation because `suggest_task` can delegate work to a different agent and
-   * the task's first turn may be an auto-start with no PATCH in between.
-   * Object or JSON text; normalized here.
-   */
-  agent_env?: string | Record<string, string> | null;
 }): Task {
   const now = Date.now();
   const id = input.id || nanoid();
@@ -750,13 +743,13 @@ export function createTask(input: {
   ).n;
   getDb()
     .prepare(
-      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, model, permission_mode, schedule_id, runbook_id, agent_env, position, created_at, updated_at)
+      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, model, provider_id, permission_mode, schedule_id, runbook_id, position, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id, input.project_id, input.title, input.description ?? "", input.priority ?? "med", input.suggested ? 1 : 0,
-      agent, sendContext ? 1 : 0, input.model || null, input.permission_mode || null, input.schedule_id ?? null, input.runbook_id ?? null,
-      serializeAgentEnv(input.agent_env), position, now, now
+      agent, sendContext ? 1 : 0, input.model || null, input.provider_id ?? null, input.permission_mode || null, input.schedule_id ?? null, input.runbook_id ?? null,
+      position, now, now
     );
   // Tags are a second write because they are a second table. setTaskTags does
   // the project check for us, so a caller that got the tags wrong fails here
@@ -1138,9 +1131,11 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   getDb()
     .prepare(
       `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, send_context=?, model=?, resolved_model=?, reasoning=?, permission_mode=?,
-        session_id=?, worktree_path=?, work_branch=?, base_sha=?, base_branch=?, merged_at=?, pr_url=?, pr_number=?, pr_state=?, pr_checks=?, pr_review=?, pr_merged_at=?, pr_synced_at=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, unread_run_at=?, base_rewritten_at=?, start_at=?, context_measured=?, agent_env=?, gateway_mcp=?, updated_at=? WHERE id=?`
+        session_id=?, worktree_path=?, work_branch=?, base_sha=?, base_branch=?, merged_at=?, pr_url=?, pr_number=?, pr_state=?, pr_checks=?, pr_review=?, pr_merged_at=?, pr_synced_at=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, provider_id=?, snoozed_until=?, unread_run_at=?, start_at=?, context_measured=?, gateway_mcp=?, updated_at=? WHERE id=?`
     )
-    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.base_branch ?? "", n.merged_at, n.pr_url, n.pr_number ?? 0, n.pr_state ?? "", n.pr_checks ?? "", n.pr_review ?? "", n.pr_merged_at ?? 0, n.pr_synced_at ?? 0, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.base_rewritten_at ?? 0, n.start_at ?? 0, n.context_measured ?? null, serializeAgentEnv(n.agent_env),
+    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.base_branch ?? "", n.merged_at, n.pr_url, n.pr_number ?? 0, n.pr_state ?? "", n.pr_checks ?? "", n.pr_review ?? "", n.pr_merged_at ?? 0, n.pr_synced_at ?? 0, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.provider_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.start_at ?? 0, n.context_measured ?? null,
+    )
+    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.base_branch ?? "", n.merged_at, n.pr_url, n.pr_number ?? 0, n.pr_state ?? "", n.pr_checks ?? "", n.pr_review ?? "", n.pr_merged_at ?? 0, n.pr_synced_at ?? 0, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.provider_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.start_at ?? 0, n.context_measured ?? null,
       // null means inherit the project's selection; anything else is
       // normalized, not trusted, same as agent_env (docs/AGENTS.md, LiteLLM section).
       n.gateway_mcp == null ? null : serializeGatewayMcp(n.gateway_mcp),
@@ -2137,13 +2132,38 @@ export function getTaskUsage(taskId: string): UsageTotals {
 // lib/gatewayModels.ts), so a task pointed there is sized from that catalog
 // instead of reported unknown. A model missing from the catalog (a stale
 // pick, or nothing probed yet) falls back to 0.
-function taskContextWindow(agent: string | null | undefined, model: string | null | undefined, kind: ProviderKind): number {
+function taskContextWindow(
+  agent: string | null | undefined,
+  model: string | null | undefined,
+  kind: ProviderKind,
+  gatewayBaseUrl: string | null = null,
+): number {
   if (kind === "cloud") return modelContextWindow(agent, model);
   if (kind === "gateway") {
-    const window = gatewayContextWindow(model);
+    const window = gatewayContextWindow(model, gatewayBaseUrl);
     if (window > 0) return window;
   }
   return 0;
+}
+
+// Context sizing follows the same task -> project provider precedence as turn
+// execution. This stays in the store so listTasks and getTaskContext agree
+// without importing the DB-bound provider resolver back into this module.
+function providerRuntimeForTask(
+  project: Project | null | undefined,
+  task: Task | null | undefined,
+): { kind: ProviderKind; gatewayBaseUrl: string | null } {
+  const db = getDb();
+  const row = task?.provider_id
+    ? getProviderRow(db, task.provider_id)
+    : project?.default_provider_id
+      ? getProviderRow(db, project.default_provider_id)
+      : null;
+  if (!row) return { kind: "cloud", gatewayBaseUrl: null };
+  if (row.type === "litellm") return { kind: "gateway", gatewayBaseUrl: row.config.base_url ?? null };
+  if (row.type === "ollama" || row.type === "lmstudio") return { kind: "local", gatewayBaseUrl: null };
+  if (row.type === "custom") return { kind: "custom", gatewayBaseUrl: null };
+  return { kind: "cloud", gatewayBaseUrl: null };
 }
 
 // Percent (0-100, one decimal) of that window `tokens` occupies. 0 when the
@@ -2190,8 +2210,8 @@ export function getTaskContext(taskId: string): TaskContext {
     )
     .get(taskId) as { context_tokens: number; context_estimated: number } | undefined;
   const context_tokens = row?.context_tokens ?? 0;
-  const kind = taskProvider(task ? getProject(task.project_id) : null, task).kind;
-  const context_window = taskContextWindow(task?.agent, task?.model, kind);
+  const provider = providerRuntimeForTask(task ? getProject(task.project_id) : null, task);
+  const context_window = taskContextWindow(task?.agent, task?.model, provider.kind, provider.gatewayBaseUrl);
   return {
     context_tokens,
     context_window,

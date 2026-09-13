@@ -1,6 +1,7 @@
 import { readEnv } from "./env.mjs";
 import { GATEWAY_PLAN_ID } from "./types";
 import type { Project, Task } from "./types";
+import type { ResolvedProviderEnv } from "./providers/resolve";
 
 /**
  * The environment a main-turn agent process runs with, plus the per-project /
@@ -148,8 +149,8 @@ export function serializeAgentEnv(input: unknown): string {
 /** The override a turn runs under: the project's, with the task's keys laid
  *  over it. A task that sets nothing inherits its project whole. */
 export function providerEnvFor(
-  project: Pick<Project, "agent_env"> | null | undefined,
-  task?: Pick<Task, "agent_env"> | null,
+  project: { agent_env?: unknown } | null | undefined,
+  task?: { agent_env?: unknown } | null,
 ): AgentEnv {
   return { ...parseAgentEnv(project?.agent_env), ...parseAgentEnv(task?.agent_env) };
 }
@@ -186,23 +187,18 @@ function originOf(url: string): string | null {
 }
 
 /**
- * The instance's LiteLLM gateway (`CALANDRIA_LITELLM_BASE_URL`), or null when
- * none is configured, which is what hides the Gateway preset everywhere.
+ * The LiteLLM gateway exposed to browser-only legacy provider helpers.
  *
  * Read here, not from `lib/config.ts`, because this module is imported
  * by the client too (the settings form and the session badge both describe a
  * stored override), and `lib/config.ts` reaches for `node:path` and `node:os`.
- * Same crossing as `lib/features.ts`: the server reads the env, and
- * `app/layout.tsx` hands the browser the answer on `window`, so both sides
- * classify a stored override identically and SSR and hydration agree.
- * `lib/config.ts` re-exports this as `LITELLM_BASE_URL` so server code has one
- * name for it.
+ * `app/layout.tsx` resolves the oldest provider row and hands the browser the
+ * answer on `window`. Server code resolves rows through lib/providers/resolve.ts.
  */
 export function gatewayBaseUrl(): string | null {
-  const raw =
-    typeof window !== "undefined"
-      ? (window as { __GATEWAY_BASE_URL?: string }).__GATEWAY_BASE_URL
-      : readEnv("CALANDRIA_LITELLM_BASE_URL");
+  const raw = typeof window !== "undefined"
+    ? (window as { __GATEWAY_BASE_URL?: string }).__GATEWAY_BASE_URL
+    : null;
   return normalizeBaseUrl(String(raw ?? "")) || null;
 }
 
@@ -257,18 +253,26 @@ export function applyProviderEnv(out: Record<string, string>, override: AgentEnv
 }
 
 export function agentTurnEnv(
-  project: (Pick<Project, "port" | "agent_env"> & Partial<Pick<Project, "id">>) | null | undefined,
-  task?: (Pick<Task, "agent_env"> & Partial<Pick<Task, "id" | "agent" | "gateway_key">>) | null,
+  project: (Pick<Project, "port"> & Partial<Pick<Project, "id" | "default_provider_id" | "agent_env">>) | null | undefined,
+  task?: (Partial<Pick<Task, "id" | "agent" | "provider_id" | "gateway_key" | "agent_env">>) | null,
   base: Readonly<Record<string, string | undefined>> = process.env,
   gateway: string | null = gatewayBaseUrl(),
+  resolved?: ResolvedProviderEnv,
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(base)) {
     if (v !== undefined) out[k] = v;
   }
   delete out.NODE_ENV;
-  const override = providerEnvFor(project, task);
+  // Provider rows are resolved by the server-only adapter in
+  // lib/providers/resolve.ts. Legacy agent_env blobs stay in the schema for
+  // downgrade compatibility but turn execution never reads them.
+  const override = resolved?.env ?? {};
   applyProviderEnv(out, override);
+  for (const [key, value] of Object.entries(resolved?.extras ?? {})) {
+    if (value) out[key] = value;
+    else delete out[key];
+  }
   // The instance's gateway key never reaches a spawned CLI under its own name;
   // it is composed into the gateway header below instead. Read before the
   // delete so that block can still use it.
@@ -279,7 +283,7 @@ export function agentTurnEnv(
   // object just before a turn's driver call, never a value getTask() or
   // listTasks() themselves return, so this decides which credential a gateway
   // turn actually bills.
-  const gatewayKey = (task?.gateway_key || out.CALANDRIA_LITELLM_KEY || "").trim();
+  const gatewayKey = (task?.gateway_key || resolved?.extras.CALANDRIA_LITELLM_KEY || "").trim();
   delete out.CALANDRIA_LITELLM_KEY;
   // Composed below for a gateway turn and never inherited, so a stale pair in
   // the server's own environment can't hand a cloud turn a credential and the
@@ -408,9 +412,9 @@ export function providerPresetEnv(input: { baseUrl: string; model?: string; toke
 
 /**
  * The override for the instance's LiteLLM gateway. Same shape as the local
- * preset minus NO credential. The gateway key is an instance secret
- * (`CALANDRIA_LITELLM_KEY`, or the persisted file behind Settings > Agents)
- * and `agent_env` is served to the browser by `GET /api/projects`, so a key
+ * preset without a credential. The gateway key is an instance secret stored
+ * for the LiteLLM provider row, and provider descriptions are served to the
+ * browser by `GET /api/projects`, so a key
  * stored here would be readable by anyone with the app open.
  * `agentTurnEnv()` resolves it at turn time instead.
  *
@@ -676,10 +680,12 @@ export function planLoginBills(env: AgentEnv, agent: string, gateway: string | n
 /** The provider a task's turns run against: the project's override with the
  *  task's laid over it, then described. */
 export function taskProvider(
-  project: Pick<Project, "agent_env"> | null | undefined,
-  task?: Pick<Task, "agent_env"> | null,
+  project: { agent_env?: unknown; provider?: AgentProvider } | null | undefined,
+  task?: { agent_env?: unknown; provider?: AgentProvider } | null,
   gateway: string | null = gatewayBaseUrl(),
 ): AgentProvider {
+  if (task?.provider) return task.provider;
+  if (project?.provider) return project.provider;
   return describeProvider(providerEnvFor(project, task), gateway);
 }
 

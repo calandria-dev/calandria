@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createProject, createTask, getTask, listTasks, updateProject, taskGatewayKeyState, setTaskGatewayKey } from "../lib/store";
 import { getDb } from "../lib/db";
+import { createProvider, firstProviderOfType } from "../lib/providers/store";
+import { setProviderSecret } from "../lib/providerSecrets";
 import { startFakeGateway, type FakeGateway } from "./fakeGateway";
 import type { Project, Task } from "../lib/types";
+import { gatewayBaseUrl } from "../lib/providers/resolve";
 
 // Per-task LiteLLM virtual keys and exact spend reconciliation
 // (docs/AGENTS.md, "Per-task virtual keys"; lib/gatewayKeys.ts).
@@ -26,7 +29,12 @@ async function loadGatewayKeys(opts: { adminKey?: string; baseUrl?: string } = {
   if (opts.baseUrl === undefined) delete process.env.CALANDRIA_LITELLM_BASE_URL;
   else process.env.CALANDRIA_LITELLM_BASE_URL = opts.baseUrl;
   vi.resetModules();
-  return (await import("../lib/gatewayKeys")) as typeof import("../lib/gatewayKeys");
+  const mod = (await import("../lib/gatewayKeys")) as typeof import("../lib/gatewayKeys");
+  if (opts.baseUrl) {
+    const provider = createProvider({ type: "litellm", config: { base_url: opts.baseUrl } });
+    if (opts.adminKey) setProviderSecret(provider.id, "admin_key", opts.adminKey);
+  }
+  return mod;
 }
 
 let gw: FakeGateway | null = null;
@@ -35,6 +43,7 @@ let savedBase: string | undefined;
 let warnSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
+  getDb().prepare("DELETE FROM model_providers").run();
   savedAdmin = process.env.CALANDRIA_LITELLM_ADMIN_KEY;
   savedBase = process.env.CALANDRIA_LITELLM_BASE_URL;
   // gatewayKeys.ts warns at most once per instance-wide `warned` Set kept on
@@ -61,7 +70,9 @@ afterEach(async () => {
  *  the gateway's own origin), so taskProvider() reports kind "gateway". */
 async function gatewayProject(): Promise<Project> {
   const project = createProject({ name: `gw-${Math.random().toString(36).slice(2)}` });
-  return updateProject(project.id, { agent_env: JSON.stringify({ ANTHROPIC_BASE_URL: gw!.url }) })!;
+  const provider = firstProviderOfType("litellm");
+  if (!provider) throw new Error("test gateway provider was not seeded");
+  return updateProject(project.id, { default_provider_id: provider.id })!;
 }
 
 /** A project with no provider override at all; taskProvider() reports "cloud". */
@@ -72,6 +83,18 @@ function cloudProject(): Project {
 function makeTask(project: Project, title = "task"): Task {
   return createTask({ project_id: project.id, title });
 }
+
+describe("gatewayBaseUrl provider-row selection", () => {
+  it("uses the task provider, then project provider, then oldest LiteLLM row", () => {
+    const oldest = createProvider({ type: "litellm", config: { base_url: "http://old-gw.example" } });
+    const project = createProvider({ type: "litellm", config: { base_url: "http://project-gw.example" } });
+    const task = createProvider({ type: "litellm", config: { base_url: "http://task-gw.example" } });
+    expect(gatewayBaseUrl({ project: { default_provider_id: project.id }, task: { provider_id: task.id } })).toBe("http://task-gw.example");
+    expect(gatewayBaseUrl({ project: { default_provider_id: project.id }, task: { provider_id: null } })).toBe("http://project-gw.example");
+    expect(gatewayBaseUrl({ project: {}, task: {} })).toBe("http://old-gw.example");
+    expect(oldest.id).toBeTruthy();
+  });
+});
 
 describe("gatewayKeysEnabled", () => {
   it("is false with no admin key even when a gateway is configured", async () => {

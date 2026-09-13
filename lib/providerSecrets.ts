@@ -139,9 +139,8 @@ export function providerSecretFlags(
 
 /**
  * Re-apply the gateway key an older release persisted to its own bare file, so
- * a restart after the upgrade does not lose it. Mirrored into the environment,
- * where lib/litellm-key.ts's `gatewayKey()` finds it and the env seed
- * (lib/providers/seed.ts) copies it onto the litellm row it creates. An
+ * a restart after the upgrade does not lose it. The env seed
+ * (lib/providers/seed.ts) copies it onto the LiteLLM row it creates. An
  * operator-set `CALANDRIA_LITELLM_KEY` wins, since it is the more explicit of
  * the two.
  *
@@ -157,8 +156,7 @@ export function loadPersistedGatewayKey(): void {
   }
 }
 
-/** Write the pre-rows gateway key file. Only lib/litellm-key.ts uses this, for
- *  an instance with a key but no litellm provider row to hang it on. */
+/** Write the pre-rows gateway key file for downgrade compatibility. */
 export function writeLegacyGatewayKey(key: string): void {
   assertStorable(key);
   writeSecretFile(LEGACY_GATEWAY_KEY_PATH, key, {

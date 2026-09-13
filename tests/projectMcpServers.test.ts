@@ -1,6 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { GET, POST } from "@/app/api/projects/[id]/mcp-servers/route";
-import { createProject, listPermissionRules } from "@/lib/store";
+import { createProject, listPermissionRules, updateProject } from "@/lib/store";
+import { createProvider } from "@/lib/providers/store";
+import { setProviderSecret } from "@/lib/providerSecrets";
 import { startFakeGateway, type FakeGateway } from "./fakeGateway";
 
 // GET/POST /api/projects/[id]/mcp-servers is the project-scoped route behind
@@ -10,24 +12,16 @@ import { startFakeGateway, type FakeGateway } from "./fakeGateway";
 // permission_rules row.
 
 let gw: FakeGateway | null = null;
-let savedBase: string | undefined;
-let savedKey: string | undefined;
 
 afterEach(async () => {
   await gw?.close();
   gw = null;
-  if (savedBase === undefined) delete process.env.CALANDRIA_LITELLM_BASE_URL;
-  else process.env.CALANDRIA_LITELLM_BASE_URL = savedBase;
-  if (savedKey === undefined) delete process.env.CALANDRIA_LITELLM_KEY;
-  else process.env.CALANDRIA_LITELLM_KEY = savedKey;
 });
 
-function pointAtGateway(url: string, key = "") {
-  savedBase = process.env.CALANDRIA_LITELLM_BASE_URL;
-  savedKey = process.env.CALANDRIA_LITELLM_KEY;
-  process.env.CALANDRIA_LITELLM_BASE_URL = url;
-  if (key) process.env.CALANDRIA_LITELLM_KEY = key;
-  else delete process.env.CALANDRIA_LITELLM_KEY;
+async function pointAtGateway(url: string, key = "", mcp = true) {
+  const provider = createProvider({ type: "litellm", config: { base_url: url, mcp } });
+  if (key) setProviderSecret(provider.id, "key", key);
+  return provider;
 }
 
 const getReq = (id: string, qs = "") => GET(new Request(`http://test/api/projects/${id}/mcp-servers${qs}`), { params: Promise.resolve({ id }) });
@@ -52,8 +46,8 @@ describe("GET: catalog", () => {
 
   it("lists the gateway's servers with a tool preview and a trusted flag", async () => {
     gw = await startFakeGateway({ mcpServers: [{ alias: "demo", description: "demo tools", tools: ["demo-lookup"] }, { alias: "search" }] });
-    pointAtGateway(gw.url);
-    const project = createProject({ name: "with-gateway" });
+    const provider = await pointAtGateway(gw.url);
+    const project = updateProject(createProject({ name: "with-gateway" }).id, { default_provider_id: provider.id })!;
 
     const res = await getReq(project.id);
     const body = await res.json();
@@ -67,8 +61,8 @@ describe("GET: catalog", () => {
 
   it("marks a server this project has already trusted", async () => {
     gw = await startFakeGateway({ mcpServers: [{ alias: "demo" }] });
-    pointAtGateway(gw.url);
-    const project = createProject({ name: "trusted" });
+    const provider = await pointAtGateway(gw.url);
+    const project = updateProject(createProject({ name: "trusted" }).id, { default_provider_id: provider.id })!;
     await postReq(project.id, { alias: "demo" });
 
     const res = await getReq(project.id);
@@ -78,8 +72,8 @@ describe("GET: catalog", () => {
 
   it("?probe=<alias> runs a live mount check instead of the catalog", async () => {
     gw = await startFakeGateway({ requireKey: "sk-right", mcpServers: [{ alias: "demo" }] });
-    pointAtGateway(gw.url, "sk-wrong");
-    const project = createProject({ name: "probed" });
+    const provider = await pointAtGateway(gw.url, "sk-wrong");
+    const project = updateProject(createProject({ name: "probed" }).id, { default_provider_id: provider.id })!;
 
     const res = await getReq(project.id, "?probe=demo");
     const body = await res.json();
@@ -92,8 +86,8 @@ describe("GET: catalog", () => {
 describe("POST: trust this server", () => {
   it("mints a mcp_server permission_rules row for the alias", async () => {
     gw = await startFakeGateway({ mcpServers: [{ alias: "demo" }] });
-    pointAtGateway(gw.url);
-    const project = createProject({ name: "mint" });
+    const provider = await pointAtGateway(gw.url);
+    const project = updateProject(createProject({ name: "mint" }).id, { default_provider_id: provider.id })!;
 
     const res = await postReq(project.id, { alias: "demo" });
     expect(res.status).toBe(200);
@@ -105,8 +99,8 @@ describe("POST: trust this server", () => {
 
   it("is idempotent, so trusting the same alias twice stores one row", async () => {
     gw = await startFakeGateway({ mcpServers: [{ alias: "demo" }] });
-    pointAtGateway(gw.url);
-    const project = createProject({ name: "idempotent" });
+    const provider = await pointAtGateway(gw.url);
+    const project = updateProject(createProject({ name: "idempotent" }).id, { default_provider_id: provider.id })!;
 
     await postReq(project.id, { alias: "demo" });
     await postReq(project.id, { alias: "demo" });
@@ -126,23 +120,13 @@ describe("POST: trust this server", () => {
 
   it("refuses when CALANDRIA_LITELLM_MCP is off, even with a gateway configured", async () => {
     gw = await startFakeGateway({ mcpServers: [{ alias: "demo" }] });
-    pointAtGateway(gw.url);
-    const project = createProject({ name: "flag-off" });
-    const savedFlag = process.env.CALANDRIA_LITELLM_MCP;
-    process.env.CALANDRIA_LITELLM_MCP = "off";
-    vi.resetModules();
-    try {
-      const mod = (await import("@/app/api/projects/[id]/mcp-servers/route")) as typeof import("@/app/api/projects/[id]/mcp-servers/route");
-      const res = await mod.POST(
-        new Request(`http://test/api/projects/${project.id}/mcp-servers`, { method: "POST", body: JSON.stringify({ alias: "demo" }) }),
-        { params: Promise.resolve({ id: project.id }) }
-      );
-      expect(res.status).toBe(400);
-      expect(listPermissionRules(project.id)).toEqual([]);
-    } finally {
-      if (savedFlag === undefined) delete process.env.CALANDRIA_LITELLM_MCP;
-      else process.env.CALANDRIA_LITELLM_MCP = savedFlag;
-      vi.resetModules();
-    }
+    const provider = await pointAtGateway(gw.url, "", false);
+    const project = updateProject(createProject({ name: "flag-off" }).id, { default_provider_id: provider.id })!;
+    const res = await POST(
+      new Request(`http://test/api/projects/${project.id}/mcp-servers`, { method: "POST", body: JSON.stringify({ alias: "demo" }) }),
+      { params: Promise.resolve({ id: project.id }) }
+    );
+    expect(res.status).toBe(400);
+    expect(listPermissionRules(project.id)).toEqual([]);
   });
 });
