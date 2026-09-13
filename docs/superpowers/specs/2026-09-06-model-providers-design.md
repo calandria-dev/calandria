@@ -404,9 +404,10 @@ falls back to the head row and a note under the list names the model that could 
 there. The environment pane carries one standing line: only models that can run in the
 chosen environment are listed, and the project default is set in project settings.
 
-New task and Edit task do not use the footer. There the environment is its own field,
-labelled Environment, beside a field-width Model select of the same width, and changing
-the environment re-scopes the Model select directly.
+New task and Edit task keep the picker footer pinned to the selected environment. The
+environment is also its own field, labelled Environment, beside a field-width Model select.
+When only one connected environment is selected, the field collapses and the footer still
+names where the task runs. Changing the environment re-scopes the Model select directly.
 
 Keyboard: Esc and Left go back one pane, Right drills into a family or selects a
 single-source version, Up and Down move within the pane and skip struck-through rows,
