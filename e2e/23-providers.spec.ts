@@ -111,4 +111,26 @@ test.describe.serial("model providers", () => {
       "true",
     );
   });
+
+  // Regression for the utility_agent default not re-resolving live: setAppDefault
+  // used to write the setting and never re-fetch /api/agents, so the "Running on"
+  // line and the model picker below it stayed pinned to the previous resolution
+  // until a reload. useShell's setAppDefault now re-fetches whenever utility_agent
+  // or default_agent changes, so this line must update in place.
+  test("re-resolves the effective utility agent after a change, without a reload", async ({ page, request }) => {
+    await gotoApp(page);
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.locator(".settings-nav .nav-item", { hasText: "Background jobs" }).click();
+    const utilityField = page.locator(".field").filter({ has: page.getByText("Utility agent", { exact: true }) });
+    const effective = utilityField.locator(".hlp").filter({ hasText: "Running on" });
+    await expect(effective).toContainText("Running on Mock Agent");
+    await expect(effective).not.toContainText(/fallback:/);
+
+    await utilityField.getByRole("button", { name: /Claude Code/ }).click();
+    await expect(effective).toContainText(/fallback: Claude Code isn.t connected/);
+
+    // Reset so this global app default doesn't leak into later specs (workers: 1,
+    // one shared instance for the whole suite).
+    await request.patch("/api/settings", { data: { utility_agent: null } });
+  });
 });

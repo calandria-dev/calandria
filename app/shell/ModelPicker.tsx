@@ -289,6 +289,17 @@ export function ModelPicker({ value, onChange, inherit, env, variant, pinned, on
     for (const opt of env.options) fetchTree(opt.id);
   }, [env.options]);
 
+  // A pinned picker's environment can change under it (Settings → Background
+  // jobs re-points this picker at whichever agent utility jobs now run on), and
+  // a family/version pane belongs to the tree it was opened from. Drop back to
+  // the root so the panes always describe `env.current`. `note` survives: a
+  // switchEnvironment() explanation is about exactly this transition.
+  useEffect(() => {
+    setPanes([{ kind: "root" }]);
+    setDepth(0);
+    setQ("");
+  }, [env.current]);
+
   const singleEnvironment = env.options.length <= 1;
   const flat = isFlatTree(tree, singleEnvironment);
 

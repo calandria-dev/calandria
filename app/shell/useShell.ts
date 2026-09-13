@@ -406,16 +406,26 @@ export function useShell() {
     return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
 
+  // `agents.default` and `agents.utility` are resolved on the server
+  // (resolveUtilityAgent() is connected-first with a fallback chain), so these
+  // two settings change the bundle and cannot be re-derived from appDefaults
+  // alone. Anything reading agents.utility, the Background jobs ModelPicker
+  // included, would otherwise stay pinned to the old agent until a reload.
+  const refreshAgentsIfResolutionChanged = async (keys: string[]) => {
+    if (keys.some((k) => k === "utility_agent" || k === "default_agent")) await refreshAgents();
+  };
   // Persist a server-backed app default and adopt the server's echoed-back state.
   const setAppDefault = async (key: string, value: string | null) => {
     const fresh = await jsend<Record<string, string>>("/api/settings", "PATCH", { [key]: value });
     setAppDefaults(fresh);
+    await refreshAgentsIfResolutionChanged([key]);
   };
   // Same, for a picker that writes two keys at once (a ModelPicker's paired
   // `model` and `provider_id`): one PATCH instead of two round trips.
   const setAppDefaultMany = async (entries: Record<string, string | null>) => {
     const fresh = await jsend<Record<string, string>>("/api/settings", "PATCH", entries);
     setAppDefaults(fresh);
+    await refreshAgentsIfResolutionChanged(Object.keys(entries));
   };
 
   // ---------- sending a turn ----------
