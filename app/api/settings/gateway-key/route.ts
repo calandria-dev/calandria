@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { LITELLM_BASE_URL } from "@/lib/config";
 import { clearGatewayKey, hasGatewayKey, setGatewayKey } from "@/lib/litellm-key";
 import { clearGatewayProbeCache } from "@/lib/gatewayHealth";
+import { gatewayBaseUrl } from "@/lib/providers/resolve";
 
 export const dynamic = "force-dynamic";
 
@@ -20,8 +20,8 @@ function state() {
 }
 
 export async function POST(req: Request) {
-  if (!LITELLM_BASE_URL) {
-    return NextResponse.json({ error: "no gateway is configured, set CALANDRIA_LITELLM_BASE_URL first" }, { status: 400 });
+  if (!gatewayBaseUrl()) {
+    return NextResponse.json({ error: "no LiteLLM provider is configured" }, { status: 400 });
   }
   const { key } = (await req.json().catch(() => ({}))) as { key?: string };
   if (!key || !key.trim()) return NextResponse.json({ error: "missing key" }, { status: 400 });

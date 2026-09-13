@@ -15,25 +15,33 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 
 import { claudeDriver } from "@/lib/agents/claude/driver";
 import { createProject, createTask, updateProject, updateTask } from "@/lib/store";
+import { createProvider, deleteProvider } from "@/lib/providers/store";
+import { setProviderSecret } from "@/lib/providerSecrets";
 import type { Project, Task } from "@/lib/types";
+
+const createdProviders: string[] = [];
 
 beforeEach(() => {
   queryMock.mockReset();
   queryMock.mockImplementation(() => (async function* () {})());
 });
-
-let savedBase: string | undefined;
-let savedKey: string | undefined;
-beforeEach(() => {
-  savedBase = process.env.CALANDRIA_LITELLM_BASE_URL;
-  savedKey = process.env.CALANDRIA_LITELLM_KEY;
-});
 afterEach(() => {
-  if (savedBase === undefined) delete process.env.CALANDRIA_LITELLM_BASE_URL;
-  else process.env.CALANDRIA_LITELLM_BASE_URL = savedBase;
-  if (savedKey === undefined) delete process.env.CALANDRIA_LITELLM_KEY;
-  else process.env.CALANDRIA_LITELLM_KEY = savedKey;
+  for (const id of createdProviders.splice(0)) deleteProvider(id);
 });
+
+beforeEach(() => {
+  // Provider rows are created per test below. The process environment remains
+  // empty so these cases exercise row resolution instead of seed settings.
+  delete process.env.CALANDRIA_LITELLM_BASE_URL;
+  delete process.env.CALANDRIA_LITELLM_KEY;
+});
+
+function gatewayProvider(url: string, key?: string, mcp = true) {
+  const provider = createProvider({ type: "litellm", config: { base_url: url, mcp } });
+  createdProviders.push(provider.id);
+  if (key) setProviderSecret(provider.id, "key", key);
+  return provider;
+}
 
 /** Run one (empty) turn and hand back the mcpServers option the driver built. */
 async function mcpServersFor(task: Task, project: Project): Promise<Record<string, unknown>> {
@@ -44,12 +52,11 @@ async function mcpServersFor(task: Task, project: Project): Promise<Record<strin
 
 describe("hosted gateway MCP servers mount on a Claude turn", () => {
   it("mounts a project's selected aliases as http servers, independent of the task's own model-provider kind", async () => {
-    process.env.CALANDRIA_LITELLM_BASE_URL = "http://gw.example";
-    process.env.CALANDRIA_LITELLM_KEY = "sk-instance";
     // No agent_env override at all, an ordinary cloud-login task, proving the
     // mount doesn't gate on describeProvider(...).kind === "gateway".
     let project = createProject({ name: "McpMountCloud" });
-    project = updateProject(project.id, { gateway_mcp: JSON.stringify(["demo", "search"]) })!;
+    const provider = gatewayProvider("http://gw.example", "sk-instance");
+    project = updateProject(project.id, { gateway_mcp: JSON.stringify(["demo", "search"]), default_provider_id: provider.id })!;
     const task = createTask({ project_id: project.id, title: "t" });
 
     const mcp = await mcpServersFor(task, project);
@@ -62,7 +69,6 @@ describe("hosted gateway MCP servers mount on a Claude turn", () => {
   });
 
   it("mounts nothing with no gateway configured, even with a selection saved", async () => {
-    delete process.env.CALANDRIA_LITELLM_BASE_URL;
     let project = createProject({ name: "McpMountNoGateway" });
     project = updateProject(project.id, { gateway_mcp: JSON.stringify(["demo"]) })!;
     const task = createTask({ project_id: project.id, title: "t" });
@@ -72,9 +78,9 @@ describe("hosted gateway MCP servers mount on a Claude turn", () => {
   });
 
   it("a task's own override replaces the project's selection", async () => {
-    process.env.CALANDRIA_LITELLM_BASE_URL = "http://gw.example";
     let project = createProject({ name: "McpMountOverride" });
-    project = updateProject(project.id, { gateway_mcp: JSON.stringify(["demo"]) })!;
+    const provider = gatewayProvider("http://gw.example");
+    project = updateProject(project.id, { gateway_mcp: JSON.stringify(["demo"]), default_provider_id: provider.id })!;
     let task = createTask({ project_id: project.id, title: "t" });
     task = updateTask(task.id, { gateway_mcp: JSON.stringify(["search"]) })!;
 
@@ -83,9 +89,9 @@ describe("hosted gateway MCP servers mount on a Claude turn", () => {
   });
 
   it("never lets a selected alias literally named 'calandria' shadow the in-process server", async () => {
-    process.env.CALANDRIA_LITELLM_BASE_URL = "http://gw.example";
     let project = createProject({ name: "McpMountReserved" });
-    project = updateProject(project.id, { gateway_mcp: JSON.stringify(["calandria"]) })!;
+    const provider = gatewayProvider("http://gw.example");
+    project = updateProject(project.id, { gateway_mcp: JSON.stringify(["calandria"]), default_provider_id: provider.id })!;
     const task = createTask({ project_id: project.id, title: "t" });
 
     const mcp = await mcpServersFor(task, project);

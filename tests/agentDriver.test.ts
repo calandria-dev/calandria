@@ -71,12 +71,13 @@ vi.mock("@openai/codex-sdk", () => {
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { createProject, createTask, getTask, getProject, updateTask, listMessages, getTaskUsage, getTaskContext, listProjectSessions, updateProject, addPendingMessage, deleteProject } from "@/lib/store";
+import { createProvider } from "@/lib/providers/store";
+import { setProviderSecret } from "@/lib/providerSecrets";
 import { getDriver, listDrivers, DEFAULT_AGENT } from "@/lib/agents/registry";
 import { DEFAULT_CODEX_MODEL } from "@/lib/agents/codex/pricing";
 import { startResumeTurn } from "@/lib/runner";
 import { subscribe, subscribeGlobal } from "@/lib/events";
 import type { StreamEvent, TaskStreamEvent, ToolData } from "@/lib/types";
-import { cloudOverrideEnv, gatewayPresetEnv, serializeAgentEnv } from "@/lib/agentEnv";
 import { gatewayModelCatalog, clearGatewayModelCache } from "@/lib/gatewayModels";
 import { clearGatewayRates } from "@/lib/gatewayPricing";
 import { startFakeGateway, type FakeGateway } from "./fakeGateway";
@@ -531,7 +532,8 @@ describe("codex driver contract through the runner", () => {
 describe("provider override usage accounting", () => {
   it("records a measured zero and tags the row with the endpoint for a local-model project", async () => {
     const project = createProject({ name: "Local" });
-    updateProject(project.id, { agent_env: JSON.stringify({ ANTHROPIC_BASE_URL: "http://localhost:11434", ANTHROPIC_MODEL: "qwen3-coder" }) });
+    const provider = createProvider({ type: "ollama", label: "Local", config: { base_url: "http://localhost:11434", default_model: "qwen3-coder" } });
+    updateProject(project.id, { default_provider_id: provider.id });
     const task = createTask({ project_id: project.id, title: "T", description: "" });
     script([
       { type: "session", sessionId: "local-1" },
@@ -558,7 +560,8 @@ describe("provider override usage accounting", () => {
   // that the number is a placeholder.
   it("records a custom endpoint's cost as unknown rather than zero", async () => {
     const project = createProject({ name: "Custom" });
-    updateProject(project.id, { agent_env: JSON.stringify({ ANTHROPIC_BASE_URL: "https://openrouter.ai/api", ANTHROPIC_MODEL: "some/model" }) });
+    const provider = createProvider({ type: "custom", label: "Custom", config: { base_url: "https://openrouter.ai/api", api: "anthropic", default_model: "some/model" } });
+    updateProject(project.id, { default_provider_id: provider.id });
     const task = createTask({ project_id: project.id, title: "T", description: "" });
     script([
       { type: "session", sessionId: "custom-1" },
@@ -587,8 +590,10 @@ describe("provider override usage accounting", () => {
 
   it("bills a task-level cloud override at the driver's figure inside a local project", async () => {
     const project = createProject({ name: "Local-2" });
-    updateProject(project.id, { agent_env: JSON.stringify({ ANTHROPIC_BASE_URL: "http://localhost:11434" }) });
-    const task = createTask({ project_id: project.id, title: "T", description: "", agent_env: cloudOverrideEnv() as Record<string, string> });
+    const local = createProvider({ type: "ollama", label: "Local", config: { base_url: "http://localhost:11434" } });
+    const bundled = createProvider({ type: "anthropic", label: "Anthropic" });
+    updateProject(project.id, { default_provider_id: local.id });
+    const task = createTask({ project_id: project.id, title: "T", description: "", provider_id: bundled.id });
     script([
       { type: "session", sessionId: "cloud-1" },
       { type: "usage", usage: { cost_usd: 0.25, input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 } },
@@ -611,17 +616,6 @@ describe("provider override usage accounting", () => {
 describe("gateway provider usage accounting", () => {
   let gw: FakeGateway;
 
-  async function withGatewayEnv<T>(url: string, fn: () => Promise<T>): Promise<T> {
-    const prev = process.env.CALANDRIA_LITELLM_BASE_URL;
-    process.env.CALANDRIA_LITELLM_BASE_URL = url;
-    try {
-      return await fn();
-    } finally {
-      if (prev === undefined) delete process.env.CALANDRIA_LITELLM_BASE_URL;
-      else process.env.CALANDRIA_LITELLM_BASE_URL = prev;
-    }
-  }
-
   afterEach(async () => {
     await gw?.close();
     clearGatewayModelCache();
@@ -630,11 +624,12 @@ describe("gateway provider usage accounting", () => {
 
   it("bills a gateway turn at the catalog's own rate, not the driver's figure", async () => {
     gw = await startFakeGateway({ models: [{ name: "claude-sonnet-4-5", provider: "anthropic" }] });
-    await withGatewayEnv(gw.url, async () => {
-      await gatewayModelCatalog(gw.url, "");
-      const project = createProject({ name: "Gateway" });
-      updateProject(project.id, { agent_env: serializeAgentEnv(gatewayPresetEnv({ baseUrl: gw.url, billing: "key", model: "claude-sonnet-4-5" })) });
-      const task = createTask({ project_id: project.id, title: "T", description: "" });
+    await gatewayModelCatalog(gw.url, "");
+    const project = createProject({ name: "Gateway" });
+    const provider = createProvider({ type: "litellm", label: "Gateway", config: { base_url: gw.url, billing: "key", default_model: "claude-sonnet-4-5" } });
+    setProviderSecret(provider.id, "key", "sk-litellm");
+    updateProject(project.id, { default_provider_id: provider.id });
+    const task = createTask({ project_id: project.id, title: "T", description: "" });
       script([
         { type: "session", sessionId: "gw-1" },
         { type: "model", model: "claude-sonnet-4-5" },
@@ -645,24 +640,24 @@ describe("gateway provider usage accounting", () => {
         { type: "done", sessionId: "gw-1" },
       ]);
       const { events, done } = collectEvents(task.id);
-      await startResumeTurn(task, getProject(project.id)!, "go");
-      await done;
+    await startResumeTurn(task, getProject(project.id)!, "go");
+    await done;
       // 1000 * 0.000003 + 500 * 0.000015 (tests/fakeGateway.ts's fixed rates)
       const expected = 1000 * 0.000003 + 500 * 0.000015;
       expect(getTaskUsage(task.id)).toMatchObject({ cost_usd: expected, turns: 1, unpriced_turns: 0 });
       const usageEv = events.find((e) => e.type === "usage") as Extract<TaskStreamEvent, { type: "usage" }>;
       expect(usageEv.usage.cost_usd).toBeCloseTo(expected, 10);
       expect(usageEv.unpriced).toBe(false);
-    });
   });
 
   it("records NULL (unpriced) for a gateway model the last probe never reported", async () => {
     gw = await startFakeGateway({ models: [{ name: "claude-sonnet-4-5", provider: "anthropic" }] });
-    await withGatewayEnv(gw.url, async () => {
-      await gatewayModelCatalog(gw.url, "");
-      const project = createProject({ name: "Gateway-unpriced" });
-      updateProject(project.id, { agent_env: serializeAgentEnv(gatewayPresetEnv({ baseUrl: gw.url, billing: "key", model: "some-unlisted-model" })) });
-      const task = createTask({ project_id: project.id, title: "T", description: "" });
+    await gatewayModelCatalog(gw.url, "");
+    const project = createProject({ name: "Gateway-unpriced" });
+    const provider = createProvider({ type: "litellm", label: "Gateway", config: { base_url: gw.url, billing: "key", default_model: "some-unlisted-model" } });
+    setProviderSecret(provider.id, "key", "sk-litellm");
+    updateProject(project.id, { default_provider_id: provider.id });
+    const task = createTask({ project_id: project.id, title: "T", description: "" });
       script([
         { type: "session", sessionId: "gw-2" },
         { type: "model", model: "some-unlisted-model" },
@@ -670,9 +665,8 @@ describe("gateway provider usage accounting", () => {
         { type: "done", sessionId: "gw-2" },
       ]);
       const { done } = collectEvents(task.id);
-      await startResumeTurn(task, getProject(project.id)!, "go");
-      await done;
-      expect(getTaskUsage(task.id)).toMatchObject({ cost_usd: 0, turns: 1, unpriced_turns: 1 });
-    });
+    await startResumeTurn(task, getProject(project.id)!, "go");
+    await done;
+    expect(getTaskUsage(task.id)).toMatchObject({ cost_usd: 0, turns: 1, unpriced_turns: 1 });
   });
 });

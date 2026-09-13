@@ -89,7 +89,7 @@ import {
   verifyTurn,
 } from "../../claude-auth";
 import { claudeUsage, claudeSubagentTokens, claudeMessageModel } from "./usage";
-import { agentTurnEnv } from "../../agentEnv";
+import { resolvedAgentTurnEnv, resolvedProviderDefaultModel } from "../../providers/resolve";
 import { gatewayMcpServersFor } from "../../gatewayMcp";
 
 const log = createLogger("claude");
@@ -748,7 +748,7 @@ async function* runTurn(
   // The model default is agent-scoped only, with no legacy un-suffixed key to
   // read and none worth minting: a model id names one provider's catalog, so
   // an instance-wide "opus" would be a value Codex could never run.
-  const model = task.model ?? getSetting(`default_model:${task.agent}`);
+  const model = task.model ?? getSetting(`default_model:${task.agent}`) ?? resolvedProviderDefaultModel(project, task, "claude");
 
   // Chat attachments travel as "[Attached image: /abs/path]" (images) or
   // "[Attached file: /abs/path]" (any other type) marker lines in the message
@@ -1028,7 +1028,7 @@ async function* runTurn(
       cwd,
       // Drops NODE_ENV and repoints PORT at the project's own port; see
       // lib/agentEnv.ts for why a turn can't just inherit the server's env.
-      env: agentTurnEnv(project, task),
+      env: resolvedAgentTurnEnv(project, task, "claude"),
       resume: task.session_id ?? undefined,
       // Model selection ("opus"/"sonnet"/"haiku" alias): the task's own pick,
       // else this agent's Settings default. Omit to inherit Claude Code's own.

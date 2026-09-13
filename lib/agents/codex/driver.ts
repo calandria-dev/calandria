@@ -35,7 +35,7 @@ import { inheritedServerOverrides, type DisabledMcpServer } from "./mcp";
 import { gatewayMcpServersForCodex, type GatewayMcpCodexServer } from "../../gatewayMcp";
 import { resolveCodexModel } from "./pricing";
 import { codexStatus, verifyCodexTurn, startCodexLogin, getCodexLogin, submitCodexCode, cancelCodexLogin, codexApiKey } from "./auth";
-import { agentTurnEnv } from "../../agentEnv";
+import { resolvedAgentTurnEnv, resolvedProviderDefaultModel } from "../../providers/resolve";
 import { codexProviderConfig } from "./provider";
 import { verifyCodexProvider } from "./providerCheck";
 import { sandboxRefusal, noteCodexSandboxWarning, noteCodexSandboxHealthy, probeCodexSandbox } from "./sandbox";
@@ -210,12 +210,12 @@ async function* runTurn(
   // the project/task provider override laid over it and PORT repointed (see
   // lib/agentEnv.ts). Built first because the override also decides the
   // provider entry and the fallback model below.
-  const env = agentTurnEnv(project, task);
+  const env = resolvedAgentTurnEnv(project, task, "codex");
   const local = codexProviderConfig(env);
   // Below the task's own choice and the agent's Settings default sits the
   // override's CODEX_MODEL: a local endpoint serves its own model names, and
   // with no choice at all the CLI would ask a local server for gpt-5.x.
-  const chosen = task.model ?? getSetting(`default_model:${task.agent}`) ?? local.model;
+  const chosen = task.model ?? getSetting(`default_model:${task.agent}`) ?? resolvedProviderDefaultModel(project, task, "codex") ?? local.model;
   // The model the turn effectively runs: that choice, else the CLI's default
   // (codex emits no model event of its own, so this resolved value is the best
   // truth available). It prices the cost estimate and is reported as a `model`

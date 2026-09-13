@@ -130,7 +130,7 @@ describe("litellm-key wrappers", () => {
     expect(hasGatewayKey()).toBe(true);
   });
 
-  it("clearGatewayKey empties the stored key and the environment fallback", () => {
+  it("clearGatewayKey empties the stored key", () => {
     createProvider({ type: "litellm", config: { base_url: "http://gw.example.com" } });
     setGatewayKey("sk-1");
     clearGatewayKey();
@@ -138,8 +138,8 @@ describe("litellm-key wrappers", () => {
     expect(hasGatewayKey()).toBe(false);
   });
 
-  it("falls back to CALANDRIA_LITELLM_KEY with no litellm row", () => {
+  it("does not read CALANDRIA_LITELLM_KEY at runtime when no row exists", () => {
     process.env.CALANDRIA_LITELLM_KEY = "sk-env";
-    expect(gatewayKey()).toBe("sk-env");
+    expect(gatewayKey()).toBe("");
   });
 });

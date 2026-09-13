@@ -11,6 +11,7 @@ vi.mock("@/lib/schedule/commands", () => ({ validatePrompt: async () => ({ ok: t
 import { createProject, getTask, listTasks } from "@/lib/store";
 import { getDb } from "@/lib/db";
 import { createRunbook, getRunbook, listRunbooks, composeRunbookPrompt } from "@/lib/runbooks/store";
+import { createProvider } from "@/lib/providers/store";
 import { setAgentConnection } from "@/lib/agents/connections";
 import { makeRepo } from "./helpers";
 
@@ -67,7 +68,9 @@ describe("runbook API", () => {
 
   it("running one mints a task and launches it with the composed prompt", async () => {
     const p = await projectWithRepo();
+    const provider = createProvider({ type: "ollama", config: { base_url: "http://localhost:11434" } });
     const rb = createRunbook({ project_id: p.id, name: "Sweep", prompt: "/sweep", priority: "hi" });
+    getDb().prepare("UPDATE runbooks SET provider_id = ?, model = ? WHERE id = ?").run(provider.id, "qwen3-coder", rb.id);
 
     const res = await runRoute(post({ extra: "focus on CEAP-1234" }), params(rb.id));
     expect(res.status).toBe(201);
@@ -76,6 +79,8 @@ describe("runbook API", () => {
     const row = getTask(task.id)!;
     expect(row.runbook_id).toBe(rb.id);
     expect(row.priority).toBe("hi");
+    expect(row.provider_id).toBe(provider.id);
+    expect(row.model).toBe("qwen3-coder");
     expect(row.title).toContain("Sweep");
     expect(started[0].text).toBe(composeRunbookPrompt("/sweep", "focus on CEAP-1234"));
     expect(started[0].text).toContain("/sweep");
@@ -84,11 +89,13 @@ describe("runbook API", () => {
 
   it("running with start=false creates the task without launching a turn", async () => {
     const p = await projectWithRepo();
+    const provider = createProvider({ type: "lmstudio", config: { base_url: "http://localhost:1234" } });
     const rb = createRunbook({ project_id: p.id, name: "Sweep", prompt: "/sweep" });
+    getDb().prepare("UPDATE runbooks SET provider_id = ?, model = ? WHERE id = ?").run(provider.id, "local-model", rb.id);
     const res = await runRoute(post({ start: false }), params(rb.id));
     expect(res.status).toBe(201);
     const { task } = await res.json();
-    expect(getTask(task.id)!.running).toBe(0);
+    expect(getTask(task.id)).toMatchObject({ running: 0, provider_id: provider.id, model: "local-model" });
     expect(started).toHaveLength(0);
   });
 

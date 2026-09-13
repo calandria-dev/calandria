@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { listDrivers } from "@/lib/agents/registry";
-import { LITELLM_BASE_URL } from "@/lib/config";
 import { gatewayHealth } from "@/lib/gatewayHealth";
-import { gatewayKey } from "@/lib/litellm-key";
+import { litellmRuntimeFor } from "@/lib/providers/resolve";
 import { GATEWAY_PLAN_ID, type PlanUsageSnapshot } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +16,7 @@ export const dynamic = "force-dynamic";
  * off, API-key auth), are simply absent from the map.
  */
 export async function GET() {
+  const gatewayRuntime = litellmRuntimeFor();
   // Concurrently, not in sequence: the drivers' sources are unrelated, and
   // they are not equally fast. Claude answers from a cached HTTP fetch while
   // Codex spawns a short-lived `codex app-server`. Serially, one slow agent's
@@ -43,8 +43,8 @@ export async function GET() {
   // is already cached (GATEWAY_CACHE_MS), so polling this every minute costs
   // nothing beyond what Settings → Agents already pays. Absent when no
   // gateway is configured, or its database doesn't report a budget.
-  if (LITELLM_BASE_URL) {
-    const health = await gatewayHealth(LITELLM_BASE_URL, gatewayKey());
+  if (gatewayRuntime) {
+    const health = await gatewayHealth(gatewayRuntime.baseUrl, gatewayRuntime.key);
     if (health.database && health.spend != null) {
       const utilization = health.max_budget ? Math.min(100, (health.spend / health.max_budget) * 100) : 0;
       const resetsAt = health.budget_reset_at ? Date.parse(health.budget_reset_at) : NaN;

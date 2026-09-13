@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getInsightsData } from "@/lib/store";
-import { LITELLM_BASE_URL } from "@/lib/config";
+import { gatewayBaseUrl } from "@/lib/providers/resolve";
 
 export const dynamic = "force-dynamic";
 
@@ -15,9 +15,10 @@ const WINDOW_DAYS = 180;
  *  so the cache-hit query matches the exact string a gateway turn wrote. ""
  *  when no gateway is configured. */
 function gatewayHost(): string {
-  if (!LITELLM_BASE_URL) return "";
+  const baseUrl = gatewayBaseUrl();
+  if (!baseUrl) return "";
   try {
-    return new URL(LITELLM_BASE_URL).host;
+    return new URL(baseUrl).host;
   } catch {
     return "";
   }
