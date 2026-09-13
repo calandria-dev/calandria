@@ -1,6 +1,6 @@
 // Shared implementations of Calandria's agent-facing tools
 // (suggest_task / list_tasks / get_task / update_task / move_task /
-//  withdraw_suggestion / list_tags / expose_service / ask_user).
+//  withdraw_suggestion / list_tags / list_providers / expose_service / ask_user).
 // One home for the LOGIC so both callers agree:
 //   - the Claude driver's in-process SDK MCP server (lib/agents/claude/driver.ts)
 //   - the internal HTTP endpoints the stdio bridge proxies to
@@ -64,8 +64,11 @@ import { interactionDenied, recordUnattendedDenial, UNATTENDED_ASK_DENIAL, UNATT
 import { turnSignal } from "./abort";
 import { formatAnswers } from "./agents/shared";
 import { resolveConnectedAgent } from "./agents/connections";
-import { cloudOverrideEnv, describeProvider, providerPresetEnv, taskProvider, type AgentEnv } from "./agentEnv";
-import { LOCAL_MODEL_BASE_URL } from "./config";
+import { checkProviderModel, resolveProviderRef } from "./providers/agentRef";
+import { presentProvider, type ProviderStatus } from "./providers/present";
+import { listProviders } from "./providers/store";
+import type { ModelProvider } from "./providers/rows";
+import type { EnvironmentId, ProviderType } from "./providers/types";
 
 /** What `list_projects` hands the agent: enough to name a target, nothing more. */
 export interface AgentProjectInfo {
@@ -83,6 +86,40 @@ export interface AgentProjectInfo {
  */
 export function listProjectsForAgent(currentId: string): AgentProjectInfo[] {
   return listProjectsPlain().map((p) => ({ id: p.id, name: p.name, repo_path: p.repo_path, current: p.id === currentId }));
+}
+
+/** One row of `list_providers`: enough to name a `provider` reference, nothing secret. */
+export interface AgentProviderInfo {
+  id: string;
+  label: string;
+  type: ProviderType;
+  /** The environment whose login owns this row, or null for a user-added one. */
+  bundled: EnvironmentId | null;
+  environments: EnvironmentId[];
+  status: ProviderStatus;
+  /** How many models are turned on for this provider right now. */
+  models_on: number;
+}
+
+/**
+ * The `list_providers` tool. Instance-wide, like `list_projects`: a provider
+ * isn't scoped to one project. `presentProvider()` is the same synchronous
+ * status/count logic `GET /api/providers` serves the settings page, so the
+ * two never disagree and neither ever probes the network on a tool call.
+ */
+export function listProvidersForAgent(): AgentProviderInfo[] {
+  return listProviders().map((p) => {
+    const presented = presentProvider(p);
+    return {
+      id: p.id,
+      label: p.label,
+      type: p.type,
+      bundled: p.bundled,
+      environments: p.environments,
+      status: presented.status,
+      models_on: presented.model_count,
+    };
+  });
 }
 
 /**
@@ -304,13 +341,13 @@ export interface SuggestTaskInput {
   /** The CALLING session's task, recorded as a new tag's origin. Never the model's word for it. */
   origin_task_id?: string | null;
   /**
-   * Where the new task's turns run (lib/agentEnv.ts). "local" pins it to the
-   * local model server, the delegation case where a frontier-model session
-   * hands routine work to a model that costs no quota. "cloud" pins it to the
-   * agent's own login inside a project whose default is local. Omitted = inherit.
+   * Which model provider the new task's turns run against
+   * (lib/providers/resolve.ts): an id or exact label from `list_providers`,
+   * or the "local"/"cloud" alias (resolveProviderRef). Omitted = inherit the
+   * project's default.
    */
-  provider?: "local" | "cloud";
-  /** The model to run on: an Ollama tag for local, a catalog id for cloud. */
+  provider?: string;
+  /** The model to run on, checked against the resolved provider's on-list. */
   model?: string;
   /** Files to attach, as the model named them; resolved by resolveAgentAttachments against the CALLER's worktree. */
   attachments?: string[];
@@ -397,30 +434,24 @@ export function createSuggestedTask(project: Project, input: SuggestTaskInput): 
     tags = hit.tags;
     createdTags = hit.created;
   }
-  // The provider override, resolved BEFORE the insert so a task is never
-  // created pointing at nothing. "local" reuses the target project's own
-  // endpoint when it already has one (a project on a LAN box must not be
-  // redirected to the instance default) and falls back to the instance knob;
-  // the model is the caller's, else the project's, and with neither the call
-  // is refused, since a local task with no model would ask Ollama for a Claude id.
+  // The provider override, resolved and validated BEFORE the insert so a
+  // task is never created pointing at something that doesn't exist. "local"
+  // and "cloud" are aliases (resolveProviderRef); anything else must match a
+  // provider id or exact label. The model is checked against the resolved
+  // provider's own list only when a provider was actually named here: a
+  // model passed with no provider inherits whatever the task resolves to at
+  // turn time, which isn't known yet.
+  const environment = resolveConnectedAgent([project.default_agent]) ?? project.default_agent;
   const model = input.model?.trim() || null;
-  let agentEnv: AgentEnv | undefined;
-  if (input.provider === "local") {
-    const current = taskProvider(project);
-    const localModel = model ?? current.model;
-    if (!localModel) {
-      return {
-        task: null,
-        text: `Could not add "${input.title}": provider "local" needs a model. Pass one (an Ollama tag such as qwen3-coder), or set a local model on ${project.name} in its settings. Nothing was created.`,
-      };
+  let resolvedProvider: ModelProvider | null = null;
+  if (input.provider?.trim()) {
+    const ref = resolveProviderRef(input.provider, environment);
+    if ("error" in ref) return { task: null, text: `Could not add "${input.title}": ${ref.error} Nothing was created.` };
+    if (model) {
+      const check = checkProviderModel(ref.provider, model);
+      if ("error" in check) return { task: null, text: `Could not add "${input.title}": ${check.error} Nothing was created.` };
     }
-    agentEnv = providerPresetEnv({
-      baseUrl: current.kind === "cloud" ? LOCAL_MODEL_BASE_URL : (current.anthropic_base_url ?? current.openai_base_url ?? LOCAL_MODEL_BASE_URL),
-      model: localModel,
-      token: current.auth_token ?? undefined,
-    });
-  } else if (input.provider === "cloud") {
-    agentEnv = cloudOverrideEnv();
+    resolvedProvider = ref.provider;
   }
   // Attachments, resolved against the CALLER's worktree before the insert so
   // a bad path refuses the whole call with nothing created. Staged under the
@@ -442,7 +473,7 @@ export function createSuggestedTask(project: Project, input: SuggestTaskInput): 
   const task = createTask({
     id,
     model,
-    agent_env: agentEnv,
+    provider_id: resolvedProvider?.id ?? null,
     project_id: project.id,
     title: input.title,
     description,
@@ -467,9 +498,7 @@ export function createSuggestedTask(project: Project, input: SuggestTaskInput): 
   const tagNote =
     (reused.length ? ` Tagged ${reused.map((t) => `"${t.name}"`).join(", ")}.` : "") +
     (createdTags.length ? ` Created tag${createdTags.length === 1 ? "" : "s"} ${createdTags.map((t) => `"${t.name}"`).join(", ")} in ${project.name}.` : "");
-  const providerNote = agentEnv
-    ? ` Runs against ${input.provider === "cloud" ? "the agent's own cloud login" : `the local model server (${describeProvider(agentEnv).host}, model ${describeProvider(agentEnv).model})`}.`
-    : "";
+  const providerNote = resolvedProvider ? ` Runs on ${resolvedProvider.label}${model ? `, model ${model}` : ""}.` : "";
   const attached = input.attachments?.length ?? 0;
   const attachNote = attached ? ` Attached ${attached} file${attached === 1 ? "" : "s"}.` : "";
   return {

@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
     priority?: Priority;
     blocked_by?: string[];
     tags?: string[];
-    provider?: "local" | "cloud";
+    provider?: string;
     model?: string;
     attachments?: string[];
   };
@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
     // one is created; it is never read from a model-set field.
     tags: Array.isArray(body.tags) ? body.tags : undefined,
     origin_task_id: body.taskId ?? null,
-    provider: body.provider === "local" || body.provider === "cloud" ? body.provider : undefined,
+    provider: typeof body.provider === "string" ? body.provider : undefined,
     model: typeof body.model === "string" ? body.model : undefined,
     // Resolved against the CALLER's worktree (taskId, trusted) inside
     // createSuggestedTask, never against anything the bridge process sees.

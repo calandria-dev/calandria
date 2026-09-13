@@ -21,7 +21,17 @@ export const dynamic = "force-dynamic";
 // a recipe under another agent's name. `created_by` is shown to the user as
 // provenance.
 export async function POST(req: NextRequest) {
-  let body: { taskId?: string; name?: string; description?: string; prompt?: string; priority?: "hi" | "med" | "lo"; permission_mode?: string; project?: string };
+  let body: {
+    taskId?: string;
+    name?: string;
+    description?: string;
+    prompt?: string;
+    priority?: "hi" | "med" | "lo";
+    permission_mode?: string;
+    project?: string;
+    provider?: string;
+    model?: string;
+  };
   try {
     body = await req.json();
   } catch {
@@ -43,6 +53,8 @@ export async function POST(req: NextRequest) {
       priority: body.priority,
       permission_mode: body.permission_mode,
       project: body.project,
+      provider: body.provider,
+      model: body.model,
     },
     caller.agent
   );

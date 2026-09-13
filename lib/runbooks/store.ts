@@ -27,6 +27,10 @@ export interface CreateRunbookInput {
   priority?: Priority;
   /** The agent id that filed this, or '' when the user wrote it. */
   created_by?: string;
+  /** The provider this runbook pins its dispatched tasks to; null/omitted = inherit the project's default. */
+  provider_id?: string | null;
+  /** The model this runbook pins its dispatched tasks to; null/omitted = inherit. */
+  model?: string | null;
 }
 
 export function createRunbook(input: CreateRunbookInput): Runbook {
@@ -38,21 +42,23 @@ export function createRunbook(input: CreateRunbookInput): Runbook {
   getDb()
     .prepare(
       `INSERT INTO runbooks (id, project_id, name, description, prompt, agent, permission_mode,
-                             send_context, priority, position, created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                             send_context, priority, position, provider_id, model, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id, input.project_id, input.name, input.description ?? "", input.prompt,
       input.agent || "claude", input.permission_mode ?? null,
       input.send_context === false ? 0 : 1, input.priority ?? "med",
-      position, input.created_by ?? "", now, now
+      position, input.provider_id ?? null, input.model ?? null, input.created_by ?? "", now, now
     );
   return getRunbook(id)!;
 }
 
 export function updateRunbook(
   id: string,
-  fields: Partial<Pick<Runbook, "name" | "description" | "prompt" | "agent" | "permission_mode" | "send_context" | "priority" | "position">>
+  fields: Partial<
+    Pick<Runbook, "name" | "description" | "prompt" | "agent" | "permission_mode" | "send_context" | "priority" | "position" | "provider_id" | "model">
+  >
 ): Runbook | null {
   if (!getRunbook(id)) return null;
   const entries = Object.entries(fields).filter(([, v]) => v !== undefined);

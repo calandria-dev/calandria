@@ -126,6 +126,7 @@ describe("calandria-mcp stdio bridge", () => {
         "expose_service",
         "get_task",
         "list_projects",
+        "list_providers",
         "list_runbooks",
         "list_tags",
         "list_tasks",
@@ -168,6 +169,7 @@ describe("calandria-mcp stdio bridge", () => {
         "expose_service",
         "get_task",
         "list_projects",
+        "list_providers",
         "list_runbooks",
         "list_tags",
         "list_tasks",
@@ -221,7 +223,7 @@ describe("calandria-mcp stdio bridge", () => {
       // the card shows that value to the user as provenance.
       expect(Object.keys(schema.properties ?? {})).not.toContain("created_by");
       expect(Object.keys(schema.properties ?? {}).sort()).toEqual(
-        ["description", "name", "permission_mode", "priority", "project", "prompt"]
+        ["description", "model", "name", "permission_mode", "priority", "project", "prompt", "provider"]
       );
       expect((schema.required ?? []).sort()).toEqual(["description", "name", "prompt"]);
 
