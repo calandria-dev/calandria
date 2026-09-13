@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { PATCH as patchSettings } from "@/app/api/settings/route";
 
 // Which titlebar usage trackers are shown is a per-agent preference
-// ("plan_usage:<agent>", Settings -> Agents). It rides /api/settings, not
+// ("plan_usage:<agent>", Settings -> Models). It rides /api/settings, not
 // browser storage, so the choice follows the instance to every device, and
 // the client reads it as shown-unless-"off", so the write that HIDES a
 // tracker is a value and the one that shows it again is a clear.

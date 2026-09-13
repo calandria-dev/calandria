@@ -12,7 +12,12 @@ import { blockerCandidates } from "./format";
 // (e.g. the folder picker opened over the project-context editor).
 const modalStack: symbol[] = [];
 
-export function Modal({ title, sub, onClose, children, footer, width }: { title: string; sub?: React.ReactNode; onClose: () => void; children: React.ReactNode; footer?: React.ReactNode; width?: number }) {
+export function Modal({ title, sub, header, onClose, children, footer, width }: {
+  title?: string; sub?: React.ReactNode;
+  /** Replaces the title/sub pair with a custom header row (the close button still renders after it). */
+  header?: React.ReactNode;
+  onClose: () => void; children: React.ReactNode; footer?: React.ReactNode; width?: number;
+}) {
   useEffect(() => {
     const token = Symbol();
     modalStack.push(token);
@@ -28,10 +33,12 @@ export function Modal({ title, sub, onClose, children, footer, width }: { title:
     <div className="scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal" style={width ? { width } : undefined}>
         <div className="modal-h">
-          <div style={{ flex: 1 }}>
-            <div className="m-title">{title}</div>
-            {sub && <div className="m-sub" style={{ marginTop: 3 }}>{sub}</div>}
-          </div>
+          {header ?? (
+            <div style={{ flex: 1 }}>
+              <div className="m-title">{title}</div>
+              {sub && <div className="m-sub" style={{ marginTop: 3 }}>{sub}</div>}
+            </div>
+          )}
           <button className="modal-close" onClick={onClose}>{Icon.x()}</button>
         </div>
         <div className="modal-b">{children}</div>

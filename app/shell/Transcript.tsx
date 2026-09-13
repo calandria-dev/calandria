@@ -554,7 +554,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
       );
     }
     // The agent's login died: same shape as the overflow case, the warning line
-    // plus the one action that fixes it (Settings → Agents, where the connect
+    // plus the one action that fixes it (Settings → Models, where the connect
     // flow lives). Instance-wide, so the titlebar banner says it too; this is
     // the in-context copy for whoever is reading the failed task.
     if (m.content.includes(AUTH_EXPIRED_NOTICE)) {
