@@ -2648,3 +2648,107 @@ button.gbadge.more:hover,button.gbadge.more[aria-expanded="true"]{color:var(--in
 .diag-kind{font-weight:600;color:var(--ink-2);}
 .diag-kind.warn{color:var(--warn);}
 .diag-detail{color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;}
+
+/* Settings -> Models: the environments/providers lists (ModelsSection.tsx)
+   and the add/detail provider modal (ProviderModal.tsx). Measurements from
+   the design handoff: modal 720px (passed as Modal's `width`), tabs 40px,
+   model rows 44px, chips 11px/600 with a 6px dot. Switches reuse the app's
+   existing 34x18 .in-switch rather than the handoff's 32x18, for consistency
+   with every other toggle in Settings. */
+.mv-lede{margin:-4px 0 6px;font-size:12.5px;line-height:1.6;color:var(--ink-2);max-width:720px;}
+.mv-sec{margin-bottom:26px;}
+.mv-sec-h{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.mv-sec-h h2{font-family:var(--font-display);font-size:15px;font-weight:var(--display-weight);letter-spacing:var(--display-tracking);flex:1;margin:0;}
+.mv-list{display:flex;flex-direction:column;gap:8px;}
+.mv-row{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r);background:var(--raise);}
+.mv-row.dimmed{opacity:.7;}
+.mv-row.link{width:100%;text-align:left;cursor:pointer;font:inherit;color:inherit;transition:border-color .12s,background .12s;}
+.mv-row.link:hover{border-color:var(--line-strong);background:var(--surface-2);}
+.mv-row.link:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+.mv-mark{flex:0 0 auto;width:22px;height:22px;display:grid;place-items:center;color:var(--ink-2);}
+.mv-mark svg{width:20px;height:20px;}
+.mv-id{flex:1;min-width:0;}
+.mv-nm{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:600;color:var(--ink);}
+.mv-ty{margin-top:2px;font-size:11.5px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mv-bund{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:11.5px;color:var(--ink-3);}
+.mv-bund svg{width:13px;height:13px;flex:0 0 auto;}
+.mv-envs{display:flex;align-items:center;gap:5px;flex:0 0 auto;color:var(--ink-4);}
+.mv-envs span{display:grid;place-items:center;width:16px;height:16px;opacity:.32;}
+.mv-envs span svg{width:14px;height:14px;}
+.mv-envs span.on{opacity:1;color:var(--accent);}
+.mv-count{flex:0 0 auto;font-size:11.5px;color:var(--ink-3);white-space:nowrap;}
+.mv-go{flex:0 0 auto;color:var(--ink-4);font-size:16px;}
+.mv-acts{flex:0 0 auto;display:flex;gap:6px;}
+.mv-chip{display:inline-flex;align-items:center;gap:5px;padding:1px 7px 1px 6px;border-radius:999px;font-size:11px;font-weight:600;letter-spacing:.02em;white-space:nowrap;}
+.mv-chip::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;flex:0 0 auto;}
+.mv-chip.ok{color:var(--green);background:var(--green-soft);}
+.mv-chip.warn{color:var(--amber);background:var(--amber-soft);}
+.mv-chip.mute{color:var(--ink-4);background:var(--surface-2);}
+.mv-detect{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px dashed var(--line-strong);border-radius:var(--r);}
+
+/* Add-provider type grid and shared connection form. */
+.mv-types{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+.mv-tc{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:12px;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--raise);text-align:left;transition:border-color .12s,background .12s;}
+.mv-tc:hover{background:var(--surface-2);}
+.mv-tc.on{border-color:var(--accent);background:var(--accent-soft);}
+.mv-tc:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+.mv-tc .mv-t{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--ink);}
+.mv-tc .mv-t svg{width:18px;height:18px;flex:0 0 auto;}
+.mv-fine{margin:10px 0 0;font-size:11.5px;color:var(--ink-3);line-height:1.5;}
+.mv-sect{margin-top:18px;}
+.mv-sect h3{font-family:var(--font-display);font-size:13px;font-weight:var(--display-weight);margin:0 0 10px;}
+.mv-form .field{margin-bottom:14px;}
+.mv-serves{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-2);flex-wrap:wrap;}
+.mv-keyrow{display:flex;align-items:center;gap:6px;}
+.mv-keyrow input{flex:1;min-width:0;}
+.mv-eye{flex:0 0 auto;width:30px;height:30px;display:grid;place-items:center;color:var(--ink-3);border-radius:var(--r-sm);}
+.mv-eye:hover{background:var(--surface-2);color:var(--ink);}
+.mv-eye:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+.mv-test{margin-top:8px;padding:10px 12px;border-radius:var(--r);border:1px solid var(--line);background:var(--surface-2);}
+.mv-test.ok{border-color:var(--green);background:var(--green-soft);}
+.mv-test.bad{border-color:var(--red);background:var(--red-soft);}
+.mv-trow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.mv-tmsg{font-size:12px;color:var(--ink-2);}
+.mv-errlog{margin:8px 0 0;padding:8px 10px;background:var(--term,#0c0d10);color:var(--red);font-family:var(--mono);font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-word;border-radius:6px;}
+
+/* Provider detail modal: header, tabs, read-only Connection, model rows, Remove. */
+.mv-bigmark{flex:0 0 auto;width:36px;height:36px;display:grid;place-items:center;border-radius:10px;background:var(--surface-2);color:var(--ink-2);}
+.mv-bigmark svg{width:22px;height:22px;}
+.mv-ttl{flex:1;min-width:0;}
+.mv-ttl h2{display:flex;align-items:center;gap:8px;font-family:var(--font-display);font-size:17px;font-weight:var(--display-weight);margin:0;}
+.mv-ttl .mv-sub{margin-top:3px;font-size:11.5px;color:var(--ink-3);}
+.mv-tabs{display:flex;gap:16px;margin-top:16px;border-bottom:1px solid var(--line);}
+.mv-tab{height:40px;font-size:12.5px;font-weight:600;color:var(--ink-3);border-bottom:2px solid transparent;margin-bottom:-1px;}
+.mv-tab[aria-selected="true"]{color:var(--ink);border-color:var(--accent);}
+.mv-tab.dng{margin-left:auto;color:var(--red);}
+.mv-tab:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+.mv-bd{padding-top:16px;min-height:120px;}
+.mv-ro{display:flex;flex-direction:column;gap:10px;}
+.mv-rrow{display:flex;gap:14px;font-size:12.5px;align-items:center;}
+.mv-rrow dt{flex:0 0 110px;color:var(--ink-3);}
+.mv-rrow dd{flex:1;min-width:0;color:var(--ink);margin:0;display:flex;align-items:center;gap:6px;}
+.mv-pol{display:flex;align-items:flex-start;gap:14px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r);background:var(--raise);margin-bottom:14px;}
+.mv-pol b{display:block;font-size:12.5px;margin-bottom:3px;}
+.mv-pol span{display:block;font-size:11.5px;color:var(--ink-3);line-height:1.5;}
+.mv-pacts{display:flex;gap:6px;flex:0 0 auto;}
+.mv-mhead{display:flex;align-items:center;gap:12px;font-size:11.5px;color:var(--ink-3);padding:0 2px 8px;}
+.mv-mhead .mv-dim{color:var(--ink-4);}
+.mv-mlist{border:1px solid var(--line);border-radius:var(--r);overflow:hidden;}
+.mv-mrow{display:flex;align-items:center;gap:10px;height:44px;padding:0 12px;border-top:1px solid var(--line);font-size:12px;}
+.mv-mrow:first-child{border-top:none;}
+.mv-mrow.off{opacity:.55;}
+.mv-mrow code{font-family:var(--mono);font-size:11.5px;color:var(--ink);}
+.mv-mrow .mv-tag{padding:1px 6px;border-radius:999px;font-size:10px;font-weight:600;color:var(--amber);background:var(--amber-soft);white-space:nowrap;}
+.mv-mrow .mv-ctx{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink-3);white-space:nowrap;}
+.mv-mrow .mv-fam{font-size:11px;color:var(--ink-3);min-width:120px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mv-mrow .mv-fam.un{color:var(--ink-4);}
+.mv-danger{display:flex;align-items:center;gap:16px;padding:14px 16px;border:1px solid color-mix(in oklab,var(--err) 30%,transparent);border-radius:var(--r);background:var(--red-soft);}
+.mv-danger b{display:block;font-size:13px;color:var(--ink);margin-bottom:3px;}
+.mv-danger span{font-size:11.5px;color:var(--ink-2);line-height:1.5;}
+
+@media (max-width:460px){
+  .mv-types{grid-template-columns:repeat(2,1fr);}
+  .mv-tc{min-height:44px;}
+  .mv-row{min-height:44px;}
+  .mv-nm,.mv-ty{white-space:normal;}
+}

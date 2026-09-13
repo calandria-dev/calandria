@@ -96,7 +96,7 @@ export function AgentNudge({ ready, onConnect }: { ready: boolean; onConnect: ()
       <p style={{ margin: 0, color: "var(--ink-2)", lineHeight: 1.55 }}>
         Connect {names} with your subscription login (no API key needed) to also pick{" "}
         {pending.length > 1 ? "them" : "it"} for a task. You can always do this later from{" "}
-        <strong>Settings → Agents</strong>.
+        <strong>Settings → Models</strong>.
       </p>
     </Modal>
   );
@@ -186,7 +186,7 @@ function AgentSandboxWarning({ agent }: { agent: AgentInfoT }) {
 // descriptor: `loginCompletesOutOfBand` (this login can land without the code
 // box, so watch authStatus too) and `connectHint` (a caveat the generic prose
 // can't carry, e.g. Antigravity's containers having no keyring for its
-// token). Used by the Settings "Agents" section and the post-setup "connect
+// token). Used by the Settings "Models" section and the post-setup "connect
 // another agent" nudge. The first-run wizard keeps its own Claude-specific
 // step to drive the onboarding funnel.
 export function AgentConnect({

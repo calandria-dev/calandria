@@ -1511,7 +1511,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
                 <div className="hlp">
                   {providerBilling === "subscription"
                     ? "These turns draw on your Claude plan. The gateway still routes, tags and meters them."
-                    : "These turns are billed to the instance's LiteLLM key. Set the key in Settings → Agents."}
+                    : "These turns are billed to the instance's LiteLLM key. Set the key in Settings → Models."}
                 </div>
                 {agents.gateway_keys_enabled && (
                   <>
