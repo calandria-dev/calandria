@@ -31,6 +31,7 @@ import {
   getTaskForAgent,
   listTagsForAgent,
   listProjectsForAgent,
+  listProvidersForAgent,
   listTasksForAgent,
   moveTasksForAgent,
   registerExposedService,
@@ -43,7 +44,7 @@ import {
   updateTaskForAgent,
   withdrawSuggestionForAgent,
 } from "../../agentTools";
-import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../../agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_PROVIDERS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../../agentToolDefs.mjs";
 import { createPrForAgent } from "../../prTools";
 import { createRunbookForAgent, listRunbooksForAgent, updateRunbookForAgent } from "../../runbookTools";
 import { publishGlobal } from "../../events";
@@ -334,6 +335,9 @@ function calandriaServer(
       tool(LIST_PROJECTS.name, LIST_PROJECTS.description, {}, async () => ({
         content: [{ type: "text", text: JSON.stringify(listProjectsForAgent(project.id), null, 2) }],
       })),
+      tool(LIST_PROVIDERS.name, LIST_PROVIDERS.description, {}, async () => ({
+        content: [{ type: "text", text: JSON.stringify(listProvidersForAgent(), null, 2) }],
+      })),
       tool(
         SUGGEST_TASK.name,
         SUGGEST_TASK.description,
@@ -344,10 +348,10 @@ function calandriaServer(
           project: z.string().optional().describe(SUGGEST_TASK.params.project),
           blocked_by: z.array(z.string()).optional().describe(SUGGEST_TASK.params.blocked_by),
           tags: z.array(z.string()).optional().describe(SUGGEST_TASK.params.tags),
-          provider: z.enum(["local", "cloud"]).optional().describe(SUGGEST_TASK.params.provider),
+          provider: z.string().optional().describe(SUGGEST_TASK.params.provider),
           model: z.string().optional().describe(SUGGEST_TASK.params.model),
         },
-        async (args: { title: string; description: string; priority: "hi" | "med" | "lo"; project?: string; blocked_by?: string[]; tags?: string[]; provider?: "local" | "cloud"; model?: string }) => {
+        async (args: { title: string; description: string; priority: "hi" | "med" | "lo"; project?: string; blocked_by?: string[]; tags?: string[]; provider?: string; model?: string }) => {
           // Resolve which project this lands in before anything else: the
           // task's agent, send_context and board position all come from it,
           // and a wrong answer is a misfiled task, not a visible
@@ -561,8 +565,10 @@ function calandriaServer(
           priority: z.enum(["hi", "med", "lo"]).optional().describe(CREATE_RUNBOOK.params.priority),
           permission_mode: z.string().optional().describe(CREATE_RUNBOOK.params.permission_mode),
           project: z.string().optional().describe(CREATE_RUNBOOK.params.project),
+          provider: z.string().optional().describe(CREATE_RUNBOOK.params.provider),
+          model: z.string().optional().describe(CREATE_RUNBOOK.params.model),
         },
-        async (args: { name: string; description: string; prompt: string; priority?: "hi" | "med" | "lo"; permission_mode?: string; project?: string }) => {
+        async (args: { name: string; description: string; prompt: string; priority?: "hi" | "med" | "lo"; permission_mode?: string; project?: string; provider?: string; model?: string }) => {
           // The agent id is the server's word (this driver is Claude), never a
           // parameter: a model must not be able to file a recipe under another
           // agent's name.
@@ -593,8 +599,10 @@ function calandriaServer(
           prompt: z.string().optional().describe(UPDATE_RUNBOOK.params.prompt),
           priority: z.enum(["hi", "med", "lo"]).optional().describe(UPDATE_RUNBOOK.params.priority),
           permission_mode: z.string().optional().describe(UPDATE_RUNBOOK.params.permission_mode),
+          provider: z.string().optional().describe(UPDATE_RUNBOOK.params.provider),
+          model: z.string().optional().describe(UPDATE_RUNBOOK.params.model),
         },
-        async (args: { runbook: string; name?: string; description?: string; prompt?: string; priority?: "hi" | "med" | "lo"; permission_mode?: string }) => {
+        async (args: { runbook: string; name?: string; description?: string; prompt?: string; priority?: "hi" | "med" | "lo"; permission_mode?: string; provider?: string; model?: string }) => {
           const { runbook: updated, text } = updateRunbookForAgent(project, args.runbook, args);
           if (updated) publishGlobal("", { type: "runbooks_changed", projectId: updated.project_id });
           return { content: [{ type: "text", text }], ...(updated ? {} : { isError: true }) };
