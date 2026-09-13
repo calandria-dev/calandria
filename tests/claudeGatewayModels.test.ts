@@ -2,22 +2,15 @@ import { describe, it, expect, afterEach } from "vitest";
 import { CLAUDE_CAPABILITIES, claudeCapabilities } from "@/lib/agents/claude/capabilities";
 import { gatewayModelCatalog, clearGatewayModelCache } from "@/lib/gatewayModels";
 import { clearGatewayRates } from "@/lib/gatewayPricing";
+import { createProvider } from "@/lib/providers/store";
 import { startFakeGateway, type FakeGateway } from "./fakeGateway";
 
 // Pins claudeCapabilities(env)'s gateway branch (docs/AGENTS.md): reached
 // when env.ANTHROPIC_BASE_URL matches the instance's configured gateway,
-// read via CALANDRIA_LITELLM_BASE_URL. Set explicitly here, since a hermetic
-// run has neither by default.
-
-async function withGatewayEnv<T>(url: string, fn: () => Promise<T> | T): Promise<T> {
-  const prev = process.env.CALANDRIA_LITELLM_BASE_URL;
-  process.env.CALANDRIA_LITELLM_BASE_URL = url;
-  try {
-    return await fn();
-  } finally {
-    if (prev === undefined) delete process.env.CALANDRIA_LITELLM_BASE_URL;
-    else process.env.CALANDRIA_LITELLM_BASE_URL = prev;
-  }
+// read from the selected provider row and exposed to the browser descriptor.
+async function withGatewayRow<T>(url: string, fn: () => Promise<T> | T): Promise<T> {
+  createProvider({ type: "litellm", config: { base_url: url } });
+  return fn();
 }
 
 let gw: FakeGateway | undefined;
@@ -31,8 +24,8 @@ afterEach(async () => {
 describe("claudeCapabilities for the gateway", () => {
   it("falls back to the static catalog when nothing has been probed yet", async () => {
     gw = await startFakeGateway({ models: ["claude-sonnet-4-5"] });
-    await withGatewayEnv(gw.url, () => {
-      expect(claudeCapabilities({ ANTHROPIC_BASE_URL: gw!.url })).toBe(CLAUDE_CAPABILITIES);
+    await withGatewayRow(gw.url, () => {
+      expect(claudeCapabilities({ ANTHROPIC_BASE_URL: gw!.url }, gw!.url)).toBe(CLAUDE_CAPABILITIES);
     });
   });
 
@@ -43,9 +36,9 @@ describe("claudeCapabilities for the gateway", () => {
         { name: "gpt-5-codex", provider: "openai" },
       ],
     });
-    await withGatewayEnv(gw.url, async () => {
+    await withGatewayRow(gw.url, async () => {
       await gatewayModelCatalog(gw!.url, "");
-      const caps = claudeCapabilities({ ANTHROPIC_BASE_URL: gw!.url });
+      const caps = claudeCapabilities({ ANTHROPIC_BASE_URL: gw!.url }, gw!.url);
       expect(caps.models.map((m) => m.value).sort()).toEqual(["claude-sonnet-4-5", "gpt-5-codex"].sort());
       expect(caps.models.find((m) => m.value === "gpt-5-codex")!.sub).toContain("translated");
       expect(caps).not.toBe(CLAUDE_CAPABILITIES);
@@ -54,9 +47,9 @@ describe("claudeCapabilities for the gateway", () => {
 
   it("offers a [1m] sibling only when the catalog states a >=1M window", async () => {
     gw = await startFakeGateway({ models: [{ name: "claude-sonnet-4-5", max_input_tokens: 1_000_000 }] });
-    await withGatewayEnv(gw.url, async () => {
+    await withGatewayRow(gw.url, async () => {
       await gatewayModelCatalog(gw!.url, "");
-      const caps = claudeCapabilities({ ANTHROPIC_BASE_URL: gw!.url });
+      const caps = claudeCapabilities({ ANTHROPIC_BASE_URL: gw!.url }, gw!.url);
       expect(caps.models.map((m) => m.value)).toEqual(["claude-sonnet-4-5", "claude-sonnet-4-5[1m]"]);
       expect(caps.models.find((m) => m.value === "claude-sonnet-4-5[1m]")!.contextWindow).toBe(1_000_000);
     });
@@ -64,11 +57,11 @@ describe("claudeCapabilities for the gateway", () => {
 
   it("is not reached when ANTHROPIC_BASE_URL doesn't match the configured gateway", async () => {
     gw = await startFakeGateway({ models: ["claude-sonnet-4-5"] });
-    await withGatewayEnv(gw.url, async () => {
+    await withGatewayRow(gw.url, async () => {
       await gatewayModelCatalog(gw!.url, "");
       // A different, genuinely custom base URL must not pick up the
       // gateway's catalog just because one is configured.
-      expect(claudeCapabilities({ ANTHROPIC_BASE_URL: "http://localhost:11434" })).toBe(CLAUDE_CAPABILITIES);
+      expect(claudeCapabilities({ ANTHROPIC_BASE_URL: "http://localhost:11434" }, gw!.url)).toBe(CLAUDE_CAPABILITIES);
     });
   });
 });

@@ -5,30 +5,40 @@ title: "Supported agents"
 # Supported agents
 
 Calandria supports Claude Code, OpenAI Codex and Google's Antigravity as first-class task
-agents. Connect one, two or all three, choose a default, and override the agent for an
-individual task. With only one agent connected, the New-task and Edit-task dialogs skip the
-agent picker. It reappears once a second agent is connected, or when a task already points at
-an agent that isn't.
+environments. Settings → Models calls each coding CLI an environment. Some task editors still
+label it Agent. The API keeps the field name `agent`. Connect one, two or all three, choose a default, and override the environment for an
+individual task. With only one environment connected, the New-task and Edit-task dialogs skip
+the environment picker. It reappears once a second environment is connected, or when a task
+already points at an environment that is not connected.
 
 ## Support matrix
 
-| Agent | Authentication | Task support | Notes |
-|-|-|-|-|
-| Claude Code | Max/Pro login or optional API key | Full | Reference driver; supports interactive questions and reported cost data |
-| OpenAI Codex | ChatGPT login or optional API key | Full | Supports interactive questions through Calandria's bridge; estimated cost data |
-| Antigravity | Google login, or an API key (the only path in a container) | Full | Gemini models, plus Claude and GPT on the same subscription; estimated cost data |
+| Agent | Authentication | Task support | Anthropic | OpenAI | Google | OpenAI key | Gemini key | LiteLLM | Ollama | LM Studio | Custom | Notes |
+|-|-|-|-|-|-|-|-|-|-|-|-|-|
+| Claude Code | Max/Pro login or optional API key | Full | Yes |  |  |  |  | Yes | Yes | Yes | Yes | Reference driver; supports interactive questions and reported cost data |
+| OpenAI Codex | ChatGPT login or optional API key | Full |  | Yes |  | Yes |  | Yes | Yes | Yes | Yes | Supports interactive questions through Calandria's bridge; estimated cost data |
+| Antigravity | Google login, or an API key (the only path in a container) | Full |  |  | Yes |  | Yes | Yes |  |  |  | Gemini models, plus Claude and GPT on the same subscription; estimated cost data |
+
+The provider columns follow the environment lists in `lib/providers/types.ts`. A provider type
+appears here only when Calandria can route it through that coding environment.
 
 Connecting any one of them completes first-run setup and makes it the initial default. An
 instance with only Codex connected, or only Antigravity, is a supported configuration. Project
-recaps, context drafts, and other utility jobs prefer a connected agent automatically.
+recaps, context drafts, and other utility jobs prefer a connected environment automatically.
 
 ## Choosing a model
 
-Each driver publishes its own model catalog, offered in four places: the **New task** and
-**Edit task** dialogs, the session rail's picker (which changes a running task's model for its
-next turn), and **Settings → Run defaults → Default model**. The list comes from the agent, not
-Calandria: a Vertex-routed instance sees the corrected context windows its aliases actually
-resolve to.
+The model picker combines the catalogs from every provider that can serve the selected
+environment. It appears in the **New task** and **Edit task** dialogs, in the session rail for
+the next turn, and under **Settings → Run defaults → Default model**. Choose the model before the
+environment. In the picker, choose a family, then a version, then a provider source when more than one
+provider serves that version. `GET /api/models?agent=<environment>` builds that tree, and
+`lib/providers/families.ts` places provider model ids into its shared family and version names.
+The picker applies corrected alias context windows for a Vertex-routed environment.
+
+Each provider's Models tab controls which entries reach that tree. LiteLLM uses an allowlist, so
+new models stay off until you turn them on. Every other provider type exposes its catalog by
+default and lets you turn individual models off.
 
 A family alias such as **Opus (latest)** is resolved by the installed CLI at turn time, not by
 Calandria, so the row's label never claims a version. The subtitle under the name reports the id
@@ -38,16 +48,16 @@ request goes out. `--bare` never touches your login, and the process is killed a
 line arrives. It spawns the CLI five times, so it runs in the background the first time you open
 a picker and the ids appear on a later load.
 
-Every picker leads with an **Inherit** entry, following the same fallback chain as reasoning
-level and permission mode: the task's own pick wins; failing that, the agent's default from
-Settings; failing that, nothing is sent and the CLI's own configured model runs. An instance that
-has never opened Settings still honors a model set in `~/.claude/settings.json` or
-`~/.codex/config.toml`.
+Every picker leads with an **Inherit** entry. Provider resolution uses the task provider, then
+the project provider, then the environment's bundled provider. Model resolution uses the task
+model, then the environment's default model from Settings, then the selected provider's default
+model. If none of those names a model, Calandria sends no model and the CLI's configured model runs. An
+instance that has never opened Settings still honors a model set in `~/.claude/settings.json`
+or `~/.codex/config.toml`.
 
-The Settings default is per agent. There is no instance-wide default: a model id names one
-provider's catalog and `opus` is not a value Codex can run. Switching an unstarted task's agent
-drops its model back to Inherit instead of carrying over an id the new driver would silently
-ignore.
+The Settings default is per environment. A model id names one provider's catalog, and `opus` is
+not a value Codex can run. Switching an unstarted task's environment drops an incompatible
+provider and model back to Inherit.
 
 ### Models for Calandria's own jobs
 
@@ -73,7 +83,7 @@ back, the fallback agent's setting is the one used.
 ## Authentication and billing
 
 The recommended path is the subscription login offered by the first-run wizard or **Settings →
-Agents**. Subscription turns consume plan quota and have no marginal API charge.
+Models → Environments**. Subscription turns consume plan quota and have no marginal API charge.
 
 | Setting | Default | Effect |
 |-|-|-|
@@ -88,7 +98,7 @@ questions, project context, diff workflows, and usage reporting.
 
 **Prerequisites.** A Claude Max or Pro subscription, or an Anthropic API key.
 
-**Connect.** Settings → Agents → Claude Code → sign in. The subscription login is recommended;
+**Connect.** Settings → Models → Environments → Claude Code → sign in. The subscription login is recommended;
 see [Authentication and billing](#authentication-and-billing) for the API-key path.
 
 **Settings.**
@@ -186,7 +196,7 @@ MCP bridge because the upstream non-interactive CLI has no such hook of its own.
 
 **Prerequisites.** A ChatGPT Plus/Pro/Team login, or an OpenAI API key. The `codex` CLI.
 
-**Connect.** Settings → Agents → Codex → sign in.
+**Connect.** Settings → Models → Environments → Codex → sign in.
 
 **Settings.**
 
@@ -235,8 +245,7 @@ Two other upstream differences show up in the UI:
   the `exec` transport the CLI reports only the thread's running totals on `turn.completed`, so
   the gauge is derived from the last turn's usage report, marked `≈`.
 
-Each agent's card in **Settings → Agents** states whether inherited external MCP servers are
-mounted, so you can check before picking an agent for a task.
+`GET /api/agents` reports whether each environment mounts inherited external MCP servers.
 
 ### Linux sandbox
 
@@ -247,7 +256,7 @@ every workspace-write or read-only turn fails. The only signal is a startup warn
 `codex app-server`: "Codex's Linux sandbox uses bubblewrap and needs access to create user
 namespaces."
 
-Calandria detects that warning and flags the Codex card in **Settings → Agents** with the
+Calandria detects that warning in the Codex connection flow under **Settings → Models** with the
 fix and a "Check again" button. While the flag is set, Calandria refuses to start a
 workspace-write or read-only turn and fails it with an explanation instead of running one
 where every command fails. `bypassPermissions` (danger-full-access) uses no sandbox and is
@@ -276,7 +285,7 @@ tracking, the same as the other two.
 **Prerequisites.** A Google account with Antigravity access, or a Gemini API key (required in a
 container; see below). The `agy` CLI.
 
-**Connect.** Sign in with your Google account from **Settings → Agents**. Two things about that
+**Connect.** Sign in with your Google account from **Settings → Models → Environments**. Two things about that
 login differ from Claude's and Codex's, and the card handles both:
 
 - **The authorize link is short-lived.** The CLI waits 60 seconds for the callback and that window
@@ -295,7 +304,7 @@ subscription login as normal.
 
 | Setting or env var | Default | Effect |
 |-|-|-|
-| `GEMINI_API_KEY` | unset | Set (or paste a key on the agent's card) for API-key billing, billed against Google's API, not the Antigravity subscription. |
+| `GEMINI_API_KEY` | unset | Set it, or paste a key while connecting the Antigravity environment, for API-key billing against Google's API instead of the Antigravity subscription. |
 | `AGY_CLI_PATH` | unset (uses `agy` on PATH) | Pins a specific binary when PATH is trimmed. The published image installs a version the `Dockerfile` records and reviews the checksum of. |
 | `AGY_CLI_DISABLE_AUTO_UPDATE` | always set to `true` | Always applied by Calandria; a self-update can never swap the binary out mid-turn or mid-login. |
 
@@ -320,7 +329,7 @@ path; Calandria watches it as a precaution.
 - MCP servers from your `~/.gemini/config/mcp_config.json` are not inherited. The CLI reads MCP
   config from that one user-global file, so each task is handed its own copy containing only
   Calandria's bridge, which is what lets tasks run in parallel without stealing each other's tool
-  identity. Each agent's card in **Settings → Agents** states this.
+  identity. Each environment's connection flow in **Settings → Models** states this.
 - No dollar cost is reported by the CLI. The usage report carries token counts only, so Calandria
   prices those tokens at Google's published API rates and marks the result `~`, the same
   convention as Codex's estimate.
@@ -341,14 +350,13 @@ Claude/GPT models it also serves against separate limits; the pill itself shows 
 
 ## Local models
 
-A project, or a single task, can run its turns against a local model server instead of the
-agent's cloud login. There is no separate driver: the Claude and Codex CLIs both accept a
-different endpoint, and Calandria sets it per turn.
+A project, or a single task, can run its turns against a local model provider. Claude Code and
+Codex accept a different endpoint, so Calandria sets it per turn without adding another coding
+environment.
 
-**Antigravity does not take part in the Local model preset.** Its CLI exposes no endpoint
-override, so a local-model project runs an Antigravity task against Google as usual; point such a
-task at Claude or Codex instead. It does take part in the [Gateway](#litellm-gateway) preset
-below, which is a different endpoint knob the CLI does honor.
+**Antigravity does not support local model providers.** Its CLI exposes no compatible local
+endpoint override. The picker offers Ollama, LM Studio, and custom endpoints only for Claude Code
+and Codex. Antigravity does support [LiteLLM](#litellm-gateway).
 
 **Prerequisites.**
 
@@ -358,12 +366,13 @@ below, which is a different endpoint knob the CLI does honor.
 - **Codex 0.146.0 or newer** if pointing a Codex task at a local server (see the provider check
   below).
 
-**Connect.** Open the project's settings and set **Model provider** to *Local model*. Set the base
-URL and name a model the server has pulled, then save. From then on every task in the project
-runs there, and its session header carries a `local` chip beside the agent mark.
+**Connect.** Open Settings → Models, select **Add provider**, and choose **Ollama** or **LM
+Studio**. Enter the base URL, test the connection, and choose which reported models stay on.
+Then choose that provider and a model in the project or task model picker. The session header
+carries a `local` chip beside the environment mark.
 
 - **Ollama**: base URL `http://localhost:11434`, model `qwen3-coder` (or whatever you pulled).
-  Ollama's Anthropic endpoint requires an auth token and ignores its value; the preset sends
+  Ollama's Anthropic endpoint requires an auth token and ignores its value; the provider sends
   `ollama`.
 - **LM Studio**: base URL `http://localhost:1234`, and the model's identifier as LM Studio shows
   it.
@@ -372,8 +381,8 @@ runs there, and its session header carries a `local` chip beside the agent mark.
 
 | Setting or env var | Default | Effect |
 |-|-|-|
-| `CALANDRIA_LOCAL_MODEL_BASE_URL` | `http://localhost:11434` | Base URL prefilled for a project's Local-model preset. In Docker, set it to `http://host.docker.internal:11434`. |
-| `CALANDRIA_MODEL_PROBE_MS` | `2500` | Timeout for probing the server's model list: `GET /api/tags` for Ollama, `GET /v1/models` for LM Studio and anything else OpenAI-compatible. The probe runs server-side, since the endpoint is loopback on the machine Calandria runs on. |
+| `CALANDRIA_LOCAL_MODEL_BASE_URL` | `http://localhost:11434` | First-boot seed for one local provider row only when you set it explicitly. Leaving it unset seeds no row. Set it to `http://host.docker.internal:11434` in Docker. Once any Ollama, LM Studio, or custom provider row exists, the stored provider wins and the boot log says the environment was ignored. |
+| `CALANDRIA_MODEL_PROBE_MS` | `2500` | Timeout for probing the server's model list: `GET /api/tags` for Ollama, `GET /v1/models` for LM Studio and anything else OpenAI-compatible. The probe runs server-side because the endpoint can be loopback on the machine Calandria runs on. |
 | `CALANDRIA_CODEX_PROVIDER_CHECK` | on | Before a Codex turn runs against an override, Calandria confirms via `codex doctor --json` that `model_provider` really resolved to `calandria-local` (or `calandria-gateway`), refusing the turn otherwise. Set to `off` to skip the check and accept the risk. The answer is remembered per CLI version and re-earned whenever that version moves. |
 | `CODEX_CLI_PATH` | unset (uses `codex` on PATH) | Pins a known-good Codex binary. Also the fix when your `codex` is the npm `.cmd` shim: the shim's command line can't carry the provider settings faithfully enough to check them, so the provider check stands down and says so in the log unless this points at the real executable. |
 
@@ -384,49 +393,48 @@ directly from its environment and needs no such check: it sends every request to
 base URL under a subscription login and does not silently fall back to Anthropic. Everything
 else, worktrees, diff review, merge, tools, asks, works as it does in the cloud.
 
-**Picking a model.** Once a project is on an endpoint, the model field stops being the driver's
-catalog and becomes a text box: Calandria suggests what the server itself reports (Ollama's
-`GET /api/tags` first, its names are the ids the Anthropic endpoint wants, tag included, then
-`GET /v1/models` for LM Studio and anything else OpenAI-compatible), but anything can still be
-typed, so a model pulled a minute ago works before any probe has seen it. The probe is always
-server-side (`GET /api/projects/[id]/models`): the endpoint is loopback on the machine Calandria
-runs on, which the browser usually can't reach at all.
+**Picking a model.** The Add provider form tests the endpoint with `POST /api/providers/test`.
+Ollama supplies model ids through `GET /api/tags`. LM Studio and other OpenAI-compatible servers
+supply them through `GET /v1/models`. After you save the provider, the Models tab uses `GET` and
+`PUT` on `/api/providers/[id]/models`. The shared picker places those ids into families and
+versions, then asks you for a provider source when the same version is available from more than
+one place.
 
-Settings → Agents reports the instance's default endpoint the same way, separately from the
-agents above it, since an agent's *connected* is its CLI login and says nothing about whether a
-local server is reachable, for example *Ollama at localhost:11434: reachable, 4 models*. A
-project on Ollama runs through a Claude login it never uses, and fails with a perfectly good one
-when Ollama is down.
+Settings → Models reports environment connections separately from providers. A connected
+environment means its CLI login works. A provider's Connection tab tests whether its endpoint
+answers. A project on Ollama still fails when Ollama is down, even when its Claude Code or Codex
+environment remains connected.
 
-**What the override can and can't carry.** The stored form is `projects.agent_env`, a JSON object
-over a fixed allowlist (`AGENT_ENV_KEYS` in `lib/agentEnv.ts`): `ANTHROPIC_BASE_URL`,
+**What the override can and can't carry.** A project or task stores a `provider_id` that names a
+row in `model_providers`. The row stores its endpoint and non-secret configuration. Credentials
+live in a 0600 file beside the database. At turn time Calandria derives an environment over the
+fixed `AGENT_ENV_KEYS` allowlist in `lib/agentEnv.ts`: `ANTHROPIC_BASE_URL`,
 `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL` and the `ANTHROPIC_DEFAULT_OPUS_MODEL` /
 `ANTHROPIC_DEFAULT_SONNET_MODEL` / `ANTHROPIC_DEFAULT_HAIKU_MODEL` / `ANTHROPIC_SMALL_FAST_MODEL`
 aliases, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `OPENAI_BASE_URL` and `CODEX_MODEL` (plus
 `CODEX_OSS_BASE_URL` and `OLLAMA_HOST` for Codex's Ollama-compatible mode), `GOOGLE_GEMINI_BASE_URL`
-and `GEMINI_MODEL` for the Gateway preset's Antigravity turns, and `CALANDRIA_GATEWAY_BILLING`.
-Nothing else gets through, so the field can't set `PATH` or `NODE_OPTIONS` for the spawned CLI.
-The model you name is written to every alias, so a task whose picker says `sonnet` still lands on
-the local model.
+and `GEMINI_MODEL` for LiteLLM Antigravity turns, and `CALANDRIA_GATEWAY_BILLING`. Nothing else
+gets through, so a provider cannot set `PATH` or `NODE_OPTIONS` for the spawned CLI. Calandria
+writes the chosen model to every relevant alias.
 
-**What a turn against an override costs.** Whatever the driver reports isn't measuring this
+**What a turn against an override costs.** Whatever the environment reports is not measuring this
 endpoint: Claude Code prices the model id it was told and Codex prices an unknown id at the
-CLI-default family, both against a catalog the endpoint doesn't bill from. The ledger distinguishes
-two presets:
+CLI-default family, both against a catalog the endpoint does not bill from. The ledger distinguishes
+the provider types:
 
-- **Local model**: an endpoint on this machine or your own network. Recorded at **$0**, which is
-  a measurement, not a placeholder.
-- **Custom base URL**: free text, and just as likely to be OpenRouter, Together, Fireworks or a
-  Bedrock/Vertex proxy as anything free. Recorded as **unpriced** (`task_usage.cost_usd` is NULL,
-  distinct from a zero). Those turns are left out of every cost total, and each place a total is
-  shown marks it: the session header's usage chip prints `—` when a task has nothing else to count
-  and `$x.xx+` when it does, and Insights suffixes the Spend KPI and the project, tag and provider
-  tables with a `+` whose tooltip names the count. Tokens are kept either way.
+- **Ollama and LM Studio**: endpoints on this machine or your own network. Calandria records them
+  at **$0**, which is a measurement.
+- **Custom endpoint**: free text that can point to OpenRouter, Together, Fireworks, or a
+  Bedrock/Vertex proxy. Calandria records it as **unpriced** (`task_usage.cost_usd` is NULL,
+  distinct from zero). Those turns stay out of every cost total. The session header shows no
+  amount when a task has nothing else to count and `$x.xx+` when it does. Insights suffixes the
+  Spend KPI and the project, tag, and provider tables with a `+` whose tooltip names the count.
+  Tokens are kept either way.
 
 **Credentials.** Redirecting the base URL drops the instance's own Anthropic and OpenAI keys from
-that turn's environment: a custom endpoint gets only the token you typed for it. A project-level
-`ANTHROPIC_AUTH_TOKEN` is honored only when the same override points the base URL somewhere other
-than Anthropic, so the field is not a way around `CALANDRIA_ALLOW_API_KEY_ENV`.
+that turn's environment. A custom endpoint gets only the key stored for that provider. Calandria
+uses an `ANTHROPIC_AUTH_TOKEN` only when the same provider points the base URL away from
+Anthropic. Provider configuration cannot bypass `CALANDRIA_ALLOW_API_KEY_ENV`.
 
 **What the usage gauges can still tell you.** A turn against an override is recorded with a cost
 of zero and tagged with the endpoint's host in `task_usage.provider`, and the session header
@@ -438,11 +446,11 @@ gauge on a 32K window about to overflow. The rail shows the token count without 
 Project-scoped one-shots (recaps, *Refresh with AI*, *Refresh tag*) run on the utility agent's own
 login, not the project's endpoint.
 
-**Delegating from a cloud session.** A task can override its project on its own row, which is what
-lets a frontier model hand routine work to a local one. `suggest_task` takes `provider: "local"`
-plus a `model`: the task it files runs against the instance's local endpoint whatever the
-project's setting, and `provider: "cloud"` does the reverse inside a local project. The same field
-is `agent_env` on `PATCH /api/tasks/[id]`.
+**Delegating from a cloud session.** A task can override its project's provider. `suggest_task`
+takes a provider id or exact label from `list_providers`. Its `provider: "local"` alias checks
+Ollama, LM Studio, then custom and selects the oldest row of the first configured type. Its
+`provider: "cloud"` alias selects the environment's bundled login. The REST field is `provider_id`
+on `PATCH /api/tasks/[id]`.
 
 **Permission modes.** The override changes only the endpoint; permission modes are unchanged from
 the [Claude Code](#claude-code) or [OpenAI Codex](#openai-codex) section for whichever driver the
@@ -450,20 +458,20 @@ task uses.
 
 ## LiteLLM gateway
 
-A [LiteLLM](https://docs.litellm.ai) proxy is the fourth **Model provider**, beside *Local model*
-and *Custom base URL* and on the same seam. It is not a driver: LiteLLM speaks the Anthropic
-Messages API, so Claude Code reaches it through `ANTHROPIC_BASE_URL` exactly as it reaches Ollama.
-What the gateway adds over a custom base URL is a catalog it will tell you about, spend it can
-attribute per key and tag, and budgets it enforces.
+A [LiteLLM](https://docs.litellm.ai) proxy is a model provider. It supplies an endpoint,
+credential, catalog, spend attribution, and budgets to the coding environments that can route
+through it. LiteLLM speaks the Anthropic Messages API, so Claude Code reaches it through
+`ANTHROPIC_BASE_URL` as it reaches Ollama.
 
 **Scope today: Claude Code, Codex and Antigravity.**
 
 **Prerequisites.** A running LiteLLM proxy with a `model_list` configured for the models you want
 to expose.
 
-**Connect.** Set `CALANDRIA_LITELLM_BASE_URL` to the proxy's origin, then open a project's
-settings, set **Model provider** to *Gateway*, name a model your `model_list` serves, and choose
-who pays:
+**Connect.** Open Settings → Models, select **Add provider**, and choose **LiteLLM gateway**.
+Enter the proxy origin and virtual key. Test the connection, then turn on the models you want in
+the picker. Select that provider and a model for a project or task. The current Add provider form
+creates a key-billed provider. The provider API also accepts the subscription billing mode:
 
 - **Billed to the gateway's key**: the instance's virtual key goes out as the turn's Anthropic
   auth token, so the turn draws on that key's account.
@@ -475,10 +483,11 @@ who pays:
 
 | Setting or env var | Default | Effect |
 |-|-|-|
-| `CALANDRIA_LITELLM_BASE_URL` | unset | Proxy origin. Unset is the off switch: with no address, the Gateway preset is absent from the settings form and Settings → Agents shows no card. |
-| `CALANDRIA_LITELLM_KEY` | unset | Instance-wide virtual key sent as `x-litellm-api-key` for "Billed to the gateway's key" turns. Can also be set in Settings → Agents. |
-| `CALANDRIA_LITELLM_ADMIN_KEY` | unset | Admin/master key for LiteLLM's key-management calls: minting and deleting per-task virtual keys, and reading budgets. Sent on a plain `Authorization` header, never on `x-litellm-api-key`, which is reserved for the virtual keys turns actually bill against. |
-| `CALANDRIA_LITELLM_MCP` | on | Set to `0` to turn off hosted MCP server mounting (see [Hosted MCP servers](#hosted-mcp-servers) below) entirely. |
+| `CALANDRIA_LITELLM_BASE_URL` | unset | First-boot seed for one LiteLLM provider row. Once a LiteLLM row exists, the stored provider wins and the boot log says the environment was ignored. |
+| `CALANDRIA_LITELLM_KEY` | unset | First-boot seed for the provider's virtual key. Key-billed turns send it as `x-litellm-api-key`. You can also enter the API key when you add or edit a provider in Settings → Models. |
+| `CALANDRIA_LITELLM_ADMIN_KEY` | unset | First-boot seed for the admin/master key used by LiteLLM key-management calls: minting and deleting per-task virtual keys, and reading budgets. Calandria sends it on a plain `Authorization` header. It reserves `x-litellm-api-key` for the virtual keys that turns bill against. |
+| `CALANDRIA_LITELLM_MCP` | on | First-boot seed for hosted MCP server mounting. Set it to `0` to turn mounting off (see [Hosted MCP servers](#hosted-mcp-servers) below). |
+| `CALANDRIA_LITELLM_KEY_TIMEOUT_MS` | `8000` | First-boot seed for the timeout on one LiteLLM key-management call. |
 | Project: `gateway_max_budget` | unset | Caps a per-task virtual key's budget. Needs `CALANDRIA_LITELLM_ADMIN_KEY`. |
 | Project: `gateway_key_duration` | unset (no expiry) | Per-task virtual key duration. Needs `CALANDRIA_LITELLM_ADMIN_KEY`. |
 | Proxy: `router_settings.allowed_fails` / `cooldown_time` | LiteLLM's own defaults | A single upstream failure can put a deployment in cooldown, returning `429 No deployments available for selected model` to every request until the window expires. Raise `allowed_fails` and shorten `cooldown_time` before running several tasks against one deployment in parallel. |
@@ -491,9 +500,9 @@ router_settings:
 
 Every gateway turn also carries `x-litellm-api-key` and a tag list naming the project, task and
 agent, so LiteLLM's own spend views break down by task with nothing written on Calandria's side.
-Those headers are composed per turn, not stored: `ANTHROPIC_CUSTOM_HEADERS` is kept out of
-the `agent_env` allowlist, and the key is absent from the project row entirely; it
-lives in a 0600 file beside the database and is resolved at turn time. Claude Code also sends
+Calandria composes those headers per turn. `ANTHROPIC_CUSTOM_HEADERS` stays out of the
+`agent_env` allowlist. The key is absent from provider and project rows. It lives in a 0600 file
+beside the database and resolves at turn time. Claude Code also sends
 `x-claude-code-session-id` on its own, so LiteLLM records the task's session as the spend log's
 session id with no configuration needed.
 
@@ -503,15 +512,13 @@ it is rejected the same way until the budget resets or is raised: the response c
 this like a dead login: the turn ends with a notice, the session and its worktree are untouched,
 the pending queue is parked so it doesn't run every follow-up into the same rejection, and the
 agent is flagged instance-wide so every open tab shows the banner. Retry re-sends the same message
-once the budget resets or is raised. The gateway card in Settings → Agents shows the timing
-(`spend`, `max_budget`, `budget_reset_at` from `/key/info`) next to the models that key covers.
+once the budget resets or is raised.
 
-**The health card.** Settings → Agents reports the gateway separately from the agents above it. It
-reads `/health/readiness` (which takes no key, so an instance with the address and no key still
-gets an answer), the `x-litellm-version` header that rides on every response, and a model count
-from `/model/info`. `/key/info` answers `500 Database not connected` on a proxy with no Postgres
-behind it, and the card says **keys, budgets and spend need LiteLLM's database** instead of
-showing blanks where those would go.
+**Provider status.** Settings → Models gives the gateway its own provider row and detail modal.
+The connection test reads `/health/readiness`, which takes no key, and the model count from
+`/model/info`. The health response also carries the `x-litellm-version` header. `/key/info`
+answers `500 Database not connected` on a proxy with no Postgres behind it. Such a proxy has no
+keys, budgets, or spend to report.
 
 **What a gateway turn costs.** No CLI exposes the `x-litellm-response-cost` header the gateway
 answers every request with. Calandria computes the figure itself from the gateway's own
@@ -521,8 +528,10 @@ convention a `~` marks a Local-model or Codex estimate with, and it is included 
 per-task virtual key's spend (below) later replaces this estimate with LiteLLM's own exact figure.
 The session header shows a `gateway` chip.
 
-**Per-task virtual keys.** Set `CALANDRIA_LITELLM_ADMIN_KEY` to mint a separate LiteLLM virtual
-key for every task. The first gateway turn a task runs mints its key (`POST /key/generate`), and
+**Per-task virtual keys.** Pass `admin_key` when you create or update the LiteLLM provider through
+the provider API to mint a separate virtual key for every task. `CALANDRIA_LITELLM_ADMIN_KEY` can
+seed that secret when self-hosting.
+The first gateway turn a task runs mints its key (`POST /key/generate`), and
 later turns reuse it. The key is scoped to the project's model pick, to the project's
 `gateway_max_budget` and `gateway_key_duration` when set, and to exactly the hosted MCP servers
 this task resolved (`object_permission.mcp_servers`), so a per-task key can only reach the servers
@@ -535,8 +544,9 @@ the only exact per-task spend path: no CLI exposes `x-litellm-response-cost`, an
 no tag filter or pagination. Minting fails silently: with no admin key, no gateway, or a proxy
 with no database behind it, every task falls back to the shared instance key.
 
-**The model picker.** A project's **Model provider → Gateway** model field lists `GET
-<gateway>/model/info`, filtered to what the task's driver can actually run: Claude Code shows
+**The model picker.** The LiteLLM provider reads `GET <gateway>/model/info`. LiteLLM uses an
+allowlist, so only models turned on in Settings → Models reach the shared picker. The picker
+filters the catalog to what the task's environment can run: Claude Code shows
 every `mode: "chat"` entry, marking anything not served by the `anthropic` provider
 **translated**; Codex shows only providers LiteLLM can reach over the Responses API (`openai`,
 `azure`); Antigravity shows `gemini` and `vertex_ai` providers. A wildcard route (`anthropic/*`) is
@@ -604,7 +614,7 @@ with `{"modelProvider":"gemini"}` in `~/.gemini/antigravity-cli/settings.json` a
 variables set, `agy` sends `POST /v1beta/models/<model>:streamGenerateContent?alt=sse` with
 `x-goog-api-key`, which LiteLLM serves at its root, so a `model_list` entry (or a `gemini/*`
 wildcard) has to exist for every model name the CLI uses. Calandria writes that settings file
-itself for a gateway task; there is nothing to set up beyond picking the Gateway preset.
+itself for a gateway task; there is nothing to set up beyond picking a LiteLLM provider.
 
 **What is not supported.**
 
@@ -623,8 +633,8 @@ itself for a gateway task; there is nothing to set up beyond picking the Gateway
 
 **The health card names a missing side model.** `agy` calls a flash-lite side model on every turn
 in addition to whichever model the task picked, and a turn whose side model is absent from the
-gateway's catalog fails with an unhelpful `Agent execution terminated due to error`. Settings →
-Agents runs `agy models` against the gateway's `/model/info` catalog and names anything the CLI
+  gateway's catalog fails with an unhelpful `Agent execution terminated due to error`. Settings →
+  Models runs `agy models` against the gateway's `/model/info` catalog and names anything the CLI
 would ask for that the catalog doesn't serve, so the gap shows up before a task hits it.
 
 ### Hosted MCP servers
@@ -635,7 +645,7 @@ servers (`GET <gateway>/v1/mcp/server`, with a tool-name preview from `GET
 needs no database: LiteLLM answers both routes off the calling key's own `object_permission`. Turn
 the feature off entirely with `CALANDRIA_LITELLM_MCP=0`.
 
-Mounting is independent of the *Model provider* choice above: a project on the *Cloud* preset can
+Mounting is independent of the model provider choice above. A project on its environment's bundled provider can
 still mount hosted MCP servers, since the mount is a separate HTTP call to `<gateway>/<alias>/mcp`
 and never touches `ANTHROPIC_BASE_URL`. The `calandria` alias is reserved for Calandria's own
 tools and is always dropped from the picker's selection even if checked, so it can't shadow them.
@@ -677,7 +687,7 @@ doesn't reach, so every mounted hosted server also carries `default_tools_approv
 which auto-approves every one of its tools for the task the moment it mounts. Hosted servers are
 offered under every permission mode but `plan`, which runs read-only and mounts none of them.
 User-configured and plugin-provided external servers follow `CODEX_INHERIT_MCP` independently of
-the permission mode. Settings → Agents states the hosted-server gate on Codex's card. Before
+the permission mode. Settings → Models states the hosted-server gate in the Codex connection flow. Before
 relying on this in production, test `gpt-5-codex` plus a mounted
 MCP server on your pinned LiteLLM and codex versions: BerriAI/litellm#14846 recorded silent empty
 completions for exactly that combination.

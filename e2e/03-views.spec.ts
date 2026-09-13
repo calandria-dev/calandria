@@ -399,11 +399,11 @@ test.describe("mobile settings nav", () => {
     expect(boxes.some((b) => b.left < 390 && b.right > 390)).toBe(true);
 
     // A section past the fold still selects, and gets scrolled into view.
-    const agents = chips.filter({ hasText: "Agents" });
-    await agents.click();
-    await expect(agents).toHaveClass(/\bactive\b/);
-    await expect(page.getByText("Each task runs as a coding agent.")).toBeVisible();
-    const box = await agents.boundingBox();
+    const models = chips.filter({ hasText: "Models" });
+    await models.click();
+    await expect(models).toHaveClass(/\bactive\b/);
+    await expect(page.getByText("Environments are the coding CLIs a task can run in")).toBeVisible();
+    const box = await models.boundingBox();
     expect(box!.x).toBeGreaterThanOrEqual(0);
     expect(box!.x + box!.width).toBeLessThanOrEqual(390);
   });

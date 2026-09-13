@@ -7,6 +7,7 @@
 // lib/control-plane/provisioner/.
 
 import type { PlanUsageSnapshot, Project, Task, StreamEvent, TurnUsage } from "../types";
+import type { ProviderType } from "../providers/types";
 
 export type { StreamEvent };
 
@@ -49,6 +50,12 @@ export interface AgentCapabilities {
   models: AgentModelOption[];
   reasoningOptions: AgentPickerOption[];
   permissionModes: AgentPickerOption[];
+  /** Provider types this coding environment can route a turn through. */
+  providerTypes: ProviderType[];
+  /** Provider type created and removed with this environment's own login. */
+  bundledProvider: ProviderType;
+  /** How Calandria passes a provider endpoint and credential to this CLI. */
+  endpointTransport: string;
   /** Can surface interactive AskUserQuestion-style prompts mid-turn ("ask" events). */
   supportsAsks: boolean;
   /** Can mount Calandria's MCP tools (suggest_task / expose_service). */

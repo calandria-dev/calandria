@@ -53,6 +53,9 @@ export interface DispatchInput {
   permission_mode: string | null;
   send_context: boolean;
   priority: Priority;
+  /** Provider and model overrides copied from the runbook or schedule. */
+  provider_id?: string | null;
+  model?: string | null;
   /** The "▶ …" line recording why this session began, persisted at the top of the turn. */
   note: string;
   /** Schedules pass SCHEDULED_RUN_CONTEXT. A runbook passes nothing, since someone is watching. */
@@ -110,6 +113,8 @@ export async function dispatchPromptTask(input: DispatchInput): Promise<Dispatch
       priority: input.priority,
       agent: input.agent,
       send_context: input.send_context,
+      provider_id: input.provider_id ?? null,
+      model: input.model ?? null,
       permission_mode: input.permission_mode,
       schedule_id: input.schedule_id ?? null,
       runbook_id: input.runbook_id ?? null,

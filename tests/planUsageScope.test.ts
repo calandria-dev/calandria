@@ -15,20 +15,19 @@ vi.mock("@/lib/agents/registry", () => ({
 }));
 
 import { createProject, updateProject, listProjectsPlain, deleteProject } from "@/lib/store";
+import { createProvider } from "@/lib/providers/store";
 import { GET } from "@/app/api/plan-usage/route";
 import type { PlanUsageSnapshot } from "@/lib/types";
 
-const REDIRECT_CODEX = '{"OPENAI_BASE_URL":"http://localhost:11434/v1"}';
-
-// A project with an empty agent_env still bills every agent's own login
+// A project with no default provider still bills every agent's own login
 // (agentPlanScope's "onPlan" case).
 const onPlanProject = () => createProject({ name: `plan-${Math.random().toString(36).slice(2)}` });
 
-// A project whose agent_env redirects codex's turns to a local endpoint, the
-// shape planLoginBills reads off OPENAI_BASE_URL (lib/agentEnv.ts).
+// A project whose provider row redirects codex's turns to a local endpoint.
 const codexRedirectedProject = () => {
   const p = createProject({ name: `plan-${Math.random().toString(36).slice(2)}` });
-  return updateProject(p.id, { agent_env: REDIRECT_CODEX })!;
+  const provider = createProvider({ type: "openai_key" });
+  return updateProject(p.id, { default_provider_id: provider.id })!;
 };
 
 const fakeSnapshot = (): PlanUsageSnapshot => ({

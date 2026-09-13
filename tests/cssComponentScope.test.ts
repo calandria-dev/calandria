@@ -184,6 +184,7 @@ const ALLOWED_CROSS_SCOPE_CLASSES = new Set<string>([
   ".icon-btn", ".in-provhead", ".in-provrow",
   ".lab",
   ".md-copy", ".md-mermaid-svg", ".msg-attachments", ".msg-body", ".mtabbar",
+  ".mpick", ".mpick-lbl", ".mpick-pane", ".mpick-panes", ".mpick-price", ".mpick-row", ".mpick-scroll",
   ".perm-head", ".perm-pre", ".perm-what", ".pic", ".pick-slot", ".pickbox",
   ".pr-chip", ".pr-ic", ".pr-refresh", ".pri",
   ".rail-tab",

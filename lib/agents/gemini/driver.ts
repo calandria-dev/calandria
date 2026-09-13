@@ -39,7 +39,7 @@ import {
   geminiApiKey,
   applyStoredApiKey,
 } from "./auth";
-import { agentTurnEnv } from "../../agentEnv";
+import { resolvedAgentTurnEnv, resolvedProviderDefaultModel } from "../../providers/resolve";
 
 const AGY = () => AGY_CLI_PATH || "agy";
 
@@ -90,9 +90,10 @@ async function* runTurn(
   userText: string,
   abortController?: AbortController
 ): AsyncGenerator<StreamEvent> {
+  const providerEnv = resolvedAgentTurnEnv(project, task, "gemini");
   // The task's own choice, else this agent's Settings default ("default_model:<agent>";
   // agent-scoped, since a model id names one provider's catalog).
-  const chosen = task.model ?? getSetting(`default_model:${task.agent}`);
+  const chosen = task.model ?? getSetting(`default_model:${task.agent}`) ?? resolvedProviderDefaultModel(project, task, "gemini") ?? providerEnv.GEMINI_MODEL;
   const model = resolveGeminiModel(chosen);
   const permission =
     task.permission_mode ?? getSetting(`default_permission_mode:${task.agent}`) ?? getSetting("default_permission_mode");
@@ -120,7 +121,7 @@ async function* runTurn(
 
   const { home, cwd } = prepareTaskHome(project, task);
   const env = applyStoredApiKey({
-    ...agentTurnEnv(project, task),
+    ...providerEnv,
     // Per-task MCP config lives here; see ./home.ts for why HOME is the lever.
     HOME: home,
     // A background self-update would swap the binary mid-turn.
@@ -244,7 +245,7 @@ function firstMeaningfulLine(text: string): string {
  * without editing, which is what a one-shot needs.
  */
 async function oneShot(project: Project, prompt: string, timeoutMs = 5 * 60 * 1000): Promise<OneShotResult> {
-  const env = applyStoredApiKey({ ...agentTurnEnv(project), AGY_CLI_DISABLE_AUTO_UPDATE: "true" });
+  const env = applyStoredApiKey({ ...resolvedAgentTurnEnv(project, undefined, "gemini"), AGY_CLI_DISABLE_AUTO_UPDATE: "true" });
   const args = ["-p", prompt, "--output-format", "stream-json", "--mode", "plan"];
   const child = spawn(AGY(), args, {
     cwd: project.repo_path || process.cwd(),

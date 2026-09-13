@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { planLoginBills } from "@/lib/agentEnv";
 import type { AgentEnv } from "@/lib/agentEnv";
 import { agentPlanScope } from "@/lib/planScope";
+import { createProvider } from "@/lib/providers/store";
 import type { Project } from "@/lib/types";
 
 // Gateway address these tests describe an override against, passed explicitly
@@ -94,13 +95,14 @@ describe("planLoginBills", () => {
   });
 });
 
-// agent_env is stored as a JSON string on the project row (lib/agentEnv.ts's
-// parseAgentEnv/serializeAgentEnv). Fixtures below use the same plain-object
-// JSON form serializeAgentEnv produces, so these pin the real stored shape,
-// not a convenient stand-in for it.
-const onPlanRow = (): Pick<Project, "agent_env" | "deprecated"> => ({ agent_env: "", deprecated: 0 });
-const redirectCodexRow = (): Pick<Project, "agent_env" | "deprecated"> => ({
-  agent_env: '{"OPENAI_BASE_URL":"http://localhost:11434/v1"}',
+// A null default provider inherits the environment's bundled login. A local
+// provider row redirects turns away from that login.
+const onPlanRow = (): Pick<Project, "default_provider_id" | "deprecated"> => ({
+  default_provider_id: null,
+  deprecated: 0,
+});
+const redirectCodexRow = (): Pick<Project, "default_provider_id" | "deprecated"> => ({
+  default_provider_id: createProvider({ type: "openai_key" }).id,
   deprecated: 0,
 });
 
@@ -109,13 +111,13 @@ describe("agentPlanScope", () => {
     expect(agentPlanScope("claude", [])).toEqual({ kind: "all", onPlan: 0, redirected: 0 });
   });
 
-  it("reads all when every project has an empty agent_env", () => {
+  it("reads all when every project inherits its bundled provider", () => {
     const rows = [onPlanRow(), onPlanRow(), onPlanRow()];
     expect(agentPlanScope("claude", rows)).toEqual({ kind: "all", onPlan: 3, redirected: 0 });
     expect(agentPlanScope("codex", rows)).toEqual({ kind: "all", onPlan: 3, redirected: 0 });
   });
 
-  it("reads none for codex and all for claude when every project redirects codex to a local endpoint", () => {
+  it("reads none for codex and all for claude when every project redirects codex to a local provider", () => {
     const rows = [redirectCodexRow(), redirectCodexRow()];
     expect(agentPlanScope("codex", rows)).toEqual({ kind: "none", onPlan: 0, redirected: 2 });
     // Same rows say nothing about claude: no ANTHROPIC_BASE_URL is set.
@@ -147,9 +149,9 @@ describe("agentPlanScope", () => {
     expect(agentPlanScope("codex", rows)).toEqual({ kind: "all", onPlan: 1, redirected: 0 });
   });
 
-  it("treats malformed JSON in agent_env as no override, counting the project on-plan", () => {
-    const rows = [{ agent_env: "{not json", deprecated: 0 }];
-    // parseAgentEnv returns an empty env for garbage input, same as "".
+  it("treats a missing provider row as the bundled login, counting the project on-plan", () => {
+    const rows = [{ default_provider_id: "missing-provider", deprecated: 0 }];
+    // A deleted provider falls back to the environment's bundled provider.
     expect(agentPlanScope("codex", rows)).toEqual({ kind: "all", onPlan: 1, redirected: 0 });
   });
 });

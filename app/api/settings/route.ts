@@ -23,6 +23,11 @@ export const dynamic = "force-dynamic";
 // handoff notes and recaps, heavy = the repo-exploring context draft; see
 // lib/agents/oneshots.ts). Agent-scoped and unvalidated for the same reasons as
 // `default_model`; unset means "inherit the driver's own default".
+// `default_provider:<agent>` / `job_provider_(light|heavy):<agent>` are the
+// provider id paired with the model above: a ModelPicker's value is always a
+// {provider_id, model} pair (the same model id can be served by more than one
+// provider), so every model-scoped setting above carries a matching provider
+// key written alongside it.
 // The notify_* keys and their master switch (`notifications`) gate
 // lib/notifications, enforced server-side because the webhook channel planned
 // next must obey the same policy. All default on. `notify_queued_start` and
@@ -43,7 +48,7 @@ export const dynamic = "force-dynamic";
 // version" on, which hides the pill until something newer than it appears.
 // The check's own result rides `update_state`. The server writes that key and
 // this allowlist omits it, so no browser can overwrite the cache.
-const ALLOWED = /^(background_jobs|recap_mode|notifications|notify_awaiting_input|notify_turn_failed|notify_schedule_failed|notify_queued_start|notify_queued_start_skipped|default_agent|utility_agent|update_check|update_dismissed|default_reasoning(:[a-z0-9_-]+)?|default_permission_mode(:[a-z0-9_-]+)?|default_model:[a-z0-9_-]+|job_model_(light|heavy):[a-z0-9_-]+|plan_usage:[a-z0-9_-]+|auto_resume_on_limit:[a-z0-9_-]+)$/;
+const ALLOWED = /^(background_jobs|recap_mode|notifications|notify_awaiting_input|notify_turn_failed|notify_schedule_failed|notify_queued_start|notify_queued_start_skipped|default_agent|utility_agent|update_check|update_dismissed|default_reasoning(:[a-z0-9_-]+)?|default_permission_mode(:[a-z0-9_-]+)?|default_model:[a-z0-9_-]+|default_provider:[a-z0-9_-]+|job_model_(light|heavy):[a-z0-9_-]+|job_provider_(light|heavy):[a-z0-9_-]+|plan_usage:[a-z0-9_-]+|auto_resume_on_limit:[a-z0-9_-]+)$/;
 
 /** The two keys the update pill re-reads when another tab writes them. */
 const UPDATE_KEYS = new Set(["update_check", "update_dismissed"]);

@@ -31,6 +31,7 @@ const PINNED = [
   "lib/storage.mjs", //          where the db/worktrees live incl. the pre-rename fallback; fs + env only, and server.js reads it before Next exists
   "lib/agents/capabilities.ts", // capability data with no SDK imports, why this module exists
   "lib/agents/connections.ts", // connection state is ID lookups only, no driving
+  "lib/agents/detect.ts", //      host CLI and config-directory detection; fs + child_process only
   "lib/agentEnv.ts", //          the main-turn process env (issue #102); types-only, no driving
   "lib/agents/codex/catalog.ts", // ~/.codex models_cache.json + config.toml; node:fs only, and ./capabilities.ts reads it on the request path
   "lib/agents/codex/provider.ts", // the override → codex config.toml mapping; pure data, tested without the SDK
@@ -58,6 +59,16 @@ const PINNED = [
   "lib/binPath.ts", //           where a CLI is on disk + how to launch it on Windows; node:fs/node:path only
   "lib/processTree.ts", //       how to kill a spawned command's whole tree per platform; node:child_process only, and lib/services.ts sits on it
   "lib/secretFile.ts", //        how a persisted credential is locked to its owner on each platform; node:fs/node:os/node:path only
+  "lib/providers/types.ts", //   the provider registry: which environments a type serves, its policy mode, its config schema and its secret fields; zod only, and the client bundles it alongside the routes
+  "lib/providers/rows.ts", //    the model_providers SQL over a caller's connection; better-sqlite3 + the registry, and lib/db.ts's init() reaches it through the seed
+  "lib/providers/store.ts", //   the same CRUD on the shared connection; DB only, no driving, and lib/agents/connections.ts sits on it
+  "lib/providers/seed.ts", //    first-boot provider rows from the env; reached from lib/db.ts's init(), so it must never grow an import that calls getDb()
+  "lib/providers/families.ts", // automatic family/version placement; registry types only
+  "lib/providers/catalog.ts", //  model source reads and picker-tree assembly behind sync route entries
+  "lib/providers/present.ts", //  status + on-model count for a row, synchronous, no catalog probe
+  "lib/providers/agentRef.ts", // provider-ref/model-policy resolution shared by suggest_task and the runbook tools
+  "lib/providerSecrets.ts", //   every provider credential in one 0600 file; fs + secretFile only, and lib/db.ts loads the legacy gateway key from it at boot
+  "lib/litellm-key.ts", //       the gateway key as the rest of the app asks for it; wrappers over the litellm row's key field, and lib/gatewayMcp.ts sits on it
   "lib/agents/codex/bin.ts", //  which `codex` to spawn; config + binPath, no driving
   "lib/worktreeFailure.ts", //   how a failed worktree prep is classified + its recovery notice, which the client imports to render the button
   "lib/usageReset.ts", //        which usage-window reset a queued start targets, which the client derives the button from

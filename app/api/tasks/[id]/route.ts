@@ -7,8 +7,9 @@ import { withTaskLock } from "@/lib/taskLock";
 import { maybeAutoStartDependents } from "@/lib/autoStart";
 import { publishGlobal } from "@/lib/events";
 import { isAgentId } from "@/lib/agents/capabilities";
-import { serializeAgentEnv } from "@/lib/agentEnv";
 import { serializeGatewayMcp } from "@/lib/gatewayMcp";
+import { getProvider } from "@/lib/providers/store";
+import { resolvedTaskProvider } from "@/lib/providers/resolve";
 import type { Task } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -19,8 +20,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
   const usage = getTaskUsage(id);
   const ctx = getTaskContext(id);
+  const project = getProject(task.project_id);
+  const { agent_env: _legacyAgentEnv, ...publicTask } = task;
   return NextResponse.json({
-    ...task,
+    ...publicTask,
+    provider: resolvedTaskProvider(project, task, task.agent),
     cost_usd: usage.cost_usd,
     // Turns whose endpoint had no price, so cost_usd is only a floor.
     // Preserves the marker the live stream already set on the chip after a
@@ -51,7 +55,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 // since it only carries running/awaiting_input/status. A change to any of
 // these publishes `task_edited` ("refetch the row") instead of
 // `task_updated` ("here's the new status"); see lib/events.ts.
-const EDIT_FIELDS = ["title", "description", "priority", "suggested", "agent", "model", "reasoning", "permission_mode", "auto_start", "send_context", "agent_env", "gateway_mcp", "withdrawn_reason", "snoozed_until", "start_at"] as const;
+const EDIT_FIELDS = ["title", "description", "priority", "suggested", "agent", "model", "reasoning", "permission_mode", "auto_start", "send_context", "provider_id", "gateway_mcp", "withdrawn_reason", "snoozed_until", "start_at"] as const;
 
 // Terminal statuses no longer block anything, matching the pair
 // lib/autoStart's blocks() uses. Cancelling clears a dependency edge the
@@ -66,7 +70,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const prevStatus = current.status;
   // Whitelist user-editable fields.
   const allowed: Partial<Task> = {};
-  for (const k of ["title", "description", "priority", "status", "suggested", "model", "reasoning", "permission_mode", "auto_start", "send_context"] as const) {
+  for (const k of ["title", "description", "priority", "status", "suggested", "model", "reasoning", "permission_mode", "auto_start", "send_context", "provider_id"] as const) {
     if (k in body) (allowed as Record<string, unknown>)[k] = body[k];
   }
   // `model` is the one whitelisted field with an open-ended value: the picker
@@ -86,15 +90,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       allowed.model = model || null;
     }
   }
-  // Provider override (lib/agentEnv.ts): which endpoint and model this
-  // task's turns run against, layered over the project's. Accepts an object
-  // or JSON text; the store's serialize enforces the allowlist and drops any
-  // unlisted key. Refused only when the shape can't be read.
-  if ("agent_env" in body) {
-    const v = (body as { agent_env?: unknown }).agent_env;
-    if (v !== null && typeof v !== "string" && (typeof v !== "object" || Array.isArray(v)))
-      return NextResponse.json({ error: "agent_env must be an object, JSON text or null" }, { status: 400 });
-    allowed.agent_env = serializeAgentEnv(v);
+  if ("provider_id" in body) {
+    if (body.provider_id !== null && (typeof body.provider_id !== "string" || !getProvider(body.provider_id)))
+      return NextResponse.json({ error: "valid provider_id required" }, { status: 400 });
   }
   // Per-task override of the project's hosted-MCP selection (docs/AGENTS.md,
   // "Hosted MCP servers"). null inherits the project's gateway_mcp; an array
@@ -268,7 +266,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (isTerminal(task.status) && !isTerminal(prevStatus)) {
     maybeAutoStartDependents(id);
   }
-  return NextResponse.json({ ...task, depends_on: getTaskDeps(id) });
+  const project = getProject(task.project_id);
+  const { agent_env: _legacyAgentEnv, ...publicTask } = task;
+  return NextResponse.json({
+    ...publicTask,
+    provider: resolvedTaskProvider(project, task, task.agent),
+    depends_on: getTaskDeps(id),
+  });
 }
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {

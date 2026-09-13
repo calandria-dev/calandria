@@ -1,15 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { INHERIT_LABEL, modelOptions, permissionOptions, reasoningOptions } from "@/app/shell/types";
+import { INHERIT_LABEL, permissionOptions, reasoningOptions } from "@/app/shell/types";
 import { getCapabilities, listAgentIds } from "@/lib/agents/capabilities";
 
 // The synthetic head every run-control picker is built from (withInherit() in
 // app/shell/types.ts) versus the provider's own option labels, which are the
 // driver's native spellings, Anthropic's `--permission-mode` strings among
 // them, one of which is literally "default". The head owns a word no
-// provider uses, and it must be the SAME word in all three pickers (model /
-// reasoning / permission), since a per-picker synonym is how the vocabulary
-// drifts back apart.
-const PICKERS = { model: modelOptions, reasoning: reasoningOptions, permission: permissionOptions } as const;
+// provider uses, and it must be the SAME word in every picker (reasoning /
+// permission here; ModelPicker.tsx's head row is covered separately, since
+// model selection moved to the provider tree), since a per-picker synonym is
+// how the vocabulary drifts back apart.
+const PICKERS = { reasoning: reasoningOptions, permission: permissionOptions } as const;
 
 describe("the pickers' inherit head", () => {
   it("leads every picker, carries the null value, and is spelled the same in all of them", () => {

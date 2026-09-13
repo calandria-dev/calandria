@@ -2,12 +2,14 @@
 // Pure data only (no React / no Icon) so any module can import freely.
 import { PRIORITIES, TAG_COLORS, tagIsDone } from "@/lib/types";
 import type { LandingMode, PlanScope as PlanScopeT, Priority, Status, Tag } from "@/lib/types";
+import type { AgentProvider } from "@/lib/agentEnv";
 export { PRIORITIES, TAG_COLORS, tagIsDone };
 export type { LandingMode, PlanScopeT };
 /** A tag as the project GET embeds it: lib/types' row plus its derived counts. */
 export type TagRow = Tag;
 import type { InternalUsageEstimate } from "@/lib/internalUsage";
-export type { InternalUsageEstimate };
+import type { ProviderType } from "@/lib/providers/types";
+export type { InternalUsageEstimate, ProviderType };
 
 // ---------- client shapes ----------
 export interface ProjectRow {
@@ -26,7 +28,9 @@ export interface ProjectRow {
   test_command: string;
   default_agent: string; // agent driver new tasks in this project default to (lib/agents/registry.ts)
   send_context: number; // 1 = new tasks default to sending the saved project context to the agent
-  agent_env: string; // provider override for the project's turns, JSON over lib/agentEnv.ts's allowlist ("" = the agent's own cloud login)
+  agent_env?: string; // legacy provider override, absent from current API responses
+  default_provider_id: string | null;
+  provider: AgentProvider;
   gateway_max_budget: number | null; // dollars; null = no max_budget sent to LiteLLM's /key/generate for this project's per-task keys
   gateway_key_duration: string; // a LiteLLM duration string like "30d"; "" = the key never auto-expires on LiteLLM's own clock
   gateway_mcp: string; // hosted MCP server aliases this project mounts, JSON array (lib/gatewayMcp.ts); "[]" = none
@@ -52,7 +56,9 @@ export interface TaskRow {
   suggested: number;
   agent: string; // agent driver this task's sessions run under (lib/agents/); fixed for the task's life
   send_context: number; // 1 = sessions get the saved project context (seeded from the project setting)
-  agent_env: string; // per-task provider override laid over the project's (lib/agentEnv.ts); "" = inherit
+  agent_env?: string; // legacy provider override, absent from current API responses
+  provider_id: string | null;
+  provider: AgentProvider;
   model: string | null;
   resolved_model: string | null;
   reasoning: string | null; // thinking preset; null = inherit default
@@ -364,12 +370,28 @@ export type AgentCapabilitiesT = {
   // MCP selection, a separate mount from the two fields above. null = mounts
   // with no special behavior for this driver.
   gatewayMcpNote: string | null;
+  providerTypes: ProviderType[];
+  bundledProvider: ProviderType;
+  endpointTransport: string;
+};
+export type AgentEnvironmentStatusT = "connected" | "installed" | "absent";
+export type AgentProviderSummaryT = {
+  id: string;
+  label: string;
+  type: ProviderType;
+  status: "connected" | "reachable" | "unreachable" | "untested";
 };
 export type AgentInfoT = {
   id: string;
   label: string;
   capabilities: AgentCapabilitiesT;
   connected: boolean;
+  status: AgentEnvironmentStatusT;
+  installedVersion: string | null;
+  bundledProvider: ProviderType;
+  providerTypes: ProviderType[];
+  endpointTransport: string;
+  providers: AgentProviderSummaryT[];
   account: { email: string | null; plan: string | null; method: "subscription" | "api_key" } | null;
   authBroken?: AgentAuthBrokenT | null;
   sandboxBroken?: AgentSandboxBrokenT | null;
@@ -426,6 +448,9 @@ export interface AgentCapabilities {
   models: AgentModelOption[];
   reasoningOptions: AgentPickerOption[];
   permissionModes: AgentPickerOption[];
+  providerTypes: ProviderType[];
+  bundledProvider: ProviderType;
+  endpointTransport: string;
   supportsAsks: boolean;      // can surface interactive ask cards mid-turn
   supportsMcpTools: boolean;  // can mount the Calandria MCP tools
   reportsCostUsd: boolean;    // usage carries a real dollar cost (not just tokens)
@@ -438,7 +463,22 @@ export interface AgentCapabilities {
 // API-PRICE EQUIVALENT, not a charge; "api_key" means it really is billed.
 // Mirrors lib/agents/connections.ts AgentConnection; null when not connected.
 export interface AgentAccount { email: string | null; plan: string | null; method: "subscription" | "api_key" }
-export interface AgentInfo { id: string; label: string; capabilities: AgentCapabilities; authenticated: boolean; account?: AgentAccount | null; authBroken?: AgentAuthBrokenT | null; sandboxBroken?: AgentSandboxBrokenT | null }
+export interface AgentInfo {
+  id: string;
+  label: string;
+  capabilities: AgentCapabilities;
+  connected: boolean;
+  authenticated: boolean;
+  status: AgentEnvironmentStatusT;
+  installedVersion: string | null;
+  bundledProvider: ProviderType;
+  providerTypes: ProviderType[];
+  endpointTransport: string;
+  providers: AgentProviderSummaryT[];
+  account?: AgentAccount | null;
+  authBroken?: AgentAuthBrokenT | null;
+  sandboxBroken?: AgentSandboxBrokenT | null;
+}
 // `local_base_url` is where the project settings' "Local model" preset points
 // by default: the instance's CALANDRIA_LOCAL_MODEL_BASE_URL, served here so
 // the form writes the instance's answer instead of a guess.
@@ -480,6 +520,65 @@ export interface GatewayHealthT {
 }
 export const EMPTY_AGENTS: AgentsBundle = { default: "claude", agents: [] };
 
+// ---------- model providers (mirrors lib/providers/*) ----------
+// Settings → Models reads these off GET/POST /api/providers and its per-id
+// routes. Mirrored here rather than imported from lib/providers/* because
+// those modules pull in better-sqlite3 and the agent SDKs; the client only
+// ever needs their shapes.
+export type ProviderStatusT = "connected" | "reachable" | "unreachable" | "untested";
+export interface ProviderConfigT {
+  base_url?: string;
+  billing?: "key" | "subscription";
+  mcp?: boolean;
+  key_timeout_ms?: number;
+  api?: "anthropic" | "openai";
+  default_model?: string;
+}
+export interface ModelPolicyT { mode: "allow" | "deny"; ids: string[]; known: string[]; unavailable: string[] }
+export interface ProviderTestResultT {
+  reachable?: boolean; api?: string | null; version?: string | null; latency_ms?: number; error?: string | null;
+  [key: string]: unknown;
+}
+export interface ModelProviderT {
+  id: string;
+  type: ProviderType;
+  label: string;
+  config: ProviderConfigT;
+  model_policy: ModelPolicyT;
+  created_at: number;
+  updated_at: number;
+  last_test_at: number | null;
+  last_test: ProviderTestResultT | null;
+  /** The environment whose login owns this row, or null for a user-added one. */
+  bundled: string | null;
+  /** The environments this row serves, decided by its type. */
+  environments: string[];
+  has_key?: boolean;
+  has_admin_key?: boolean;
+}
+export interface PresentedProviderT extends ModelProviderT { status: ProviderStatusT; model_count: number }
+export interface ProviderProbeModelT {
+  id: string; context_window: number | null; family: string | null; version: string | null;
+  duplicate_of: string | null; chat: boolean;
+}
+export interface ProviderProbeResultT extends ProviderTestResultT {
+  reachable: boolean; api: string | null; version: string | null; latency_ms: number; error: string | null;
+  key: { spend: number | null; max_budget: number | null };
+  models: ProviderProbeModelT[];
+}
+export interface FlatProviderModelT {
+  id: string; ctx: number; family: string; version: string; on: boolean; duplicate_of: string | null; chat: boolean;
+}
+export interface ProviderModelsResponseT { mode: "allow" | "deny"; refreshed_at: number; models: FlatProviderModelT[] }
+export interface ProviderUsageT {
+  projects: { id: string; name: string }[];
+  tasks: { id: string; project_id: string; title: string }[];
+  schedules: { id: string; project_id: string; name: string }[];
+  runbooks: { id: string; project_id: string; name: string }[];
+}
+/** A local server GET /api/providers/detect found with no row yet. */
+export interface DetectedProviderT { type: ProviderType; base_url: string; model_count: number }
+
 // A picker option list. `value: null` is the synthetic inherit head: it
 // persists as null in tasks.model/reasoning/permission_mode, inheriting the
 // app-level (agent-scoped) default, then the driver's built-in.
@@ -498,8 +597,9 @@ const INHERIT_HEAD: PickerOption = { value: null, label: INHERIT_LABEL, sub: "us
 const withInherit = (opts: PickerOption[], sub?: string): PickerOption[] =>
   [sub ? { ...INHERIT_HEAD, sub } : INHERIT_HEAD, ...opts];
 // Build each picker's option list from a driver's capabilities. Undefined caps
-// (agent metadata not loaded yet) yields just the inherit head.
-export const modelOptions = (caps?: AgentCapabilities, sub?: string): PickerOption[] => withInherit(caps?.models ?? [], sub);
+// (agent metadata not loaded yet) yields just the inherit head. Model
+// selection moved to the provider tree (ModelPicker.tsx, GET /api/models);
+// `caps.models` itself survives only as modelLabel()'s display fallback.
 export const reasoningOptions = (caps?: AgentCapabilities, sub?: string): PickerOption[] => withInherit(caps?.reasoningOptions ?? [], sub);
 export const permissionOptions = (caps?: AgentCapabilities, sub?: string): PickerOption[] => withInherit(caps?.permissionModes ?? [], sub);
 
@@ -677,6 +777,10 @@ export interface ScheduleRow {
   next_fire_at: number;
   /** The runbook this schedule fires, if any: it supplies the prompt and config. */
   runbook_id: string | null;
+  /** The model provider a firing carries into the task it mints; null = the project's default. */
+  provider_id: string | null;
+  /** The model that task starts on; null = the project's default. */
+  model: string | null;
   last_run: ScheduleRunRow | null;
   runs: ScheduleRunRow[];
   // The row still `claimed`/`running` for this schedule, if any, served
@@ -716,6 +820,10 @@ export interface RunbookRow {
   priority: Priority;
   /** '' = the user wrote it; otherwise the agent id that filed it. */
   created_by: string;
+  /** The model provider a dispatch carries into the task it mints; null = the project's default. */
+  provider_id: string | null;
+  /** The model that task starts on; null = the project's default. */
+  model: string | null;
   /** The most recent task this dispatched; null until it has run once. */
   last_run: { id: string; title: string; status: string; created_at: number } | null;
   /**

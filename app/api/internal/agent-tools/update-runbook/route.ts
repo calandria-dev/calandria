@@ -17,7 +17,17 @@ export const dynamic = "force-dynamic";
 // from rewriting work that runs unattended. It is shared with the in-process
 // server so the two can't drift.
 export async function POST(req: NextRequest) {
-  let body: { taskId?: string; runbook?: string; name?: string; description?: string; prompt?: string; priority?: "hi" | "med" | "lo"; permission_mode?: string };
+  let body: {
+    taskId?: string;
+    runbook?: string;
+    name?: string;
+    description?: string;
+    prompt?: string;
+    priority?: "hi" | "med" | "lo";
+    permission_mode?: string;
+    provider?: string;
+    model?: string;
+  };
   try {
     body = await req.json();
   } catch {
@@ -36,6 +46,8 @@ export async function POST(req: NextRequest) {
     prompt: body.prompt,
     priority: body.priority,
     permission_mode: body.permission_mode,
+    provider: body.provider,
+    model: body.model,
   });
   // 400: the caller exists, so this is either an unknown runbook or one this
   // tool may not touch. The reason travels; a bare refusal leaves the agent

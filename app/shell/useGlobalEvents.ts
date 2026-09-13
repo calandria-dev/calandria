@@ -31,7 +31,16 @@ export function useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProje
     // An agent's login died or came back. Refetch the shared agents bundle
     // instead of patching state locally, so the reconnect banner, the
     // Settings cards and the New-task picker all read one server-side truth.
-    if (ev.type === "agent_auth") { void refreshAgents(); return; }
+    if (ev.type === "agent_auth") {
+      void refreshAgents();
+      // Settings → Models keeps its own richer fetch of GET /api/agents (the
+      // shared AgentsBundle above drops fields AgentConnect needs), so it
+      // can't read the refresh this triggers. Relay it as a window event,
+      // same pattern as calandria:runbooks, so the environments and
+      // providers lists refetch too.
+      window.dispatchEvent(new CustomEvent("calandria:agent_auth"));
+      return;
+    }
     // A task was hard-deleted, possibly in another tab (in this one the local
     // removal already happened, so the replay is a no-op). Drop it and adopt
     // the recomputed project badge the event carries; there's no row left to
