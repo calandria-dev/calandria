@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
     priority?: Priority;
     blocked_by?: string[];
     tags?: string[];
-    provider?: "local" | "cloud";
+    provider?: string;
     model?: string;
   };
   try {
@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
     // one is created; it is never read from a model-set field.
     tags: Array.isArray(body.tags) ? body.tags : undefined,
     origin_task_id: body.taskId ?? null,
-    provider: body.provider === "local" || body.provider === "cloud" ? body.provider : undefined,
+    provider: typeof body.provider === "string" ? body.provider : undefined,
     model: typeof body.model === "string" ? body.model : undefined,
   });
   if (!task) return NextResponse.json({ error: text }, { status: 404 });

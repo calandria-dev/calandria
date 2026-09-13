@@ -5,6 +5,7 @@ import { createSchedule } from "@/lib/schedule/store";
 import { createRunbook, getRunbook, listRunbooks } from "@/lib/runbooks/store";
 import { createRunbookForAgent, listRunbooksForAgent, updateRunbookForAgent } from "@/lib/runbookTools";
 import { setAgentConnection } from "@/lib/agents/connections";
+import { createProvider } from "@/lib/providers/store";
 
 describe("runbook agent tools", () => {
   let here: ReturnType<typeof createProject>;
@@ -164,5 +165,48 @@ describe("runbook agent tools", () => {
     const whitespace = updateRunbookForAgent(here, rb2.id, { permission_mode: "   " });
     expect(whitespace.runbook).not.toBeNull();
     expect(whitespace.runbook!.permission_mode).toBeNull();
+  });
+});
+
+describe("runbook provider/model", () => {
+  it("create_runbook stores a resolved provider and model", () => {
+    const project = createProject({ name: "RB-Provider" });
+    const provider = createProvider({ type: "ollama", config: { base_url: "http://localhost:11434" } });
+    const { runbook } = createRunbookForAgent(project, { name: "Sweep", description: "", prompt: "/sweep", provider: provider.id, model: "qwen3-coder" }, "claude");
+    expect(runbook).toMatchObject({ provider_id: provider.id, model: "qwen3-coder" });
+  });
+
+  it("refuses an unrecognized provider on create, and creates nothing", () => {
+    const project = createProject({ name: "RB-BadProvider" });
+    const { runbook, text } = createRunbookForAgent(project, { name: "Sweep", description: "", prompt: "/sweep", provider: "ghost" }, "claude");
+    expect(runbook).toBeNull();
+    expect(text).toMatch(/No provider matches/);
+    expect(listRunbooks(project.id)).toHaveLength(0);
+  });
+
+  it("refuses a model the named provider doesn't list", () => {
+    const project = createProject({ name: "RB-BadModel" });
+    const provider = createProvider({
+      type: "ollama", config: { base_url: "http://localhost:11434" },
+      model_policy: { mode: "deny", ids: [], known: ["qwen3-coder"], unavailable: [] },
+    });
+    const { runbook, text } = createRunbookForAgent(project, { name: "Sweep", description: "", prompt: "/sweep", provider: provider.id, model: "made-up" }, "claude");
+    expect(runbook).toBeNull();
+    expect(text).toMatch(/isn't a model/);
+  });
+
+  it("update_runbook changes provider and validates the model against it, carrying both", () => {
+    const project = createProject({ name: "RB-Update" });
+    const provider = createProvider({
+      type: "ollama", config: { base_url: "http://localhost:11434" },
+      model_policy: { mode: "deny", ids: ["off-model"], known: ["on-model", "off-model"], unavailable: [] },
+    });
+    const rb = createRunbook({ project_id: project.id, name: "Sweep", prompt: "/sweep" });
+    const ok = updateRunbookForAgent(project, rb.id, { provider: provider.id, model: "on-model" });
+    expect(ok.runbook).toMatchObject({ provider_id: provider.id, model: "on-model" });
+
+    const off = updateRunbookForAgent(project, rb.id, { model: "off-model" });
+    expect(off.runbook).toBeNull();
+    expect(off.text).toMatch(/is off under/);
   });
 });

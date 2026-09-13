@@ -14,6 +14,8 @@ import { POST as suggestTaskEp } from "@/app/api/internal/agent-tools/suggest-ta
 import { POST as listTagsEp } from "@/app/api/internal/agent-tools/list-tags/route";
 import { POST as setBaseBranchEp } from "@/app/api/internal/agent-tools/set-base-branch/route";
 import { POST as updateTagEp } from "@/app/api/internal/agent-tools/update-tag/route";
+import { POST as listProvidersEp } from "@/app/api/internal/agent-tools/list-providers/route";
+import { createProvider } from "@/lib/providers/store";
 import { git, makeRepo, uid } from "./helpers";
 
 // update_task's cross-task policy, proved end to end on the Codex path.
@@ -41,6 +43,7 @@ const ROUTES: Record<string, (req: NextRequest) => Promise<Response>> = {
   "/api/internal/agent-tools/list-tags": listTagsEp,
   "/api/internal/agent-tools/set-base-branch": setBaseBranchEp,
   "/api/internal/agent-tools/update-tag": updateTagEp,
+  "/api/internal/agent-tools/list-providers": listProvidersEp,
 };
 
 let server: http.Server;
@@ -601,6 +604,23 @@ describe("update_tag, end to end over the Codex bridge", () => {
       const unsafe = (await client.callTool({ name: "update_tag", arguments: { tag: a.id, base_branch: "--upload-pack=evil" } })) as ToolResult;
       expect(unsafe.isError).toBe(true);
       expect(getTag(a.id)!.base_branch).toBe("");
+    } finally {
+      await close();
+    }
+  });
+});
+
+describe("list_providers, end to end over the Codex bridge", () => {
+  it("returns every provider with its status and models_on", async () => {
+    const project = createProject({ name: "Codex-Providers" });
+    const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
+    const provider = createProvider({ type: "ollama", label: "Home box", config: { base_url: "http://localhost:11434" } });
+
+    const { client, close } = await connectBridge(caller.id, project.id);
+    try {
+      const result = (await client.callTool({ name: "list_providers", arguments: {} })) as ToolResult;
+      const rows = JSON.parse(result.content[0].text) as { id: string; label: string; type: string }[];
+      expect(rows.find((r) => r.id === provider.id)).toMatchObject({ label: "Home box", type: "ollama" });
     } finally {
       await close();
     }

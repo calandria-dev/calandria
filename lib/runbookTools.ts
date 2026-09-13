@@ -29,6 +29,9 @@ import {
   createRunbook, getRunbook, listRunbooks, schedulesUsing, updateRunbook,
 } from "@/lib/runbooks/store";
 import type { Priority, Project, Runbook } from "@/lib/types";
+import { checkProviderModel, resolveProviderRef } from "@/lib/providers/agentRef";
+import { getProvider } from "@/lib/providers/store";
+import type { ModelProvider } from "@/lib/providers/rows";
 
 // Every permission_mode value any registered driver honors: the same
 // capability data GET /api/agents renders into the human picker
@@ -89,6 +92,10 @@ export interface CreateRunbookToolInput {
   permission_mode?: string;
   /** An id, or an exact (case-insensitive) name from list_projects. */
   project?: string;
+  /** Provider id/label, or "local"/"cloud". Omit to inherit the project's default. */
+  provider?: string;
+  /** Model id, checked against the provider named above. Omit to inherit. */
+  model?: string;
 }
 
 /**
@@ -119,14 +126,33 @@ export function createRunbookForAgent(
   const target = resolveTargetProject(current, input.project);
   if ("error" in target) return { runbook: null, text: target.error };
 
+  const agent = resolveConnectedAgent([target.project.default_agent]) ?? undefined;
+
+  // Same resolution suggest_task's `provider` uses: an id, an exact label, or
+  // the "local"/"cloud" alias. Checked before the insert so a runbook is
+  // never saved pointing at a provider or model that doesn't exist.
+  const model = input.model?.trim() || null;
+  let providerId: string | null = null;
+  if (input.provider?.trim()) {
+    const ref = resolveProviderRef(input.provider, agent ?? target.project.default_agent);
+    if ("error" in ref) return { runbook: null, text: `Could not save the runbook: ${ref.error} Nothing was created.` };
+    if (model) {
+      const check = checkProviderModel(ref.provider, model);
+      if ("error" in check) return { runbook: null, text: `Could not save the runbook: ${check.error} Nothing was created.` };
+    }
+    providerId = ref.provider.id;
+  }
+
   const runbook = createRunbook({
     project_id: target.project.id,
     name: input.name.trim(),
     description: input.description ?? "",
     prompt: input.prompt,
-    agent: resolveConnectedAgent([target.project.default_agent]) ?? undefined,
+    agent,
     permission_mode: permissionMode ?? null,
     priority: input.priority,
+    provider_id: providerId,
+    model,
     // Provenance, not a review gate: a runbook is inert until someone presses
     // Run, so it needs no suggested-tray equivalent, but the user should be
     // able to see at a glance which recipes they didn't write.
@@ -180,6 +206,10 @@ export interface UpdateRunbookToolInput {
   prompt?: string;
   priority?: Priority;
   permission_mode?: string;
+  /** New provider: an id/label, or "local"/"cloud". Pass "" to clear back to inherit. */
+  provider?: string;
+  /** New model id. Pass "" to clear back to inherit. */
+  model?: string;
 }
 
 /**
@@ -231,6 +261,31 @@ export function updateRunbookForAgent(
       if (refusal) return { runbook: null, text: refusal };
     }
     patch.permission_mode = permissionMode ?? null;
+  }
+
+  let providerForCheck: ModelProvider | null | undefined;
+  if (fields.provider !== undefined) {
+    const wanted = fields.provider.trim();
+    if (!wanted) {
+      patch.provider_id = null;
+      providerForCheck = null;
+    } else {
+      const ref = resolveProviderRef(wanted, cur.agent);
+      if ("error" in ref) return { runbook: null, text: `Could not update "${cur.name}": ${ref.error} Nothing was changed.` };
+      patch.provider_id = ref.provider.id;
+      providerForCheck = ref.provider;
+    }
+  }
+  if (fields.model !== undefined) {
+    const model = fields.model.trim() || null;
+    if (model) {
+      const provider = providerForCheck !== undefined ? providerForCheck : (cur.provider_id ? getProvider(cur.provider_id) : null);
+      if (provider) {
+        const check = checkProviderModel(provider, model);
+        if ("error" in check) return { runbook: null, text: `Could not update "${cur.name}": ${check.error} Nothing was changed.` };
+      }
+    }
+    patch.model = model;
   }
 
   const runbook = updateRunbook(cur.id, patch)!;
