@@ -2050,6 +2050,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 /* max-height + scroll: the model picker now carries Claude Code's full list
    (families, 1M variants, pinned versions), which is taller than a viewport. */
 .popover{position:absolute;z-index:60;background:var(--raise);border:1px solid var(--line-strong);border-radius:var(--r);box-shadow:var(--sh-3);overflow-y:auto;overscroll-behavior:contain;max-height:min(60vh,440px);min-width:200px;animation:pop .14s ease;}
+.popover:has(> .mpick){z-index:220;}
 .pop-item{display:flex;align-items:center;gap:10px;padding:10px 13px;cursor:pointer;font-size:13px;font-weight:600;}
 .pop-item:hover{background:var(--surface-2);}
 .pop-item .pi-check{margin-left:auto;color:var(--accent);}
