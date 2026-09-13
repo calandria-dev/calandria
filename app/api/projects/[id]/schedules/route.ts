@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getProject } from "@/lib/store";
 import { activeRun, createSchedule, lastRun, listRuns, listSchedules } from "@/lib/schedule/store";
 import { getRunbook } from "@/lib/runbooks/store";
+import { getProvider } from "@/lib/providers/store";
 import { PRIORITIES } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -46,6 +47,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (body.priority !== undefined && !PRIORITIES.includes(body.priority)) {
     return NextResponse.json({ error: `priority must be one of: ${PRIORITIES.join(", ")}` }, { status: 400 });
   }
+  // Same screen as the task routes': a provider must exist, and model is a
+  // shape check only (provider-native ids and inference-profile ARNs are the
+  // driver's business); a control character would reach a spawned process.
+  if (body.provider_id !== undefined && body.provider_id !== null && (typeof body.provider_id !== "string" || !getProvider(body.provider_id)))
+    return NextResponse.json({ error: "valid provider_id required" }, { status: 400 });
+  if (body.model !== undefined && body.model !== null) {
+    if (typeof body.model !== "string") return NextResponse.json({ error: "model must be a string or null" }, { status: 400 });
+    if (body.model.length > 2048 || /[\0-\x1f\x7f]/.test(body.model))
+      return NextResponse.json({ error: "invalid model id" }, { status: 400 });
+  }
   try {
     // createSchedule computes next_fire_at and throws on an unusable spec, so
     // a 400 now beats a schedule that never fires.
@@ -66,6 +77,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // validity are createSchedule's job (nextFireAt throws), so all that's
       // needed here is to refuse a non-string before String() launders it.
       once_date: typeof body.once_date === "string" ? body.once_date : "",
+      provider_id: body.provider_id ?? null,
+      model: typeof body.model === "string" && body.model.trim() ? body.model.trim() : null,
     });
     const { startScheduler } = await import("@/lib/scheduler");
     startScheduler();

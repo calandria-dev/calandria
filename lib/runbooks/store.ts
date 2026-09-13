@@ -27,9 +27,9 @@ export interface CreateRunbookInput {
   priority?: Priority;
   /** The agent id that filed this, or '' when the user wrote it. */
   created_by?: string;
-  /** The provider this runbook pins its dispatched tasks to; null/omitted = inherit the project's default. */
+  /** The model provider a dispatch carries into the task it mints; null/undefined = the project's default. */
   provider_id?: string | null;
-  /** The model this runbook pins its dispatched tasks to; null/omitted = inherit. */
+  /** The model that task starts on; null/undefined = the project's default. */
   model?: string | null;
 }
 
@@ -42,23 +42,21 @@ export function createRunbook(input: CreateRunbookInput): Runbook {
   getDb()
     .prepare(
       `INSERT INTO runbooks (id, project_id, name, description, prompt, agent, permission_mode,
-                             send_context, priority, position, provider_id, model, created_by, created_at, updated_at)
+                             send_context, priority, position, created_by, provider_id, model, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id, input.project_id, input.name, input.description ?? "", input.prompt,
       input.agent || "claude", input.permission_mode ?? null,
       input.send_context === false ? 0 : 1, input.priority ?? "med",
-      position, input.provider_id ?? null, input.model ?? null, input.created_by ?? "", now, now
+      position, input.created_by ?? "", input.provider_id ?? null, input.model ?? null, now, now
     );
   return getRunbook(id)!;
 }
 
 export function updateRunbook(
   id: string,
-  fields: Partial<
-    Pick<Runbook, "name" | "description" | "prompt" | "agent" | "permission_mode" | "send_context" | "priority" | "position" | "provider_id" | "model">
-  >
+  fields: Partial<Pick<Runbook, "name" | "description" | "prompt" | "agent" | "permission_mode" | "send_context" | "priority" | "position" | "provider_id" | "model">>
 ): Runbook | null {
   if (!getRunbook(id)) return null;
   const entries = Object.entries(fields).filter(([, v]) => v !== undefined);
@@ -91,9 +89,9 @@ export function deleteRunbook(id: string): void {
     db.prepare(
       `UPDATE schedules
           SET prompt = ?, agent = ?, permission_mode = ?, send_context = ?, priority = ?,
-              runbook_id = NULL, updated_at = ?
+              provider_id = ?, model = ?, runbook_id = NULL, updated_at = ?
         WHERE runbook_id = ?`
-    ).run(rb.prompt, rb.agent, rb.permission_mode, rb.send_context, rb.priority, Date.now(), id);
+    ).run(rb.prompt, rb.agent, rb.permission_mode, rb.send_context, rb.priority, rb.provider_id, rb.model, Date.now(), id);
     db.prepare("DELETE FROM runbooks WHERE id = ?").run(id);
   })();
 }
@@ -116,6 +114,8 @@ export function copyRunbook(id: string, targetProjectId: string): Runbook | null
     permission_mode: src.permission_mode,
     send_context: src.send_context !== 0,
     priority: src.priority,
+    provider_id: src.provider_id,
+    model: src.model,
     // created_by is "who wrote this row", and this row was written by whoever
     // pressed Copy, not by the original's author.
     created_by: "",

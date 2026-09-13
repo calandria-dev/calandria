@@ -5,16 +5,93 @@ import type { LandingMode, Priority } from "@/lib/types";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
 import { relTime, duration, fmtJobCost, alphabetical, isBlocking } from "./format";
-import { SLABEL, modelOptions, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate, type TagRow } from "./types";
+import { SLABEL, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate, type TagRow } from "./types";
 import { tagProgress } from "./TagChips";
 import { agentLabel, agentPickerNeeded, defaultAgentFor, findAgent, pickerAgents } from "./agents";
-import { StatusDot, Skel, ErrNote, EndpointNote } from "./shared";
-import { Modal, BrowseDirButton, FreeFormModel, ModelField, PrioritySeg, DepPicker } from "./Modal";
+import { StatusDot, Skel, ErrNote } from "./shared";
+import { Modal, BrowseDirButton, PrioritySeg, DepPicker } from "./Modal";
 import { GitHubClonePicker } from "./github";
 import { Markdown } from "../Markdown";
 import { clientFeatures } from "@/lib/features";
-import { describeProvider, gatewayInsecureForGemini, gatewayPresetEnv, normalizeBaseUrl, parseAgentEnv, providerPresetEnv, serializeAgentEnv, taskProvider, type GatewayBilling, type ProviderKind } from "@/lib/agentEnv";
-import { useEndpointModels } from "./modelEndpoint";
+import { gatewayInsecureForGemini, taskProvider } from "@/lib/agentEnv";
+import { ModelPicker, useModelTree, resolveModelLabel, type ModelPickerValue } from "./ModelPicker";
+import type { PresentedProvider } from "@/lib/providers/present";
+
+// The configured provider rows, fetched once per mounted dialog (no module-
+// scoped cache like ModelPicker's own: only one of these dialogs is ever open
+// at a time, so a per-mount fetch costs nothing extra). Feeds ModelPickerField's
+// resolved label and ContextModal's "is the chosen provider a gateway" check,
+// neither of which ModelPicker exposes on its own (it keeps its provider cache
+// private).
+function useProvidersMap(): Map<string, PresentedProvider> {
+  const [map, setMap] = useState<Map<string, PresentedProvider>>(new Map());
+  useEffect(() => {
+    let alive = true;
+    jget<{ providers: PresentedProvider[] }>("/api/providers")
+      .then((r) => { if (alive) setMap(new Map(r.providers.map((p) => [p.id, p] as const))); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  return map;
+}
+
+/**
+ * The field-width "Model" control both task dialogs use: a button styled like
+ * the other fields around it, showing the resolved model (or the inherit
+ * label), that opens ModelPicker in its popover variant. `agentId` is pinned
+ * to a single-entry `env.options`, matching its own value: these dialogs
+ * already have a separate Agent/Environment picker (AgentPicker, above), so
+ * ModelPicker's own environment-switch footer would just be a second, redundant
+ * control for the same choice. Passing one option instead of the picker's
+ * `pinned` flag keeps the footer's "runs in X" line while suppressing "Change".
+ */
+function ModelPickerField({ label = "Model", help, value, onChange, agentId, agents, providers, inherit }: {
+  label?: string;
+  help?: React.ReactNode;
+  value: ModelPickerValue;
+  onChange: (v: ModelPickerValue) => void;
+  agentId: string;
+  agents: AgentsBundle;
+  providers: Map<string, PresentedProvider>;
+  inherit: { label: string; sub?: string };
+}) {
+  const [open, setOpen] = useState(false);
+  const { tree } = useModelTree(agentId);
+  const resolved = resolveModelLabel(tree, providers, value);
+  return (
+    <div className="field model-field">
+      <div className="lab">{Icon.spark()} {label}</div>
+      <div style={{ position: "relative" }}>
+        <button
+          type="button"
+          className="btn btn-line"
+          style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}
+          onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        >
+          <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, overflow: "hidden" }}>
+            {resolved?.mark}
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {resolved ? resolved.name : inherit.label}
+            </span>
+            {resolved?.via && <span className="opt">via {resolved.via}</span>}
+          </span>
+          {Icon.chevDown()}
+        </button>
+        {open && (
+          <ModelPicker
+            value={value}
+            onChange={onChange}
+            inherit={inherit}
+            env={{ current: agentId, options: [{ id: agentId, label: agentLabel(agents, agentId) }] }}
+            variant="popover"
+            onClose={() => setOpen(false)}
+          />
+        )}
+      </div>
+      {help && <div className="hlp">{help}</div>}
+    </div>
+  );
+}
 
 // Segmented agent picker (Claude Code / Codex, etc). Hidden when there is
 // nothing to choose: one agent registered, or one agent connected and it's the
@@ -129,7 +206,7 @@ export function TagsField({ tags, value, onChange, onCreate, label = "Tags", hin
   );
 }
 
-export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, onCreateTag, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; tags: TagRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; permission_mode: string | null; tag_ids: string[] }) => void; onCreateTag: (name: string) => Promise<TagRow>; onOpenSetup?: () => void }) {
+export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, onCreateTag, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; tags: TagRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; provider_id: string | null; permission_mode: string | null; tag_ids: string[] }) => void; onCreateTag: (name: string) => Promise<TagRow>; onOpenSetup?: () => void }) {
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
@@ -150,6 +227,8 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   // of this dialog: a rail pick afterwards would land a model behind the turn
   // that already ran on the default one.
   const [model, setModel] = useState<string | null>(null);
+  const [providerId, setProviderId] = useState<string | null>(null);
+  const providers = useProvidersMap();
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => { ref.current?.focus(); }, []);
   // The bundle can arrive after mount; adopt the resolved default until the user picks.
@@ -167,13 +246,11 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   // still be created (not started) and started once the agent is connected.
   const selAgent = findAgent(agents, agent);
   const agentReady = selAgent ? selAgent.authenticated : true;
-  // Which shape the model field takes. A cloud project picks from the driver's
-  // catalog; a project pointed at a local server types an id, since the ids on
-  // that machine are whatever was pulled and no catalog can know them
-  // (lib/agentEnv.ts). The suggestions are what the endpoint reports, asked
-  // server-side, since the browser generally can't reach a loopback model server.
+  // The old per-project http/loopback endpoint override (lib/agentEnv.ts),
+  // kept only for the Gemini-insecure-gateway warning below: unrelated to
+  // which model/provider this task picks, which now goes through ModelPicker
+  // and the model_providers table instead.
   const provider = useMemo(() => taskProvider(project), [project]);
-  const localModel = provider.kind !== "cloud";
   // Gemini CLI source refuses a plain-http endpoint unless it's loopback
   // (docs/AGENTS.md, "Antigravity CLI"). A gateway is reachable from anywhere
   // the app is deployed, so this would fail every turn inside `agy` instead of
@@ -182,29 +259,22 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   const canStart = !blocked && agentReady && !gatewayInsecure;
   const willAutoStart = autoStart && deps.length > 0;
   const permissionOpts = useMemo(() => permissionOptions(selAgent?.capabilities), [selAgent]);
-  const modelOpts = useMemo(() => modelOptions(selAgent?.capabilities), [selAgent]);
-  const endpoint = useEndpointModels(project.id, "", localModel);
-  // Permission modes and models are both provider-specific (each driver labels
-  // its own: Claude speaks Anthropic's mode names and model aliases, Codex its
-  // sandbox modes and GPT ids), so a choice made under one agent may not exist
-  // under the next. Switching agents drops it back to Inherit instead of
-  // sending a value the new driver would coerce.
+  // Permission modes are provider-specific (each driver labels its own: Claude
+  // speaks Anthropic's mode names, Codex its sandbox modes), so a choice made
+  // under one agent may not exist under the next. Switching agents drops it
+  // back to Inherit instead of sending a value the new driver would coerce.
+  // ModelPicker's own switchEnvironment() does the equivalent check for the
+  // model/provider pair.
   useEffect(() => {
     if (permission && !permissionOpts.some((p) => p.value === permission)) setPermission(null);
   }, [permissionOpts, permission]);
-  // Except under an override, where the catalog isn't the authority on what is
-  // runnable and clearing a typed id would be a bug, not a fix.
-  useEffect(() => {
-    if (localModel) return;
-    if (model && !modelOpts.some((m) => m.value === model)) setModel(null);
-  }, [modelOpts, model, localModel]);
   // What this agent calls its never-asks mode, for the unattended warning below.
   const bypassLabel = permissionOpts.find((p) => p.value === "bypassPermissions")?.label ?? "bypassPermissions";
   // bypassPermissions is the only mode that never parks on a card. "Inherit"
   // (null) can resolve to one that does, so it counts as unsafe for unattended
   // too: what it resolves to isn't guessed at here.
   const unattendedRisk = willAutoStart && permission !== "bypassPermissions";
-  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: willAutoStart, model, permission_mode: permission, tag_ids: tagIds });
+  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: willAutoStart, model, provider_id: providerId, permission_mode: permission, tag_ids: tagIds });
   return (
     <Modal title="New task" sub={`${project.name} · title + description define ${agentLabel(agents, agent)}'s task context`} onClose={onClose}
       footer={<>
@@ -239,9 +309,13 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
           <code className="ctx-mono">https://</code> address. Use a different gateway, or pick a different agent.
         </div>
       )}
-      <ModelField options={modelOpts} value={model} onChange={setModel}
-        freeForm={localModel} suggestions={endpoint.models} status={<EndpointNote state={endpoint} />}
-        help=" (changeable later from the session rail)." />
+      <ModelPickerField
+        value={{ agent, provider_id: providerId, model }}
+        onChange={(v) => { setProviderId(v.provider_id); setModel(v.model); }}
+        agentId={agent} agents={agents} providers={providers}
+        inherit={{ label: "Project default" }}
+        help="Changeable later from the session rail."
+      />
       <div className="field">
         <div className="lab">Priority</div>
         <PrioritySeg value={priority} onChange={setPriority} />
@@ -868,7 +942,7 @@ export function TagTasksModal({ selected, tags, onClose, onApply, onCreateTag }:
   );
 }
 
-export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, onSave, onDelete, onMove, onCreateTag, onOpenSetup }: { task: TaskRow; tasks: TaskRow[]; tags: TagRow[]; projects: ProjectRow[]; agents: AgentsBundle; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; model: string | null; depends_on: string[]; auto_start: boolean; tag_ids: string[] }, action?: SaveAction) => void; onCreateTag: (name: string) => Promise<TagRow>; onDelete: (id: string) => void; onMove: (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => Promise<void>; onOpenSetup?: () => void }) {
+export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, onSave, onDelete, onMove, onCreateTag, onOpenSetup }: { task: TaskRow; tasks: TaskRow[]; tags: TagRow[]; projects: ProjectRow[]; agents: AgentsBundle; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; model: string | null; provider_id: string | null; depends_on: string[]; auto_start: boolean; tag_ids: string[] }, action?: SaveAction) => void; onCreateTag: (name: string) => Promise<TagRow>; onDelete: (id: string) => void; onMove: (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => Promise<void>; onOpenSetup?: () => void }) {
   const [title, setTitle] = useState(task.title);
   const [desc, setDesc] = useState(task.description);
   const [priority, setPriority] = useState<Priority>(task.priority);
@@ -877,6 +951,8 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
   // per turn, so this stays editable for a task's whole life (it's the same
   // value the session rail's picker writes) and takes effect on the next turn.
   const [model, setModel] = useState<string | null>(task.model);
+  const [providerId, setProviderId] = useState<string | null>(task.provider_id);
+  const providers = useProvidersMap();
   const [deps, setDeps] = useState<string[]>(task.depends_on ?? []);
   const [tagIds, setTagIds] = useState<string[]>(task.tag_ids ?? []);
   const [autoStart, setAutoStart] = useState(!!task.auto_start);
@@ -886,7 +962,7 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
   const can = title.trim().length > 0;
   const canChangeAgent = task.started === 0 && task.running === 0;
   const candidates = useMemo(() => tasks.filter((t) => t.id !== task.id), [tasks, task.id]);
-  const save = (action?: SaveAction) => can && onSave(task.id, { title: title.trim(), description: desc.trim(), priority, agent: canChangeAgent ? agent : undefined, model, depends_on: deps, auto_start: autoStart && deps.length > 0, tag_ids: tagIds }, action);
+  const save = (action?: SaveAction) => can && onSave(task.id, { title: title.trim(), description: desc.trim(), priority, agent: canChangeAgent ? agent : undefined, model, provider_id: providerId, depends_on: deps, auto_start: autoStart && deps.length > 0, tag_ids: tagIds }, action);
   // Editing a suggestion is usually the last step before deciding on it, so the
   // tray's two verbs live here too: sharpen the brief and accept it in one
   // gesture, instead of saving, closing, and hunting for the row again.
@@ -903,24 +979,25 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
   // the suggested rows so the picker above can show and untick it.
   const blocked = deps.some((id) => isBlocking(tasks.find((t) => t.id === id)));
   const selAgent = findAgent(agents, canChangeAgent ? agent : task.agent);
-  const modelOpts = useMemo(() => modelOptions(selAgent?.capabilities), [selAgent]);
-  // Same two shapes as the New-task dialog, over this task's own effective
-  // provider: the project's override with the task's laid over it, since a task
-  // can be sent to a local endpoint (or back to the cloud) on its own row.
+  // The old per-project http/loopback endpoint override (lib/agentEnv.ts),
+  // kept only for the Gemini-insecure-gateway warning below: the project's
+  // override with the task's own laid over it, since a task can still be sent
+  // to a local endpoint under that legacy system.
   const taskProject = projects.find((p) => p.id === task.project_id);
   const provider = useMemo(() => taskProvider(taskProject, task), [taskProject, task]);
-  const localModel = provider.kind !== "cloud";
-  const endpoint = useEndpointModels(task.project_id, "", localModel);
-  // Switching an unstarted task's agent invalidates a model chosen under the old
-  // one, same as the New-task dialog: drop to Inherit instead of saving an id
-  // the new driver would never resolve. Gated on the agent actually having
-  // moved, unlike the New dialog's copy, since being absent from the catalog is
-  // also what a not-yet-loaded bundle and a provider change look like, and
-  // rewriting the row's model just because the dialog was opened is worse.
+  // Switching an unstarted task's agent invalidates a model/provider chosen
+  // under the old one, same as the New-task dialog: drop back to Inherit
+  // instead of saving a pair the new driver would never resolve. A simpler
+  // rule than the New-task dialog's ModelPicker gets for free from its own
+  // switchEnvironment(): this dialog's Model field is pinned to a single
+  // environment (the AgentPicker above is the only environment switch), so
+  // there is no "does it still exist under the new one" check to reuse; any
+  // agent change just clears both.
   useEffect(() => {
-    if (!model || agent === task.agent) return;
-    if (!modelOpts.some((m) => m.value === model)) setModel(null);
-  }, [agent, task.agent, modelOpts, model]);
+    if (agent === task.agent) return;
+    setModel(null);
+    setProviderId(null);
+  }, [agent, task.agent]);
   const agentReady = selAgent ? selAgent.authenticated : true;
   // Same refusal as the New-task dialog (lib/agentEnv.ts): a gateway that's
   // http:// and not loopback fails every Antigravity turn inside `agy`.
@@ -985,9 +1062,13 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
           <code className="ctx-mono">https://</code> address. Use a different gateway, or pick a different agent.
         </div>
       )}
-      <ModelField options={modelOpts} value={model} onChange={setModel}
-        freeForm={localModel} suggestions={endpoint.models} status={<EndpointNote state={endpoint} />}
-        help={task.started === 1 ? " (takes effect on this task's next turn)." : undefined} />
+      <ModelPickerField
+        value={{ agent: canChangeAgent ? agent : task.agent, provider_id: providerId, model }}
+        onChange={(v) => { setProviderId(v.provider_id); setModel(v.model); }}
+        agentId={canChangeAgent ? agent : task.agent} agents={agents} providers={providers}
+        inherit={{ label: "Project default" }}
+        help={task.started === 1 ? "Takes effect on this task's next turn." : undefined}
+      />
       <div className="field">
         <div className="lab">Priority</div>
         <PrioritySeg value={priority} onChange={setPriority} />
@@ -1156,7 +1237,7 @@ function GatewayMcpField({ projectId, value, onChange }: { projectId: string; va
   );
 }
 
-export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string; agent_env: string; gateway_max_budget: number | null; gateway_key_duration: string; gateway_mcp: string[] }) => void; onDelete: () => void; onDeprecate: () => void }) {
+export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string; default_provider_id: string | null; gateway_max_budget: number | null; gateway_key_duration: string; gateway_mcp: string[] }) => void; onDelete: () => void; onDeprecate: () => void }) {
   const [name, setName] = useState(project.name);
   const [context, setContext] = useState(project.context);
   const [sendContext, setSendContext] = useState(project.send_context !== 0);
@@ -1170,27 +1251,38 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   // a real configuration). Applying it is one click, spelled out below.
   const [landing, setLanding] = useState<LandingMode>(project.landing_mode === "pr" ? "pr" : "merge");
   const [autoReclaim, setAutoReclaim] = useState(project.auto_reclaim === 1);
-  // Which endpoint the project's turns run against (lib/agentEnv.ts). The
-  // stored form is an env-shaped override; the form edits the three things a
-  // person actually chooses (kind, base URL, model, plus a token for a custom
-  // endpoint) and writes the override back through providerPresetEnv, so the
-  // form and the presets `suggest_task` writes can't produce different shapes.
-  const savedProvider = describeProvider(parseAgentEnv(project.agent_env));
-  const [providerKind, setProviderKind] = useState<ProviderKind>(savedProvider.kind);
-  const [providerUrl, setProviderUrl] = useState(normalizeBaseUrl(savedProvider.anthropic_base_url ?? savedProvider.openai_base_url ?? ""));
-  const [providerModel, setProviderModel] = useState(savedProvider.model ?? "");
-  const [providerToken, setProviderToken] = useState(savedProvider.auth_token ?? "");
-  // Who a Gateway-preset project bills. Stored rather than derived because both
-  // modes are legitimate against the same address (lib/agentEnv.ts).
-  const [providerBilling, setProviderBilling] = useState<GatewayBilling>(savedProvider.gateway_billing ?? "key");
+  // Which model provider this project's turns run against
+  // (docs/superpowers/specs/2026-09-06-model-providers-design.md). Replaces
+  // the old env-shaped agent_env override entirely: default_provider_id names
+  // a model_providers row, and the row's own config (base URL, billing,
+  // default_model) is edited from Settings → Providers, not here. This dialog
+  // only picks WHICH provider (and which model on it) this project defaults
+  // to. `providers` is fetched once, shared with the model trigger's resolved
+  // label and with the litellm-only gating below.
+  const providers = useProvidersMap();
+  const [providerId, setProviderId] = useState<string | null>(project.default_provider_id);
+  const [defaultModel, setDefaultModel] = useState<string | null>(null);
+  // Seeds the model once the provider row that owns it has loaded (fetched
+  // async, so it can't be read into useState's initializer above). A ref, not
+  // a `providerId === project.default_provider_id` check, since the user is
+  // free to pick a different provider before the fetch lands, and that pick
+  // must not be clobbered the moment it does.
+  const modelSeededRef = useRef(false);
+  useEffect(() => {
+    if (modelSeededRef.current) return;
+    if (!project.default_provider_id) { modelSeededRef.current = true; return; }
+    const row = providers.get(project.default_provider_id);
+    if (!row) return; // still loading
+    setDefaultModel(row.config.default_model ?? null);
+    modelSeededRef.current = true;
+  }, [providers, project.default_provider_id]);
   // Per-task LiteLLM virtual keys (docs/AGENTS.md): advanced, opt-in,
   // and only meaningful when the instance has an admin key configured.
   const [gatewayMaxBudget, setGatewayMaxBudget] = useState(project.gateway_max_budget != null ? String(project.gateway_max_budget) : "");
   const [gatewayKeyDuration, setGatewayKeyDuration] = useState(project.gateway_key_duration || "");
-  // Hosted MCP servers (docs/AGENTS.md, "Hosted MCP servers"), independent
-  // of providerKind above: a Cloud-login task can still reach the gateway's
-  // hosted tools, so this is its own field instead of nested under the
-  // Gateway provider option.
+  // Hosted MCP servers (docs/AGENTS.md, "Hosted MCP servers"): shown only
+  // alongside the LiteLLM caps above, since both need the project's turns to
+  // actually be routed through a gateway to mean anything.
   const [gatewayMcp, setGatewayMcp] = useState<string[]>(() => {
     try {
       const parsed = JSON.parse(project.gateway_mcp || "[]");
@@ -1199,24 +1291,11 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
       return [];
     }
   });
-  const localDefaultUrl = agents.local_base_url || "http://localhost:11434";
-  // The instance's LiteLLM address, or "", which is what hides the option.
-  // The gateway's URL is not typed: it is the one the instance is configured
-  // for, and an override naming any other address is a Custom endpoint.
-  const gatewayUrl = agents.gateway_base_url || "";
-  // What the URL in the box right now actually has. Probed through the server
-  // (the endpoint is loopback there, not in this browser) and keyed on the
-  // typed url rather than the saved one, so the suggestions and the "reachable,
-  // 4 models" line follow the field being edited instead of appearing only
-  // after a save.
-  const probeUrl = providerKind === "gateway" ? gatewayUrl : providerUrl || localDefaultUrl;
-  const endpoint = useEndpointModels(project.id, probeUrl, providerKind !== "cloud");
-  const agentEnvOut = () =>
-    providerKind === "cloud"
-      ? ""
-      : providerKind === "gateway"
-        ? serializeAgentEnv(gatewayPresetEnv({ baseUrl: gatewayUrl, billing: providerBilling, model: providerModel }))
-        : serializeAgentEnv(providerPresetEnv({ baseUrl: providerUrl || localDefaultUrl, model: providerModel, token: providerToken }));
+  // Whether the currently-chosen provider is a LiteLLM gateway: the gate for
+  // the budget/duration fields and GatewayMcpField below, replacing the old
+  // providerKind === "gateway" check now that "gateway" is a provider TYPE
+  // rather than a project-level preset.
+  const chosenProviderType = providerId ? providers.get(providerId)?.type ?? null : null;
   const [probe, setProbe] = useState<LandingProbeResult | null>(null);
   const [probing, setProbing] = useState(false);
   const [probeAsked, setProbeAsked] = useState(false); // the user pressed Detect: show failures too
@@ -1326,6 +1405,33 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
     }
   };
 
+  // The provider's own config.default_model is the only place a "default
+  // model" lives (there is no per-project model column): picking a model
+  // for this provider in the dialog above is a PATCH to that provider row,
+  // sequenced before the ordinary project save. Best-effort: a failure here
+  // must not block saving the rest of the project's settings, since
+  // default_provider_id alone already lands.
+  const saveProject = async () => {
+    if (providerId) {
+      const row = providers.get(providerId);
+      if (row && (row.config.default_model ?? null) !== (defaultModel ?? null)) {
+        try {
+          await jsend(`/api/providers/${providerId}`, "PATCH", { config: { ...row.config, default_model: defaultModel || undefined } });
+        } catch {
+          // Reported nowhere specific: the project save below still proceeds
+          // with the picked provider, just not (yet) its new default model.
+        }
+      }
+    }
+    onSave({
+      name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing,
+      auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd,
+      default_provider_id: providerId,
+      gateway_max_budget: gatewayMaxBudget.trim() === "" ? null : Number(gatewayMaxBudget) || null,
+      gateway_key_duration: gatewayKeyDuration.trim(), gateway_mcp: gatewayMcp,
+    });
+  };
+
   return (
     <Modal title="Project context" sub={`prepended to every task in ${project.name}`} onClose={onClose} width={620}
       footer={<>
@@ -1339,7 +1445,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
         )}
         <span className="spacer" />
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-accent" disabled={!branch.trim()} title={branch.trim() ? undefined : "Set a base branch first"} onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing, auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd, agent_env: agentEnvOut(), gateway_max_budget: gatewayMaxBudget.trim() === "" ? null : Number(gatewayMaxBudget) || null, gateway_key_duration: gatewayKeyDuration.trim(), gateway_mcp: gatewayMcp })}>{Icon.check()} Save</button>
+        <button className="btn btn-accent" disabled={!branch.trim()} title={branch.trim() ? undefined : "Set a base branch first"} onClick={() => void saveProject()}>{Icon.check()} Save</button>
       </>}>
       <div className="field">
         <div className="lab">Project name</div>
@@ -1460,93 +1566,49 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
           help="New tasks in this project default to this agent. Existing tasks keep the agent they were created with."
         />
       </div>
-      {/* The endpoint behind that agent. Cloud is the agent's own login; the
-          other two point BOTH CLIs at an Anthropic-/OpenAI-compatible server
-          (Claude Code via ANTHROPIC_BASE_URL, Codex via a config.toml provider
-          entry the driver writes) with no new driver. A task can override this
-          on its own row; that is how a session delegates to a local model. */}
+      {/* The provider (and its model) new tasks in this project default to.
+          "App default" is the picker's own head row: null provider_id/model
+          means "the environment's own bundled row" (lib/providers/resolve.ts
+          resolveProvider). The environment above and the provider here are
+          independent fields; picking a provider whose type doesn't serve the
+          chosen environment just shows nothing runnable for it, the same as
+          any other picker instance. */}
       <div className="field" style={{ marginTop: 14 }}>
-        <div className="lab">{Icon.spark()} Model provider</div>
-        <div className="model-field">
-          <select value={providerKind} aria-label="Model provider" onChange={(e) => {
-            const kind = e.target.value as ProviderKind;
-            setProviderKind(kind);
-            if (kind === "local" && (!providerUrl || providerKind === "cloud")) setProviderUrl(localDefaultUrl);
-          }}>
-            <option value="cloud">Cloud, the agent&apos;s own login</option>
-            <option value="local">Local model, Ollama or LM Studio</option>
-            {/* Only when the instance has one. With no CALANDRIA_LITELLM_BASE_URL
-                there is no address to route to, so the option would be a dead
-                end rather than a setup step. */}
-            {gatewayUrl ? <option value="gateway">Gateway, the instance&apos;s LiteLLM proxy</option> : null}
-            <option value="custom">Custom base URL</option>
-          </select>
-        </div>
-        {providerKind !== "cloud" && (
-          <>
-            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-              {/* The gateway's address is the instance's, not a field: an
-                  override naming any other address is a Custom endpoint by
-                  definition, so a box here would only be a way to leave the
-                  preset without saying so. */}
-              {providerKind === "gateway" ? (
-                <code className="ctx-mono" style={{ flex: 1, minWidth: 0, alignSelf: "center", overflow: "hidden", textOverflow: "ellipsis" }}>{gatewayUrl}</code>
-              ) : (
-                <input type="text" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={providerUrl} placeholder={localDefaultUrl}
-                  title="Base URL of the Ollama or LM Studio server."
-                  onChange={(e) => setProviderUrl(e.target.value)} />
-              )}
-              <FreeFormModel value={providerModel} onChange={setProviderModel} suggestions={endpoint.models}
-                style={{ flex: "0 0 190px" }} label="Model" placeholder="model, e.g. qwen3-coder"
-                title="This project's default model. A task can pick its own instead; Claude Code's opus/sonnet/haiku aliases resolve to it too." />
-            </div>
-            {providerKind === "gateway" && (
-              <>
-                <div className="model-field" style={{ marginTop: 8 }}>
-                  <select value={providerBilling} aria-label="Gateway billing" onChange={(e) => setProviderBilling(e.target.value as GatewayBilling)}>
-                    <option value="key">Billed to the gateway&apos;s key</option>
-                    <option value="subscription">Billed to your own plan</option>
-                  </select>
-                </div>
-                <div className="hlp">
-                  {providerBilling === "subscription"
-                    ? "These turns draw on your Claude plan. The gateway still routes, tags and meters them."
-                    : "These turns are billed to the instance's LiteLLM key. Set the key in Settings → Models."}
-                </div>
-                {agents.gateway_keys_enabled && (
-                  <>
-                    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                      <input type="number" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={gatewayMaxBudget} placeholder="max budget ($, blank = unlimited)"
-                        onChange={(e) => setGatewayMaxBudget(e.target.value)} />
-                      <input type="text" className="ctx-mono" style={{ flex: "0 0 190px" }} value={gatewayKeyDuration} placeholder="30d"
-                        title="Key duration, e.g. 30d. Blank means it never expires."
-                        onChange={(e) => setGatewayKeyDuration(e.target.value)} />
-                    </div>
-                    <div className="hlp">Caps this project&apos;s per-task LiteLLM keys. Leave blank for unlimited budget, or a key that never expires. Docs: docs/AGENTS.md.</div>
-                  </>
-                )}
-              </>
-            )}
-            {providerKind === "custom" && (
-              <input type="text" className="ctx-mono" style={{ marginTop: 8 }} value={providerToken} placeholder="auth token (ollama)"
-                title="Auth token for Ollama or LM Studio. Both require one but ignore its value; your Anthropic/OpenAI keys are never sent here."
-                onChange={(e) => setProviderToken(e.target.value)} />
-            )}
-            {/* What the server just said, ahead of the advice about what to
-                type: an unreachable endpoint answers most of the questions
-                that advice is trying to pre-empt. */}
-            <div className="hlp"><EndpointNote state={endpoint} /></div>
-            <div className="hlp">
-              {providerKind === "gateway"
-                ? "Claude Code only for now: a Codex task here reaches the gateway with no credential, and Antigravity ignores the address entirely. Point those tasks at Claude until their gateway support lands. Turns are recorded unpriced."
-                : providerModel.trim()
-                  ? "Turns aren't billed as cloud spend. Codex reaches the same server through its own provider entry; ~/.codex/config.toml is left alone."
-                  : "Name a model, or the CLIs will ask the server for their cloud defaults and fail. Codex needs an OpenAI Responses endpoint: Ollama 0.13+ and LM Studio."}
-            </div>
-          </>
-        )}
+        <div className="lab">{Icon.spark()} Default model</div>
+        <ModelPicker
+          value={{ agent: project.default_agent || defaultAgentFor(agents, undefined), provider_id: providerId, model: defaultModel }}
+          onChange={(v) => {
+            if (v.agent && v.agent !== project.default_agent) onSetDefaultAgent(v.agent);
+            setProviderId(v.provider_id);
+            setDefaultModel(v.model);
+          }}
+          inherit={{ label: "App default" }}
+          env={{
+            current: project.default_agent || defaultAgentFor(agents, undefined),
+            // connectedEnvOptions (ModelPicker.tsx) wants the server's
+            // AgentsResponseT, whose AgentInfoT#capabilities isn't the client
+            // AgentsBundle's AgentCapabilities shape; every field this picker
+            // reads (status/id/label) is on both, so the filter is inlined
+            // instead of fighting that mismatch.
+            options: agents.agents.filter((a) => a.status === "connected").map((a) => ({ id: a.id, label: a.label })),
+          }}
+          variant="inline"
+        />
       </div>
-      {agents.gateway_mcp_enabled && <GatewayMcpField projectId={project.id} value={gatewayMcp} onChange={setGatewayMcp} />}
+      {chosenProviderType === "litellm" && agents.gateway_keys_enabled && (
+        <div className="field" style={{ marginTop: 14 }}>
+          <div className="lab">Gateway key caps <span className="opt">(per-task LiteLLM virtual keys)</span></div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input type="number" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={gatewayMaxBudget} placeholder="max budget ($, blank = unlimited)"
+              onChange={(e) => setGatewayMaxBudget(e.target.value)} />
+            <input type="text" className="ctx-mono" style={{ flex: "0 0 190px" }} value={gatewayKeyDuration} placeholder="30d"
+              title="Key duration, e.g. 30d. Blank means it never expires."
+              onChange={(e) => setGatewayKeyDuration(e.target.value)} />
+          </div>
+          <div className="hlp">Caps this project&apos;s per-task LiteLLM keys. Leave blank for unlimited budget, or a key that never expires. Docs: docs/AGENTS.md.</div>
+        </div>
+      )}
+      {chosenProviderType === "litellm" && agents.gateway_mcp_enabled && <GatewayMcpField projectId={project.id} value={gatewayMcp} onChange={setGatewayMcp} />}
       {showServices && (
         <div className="field" style={{ marginTop: 14 }}>
           <div className="lab ctx-lab">

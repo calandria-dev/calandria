@@ -1,13 +1,13 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState } from "react";
-import { Icon } from "../icons";
+import { Icon, EnvMark } from "../icons";
 import {
-  DEFAULT_SETTINGS, modelOptions, reasoningOptions, permissionOptions, INHERIT_LABEL, MONO_FONTS, PROMPT_FONTS,
+  DEFAULT_SETTINGS, reasoningOptions, permissionOptions, INHERIT_LABEL, MONO_FONTS, PROMPT_FONTS,
   type Settings, type AgentsBundle, type Appearance, type Palette, type MonoFontId, type PromptFontId,
 } from "./types";
 import { capsFor, agentLabel } from "./agents";
-import { ModelField } from "./Modal";
+import { ModelPicker } from "./ModelPicker";
 import { GitHubSettings } from "./github";
 import { WorktreePrune } from "./WorktreePrune";
 import { Diagnostics } from "./Diagnostics";
@@ -549,13 +549,14 @@ const SETTINGS_SECTIONS: { id: string; label: string; icon: () => React.ReactNod
   { id: "setup", label: "Setup", icon: Icon.bolt },
 ];
 
-export function SettingsView({ settings, setSetting, appearance, setAppearance, appDefaults, setAppDefault, agents, onAgentsRefresh, onReset, onRerunSetup, onClose, initialSection }: {
+export function SettingsView({ settings, setSetting, appearance, setAppearance, appDefaults, setAppDefault, setAppDefaultMany, agents, onAgentsRefresh, onReset, onRerunSetup, onClose, initialSection }: {
   settings: Settings;
   setSetting: <K extends keyof Settings>(k: K, v: Settings[K]) => void;
   appearance: Appearance;
   setAppearance: (k: keyof Appearance, v: string) => void;
   appDefaults: Record<string, string>;
   setAppDefault: (key: string, value: string | null) => void;
+  setAppDefaultMany: (entries: Record<string, string | null>) => void;
   agents: AgentsBundle;
   onAgentsRefresh?: () => void;
   onReset: () => void;
@@ -575,13 +576,19 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   // driver's resolution) so pre-existing settings still show as selected.
   const reasoningVal = appDefaults[`default_reasoning:${editAgent}`] ?? appDefaults.default_reasoning ?? null;
   const permissionVal = appDefaults[`default_permission_mode:${editAgent}`] ?? appDefaults.default_permission_mode ?? null;
-  // The model default has no legacy un-suffixed key to fall back to: it shipped
-  // agent-scoped, and a model id names one provider's catalog anyway.
-  const modelVal = appDefaults[`default_model:${editAgent}`] ?? null;
   // The internal one-shots, in the two tiers lib/agents/oneshots.ts routes them
   // by. Agent-scoped like the model default above, and for the same reason.
   const lightJobModel = appDefaults[`job_model_light:${editAgent}`] ?? null;
   const heavyJobModel = appDefaults[`job_model_heavy:${editAgent}`] ?? null;
+  const lightJobProvider = appDefaults[`job_provider_light:${editAgent}`] ?? null;
+  const heavyJobProvider = appDefaults[`job_provider_heavy:${editAgent}`] ?? null;
+  // The Default model grid: one pinned ModelPicker per connected environment,
+  // no editAgent switcher needed since every environment's own default is
+  // shown at once. Falls back to every registered agent so the grid isn't
+  // empty before anything is connected (matches the old single-picker's
+  // behavior of always rendering for editAgent regardless of connection).
+  const modelGridAgents = agents.agents.filter((a) => a.status === "connected");
+  if (modelGridAgents.length === 0) modelGridAgents.push(...agents.agents);
   // Opt-in: when a turn on this agent dies on its spent plan quota, the runner
   // queues the resume for the reset itself (lib/usageReset.ts). Stored "on" or
   // absent, so an instance that never opens this page keeps the click.
@@ -595,6 +602,13 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   // inherits differs by surface: a task inherits THESE defaults, and these
   // defaults inherit the driver's own. Only the sub says so.
   const inheritSub = `hand the choice to ${agentLabel(agents, editAgent)}'s own default`;
+  // The agent that will actually run project-scoped internal jobs right now
+  // (lib/agents/oneshots.ts resolveUtilityAgent()), null when nothing is
+  // connected. There's no separate "utility agent model": the jobs run on
+  // whichever environment this names, at THAT environment's own
+  // job_model_light/heavy settings, so the Background jobs picker below just
+  // points a pinned ModelPicker at whichever agent is currently effective.
+  const utilityAgentId = agents.utility?.id ?? null;
   const multiAgent = agents.agents.length > 1;
   const backgroundJobs = appDefaults.background_jobs !== "off";
   const recapMode = appDefaults.recap_mode === "on_open" || appDefaults.recap_mode === "off"
@@ -762,11 +776,30 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                     ))}
                   </div>
                   <UtilityEffective agents={agents} />
-                  <div className="hlp" style={{ marginTop: 8 }}>
-                    Which MODEL these jobs run on is set per agent under <strong>Run defaults</strong>, split into quick jobs
-                    (recaps, <strong>/clear</strong> notes) and repo-reading ones (<strong>Refresh with AI</strong>). Left alone, each
-                    inherits the agent&apos;s own default.
-                  </div>
+                  {utilityAgentId && (
+                    <div style={{ marginTop: 10 }}>
+                      <div className="hlp" style={{ marginTop: 0, marginBottom: 6 }}>
+                        The model quick jobs (recaps, <strong>/clear</strong> notes) run on right now, on{" "}
+                        {agentLabel(agents, utilityAgentId)}. Repo-reading jobs (<strong>Refresh with AI</strong>) are set
+                        per agent under <strong>Run defaults</strong>.
+                      </div>
+                      <ModelPicker
+                        pinned
+                        variant="inline"
+                        value={{
+                          agent: utilityAgentId,
+                          provider_id: appDefaults[`job_provider_light:${utilityAgentId}`] ?? null,
+                          model: appDefaults[`job_model_light:${utilityAgentId}`] ?? null,
+                        }}
+                        onChange={(v) => setAppDefaultMany({
+                          [`job_model_light:${utilityAgentId}`]: v.model,
+                          [`job_provider_light:${utilityAgentId}`]: v.provider_id,
+                        })}
+                        inherit={{ label: "Environment default", sub: `${agentLabel(agents, utilityAgentId)}'s own setting` }}
+                        env={{ current: utilityAgentId, options: [{ id: utilityAgentId, label: agentLabel(agents, utilityAgentId) }] }}
+                      />
+                    </div>
+                  )}
                   <div className="hlp" style={{ marginTop: 10 }}>{jobUsage === null ? "Loading last-30-day usage…" : usageLine("Utility agent jobs", utilityUsage)}</div>
                 </div>
               </>
@@ -794,11 +827,38 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                     </div>
                   </div>
                 )}
+                <div className="field">
+                  <div className="lab">{Icon.spark()} Default model</div>
+                  <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+                    The model a task runs on when its own picker is set to <strong>{INHERIT_LABEL}</strong>. Per-task choices
+                    always override this. One picker per connected environment: <strong>Environment default</strong> hands
+                    the choice back to that environment&apos;s own default.
+                  </div>
+                  <div className="envgrid">
+                    {modelGridAgents.map((a) => {
+                      const gModel = appDefaults[`default_model:${a.id}`] ?? null;
+                      const gProvider = appDefaults[`default_provider:${a.id}`] ?? null;
+                      return (
+                        <div key={a.id} className="envgrid-card">
+                          <div className="envgrid-h">{EnvMark[a.id]?.()} {a.label}</div>
+                          <ModelPicker
+                            pinned
+                            variant="inline"
+                            value={{ agent: a.id, provider_id: gProvider, model: gModel }}
+                            onChange={(v) => setAppDefaultMany({ [`default_model:${a.id}`]: v.model, [`default_provider:${a.id}`]: v.provider_id })}
+                            inherit={{ label: "Environment default", sub: `${a.label}'s own setting` }}
+                            env={{ current: a.id, options: [{ id: a.id, label: a.label }] }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
                 {multiAgent && (
                   <div className="field">
                     <div className="lab">Run defaults for</div>
                     <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                      Each agent carries its own model, reasoning &amp; permission defaults. Pick which to edit.
+                      Each agent carries its own internal-job models, reasoning &amp; permission defaults. Pick which to edit.
                     </div>
                     <div className="seg wrap" style={{ maxWidth: 520 }}>
                       {agents.agents.map((a) => (
@@ -807,43 +867,37 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                     </div>
                   </div>
                 )}
-                <ModelField
-                  label="Default model"
-                  options={modelOptions(caps, inheritSub)}
-                  value={modelVal}
-                  onChange={(m) => setAppDefault(`default_model:${editAgent}`, m)}
-                  note={
-                    <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                      The model a task runs on when its own picker is set to <strong>{INHERIT_LABEL}</strong>. Per-task choices
-                      always override this, and <strong>{INHERIT_LABEL}</strong> here hands the choice back to {agentLabel(agents, editAgent)}&apos;s own.
-                    </div>
-                  }
-                />
-                <ModelField
-                  label="Quick internal jobs"
-                  options={modelOptions(caps, inheritSub)}
-                  value={lightJobModel}
-                  onChange={(m) => setAppDefault(`job_model_light:${editAgent}`, m)}
-                  note={
-                    <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                      Calandria&apos;s own short jobs on {agentLabel(agents, editAgent)}: <strong>/clear</strong> handoff notes and
-                      project recaps, each one turn of text in and out with no tools.
-                    </div>
-                  }
-                />
-                <ModelField
-                  label="Repo-reading internal jobs"
-                  options={modelOptions(caps, inheritSub)}
-                  value={heavyJobModel}
-                  onChange={(m) => setAppDefault(`job_model_heavy:${editAgent}`, m)}
-                  note={
-                    <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                      The <strong>Refresh with AI</strong> project-context draft and the <strong>Refresh tag</strong> plan check. Both
-                      explore the repository read-only, then produce something durable: context prepended to every new session, or
-                      which of a tag&apos;s tasks have gone stale.
-                    </div>
-                  }
-                />
+                <div className="field">
+                  <div className="lab">{Icon.spark()} Quick internal jobs</div>
+                  <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+                    Calandria&apos;s own short jobs on {agentLabel(agents, editAgent)}: <strong>/clear</strong> handoff notes and
+                    project recaps, each one turn of text in and out with no tools.
+                  </div>
+                  <ModelPicker
+                    pinned
+                    variant="inline"
+                    value={{ agent: editAgent, provider_id: lightJobProvider, model: lightJobModel }}
+                    onChange={(v) => setAppDefaultMany({ [`job_model_light:${editAgent}`]: v.model, [`job_provider_light:${editAgent}`]: v.provider_id })}
+                    inherit={{ label: "Environment default", sub: `${agentLabel(agents, editAgent)}'s own setting` }}
+                    env={{ current: editAgent, options: [{ id: editAgent, label: agentLabel(agents, editAgent) }] }}
+                  />
+                </div>
+                <div className="field">
+                  <div className="lab">{Icon.spark()} Repo-reading internal jobs</div>
+                  <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+                    The <strong>Refresh with AI</strong> project-context draft and the <strong>Refresh tag</strong> plan check. Both
+                    explore the repository read-only, then produce something durable: context prepended to every new session, or
+                    which of a tag&apos;s tasks have gone stale.
+                  </div>
+                  <ModelPicker
+                    pinned
+                    variant="inline"
+                    value={{ agent: editAgent, provider_id: heavyJobProvider, model: heavyJobModel }}
+                    onChange={(v) => setAppDefaultMany({ [`job_model_heavy:${editAgent}`]: v.model, [`job_provider_heavy:${editAgent}`]: v.provider_id })}
+                    inherit={{ label: "Environment default", sub: `${agentLabel(agents, editAgent)}'s own setting` }}
+                    env={{ current: editAgent, options: [{ id: editAgent, label: agentLabel(agents, editAgent) }] }}
+                  />
+                </div>
                 <div className="field">
                   <div className="lab">{Icon.spark()} Default reasoning level</div>
                   <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
