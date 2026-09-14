@@ -38,6 +38,10 @@ Claude or Codex login. It never uses an API key.
 
 ## Collecting context
 
+An investigation is complete only when its findings are recorded and each actionable remediation
+is implemented or filed as a follow-up task. Leave the task in progress when identified work is
+untracked.
+
 Past two read-only Bash commands in a row, send the third to a synchronous collection subagent,
 asking only for conclusions and `file:line`s. `buildProjectContext()` in
 `lib/agents/shared.ts` enforces the same rule for every project on the instance; this section is

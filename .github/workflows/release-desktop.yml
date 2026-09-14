@@ -237,6 +237,11 @@ jobs:
           node-version: ${{ env.CALANDRIA_DESKTOP_NODE_VERSION }}
           cache: npm
 
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/electron-builder-cache
+          key: electron-builder-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/package-lock.json') }}
+
       - name: Record the artifact identity
         id: source
         run: |
@@ -301,10 +306,28 @@ jobs:
           AZURE_CODE_SIGNING_ACCOUNT_NAME: ${{ (matrix.platform == 'win' && needs.gate.outputs.win_signing == 'true') && vars.AZURE_CODE_SIGNING_ACCOUNT_NAME || '' }}
           AZURE_CODE_SIGNING_CERT_PROFILE_NAME: ${{ (matrix.platform == 'win' && needs.gate.outputs.win_signing == 'true') && vars.AZURE_CODE_SIGNING_CERT_PROFILE_NAME || '' }}
           AZURE_CODE_SIGNING_PUBLISHER_NAME: ${{ (matrix.platform == 'win' && needs.gate.outputs.win_signing == 'true') && vars.AZURE_CODE_SIGNING_PUBLISHER_NAME || '' }}
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
+          DEBUG: electron-builder*,@electron/get*
         run: |
           set -euo pipefail
           unset GITHUB_BASE_REF
-          npx electron-builder ${{ matrix.targets }} --publish never
+          for attempt in 1 2; do
+            log="$RUNNER_TEMP/electron-builder-attempt-${attempt}.log"
+            set +e
+            npx electron-builder ${{ matrix.targets }} --publish never 2>&1 | tee "$log"
+            status=${PIPESTATUS[0]}
+            set -e
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 1 ] && grep -Eq 'HTTPError: Response code (500|502|503|504)' "$log"; then
+              echo "::warning::electron-builder failed with a transient HTTP error; retrying once after 60 seconds"
+              rm -rf dist
+              sleep 60
+              continue
+            fi
+            exit "$status"
+          done
 
       - name: Assert the macOS artifacts are signed, notarized, and stapled
         if: matrix.platform == 'mac' && needs.gate.outputs.mac_signing == 'true'
