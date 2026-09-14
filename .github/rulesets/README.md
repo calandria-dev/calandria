@@ -21,20 +21,22 @@ table.
 | `main-require-pr` | `~DEFAULT_BRANCH` | `deletion`, `pull_request` (squash only, 0 approvals, empty bypass list) | id `21757704`, active; the required-checks rule is still waiting on the PUT below |
 | `integration-require-checks` | `refs/heads/integration/**` | `required_status_checks` | not created yet, waits on the POST below |
 
-## The six required checks
+## The seven required checks
 
-`required-checks.json` holds the rule both rulesets use. The contexts are workflow job **display
-names** from `.github/workflows/test.yml` and `.github/workflows/publish-image.yml`, not job keys,
-and they must match byte-for-byte:
+`required-checks.json` holds the rule both rulesets use. Six contexts are workflow job **display
+names** from `.github/workflows/test.yml` and `.github/workflows/publish-image.yml`, not job keys.
+`Desktop release artifacts` is a commit status written by the trusted base-branch workflow in
+`.github/workflows/release-desktop.yml`. Every context must match byte-for-byte:
 
 - `Changed paths`
 - `Audit (npm)`
 - `Types (tsc)`
 - `Unit (vitest)`
 - `Windows (types + unit)`
+- `Desktop release artifacts`
 - `Image build`
 
-Six facts about this list matter.
+Seven facts about this list matter.
 
 **`Changed paths` is required because a failed `needs:` dependency makes GitHub report its
 dependents as `skipped`, and GitHub treats a skipped required check as satisfied.** Without this
@@ -49,11 +51,12 @@ and the Windows e2e pair are label-gated (`e2e`, `macos`), so they report `skipp
 Requiring a check that is usually skipped buys nothing, since skipped satisfies the gate, and it
 would make every labelled PR wait half an hour.
 
-**The bot PR from `Pin drift` reports the six required contexts from a `workflow_dispatch` run, not from a
+**The bot PR from `Pin drift` reports the seven required contexts from a `workflow_dispatch` run, not from a
 `pull_request` one.** A push made with `GITHUB_TOKEN` fires no `push` or `pull_request` workflow,
-so `.github/workflows/pin-drift.yml` dispatches `test.yml` and `publish-image.yml` against
+so `.github/workflows/pin-drift.yml` dispatches `test.yml`, `release-desktop.yml` and
+`publish-image.yml` against
 `bot/agy-pin` itself. Check runs attach to a commit, and the PR's head commit is that branch's
-head, so the same six contexts appear under the same display names and satisfy the same rule. The
+head, so the same seven contexts appear under the same display names and satisfy the same rule. The
 dispatch is why no PAT and no bypass entry are needed for that branch. If a `bot/agy-pin` PR ever
 shows an empty check list, read the `bump` job's log: it fails when a dispatch produces no run for
 the SHA it pushed.
@@ -63,7 +66,7 @@ the base before merging", which in a stacked tag tree forces a rebase of every o
 one of its siblings lands.
 
 **`Image build` is the stable aggregate for `publish-image.yml`'s two architecture legs.** The
-matrix job names include the runner and platform, so they are deliberately not required contexts.
+matrix job names include the runner and platform, so they are not required contexts.
 The aggregate fails when either leg fails or is cancelled. It succeeds for completed builds and for
 the intentional website-only or already-fresh scheduled skip. The workflow has no PR
 `paths-ignore`: `prepare` detects website-only changes and skips the expensive build while the
@@ -81,7 +84,7 @@ The order is always: land the workflow change on the branch first, then add the 
 `integration-require-checks` targets `refs/heads/integration/**` rather than naming individual
 branches because the namespace was empty when this payload was written, so the rule could strand
 nothing. **It is no longer empty.** Before creating or widening this ruleset, check that every
-branch it matches already produces all six contexts, and that no open PR into one is sitting on a
+branch it matches already produces all seven contexts, and that no open PR into one is sitting on a
 head that predates the workflow change:
 
 ```sh
@@ -112,7 +115,7 @@ auto-mode classifier, so an agent session can prepare and verify these payloads 
 them. Reads of the same endpoint go through fine.
 
 After this workflow change lands on `main`, verify that an ordinary PR and a website-only PR both
-report `Image build`, then apply the checked-in six-context rule. The PUT replaces the whole rules
+report `Image build` and the generated release-please PR reports `Desktop release artifacts`, then apply the checked-in seven-context rule. The PUT replaces the whole rules
 array, so the command reads the current ruleset and preserves its deletion and pull-request rules:
 
 Create the integration ruleset:
