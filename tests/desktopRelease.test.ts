@@ -212,6 +212,12 @@ describe("no lane publishes by accident", () => {
     expect(RELEASE_WORKFLOW).toContain('.head_branch == env.RELEASE_BRANCH');
     expect(RELEASE_WORKFLOW).not.toContain('.pull_requests');
     expect(RELEASE_WORKFLOW).toContain('.head.repo.full_name == env.GH_REPO');
+    expect(RELEASE_WORKFLOW).toContain('git fetch --no-tags origin "refs/pull/${pr}/head"');
+    expect(RELEASE_WORKFLOW).toContain('if [ "$fetched_head" != "$head_sha" ]; then');
+    expect(RELEASE_WORKFLOW).toContain("':(exclude).github/**'");
+    expect(RELEASE_WORKFLOW).toContain("':(exclude)CLAUDE.md'");
+    expect(RELEASE_WORKFLOW).toContain("':(exclude)tests/**'");
+    expect(RELEASE_WORKFLOW).toContain('git rev-parse "${head_sha}^{tree}"');
     expect(RELEASE_WORKFLOW).toMatch(/- name: Stage the release handoff[\s\S]*- name: Upload the release handoff/);
     for (const pattern of ["*.yml", "*.blockmap", "*.dmg", "*.zip", "*.deb", "*.AppImage", "*.exe"]) {
       expect(RELEASE_WORKFLOW).toContain(`-name '${pattern}'`);

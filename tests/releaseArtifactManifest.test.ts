@@ -74,6 +74,8 @@ describe("release artifact manifests", () => {
     fs.writeFileSync(path.join(root, "linux", "calandria.deb"), "changed");
     expect(() => verifyReleaseArtifacts({ root, version: "1.2.3", sourceSha: "deadbeef", sourceTree: "main", sourcePr: "42", assetList: path.join(root, "assets.txt") })).toThrow(/checksum/);
     fs.writeFileSync(path.join(root, "linux", "calandria.deb"), "deb");
-    expect(() => verifyReleaseArtifacts({ root, version: "1.2.4", sourceSha: "deadbeef", sourceTree: "main", sourcePr: "42", assetList: path.join(root, "assets.txt") })).toThrow(/metadata/);
+    expect(() => verifyReleaseArtifacts({ root, version: "1.2.4", sourceSha: "badc0de", sourceTree: "release", sourcePr: "43", assetList: path.join(root, "assets.txt") })).toThrow(
+      /version expected "1\.2\.4" but got "1\.2\.3"; sourceSha expected "badc0de" but got "deadbeef"; sourceTree expected "release" but got "main"; sourcePr expected 43 but got 42/,
+    );
   });
 });

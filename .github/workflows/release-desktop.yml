@@ -9,10 +9,11 @@
 # release PR may change only version fields plus CHANGELOG.md.
 #
 # The tag job identifies the merged release PR through GitHub's commit-to-PR
-# association. Every platform manifest must match that PR's head SHA, the tag's
-# git tree, and the released version. It also verifies each asset's byte count
-# and SHA-256 digest before upload. A new commit on the release PR produces new
-# artifact names, so a stale run cannot be promoted.
+# association. Every platform manifest must match that PR's head SHA and tree,
+# and the released version. The tag may differ only in CI, tests, and agent
+# instructions that cannot enter the packaged app. It also verifies each asset's
+# byte count and SHA-256 digest before upload. A new commit on the release PR
+# produces new artifact names, so a stale run cannot be promoted.
 name: Publish desktop artifacts
 
 on:
@@ -527,6 +528,23 @@ jobs:
             --jq '[.[] | select(.merged_at != null and .base.ref == "main" and .head.ref == env.RELEASE_BRANCH and .head.repo.full_name == env.GH_REPO)] | if length == 1 then .[0] else error("expected one merged release-please PR") end')
           pr=$(printf '%s' "$pull" | jq -r .number)
           head_sha=$(printf '%s' "$pull" | jq -r .head.sha)
+          git fetch --no-tags origin "refs/pull/${pr}/head"
+          fetched_head=$(git rev-parse FETCH_HEAD)
+          if [ "$fetched_head" != "$head_sha" ]; then
+            echo "::error::Release PR ${pr} head moved from ${head_sha} to ${fetched_head}."
+            exit 1
+          fi
+
+          unexpected_changes=$(git diff --name-only "$head_sha" "$tag_sha" -- . \
+            ':(exclude).github/**' \
+            ':(exclude)CLAUDE.md' \
+            ':(exclude)tests/**')
+          if [ -n "$unexpected_changes" ]; then
+            echo "::error::The release tag differs from the prebuilt source in packaged-app inputs."
+            printf '%s\n' "$unexpected_changes"
+            exit 1
+          fi
+
           suffix="pr-${pr}-${head_sha}"
           artifact="desktop-linux-${suffix}"
           run_id=$(gh api --method GET "repos/${GH_REPO}/actions/artifacts" \
@@ -557,7 +575,7 @@ jobs:
             echo "version=$version"
             echo "source_pr=$pr"
             echo "source_sha=$head_sha"
-            echo "source_tree=$(git rev-parse 'HEAD^{tree}')"
+            echo "source_tree=$(git rev-parse "${head_sha}^{tree}")"
             echo "suffix=$suffix"
             echo "run_id=$run_id"
           } >> "$GITHUB_OUTPUT"
