@@ -122,9 +122,11 @@ function readManifest(dir) {
 }
 
 function verifyManifest(dir, manifest, expected) {
-  if (manifest.version !== expected.version || manifest.sourceSha !== expected.sourceSha ||
-      manifest.sourceTree !== expected.sourceTree || manifest.sourcePr !== expected.sourcePr) {
-    fail(`manifest metadata mismatch: ${path.join(dir, MANIFEST_NAME)}`);
+  const mismatches = ["version", "sourceSha", "sourceTree", "sourcePr"]
+    .filter((field) => manifest[field] !== expected[field])
+    .map((field) => `${field} expected ${JSON.stringify(expected[field])} but got ${JSON.stringify(manifest[field])}`);
+  if (mismatches.length > 0) {
+    fail(`manifest metadata mismatch: ${path.join(dir, MANIFEST_NAME)}: ${mismatches.join("; ")}`);
   }
   const listed = new Map();
   for (const artifact of manifest.artifacts) {
