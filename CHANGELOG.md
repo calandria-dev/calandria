@@ -8,6 +8,15 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.14.1](https://github.com/calandria-dev/calandria/compare/v0.14.0...v0.14.1) (2026-09-14)
+
+
+### Bug Fixes
+
+* **ci:** allow release-neutral prebuild drift ([#354](https://github.com/calandria-dev/calandria/issues/354)) ([cf8d2e6](https://github.com/calandria-dev/calandria/commit/cf8d2e6f70df9907e3903aea8762bade6a51685c))
+* **ci:** avoid release asset name collisions ([#355](https://github.com/calandria-dev/calandria/issues/355)) ([4dba359](https://github.com/calandria-dev/calandria/commit/4dba3598cf20ea82b6f31db36d8dc8f05c7218df))
+* **ci:** recover prebuilt release promotion ([#352](https://github.com/calandria-dev/calandria/issues/352)) ([e499df8](https://github.com/calandria-dev/calandria/commit/e499df800cf4a8a49e0fe4c81c448cd79df0a9a7))
+
 ## [0.14.0](https://github.com/calandria-dev/calandria/compare/v0.13.0...v0.14.0) (2026-09-14)
 
 
