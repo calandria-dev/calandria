@@ -66,7 +66,7 @@ the base before merging", which in a stacked tag tree forces a rebase of every o
 one of its siblings lands.
 
 **`Image build` is the stable aggregate for `publish-image.yml`'s two architecture legs.** The
-matrix job names include the runner and platform, so they are deliberately not required contexts.
+matrix job names include the runner and platform, so they are not required contexts.
 The aggregate fails when either leg fails or is cancelled. It succeeds for completed builds and for
 the intentional website-only or already-fresh scheduled skip. The workflow has no PR
 `paths-ignore`: `prepare` detects website-only changes and skips the expensive build while the
