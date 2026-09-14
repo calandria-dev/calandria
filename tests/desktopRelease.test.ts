@@ -201,6 +201,31 @@ describe("no lane publishes by accident", () => {
       expect(RELEASE_WORKFLOW).toContain(`-name '${pattern}'`);
     }
   });
+
+  it("caches electron-builder downloads and retries transient HTTP failures once", () => {
+    expect(RELEASE_WORKFLOW).toContain(
+      "ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache",
+    );
+    expect(RELEASE_WORKFLOW).toContain(
+      "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0",
+    );
+    expect(RELEASE_WORKFLOW).toContain("path: ${{ env.ELECTRON_BUILDER_CACHE }}");
+    expect(RELEASE_WORKFLOW).toContain(
+      "key: electron-builder-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/package-lock.json') }}",
+    );
+    expect(RELEASE_WORKFLOW).toContain("DEBUG: electron-builder*,@electron/get*");
+    expect(RELEASE_WORKFLOW).toContain("for attempt in 1 2; do");
+    expect(RELEASE_WORKFLOW).toContain(
+      'log="$RUNNER_TEMP/electron-builder-attempt-${attempt}.log"',
+    );
+    expect(RELEASE_WORKFLOW).toContain('status=${PIPESTATUS[0]}');
+    expect(RELEASE_WORKFLOW).toContain(
+      "grep -Eq 'HTTPError: Response code (500|502|503|504)' \"$log\"",
+    );
+    expect(RELEASE_WORKFLOW).toContain('rm -rf dist');
+    expect(RELEASE_WORKFLOW).not.toContain('rm -rf desktop/dist');
+    expect(RELEASE_WORKFLOW).not.toContain('rm -rf .');
+  });
 });
 
 describe("required release checks", () => {
