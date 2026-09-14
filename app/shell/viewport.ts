@@ -1,13 +1,11 @@
 // Viewport arithmetic for the phone surface. The pure half of
 // useViewportInsets.ts, pinned by tests/viewport.test.ts.
 //
-// iOS resizes only the VISUAL viewport for the on-screen keyboard. The layout
-// viewport keeps its full height, so 100dvh, 100vh and env(safe-area-inset-*)
-// all read exactly as they did before the keyboard opened, and no CSS query
-// can see it. What does change is window.visualViewport: its height shrinks by
-// the keyboard and its offsetTop carries however far WebKit scrolled the page
-// to keep the focused field on screen. The difference between the two
-// viewports is the number the layout needs.
+// Browsers expose the on-screen keyboard through different viewport models.
+// iOS can leave the layout viewport and CSS viewport units at full height while
+// shrinking window.visualViewport. Other engines can shrink both viewports.
+// visualViewport.offsetTop also carries any scroll applied to keep the focused
+// field on screen. The arithmetic below supports both models.
 
 // Below this an overlap is not a keyboard. The shortest software keyboard is
 // several hundred CSS pixels tall, while a settling page reports a pixel or
@@ -29,7 +27,7 @@ export function isTextEntryElement(el: { tagName?: string; type?: string; isCont
 }
 
 export interface ViewportMetrics {
-  /** window.innerHeight: the layout viewport, which the keyboard does not change. */
+  /** window.innerHeight: the current layout viewport height. */
   layoutHeight: number;
   /** visualViewport.height: what the user can actually see. */
   visualHeight: number;
@@ -43,9 +41,9 @@ export interface ViewportMetrics {
 
 /**
  * How many CSS pixels of the layout viewport the on-screen keyboard covers, 0
- * when there is no keyboard. Published as the --kb-inset custom property and
- * subtracted from the shell's height, which puts the composer against the keys
- * instead of floating above a strip of dead space.
+ * when there is no keyboard. Published as the --kb-inset custom property for
+ * fixed overlays and home-indicator padding; shellViewportHeight uses the same
+ * value to derive the shell's measured --viewport-height.
  *
  * Two shrinks that are not a keyboard are screened out. A pinch-zoom shrinks
  * the visual viewport too, and shrinking the shell to match would fight the
@@ -57,6 +55,15 @@ export function keyboardInset(m: ViewportMetrics): number {
   if (!m.fieldFocused || m.scale > 1.01) return 0;
   const overlap = Math.round(m.layoutHeight - m.visualHeight - m.visualOffsetTop);
   return overlap >= KEYBOARD_MIN_INSET ? overlap : 0;
+}
+
+/**
+ * The shell height that leaves the keyboard-covered part of the layout out of
+ * the app. Some engines shrink layoutHeight with the keyboard, while iOS only
+ * shrinks visualHeight, so the same formula works for both viewport models.
+ */
+export function shellViewportHeight(m: ViewportMetrics): number {
+  return m.layoutHeight - keyboardInset(m);
 }
 
 /**

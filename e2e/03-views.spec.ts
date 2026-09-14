@@ -371,6 +371,120 @@ test.describe("mobile tab bar", () => {
   });
 });
 
+// Keyboard geometry: Chromium has no software keyboard in this suite, so the
+// test supplies the same 336px inset the iOS visual viewport reports. This
+// still exercises the real stylesheet and the actual task modal/composer.
+test.describe("mobile keyboard geometry", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  const KEYBOARD_TASK = `Keyboard task ${uid()}`;
+
+  test.beforeAll(async ({ request }) => {
+    const projects = await (await request.get("/api/projects")).json();
+    const project = projects.find((p: { name: string }) => p.name === PROJECT);
+    const task = await createTask(request, { projectId: project.id, title: KEYBOARD_TASK });
+    await sendMessage(request, task.id);
+    await waitForIdle(request, task.id);
+  });
+
+  test("keeps modal controls and the focused composer above the keyboard", async ({ page }) => {
+    await gotoApp(page);
+    await expect(page.locator(".mtabbar")).toBeVisible();
+    const backToProjects = page.getByRole("button", { name: "Back to projects" });
+    if (await backToProjects.isVisible()) await backToProjects.click();
+    await page.getByText(PROJECT).first().click();
+    await page.getByRole("button", { name: "Task", exact: true }).click();
+
+    const modal = page.locator(".modal");
+    await expect(modal).toBeVisible();
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty("--kb-inset", "336px");
+      document.documentElement.style.removeProperty("--viewport-height");
+    });
+    expect(await page.locator(".app.mobile").evaluate((el) => el.getBoundingClientRect().height)).toBeCloseTo(508, 0);
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty("--viewport-height", "508px");
+    });
+
+    const geometry = await page.evaluate(() => {
+      const scrim = document.querySelector<HTMLElement>(".scrim")!;
+      const modal = document.querySelector<HTMLElement>(".modal")!;
+      return {
+        scrimBottom: scrim.getBoundingClientRect().bottom,
+        modalBottom: modal.getBoundingClientRect().bottom,
+        scrollable: modal.scrollHeight > modal.clientHeight,
+      };
+    });
+    expect(geometry.scrimBottom).toBeCloseTo(508, 0);
+    expect(geometry.modalBottom).toBeLessThanOrEqual(508);
+    expect(geometry.scrollable).toBe(true);
+
+    await modal.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    const create = modal.getByRole("button", { name: "Create task" });
+    const createBox = await create.boundingBox();
+    expect(createBox).not.toBeNull();
+    expect(createBox!.y + createBox!.height).toBeLessThanOrEqual(508);
+
+    await page.keyboard.press("Escape");
+    await expect(modal).toBeHidden();
+    await listRow(page, KEYBOARD_TASK).click();
+    const composer = page.locator(".comp-input");
+    await expect(composer).toBeVisible();
+    await composer.click();
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty("--kb-inset", "336px");
+      document.documentElement.style.setProperty("--viewport-height", "508px");
+    });
+    const composerBox = await composer.boundingBox();
+    expect(composerBox).not.toBeNull();
+    expect(composerBox!.height).toBeGreaterThan(0);
+    expect(composerBox!.y + composerBox!.height).toBeLessThanOrEqual(508);
+    await expect(page.locator(".mtabbar")).toBeHidden();
+  });
+
+  test("keeps the onboarding wizard usable above the keyboard", async ({ page, request }) => {
+    await request.post("/api/onboarding");
+    await gotoApp(page);
+    await expect(page.locator(".mtabbar")).toBeVisible();
+    const backToProjects = page.getByRole("button", { name: "Back to projects" });
+    if (await backToProjects.isVisible()) await backToProjects.click();
+    await page.getByTitle("App settings").click();
+    await page.getByRole("button", { name: "Setup", exact: true }).click();
+    await page.getByRole("button", { name: "Re-run setup wizard", exact: true }).click();
+
+    const scrim = page.locator(".wiz-scrim");
+    const wizard = page.locator(".wiz");
+    await expect(wizard).toBeVisible();
+    await wizard.evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)));
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty("--kb-inset", "336px");
+      document.documentElement.style.setProperty("--viewport-height", "508px");
+    });
+
+    const geometry = await page.evaluate(() => {
+      const scrim = document.querySelector<HTMLElement>(".wiz-scrim")!;
+      const wizard = document.querySelector<HTMLElement>(".wiz")!;
+      const body = document.querySelector<HTMLElement>(".wiz-body")!;
+      const footer = document.querySelector<HTMLElement>(".wiz-foot")!;
+      return {
+        scrimBottom: scrim.getBoundingClientRect().bottom,
+        wizardBottom: wizard.getBoundingClientRect().bottom,
+        bodyHeight: body.getBoundingClientRect().height,
+        bodyOverflow: getComputedStyle(body).overflowY,
+        footerBottom: footer.getBoundingClientRect().bottom,
+      };
+    });
+    expect(geometry.scrimBottom).toBeCloseTo(508, 0);
+    expect(geometry.wizardBottom).toBeLessThanOrEqual(508);
+    expect(geometry.bodyHeight).toBeGreaterThan(100);
+    expect(geometry.bodyOverflow).toBe("auto");
+    expect(geometry.footerBottom).toBeLessThanOrEqual(508);
+
+    await scrim.getByRole("button", { name: "Skip setup", exact: true }).click();
+    await expect(scrim).toBeHidden();
+  });
+});
+
 // Settings on a phone: the section nav is a horizontal chip rail. Several
 // chips fit in the row at once, with a scroll affordance to reach the rest,
 // instead of each chip filling the full screen width.
