@@ -54,10 +54,10 @@
 # shape of the bug the `changes` job in test.yml was rewritten to avoid. The fix
 # is neither a PAT nor a weakened ruleset: `workflow_dispatch` is not subject to
 # the guard, check runs attach to the head SHA rather than to the PR, and the
-# PR's head SHA is the bot branch's head. So the job dispatches `Test` and
-# `Publish image` against that branch and then REFUSES TO FINISH until it has
-# found a run whose `headSha` is the commit it just pushed. A dispatch that
-# produced no run means a PR with no checks, and that is a red job here.
+# PR's head SHA is the bot branch's head. The job dispatches `Test`, the desktop
+# release skip check, and `Publish image` against that branch. It refuses to
+# finish until each workflow has a run whose `headSha` is the commit it pushed.
+# A missing run means a PR with missing checks, and that is a red job here.
 name: Pin drift
 
 on:
@@ -373,7 +373,7 @@ jobs:
             echo "- $label: $url" >> "$RUNNER_TEMP/runs.md"
           }
 
-          # The six required contexts (`.github/rulesets/README.md`) come from
+          # Six required contexts (`.github/rulesets/README.md`) come from
           # test.yml's own run, not from the copy publish-image.yml calls, whose
           # jobs report as `test / …` and match no rule. Both slow-lane inputs
           # are off: a Dockerfile ARG cannot change how the app behaves in a
@@ -381,6 +381,12 @@ jobs:
           # as a person opting in. This one is a cron, and `macos=auto` would
           # buy a 70-minute macOS runner on every bump.
           dispatch_and_confirm test.yml Test -f e2e=off -f macos=off
+
+          # The desktop release check does real work only for the generated
+          # release-please PR. This dispatch attaches its required skip result
+          # to the bot branch without starting the three packaging runners.
+          dispatch_and_confirm release-desktop.yml "Desktop release artifacts" \
+            -f check_only=true
 
           # The one check that actually reviews this change. `publish=false`
           # builds both arches and materializes nothing, so no sha- tag appears

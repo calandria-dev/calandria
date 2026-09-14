@@ -53,19 +53,20 @@ push is not a successful CI run.
   plausibly infra (a known transient in a build/registry step, not your code). A repeat failure,
   or any failure in a test, typecheck or build step, is real: fix it, or open a `revert:`-titled
   PR so release-please records it. Never rerun to make a real failure go away.
-- **A publisher refused the tag.** `publish-image.yml` and `release-desktop.yml` both run
+- **A publisher refused the tag.** `publish-image.yml` runs
   `.github/actions/require-green-test-run` on a tag: it reads the newest push-event `Test` run for
-  the tag's commit (a PR's run does not count) and fails the release if that run is red, cancelled
-  or absent. A red push run on a release commit is nearly always a flake in a push-only lane (e2e,
-  desktop, windows-e2e, windows-desktop; the Playwright configs retry once on CI, so a red one
-  failed twice). Recover in order: find the run
+  the tag's commit (a PR's run does not count) and fails the image release if that run is red,
+  cancelled or absent. Desktop tag promotion uses the already verified release-PR artifacts and
+  does not wait for a duplicate push `Test` run. A red push run on a release commit is nearly
+  always a flake in a push-only lane (e2e, desktop, windows-e2e, windows-desktop; the Playwright
+  configs retry once on CI, so a red one failed twice). Recover in order: find the run
   (`gh run list --workflow test.yml --branch main --commit <sha> --json databaseId,conclusion`);
   read the failing job before touching it, a known flake gets `gh run rerun <id> --failed` and a
   real failure gets a fix and a new release commit, never a rerun; once that run is green,
   re-dispatch each publisher on the tag so the gate reads it again and passes
   (`gh workflow run publish-image.yml --ref vX.Y.Z` and
-  `gh workflow run release-desktop.yml --ref vX.Y.Z -f publish=true`, where the desktop workflow
-  needs `-f publish=true` or it's a dry run that attaches nothing); don't close or edit the
+  `gh workflow run release-desktop.yml --ref vX.Y.Z -f publish=true`, where `publish=true` retries
+  desktop promotion and `publish=false` is a dry run that attaches nothing); don't close or edit the
   release, both publishers attach to the existing one for the tag. The failed-build bot only files
   for scheduled builds, not a refused tag push, so don't wait for an issue to appear.
 - **The app's "Needs you" inbox is a backstop, not a substitute.** It raises a task for an open PR
@@ -77,10 +78,11 @@ push is not a successful CI run.
 - **The `bot/agy-pin` PR is machine-opened and human-merged.** `pin-drift.yml` owns the three agy
   ARGs in the Dockerfile: it force-pushes that branch from main whenever the Antigravity manifests
   move, refreshes one PR titled `build(deps): bump Antigravity CLI to <version>`, and dispatches
-  `test.yml` and `publish-image.yml` (`publish=false`, `no_cache=true`) against the branch head so
-  the PR has checks at all. Review it like any other PR: the two `build` legs are what prove the
-  checksums. Never automerge it, never hand-edit the branch (the next run recreates it), and if the
-  pins are fixed some other way the next run closes the PR and deletes the branch.
+  `test.yml`, `release-desktop.yml` (`check_only=true`) and `publish-image.yml` (`publish=false`,
+  `no_cache=true`) against the branch head so the PR has every required check. Review it like any
+  other PR: the two `build` legs are what prove the checksums. Never automerge it, never hand-edit
+  the branch (the next run recreates it), and if the pins are fixed some other way the next run
+  closes the PR and deletes the branch.
 - **The buildx/BuildKit version pin in `publish-image.yml` is intentional**: its header comment
   explains why. Don't upgrade it away without reading that comment first.
 - **Release automation may be written and fixed freely by agents.** release-please, the

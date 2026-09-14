@@ -9,6 +9,7 @@
       { "context": "Types (tsc)" },
       { "context": "Unit (vitest)" },
       { "context": "Windows (types + unit)" },
+      { "context": "Desktop release artifacts" },
       { "context": "Image build" }
     ]
   }
