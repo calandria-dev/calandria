@@ -374,7 +374,7 @@ jobs:
           mkdir -p "$stage"
           find desktop/dist -maxdepth 1 -type f \
             \( -name '*.dmg' -o -name '*.zip' -o -name '*.deb' -o -name '*.AppImage' \
-               -o -name '*.exe' -o -name '*.yml' -o -name '*.blockmap' \) \
+               -o -name '*.exe' -o -name 'latest*.yml' -o -name '*.blockmap' \) \
             -exec cp {} "$stage/" \;
           node scripts/release-artifact-manifest.mjs create \
             --dir "$stage" \
@@ -612,13 +612,30 @@ jobs:
             --source-sha "$SOURCE_SHA" \
             --source-tree "$SOURCE_TREE" \
             --asset-list "$RUNNER_TEMP/release-assets.txt"
+          awk '!/\/builder-debug\.yml$/' "$RUNNER_TEMP/release-assets.txt" \
+            > "$RUNNER_TEMP/release-assets.filtered.txt"
+          mv "$RUNNER_TEMP/release-assets.filtered.txt" "$RUNNER_TEMP/release-assets.txt"
           mapfile -t assets < "$RUNNER_TEMP/release-assets.txt"
           if [ ${#assets[@]} -eq 0 ]; then
             echo "::error::The verified handoff contains no assets."
             exit 1
           fi
+
+          declare -A upload_names=()
+          for asset in "${assets[@]}"; do
+            name=${asset##*/}
+            normalized=$(printf '%s' "$name" | tr -c 'A-Za-z0-9' '-')
+            if [ -n "${upload_names[$normalized]:-}" ]; then
+              echo "::error::${asset} and ${upload_names[$normalized]} map to the same GitHub release asset name."
+              exit 1
+            fi
+            upload_names[$normalized]=$asset
+          done
+
           cd handoff
-          gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          for asset in "${assets[@]}"; do
+            gh release upload "$RELEASE_TAG" "$asset" --clobber
+          done
 
       - name: Assert every prebuilt asset reached the release
         run: |
