@@ -209,7 +209,7 @@ describe("no lane publishes by accident", () => {
     expect(RELEASE_WORKFLOW).toContain(
       "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0",
     );
-    expect(RELEASE_WORKFLOW).toContain("path: ${{ env.ELECTRON_BUILDER_CACHE }}");
+    expect(RELEASE_WORKFLOW).toContain("path: ${{ runner.temp }}/electron-builder-cache");
     expect(RELEASE_WORKFLOW).toContain(
       "key: electron-builder-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/package-lock.json') }}",
     );

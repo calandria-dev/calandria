@@ -200,8 +200,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout }}
     environment: windows-signing
-    env:
-      ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
     permissions:
       contents: read
       id-token: write
@@ -241,7 +239,7 @@ jobs:
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ env.ELECTRON_BUILDER_CACHE }}
+          path: ${{ runner.temp }}/electron-builder-cache
           key: electron-builder-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/package-lock.json') }}
 
       - name: Record the artifact identity
@@ -308,6 +306,7 @@ jobs:
           AZURE_CODE_SIGNING_ACCOUNT_NAME: ${{ (matrix.platform == 'win' && needs.gate.outputs.win_signing == 'true') && vars.AZURE_CODE_SIGNING_ACCOUNT_NAME || '' }}
           AZURE_CODE_SIGNING_CERT_PROFILE_NAME: ${{ (matrix.platform == 'win' && needs.gate.outputs.win_signing == 'true') && vars.AZURE_CODE_SIGNING_CERT_PROFILE_NAME || '' }}
           AZURE_CODE_SIGNING_PUBLISHER_NAME: ${{ (matrix.platform == 'win' && needs.gate.outputs.win_signing == 'true') && vars.AZURE_CODE_SIGNING_PUBLISHER_NAME || '' }}
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
           DEBUG: electron-builder*,@electron/get*
         run: |
           set -euo pipefail
