@@ -8,6 +8,23 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.14.0](https://github.com/calandria-dev/calandria/compare/v0.13.0...v0.14.0) (2026-09-14)
+
+
+### Features
+
+* **mobile:** give managed services a phone surface ([#338](https://github.com/calandria-dev/calandria/issues/338)) ([6597a6d](https://github.com/calandria-dev/calandria/commit/6597a6d461af28a4350f918d3d8c41226f030b48))
+* **providers:** configure model providers in Settings and pick models through one picker ([#345](https://github.com/calandria-dev/calandria/issues/345)) ([42a43cc](https://github.com/calandria-dev/calandria/commit/42a43cc4456655bb1cc7ca06e18d11f6fdb72685))
+
+
+### Bug Fixes
+
+* keep diff text size consistent on mobile ([#347](https://github.com/calandria-dev/calandria/issues/347)) ([2504bf6](https://github.com/calandria-dev/calandria/commit/2504bf6614d479baddabc4a186e1202b8d8db3dc))
+* **mobile:** keep phone inputs above the keyboard ([#350](https://github.com/calandria-dev/calandria/issues/350)) ([e05d846](https://github.com/calandria-dev/calandria/commit/e05d846c516ec4c810184d70cb40ff70a38392f0))
+* **mobile:** size the phone shell to the visible viewport under the keyboard ([#349](https://github.com/calandria-dev/calandria/issues/349)) ([868b6e4](https://github.com/calandria-dev/calandria/commit/868b6e42461aa2ae4edce4654f895bffa552b6e6))
+* **reclaim:** close tasks when pull requests merge ([#330](https://github.com/calandria-dev/calandria/issues/330)) ([44c5e7a](https://github.com/calandria-dev/calandria/commit/44c5e7acd23c05f9c0602439626a7be523ac941b))
+* **settings:** re-resolve the utility agent when its setting changes ([#346](https://github.com/calandria-dev/calandria/issues/346)) ([ca38a1c](https://github.com/calandria-dev/calandria/commit/ca38a1c31b33222cf18f2171e3138b8ded444c5c))
+
 ## [0.13.0](https://github.com/calandria-dev/calandria/compare/v0.12.0...v0.13.0) (2026-09-11)
 
 
