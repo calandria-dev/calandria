@@ -24,6 +24,7 @@ export type LifecycleKind =
   | "resume"
   | "heartbeat_gap"  // the 5s ticker fired late: timers were suspended or throttled
   | "resume_reload"  // the shell decided to reload itself on resume
+  | "scroll_reset"   // the document came back scrolled and the offset was put back
   | "ws_stuck";      // a terminal socket sat at CONNECTING past its deadline (WebKit 308073)
 
 export interface LifecycleEvent {
@@ -46,6 +47,8 @@ export interface LifecycleEvent {
   ua?: string;
   /** resume_reload: how long the page had been hidden. */
   hiddenMs?: number;
+  /** scroll_reset: the offset the document was holding, in CSS pixels. */
+  scrollY?: number;
   /** ws_stuck: how long the socket was given to open before it was given up on. */
   waitMs?: number;
 }
@@ -138,6 +141,7 @@ export function formatLifecycleLog(log: readonly LifecycleEvent[]): string {
     if (e.gapMs !== undefined) parts.push(`gap=${e.gapMs}ms`);
     if (e.monoMs !== undefined) parts.push(`mono=${e.monoMs}ms`);
     if (e.hiddenMs !== undefined) parts.push(`hidden=${e.hiddenMs}ms`);
+    if (e.scrollY !== undefined) parts.push(`scrollY=${e.scrollY}`);
     if (e.waitMs !== undefined) parts.push(`wait=${e.waitMs}ms`);
     if (e.heapMB !== undefined) parts.push(`heap=${e.heapMB}MB`);
     if (e.online !== undefined) parts.push(`online=${e.online}`);
