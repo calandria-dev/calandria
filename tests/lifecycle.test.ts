@@ -43,6 +43,11 @@ describe("lifecycle log: bounded, content-free, and readable after a force-quit"
     ]);
     expect(text).toBe("2026-09-07T12:00:08.000Z ws_stuck wait=8000ms online=true");
   });
+
+  it("formats a document that came back scrolled", () => {
+    const text = formatLifecycleLog([{ t: Date.UTC(2026, 8, 7, 12, 0, 9), kind: "scroll_reset", scrollY: 96 }]);
+    expect(text).toBe("2026-09-07T12:00:09.000Z scroll_reset scrollY=96");
+  });
 });
 
 describe("heartbeat: a late tick says timers were suspended, and the two clocks say how", () => {

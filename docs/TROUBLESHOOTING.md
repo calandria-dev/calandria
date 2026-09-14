@@ -483,6 +483,26 @@ Change one variable per run and record each run with its copied log.
   The terminal uses a WebSocket, so this is a candidate for the symptom above on iOS 26.
 - Bug 323322: a phantom keyboard-sized `visualViewport` inset after resume, on iOS 26.
 
+## iOS home-screen app comes back shifted up
+
+**Symptom.** The installed app resumes with everything painted a hundred pixels too high: the
+titlebar sits under the status bar, the back chevron is out of reach, and a band of background
+shows below the tab bar. The app still responds, which is what tells this apart from the frozen
+resume above. Force-quitting and relaunching puts it right.
+
+**Cause.** The shell is a fixed-height surface (`html`/`body` are `overflow:hidden`), so the
+document's own scroll offset is always meant to be 0. WebKit ignores that when it scrolls a
+focused field clear of the on-screen keyboard, and on the installed app that offset can outlive
+the keyboard that caused it. WebKit 323322, a phantom keyboard-sized `visualViewport` inset after
+resume on iOS 26, produces the same picture.
+
+**What the app does about it.** `app/shell/useViewportInsets.ts` re-measures on `pageshow`,
+`visibilitychange`, rotation and resize (immediately, on the next frame, and 300 ms later, since
+WebKit settles the viewport after it restores the page) and puts a non-zero offset back to 0. Each
+reset lands in the lifecycle log as a `scroll_reset` entry with the offset it undid, so Settings →
+Diagnostics shows whether it fired. The phantom inset is screened out separately: the shell only
+believes in a keyboard while a text field holds focus.
+
 ## Upgrade rollback
 
 Pulling an older image tag against a database a newer build already migrated is a clean refusal,

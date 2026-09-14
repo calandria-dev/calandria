@@ -31,6 +31,7 @@ import { CommandPalette, type PaletteCommand } from "./shell/CommandPalette";
 import { MobileTabBar, type MobileTabId } from "./shell/MobileTabBar";
 import { isMacDesktopShell } from "./shell/useNotifications";
 import { terminalShouldSuspend } from "./shell/lifecycle";
+import { useViewportInsets } from "./shell/useViewportInsets";
 
 // Below this width the three columns can't coexist, so the workspace collapses to
 // one pane at a time (projects -> tasks -> session) with back affordances. matchMedia
@@ -198,6 +199,10 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
   const tagsById = useMemo(() => new Map(o.tags.map((t) => [t.id, t])), [o.tags]);
   const isMobile = useIsMobile();
   const macChrome = useMacDesktopChrome();
+  // Keeps --kb-inset (the on-screen keyboard's overlap) on <html> and undoes
+  // the document scroll WebKit applies to clear a focused field. Both are
+  // things the phone layout cannot see from CSS; see shell/viewport.ts.
+  useViewportInsets(isMobile);
   // One instance-wide fact, read once here and handed to the two places that
   // render it: the titlebar pill and the Updates field in Settings.
   const updates = useUpdates();

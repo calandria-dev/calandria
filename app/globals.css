@@ -169,9 +169,10 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .tnum{font-variant-numeric:tabular-nums;}
 
 /* ============================== app shell ============================== */
-/* dvh tracks the *visible* viewport as mobile browser chrome / the on-screen
-   keyboard expand and collapse, so the composer never ends up behind them; vh
-   is the desktop fallback. */
+/* dvh tracks the mobile browser chrome as it expands and collapses; vh is the
+   desktop fallback. dvh does NOT track the on-screen keyboard: iOS resizes
+   only the visual viewport for that, so the phone block below subtracts the
+   keyboard's overlap (--kb-inset, from app/shell/viewport.ts) as well. */
 .app{height:100vh;height:100dvh;display:flex;flex-direction:column;background:var(--chrome);}
 .titlebar{
   height:50px;flex:0 0 auto;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:14px;
@@ -2172,6 +2173,15 @@ button.tpeek-more:hover{color:var(--accent-ink);}
    each header; this block makes that pane fill the screen, fattens hit targets
    to a thumb-friendly ~44px, and respects the notch / home-indicator insets. */
 @media (max-width:760px){
+  /* Shrink the whole shell by however much of it the on-screen keyboard covers,
+     so its bottom edge lands on the keys and the composer sits against them.
+     iOS leaves the layout viewport at full height when the keyboard opens
+     (100dvh, 100vh and env(safe-area-inset-bottom) all keep their no-keyboard
+     values) and shrinks only the visual viewport, so useViewportInsets.ts
+     measures the difference and writes it here. Without JavaScript the property
+     is unset and this is plain 100dvh. */
+  .app.mobile{height:calc(100dvh - var(--kb-inset, 0px));}
+
   /* The mounted pane is the only flex child of .body: let it fill the width.
      Column direction matters only for Settings, which mounts its section nav +
      content together; the other panes mount one child. !important beats the
@@ -2250,11 +2260,13 @@ button.tpeek-more:hover{color:var(--accent-ink);}
      composer takes the inset only while the tab bar is hidden, on the SAME
      focus selector that hides it (see .mtabbar below; keep the two in step):
      with a hardware keyboard the field is focused, nothing covers the
-     indicator, and the box would otherwise sit on it. With the software
-     keyboard up iOS reports the inset as 0, so that case costs nothing.
+     indicator, and the box would otherwise sit on it. A software keyboard
+     covers the indicator itself and iOS keeps reporting the inset anyway, so
+     subtract --kb-inset: a keyboard is hundreds of pixels tall, so that term
+     floors at 0 whenever one is up and stays whole when none is.
      The keyboard hints are mouse-era noise on a phone. */
   .app.mobile .composer{padding:10px 12px 12px;}
-  .app.mobile:has(textarea:focus, [contenteditable]:focus, input:is([type=text],[type=search],[type=email],[type=url],[type=number],[type=password]):focus) .composer{padding-bottom:calc(12px + env(safe-area-inset-bottom));}
+  .app.mobile:has(textarea:focus, [contenteditable]:focus, input:is([type=text],[type=search],[type=email],[type=url],[type=number],[type=password]):focus) .composer{padding-bottom:calc(12px + max(0px, env(safe-area-inset-bottom) - var(--kb-inset, 0px)));}
   /* 16px stops iOS zooming on focus; 8px vertical padding centers a single
      line against the 40px send button (see .comp-area's comment). */
   .app.mobile .comp-area .comp-input{font-size:16px;padding:8px 0;}
@@ -2312,10 +2324,10 @@ button.tpeek-more:hover{color:var(--accent-ink);}
    (z-index 150, see .mterm) paints over it when the Terminals tab is open. */
 .mtabbar{display:flex;flex:0 0 auto;border-top:1px solid var(--line);background:var(--panel);padding-bottom:env(safe-area-inset-bottom);}
 /* While the on-screen keyboard is up (a text field is focused), the tab bar
-   would otherwise ride on top of it: 100dvh shrinks to the visible viewport
-   and the bottom-docked bar lands right above the keys, between them and the
-   composer. Hide it for the duration; it returns on blur. Text-type inputs
-   only: focusing a checkbox raises no keyboard and must not blink the bar.
+   would otherwise sit between the keys and the composer: the shell shrinks by
+   --kb-inset and the bottom-docked bar rides up with it. Hide it for the
+   duration; it returns on blur. Text-type inputs only: focusing a checkbox
+   raises no keyboard and must not blink the bar.
    The composer's home-indicator rule (the phone block above) keys off this
    same selector, since while the bar is gone the composer is bottom-most. */
 .app.mobile:has(textarea:focus, [contenteditable]:focus, input:is([type=text],[type=search],[type=email],[type=url],[type=number],[type=password]):focus) .mtabbar{display:none;}
