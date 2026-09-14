@@ -195,6 +195,16 @@ const ALLOWED_CROSS_SCOPE_CLASSES = new Set<string>([
 ]);
 
 describe("CSS component-scope guard (globals.css class namespace collisions)", () => {
+  it("keeps mobile diff text at its declared size", () => {
+    const cssText = fs.readFileSync(path.join(ROOT, CSS_FILE), "utf8");
+    const diffRule = /\.tc-hunks\{([^}]*)\}/.exec(cssText)?.[1] ?? "";
+    const declarations = diffRule.split(";");
+    expect(declarations).toEqual(expect.arrayContaining([
+      "-webkit-text-size-adjust:100%",
+      "text-size-adjust:100%",
+    ]));
+  });
+
   it("no class newly collides across two components' scopes with a layout conflict", () => {
     const cssText = fs.readFileSync(path.join(ROOT, CSS_FILE), "utf8");
     const flagged = findCrossScopeClassDefinitions(cssText);
