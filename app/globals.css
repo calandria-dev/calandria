@@ -170,9 +170,9 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 
 /* ============================== app shell ============================== */
 /* dvh tracks the mobile browser chrome as it expands and collapses; vh is the
-   desktop fallback. dvh does NOT track the on-screen keyboard: iOS resizes
-   only the visual viewport for that, so the phone block below subtracts the
-   keyboard's overlap (--kb-inset, from app/shell/viewport.ts) as well. */
+   desktop fallback. The phone block below uses the measured viewport height
+   from app/shell/useViewportInsets.ts, which handles both engines that resize
+   layout for the keyboard and iOS, which resizes only the visual viewport. */
 .app{height:100vh;height:100dvh;display:flex;flex-direction:column;background:var(--chrome);}
 .titlebar{
   height:50px;flex:0 0 auto;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:14px;
@@ -1787,7 +1787,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .hero .h-prompt .hp-list .hp-fixed::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--ink-4);}
 
 /* ============================== modal ============================== */
-.scrim{position:fixed;inset:0;background:rgba(38,36,31,.42);backdrop-filter:blur(3px);display:grid;place-items:center;z-index:200;animation:fadein .15s ease;}
+.scrim{position:fixed;inset:0;bottom:var(--kb-inset, 0px);background:rgba(38,36,31,.42);backdrop-filter:blur(3px);display:grid;place-items:center;z-index:200;animation:fadein .15s ease;}
 @keyframes fadein{from{opacity:0;}to{opacity:1;}}
 .modal{width:560px;max-width:calc(100vw - 40px);max-height:calc(100vh - 60px);overflow-y:auto;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh-3);animation:pop .18s cubic-bezier(.2,.9,.3,1.2);}
 @keyframes pop{from{opacity:0;transform:translateY(10px) scale(.98);}to{opacity:1;transform:none;}}
@@ -2173,14 +2173,11 @@ button.tpeek-more:hover{color:var(--accent-ink);}
    each header; this block makes that pane fill the screen, fattens hit targets
    to a thumb-friendly ~44px, and respects the notch / home-indicator insets. */
 @media (max-width:760px){
-  /* Shrink the whole shell by however much of it the on-screen keyboard covers,
-     so its bottom edge lands on the keys and the composer sits against them.
-     iOS leaves the layout viewport at full height when the keyboard opens
-     (100dvh, 100vh and env(safe-area-inset-bottom) all keep their no-keyboard
-     values) and shrinks only the visual viewport, so useViewportInsets.ts
-     measures the difference and writes it here. Without JavaScript the property
-     is unset and this is plain 100dvh. */
-  .app.mobile{height:calc(100dvh - var(--kb-inset, 0px));}
+  /* Keep the shell's bottom edge above the keyboard. The measured property
+     handles engines that resize either viewport, and its fallback preserves
+     the manual/no-JavaScript --kb-inset fallback. min() also keeps a stale
+     measurement from making the shell taller than the current dynamic height. */
+  .app.mobile{height:min(100dvh,var(--viewport-height,calc(100dvh - var(--kb-inset, 0px))));}
 
   /* The mounted pane is the only flex child of .body: let it fill the width.
      Column direction matters only for Settings, which mounts its section nav +
@@ -2278,7 +2275,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   .app.mobile .ask-other{padding:11px;font-size:16px;}
 
   /* Modals go near-fullscreen so their forms are usable. */
-  .app.mobile .modal{width:100%;max-width:calc(100vw - 16px);max-height:calc(100dvh - 32px);}
+  .app.mobile .modal{width:100%;max-width:calc(100vw - 16px);max-height:calc(min(100dvh,var(--viewport-height,calc(100dvh - var(--kb-inset, 0px)))) - 32px);}
   .app.mobile .field input[type=text],
   .app.mobile .field input[type=number],
   .app.mobile .field textarea{font-size:16px;}
@@ -2336,7 +2333,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .mtabbar-item.on{color:var(--accent);}
 
 /* ── First-run onboarding wizard ─────────────────────────────────────────── */
-.wiz-scrim{position:fixed;inset:0;background:rgba(38,36,31,.55);backdrop-filter:blur(4px);display:grid;place-items:center;z-index:300;animation:fadein .18s ease;padding:24px;}
+.wiz-scrim{position:fixed;inset:0;bottom:var(--kb-inset, 0px);background:rgba(38,36,31,.55);backdrop-filter:blur(4px);display:grid;place-items:center;z-index:300;animation:fadein .18s ease;padding:24px;}
 .wiz{display:flex;width:min(940px,100%);height:min(640px,calc(100vh - 48px));background:var(--panel);border:1px solid var(--line-strong);border-radius:var(--r-xl,16px);box-shadow:var(--sh-3);overflow:hidden;animation:pop .22s cubic-bezier(.2,.9,.3,1.2);}
 .wiz-rail{flex:0 0 230px;display:flex;flex-direction:column;gap:4px;padding:22px 18px;background:var(--panel-2);border-right:1px solid var(--line);}
 .wiz-brand{display:flex;align-items:center;gap:6px;font-family:var(--font-display);font-weight:500;font-size:15px;letter-spacing:.005em;color:var(--ink);}
@@ -2352,7 +2349,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .wiz-stepitem.active .wiz-stepnum{border-color:var(--accent);color:var(--accent-ink);}
 .wiz-stepitem.done .wiz-stepnum{border-color:var(--green,#5C8C5A);color:var(--green,#5C8C5A);}
 .wiz-skip{align-self:flex-start;}
-.wiz-main{flex:1;min-width:0;display:flex;flex-direction:column;}
+.wiz-main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;}
 .wiz-head{padding:30px 34px 16px;border-bottom:1px solid var(--line);}
 .wiz-step-tag{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-ink);margin-bottom:8px;}
 .wiz-title{font-size:21px;font-weight:700;letter-spacing:-.02em;}

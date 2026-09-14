@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { KEYBOARD_MIN_INSET, isTextEntryElement, keyboardInset, scrollOffsetIsStale, type ViewportMetrics } from "../app/shell/viewport";
+import { KEYBOARD_MIN_INSET, isTextEntryElement, keyboardInset, scrollOffsetIsStale, shellViewportHeight, type ViewportMetrics } from "../app/shell/viewport";
 
 // An iPhone 16 Pro Max in portrait: 440x956 CSS px, home indicator inset 34.
 const LAYOUT_HEIGHT = 956;
@@ -52,6 +52,24 @@ describe("keyboardInset: what the on-screen keyboard covers", () => {
   it("is 0 where the browser resizes the layout viewport for the keyboard instead", () => {
     // Both viewports shrink together, so 100dvh already excludes the keyboard.
     expect(keyboardInset(metrics({ layoutHeight: 620, visualHeight: 620 }))).toBe(0);
+  });
+});
+
+describe("shellViewportHeight: the measured phone shell height", () => {
+  it("uses the visible height when only the visual viewport shrinks", () => {
+    expect(shellViewportHeight(metrics({ visualHeight: 620 }))).toBe(620);
+  });
+
+  it("does not shrink twice when the layout viewport already shrank", () => {
+    expect(shellViewportHeight(metrics({ layoutHeight: 620, visualHeight: 620 }))).toBe(620);
+  });
+
+  it("uses the full layout height without a keyboard", () => {
+    expect(shellViewportHeight(metrics({}))).toBe(LAYOUT_HEIGHT);
+  });
+
+  it("keeps the visible viewport bottom when WebKit reports an offset", () => {
+    expect(shellViewportHeight(metrics({ visualHeight: 620, visualOffsetTop: 50 }))).toBe(670);
   });
 });
 
