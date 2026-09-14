@@ -33,12 +33,17 @@ on:
         type: boolean
         default: false
         required: false
+      release_tag:
+        description: "Existing vX.Y.Z tag to promote when dispatching from a branch"
+        type: string
+        default: ""
+        required: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-desktop-${{ github.event.pull_request.number || github.ref }}
+  group: release-desktop-${{ github.event.pull_request.number || inputs.release_tag || github.ref_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
 env:
@@ -59,6 +64,7 @@ jobs:
       source_sha: ${{ steps.mode.outputs.source_sha }}
       source_pr: ${{ steps.mode.outputs.source_pr }}
       artifact_suffix: ${{ steps.mode.outputs.artifact_suffix }}
+      release_tag: ${{ steps.mode.outputs.release_tag }}
       mac_signing: ${{ steps.credentials.outputs.mac }}
       win_signing: ${{ steps.credentials.outputs.win }}
     steps:
@@ -70,12 +76,14 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           mode=skip
           source_sha=""
           source_pr=""
           suffix=""
+          release_tag=""
 
           case "$GITHUB_EVENT_NAME" in
             pull_request_target)
@@ -96,6 +104,7 @@ jobs:
                 exit 1
               fi
               mode=promote
+              release_tag="$GITHUB_REF_NAME"
               ;;
             workflow_dispatch)
               if [ "${{ inputs.check_only }}" = "true" ]; then
@@ -106,9 +115,14 @@ jobs:
                 mode=check
                 source_sha="$GITHUB_SHA"
               elif [ "${{ inputs.publish }}" = "true" ]; then
-                if [ "$GITHUB_REF_TYPE" != "tag" ]; then
-                  echo "::error::Publishing requires a vX.Y.Z tag."
-                  exit 1
+                if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+                  if [ -n "$REQUESTED_RELEASE_TAG" ] && [ "$REQUESTED_RELEASE_TAG" != "$GITHUB_REF_NAME" ]; then
+                    echo "::error::release_tag must match the tag selected as the workflow ref."
+                    exit 1
+                  fi
+                  release_tag="$GITHUB_REF_NAME"
+                else
+                  release_tag="$REQUESTED_RELEASE_TAG"
                 fi
                 mode=promote
               else
@@ -119,11 +133,18 @@ jobs:
               ;;
           esac
 
+          if [ "$mode" = "promote" ] &&
+             [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Publishing requires release_tag to name a vX.Y.Z tag."
+            exit 1
+          fi
+
           {
             echo "mode=$mode"
             echo "source_sha=$source_sha"
             echo "source_pr=$source_pr"
             echo "artifact_suffix=$suffix"
+            echo "release_tag=$release_tag"
           } >> "$GITHUB_OUTPUT"
           echo "selected mode: $mode"
 
@@ -482,23 +503,26 @@ jobs:
     env:
       GH_REPO: ${{ github.repository }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ needs.gate.outputs.release_tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
+          ref: refs/tags/${{ needs.gate.outputs.release_tag }}
 
       - name: Find the release PR and artifact run
         id: source
         run: |
           set -euo pipefail
           version=$(node -p "require('./desktop/package.json').version")
-          if [ "v${version}" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::desktop/package.json is ${version}, which does not match ${GITHUB_REF_NAME}."
+          if [ "v${version}" != "$RELEASE_TAG" ]; then
+            echo "::error::desktop/package.json is ${version}, which does not match ${RELEASE_TAG}."
             exit 1
           fi
 
-          pull=$(gh api "repos/${GH_REPO}/commits/${GITHUB_SHA}/pulls" \
+          tag_sha=$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")
+          pull=$(gh api "repos/${GH_REPO}/commits/${tag_sha}/pulls" \
             -H "Accept: application/vnd.github+json" \
             --jq '[.[] | select(.merged_at != null and .base.ref == "main" and .head.ref == env.RELEASE_BRANCH and .head.repo.full_name == env.GH_REPO)] | if length == 1 then .[0] else error("expected one merged release-please PR") end')
           pr=$(printf '%s' "$pull" | jq -r .number)
@@ -517,13 +541,13 @@ jobs:
           run=$(gh api "repos/${GH_REPO}/actions/runs/${run_id}")
           if ! printf '%s' "$run" | jq -e \
             --argjson workflow_id "$workflow_id" \
-            --argjson pr "$pr" \
             --arg head_sha "$head_sha" '
               .workflow_id == $workflow_id and
               .event == "pull_request_target" and
               .status == "completed" and
               .conclusion == "success" and
-              any(.pull_requests[]?; .number == $pr and .head.sha == $head_sha)
+              .head_sha == $head_sha and
+              .head_branch == env.RELEASE_BRANCH
             ' >/dev/null; then
             echo "::error::Artifact run ${run_id} is not the successful release prebuild for PR ${pr} at ${head_sha}."
             exit 1
@@ -576,12 +600,12 @@ jobs:
             exit 1
           fi
           cd handoff
-          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
 
       - name: Assert every prebuilt asset reached the release
         run: |
           set -euo pipefail
-          gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | sort > attached.txt
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | sort > attached.txt
           norm() { printf '%s' "$1" | tr -c 'A-Za-z0-9' '-'; }
           while IFS= read -r asset; do
             name=${asset##*/}
@@ -597,7 +621,7 @@ jobs:
         run: |
           set -euo pipefail
           cat fragments/SHA256SUMS-*.txt | sort -k2 > SHA256SUMS.txt
-          gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' > assets.txt
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' > assets.txt
           norm() { printf '%s' "$1" | tr -c 'A-Za-z0-9' '-'; }
           : > SHA256SUMS.reconciled
           while IFS= read -r line; do
@@ -615,13 +639,13 @@ jobs:
             printf '%s%s%s\n' "$hash" "$sep" "$match" >> SHA256SUMS.reconciled
           done < SHA256SUMS.txt
           mv SHA256SUMS.reconciled SHA256SUMS.txt
-          gh release upload "$GITHUB_REF_NAME" SHA256SUMS.txt --clobber
+          gh release upload "$RELEASE_TAG" SHA256SUMS.txt --clobber
 
       - name: Record signing and download details
         run: |
           set -euo pipefail
           marker='<!-- desktop-artifacts -->'
-          gh release view "$GITHUB_REF_NAME" --json body --jq .body > body.md
+          gh release view "$RELEASE_TAG" --json body --jq .body > body.md
           awk -v marker="$marker" 'index($0, marker) { exit } { print }' body.md > notes.md
           {
             echo "$marker"
@@ -643,5 +667,5 @@ jobs:
             echo "Linux ships a deb and an AppImage."
             echo "Every platform is x64 except macOS, which is Apple silicon arm64."
           } >> notes.md
-          gh release edit "$GITHUB_REF_NAME" --notes-file notes.md
+          gh release edit "$RELEASE_TAG" --notes-file notes.md
           cat notes.md >> "$GITHUB_STEP_SUMMARY"
