@@ -173,6 +173,18 @@ describe("no lane publishes by accident", () => {
     expect(RELEASE_WORKFLOW).toContain('mode=dry-run');
     expect(RELEASE_WORKFLOW).toContain('source_sha="$GITHUB_SHA"');
     expect(RELEASE_WORKFLOW).toContain("if: needs.gate.outputs.mode == 'promote'");
+    expect(RELEASE_WORKFLOW).toContain('release_tag:');
+    expect(RELEASE_WORKFLOW).toContain('release_tag="$GITHUB_REF_NAME"');
+    expect(RELEASE_WORKFLOW).toContain('REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}');
+    expect(RELEASE_WORKFLOW).toContain('release_tag="$REQUESTED_RELEASE_TAG"');
+    expect(RELEASE_WORKFLOW).toContain('[[ ! "$release_tag" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+');
+    expect(RELEASE_WORKFLOW).toContain('ref: refs/tags/${{ needs.gate.outputs.release_tag }}');
+    expect(RELEASE_WORKFLOW).toContain('tag_sha=$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")');
+    expect(RELEASE_WORKFLOW).toContain('commits/${tag_sha}/pulls');
+    expect(RELEASE_WORKFLOW).toContain('RELEASE_TAG: ${{ needs.gate.outputs.release_tag }}');
+    expect(RELEASE_WORKFLOW).not.toContain('gh release upload "$GITHUB_REF_NAME"');
+    expect(RELEASE_WORKFLOW).not.toContain('gh release view "$GITHUB_REF_NAME"');
+    expect(RELEASE_WORKFLOW).not.toContain('gh release edit "$GITHUB_REF_NAME"');
     expect(RELEASE_WORKFLOW).toMatch(/npx electron-builder[^\n]*--publish never/);
     expect(RELEASE_WORKFLOW).not.toContain("require-green-test-run");
     expect(fs.readFileSync(path.join(WORKFLOWS, "pin-drift.yml"), "utf8")).toContain(
@@ -191,10 +203,14 @@ describe("no lane publishes by accident", () => {
     expect(RELEASE_WORKFLOW).toContain("statuses: write");
     expect(RELEASE_WORKFLOW).toContain("/statuses/${TARGET_SHA}");
     expect(RELEASE_WORKFLOW).toContain("name: Promote prebuilt desktop artifacts");
-    expect(RELEASE_WORKFLOW).toContain('gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber');
+    expect(RELEASE_WORKFLOW).toContain('gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber');
     expect(RELEASE_WORKFLOW).toContain('.workflow_id == $workflow_id');
     expect(RELEASE_WORKFLOW).toContain('.event == "pull_request_target"');
+    expect(RELEASE_WORKFLOW).toContain('.status == "completed"');
     expect(RELEASE_WORKFLOW).toContain('.conclusion == "success"');
+    expect(RELEASE_WORKFLOW).toContain('.head_sha == $head_sha');
+    expect(RELEASE_WORKFLOW).toContain('.head_branch == env.RELEASE_BRANCH');
+    expect(RELEASE_WORKFLOW).not.toContain('.pull_requests');
     expect(RELEASE_WORKFLOW).toContain('.head.repo.full_name == env.GH_REPO');
     expect(RELEASE_WORKFLOW).toMatch(/- name: Stage the release handoff[\s\S]*- name: Upload the release handoff/);
     for (const pattern of ["*.yml", "*.blockmap", "*.dmg", "*.zip", "*.deb", "*.AppImage", "*.exe"]) {
