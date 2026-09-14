@@ -203,7 +203,7 @@ describe("no lane publishes by accident", () => {
     expect(RELEASE_WORKFLOW).toContain("statuses: write");
     expect(RELEASE_WORKFLOW).toContain("/statuses/${TARGET_SHA}");
     expect(RELEASE_WORKFLOW).toContain("name: Promote prebuilt desktop artifacts");
-    expect(RELEASE_WORKFLOW).toContain('gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber');
+    expect(RELEASE_WORKFLOW).toContain('gh release upload "$RELEASE_TAG" "$asset" --clobber');
     expect(RELEASE_WORKFLOW).toContain('.workflow_id == $workflow_id');
     expect(RELEASE_WORKFLOW).toContain('.event == "pull_request_target"');
     expect(RELEASE_WORKFLOW).toContain('.status == "completed"');
@@ -219,7 +219,13 @@ describe("no lane publishes by accident", () => {
     expect(RELEASE_WORKFLOW).toContain("':(exclude)tests/**'");
     expect(RELEASE_WORKFLOW).toContain('git rev-parse "${head_sha}^{tree}"');
     expect(RELEASE_WORKFLOW).toMatch(/- name: Stage the release handoff[\s\S]*- name: Upload the release handoff/);
-    for (const pattern of ["*.yml", "*.blockmap", "*.dmg", "*.zip", "*.deb", "*.AppImage", "*.exe"]) {
+    expect(RELEASE_WORKFLOW).not.toContain("-name '*.yml'");
+    expect(RELEASE_WORKFLOW).toContain("awk '!/\\/builder-debug\\.yml$/'");
+    expect(RELEASE_WORKFLOW).toContain("declare -A upload_names=()");
+    expect(RELEASE_WORKFLOW).toContain('for asset in "${assets[@]}"; do');
+    expect(RELEASE_WORKFLOW).toContain('gh release upload "$RELEASE_TAG" "$asset" --clobber');
+    expect(RELEASE_WORKFLOW).not.toContain('gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber');
+    for (const pattern of ["latest*.yml", "*.blockmap", "*.dmg", "*.zip", "*.deb", "*.AppImage", "*.exe"]) {
       expect(RELEASE_WORKFLOW).toContain(`-name '${pattern}'`);
     }
   });
