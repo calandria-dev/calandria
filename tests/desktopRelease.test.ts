@@ -84,10 +84,12 @@ describe("desktop release publishing", () => {
       delete require.cache[configPath];
       const config = require(configPath) as {
         publish: Array<{ provider: string; owner: string; repo: string; releaseType: string }>;
+        nsis: { artifactName?: string };
       };
       expect(config.publish).toEqual([
         { provider: "github", owner: "calandria-dev", repo: "calandria", releaseType: "release" },
       ]);
+      expect(config.nsis.artifactName).toBe("Calandria-Setup-${version}.${ext}");
     } finally {
       for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
       Object.assign(process.env, saved);

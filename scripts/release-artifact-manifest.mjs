@@ -88,11 +88,60 @@ function requirePlatformAssets(platform, artifacts) {
   if (missing.length > 0) fail(`${platform} artifact set is missing: ${missing.join(", ")}`);
 }
 
+function feedScalar(value) {
+  const text = value.trim();
+  if ((text.startsWith("\"") && text.endsWith("\"")) || (text.startsWith("'") && text.endsWith("'"))) {
+    return text.slice(1, -1);
+  }
+  return text;
+}
+
+function feedReferenceName(value) {
+  const raw = feedScalar(value);
+  let pathname = raw;
+  try {
+    pathname = new URL(raw).pathname;
+  } catch {
+    // Relative feed paths are the normal electron-builder format.
+  }
+  try {
+    pathname = decodeURIComponent(pathname);
+  } catch {
+    fail(`invalid update feed artifact reference: ${raw}`);
+  }
+  const name = path.basename(pathname);
+  if (!name || name !== pathname.replace(/^.*\//, "") || name === "." || name === "..") {
+    fail(`unsafe update feed artifact reference: ${raw}`);
+  }
+  return name;
+}
+
+function validateWindowsFeed(dir, artifacts) {
+  const feedPath = path.join(dir, "latest.yml");
+  const text = fs.readFileSync(feedPath, "utf8");
+  const referenced = new Set();
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^\s*(?:-\s*)?(?:url|path):\s*(.+?)\s*$/.exec(line);
+    if (match) referenced.add(feedReferenceName(match[1]));
+  }
+  if (referenced.size === 0) fail(`latest.yml has no artifact references: ${feedPath}`);
+  const available = new Set(artifacts.map((artifact) => artifact.name));
+  const missing = [...referenced].filter((name) => !available.has(name));
+  for (const name of referenced) {
+    if (name.toLowerCase().endsWith(".exe")) {
+      const blockmap = `${name}.blockmap`;
+      if (!available.has(blockmap)) missing.push(blockmap);
+    }
+  }
+  if (missing.length > 0) fail(`latest.yml references missing artifacts: ${missing.join(", ")}`);
+}
+
 export function createManifest({ dir, platform, version, sourceSha, sourceTree, sourcePr }) {
   const root = requireDirectory(dir, "dir");
   const checkedPlatform = requirePlatform(platform);
   const artifacts = artifactEntries(root);
   requirePlatformAssets(checkedPlatform, artifacts);
+  if (checkedPlatform === "win") validateWindowsFeed(root, artifacts);
   const manifest = {
     schemaVersion: MANIFEST_SCHEMA_VERSION,
     platform: checkedPlatform,
@@ -139,6 +188,7 @@ function verifyManifest(dir, manifest, expected) {
     listed.set(artifact.name, artifact);
   }
   const actual = artifactEntries(dir);
+  if (manifest.platform === "win") validateWindowsFeed(dir, actual);
   if (actual.length !== listed.size || actual.some((entry) => !listed.has(entry.name))) {
     fail(`manifest file list mismatch: ${path.join(dir, MANIFEST_NAME)}`);
   }
