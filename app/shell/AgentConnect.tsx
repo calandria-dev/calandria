@@ -161,7 +161,7 @@ function AgentSandboxWarning({ agent }: { agent: AgentInfoT }) {
             </li>
             <li>an AppArmor profile that allows <code>bwrap</code> to create user namespaces</li>
             <li>
-              run the task in <strong>bypassPermissions</strong>, which uses no sandbox at all
+              select the <strong>Full access</strong> sandbox, which uses no Codex sandbox
             </li>
             <li>
               in a container, set <code>CODEX_EXTERNAL_SANDBOX=1</code> so workspace-write turns rely on the

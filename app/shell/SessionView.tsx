@@ -10,7 +10,7 @@ import { AttachmentStrip } from "./attachments";
 import { pendingPromptIds, promptsAreLive } from "./pendingPrompt";
 import {
   SLABEL, SSUB, AWAIT_LABEL, STATUSES, PLABEL, PRIORITIES,
-  reasoningOptions, permissionOptions, INHERIT_LABEL, RAIL_W, SESS_MAIN_MIN,
+  reasoningOptions, permissionOptions, codexSandboxOptions, INHERIT_LABEL, RAIL_W, SESS_MAIN_MIN,
   type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle, type InternalUsageEstimate, type TagRow,
 } from "./types";
 import { TagBadges, selectOneTag } from "./TagChips";
@@ -560,14 +560,14 @@ function useStableAsync<A extends unknown[], R>(fn: (...args: A) => Promise<R>):
   return useCallback((...args: A) => ref.current(...args), []);
 }
 
-export function SessionView({ project, task, tagsById, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onSetAutoStart, onSnooze, onUnsnooze, onQueueStart, onCancelQueuedStart, onResolveWithAI, onFixCi, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
+export function SessionView({ project, task, tagsById, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSandbox, onSetSendContext, onSetAutoStart, onSnooze, onUnsnooze, onQueueStart, onCancelQueuedStart, onResolveWithAI, onFixCi, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
   project: ProjectRow; task: TaskRow; tagsById: Map<string, TagRow>; agents: AgentsBundle; messages: Msg[]; running: boolean; blockedBy?: string[]; transcriptLoading?: boolean;
   onSend: (t: string) => void; onStart: () => void; onStop: () => void; onClear: () => void; onEdit: () => void;
   clearConfirming?: boolean; onConfirmClear?: () => void; onCancelClear?: () => void;
   // Deep-link to Settings → Models, for the transcript's "your login died" recovery button.
   onReconnect?: () => void;
   onSetStatus: (s: Status) => void; onSetPriority: (p: Priority) => void; onSetModel: (v: ModelPickerValue) => void;
-  onSetReasoning: (r: string | null) => void; onSetPermission: (p: string | null) => void;
+  onSetReasoning: (r: string | null) => void; onSetPermission: (p: string | null) => void; onSetSandbox: (s: string | null) => void;
   onSetSendContext: (v: boolean) => void;
   // The blocked-task hero's "Start when unblocked" toggle (tasks.auto_start).
   onSetAutoStart: (v: boolean) => void;
@@ -764,6 +764,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
     .map((a) => ({ id: a.id, label: a.label }));
   const reasoningOpts = reasoningOptions(caps);
   const permissionOpts = permissionOptions(caps);
+  const sandboxOpts = task.agent === "codex" ? codexSandboxOptions("Use the Codex Settings default, or follow the permission mode", "Inherit default") : [];
   // Usage chip: tokens split into fresh work and re-read cache (the raw total
   // is mostly cache reads and overstates what ran), and a dollar figure whose
   // presentation follows how this agent is signed in: a subscription login's
@@ -1056,6 +1057,19 @@ export function SessionView({ project, task, tagsById, agents, messages, running
               {p.value === null && <div className="divider" />}
             </Fragment>
           ))}
+          {sandboxOpts.length > 0 && <>
+            <div className="divider" />
+            <div className="pop-sec">Sandbox</div>
+            {sandboxOpts.map((s) => (
+              <Fragment key={s.label}>
+                <div className="pop-item" onClick={() => { onSetSandbox(s.value); setSettingsOpen(false); }}>
+                  <div><div>{s.label}</div><div className="pi-sub">{s.sub}</div></div>
+                  {(task.sandbox_mode ?? null) === s.value && <span className="pi-check">{Icon.check()}</span>}
+                </div>
+                {s.value === null && <div className="divider" />}
+              </Fragment>
+            ))}
+          </>}
         </Popover>
       )}
     </div>

@@ -3,6 +3,8 @@
 import { PRIORITIES, TAG_COLORS, tagIsDone } from "@/lib/types";
 import type { LandingMode, PlanScope as PlanScopeT, Priority, Status, Tag } from "@/lib/types";
 import type { AgentProvider } from "@/lib/agentEnv";
+import type { CodexSandboxMode } from "@/lib/codexSandbox";
+export type { CodexSandboxMode } from "@/lib/codexSandbox";
 export { PRIORITIES, TAG_COLORS, tagIsDone };
 export type { LandingMode, PlanScopeT };
 /** A tag as the project GET embeds it: lib/types' row plus its derived counts. */
@@ -63,6 +65,7 @@ export interface TaskRow {
   resolved_model: string | null;
   reasoning: string | null; // thinking preset; null = inherit default
   permission_mode: string | null; // run permission; null = bypassPermissions (default)
+  sandbox_mode: CodexSandboxMode | null; // Codex sandbox; null = inherit permission/default
   session_id: string | null;
   worktree_path: string; // isolated git worktree this task runs in ("" = not created yet, appears on the first turn)
   merged_at: number; // when this task's branch was merged into the base branch LOCALLY (0 = never); pairs with pr_state for "has this landed?"
@@ -583,6 +586,13 @@ export interface DetectedProviderT { type: ProviderType; base_url: string; model
 // persists as null in tasks.model/reasoning/permission_mode, inheriting the
 // app-level (agent-scoped) default, then the driver's built-in.
 export type PickerOption = { value: string | null; label: string; sub: string; group?: string };
+
+export const codexSandboxOptions = (sub = "Use the app-level default", inheritLabel = "Inherit default"): PickerOption[] => [
+  { value: null, label: inheritLabel, sub },
+  { value: "read-only", label: "Read-only", sub: "File reads; no sandboxed writes or network access" },
+  { value: "workspace-write", label: "Workspace write", sub: "Worktree, commit paths, and temporary files; network allowed" },
+  { value: "danger-full-access", label: "Full access", sub: "No Codex filesystem or network isolation" },
+];
 // The head is NOT called "Default": the labels below it are provider-native
 // (Anthropic's own `--permission-mode` strings), and one of those modes is
 // literally spelled "default", so a capital-D head would read as a duplicate

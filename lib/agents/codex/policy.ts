@@ -1,48 +1,13 @@
-// What a task's permission mode MEANS to Codex: the sandbox the turn runs in,
-// the approval policy that decides who is asked when the model wants out of
-// it, and the writable roots the sandbox grants. One resolution shared by the
-// app-server transport (which passes a full SandboxPolicy per turn) and the
-// exec transport (which can only pass a mode plus `--add-dir`s), so the two
-// can't disagree about what a mode does. SDK-free: pure data plus a few
-// stat()s, so capabilities.ts and the tests can read it without pulling
-// @openai/codex-sdk in.
-//
-// The five keys are the cross-agent vocabulary tasks, runbooks, schedules and
-// app defaults persist (tasks.permission_mode), each mapped to the nearest
-// Codex analog instead of a Claude-shaped meaning:
-//
-//   auto               workspace-write, approvals on request, Codex's own
-//                      reviewer decides them (approvals_reviewer=auto_review):
-//                      the "approve for me" the Claude picker's auto is.
-//   default            workspace-write, approvals on request, YOU decide: the
-//                      model asks to leave the sandbox (a network fetch, a path
-//                      outside the worktree, a command the sandbox refused) and
-//                      the request parks on a permission card.
-//   acceptEdits        workspace-write, never asks: what the sandbox refuses
-//                      simply fails and the model works around it. This is what
-//                      the old "workspace-write" picker entry was.
-//   bypassPermissions  danger-full-access, never asks: no sandbox at all,
-//                      Codex's --dangerously-bypass-approvals-and-sandbox.
-//   plan               read-only sandbox, never asks: propose without editing.
-//
-// The writable roots are the part the picker never showed and the user ran
-// into first: workspace-write makes the cwd writable but marks its `.git`
-// read-only. For a WORKTREE, whose `.git` is a pointer file, the CLI resolves
-// the pointer and protects the real gitdir too (codex-rs
-// protocol/src/permissions.rs, default_read_only_subpaths_for_writable_root),
-// while the repo's common `.git` sits outside every root anyway. So `git add`
-// and `git commit` fail inside a Calandria worktree under every sandboxed
-// mode, which blocks a task whose whole job is to commit. gitWritableRoots()
-// grants exactly what a commit writes: the task's private gitdir (index,
-// HEAD, its reflog) and the common dir's objects, refs and logs, and not the
-// common dir itself, so hooks/, config and info/ keep Codex's protection. A
-// writable config would let a sandboxed turn plant a core.fsmonitor or
-// hooksPath that runs unsandboxed the next time the user runs `git status`
-// in their real checkout.
+// Resolve a Codex permission mode and optional sandbox override.
+// Both transports use this SDK-free mapping. Workspace-write includes the git
+// paths required to commit from a linked worktree.
 
 import fs from "node:fs";
 import path from "node:path";
 import { CODEX_APPROVAL_POLICY, CODEX_WRITABLE_ROOTS } from "../../config";
+import { isCodexSandboxMode } from "../../codexSandbox";
+export type { CodexSandboxMode } from "../../codexSandbox";
+import type { CodexSandboxMode } from "../../codexSandbox";
 
 export const CODEX_MODES = ["auto", "default", "acceptEdits", "bypassPermissions", "plan"] as const;
 export type CodexMode = (typeof CODEX_MODES)[number];
@@ -50,7 +15,6 @@ export type CodexMode = (typeof CODEX_MODES)[number];
 /** The mode a null / unknown permission_mode resolves to. */
 export const DEFAULT_CODEX_MODE: CodexMode = "auto";
 
-export type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type CodexApprovalPolicy = "never" | "on-request" | "on-failure" | "untrusted";
 export type CodexApprovalsReviewer = "user" | "auto_review";
 
@@ -93,22 +57,35 @@ export function neverAskPolicy(downgraded: boolean): CodexApprovalPolicy | undef
 export function codexRunPolicy(
   mode: string | null | undefined,
   cwd: string,
-  opts: { downgraded?: boolean; extraRoots?: string[] } = {},
+  opts: { downgraded?: boolean; extraRoots?: string[]; sandbox?: string | null } = {},
 ): CodexRunPolicy {
   const m = resolveCodexMode(mode);
   const never = neverAskPolicy(!!opts.downgraded);
   const roots = () => dedupe([...gitWritableRoots(cwd), ...configuredWritableRoots(), ...(opts.extraRoots ?? [])]);
+  const sandboxFor = (legacy: CodexSandboxMode) => isCodexSandboxMode(opts.sandbox) ? opts.sandbox : legacy;
+  const withSandbox = (legacy: CodexSandboxMode, approval: CodexApprovalPolicy | undefined, reviewer: CodexApprovalsReviewer, asks: boolean): CodexRunPolicy => {
+    const sandbox = sandboxFor(legacy);
+    return {
+      mode: m,
+      sandbox,
+      approval,
+      reviewer,
+      network: sandbox !== "read-only",
+      writableRoots: sandbox === "workspace-write" ? roots() : [],
+      asks,
+    };
+  };
   switch (m) {
     case "auto":
-      return { mode: m, sandbox: "workspace-write", approval: "on-request", reviewer: "auto_review", network: true, writableRoots: roots(), asks: false };
+      return withSandbox("workspace-write", "on-request", "auto_review", false);
     case "default":
-      return { mode: m, sandbox: "workspace-write", approval: "on-request", reviewer: "user", network: true, writableRoots: roots(), asks: true };
+      return withSandbox("workspace-write", "on-request", "user", true);
     case "acceptEdits":
-      return { mode: m, sandbox: "workspace-write", approval: never, reviewer: "user", network: true, writableRoots: roots(), asks: never !== "never" && never !== undefined };
+      return withSandbox("workspace-write", never, "user", never !== "never" && never !== undefined);
     case "bypassPermissions":
-      return { mode: m, sandbox: "danger-full-access", approval: never, reviewer: "user", network: true, writableRoots: [], asks: false };
+      return withSandbox("danger-full-access", never, "user", false);
     case "plan":
-      return { mode: m, sandbox: "read-only", approval: never, reviewer: "user", network: false, writableRoots: [], asks: false };
+      return withSandbox("read-only", never, "user", false);
   }
 }
 

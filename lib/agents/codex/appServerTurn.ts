@@ -75,12 +75,16 @@ export async function* runAppServerTurn(args: AppServerTurnArgs): AsyncGenerator
 
   const push = (ev: StreamEvent) => queue.push(ev);
 
-  const handleNotification = (method: string, params: unknown) => {
+  const rememberItem = (method: string, params: unknown) => {
     const p = (params ?? {}) as Record<string, unknown>;
     if ((method === "item/started" || method === "item/completed") && p.item) {
       const it = p.item as V2Item;
       items.set(it.id, it);
     }
+  };
+
+  const handleNotification = (method: string, params: unknown) => {
+    const p = (params ?? {}) as Record<string, unknown>;
     // The account's rate limits, pushed for free while the turn runs. Feeding
     // the meter's cache here is what keeps ./planUsage.ts from spawning a
     // throwaway `codex app-server` to read the same numbers; it produces no
@@ -107,6 +111,10 @@ export async function* runAppServerTurn(args: AppServerTurnArgs): AsyncGenerator
 
   const client = new AppServerClient({
     onNotification: (method, params) => {
+      // An approval request can share stdout with turn/start's response and an
+      // item notification. Remember the item before buffering that notification
+      // until the turn id is known, so the approval card still has its paths.
+      rememberItem(method, params);
       if (early) early.push({ method, params });
       else handleNotification(method, params);
     },

@@ -30,7 +30,17 @@ if (argv[0] !== "app-server") {
 }
 
 const scenario = process.env.FAKE_CODEX_SCENARIO || "command";
-const out = (msg) => process.stdout.write(`${JSON.stringify(msg)}\n`);
+let batch = null;
+const out = (msg) => {
+  const line = `${JSON.stringify(msg)}\n`;
+  if (batch) batch.push(line);
+  else process.stdout.write(line);
+};
+const flush = () => {
+  if (!batch) return;
+  process.stdout.write(batch.join(""));
+  batch = null;
+};
 const notify = (method, params) => out({ jsonrpc: "2.0", method, params, emittedAtMs: Date.now() });
 
 let nextServerId = 1000;
@@ -96,6 +106,16 @@ rl.on("line", (line) => {
       return;
     case "turn/start":
       turnId = "turn-fake-1";
+      if (scenario === "fileChange") {
+        // Force the turn/start response, item notification, and approval
+        // request through one stdout write. A client must retain the item
+        // before it replays early notifications after turn/start resolves.
+        batch = [];
+        reply({ turn: { id: turnId, items: [], status: "inProgress", error: null } });
+        void runTurn();
+        flush();
+        return;
+      }
       reply({ turn: { id: turnId, items: [], status: "inProgress", error: null } });
       void runTurn();
       return;

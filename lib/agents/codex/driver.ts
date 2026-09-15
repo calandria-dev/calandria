@@ -241,12 +241,10 @@ async function* runTurn(
   const permission = task.permission_mode ?? getSetting(`default_permission_mode:${task.agent}`);
   // Prefer the task's isolated worktree; fall back to the shared repo path.
   const cwd = task.worktree_path || project.repo_path || process.cwd();
-  const policy = codexRunPolicy(permission, cwd, { downgraded: approvalDowngraded() });
+  const sandbox = task.sandbox_mode ?? getSetting("default_sandbox_mode:codex");
+  const policy = codexRunPolicy(permission, cwd, { sandbox, downgraded: approvalDowngraded() });
 
-  // The host has already told us its sandbox can't be created, and this mode
-  // needs one. Refuse before spending a turn: it would start, look normal, and
-  // fail every command it ran (lib/agents/codex/sandbox.ts). The message names
-  // the fixes, bypassPermissions among them, since that mode uses no sandbox.
+  // Refuse a selected sandbox that the host cannot create before starting a turn.
   const refusal = sandboxRefusal(policy.sandbox);
   if (refusal) {
     yield { type: "error", content: refusal };

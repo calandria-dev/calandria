@@ -8,6 +8,7 @@ import { maybeAutoStartDependents } from "@/lib/autoStart";
 import { publishGlobal } from "@/lib/events";
 import { isAgentId } from "@/lib/agents/capabilities";
 import { serializeGatewayMcp } from "@/lib/gatewayMcp";
+import { isCodexSandboxMode } from "@/lib/codexSandbox";
 import { getProvider } from "@/lib/providers/store";
 import { resolvedTaskProvider } from "@/lib/providers/resolve";
 import type { Task } from "@/lib/types";
@@ -55,7 +56,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 // since it only carries running/awaiting_input/status. A change to any of
 // these publishes `task_edited` ("refetch the row") instead of
 // `task_updated` ("here's the new status"); see lib/events.ts.
-const EDIT_FIELDS = ["title", "description", "priority", "suggested", "agent", "model", "reasoning", "permission_mode", "auto_start", "send_context", "provider_id", "gateway_mcp", "withdrawn_reason", "snoozed_until", "start_at"] as const;
+const EDIT_FIELDS = ["title", "description", "priority", "suggested", "agent", "model", "reasoning", "permission_mode", "sandbox_mode", "auto_start", "send_context", "provider_id", "gateway_mcp", "withdrawn_reason", "snoozed_until", "start_at"] as const;
 
 // Terminal statuses no longer block anything, matching the pair
 // lib/autoStart's blocks() uses. Cancelling clears a dependency edge the
@@ -70,9 +71,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const prevStatus = current.status;
   // Whitelist user-editable fields.
   const allowed: Partial<Task> = {};
-  for (const k of ["title", "description", "priority", "status", "suggested", "model", "reasoning", "permission_mode", "auto_start", "send_context", "provider_id"] as const) {
+  for (const k of ["title", "description", "priority", "status", "suggested", "model", "reasoning", "permission_mode", "sandbox_mode", "auto_start", "send_context", "provider_id"] as const) {
     if (k in body) (allowed as Record<string, unknown>)[k] = body[k];
   }
+  if ("sandbox_mode" in body && body.sandbox_mode !== null && !isCodexSandboxMode(body.sandbox_mode))
+    return NextResponse.json({ error: "sandbox_mode must be read-only, workspace-write, danger-full-access, or null" }, { status: 400 });
   // `model` is the one whitelisted field with an open-ended value: the picker
   // offers a catalog, but the column stores whatever the client sends and the
   // driver passes it straight to the CLI. This route validates shape only,
@@ -164,6 +167,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       allowed.resolved_model = null;
       allowed.reasoning = null;
       allowed.permission_mode = null;
+      allowed.sandbox_mode = null;
       allowed.session_id = null;
     }
   }

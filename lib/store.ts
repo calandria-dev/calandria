@@ -707,6 +707,8 @@ export function createTask(input: {
    * other creation path relies on.
    */
   permission_mode?: string | null;
+  /** Codex filesystem sandbox. null/undefined inherits default_sandbox_mode:codex. */
+  sandbox_mode?: string | null;
   /**
    * The model the task's sessions run on, settable at creation for the same
    * reason as permission_mode: the New-task dialog can start the first turn in
@@ -743,12 +745,12 @@ export function createTask(input: {
   ).n;
   getDb()
     .prepare(
-      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, model, provider_id, permission_mode, schedule_id, runbook_id, position, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, model, provider_id, permission_mode, sandbox_mode, schedule_id, runbook_id, position, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id, input.project_id, input.title, input.description ?? "", input.priority ?? "med", input.suggested ? 1 : 0,
-      agent, sendContext ? 1 : 0, input.model || null, input.provider_id ?? null, input.permission_mode || null, input.schedule_id ?? null, input.runbook_id ?? null,
+      agent, sendContext ? 1 : 0, input.model || null, input.provider_id ?? null, input.permission_mode || null, input.sandbox_mode ?? null, input.schedule_id ?? null, input.runbook_id ?? null,
       position, now, now
     );
   // Tags are a second write because they are a second table. setTaskTags does
@@ -993,7 +995,7 @@ export function moveTasks(
     // at its next cut. Empty inherits the destination project's default.
     const reparent = db.prepare(
       `UPDATE tasks SET project_id = ?, position = ?, agent = ?, send_context = ?, model = ?, resolved_model = ?,
-        reasoning = ?, permission_mode = ?, session_id = ?, base_branch = '', updated_at = ? WHERE id = ?`
+        reasoning = ?, permission_mode = ?, sandbox_mode = ?, session_id = ?, base_branch = '', updated_at = ? WHERE id = ?`
     );
     // Tags a row leaves behind, when the rest of their members stayed. Kept
     // out of the reparent above because a whole selection keeps its tags, so
@@ -1047,7 +1049,7 @@ export function moveTasks(
     // takes its repo's.
     const dropSettings = db.prepare("DELETE FROM task_settings_snapshots WHERE task_id = ?");
     for (const r of rows) {
-      reparent.run(projectId, r.position, r.agent, r.send_context, r.model, r.resolved_model, r.reasoning, r.permission_mode, r.session_id, now, r.id);
+      reparent.run(projectId, r.position, r.agent, r.send_context, r.model, r.resolved_model, r.reasoning, r.permission_mode, r.sandbox_mode, r.session_id, now, r.id);
       dropSettings.run(r.id);
       if (opts.resetCheckout?.has(r.id)) clearCheckout.run(r.id);
       for (const tagId of leftBehind.get(r.id) ?? []) untag.run(r.id, tagId);
@@ -1101,6 +1103,7 @@ function deriveMoved(task: Task, dest: Project) {
     resolved_model: switched ? null : task.resolved_model,
     reasoning: switched ? null : task.reasoning,
     permission_mode: switched ? null : task.permission_mode,
+    sandbox_mode: switched ? null : task.sandbox_mode,
     session_id: switched ? null : task.session_id,
   };
 }
@@ -1130,10 +1133,10 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   const n = { ...cur, ...patch, updated_at: Date.now() };
   getDb()
     .prepare(
-      `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, send_context=?, model=?, resolved_model=?, reasoning=?, permission_mode=?,
+      `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, send_context=?, model=?, resolved_model=?, reasoning=?, permission_mode=?, sandbox_mode=?,
         session_id=?, worktree_path=?, work_branch=?, base_sha=?, base_branch=?, merged_at=?, pr_url=?, pr_number=?, pr_state=?, pr_checks=?, pr_review=?, pr_merged_at=?, pr_synced_at=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, provider_id=?, snoozed_until=?, unread_run_at=?, base_rewritten_at=?, start_at=?, context_measured=?, gateway_mcp=?, updated_at=? WHERE id=?`
     )
-    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.base_branch ?? "", n.merged_at, n.pr_url, n.pr_number ?? 0, n.pr_state ?? "", n.pr_checks ?? "", n.pr_review ?? "", n.pr_merged_at ?? 0, n.pr_synced_at ?? 0, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.provider_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.base_rewritten_at ?? 0, n.start_at ?? 0, n.context_measured ?? null,
+    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.sandbox_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.base_branch ?? "", n.merged_at, n.pr_url, n.pr_number ?? 0, n.pr_state ?? "", n.pr_checks ?? "", n.pr_review ?? "", n.pr_merged_at ?? 0, n.pr_synced_at ?? 0, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.provider_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.base_rewritten_at ?? 0, n.start_at ?? 0, n.context_measured ?? null,
       // null means inherit the project's selection; anything else is
       // normalized, not trusted, same as agent_env (docs/AGENTS.md, LiteLLM section).
       n.gateway_mcp == null ? null : serializeGatewayMcp(n.gateway_mcp),

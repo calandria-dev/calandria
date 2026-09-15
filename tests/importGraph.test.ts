@@ -21,6 +21,7 @@ const FORBIDDEN = ["@anthropic-ai/claude-agent-sdk", "@openai/codex-sdk"];
 
 // Modules that must stay SDK-free, and why:
 const PINNED = [
+  "lib/codexSandbox.ts", // shared sandbox values for settings validation and the browser
   "lib/store.ts", //     imported by nearly everything, so it must stay SDK-free
   "lib/services.ts", //  behind sync-compiled routes (grant, services-restore)
   "lib/db.ts",

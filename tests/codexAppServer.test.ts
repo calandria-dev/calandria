@@ -23,7 +23,7 @@ vi.hoisted(() => {
 });
 
 import { codexDriver } from "@/lib/agents/codex/driver";
-import { createProject, createTask, updateProject, updateTask, getTask, listPermissionRules, listMessages } from "@/lib/store";
+import { createProject, createTask, updateProject, updateTask, getTask, listPermissionRules, listMessages, setSetting } from "@/lib/store";
 import { submitAnswer } from "@/lib/asks";
 import { subscribeGlobal, subscribe } from "@/lib/events";
 import { setRunContext, clearRunContext, SCHEDULED_RUN_CONTEXT } from "@/lib/runContext";
@@ -38,6 +38,7 @@ let logFile = "";
 let offWatcher: (() => void) | null = null;
 
 beforeEach(() => {
+  setSetting("default_sandbox_mode:codex", null);
   logFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "codex-fake-log-")), "log.jsonl");
   tmp.push(path.dirname(logFile));
   process.env.FAKE_CODEX_LOG = logFile;
@@ -47,6 +48,7 @@ beforeEach(() => {
   offWatcher = subscribeGlobal(() => {});
 });
 afterEach(() => {
+  setSetting("default_sandbox_mode:codex", null);
   offWatcher?.();
   offWatcher = null;
   delete process.env.FAKE_CODEX_LOG;
@@ -275,6 +277,23 @@ describe("codex app-server transport", () => {
     const p = fixture("plan");
     await turn(p.task, p.project, { answer: ["allow_once"] });
     expect(logged("turn/start")).toMatchObject({ approvalPolicy: "never", sandboxPolicy: { type: "readOnly", networkAccess: false } });
+  });
+
+  it("inherits the Settings sandbox for a fresh thread without changing approvals", async () => {
+    setSetting("default_sandbox_mode:codex", "read-only");
+    const { project, task } = fixture("default");
+    await turn(task, project, { answer: ["allow_once"] });
+    expect(logged("thread/start")).toMatchObject({ sandbox: "read-only", approvalPolicy: "on-request", approvalsReviewer: "user" });
+    expect(logged("turn/start")).toMatchObject({ sandboxPolicy: { type: "readOnly", networkAccess: false }, approvalPolicy: "on-request" });
+  });
+
+  it("applies a task sandbox override when resuming a thread", async () => {
+    setSetting("default_sandbox_mode:codex", "read-only");
+    const { project, task } = fixture("auto", { sessionId: "thread-fake-1" });
+    updateTask(task.id, { sandbox_mode: "danger-full-access" });
+    await turn(getTask(task.id)!, project, { answer: ["allow_once"] });
+    expect(logged("thread/resume")).toMatchObject({ sandbox: "danger-full-access", approvalPolicy: "on-request", approvalsReviewer: "auto_review" });
+    expect(logged("turn/start")).toMatchObject({ sandboxPolicy: { type: "dangerFullAccess" }, approvalsReviewer: "auto_review" });
   });
 
   it("renders a file-change approval with its diff and the escape it asks for", async () => {

@@ -99,6 +99,8 @@ export function init(db: Database.Database) {
       resolved_model TEXT,
       reasoning   TEXT,
       permission_mode TEXT,
+      -- Codex filesystem sandbox override. NULL inherits default_sandbox_mode:codex.
+      sandbox_mode TEXT,
       session_id  TEXT,
       worktree_path TEXT NOT NULL DEFAULT '',
       work_branch   TEXT NOT NULL DEFAULT '',
@@ -967,6 +969,9 @@ export function migrate(db: Database.Database, options: { seedProviders?: boolea
   // Per-task run controls (added after model selection): thinking preset + permission mode.
   if (!taskCols.includes("reasoning")) db.exec("ALTER TABLE tasks ADD COLUMN reasoning TEXT");
   if (!taskCols.includes("permission_mode")) db.exec("ALTER TABLE tasks ADD COLUMN permission_mode TEXT");
+  // Per-task Codex filesystem sandbox. NULL keeps the current driver behavior
+  // until a Codex default is configured in settings.
+  if (!taskCols.includes("sandbox_mode")) db.exec("ALTER TABLE tasks ADD COLUMN sandbox_mode TEXT");
   // Per-task provider override, laid over the project's (lib/agentEnv.ts). This
   // is how a frontier-model session delegates a task to a local model, or a
   // task in a local-model project is sent back to the cloud. '' = inherit.

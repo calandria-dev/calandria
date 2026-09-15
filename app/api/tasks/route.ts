@@ -4,6 +4,7 @@ import { createTask, getProject, listAllTasksLite, listAllTagsLite, getTag } fro
 import { adoptDraftUploads, removeTaskUploads } from "@/lib/uploads";
 import { attachmentKindOf, joinAttachmentText } from "@/lib/uploadTypes";
 import { getProvider } from "@/lib/providers/store";
+import { isCodexSandboxMode } from "@/lib/codexSandbox";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,8 @@ export async function POST(req: Request) {
   if (!body?.title?.trim()) return NextResponse.json({ error: "title required" }, { status: 400 });
   if (body.provider_id !== undefined && body.provider_id !== null && (typeof body.provider_id !== "string" || !getProvider(body.provider_id)))
     return NextResponse.json({ error: "valid provider_id required" }, { status: 400 });
+  if (body.sandbox_mode !== undefined && body.sandbox_mode !== null && !isCodexSandboxMode(body.sandbox_mode))
+    return NextResponse.json({ error: "sandbox_mode must be read-only, workspace-write, danger-full-access, or null" }, { status: 400 });
   // Same screen the PATCH route applies: every tag must exist and belong to
   // this task's project, since a tag can't span repositories.
   let tagIds: string[] = [];
@@ -75,6 +78,7 @@ export async function POST(req: Request) {
     // driver resolves anything it doesn't recognize (permissionModeFor), so a
     // stale or cross-agent value degrades to the default instead of 400ing.
     permission_mode: typeof body.permission_mode === "string" ? body.permission_mode : undefined,
+    sandbox_mode: body.sandbox_mode ?? null,
     // Settable up front for the same reason `startNow` exists: the New-task
     // dialog can launch the first turn in the same gesture, and a follow-up
     // PATCH would land after that turn already picked a model. Shape-checked

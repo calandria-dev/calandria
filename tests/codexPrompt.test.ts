@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // The exec transport is the one that drives @openai/codex-sdk; the default
 // app-server transport spawns the real CLI (tests/codexAppServer.test.ts points
@@ -11,7 +11,7 @@ vi.hoisted(() => {
 
 // Records the prompt string the driver hands the thread, then replays an empty
 // stream.
-const { sentPrompt } = vi.hoisted(() => ({ sentPrompt: { last: null as string | null } }));
+const { sentPrompt } = vi.hoisted(() => ({ sentPrompt: { last: null as string | null, options: {} as Record<string, unknown> } }));
 
 vi.mock("@openai/codex-sdk", () => {
   class FakeThread {
@@ -25,10 +25,12 @@ vi.mock("@openai/codex-sdk", () => {
     }
   }
   class Codex {
-    startThread() {
+    startThread(options: Record<string, unknown>) {
+      sentPrompt.options = options;
       return new FakeThread();
     }
-    resumeThread(id: string) {
+    resumeThread(id: string, options: Record<string, unknown>) {
+      sentPrompt.options = options;
       return new FakeThread(id);
     }
   }
@@ -36,7 +38,7 @@ vi.mock("@openai/codex-sdk", () => {
 });
 
 import { codexDriver } from "@/lib/agents/codex/driver";
-import { createProject, createTask, getTask } from "@/lib/store";
+import { createProject, createTask, getTask, setSetting } from "@/lib/store";
 import { ATTACHMENT_NUDGE, attachmentMarker } from "@/lib/uploadTypes";
 import type { Task } from "@/lib/types";
 
@@ -52,6 +54,24 @@ async function sent(userText: string, over: Partial<Task> = {}): Promise<string>
 
 beforeEach(() => {
   sentPrompt.last = null;
+  setSetting("default_sandbox_mode:codex", null);
+});
+afterEach(() => setSetting("default_sandbox_mode:codex", null));
+
+describe("codex exec sandbox selection", () => {
+  it("inherits the Settings sandbox while retaining the permission policy", async () => {
+    setSetting("default_sandbox_mode:codex", "read-only");
+    await sent("inspect", { permission_mode: "default" });
+    expect(sentPrompt.options).toMatchObject({ sandboxMode: "read-only", approvalPolicy: "never", networkAccessEnabled: false });
+    expect(sentPrompt.options.additionalDirectories).toBeUndefined();
+  });
+
+  it("applies a task override on a resumed thread", async () => {
+    setSetting("default_sandbox_mode:codex", "read-only");
+    await sent("continue", { session_id: "thread-1", permission_mode: "auto", sandbox_mode: "danger-full-access" });
+    expect(sentPrompt.options).toMatchObject({ sandboxMode: "danger-full-access", approvalPolicy: "never", networkAccessEnabled: true });
+    expect(sentPrompt.options.additionalDirectories).toBeUndefined();
+  });
 });
 
 // Chat attachments reach the agent as "[Attached image: /abs/path]" marker
