@@ -26,7 +26,12 @@ function platform(root: string, name: string, files: Record<string, string>) {
 const complete = {
   linux: { "calandria.deb": "deb", "calandria.AppImage": "app", "latest-linux.yml": "feed" },
   mac: { "calandria.dmg": "dmg", "calandria.zip": "zip", "latest-mac.yml": "feed", "calandria.zip.blockmap": "map" },
-  win: { "calandria.exe": "exe", "calandria.zip": "zip", "latest.yml": "feed", "calandria.exe.blockmap": "map" },
+  win: {
+    "calandria.exe": "exe",
+    "calandria.zip": "zip",
+    "latest.yml": "version: 1.2.3\nfiles:\n  - url: calandria.exe\npath: calandria.exe\n",
+    "calandria.exe.blockmap": "map",
+  },
 };
 
 describe("release artifact manifests", () => {
@@ -77,5 +82,49 @@ describe("release artifact manifests", () => {
     expect(() => verifyReleaseArtifacts({ root, version: "1.2.4", sourceSha: "badc0de", sourceTree: "release", sourcePr: "43", assetList: path.join(root, "assets.txt") })).toThrow(
       /version expected "1\.2\.4" but got "1\.2\.3"; sourceSha expected "badc0de" but got "deadbeef"; sourceTree expected "release" but got "main"; sourcePr expected 43 but got 42/,
     );
+  });
+
+  it("rejects a Windows feed that names an artifact absent from the handoff", () => {
+    const root = tempRoot();
+    const dir = path.join(root, "win");
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, "calandria.exe"), "exe");
+    fs.writeFileSync(path.join(dir, "calandria.zip"), "zip");
+    fs.writeFileSync(path.join(dir, "calandria.exe.blockmap"), "map");
+    fs.writeFileSync(
+      path.join(dir, "latest.yml"),
+      "version: 1.2.3\nfiles:\n  - url: Calandria-Setup-1.2.3.exe\npath: Calandria-Setup-1.2.3.exe\n",
+    );
+
+    expect(() => createManifest({
+      dir,
+      platform: "win",
+      version: "1.2.3",
+      sourceSha: "deadbeef",
+      sourceTree: "main",
+      sourcePr: "42",
+    })).toThrow(/latest\.yml references missing artifacts: Calandria-Setup-1\.2\.3\.exe/);
+  });
+
+  it("rejects a Windows handoff when the feed installer has no matching blockmap", () => {
+    const root = tempRoot();
+    const dir = path.join(root, "win");
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, "Calandria-Setup-1.2.3.exe"), "exe");
+    fs.writeFileSync(path.join(dir, "calandria.zip"), "zip");
+    fs.writeFileSync(path.join(dir, "other.exe.blockmap"), "map");
+    fs.writeFileSync(
+      path.join(dir, "latest.yml"),
+      "version: 1.2.3\nfiles:\n  - url: Calandria-Setup-1.2.3.exe\npath: Calandria-Setup-1.2.3.exe\n",
+    );
+
+    expect(() => createManifest({
+      dir,
+      platform: "win",
+      version: "1.2.3",
+      sourceSha: "deadbeef",
+      sourceTree: "main",
+      sourcePr: "42",
+    })).toThrow(/latest\.yml references missing artifacts: Calandria-Setup-1\.2\.3\.exe\.blockmap/);
   });
 });

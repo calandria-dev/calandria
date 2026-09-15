@@ -139,6 +139,9 @@ module.exports = {
     oneClick: false,
     perMachine: false,
     allowToChangeInstallationDirectory: true,
+    // Keep the installer name stable and identical to the filename written in
+    // latest.yml. The updater downloads the feed's path verbatim.
+    artifactName: "Calandria-Setup-${version}.${ext}",
   },
 
   // Controls where a release's artifacts go, and, easy to miss, where the
