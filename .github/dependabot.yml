@@ -216,8 +216,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    # node:22-bookworm-slim is pinned tag@digest; Dependabot rewrites the digest
-    # (and the tag, if the 22.x line moves) in both FROM lines.
+    # node:26-bookworm-slim is pinned tag@digest; Dependabot rewrites the digest
+    # (and the tag, if the line moves, as it did to 26 in #314) in both FROM
+    # lines. A current digest is not a current Debian package set, so the
+    # runtime stage also runs `apt-get upgrade` (issue #363); the comment there
+    # explains what this entry can and cannot do for the image scan.
     groups:
       base-image:
         patterns: ["*"]

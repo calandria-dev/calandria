@@ -15,12 +15,17 @@
 # Run:    see docker-compose.yml or the reference `docker run` in docs/DEPLOY.md.
 
 # ---- build stage: install all deps (incl. dev), compile Next ----------------
-# Pinned by digest rather than the `22-bookworm-slim` tag, which moves on every
+# Pinned by digest rather than the `26-bookworm-slim` tag, which moves on every
 # Node patch and Debian security rebuild, so a tag reference would not give two
 # builds of the same commit the same image. The digest is the multi-arch index
 # digest (linux/amd64 + linux/arm64/v8), so both matrix legs resolve their own
 # manifest from it. .github/dependabot.yml bumps it weekly; keep the two FROM
 # lines identical or the runtime stage diverges from the build stage.
+#
+# A current digest is not a current Debian package set. The tag is rebuilt on
+# Node's cadence, so between rebuilds this layer holds packages Debian has
+# already fixed. The runtime stage runs `apt-get upgrade` for that reason; the
+# note at that line carries the reasoning.
 FROM node:26-bookworm-slim@sha256:cd9f682fa2885cd1056e830424764158570061c59736a1da836bc3d73df095ae AS build
 WORKDIR /app
 
@@ -62,7 +67,27 @@ FROM node:26-bookworm-slim@sha256:cd9f682fa2885cd1056e830424764158570061c59736a1
 
 # git: project repos and per-task worktrees. openssh-client: git over ssh.
 # tini: PID 1, reaps the pty shells' orphans. procps: ps for debugging shells.
+#
+# `apt-get upgrade` covers the packages the base image already carries and
+# this line does not name. The FROM above is pinned by digest and Dependabot
+# rewrites it weekly, but Debian publishes a security update against bookworm
+# as soon as it is built, while the `node:26-bookworm-slim` tag is rebuilt on
+# Node's cadence. Between those two the pinned layer accumulates CVEs that
+# Debian has already fixed, which is what `Image scan (trivy)` reports: every
+# finding is `ignore-unfixed: true`, so every finding has a fixed version in
+# the archive. Installing only the seven packages named here left
+# libpcre2-8-0 at 10.42-1 with 10.42-1+deb12u1 sitting in the archive
+# (CVE-2026-86145, CVE-2026-89161, issue #363).
+#
+# This depends on the layer actually being rebuilt. Docker keys a layer on the
+# RUN command's text, so a cached build reuses whatever apt resolved the last
+# time the cache was cold, the same hazard the `gh=` pin note below describes.
+# publish-image.yml's Sunday cron (09:23 UTC) builds with `no-cache` and
+# pushes `:edge`; security-scan.yml reads `:edge` on Monday at 06:00 UTC. The
+# cold build is the one the scan sees, so this repeats every week on its own
+# instead of needing a digest bump by hand.
 RUN apt-get update \
+  && apt-get upgrade -y \
   && apt-get install -y --no-install-recommends \
        git openssh-client ca-certificates curl bash tini procps \
   && rm -rf /var/lib/apt/lists/*
@@ -89,7 +114,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list \
   && apt-get update \
-  && apt-get install -y --no-install-recommends gh=2.100.0 \
+  && apt-get install -y --no-install-recommends gh=2.101.0 \
   && rm -rf /var/lib/apt/lists/* \
   && gh --version
 
@@ -103,7 +128,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # npm 12.0.2 in turn vendors its own newer but still-vulnerable copies of tar,
 # brace-expansion, and ip-address, unfixable here since it is npm's newest
 # release. Tracked in .trivyignore; see that file for the current CVE list and
-# revisit policy.
+# revisit policy. Bumping this pin is how those four clear.
 RUN npm install -g npm@12.0.2 && npm --version
 
 # The agent CLIs, pinned. A floating `@latest` install would make a
@@ -121,7 +146,7 @@ RUN npm install -g npm@12.0.2 && npm --version
 # login.
 ARG CLAUDE_CODE_VERSION=2.1.260
 ARG CODEX_VERSION=0.153.0
-ARG AGY_VERSION=1.2.2
+ARG AGY_VERSION=1.2.3
 
 # The `claude` CLI: the Agent SDK spawns it, and login state lives in
 # ~/.claude on the volume. Pinned location via CLAUDE_CLI_PATH; updates ship as
@@ -176,8 +201,8 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 # The binary self-updates in the background by default, which would replace
 # this pin mid-turn. AGY_CLI_DISABLE_AUTO_UPDATE below turns that off
 # image-wide, and the driver sets it on every spawn as a second guard.
-ARG AGY_SHA512_AMD64=74342cf2a78b344392e573b638a648a6ad1f8e877f494b96e20f9c2b79158d5c423c40b2dcf788703362bb0a9150f09c707fde599d7557ce01c12208802a63cb
-ARG AGY_SHA512_ARM64=a1645a30f36b767c7534c2f6a53e99a9bfade993267efcca715f7a45d797d47d6561df787e9d4a51a3bdfc9be855d49d23fa3f4b91b2c661fd17314050836048
+ARG AGY_SHA512_AMD64=ec74dc5ce20e64623a4d68e73a8957e468c026bdb3d07b15c5291490323133970c735d985af839eab057b52b1bfd1b2e91ff49abeebef032ffae6dded8e2a763
+ARG AGY_SHA512_ARM64=bdab1bcdd4fea79eae663239a06e8e7964d9905ec6fa072076644f7506c7ce73cf2eb8563eb7060366bdb68ad815e5fc5bddf38ab621f39aff576a90899a3ac6
 RUN set -eu; \
     case "$(dpkg --print-architecture)" in \
       amd64) manifest=linux_amd64; sha="${AGY_SHA512_AMD64}" ;; \
