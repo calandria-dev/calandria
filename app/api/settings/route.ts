@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSettings, setSetting } from "@/lib/store";
 import { publishGlobal } from "@/lib/events";
+import { isCodexSandboxMode } from "@/lib/codexSandbox";
 
 export const dynamic = "force-dynamic";
 
@@ -48,7 +49,7 @@ export const dynamic = "force-dynamic";
 // version" on, which hides the pill until something newer than it appears.
 // The check's own result rides `update_state`. The server writes that key and
 // this allowlist omits it, so no browser can overwrite the cache.
-const ALLOWED = /^(background_jobs|recap_mode|notifications|notify_awaiting_input|notify_turn_failed|notify_schedule_failed|notify_queued_start|notify_queued_start_skipped|default_agent|utility_agent|update_check|update_dismissed|default_reasoning(:[a-z0-9_-]+)?|default_permission_mode(:[a-z0-9_-]+)?|default_model:[a-z0-9_-]+|default_provider:[a-z0-9_-]+|job_model_(light|heavy):[a-z0-9_-]+|job_provider_(light|heavy):[a-z0-9_-]+|plan_usage:[a-z0-9_-]+|auto_resume_on_limit:[a-z0-9_-]+)$/;
+const ALLOWED = /^(background_jobs|recap_mode|notifications|notify_awaiting_input|notify_turn_failed|notify_schedule_failed|notify_queued_start|notify_queued_start_skipped|default_agent|utility_agent|update_check|update_dismissed|default_reasoning(:[a-z0-9_-]+)?|default_permission_mode(:[a-z0-9_-]+)?|default_sandbox_mode:codex|default_model:[a-z0-9_-]+|default_provider:[a-z0-9_-]+|job_model_(light|heavy):[a-z0-9_-]+|job_provider_(light|heavy):[a-z0-9_-]+|plan_usage:[a-z0-9_-]+|auto_resume_on_limit:[a-z0-9_-]+)$/;
 
 /** The two keys the update pill re-reads when another tab writes them. */
 const UPDATE_KEYS = new Set(["update_check", "update_dismissed"]);
@@ -59,6 +60,11 @@ export async function GET() {
 
 export async function PATCH(req: Request) {
   const body = (await req.json()) as Record<string, string | null>;
+  if ("default_sandbox_mode:codex" in body) {
+    const value = body["default_sandbox_mode:codex"];
+    if (value !== null && !isCodexSandboxMode(value))
+      return NextResponse.json({ error: "default_sandbox_mode:codex must be read-only, workspace-write, danger-full-access, or null" }, { status: 400 });
+  }
   let updates = false;
   for (const k of Object.keys(body)) {
     if (!ALLOWED.test(k)) continue;

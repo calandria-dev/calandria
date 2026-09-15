@@ -277,19 +277,26 @@ protocol's so `codex/events.ts` maps both transports identically, and reads
 carries across transports). `tests/codexAppServer.test.ts` drives all of it against a fake binary
 (`tests/fixtures/codex/fake-app-server.mjs`).
 
-`codex/policy.ts` maps a permission mode to Codex's own policy, shared by both transports:
+`codex/policy.ts` resolves permissions and a sandbox for both transports. Permission modes choose
+approval behavior and the reviewer. The sandbox selector controls isolation independently. A null
+task value uses `default_sandbox_mode:codex` from Settings → Run defaults, then the legacy mapping
+below when the setting is unset.
 
-| Mode | Codex policy |
-|-|-|
-| `auto` (default) | workspace-write, `on-request` approvals decided by Codex's own reviewer (`approvals_reviewer: "auto_review"`) |
-| `default` | workspace-write, escalations go to the card |
-| `acceptEdits` | workspace-write that never asks |
-| `bypassPermissions` | `danger-full-access` |
-| `plan` | read-only |
+| Mode | Legacy sandbox | Approval behavior |
+|-|-|-|
+| `auto` (default) | workspace-write | `on-request`, reviewed by Codex (`approvals_reviewer: "auto_review"`) |
+| `default` | workspace-write | `on-request`, sent to the card |
+| `acceptEdits` | workspace-write | never asks |
+| `bypassPermissions` | danger-full-access | never asks |
+| `plan` | read-only | never asks |
+
+Valid explicit values are `read-only`, `workspace-write`, and `danger-full-access`, including for
+`plan` and `bypassPermissions`. Read-only has no network access or writable roots. Workspace-write
+has network access and computed git roots. Danger-full-access has network access with no sandbox
+or roots. Only `turn/start` can carry the full `SandboxPolicy` object with `writableRoots`.
 
 A migration moved every Codex row stored as `bypassPermissions` onto `acceptEdits`, preserving
-prior behavior. Only `turn/start` (not `thread/start`) can carry the full `SandboxPolicy` object
-with `writableRoots`.
+prior behavior.
 
 Under workspace-write, Codex marks a linked worktree's `.git` gitdir pointer and its resolved
 real gitdir read-only, and the repo's common `.git` sits outside every writable root, so a
@@ -313,11 +320,11 @@ reconnecting a working login does not fix a broken sandbox). Three writers, one 
 a session and saw no such warning (the `sawSession` gate: a fresh server's silence is proof, a
 turn that died before the server spoke is not). The driver refuses to start a `workspace-write`
 or `read-only` turn while the flag is set, naming the sysctl, an AppArmor profile for bwrap,
-`bypassPermissions` and `CODEX_EXTERNAL_SANDBOX`; `danger-full-access` is never refused, having no
-sandbox to fail. The classifier does not treat "could not find bubblewrap on PATH" as fatal, since
+the Full access sandbox selector and `CODEX_EXTERNAL_SANDBOX`; `danger-full-access` is never refused,
+having no sandbox to fail. The classifier does not treat "could not find bubblewrap on PATH" as fatal, since
 that warning names its own bundled fallback. `CODEX_EXTERNAL_SANDBOX` sends `workspace-write` out
 as the app-server's `externalSandbox` policy, so Codex confines nothing and the container image is
-the boundary; it covers only that one mode, since `read-only` assumes a read-only filesystem a
+the boundary; it covers workspace-write only, since `read-only` assumes a read-only filesystem a
 container does not provide.
 
 Enterprise-managed approval requirements can disallow `approval_policy=never`. The driver detects

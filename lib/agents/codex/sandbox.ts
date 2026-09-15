@@ -1,36 +1,7 @@
-// Is Codex's own sandbox actually able to run anything on this host?
-//
-// On Linux, Codex sandboxes `workspace-write` and `read-only` turns with
-// bubblewrap, which needs to create an unprivileged user namespace. Ubuntu
-// 24.04 denies exactly that by default
-// (`kernel.apparmor_restrict_unprivileged_userns=1`), and the failure is as
-// quiet as it is total: the turn starts, the model works, and every single
-// command it runs fails. Nothing in the transcript says why. The one signal is
-// a `configWarning` notification the `codex app-server` pushes when it
-// starts: "Codex's Linux sandbox uses bubblewrap and needs access to create
-// user namespaces." lib/agents/codex/appServerEvents.ts already surfaces
-// that as a transcript notice, once, mid-turn, after the user has already
-// spent a turn finding out.
-//
-// So the warning is promoted to a piece of instance state, recorded next to the
-// dead-login flag (`agent_sandbox_broken_codex`, lib/agents/connections.ts) and
-// read in two places: the Settings → Agents card, which shows it with the fix,
-// and the driver, which REFUSES a sandboxed turn instead of running one that
-// cannot work: a turn that fails every command still bills, still writes a
-// transcript, and still looks to the model like a repo that mysteriously
-// rejects every edit.
-//
-// Three warnings, three verdicts:
-//
-//   "…needs access to create user namespaces."        broken (this host)
-//   "…not supported on WSL1 because WSL1 cannot        broken (use WSL2)
-//    create the required user namespaces…"
-//   "Codex could not find bubblewrap on PATH…         fine: the CLI says in
-//    Codex will use the bundled bubblewrap…"          the same breath that it
-//                                                     has a working fallback
-//
-// Verified against codex-cli 0.153.0: all three strings are in the shipped
-// binary, and `externalSandbox` is a real app-server SandboxPolicy variant.
+// Track hosts where Codex cannot start its read-only or workspace-write sandbox.
+// Linux uses bubblewrap, which needs an unprivileged user namespace. The
+// app-server warning is recorded next to the dead-login state and blocks only
+// sandboxed turns. Danger-full-access has no Codex sandbox.
 
 import { CODEX_EXTERNAL_SANDBOX } from "../../config";
 import { getAgentSandboxBroken, markAgentSandboxBroken, clearAgentSandboxBroken } from "../connections";
@@ -73,7 +44,7 @@ export function firstSandboxWarning(warnings: string[]): string | null {
 export const SANDBOX_FIX_HINT =
   "Allow unprivileged user namespaces (sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0, " +
   "persisted in /etc/sysctl.d/), or install an AppArmor profile for bwrap, or run the task in " +
-  "bypassPermissions, which uses no sandbox at all. In a container, where the container is already the " +
+  "the Full access (`danger-full-access`) sandbox, which uses no Codex sandbox. In a container, where the container is already the " +
   "boundary, set CODEX_EXTERNAL_SANDBOX=1.";
 
 export interface CodexSandboxHealth {

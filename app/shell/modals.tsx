@@ -8,7 +8,7 @@ import { nanoid } from "nanoid";
 import { relTime, duration, fmtJobCost, alphabetical, isBlocking, splitAttachments } from "./format";
 import { AttachmentChips, stagedAttachment, uploadToDraft, uploadToTask, useAttachments } from "./attachments";
 import { joinAttachmentText } from "@/lib/uploadTypes";
-import { SLABEL, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate, type TagRow } from "./types";
+import { SLABEL, permissionOptions, codexSandboxOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate, type TagRow } from "./types";
 import { tagProgress } from "./TagChips";
 import { agentLabel, agentPickerNeeded, defaultAgentFor, findAgent, pickerAgents } from "./agents";
 import { StatusDot, Skel, ErrNote } from "./shared";
@@ -274,7 +274,7 @@ function DescriptionField({ value, onChange, placeholder, files, help }: {
   );
 }
 
-export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, onCreateTag, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; tags: TagRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; provider_id: string | null; permission_mode: string | null; tag_ids: string[]; attachments: string[] }) => void; onCreateTag: (name: string) => Promise<TagRow>; onOpenSetup?: () => void }) {
+export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, onCreateTag, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; tags: TagRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; provider_id: string | null; permission_mode: string | null; sandbox_mode: string | null; tag_ids: string[]; attachments: string[] }) => void; onCreateTag: (name: string) => Promise<TagRow>; onOpenSetup?: () => void }) {
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
@@ -290,6 +290,7 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   // permission prompt declines itself: this dialog needs to be able to say
   // "don't stop to ask".
   const [permission, setPermission] = useState<string | null>(null);
+  const [sandbox, setSandbox] = useState<string | null>(null);
   // Same inherit semantics for the model. Chosen here rather than only in the
   // session rail because "Start session immediately" makes the first turn part
   // of this dialog: a rail pick afterwards would land a model behind the turn
@@ -337,6 +338,7 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   const canStart = !blocked && agentReady && !gatewayInsecure;
   const willAutoStart = autoStart && deps.length > 0;
   const permissionOpts = useMemo(() => permissionOptions(selAgent?.capabilities), [selAgent]);
+  const sandboxOpts = agent === "codex" ? codexSandboxOptions("Use the Codex Settings default, or follow the permission mode") : [];
   // Permission modes are provider-specific (each driver labels its own: Claude
   // speaks Anthropic's mode names, Codex its sandbox modes), so a choice made
   // under one agent may not exist under the next. Switching agents drops it
@@ -345,14 +347,15 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   // model/provider pair.
   useEffect(() => {
     if (permission && !permissionOpts.some((p) => p.value === permission)) setPermission(null);
-  }, [permissionOpts, permission]);
+    if (agent !== "codex") setSandbox(null);
+  }, [permissionOpts, permission, agent]);
   // What this agent calls its never-asks mode, for the unattended warning below.
   const bypassLabel = permissionOpts.find((p) => p.value === "bypassPermissions")?.label ?? "bypassPermissions";
   // bypassPermissions is the only mode that never parks on a card. "Inherit"
   // (null) can resolve to one that does, so it counts as unsafe for unattended
   // too: what it resolves to isn't guessed at here.
   const unattendedRisk = willAutoStart && permission !== "bypassPermissions";
-  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: willAutoStart, model, provider_id: providerId, permission_mode: permission, tag_ids: tagIds, attachments: files.ready.map((a) => a.path) });
+  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: willAutoStart, model, provider_id: providerId, permission_mode: permission, sandbox_mode: sandbox, tag_ids: tagIds, attachments: files.ready.map((a) => a.path) });
   return (
     <Modal title="New task" sub={`${project.name} · title + description define ${agentLabel(agents, agent)}'s task context`} onClose={close}
       footer={<>
@@ -419,6 +422,15 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
             {permissionOpts.find((p) => p.value === permission)?.sub ?? permissionOpts[0]?.sub}
             {" (changeable later from the session rail)."}
           </div>
+        </div>
+      )}
+      {sandboxOpts.length > 0 && (
+        <div className="field">
+          <div className="lab">Sandbox</div>
+          <div className="seg wrap" style={{ maxWidth: 520 }}>
+            {sandboxOpts.map((s) => <button key={s.label} className={sandbox === s.value ? "on" : ""} title={s.sub} onClick={() => setSandbox(s.value)}>{s.label}</button>)}
+          </div>
+          <div className="hlp">Controls Codex file and network isolation independently from its permission mode.</div>
         </div>
       )}
       <TagsField tags={tags} value={tagIds} onChange={setTagIds} onCreate={onCreateTag} primary />

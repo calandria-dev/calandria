@@ -253,10 +253,10 @@ environment in Settings → Models. Some task editors still label it Agent. The 
 the field name `agent`. Choose an environment per task,
 or connect only the one you use. All three work with subscription login, and API keys stay
 optional, except in a container, where Antigravity needs one because its CLI
-stores its token in the OS keyring. The same five permission modes apply to
-every environment: a Codex task maps them onto Codex's sandbox and approval policy,
-its approval requests land on the same permission card a Claude prompt does,
-and a sandboxed Codex turn can still commit from its worktree. On a Linux
+stores its token in the OS keyring. Codex tasks select permissions and a sandbox independently.
+An inherited sandbox uses the Settings → Run defaults value, then the permission mode's default
+mapping. Codex approval requests land on the same permission card a Claude prompt does, and a
+workspace-write Codex turn can still commit from its worktree. On a Linux
 host that blocks the user namespaces Codex's sandbox needs, Settings →
 Models displays the fix when you connect the Codex environment. Calandria blocks the sandboxed
 modes instead of running turns whose every command fails.

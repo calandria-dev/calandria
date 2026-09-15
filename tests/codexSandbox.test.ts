@@ -110,7 +110,7 @@ describe("refusing a turn that cannot work", () => {
       expect(msg).toContain("workspace-write");
       expect(msg).toContain(USERNS);
       expect(msg).toContain("kernel.apparmor_restrict_unprivileged_userns=0");
-      expect(msg).toContain("bypassPermissions");
+      expect(msg).toContain("danger-full-access");
     }
     expect(sandboxRefusal(modeSandbox("plan"))).toContain("read-only");
   });
@@ -118,6 +118,14 @@ describe("refusing a turn that cannot work", () => {
   it("never refuses bypassPermissions, which uses no sandbox at all", () => {
     noteCodexSandboxWarning(USERNS);
     expect(sandboxRefusal(modeSandbox("bypassPermissions"))).toBeNull();
+  });
+
+  it("checks the selected sandbox independently of the permission mode", () => {
+    noteCodexSandboxWarning(USERNS);
+    const full = codexRunPolicy("default", process.cwd(), { sandbox: "danger-full-access" });
+    expect(sandboxRefusal(full.sandbox)).toBeNull();
+    const read = codexRunPolicy("bypassPermissions", process.cwd(), { sandbox: "read-only" });
+    expect(sandboxRefusal(read.sandbox)).toContain("read-only");
   });
 });
 

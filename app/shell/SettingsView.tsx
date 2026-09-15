@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Icon, EnvMark } from "../icons";
 import {
-  DEFAULT_SETTINGS, reasoningOptions, permissionOptions, INHERIT_LABEL, MONO_FONTS, PROMPT_FONTS,
+  DEFAULT_SETTINGS, reasoningOptions, permissionOptions, codexSandboxOptions, INHERIT_LABEL, MONO_FONTS, PROMPT_FONTS,
   type Settings, type AgentsBundle, type Appearance, type Palette, type MonoFontId, type PromptFontId,
 } from "./types";
 import { capsFor, agentLabel } from "./agents";
@@ -675,6 +675,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   // driver's resolution) so pre-existing settings still show as selected.
   const reasoningVal = appDefaults[`default_reasoning:${editAgent}`] ?? appDefaults.default_reasoning ?? null;
   const permissionVal = appDefaults[`default_permission_mode:${editAgent}`] ?? appDefaults.default_permission_mode ?? null;
+  const sandboxVal = appDefaults["default_sandbox_mode:codex"] ?? null;
   // The internal one-shots, in the two tiers lib/agents/oneshots.ts routes them
   // by. Agent-scoped like the model default above, and for the same reason.
   const lightJobModel = appDefaults[`job_model_light:${editAgent}`] ?? null;
@@ -1044,6 +1045,17 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                     ))}
                   </div>
                 </div>
+                {editAgent === "codex" && (
+                  <div className="field">
+                    <div className="lab">Default Codex sandbox</div>
+                    <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+                      The sandbox a Codex task uses when its own picker is set to <strong>Inherit default</strong>. This is independent of the permission mode.
+                    </div>
+                    <div className="seg wrap" style={{ maxWidth: 520 }}>
+                      {codexSandboxOptions("Use the sandbox associated with the task's permission mode", "Follow permission mode").map((s) => <button key={s.label} className={sandboxVal === s.value ? "on" : ""} title={s.sub} onClick={() => setAppDefault("default_sandbox_mode:codex", s.value)}>{s.label}</button>)}
+                    </div>
+                  </div>
+                )}
                 <div className="field">
                   <div className="lab" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     {Icon.clock()} Resume automatically when the limit resets

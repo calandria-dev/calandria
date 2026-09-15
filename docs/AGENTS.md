@@ -208,18 +208,26 @@ MCP bridge because the upstream non-interactive CLI has no such hook of its own.
 | `CODEX_WRITABLE_ROOTS` | unset | Extra paths a sandboxed turn can write to, beyond the worktree's own git plumbing. |
 | `CODEX_EXTERNAL_SANDBOX` | unset | In a container, set to `1` to run `workspace-write` turns unconfined and rely on the container as the boundary. |
 
-**Permission modes.** Task turns run on `codex app-server` by default. Its approval requests
+**Permissions and sandbox.** Task turns run on `codex app-server` by default. Its approval requests
 come back to Calandria over JSON-RPC and park on the same permission card a Claude prompt uses,
 with Allow once / Always allow / Decline and the same remembered rules per project. The five
-modes map onto Codex's own sandbox and approval policy (`lib/agents/codex/policy.ts`):
+modes choose Codex approvals and reviewers. Each Codex task also has a sandbox selector. When the
+task selector is inherited, Calandria reads `default_sandbox_mode:codex` from **Settings → Run
+defaults**. If that value is unset, it uses the permission mode's legacy sandbox mapping.
 
-| Mode | Codex label | Sandbox | Approvals |
-|-|-|-|-|
-| **auto** *(default)* | auto-review | workspace-write | on request, decided by Codex's own reviewer (`approvals_reviewer=auto_review`) |
-| **default** | on-request | workspace-write | on request, decided by you on a permission card |
-| **acceptEdits** | workspace-write | workspace-write | never: what the sandbox refuses fails and the model works around it |
-| **bypassPermissions** | danger-full-access | none | never |
-| **plan** | read-only | read-only | never |
+| Mode | Legacy sandbox | Approvals |
+|-|-|-|
+| **auto** *(default)* | workspace-write | on request, decided by Codex's own reviewer (`approvals_reviewer=auto_review`) |
+| **default** | workspace-write | on request, decided by you on a permission card |
+| **acceptEdits** | workspace-write | never: what the sandbox refuses fails and the model works around it |
+| **bypassPermissions** | danger-full-access | never |
+| **plan** | read-only | never |
+
+An explicit sandbox choice overrides that legacy mapping for every permission mode, including
+`plan` and `bypassPermissions`. It does not change approvals, the reviewer, or whether a turn can
+park on a permission card. Read-only has no network access and no writable roots. Workspace-write
+has network access and the worktree's git roots described below. Danger-full-access has network
+access and no Codex sandbox or writable-root list.
 
 A workspace-write turn can commit from its worktree. Codex protects a checkout's `.git` and, for
 a linked worktree, the real gitdir the `.git` file points at, while the repo's common `.git` sits
@@ -259,7 +267,7 @@ namespaces."
 Calandria detects that warning in the Codex connection flow under **Settings → Models** with the
 fix and a "Check again" button. While the flag is set, Calandria refuses to start a
 workspace-write or read-only turn and fails it with an explanation instead of running one
-where every command fails. `bypassPermissions` (danger-full-access) uses no sandbox and is
+where every command fails. A task with **Full access** selected uses danger-full-access and is
 never refused.
 
 Fix it one of these ways:
@@ -267,10 +275,10 @@ Fix it one of these ways:
 - Run `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` and persist it under
   `/etc/sysctl.d/`.
 - Add an AppArmor profile that allows `bwrap` to create user namespaces.
-- Run the task in `bypassPermissions` mode.
+- Select **Full access** for the task sandbox.
 - In a container, set `CODEX_EXTERNAL_SANDBOX=1`. It sends `workspace-write` turns Codex's
   `externalSandbox` policy, which runs commands unconfined and relies on the container as
-  the boundary. It covers `workspace-write` only: `read-only` (plan mode) stays sandboxed,
+  the boundary. It covers `workspace-write` only: `read-only` stays sandboxed,
   because its guarantee is that nothing is writable and a container does not provide that.
   It has no effect under `CODEX_TRANSPORT=exec`, which cannot express the policy.
 
