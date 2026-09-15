@@ -3,9 +3,8 @@
  * it. Thin wrappers over the `key` field of the `litellm` provider row
  * (lib/providerSecrets.ts, lib/providers/store.ts).
  *
- * Not part of `agent_env`, which GET /api/projects serves to the browser;
- * `agentTurnEnv()` resolves the provider row and reads its credential at turn
- * time.
+ * Never serialized into a provider row or an API response. `agentTurnEnv()`
+ * resolves the provider row and reads its credential at turn time.
  *
  * `CALANDRIA_LITELLM_KEY` in the environment is the other way in, for an
  * instance that gets its secrets from compose or a systemd unit. It needs no

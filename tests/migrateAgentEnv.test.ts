@@ -7,10 +7,20 @@ import { insertProviderRow } from "../lib/providers/rows";
 let open: Database.Database | undefined;
 afterEach(() => open?.close());
 
+// A database as a shipped 0.14.x release left it: the provider tables exist
+// and the agent_env columns are still there, carrying blobs that release's
+// own migration did not convert. init() no longer creates those columns, so
+// the pre-drop shape is restored here.
 function legacyDb() {
   const db = (open = new Database(":memory:"));
   init(db);
+  db.exec("ALTER TABLE projects ADD COLUMN agent_env TEXT NOT NULL DEFAULT ''");
+  db.exec("ALTER TABLE tasks ADD COLUMN agent_env TEXT NOT NULL DEFAULT ''");
   return db;
+}
+
+function hasAgentEnv(db: Database.Database, table: string): boolean {
+  return (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((c) => c.name === "agent_env");
 }
 
 function project(db: Database.Database, id: string, agentEnv: object, agent = "claude") {
@@ -36,7 +46,7 @@ function task(db: Database.Database, id: string, projectId: string, agentEnv: ob
 }
 
 describe("legacy agent_env provider migration", () => {
-  it("converts local, gateway, custom and cloud shapes and is idempotent", () => {
+  it("converts local, gateway, custom and cloud shapes, drops the columns, and is idempotent", () => {
     const db = legacyDb();
     const cloud = {
       ANTHROPIC_BASE_URL: "",
@@ -91,10 +101,25 @@ describe("legacy agent_env provider migration", () => {
     ]));
     const cloudProvider = (db.prepare("SELECT provider_id FROM tasks WHERE id = 'cloud-task'").get() as { provider_id: string }).provider_id;
     expect(cloudProvider).toBe(byType("openai").id);
+    // The blobs are read for the last time by that migrate() and the columns
+    // go with it, so the conversion above can never run twice on one row.
+    expect(hasAgentEnv(db, "projects")).toBe(false);
+    expect(hasAgentEnv(db, "tasks")).toBe(false);
+
+    // A second migrate() has no columns left to read and creates nothing.
     const before = rows.length;
-    const envBefore = (db.prepare("SELECT agent_env FROM projects WHERE id = 'local'").get() as { agent_env: string }).agent_env;
     migrate(db);
     expect((db.prepare("SELECT COUNT(*) AS n FROM model_providers").get() as { n: number }).n).toBe(before);
-    expect((db.prepare("SELECT agent_env FROM projects WHERE id = 'local'").get() as { agent_env: string }).agent_env).toBe(envBefore);
+    expect(hasAgentEnv(db, "projects")).toBe(false);
+  });
+
+  // A database created by this build has never had the columns, so the
+  // conversion returns before preparing a statement that names them.
+  it("migrates a fresh database that never carried the columns", () => {
+    const db = (open = new Database(":memory:"));
+    init(db);
+    expect(hasAgentEnv(db, "projects")).toBe(false);
+    expect(hasAgentEnv(db, "tasks")).toBe(false);
+    expect(() => migrate(db)).not.toThrow();
   });
 });

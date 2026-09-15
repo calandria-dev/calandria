@@ -1130,7 +1130,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         //    SDK hasn't announced one yet. Still null when that model never
         //    appeared in a probe, same as `custom`.
         //
-        // The kind comes from `taskProvider`, the same call the session
+        // The kind comes from `resolvedTaskProvider`, the same call the session
         // header's provider badge renders from, so the ledger and the badge
         // cannot disagree about which endpoint a turn ran against. Tokens
         // are kept whichever way it lands: an unpriced turn still filled a

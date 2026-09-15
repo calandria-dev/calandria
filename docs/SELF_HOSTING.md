@@ -224,10 +224,12 @@ docker compose -p calandria-alice up -d --no-build
 ```
 
 The container comes up, runs its schema migrations, and starts serving.
-Migrations are additive and idempotent: new columns get defaults, nothing is
-dropped, so a database from any older version upgrades in place, and
-re-running the same version changes nothing. They are not reversible, which
-is why step 1 matters.
+Migrations are idempotent, so re-running the same version changes nothing and
+a database from any older version upgrades in place. Most are additive: new
+columns get defaults. A few are not. This release drops two columns the
+provider migration left unread. That is why the build stamps a schema version
+and an older build refuses the database, and why step 1 matters: migrations
+are not reversible.
 
 After migrating, the build stamps the database with the schema version it
 understands (`PRAGMA user_version`,

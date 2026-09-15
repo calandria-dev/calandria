@@ -324,8 +324,8 @@ export function parseModelPolicy(type: ProviderType, value: unknown): ModelPolic
 /**
  * Which local server answers on a port. 11434 is Ollama's default and 1234 is
  * LM Studio's; anything else is something Calandria cannot name, so it is a
- * `custom` row. Used by the env seed and by the agent_env migration, which
- * have to agree.
+ * `custom` row. Used by the env seed and by the legacy provider migration in
+ * lib/db.ts, which have to agree.
  */
 export function localTypeForPort(baseUrl: string): ProviderType {
   let port = "";

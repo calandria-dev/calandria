@@ -22,9 +22,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const usage = getTaskUsage(id);
   const ctx = getTaskContext(id);
   const project = getProject(task.project_id);
-  const { agent_env: _legacyAgentEnv, ...publicTask } = task;
   return NextResponse.json({
-    ...publicTask,
+    ...task,
     provider: resolvedTaskProvider(project, task, task.agent),
     cost_usd: usage.cost_usd,
     // Turns whose endpoint had no price, so cost_usd is only a floor.
@@ -271,9 +270,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     maybeAutoStartDependents(id);
   }
   const project = getProject(task.project_id);
-  const { agent_env: _legacyAgentEnv, ...publicTask } = task;
   return NextResponse.json({
-    ...publicTask,
+    ...task,
     provider: resolvedTaskProvider(project, task, task.agent),
     depends_on: getTaskDeps(id),
   });

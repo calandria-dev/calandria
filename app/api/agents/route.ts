@@ -143,9 +143,9 @@ export async function GET() {
         // driver refuses the affected modes rather than running them.
         sandboxBroken: getAgentSandboxBroken(d.id),
         // How much of the instance this login actually runs. `connected` and
-        // `account` describe the login itself, which a project's agent_env
-        // override cannot invalidate: the credentials stay good and Reconnect
-        // must keep working. What the override changes is whether the plan
+        // `account` describe the login itself, which a project's provider
+        // selection cannot invalidate: the credentials stay good and Reconnect
+        // must keep working. What the selection changes is whether the plan
         // named beside them has anything to do with this instance's turns, so
         // the card states that separately. Same source as the titlebar meter's
         // hide rule (app/api/plan-usage/route.ts), so the two never disagree.

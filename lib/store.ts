@@ -301,8 +301,8 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
       // A budget of 0 is a legitimate (if pointless) cap, so only null/undefined
       // clear it, matching gateway_max_budget's own null-is-unlimited contract.
       n.gateway_max_budget ?? null, n.gateway_key_duration?.trim() ?? "",
-      // Same normalize-don't-trust treatment as agent_env (docs/AGENTS.md, LiteLLM
-      // section, "Hosted MCP servers").
+      // Normalized, not trusted, since this is reached straight from a PATCH
+      // body (docs/AGENTS.md, LiteLLM section, "Hosted MCP servers").
       serializeGatewayMcp(n.gateway_mcp), id);
   return getProject(id);
 }
@@ -386,10 +386,10 @@ const CONTEXT_ESTIMATED_SQL = (t: string) =>
  */
 export function listTasks(projectId: string): TaskWithUsage[] {
   const db = getDb();
-  // One read for the whole list: the provider override a row inherits is the
-  // project's, with only the task's own agent_env laid over it per row. Rows
-  // where neither carries one skip the describe entirely, which is almost every
-  // row on almost every instance, and this runs on every task-list load.
+  // One read of the project for the whole list: a row's provider is its own
+  // provider_id when set, otherwise the project's default_provider_id. Rows
+  // with neither skip the lookup entirely, which is almost every row on
+  // almost every instance, and this runs on every task-list load.
   const project = getProject(projectId);
   const rows = db
     .prepare(
@@ -718,8 +718,6 @@ export function createTask(input: {
   model?: string | null;
   /** The provider override for this task. null inherits the project provider. */
   provider_id?: string | null;
-  /** @deprecated Legacy callers may still supply this during migration. It is ignored. */
-  agent_env?: string | Record<string, string> | null;
   /** The schedule that minted this task (lib/scheduler.ts). null for hand-made tasks. */
   schedule_id?: string | null;
   /** The runbook that dispatched this task (lib/dispatch.ts). null for hand-made tasks. */
@@ -1138,7 +1136,7 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
     )
     .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.sandbox_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.base_branch ?? "", n.merged_at, n.pr_url, n.pr_number ?? 0, n.pr_state ?? "", n.pr_checks ?? "", n.pr_review ?? "", n.pr_merged_at ?? 0, n.pr_synced_at ?? 0, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.provider_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.base_rewritten_at ?? 0, n.start_at ?? 0, n.context_measured ?? null,
       // null means inherit the project's selection; anything else is
-      // normalized, not trusted, same as agent_env (docs/AGENTS.md, LiteLLM section).
+      // normalized, not trusted (docs/AGENTS.md, LiteLLM section).
       n.gateway_mcp == null ? null : serializeGatewayMcp(n.gateway_mcp),
       n.updated_at, id);
   return getTask(id);

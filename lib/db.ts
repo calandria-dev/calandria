@@ -869,12 +869,6 @@ export function migrate(db: Database.Database, options: { seedProviders?: boolea
   add("recap", "TEXT NOT NULL DEFAULT ''");
   add("recap_at", "INTEGER NOT NULL DEFAULT 0");
   add("recap_covers_at", "INTEGER NOT NULL DEFAULT 0");
-  // Provider override for the project's turns (lib/agentEnv.ts): JSON over
-  // an allowlist of the env keys the two CLIs read to pick an endpoint and
-  // model, so a project can run against Ollama or LM Studio without a new
-  // driver. '' = no override; every pre-existing project used the agent's own
-  // cloud login.
-  add("agent_env", "TEXT NOT NULL DEFAULT ''");
   // The provider every task in this project runs against unless the task names
   // its own (lib/providers/). NULL = the environment's own bundled row. SET
   // NULL rather than cascade: removing a provider must not delete the project,
@@ -972,10 +966,6 @@ export function migrate(db: Database.Database, options: { seedProviders?: boolea
   // Per-task Codex filesystem sandbox. NULL keeps the current driver behavior
   // until a Codex default is configured in settings.
   if (!taskCols.includes("sandbox_mode")) db.exec("ALTER TABLE tasks ADD COLUMN sandbox_mode TEXT");
-  // Per-task provider override, laid over the project's (lib/agentEnv.ts). This
-  // is how a frontier-model session delegates a task to a local model, or a
-  // task in a local-model project is sent back to the cloud. '' = inherit.
-  if (!taskCols.includes("agent_env")) db.exec("ALTER TABLE tasks ADD COLUMN agent_env TEXT NOT NULL DEFAULT ''");
   // Agent-driver seam: which driver runs this task's sessions. Every pre-seam
   // task ran Claude, so the column default backfills existing rows correctly.
   if (!taskCols.includes("agent")) db.exec("ALTER TABLE tasks ADD COLUMN agent TEXT NOT NULL DEFAULT 'claude'");
@@ -1378,6 +1368,7 @@ export function migrate(db: Database.Database, options: { seedProviders?: boolea
   // available until init() returns.
   if (options.seedProviders) seedProvidersFromEnv(db);
   migrateLegacyAgentEnv(db);
+  dropLegacyAgentEnv(db);
 
   // Last, once everything above has actually run: stamp what this build
   // made of the file, so a later build older than this one refuses to open
@@ -1496,10 +1487,34 @@ function scaffoldWelcomeRepo(): string {
 
 }
 
+function hasColumn(db: Database.Database, table: string, column: string): boolean {
+  return (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((c) => c.name === column);
+}
+
+/**
+ * Remove the legacy provider blobs, after migrateLegacyAgentEnv has read them
+ * for the last time. Runs on every migrate and does nothing once the columns
+ * are gone, like every other step here.
+ *
+ * SCHEMA_VERSION carries the other half: a build older than this one re-adds
+ * both columns empty and resolves turns from them, so the boot gate refuses
+ * that database (lib/schema-version.mjs).
+ */
+function dropLegacyAgentEnv(db: Database.Database): void {
+  if (hasColumn(db, "projects", "agent_env")) db.exec("ALTER TABLE projects DROP COLUMN agent_env");
+  if (hasColumn(db, "tasks", "agent_env")) db.exec("ALTER TABLE tasks DROP COLUMN agent_env");
+}
+
 /**
  * Convert the endpoint presets stored by pre-provider releases into provider
- * rows. The old columns stay in the schema for one release so an interrupted
- * upgrade can be retried safely, but they are never read after this point.
+ * rows, then drop the columns they were stored in (dropLegacyAgentEnv above).
+ *
+ * This still runs one release after the columns stopped being read, because
+ * an upgrade can skip the release that introduced provider rows: a database
+ * last migrated by 0.13.x arrives here with every blob still unconverted, and
+ * dropping the columns without reading them would lose each project's and
+ * task's endpoint. A database already past the drop has no columns to read
+ * and returns before preparing a statement naming them.
  *
  * The environment seed runs first, so a legacy gateway selection points at
  * the seeded row. Without a seed, the legacy gateway shape creates the row.
@@ -1507,6 +1522,7 @@ function scaffoldWelcomeRepo(): string {
  * leave half of a project tree pointing at providers.
  */
 function migrateLegacyAgentEnv(db: Database.Database): void {
+  if (!hasColumn(db, "projects", "agent_env") || !hasColumn(db, "tasks", "agent_env")) return;
   const projects = db
     .prepare("SELECT id, default_agent, agent_env, default_provider_id FROM projects WHERE agent_env != '' AND default_provider_id IS NULL ORDER BY rowid ASC")
     .all() as { id: string; default_agent: string; agent_env: string; default_provider_id: string | null }[];

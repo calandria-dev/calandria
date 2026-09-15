@@ -5,11 +5,9 @@ import { resolvedTaskProvider } from "@/lib/providers/resolve";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return NextResponse.json(listProjects().map((project) => {
-    const output = { ...project, provider: resolvedTaskProvider(project, null, project.default_agent) };
-    delete (output as Partial<typeof output>).agent_env;
-    return output;
-  }));
+  return NextResponse.json(
+    listProjects().map((project) => ({ ...project, provider: resolvedTaskProvider(project, null, project.default_agent) })),
+  );
 }
 
 export async function POST(req: Request) {

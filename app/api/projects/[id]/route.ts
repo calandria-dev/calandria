@@ -71,19 +71,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   // not going to.
   const tasks = (await withDiffStats(project, listTasks(id))).map((t) => ({ ...t, idle_since: turnIdleSince(t.id) }));
   const output = { ...project, provider: resolvedTaskProvider(project, null, project.default_agent) };
-  delete (output as Partial<typeof output>).agent_env;
-  const publicTasks = tasks.map((task) => {
-    const row = { ...task, provider: resolvedTaskProvider(project, task, task.agent) };
-    delete (row as Partial<typeof row>).agent_env;
-    return row;
-  });
+  const publicTasks = tasks.map((task) => ({ ...task, provider: resolvedTaskProvider(project, task, task.agent) }));
   return NextResponse.json({ ...output, tasks: publicTasks, tags: listTags(id) });
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const raw = await req.json();
-  const { agent_env: _legacyAgentEnv, ...patch } = raw ?? {};
+  const patch = raw ?? {};
   if ("default_provider_id" in patch && patch.default_provider_id !== null) {
     if (typeof patch.default_provider_id !== "string" || !getProvider(patch.default_provider_id))
       return NextResponse.json({ error: "valid default_provider_id required" }, { status: 400 });
@@ -95,9 +90,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({ error: "branch is required" }, { status: 400 });
   const project = updateProject(id, patch);
   if (!project) return NextResponse.json({ error: "not found" }, { status: 404 });
-  const { agent_env: _storedLegacyEnv, ...publicProject } = project;
   return NextResponse.json({
-    ...publicProject,
+    ...project,
     provider: resolvedTaskProvider(project, null, project.default_agent),
   });
 }
