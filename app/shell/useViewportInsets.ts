@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect } from "react";
-import { isTextEntryElement, keyboardInset, scrollOffsetIsStale, shellViewportHeight } from "./viewport";
+import { isTextEntryElement, keyboardInset, scrollOffsetIsStale, shellViewportHeight, softwareKeyboardOpen } from "./viewport";
 import { recordLifecycleEvent } from "./useLifecycleDiagnostics";
 
-// The custom properties the phone layout reads. globals.css uses the inset for
-// scrims and home-indicator padding, and the measured height for the shell and
-// modals; keep these names in step with it.
+// The phone layout reads these properties and the data-keyboard-open attribute.
+// globals.css uses the inset for scrims and home-indicator padding, and the
+// measured height for the shell and modals; keep them in step with this hook.
 export const KB_INSET_VAR = "--kb-inset";
 export const VIEWPORT_HEIGHT_VAR = "--viewport-height";
 
@@ -14,6 +14,12 @@ export const VIEWPORT_HEIGHT_VAR = "--viewport-height";
 // settles the viewport, so the value read inside the visibilitychange handler
 // can still be the stale one; a frame and a beat later it is not.
 const SETTLE_MS = 300;
+
+// Keep learned no-keyboard geometry across the mobile breakpoint. A rotation
+// can remount this hook while the focused field and software keyboard remain
+// open, so the new effect needs the measurements collected by the old one.
+const largestUnfocusedLayoutHeights = new Map<number, number>();
+let largestUnfocusedScreenRatio = 0;
 
 /**
  * Publishes the on-screen keyboard's overlap as --kb-inset and the measured
@@ -35,6 +41,13 @@ export function useViewportInsets(enabled: boolean) {
     const root = document.documentElement;
     const vv = window.visualViewport;
 
+    const orientedScreenHeight = () => {
+      const screenWidth = window.screen?.width ?? window.innerWidth;
+      const screenHeight = window.screen?.height ?? window.innerHeight;
+      const portrait = window.matchMedia?.("(orientation: portrait)").matches ?? screenHeight >= screenWidth;
+      return portrait ? Math.max(screenWidth, screenHeight) : Math.min(screenWidth, screenHeight);
+    };
+
     // `record` only on the resume path: that is the offset worth a diagnostic
     // line, and it happens once, where a keyboard opening reports dozens of
     // viewport events a second and would fill the log with them.
@@ -46,9 +59,23 @@ export function useViewportInsets(enabled: boolean) {
         scale: vv?.scale ?? 1,
         fieldFocused: isTextEntryElement(document.activeElement as HTMLInputElement | null),
       };
+      // Focusout fires before the keyboard has expanded the layout again. Do
+      // not save that transient height as a no-keyboard baseline. The next
+      // viewport event records the restored height, and the ratio remains
+      // available for an immediate focus transfer.
+      const wasSoftwareKeyboardOpen = root.hasAttribute("data-keyboard-open");
+      const width = Math.round(window.innerWidth);
+      const screenHeight = orientedScreenHeight();
+      if (!metrics.fieldFocused && !wasSoftwareKeyboardOpen) {
+        largestUnfocusedLayoutHeights.set(width, Math.max(largestUnfocusedLayoutHeights.get(width) ?? 0, metrics.layoutHeight));
+        if (screenHeight > 0) largestUnfocusedScreenRatio = Math.max(largestUnfocusedScreenRatio, metrics.layoutHeight / screenHeight);
+      }
       const inset = keyboardInset(metrics);
       root.style.setProperty(KB_INSET_VAR, `${inset}px`);
       root.style.setProperty(VIEWPORT_HEIGHT_VAR, `${shellViewportHeight(metrics)}px`);
+      const layoutReference = largestUnfocusedLayoutHeights.get(width)
+        ?? (screenHeight > 0 && largestUnfocusedScreenRatio > 0 ? screenHeight * largestUnfocusedScreenRatio : null);
+      root.toggleAttribute("data-keyboard-open", softwareKeyboardOpen(metrics, layoutReference));
       // Written after the inset, so the shell is already sized to the visible
       // viewport and the focused field stays on screen without the offset.
       if (!scrollOffsetIsStale(window.scrollX, window.scrollY)) return;
@@ -91,6 +118,7 @@ export function useViewportInsets(enabled: boolean) {
       document.removeEventListener("visibilitychange", settle);
       root.style.removeProperty(KB_INSET_VAR);
       root.style.removeProperty(VIEWPORT_HEIGHT_VAR);
+      root.removeAttribute("data-keyboard-open");
     };
   }, [enabled]);
 }
