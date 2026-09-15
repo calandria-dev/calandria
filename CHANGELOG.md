@@ -8,6 +8,13 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.14.2](https://github.com/calandria-dev/calandria/compare/v0.14.1...v0.14.2) (2026-09-15)
+
+
+### Bug Fixes
+
+* **desktop:** restore Windows auto-updates ([#356](https://github.com/calandria-dev/calandria/issues/356)) ([8f66911](https://github.com/calandria-dev/calandria/commit/8f669116b34f5971fa9f2ab984cf15de5f501124))
+
 ## [0.14.1](https://github.com/calandria-dev/calandria/compare/v0.14.0...v0.14.1) (2026-09-14)
 
 
