@@ -1,6 +1,6 @@
 {
   "name": "calandria-desktop",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "private": true,
   "description": "Calandria: run many coding-agent sessions in parallel from one screen.",
   "main": "main.js",
