@@ -61,7 +61,7 @@ import {
   CLAUDE_TOOL_TRANSPORT,
 } from "../../config";
 import { guardToolHandler, isCalandriaToolName, isCliInterruptedToolResult, toolCutoffNotice, toolInterruptedMessage } from "../../agentToolGuard.mjs";
-import { logAgentToolArrival, logAgentToolOutcome, type AgentToolOutcome } from "../../agentToolLog";
+import { logAgentToolArrival, logAgentToolCutoff, logAgentToolOutcome, type AgentToolOutcome } from "../../agentToolLog";
 import { calandriaBridgeServer } from "./mcp";
 import fs from "node:fs";
 import path from "node:path";
@@ -1402,9 +1402,12 @@ async function* runTurn(
                 const cutOff = !!cut && isCliInterruptedToolResult(raw);
                 if (cut && cutOff) {
                   toolCutoffs++;
-                  log.warn("agent tool call cut off before Calandria answered", {
-                    task: task.id,
-                    tool: cut,
+                  // One wording for both transports (lib/agentToolLog.ts): the
+                  // bridge reports its own half of this failure through
+                  // lib/agentToolCutoff.ts, and an operator greps for one line.
+                  // `reached` is unknown here: the CLI's sentence is the same
+                  // whether the abort beat the request or landed mid-flight.
+                  logAgentToolCutoff(cut, CLAUDE_TOOL_TRANSPORT === "stdio" ? "bridge" : "in-process", task.id, {
                     tool_use_id: b.tool_use_id,
                     count: toolCutoffs,
                   });
