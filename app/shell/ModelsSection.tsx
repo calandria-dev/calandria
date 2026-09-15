@@ -7,6 +7,7 @@ import { Modal } from "./Modal";
 import { AgentConnect } from "./AgentConnect";
 import { LoadNote } from "./shared";
 import { ProviderModal, EnvDots, StatusChip, providerTypeLine, envLabel } from "./ProviderModal";
+import { invalidateModelPickerData } from "./ModelPicker";
 import type { AgentInfoT, AgentsResponseT, PresentedProviderT, DetectedProviderT, ProviderType } from "./types";
 
 function envStatusChip(status: "connected" | "installed" | "absent") {
@@ -116,12 +117,18 @@ export function ModelsSection({ appDefaults, setAppDefault, onChanged }: {
   const loadDetected = () => jget<{ servers: DetectedProviderT[] }>("/api/providers/detect").then((r) => setDetected(r.servers)).catch(() => setDetected([]));
 
   const reload = () => { void loadAgents(); void loadProviders(); void loadDetected(); };
+  const changed = () => {
+    invalidateModelPickerData();
+    reload();
+    onChanged?.();
+  };
   useEffect(() => { reload(); }, []);
   // The environments/providers lists keep their own fetch of GET /api/agents
   // (the shared AgentsBundle SettingsView already has drops the fields
   // AgentConnect needs), so a shell-level agent_auth refresh can't reach them
   // through props. useGlobalEvents.ts relays the same event as a window
   // CustomEvent for exactly this: a leaf settings surface with its own state.
+  // useGlobalEvents invalidates the shared picker cache before relaying it.
   useEffect(() => {
     const onAuth = () => reload();
     window.addEventListener("calandria:agent_auth", onAuth);
@@ -132,14 +139,13 @@ export function ModelsSection({ appDefaults, setAppDefault, onChanged }: {
 
   const disconnect = async (agent: AgentInfoT) => {
     await jsend(`/api/agents/${agent.id}/api-key`, "DELETE").catch(() => {});
-    reload();
-    onChanged?.();
+    changed();
   };
 
   const dismiss = (type: string) => setDismissed((prev) => new Set(prev).add(type));
   const addDetected = async (server: DetectedProviderT) => {
     const r = await jsend<{ provider: PresentedProviderT }>("/api/providers", "POST", { type: server.type, config: { base_url: server.base_url } });
-    reload();
+    changed();
     setModal({ providerId: r.provider.id });
   };
 
@@ -181,7 +187,7 @@ export function ModelsSection({ appDefaults, setAppDefault, onChanged }: {
 
       {signIn && (
         <Modal title={`Connect ${signIn.label}`} sub="Sign in with your subscription login (no API key needed)." onClose={() => setSignIn(null)} width={520}>
-          <AgentConnect agent={signIn} onConnected={() => { setSignIn(null); reload(); onChanged?.(); }} />
+          <AgentConnect agent={signIn} onConnected={() => { setSignIn(null); changed(); }} />
         </Modal>
       )}
 
@@ -193,7 +199,7 @@ export function ModelsSection({ appDefaults, setAppDefault, onChanged }: {
           appDefaults={appDefaults}
           setAppDefault={setAppDefault}
           onClose={() => setModal(null)}
-          onChanged={reload}
+          onChanged={changed}
         />
       )}
     </>

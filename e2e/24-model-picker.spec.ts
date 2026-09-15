@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page, type Route } from "@playwright/test";
 import { createProject, ensureOnboarded, gotoApp, makeFixtureRepo, uid } from "./helpers";
 import { INITIAL_OLLAMA_MODELS, OllamaStub, REFRESHED_OLLAMA_MODELS } from "./provider-stub";
 
@@ -62,6 +62,10 @@ test.describe.serial("model picker", () => {
     await expect(picker.getByText("Recent", { exact: true })).toHaveCount(0);
 
     const filter = picker.getByPlaceholder("Filter models");
+    // The project list and live session panes scroll independently of this
+    // modal. Their scroll events must not close an anchored picker.
+    await page.locator(".col-projects > .scroll").evaluate((el) => el.dispatchEvent(new Event("scroll")));
+    await expect(filter).toBeVisible();
     await filter.fill(INITIAL_OLLAMA_MODELS[0]);
     await expect(picker.getByText(/No models match/)).toBeVisible();
     await filter.fill("");
@@ -97,24 +101,67 @@ test.describe.serial("model picker", () => {
   });
 
   test("refreshes a provider and exposes a newly added model in the picker", async ({ page, request }) => {
-    await stub.restart(REFRESHED_OLLAMA_MODELS);
-    await page.route("**/api/providers/detect", async (route) => { await route.continue(); });
-    await gotoApp(page);
-    await page.getByRole("button", { name: "Settings", exact: true }).click();
-    await page.getByRole("button", { name: "Models", exact: true }).click();
-    await page.getByRole("button", { name: /Picker Ollama .* details/ }).click();
-    await page.getByRole("tab", { name: "Models" }).click();
-    await page.getByRole("button", { name: "Refresh" }).click();
-    await expect(page.getByRole("switch", { name: "gemma3:4b" })).toBeChecked();
-    const models = await (await request.get(`/api/providers/${provider.id}/models`)).json();
-    expect(models.models.find((m: { id: string }) => m.id === "gemma3:4b")?.on).toBe(true);
+    const staleTree = await (await request.get("/api/models?agent=mock")).json();
+    let releaseStaleResponse!: () => void;
+    let markStaleRequestStarted!: () => void;
+    let markStaleResponseSettled!: () => void;
+    const staleResponseGate = new Promise<void>((resolve) => { releaseStaleResponse = resolve; });
+    const staleRequestStarted = new Promise<void>((resolve) => { markStaleRequestStarted = resolve; });
+    const staleResponseSettled = new Promise<void>((resolve) => { markStaleResponseSettled = resolve; });
+    let holdNextTreeRequest = true;
+    let staleRequestDidStart = false;
+    const treeRoute = async (route: Route) => {
+      if (!holdNextTreeRequest) {
+        await route.continue();
+        return;
+      }
+      holdNextTreeRequest = false;
+      staleRequestDidStart = true;
+      markStaleRequestStarted();
+      await staleResponseGate;
+      try {
+        await route.fulfill({ json: staleTree });
+      } finally {
+        markStaleResponseSettled();
+      }
+    };
+    await page.route("**/api/models?agent=mock", treeRoute);
 
-    await page.getByRole("button", { name: "Close" }).click();
-    await openProject(page);
-    await page.getByRole("button", { name: "Task", exact: true }).click();
-    await page.locator(".model-field button").click();
-    const refreshedPicker = page.locator(".mpick").last();
-    await refreshedPicker.getByPlaceholder("Filter models").fill("gemma3:4b");
-    await expect(refreshedPicker.getByRole("option").filter({ hasText: "gemma3:4b" }).first()).toBeVisible();
+    try {
+      // Leave an old tree response in flight while Settings refreshes the
+      // provider. It must not overwrite the replacement fetched afterward.
+      await openProject(page);
+      await page.getByRole("button", { name: "Task", exact: true }).click();
+      await page.locator(".model-field button").click();
+      await staleRequestStarted;
+      await page.getByRole("button", { name: "Cancel" }).click();
+
+      await stub.restart(REFRESHED_OLLAMA_MODELS);
+      await page.route("**/api/providers/detect", async (route) => { await route.continue(); });
+      await page.getByRole("button", { name: "Settings", exact: true }).click();
+      await page.getByRole("button", { name: "Models", exact: true }).click();
+      await page.getByRole("button", { name: /Picker Ollama .* details/ }).click();
+      await page.getByRole("tab", { name: "Models" }).click();
+      await page.getByRole("button", { name: "Refresh" }).click();
+      await expect(page.getByRole("switch", { name: "gemma3:4b" })).toBeChecked();
+      const models = await (await request.get(`/api/providers/${provider.id}/models`)).json();
+      expect(models.models.find((m: { id: string }) => m.id === "gemma3:4b")?.on).toBe(true);
+
+      await page.getByRole("button", { name: "Close" }).click();
+      await page.getByRole("button", { name: "Back to workspace" }).click();
+      await page.getByText(PROJECT, { exact: true }).first().click();
+      await page.getByRole("button", { name: "Task", exact: true }).click();
+      await page.locator(".model-field button").click();
+      const refreshedPicker = page.locator(".mpick").last();
+      await refreshedPicker.getByPlaceholder("Filter models").fill("gemma3:4b");
+      await expect(refreshedPicker.getByRole("option").filter({ hasText: "gemma3:4b" }).first()).toBeVisible();
+      releaseStaleResponse();
+      await staleResponseSettled;
+      await expect(refreshedPicker.getByRole("option").filter({ hasText: "gemma3:4b" }).first()).toBeVisible();
+    } finally {
+      releaseStaleResponse();
+      if (staleRequestDidStart && !page.isClosed()) await staleResponseSettled;
+      if (!page.isClosed()) await page.unroute("**/api/models?agent=mock", treeRoute);
+    }
   });
 });

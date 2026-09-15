@@ -63,17 +63,21 @@ interface TreeCacheEntry {
 }
 const treeCache = new Map<string, TreeCacheEntry>();
 const treeListeners = new Map<string, Set<() => void>>();
+const treeEpochs = new Map<string, number>();
 
 function fetchTree(agent: string): void {
   if (treeCache.has(agent)) return;
+  const epoch = treeEpochs.get(agent) ?? 0;
   treeCache.set(agent, { loading: true });
   fetch(`/api/models?agent=${encodeURIComponent(agent)}`)
     .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
     .then((data: ModelsTree) => {
+      if ((treeEpochs.get(agent) ?? 0) !== epoch) return;
       treeCache.set(agent, { data, loading: false });
       treeListeners.get(agent)?.forEach((cb) => cb());
     })
     .catch(() => {
+      if ((treeEpochs.get(agent) ?? 0) !== epoch) return;
       treeCache.set(agent, { loading: false });
       treeListeners.get(agent)?.forEach((cb) => cb());
     });
@@ -106,21 +110,43 @@ export function useModelTree(agent: string | null | undefined): { tree: ModelsTr
 
 const providersCache: { data?: PresentedProvider[]; loading: boolean } = { loading: false };
 const providersListeners = new Set<() => void>();
+let providersEpoch = 0;
 
 function fetchProviders(): void {
   if (providersCache.data || providersCache.loading) return;
+  const epoch = providersEpoch;
   providersCache.loading = true;
   fetch("/api/providers")
     .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
     .then((body: { providers: PresentedProvider[] }) => {
+      if (providersEpoch !== epoch) return;
       providersCache.data = body.providers;
       providersCache.loading = false;
       providersListeners.forEach((cb) => cb());
     })
     .catch(() => {
+      if (providersEpoch !== epoch) return;
       providersCache.loading = false;
       providersListeners.forEach((cb) => cb());
     });
+}
+
+/** Drop picker data after a provider write and refresh every mounted consumer.
+ * Epochs keep an older in-flight response from restoring the stale snapshot. */
+export function invalidateModelPickerData(): void {
+  const agents = new Set([...treeCache.keys(), ...treeListeners.keys()]);
+  for (const agent of agents) treeEpochs.set(agent, (treeEpochs.get(agent) ?? 0) + 1);
+  treeCache.clear();
+  for (const agent of agents) {
+    if (treeListeners.get(agent)?.size) fetchTree(agent);
+    treeListeners.get(agent)?.forEach((cb) => cb());
+  }
+
+  providersEpoch += 1;
+  providersCache.data = undefined;
+  providersCache.loading = false;
+  if (providersListeners.size) fetchProviders();
+  providersListeners.forEach((cb) => cb());
 }
 
 function useProviders(): Map<string, PresentedProvider> {
