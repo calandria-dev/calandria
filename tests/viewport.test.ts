@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { KEYBOARD_MIN_INSET, isTextEntryElement, keyboardInset, scrollOffsetIsStale, shellViewportHeight, type ViewportMetrics } from "../app/shell/viewport";
+import { KEYBOARD_MIN_INSET, isTextEntryElement, keyboardInset, scrollOffsetIsStale, shellViewportHeight, softwareKeyboardOpen, type ViewportMetrics } from "../app/shell/viewport";
 
 // An iPhone 16 Pro Max in portrait: 440x956 CSS px, home indicator inset 34.
 const LAYOUT_HEIGHT = 956;
@@ -70,6 +70,45 @@ describe("shellViewportHeight: the measured phone shell height", () => {
 
   it("keeps the visible viewport bottom when WebKit reports an offset", () => {
     expect(shellViewportHeight(metrics({ visualHeight: 620, visualOffsetTop: 50 }))).toBe(670);
+  });
+});
+
+describe("softwareKeyboardOpen: the focused keyboard state", () => {
+  it("detects a visual-only viewport resize", () => {
+    expect(softwareKeyboardOpen(metrics({ visualHeight: 620 }), LAYOUT_HEIGHT)).toBe(true);
+  });
+
+  it("detects a layout and visual viewport resize together", () => {
+    expect(softwareKeyboardOpen(metrics({ layoutHeight: 620, visualHeight: 620 }), LAYOUT_HEIGHT)).toBe(true);
+  });
+
+  it("ignores an ordinary focused layout reduction below the shrink ratio", () => {
+    expect(softwareKeyboardOpen(metrics({ layoutHeight: 800, visualHeight: 800 }), LAYOUT_HEIGHT)).toBe(false);
+  });
+
+  it("does not treat a focused hardware keyboard as a software keyboard", () => {
+    expect(softwareKeyboardOpen(metrics({}), LAYOUT_HEIGHT)).toBe(false);
+  });
+
+  it("does not treat an unfocused layout resize as a software keyboard", () => {
+    expect(softwareKeyboardOpen(metrics({ fieldFocused: false, layoutHeight: 620, visualHeight: 620 }), LAYOUT_HEIGHT)).toBe(false);
+  });
+
+  it("does not treat pinch zoom as a software keyboard", () => {
+    expect(softwareKeyboardOpen(metrics({ visualHeight: 478, visualOffsetTop: 200, scale: 2 }), LAYOUT_HEIGHT)).toBe(false);
+  });
+
+  it("detects a projected portrait orientation reference", () => {
+    expect(softwareKeyboardOpen(metrics({ layoutHeight: 620, visualHeight: 620 }), 956)).toBe(true);
+  });
+
+  it("detects a projected landscape orientation reference", () => {
+    expect(softwareKeyboardOpen(metrics({ layoutHeight: 220, visualHeight: 220 }), 390)).toBe(true);
+  });
+
+  it("clears projected detection when portrait or landscape layout height restores", () => {
+    expect(softwareKeyboardOpen(metrics({}), LAYOUT_HEIGHT)).toBe(false);
+    expect(softwareKeyboardOpen(metrics({ layoutHeight: 390, visualHeight: 390 }), 390)).toBe(false);
   });
 });
 

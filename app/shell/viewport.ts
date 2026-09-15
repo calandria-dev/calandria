@@ -11,6 +11,8 @@
 // several hundred CSS pixels tall, while a settling page reports a pixel or
 // two of drift, and restyling the whole shell for that would flicker it.
 export const KEYBOARD_MIN_INSET = 60;
+// A focused layout shrink below this ratio is ordinary window geometry drift.
+export const KEYBOARD_MIN_LAYOUT_SHRINK_RATIO = 0.2;
 
 // The input types that raise a keyboard, matching the :has() selector the
 // phone block in globals.css hides the tab bar on; keep the two in step.
@@ -64,6 +66,20 @@ export function keyboardInset(m: ViewportMetrics): number {
  */
 export function shellViewportHeight(m: ViewportMetrics): number {
   return m.layoutHeight - keyboardInset(m);
+}
+
+/**
+ * Whether a focused, unzoomed text field has a software keyboard open.
+ * Browsers either leave the layout viewport unchanged and shrink only the
+ * visual viewport, or shrink both viewports together. The remembered unfocused
+ * layout height distinguishes the latter from an ordinary resize. The layout
+ * reference must shrink by at least 20 percent, with the absolute keyboard
+ * minimum as a floor, before it is treated as a keyboard.
+ */
+export function softwareKeyboardOpen(m: ViewportMetrics, unfocusedLayoutHeight: number | null): boolean {
+  if (!m.fieldFocused || m.scale > 1.01) return false;
+  return keyboardInset(m) > 0
+    || (unfocusedLayoutHeight !== null && unfocusedLayoutHeight - m.layoutHeight >= Math.max(KEYBOARD_MIN_INSET, Math.round(unfocusedLayoutHeight * KEYBOARD_MIN_LAYOUT_SHRINK_RATIO)));
 }
 
 /**

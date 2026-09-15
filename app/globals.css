@@ -2258,12 +2258,13 @@ button.tpeek-more:hover{color:var(--accent-ink);}
      focus selector that hides it (see .mtabbar below; keep the two in step):
      with a hardware keyboard the field is focused, nothing covers the
      indicator, and the box would otherwise sit on it. A software keyboard
-     covers the indicator itself and iOS keeps reporting the inset anyway, so
-     subtract --kb-inset: a keyboard is hundreds of pixels tall, so that term
-     floors at 0 whenever one is up and stays whole when none is.
+     covers the indicator itself. --kb-inset removes the safe area when only
+     the visual viewport shrinks. data-keyboard-open covers browsers that
+     shrink both viewports, where the measured overlap is zero.
      The keyboard hints are mouse-era noise on a phone. */
   .app.mobile .composer{padding:10px 12px 12px;}
   .app.mobile:has(textarea:focus, [contenteditable]:focus, input:is([type=text],[type=search],[type=email],[type=url],[type=number],[type=password]):focus) .composer{padding-bottom:calc(12px + max(0px, env(safe-area-inset-bottom) - var(--kb-inset, 0px)));}
+  html[data-keyboard-open] .app.mobile:has(textarea:focus, [contenteditable]:focus, input:is([type=text],[type=search],[type=email],[type=url],[type=number],[type=password]):focus) .composer{padding-bottom:12px;}
   /* 16px stops iOS zooming on focus; 8px vertical padding centers a single
      line against the 40px send button (see .comp-area's comment). */
   .app.mobile .comp-area .comp-input{font-size:16px;padding:8px 0;}

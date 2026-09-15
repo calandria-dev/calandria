@@ -440,6 +440,27 @@ test.describe("mobile keyboard geometry", () => {
     expect(composerBox!.height).toBeGreaterThan(0);
     expect(composerBox!.y + composerBox!.height).toBeLessThanOrEqual(508);
     await expect(page.locator(".mtabbar")).toBeHidden();
+    await page.evaluate(() => {
+      const style = document.createElement("style");
+      style.dataset.testSafeArea = "true";
+      style.textContent = `.app.mobile:has(textarea:focus, [contenteditable]:focus, input:is([type=text],[type=search],[type=email],[type=url],[type=number],[type=password]):focus) .composer { padding-bottom: 46px; }`;
+      document.head.appendChild(style);
+    });
+    expect(await page.locator(".composer").evaluate((el) => getComputedStyle(el).paddingBottom)).toBe("46px");
+    await page.setViewportSize({ width: 390, height: 508 });
+    await expect(composer).toBeFocused();
+    await expect(page.locator("html[data-keyboard-open]")).toHaveCount(1);
+    const composerGeometry = await page.evaluate(() => {
+      const composer = document.querySelector<HTMLElement>(".composer")!;
+      const area = document.querySelector<HTMLElement>(".comp-area")!;
+      return {
+        paddingBottom: getComputedStyle(composer).paddingBottom,
+        composerBottom: composer.getBoundingClientRect().bottom,
+        areaBottom: area.getBoundingClientRect().bottom,
+      };
+    });
+    expect(composerGeometry.paddingBottom).toBe("12px");
+    expect(composerGeometry.composerBottom - composerGeometry.areaBottom).toBeCloseTo(13, 0);
   });
 
   test("keeps the onboarding wizard usable above the keyboard", async ({ page, request }) => {
