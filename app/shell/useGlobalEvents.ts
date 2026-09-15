@@ -4,6 +4,7 @@ import { useEffect, useRef, type MutableRefObject } from "react";
 import type { GlobalWireEvent } from "@/lib/events";
 import type { NotificationPayload } from "@/lib/notifications/types";
 import { jget } from "./api";
+import { invalidateModelPickerData } from "./ModelPicker";
 import type { ProjectRow, TaskRow } from "./types";
 
 // One always-open EventSource on GET /api/events: coarse lifecycle events for
@@ -32,6 +33,7 @@ export function useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProje
     // instead of patching state locally, so the reconnect banner, the
     // Settings cards and the New-task picker all read one server-side truth.
     if (ev.type === "agent_auth") {
+      invalidateModelPickerData();
       void refreshAgents();
       // Settings → Models keeps its own richer fetch of GET /api/agents (the
       // shared AgentsBundle above drops fields AgentConnect needs), so it
@@ -165,6 +167,7 @@ export function useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProje
       // stream is a live tail), leaving a stale banner or missing one when the
       // login is actually dead. The bundle carries the persisted flag, so
       // refetch it too.
+      invalidateModelPickerData();
       void refreshAgents();
     };
     es.onmessage = (e) => {

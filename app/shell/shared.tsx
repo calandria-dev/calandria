@@ -174,6 +174,7 @@ export function ErrDetail({ detail }: { detail?: string }) {
 export function Popover({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   const markerRef = useRef<HTMLSpanElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const anchorPosRef = useRef<{ top: number; left: number } | null>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
   useLayoutEffect(() => {
@@ -181,6 +182,7 @@ export function Popover({ children, onClose }: { children: React.ReactNode; onCl
     const menu = menuRef.current;
     if (!anchor || !menu) return;
     const r = anchor.getBoundingClientRect();
+    anchorPosRef.current = { top: r.top, left: r.left };
     const mw = menu.offsetWidth || 200;
     const mh = menu.offsetHeight || 0;
     const vw = window.innerWidth, vh = window.innerHeight;
@@ -197,7 +199,20 @@ export function Popover({ children, onClose }: { children: React.ReactNode; onCl
   // list) must NOT close it, so ignore scroll events originating within the menu.
   useEffect(() => {
     const close = () => onClose();
-    const onScroll = (e: Event) => { if (!menuRef.current?.contains(e.target as Node)) onClose(); };
+    const onScroll = (e: Event) => {
+      const anchor = markerRef.current?.parentElement;
+      const target = e.target;
+      if (!anchor || (target instanceof Node && menuRef.current?.contains(target))) return;
+      // Captured scroll events name the element that actually scrolled. A
+      // sibling pane cannot move this anchor and does not own this popover.
+      if (target !== window && target !== document && (!(target instanceof Node) || !target.contains(anchor))) return;
+      const before = anchorPosRef.current;
+      const after = anchor.getBoundingClientRect();
+      // Close only when scrolling moved the anchor away from the fixed menu.
+      // A sibling pane can scroll without affecting this pair, and a scroll
+      // event queued just before the menu mounted reports the same position.
+      if (!before || Math.abs(after.top - before.top) > 0.5 || Math.abs(after.left - before.left) > 0.5) onClose();
+    };
     window.addEventListener("click", close);
     window.addEventListener("scroll", onScroll, true);
     return () => { window.removeEventListener("click", close); window.removeEventListener("scroll", onScroll, true); };
