@@ -33,9 +33,16 @@ async function createRunbook(request: APIRequestContext, projectId: string, name
  * exists for the same reason.
  */
 async function openProjectHome(page: import("@playwright/test").Page, name: string) {
-  await page.getByText(name).first().click();
-  const home = page.getByRole("button", { name: "Project home" });
-  if (await home.isVisible().catch(() => false)) await home.click();
+  const project = page.locator("button.proj").filter({ hasText: name });
+  await project.first().click();
+  const selected = page.locator("button.proj.sel").filter({ hasText: name });
+  await expect(selected).toHaveCount(1);
+  const taskCount = Number((await selected.locator(".psub").textContent())?.match(/^\d+/)?.[0] ?? 0);
+  if (taskCount > 0) {
+    const home = page.getByRole("button", { name: "Project home" });
+    await expect(home).toBeVisible();
+    await home.click();
+  }
   await expect(page.getByRole("heading", { name: "Runbooks" })).toBeVisible();
 }
 
