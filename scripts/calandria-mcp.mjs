@@ -37,7 +37,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_PROVIDERS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, REPORT_BASE_REWRITE, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../lib/agentToolDefs.mjs";
-import { guardToolHandler, DEFAULT_AGENT_TOOL_TIMEOUT_MS } from "../lib/agentToolGuard.mjs";
+import { guardToolHandler, watchToolCancellation, DEFAULT_AGENT_TOOL_TIMEOUT_MS } from "../lib/agentToolGuard.mjs";
 
 const TASK_ID = process.env.CALANDRIA_TASK_ID || "";
 const PROJECT_ID = process.env.CALANDRIA_PROJECT_ID || "";
@@ -114,9 +114,41 @@ const TOOL_TIMEOUT_MS = (() => {
   const n = Number(process.env.CALANDRIA_AGENT_TOOL_TIMEOUT_MS);
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_AGENT_TOOL_TIMEOUT_MS;
 })();
+/**
+ * Report a call the CLI cut off after dispatching it. Best effort in both
+ * directions: the stderr line lands even when the app is unreachable or this
+ * process is about to be killed, and a failed POST is swallowed, because the
+ * tool call it belongs to is already lost and there is nothing to retry for.
+ */
+async function reportCutoff({ tool, reason, ms }) {
+  process.stderr.write(
+    `[calandria-mcp] ${tool} was cancelled by the agent CLI after ${ms}ms, so its answer was discarded` +
+      `${reason ? `: ${reason}` : ""}\n`
+  );
+  try {
+    await callInternal("tool-cutoff", { tool, reason, ms });
+  } catch {
+    /* the answer is already lost; a failed report must not add noise on stdout */
+  }
+}
+
 const registerToolUnguarded = server.registerTool.bind(server);
+// Two wraps, outermost first. watchToolCancellation sees the whole in-flight
+// window, including the guard's own deadline, and reports the one failure the
+// guard cannot answer: a cancellation after dispatch, which makes the MCP SDK
+// drop whatever the guard returns (lib/agentToolGuard.mjs). This is where the
+// bridge closes the gap the Claude driver's stream pump closes in-process
+// (issue #364).
 server.registerTool = (name, config, handler) =>
-  registerToolUnguarded(name, config, guardToolHandler(name, handler, { timeoutMs: name === ASK_USER.name ? 0 : TOOL_TIMEOUT_MS }));
+  registerToolUnguarded(
+    name,
+    config,
+    watchToolCancellation(name, guardToolHandler(name, handler, { timeoutMs: name === ASK_USER.name ? 0 : TOOL_TIMEOUT_MS }), {
+      onCutoff: (cut) => {
+        void reportCutoff(cut);
+      },
+    })
+  );
 
 server.registerTool(
   EXPOSE_SERVICE.name,

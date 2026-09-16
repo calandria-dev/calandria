@@ -75,12 +75,23 @@ Calandria's own agent tools (`suggest_task`, `create_pr` and the rest) log too, 
 `[agent-tools]`: `agent tool call received` the moment a call reaches the server, and
 `agent tool call settled` with `outcome=` (`ok`, `error`, `timeout`, `blank`) and `ms=` when it
 answers, each carrying `tool=`, `task=` and `transport=` (`in-process` for a Claude session,
-`bridge` for the stdio bridge Codex uses). A call the Claude CLI answers itself never reaches
-Calandria; it shows instead as `[claude] agent tool call cut off before Calandria answered`, and
-the turn's `ok` line then carries `tool_cutoffs=N`. To check whether a session's `create_pr`
-landed: a `received` line means it reached the server, and a `cut off` line with no `received`
-line means it did not. `CALANDRIA_CLAUDE_DEBUG_DIR` adds the CLI's own per-turn debug log for
-that case.
+`bridge` for the stdio bridge Codex uses). A call the agent CLI answers itself shows as
+`agent tool call cut off before Calandria answered`, written by whichever side saw it happen. The
+two sides see different halves of it:
+
+- `transport=in-process` is the Claude driver reading the CLI's own `tool_result`. It carries
+  `count=`, and the turn's `ok` line then carries `tool_cutoffs=N`. The call never reached
+  Calandria, so there is no matching `received` line.
+- `transport=bridge reached=true` is the stdio bridge: the CLI cancelled a call it had already
+  sent, so Calandria ran it and the answer was thrown away. There is a matching `received` line,
+  and the work may have landed. The session's transcript gets a notice saying so, once per
+  generation. `teardown=true` on that line means the turn was being Stopped or cleared, which
+  cancels every call in flight; those get no transcript notice, since the user asked for it.
+
+To check whether a session's `create_pr` landed, read the `received` line: absent means the call
+never arrived, present means it did and the PR may exist. Either way it is safe to retry, since
+`create_pr` reports a PR already open for the branch instead of opening a second one.
+`CALANDRIA_CLAUDE_DEBUG_DIR` adds the CLI's own per-turn debug log for the in-process case.
 
 ## Common boot failures
 

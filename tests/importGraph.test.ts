@@ -42,6 +42,7 @@ const PINNED = [
   "lib/gatewayHealth.ts", //     what models a local endpoint reports; fetch + agentEnv + config, and GET /api/agents probes it on every load
   "lib/agentTools.ts", //        behind the internal agent-tools routes (stdio bridge)
   "lib/agentToolLog.ts", //      the arrival/settle log line every agent-tool call gets; log.mjs only, no driving
+  "lib/agentToolCutoff.ts", //   the bridge's cut-off report (issue #364); store + events + the .mjs guard, behind a sync-compiled route
   "lib/suggestionCard.ts", //    which transcript row a filed suggestion settles onto; store + types only, and the bridge's suggest-task route sits on it
   "lib/tagFilter.ts", //         pure any/all tag predicate shared by agent routes and the client
   "lib/tagContext.ts", //        the tag blocks buildProjectContext appends; store + types only

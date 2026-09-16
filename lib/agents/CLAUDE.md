@@ -93,8 +93,51 @@ already sent, so the driver can't claim the call definitely didn't happen. The e
 `[agent-tools] agent tool call received` / `… settled` mark every call that actually reached
 Calandria: a `cut off` line with no matching `received` line is the CLI answering on its own
 behalf. `CALANDRIA_CLAUDE_DEBUG_DIR` makes the CLI write its own per-turn MCP debug log, and the
-CLI's stderr is captured alongside the task. The stdio bridge is a separate process and cannot see
-any of this: it never learns its own answer was discarded.
+CLI's stderr is captured alongside the task.
+
+### The bridge tool-call cutoff
+
+The stdio bridge cannot read a `tool_result`, so it detects the same failure from the other end
+(issue #364). An abort lands in one of two places, and only one of them is visible from a separate
+process:
+
+- **Before the request is dispatched.** The CLI's MCP client rejects without sending anything, so
+  the bridge is never contacted and no handler runs. Nothing reached Calandria, so nothing was lost
+  either. Undetectable from the bridge by construction. Claude on this transport is still covered,
+  because the driver's stream pump reads the `tool_result` regardless of which transport carried the
+  call and `isCalandriaToolName` matches `mcp__calandria__*` either way; Codex and Antigravity have
+  no equivalent, and this case is the residual gap.
+- **After the request is dispatched.** The client sends `notifications/cancelled`, or the transport
+  drops. The MCP SDK aborts the request handler's `AbortSignal` and then DISCARDS whatever the
+  handler returns instead of sending it (`@modelcontextprotocol/sdk`, `Protocol._onrequest`). So
+  Calandria ran the call, may have finished it, and the model will never see the answer. This is the
+  half where `create_pr` opens a PR the model is told nothing about, and it is a real protocol
+  event.
+
+`watchToolCancellation` (`lib/agentToolGuard.mjs`) watches that signal, wrapped OUTSIDE
+`guardToolHandler` on `registerTool` so it covers the whole in-flight window including the guard's
+own deadline. It reports the moment the abort is seen, not once the handler unwinds: the same event
+often means the CLI is about to kill the bridge. The report is a stderr line (which survives an
+unreachable app) plus `POST /api/internal/agent-tools/tool-cutoff`, where
+`reportBridgeToolCutoff()` (`lib/agentToolCutoff.ts`) writes the same
+`agent tool call cut off before Calandria answered` line both transports now share
+(`logAgentToolCutoff`, `lib/agentToolLog.ts`) and appends one transcript notice per task generation.
+That notice says the opposite of the in-process one and must keep saying it: the call DID reach
+Calandria, so the warning is that a retry may do the work twice
+(`toolDiscardedNotice` versus `toolCutoffNotice`).
+
+**Stop is not this failure and must not be reported as it.** Stop, `/clear` and the shutdown drain
+all abort the turn's own controller, which tears down every tool call in flight and looks identical
+from inside the bridge. `reportBridgeToolCutoff()` reads `lib/abort.ts` and writes no notice when the
+task's turn signal is already aborted, or when no turn is registered at all; without that gate every
+stopped turn would end with a warning about a discarded answer. The log line still records it, under
+`teardown=true`. `tests/bridgeToolCutoff.test.ts` drives the real bridge against the real route and
+asserts on the transcript rows, including both teardown cases.
+
+Detection only, on both transports: by the time either side knows, the model is holding a sentence
+Calandria did not write and cannot be corrected. What keeps the sharp case safe is idempotence, not
+detection, and `createTaskPr` already has it (`lib/github.ts`): it lists open PRs for the branch
+before creating one and reports the existing PR instead of opening a second.
 
 `create_pr` has a repair: a session that hits the cutoff there falls back to `git push` + `gh pr
 create`, leaving the PR invisible to the task row. `adoptExistingPr` (`lib/prTools.ts`) runs at
@@ -120,6 +163,10 @@ Seam differences under `stdio` (Codex has run on these since the bridge shipped)
 - **No bridge counterpart for the `notice` callback.** In-process, `expose_service` posts a
   standalone transcript line with the live URL. Bridged, the URL only reaches the model as the
   tool's own result; the standalone line is lost.
+- **Cutoff detection runs on both ends at once.** The driver's stream pump keeps reading
+  `tool_result` (the pre-dispatch abort), and the bridge additionally reports a post-dispatch
+  cancellation the in-process transport has no way to see. Both write the same log line, and the
+  notices are worded differently on purpose; see "The bridge tool-call cutoff" above.
 - **Auto-start callback.** In-process hands a cleared blocker back via `TurnHooks` (this file must
   not import `lib/autoStart.ts`). The bridge endpoint has no such constraint and calls
   `maybeAutoStartDependents()` directly. `onPrOpened`/`lib/prState.ts` is the same shape.
