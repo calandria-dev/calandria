@@ -7,8 +7,8 @@ import { estimateCostUsd, resolveCodexModel, DEFAULT_CODEX_MODEL } from "@/lib/a
 import { codexCapabilities } from "@/lib/agents/codex/capabilities";
 import type { StreamEvent } from "@/lib/types";
 
-// The Codex event-mapping unit test. Feeds recorded codex `codex exec
-// --experimental-json` JSONL (two fixtures captured from real turns, one
+// The Codex event-mapping unit test. Feeds recorded `codex exec --json` JSONL
+// (three fixtures captured from real turns, one
 // synthetic fixture covering the item types those runs didn't emit) through the
 // normalizer and asserts the resulting StreamEvent stream. This is the seam's
 // contract for Codex: the same StreamEvents the runner persists for any driver.
@@ -28,6 +28,19 @@ function runFixture(name: string): StreamEvent[] {
 const byType = (evs: StreamEvent[], t: StreamEvent["type"]) => evs.filter((e) => e.type === t);
 
 describe("codex event mapping", () => {
+  it("classifies a recorded pre-dispatch Calandria MCP failure", () => {
+    const evs = runFixture("mcp-pre-dispatch-cutoff.jsonl");
+
+    expect(evs.find((e) => e.type === "tool" && e.id === "item_0")).toMatchObject({
+      name: "calandria__list_tasks",
+    });
+    expect(evs.find((e) => e.type === "tool_result" && e.id === "item_0")).toMatchObject({
+      content: "MCP tool call requires approval, but approval policy is never",
+      isError: true,
+      cutOff: true,
+    });
+  });
+
   it("maps a command + file_change + message + usage turn", () => {
     const evs = runFixture("command-file-message.jsonl");
 

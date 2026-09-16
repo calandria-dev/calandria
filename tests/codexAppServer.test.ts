@@ -22,6 +22,12 @@ vi.hoisted(() => {
   process.env.CALANDRIA_PERMISSION_UNATTENDED_MS = "400";
 });
 
+const logAgentToolCutoff = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/agentToolLog", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/agentToolLog")>()),
+  logAgentToolCutoff,
+}));
+
 import { codexDriver } from "@/lib/agents/codex/driver";
 import { createProject, createTask, updateProject, updateTask, getTask, listPermissionRules, listMessages, setSetting } from "@/lib/store";
 import { submitAnswer } from "@/lib/asks";
@@ -29,6 +35,7 @@ import { subscribeGlobal, subscribe } from "@/lib/events";
 import { setRunContext, clearRunContext, SCHEDULED_RUN_CONTEXT } from "@/lib/runContext";
 import { startResumeTurn } from "@/lib/runner";
 import { getCodexPlanUsage, resetCodexPlanUsageStateForTests } from "@/lib/agents/codex/planUsage";
+import { toolCutoffNotice } from "@/lib/agentToolGuard.mjs";
 import type { Project, Task, StreamEvent, TaskStreamEvent, ToolData } from "@/lib/types";
 
 type Ev<T extends StreamEvent["type"]> = Extract<StreamEvent, { type: T }>;
@@ -38,6 +45,7 @@ let logFile = "";
 let offWatcher: (() => void) | null = null;
 
 beforeEach(() => {
+  logAgentToolCutoff.mockClear();
   setSetting("default_sandbox_mode:codex", null);
   logFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "codex-fake-log-")), "log.jsonl");
   tmp.push(path.dirname(logFile));
@@ -116,6 +124,35 @@ async function turn(task: Task, project: Project, opts: { answer?: string[]; onE
 }
 
 describe("codex app-server transport", () => {
+  it("flags Codex's recorded pre-dispatch Calandria MCP failure and tells the user once", async () => {
+    process.env.FAKE_CODEX_SCENARIO = "mcpCutoff";
+    const { project, task } = fixture("acceptEdits");
+    const evs = await turn(task, project);
+    const raw = "MCP tool call requires approval, but approval policy is never";
+
+    expect(evs.find((e) => e.type === "tool" && e.id === "item-mcp-cutoff-1")).toMatchObject({
+      name: "calandria__list_tasks",
+    });
+    for (const id of ["item-mcp-cutoff-1", "item-mcp-cutoff-2"]) {
+      expect(evs.find((e) => e.type === "tool_result" && e.id === id)).toMatchObject({
+        content: raw,
+        isError: true,
+        cutOff: true,
+      });
+    }
+    expect(evs.filter((e) => e.type === "notice" && e.content === toolCutoffNotice("calandria__list_tasks"))).toHaveLength(1);
+    expect(logAgentToolCutoff).toHaveBeenNthCalledWith(1, "calandria__list_tasks", "bridge", task.id, {
+      reached: false,
+      item_id: "item-mcp-cutoff-1",
+      count: 1,
+    });
+    expect(logAgentToolCutoff).toHaveBeenNthCalledWith(2, "calandria__list_tasks", "bridge", task.id, {
+      reached: false,
+      item_id: "item-mcp-cutoff-2",
+      count: 2,
+    });
+  });
+
   it("runs a turn: handshake, thread, config overrides, items, plan, usage, context", async () => {
     const { project, task, repo } = fixture("default");
     const evs = await turn(task, project, { answer: ["allow_once"] });
