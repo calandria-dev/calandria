@@ -1533,6 +1533,37 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .field .perm-add input[type=text]{flex:1;min-width:160px;padding:7px 10px;font-size:12.5px;}
 .perm-add .btn{flex-shrink:0;}
 
+/* Settings → Run defaults' Codex hooks panel: the inventory of hook
+   definitions Codex will run on a lifecycle event, and the per-hook trust
+   review. A hook that won't fire (`.chk-hook.off`) has to read as visibly
+   inert, not just carry a small chip, since a hook silently skipped is the
+   exact failure this panel exists to surface. */
+.chk-picker{margin-bottom:10px;}
+.chk-picker select{font-size:11.5px;color:var(--ink-2);background:var(--raise);border:1px solid var(--line-strong);border-radius:7px;padding:7px 10px;cursor:pointer;max-width:280px;}
+.chk-suppressed{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;margin-bottom:12px;border:1px solid var(--amber);border-radius:var(--r);background:var(--amber-soft);}
+.chk-warnic{flex:0 0 20px;height:20px;display:grid;place-items:center;color:var(--amber);}
+.chk-warnic svg{width:14px;height:14px;}
+.chk-suppressed-t{font-size:12.5px;font-weight:600;color:var(--ink);}
+.chk-scope{margin-bottom:16px;}
+.chk-scope:last-child{margin-bottom:0;}
+.chk-scope-h{font-size:11px;color:var(--ink-3);margin-bottom:8px;word-break:break-all;}
+.chk-scope-warn{font-size:11.5px;color:var(--amber);margin-bottom:6px;}
+.chk-hooks{display:flex;flex-direction:column;gap:8px;}
+.chk-hook{padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--panel);}
+.chk-hook.off{border-color:var(--line);background:var(--surface-2);opacity:.82;}
+.chk-hook-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;}
+.chk-event{font-size:12.5px;font-weight:600;color:var(--ink);}
+.chk-hook.off .chk-event{color:var(--ink-3);}
+.chk-chip{display:inline-flex;align-items:center;gap:5px;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:600;letter-spacing:.02em;white-space:nowrap;}
+.chk-chip.ok{color:var(--green);background:var(--green-soft);}
+.chk-chip.warn{color:var(--amber);background:var(--amber-soft);}
+.chk-chip.mute{color:var(--ink-4);background:var(--surface-2);}
+.chk-skip{font-size:11px;font-weight:600;color:var(--red);}
+.chk-hook-what{font-size:11.5px;color:var(--ink-2);word-break:break-all;margin-bottom:4px;}
+.chk-hook-src{font-size:11px;color:var(--ink-4);margin-bottom:8px;word-break:break-all;}
+.chk-hook-acts{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.chk-managed{font-size:11px;color:var(--ink-4);}
+
 /* ---------------- markdown (assistant / user message bodies) ---------------- */
 .md > :first-child{margin-top:0;}
 .md > :last-child{margin-bottom:0;}

@@ -17,6 +17,7 @@
 import { spawn } from "node:child_process";
 import os from "node:os";
 import { codexSpawn } from "./bin";
+import { isProjectUntrustedWarning, parseHooksList, type CodexHookInventory, type CodexConfigEdit } from "./hooks";
 
 // Only echoed back inside the server's `userAgent` string, so a fixed value
 // keeps this off package.json (which the bundler would inline wholesale).
@@ -55,6 +56,14 @@ export interface AppServerCallOptions {
    * server's own startup chatter.
    */
   settleMs?: number;
+  /**
+   * Working directory for the spawned app-server. Defaults to the user's home:
+   * an account question (rate limits, login) must not be steered by a
+   * repo-local config.toml. A cwd-scoped question (hook inventory, per-hook
+   * trust) passes its own cwd instead, since the answer is defined by what is
+   * configured for that directory.
+   */
+  cwd?: string;
 }
 
 function messageOf(e: unknown): string {
@@ -84,9 +93,11 @@ export function callAppServer(
     let child;
     try {
       child = spawn(spec.command, spec.args, {
-        // Home rather than a task worktree: this asks about the account, and a
-        // repo-local config.toml must not steer it.
-        cwd: os.homedir(),
+        // Home for an account question (rate limits, login): a repo-local
+        // config.toml must not steer it. A cwd-scoped question (hook
+        // inventory, trust writes) passes its own cwd via opts.cwd instead,
+        // since the answer there is defined by what that directory configures.
+        cwd: opts.cwd ?? os.homedir(),
         env: process.env,
         stdio: ["pipe", "pipe", "pipe"],
         windowsVerbatimArguments: spec.windowsVerbatimArguments,
@@ -232,4 +243,39 @@ export async function readConfigWarnings(): Promise<ConfigWarningProbe> {
     },
   );
   return { warnings, error: r.handshook ? null : (r.error ?? "codex app-server did not start") };
+}
+
+/**
+ * The hook inventory for one working directory (`hooks/list`).
+ *
+ * A settle window is required: an untrusted-project `configWarning` is pushed
+ * around the response rather than strictly before it, so without holding the
+ * child open past the answer the untrust signal would race it and sometimes
+ * be missed, leaving an empty inventory indistinguishable from "no hooks
+ * configured".
+ */
+export async function listCodexHooks(cwd: string): Promise<{ inventory?: CodexHookInventory; error?: string }> {
+  let suppressedReason: string | undefined;
+  const r = await callAppServer(
+    "hooks/list",
+    { cwds: [cwd] },
+    {
+      cwd,
+      settleMs: SETTLE_MS,
+      onNotification: (method, params) => {
+        if (method !== "configWarning") return;
+        const summary = (params as { summary?: unknown } | undefined)?.summary;
+        if (typeof summary === "string" && isProjectUntrustedWarning(summary)) suppressedReason = summary.trim();
+      },
+    },
+  );
+  if (r.error) return { error: r.error };
+  return { inventory: parseHooksList(r.data, suppressedReason) };
+}
+
+/** Write per-hook trust/enabled state via the generic `config/batchWrite` request. */
+export async function writeCodexConfig(edits: CodexConfigEdit[], cwd: string): Promise<{ ok: boolean; error?: string }> {
+  const r = await callAppServer("config/batchWrite", { edits }, { cwd });
+  if (r.error) return { ok: false, error: r.error };
+  return { ok: true };
 }

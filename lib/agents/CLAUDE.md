@@ -432,6 +432,44 @@ client and refuses the turn if the answer isn't the expected id (`calandria-loca
 The Claude side needs no equivalent: pointed at a sink on `ANTHROPIC_BASE_URL`, claude-cli under a
 subscription login sends every request to the sink with no fallback to `api.anthropic.com`.
 
+### Hooks
+
+`codex/hooks.ts` is the pure contract: types, `parseHooksList`, the trust/enabled key-path builders,
+and hook-run rendering. Its header comment records the verified wire facts against codex-cli
+0.153.0; read it before touching this area. Do not restate it here.
+
+`appServer.ts`'s `listCodexHooks(cwd)` runs `hooks/list` and, within a settle window (`SETTLE_MS`,
+since the server can push the notification after the response), captures a project-untrust
+`configWarning` and reports it as `inventory.suppressedReason`. `writeCodexConfig(edits, cwd)` sends
+`config/batchWrite`, the only way to write trust: there is no `hooks/trust` method. Both take an
+explicit `cwd`, unlike the account-scoped calls (`readAccountRateLimits`, `readConfigWarnings`) that
+default to home, since a hook's answer is defined by what that directory configures.
+
+Trust and enabled state live under dotted TOML paths under `hooks.state`. **The hook's own key
+segment must be quoted** (`tomlQuote()` in hooks.ts): it contains dots and slashes, and an unquoted
+segment silently mis-splits into several tables that match no hook. This is the sharpest invariant
+in the feature.
+
+`driver.ts`'s `listHooks(cwd)` wraps `listCodexHooks`. `reviewHooks(cwd, reviews)` re-reads the live
+inventory and takes each hash from the current definition, never from the caller: a client-supplied
+hash would let a caller ratify a definition it never saw. A `managed` hook refuses trust/untrust
+outright; an unknown key refuses the whole batch.
+
+Per-hook `untrusted`/`modified` status is silent at runtime: no notification reports it, so
+`trustStatus` in the inventory is the only way to see that a configured hook is inert.
+`appServerEvents.ts`'s `hook/started`/`hook/completed` cases gate on `forHookRun`, not `forThisTurn`:
+a thread-scoped hook (sessionStart, sessionEnd) reports `turnId: null`, which `forThisTurn` would
+drop. A run that blocked, failed, stopped, or carried a `stop`/`error`/`warning` entry always posts
+a transcript notice; a clean pass and every `hook/started` post one only under `codexHookTrace()`
+(`CALANDRIA_CODEX_HOOK_TRACE`), since tracing every `postToolUse` firing would flood the transcript.
+
+Calandria adds no pre-turn hook gate of its own: Codex already refuses to run an unreviewed hook.
+Hook trust is a one-time judgment about a script, separate from the per-call permission gate in
+`lib/permissionPrompt.ts`, which still runs unchanged.
+
+The panel is `app/shell/CodexHooks.tsx` (Settings → Run defaults → Codex), reached through
+`GET`/`POST /api/agents/[id]/hooks/route.ts`.
+
 ## Antigravity / Gemini driver (`gemini/`)
 
 Registered unconditionally in `registry.ts` and `capabilities.ts`, like the other two: an

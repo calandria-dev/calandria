@@ -12,6 +12,7 @@ import { GitHubSettings } from "./github";
 import { WorktreePrune } from "./WorktreePrune";
 import { Diagnostics } from "./Diagnostics";
 import { ModelsSection } from "./ModelsSection";
+import { CodexHooksPanel } from "./CodexHooks";
 import { ErrNote } from "./shared";
 import { autoResumeOnLimitKey } from "@/lib/usageReset";
 import { apiFetch, jget, jsend } from "./api";
@@ -647,7 +648,7 @@ const SETTINGS_SECTIONS: { id: string; label: string; icon: () => React.ReactNod
   { id: "setup", label: "Setup", icon: Icon.bolt },
 ];
 
-export function SettingsView({ settings, setSetting, appearance, setAppearance, appDefaults, setAppDefault, setAppDefaultMany, agents, onAgentsRefresh, onReset, onRerunSetup, onClose, initialSection, updates }: {
+export function SettingsView({ settings, setSetting, appearance, setAppearance, appDefaults, setAppDefault, setAppDefaultMany, agents, onAgentsRefresh, onReset, onRerunSetup, onClose, initialSection, updates, currentProjectId, projects }: {
   settings: Settings;
   setSetting: <K extends keyof Settings>(k: K, v: Settings[K]) => void;
   appearance: Appearance;
@@ -662,6 +663,10 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   onClose: () => void;
   initialSection?: string;
   updates: Updates;
+  /** The project selected in the workspace when Settings was opened, null when none is. Scopes the Codex hooks panel, which needs a working directory. */
+  currentProjectId?: string | null;
+  /** Every active project, for the hooks panel's fallback picker when no project is selected. */
+  projects?: { id: string; name: string }[];
 }) {
   const [section, setSection] = useState<string>(
     initialSection && SETTINGS_SECTIONS.some((s) => s.id === initialSection) ? initialSection : SETTINGS_SECTIONS[0].id
@@ -1055,6 +1060,13 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                       {codexSandboxOptions("Use the sandbox associated with the task's permission mode", "Follow permission mode").map((s) => <button key={s.label} className={sandboxVal === s.value ? "on" : ""} title={s.sub} onClick={() => setAppDefault("default_sandbox_mode:codex", s.value)}>{s.label}</button>)}
                     </div>
                   </div>
+                )}
+                {editAgent === "codex" && (
+                  <CodexHooksPanel
+                    agentId="codex"
+                    currentProjectId={currentProjectId ?? null}
+                    projects={projects ?? []}
+                  />
                 )}
                 <div className="field">
                   <div className="lab" style={{ display: "flex", alignItems: "center", gap: 8 }}>

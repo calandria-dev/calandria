@@ -670,6 +670,8 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
       onClose={() => o.setView("workspace")}
       initialSection={settingsSection}
       updates={updates}
+      currentProjectId={project?.id ?? null}
+      projects={o.activeProjects.map((p) => ({ id: p.id, name: p.name }))}
     />
   );
 

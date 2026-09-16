@@ -7,10 +7,17 @@
 // emits for codex-cli 0.153.0.
 //
 // Driven by env:
-//   FAKE_CODEX_SCENARIO   command | fileChange | ask | mcpCutoff | interrupt | resumeFails | dies
+//   FAKE_CODEX_SCENARIO   command | fileChange | ask | mcpCutoff | interrupt |
+//                         resumeFails | dies | hooks | hooksUntrustedProject |
+//                         hooksManaged
 //   FAKE_CODEX_LOG        JSONL file: every request/notification we received,
 //                         plus {"argv": [...]} first, and {"decision": …} once
 //                         an approval is answered.
+//
+// The hooks* scenarios answer `hooks/list` and `config/batchWrite` directly
+// (no thread/turn involved: lib/agents/codex/appServer.ts's callAppServer
+// sends the method right after the handshake). Shapes are the real wire data
+// captured live from codex-cli 0.153.0 (tests/codexHooks.test.ts's docblock).
 // Anything but `app-server` as the subcommand (e.g. `--version`, `doctor`)
 // prints something plausible and exits.
 
@@ -121,6 +128,104 @@ rl.on("line", (line) => {
       return;
     case "turn/interrupt":
       interrupted = true;
+      reply({});
+      return;
+    case "hooks/list": {
+      const cwd = msg.params?.cwds?.[0] ?? process.cwd();
+      if (scenario === "hooksUntrustedProject") {
+        notify("configWarning", {
+          summary:
+            "Project-local config, hooks, and exec policies are disabled in the following folders until the project is trusted, but skills still load.\n    1. /tmp/p/proj/.codex\n       /tmp/p/proj is marked as untrusted in the effective configuration. ...\n",
+          details: null,
+        });
+        reply({ data: [{ cwd, hooks: [], warnings: [], errors: [] }] });
+        return;
+      }
+      if (scenario === "hooksManaged") {
+        reply({
+          data: [
+            {
+              cwd,
+              hooks: [
+                {
+                  key: "/tmp/p/proj/.codex/hooks.json:stop:0:0",
+                  eventName: "stop",
+                  handlerType: "command",
+                  command: "/bin/true",
+                  async: false,
+                  matcher: null,
+                  timeoutSec: 600,
+                  statusMessage: null,
+                  additionalContextLimit: null,
+                  sourcePath: "/tmp/p/proj/.codex/hooks.json",
+                  source: "project",
+                  pluginId: null,
+                  displayOrder: 0,
+                  enabled: true,
+                  isManaged: true,
+                  currentHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  trustStatus: "managed",
+                },
+              ],
+              warnings: [],
+              errors: [],
+            },
+          ],
+        });
+        return;
+      }
+      reply({
+        data: [
+          {
+            cwd,
+            hooks: [
+              {
+                key: "/tmp/p/proj/.codex/hooks.json:pre_tool_use:0:0",
+                eventName: "preToolUse",
+                handlerType: "command",
+                command: "/bin/true",
+                async: false,
+                matcher: "shell",
+                timeoutSec: 600,
+                statusMessage: "probe gate",
+                additionalContextLimit: null,
+                sourcePath: "/tmp/p/proj/.codex/hooks.json",
+                source: "project",
+                pluginId: null,
+                displayOrder: 0,
+                enabled: true,
+                isManaged: false,
+                currentHash: "sha256:2d3134577587d6581d783676bfa60eae2e9e1a89e2dec95f9220754fee9fd105",
+                trustStatus: "untrusted",
+              },
+              {
+                key: "/tmp/p/proj/.codex/hooks.json:post_tool_use:0:0",
+                eventName: "postToolUse",
+                handlerType: "command",
+                command: "/bin/true",
+                async: false,
+                matcher: null,
+                timeoutSec: 600,
+                statusMessage: null,
+                additionalContextLimit: null,
+                sourcePath: "/tmp/p/proj/.codex/hooks.json",
+                source: "project",
+                pluginId: null,
+                displayOrder: 1,
+                enabled: true,
+                isManaged: false,
+                currentHash: "sha256:ef95ed3c5f028e7e94f5c20a828cc12509a81f1efceaf9a2ccd44aca3225309d",
+                trustStatus: "untrusted",
+              },
+            ],
+            warnings: [],
+            errors: [],
+          },
+        ],
+      });
+      return;
+    }
+    case "config/batchWrite":
       reply({});
       return;
     default:

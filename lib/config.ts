@@ -402,6 +402,22 @@ export const CODEX_INHERIT_MCP = !["0", "false", "off"].includes(
 );
 
 /**
+ * Whether every Codex hook run posts a transcript notice, including clean
+ * passes and start events. Off by default: a hook that blocks a call or
+ * fails already posts a notice regardless of this flag (lib/agents/codex/
+ * appServerEvents.ts), and a clean pass on every tool call would flood the
+ * transcript with nothing a user could not already infer. Set to 1/true/on
+ * to trace every run while reviewing a hook's behavior.
+ *
+ * Read per call, not frozen at import: the hook mapper is a pure function the
+ * suite drives directly, and a frozen read would pin the flag to whatever the
+ * env held when the module graph loaded.
+ */
+export function codexHookTrace(): boolean {
+  return ["1", "true", "on"].includes(String(process.env.CALANDRIA_CODEX_HOOK_TRACE || "").toLowerCase());
+}
+
+/**
  * The first-boot seed for one local provider row. A trailing `/v1` is
  * tolerated and stripped. Existing rows are authoritative. The legacy
  * suggest_task provider argument still uses this value until its provider-id

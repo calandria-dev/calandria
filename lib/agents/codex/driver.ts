@@ -24,7 +24,7 @@
 import { Codex } from "@openai/codex-sdk";
 import type { SandboxMode, ApprovalMode, ModelReasoningEffort, ThreadOptions, CodexOptions } from "@openai/codex-sdk";
 import type { Project, Task, StreamEvent, TurnUsage } from "../../types";
-import type { AgentDriver, OneShotOptions, OneShotResult } from "../types";
+import type { AgentDriver, AgentHookInventoryResult, AgentHookReview, OneShotOptions, OneShotResult } from "../types";
 import { codexCapabilities } from "./capabilities";
 import { getSetting, setSetting, getThreadUsageCum, setThreadUsageCum } from "../../store";
 import { AGENT_TOOL_TIMEOUT_MS, CODEX_CLI_PATH, CODEX_TRANSPORT, INTERNAL_BASE_URL, CALANDRIA_MCP_SCRIPT } from "../../config";
@@ -41,6 +41,8 @@ import { codexProviderConfig } from "./provider";
 import { verifyCodexProvider } from "./providerCheck";
 import { sandboxRefusal, noteCodexSandboxWarning, noteCodexSandboxHealthy, probeCodexSandbox } from "./sandbox";
 import { getCodexPlanUsage } from "./planUsage";
+import { listCodexHooks, writeCodexConfig } from "./appServer";
+import { hookTrustEdit, hookUntrustEdit, hookEnabledEdit, allHooks, type CodexConfigEdit } from "./hooks";
 import { codexRunPolicy, neverAskPolicy, resolveCodexMode, type CodexRunPolicy } from "./policy";
 import { runAppServerTurn } from "./appServerTurn";
 import type { ConfigObject } from "./appServerClient";
@@ -564,6 +566,48 @@ async function summarizeProjectRecap(project: Project, digest: string, opts?: On
   return { text: result.text || "(no recap produced)", usage: result.usage, model: result.model };
 }
 
+/** The hooks configured for `cwd`, as `hooks/list` reports them. */
+async function listHooks(cwd: string): Promise<AgentHookInventoryResult> {
+  return listCodexHooks(cwd);
+}
+
+/**
+ * Apply a batch of trust/enabled reviews. Re-reads the current inventory
+ * first: trust is pinned to a hook's `currentHash`, which must come from the
+ * definition as it reads right now rather than a hash the client sent, since
+ * a client could otherwise ratify a definition it never saw. A key missing
+ * from the current inventory, or a hook an administrator pinned (isManaged),
+ * refuses the whole call rather than applying the edits it could.
+ */
+async function reviewHooks(cwd: string, reviews: AgentHookReview[]): Promise<{ ok: boolean; error?: string }> {
+  const { inventory, error } = await listCodexHooks(cwd);
+  if (error) return { ok: false, error };
+  const byKey = new Map(allHooks(inventory ?? { scopes: [] }).map((h) => [h.key, h]));
+  const edits: CodexConfigEdit[] = [];
+  for (const review of reviews) {
+    const hook = byKey.get(review.key);
+    if (!hook) return { ok: false, error: `no such hook: ${review.key}` };
+    if (hook.isManaged && (review.action === "trust" || review.action === "untrust")) {
+      return { ok: false, error: `${review.key} is pinned by an administrator and cannot be reviewed` };
+    }
+    switch (review.action) {
+      case "trust":
+        edits.push(hookTrustEdit(hook));
+        break;
+      case "untrust":
+        edits.push(hookUntrustEdit(hook));
+        break;
+      case "enable":
+        edits.push(hookEnabledEdit(hook, true));
+        break;
+      case "disable":
+        edits.push(hookEnabledEdit(hook, false));
+        break;
+    }
+  }
+  return writeCodexConfig(edits, cwd);
+}
+
 export const codexDriver: AgentDriver = {
   id: "codex",
   label: "Codex",
@@ -594,4 +638,6 @@ export const codexDriver: AgentDriver = {
   // time (lib/agents/codex/sandbox.ts).
   sandboxHealth: probeCodexSandbox,
   apiKey: codexApiKey,
+  listHooks,
+  reviewHooks,
 };
