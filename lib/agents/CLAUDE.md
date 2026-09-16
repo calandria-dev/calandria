@@ -105,8 +105,11 @@ process:
   the bridge is never contacted and no handler runs. Nothing reached Calandria, so nothing was lost
   either. Undetectable from the bridge by construction. Claude on this transport is still covered,
   because the driver's stream pump reads the `tool_result` regardless of which transport carried the
-  call and `isCalandriaToolName` matches `mcp__calandria__*` either way; Codex and Antigravity have
-  no equivalent, and this case is the residual gap.
+  call and `isCalandriaToolName` matches `mcp__calandria__*` either way. Codex detects its recorded
+  `MCP tool call requires approval, but approval policy is never` and `user cancelled MCP tool call`
+  failures from completed Calandria MCP items in `lib/agents/codex/events.ts`. Antigravity remains
+  unclassified because no equivalent MCP result has been captured. Its generic `CANCELED` terminal
+  status is not specific enough to classify as a pre-dispatch cutoff.
 - **After the request is dispatched.** The client sends `notifications/cancelled`, or the transport
   drops. The MCP SDK aborts the request handler's `AbortSignal` and then DISCARDS whatever the
   handler returns instead of sending it (`@modelcontextprotocol/sdk`, `Protocol._onrequest`). So

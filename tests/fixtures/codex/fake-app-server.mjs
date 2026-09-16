@@ -7,7 +7,7 @@
 // emits for codex-cli 0.153.0.
 //
 // Driven by env:
-//   FAKE_CODEX_SCENARIO   command | fileChange | ask | interrupt | resumeFails | dies
+//   FAKE_CODEX_SCENARIO   command | fileChange | ask | mcpCutoff | interrupt | resumeFails | dies
 //   FAKE_CODEX_LOG        JSONL file: every request/notification we received,
 //                         plus {"argv": [...]} first, and {"decision": …} once
 //                         an approval is answered.
@@ -199,6 +199,31 @@ async function runTurn() {
       questions: [{ id: "q1", header: "Colour", question: "Which colour?", isOther: true, isSecret: false, options: [{ label: "red", description: "" }, { label: "blue", description: "" }] }],
     });
     record({ decision: JSON.stringify(answer.result ?? answer.error) });
+  }
+
+  if (scenario === "mcpCutoff") {
+    for (const n of [1, 2]) {
+      const item = {
+        type: "mcpToolCall",
+        id: `item-mcp-cutoff-${n}`,
+        server: "calandria",
+        tool: "list_tasks",
+        arguments: { project: "current" },
+        status: "inProgress",
+        result: null,
+        error: null,
+      };
+      notify("item/started", { ...base, item, startedAtMs: Date.now() });
+      notify("item/completed", {
+        ...base,
+        item: {
+          ...item,
+          status: "failed",
+          error: { message: "MCP tool call requires approval, but approval policy is never" },
+        },
+        completedAtMs: Date.now(),
+      });
+    }
   }
 
   if (scenario === "interrupt") {

@@ -26,6 +26,8 @@ import type {
 // binary the user installed, which may be older or newer than the SDK types.
 type TurnCompletedUsage = Partial<Usage>;
 import { clip, clipKeepTail, summarizeResult, summarizeFailure, resultText } from "../shared";
+import { isCodexPreDispatchToolCutoff, toolCutoffNotice } from "../../agentToolGuard.mjs";
+import { logAgentToolCutoff } from "../../agentToolLog";
 import { DEFAULT_CODEX_MODEL } from "./pricing";
 import { codexUsage } from "./usage";
 
@@ -52,10 +54,14 @@ export interface CodexMapState {
   model: string;
   cum: CodexCum;
   cumDirty: boolean;
+  /** Present for task turns. One-shots have no task transcript to notify. */
+  taskId?: string;
+  /** Completed Calandria MCP calls Codex rejected before bridge dispatch. */
+  toolCutoffs: number;
 }
 
-export function newState(model: string = DEFAULT_CODEX_MODEL, cum: CodexCum = ZERO_CUM): CodexMapState {
-  return { emittedTool: new Set<string>(), model, cum, cumDirty: false };
+export function newState(model: string = DEFAULT_CODEX_MODEL, cum: CodexCum = ZERO_CUM, taskId?: string): CodexMapState {
+  return { emittedTool: new Set<string>(), model, cum, cumDirty: false, taskId, toolCutoffs: 0 };
 }
 
 const ITEM_PHASES = new Set(["item.started", "item.updated", "item.completed"]);
@@ -239,17 +245,32 @@ function mapMcp(phase: ItemPhase, item: McpToolCallItem, state: CodexMapState): 
   // Claude driver's in-process mount spells the same call
   // `mcp__calandria__suggest_task`. What matches on it (lib/suggestionCard.ts)
   // matches a substring for that reason.
-  const tool = toolOnce(state, item.id, { name: `${item.server}__${item.tool}`, title: `⚙ ${item.server}: ${item.tool}`, detail: clip(item.arguments) });
+  const name = `${item.server}__${item.tool}`;
+  const tool = toolOnce(state, item.id, { name, title: `⚙ ${item.server}: ${item.tool}`, detail: clip(item.arguments) });
   if (nonEmpty(tool)) out.push(tool);
   if (phase === "completed") {
     const isError = item.status === "failed" || !!item.error;
     const content = item.error ? item.error.message : resultText(item.result?.content);
+    // The CLI authored either captured text before it sent a request to our
+    // bridge. Restrict this to failed Calandria items so a generic vendor
+    // failure from another MCP server cannot become a false cutoff notice.
+    const cutOff = item.server === "calandria" && item.status === "failed" && isCodexPreDispatchToolCutoff(content);
+    if (cutOff) {
+      state.toolCutoffs++;
+      logAgentToolCutoff(name, "bridge", state.taskId, {
+        reached: false,
+        item_id: item.id,
+        count: state.toolCutoffs,
+      });
+      if (state.taskId && state.toolCutoffs === 1) out.push({ type: "notice", content: toolCutoffNotice(name) });
+    }
     out.push({
       type: "tool_result",
       id: item.id,
       content: isError ? clipKeepTail(content, 6000) : clip(content, 6000),
       isError,
       peek: isError ? summarizeFailure(content) : summarizeResult("output", content),
+      ...(cutOff ? { cutOff: true } : {}),
     });
   }
   return out;

@@ -14,7 +14,9 @@ import {
   toolErrorResult,
   DEFAULT_AGENT_TOOL_TIMEOUT_MS,
   CLI_INTERRUPTED_TOOL_RESULT,
+  CODEX_PRE_DISPATCH_TOOL_CUTOFFS,
   isCliInterruptedToolResult,
+  isCodexPreDispatchToolCutoff,
   isCalandriaToolName,
   toolInterruptedMessage,
   toolCutoffNotice,
@@ -227,6 +229,25 @@ describe("the CLI's own interrupted tool result", () => {
     expect(msg).toContain("/clear");
     // And the user-facing line must not be mistaken for the CLI's own.
     expect(isCliInterruptedToolResult(msg)).toBe(false);
+  });
+});
+
+describe("Codex's pre-dispatch MCP failures", () => {
+  it("recognizes both recorded Codex failure texts", () => {
+    expect(CODEX_PRE_DISPATCH_TOOL_CUTOFFS).toEqual([
+      "MCP tool call requires approval, but approval policy is never",
+      "user cancelled MCP tool call",
+    ]);
+    for (const text of CODEX_PRE_DISPATCH_TOOL_CUTOFFS) {
+      expect(isCodexPreDispatchToolCutoff(`Codex error: ${text}.`)).toBe(true);
+    }
+  });
+
+  it("leaves unrelated MCP failures alone", () => {
+    expect(isCodexPreDispatchToolCutoff("MCP tool call requires approval")).toBe(false);
+    expect(isCodexPreDispatchToolCutoff("user cancelled the turn")).toBe(false);
+    expect(isCodexPreDispatchToolCutoff(toolCutoffNotice("calandria__list_tasks"))).toBe(false);
+    expect(isCodexPreDispatchToolCutoff(undefined)).toBe(false);
   });
 });
 

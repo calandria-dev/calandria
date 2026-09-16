@@ -230,7 +230,7 @@ async function* runTurn(
   // Codex reports the thread's cumulative token counts on every turn.completed,
   // so a resumed thread starts from the baseline the last turn stored (see
   // events.ts). A fresh thread starts from zero.
-  const state = newState(model, (task.session_id ? getThreadUsageCum<CodexCum>(task.session_id) : null) ?? ZERO_CUM);
+  const state = newState(model, (task.session_id ? getThreadUsageCum<CodexCum>(task.session_id) : null) ?? ZERO_CUM, task.id);
 
   // Fallback (task choice -> agent-scoped app default -> legacy default ->
   // codex built-in), matching the Claude driver.
