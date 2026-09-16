@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { Icon } from "../icons";
 import { displayFileName, isImageExt, maxUploadBytes, uploadExtension } from "@/lib/uploadTypes";
 import type { MsgAttachment } from "./format";
+import { apiFetch } from "./api";
 
 // One file on a draft: the composer's message, or a task dialog's description.
 // Any file type is accepted (drop/paste/pick). It uploads on attach, and its
@@ -171,7 +172,7 @@ export function uploadToTask(taskId: string) {
   return async (file: File, name: string) => {
     const body = new FormData();
     body.append("file", file, name);
-    const res = await fetch(`/api/tasks/${taskId}/uploads`, { method: "POST", body });
+    const res = await apiFetch(`/api/tasks/${taskId}/uploads`, { method: "POST", body });
     const j = await res.json().catch(() => ({} as { path?: string; error?: string }));
     if (!res.ok || !j.path) throw new Error(j.error || `Upload failed (${res.status})`);
     return { path: j.path as string };
@@ -184,7 +185,7 @@ export function uploadToDraft(draft: string) {
     const body = new FormData();
     body.append("file", file, name);
     body.append("draft", draft);
-    const res = await fetch("/api/uploads", { method: "POST", body });
+    const res = await apiFetch("/api/uploads", { method: "POST", body });
     const j = await res.json().catch(() => ({} as { path?: string; error?: string }));
     if (!res.ok || !j.path) throw new Error(j.error || `Upload failed (${res.status})`);
     return { path: j.path as string };

@@ -14,7 +14,7 @@ import { Diagnostics } from "./Diagnostics";
 import { ModelsSection } from "./ModelsSection";
 import { ErrNote } from "./shared";
 import { autoResumeOnLimitKey } from "@/lib/usageReset";
-import { jget, jsend } from "./api";
+import { apiFetch, jget, jsend } from "./api";
 import { notificationPermission, type BrowserNotificationState } from "./useNotifications";
 import { disablePush, enablePush, pushSupport, syncPushSubscription, type PushSupportState } from "./usePush";
 import { modelLabel, relTime } from "./format";
@@ -33,7 +33,7 @@ function NavLogout() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/auth/whoami")
+    apiFetch("/api/auth/whoami")
       .then((r) => r.json())
       .then((d) => {
         if (!cancelled) setSignedIn(d?.signedIn === true);
@@ -47,7 +47,7 @@ function NavLogout() {
   async function logout() {
     setBusy(true);
     try {
-      const res = await fetch("/api/auth/logout", { method: "POST" });
+      const res = await apiFetch("/api/auth/logout", { method: "POST" });
       const data = await res.json().catch(() => ({}));
       // Top-level navigation so the provider's logout loads as a real page.
       window.location.href = data?.redirect || "/";

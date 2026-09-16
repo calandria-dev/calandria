@@ -7,6 +7,7 @@ import { fmtTokens } from "./format";
 import { clientFeatures } from "@/lib/features";
 import type { ServiceInfo } from "@/lib/types";
 import type { ProjectRow, TaskRow } from "./types";
+import { apiFetch } from "./api";
 
 type Tab = "diff" | "preview" | "context";
 type Session = { n: number; summaryBefore: string | null };
@@ -24,7 +25,7 @@ function useLiveUrl(project: ProjectRow): string | null {
   useEffect(() => {
     let dead = false;
     setUrl(null);
-    fetch(`/api/projects/${project.id}/services`)
+    apiFetch(`/api/projects/${project.id}/services`)
       .then((r) => (r.ok ? r.json() : null))
       .then((j: { services?: ServiceInfo[] } | null) => {
         if (dead || !j?.services) return;

@@ -33,7 +33,7 @@ import { ReclaimButton } from "./ReclaimButton";
 import { usePrOpenRefresh } from "./PrChip";
 import { ColResize, ColRail } from "./Layout";
 import { useOverflowRail } from "./useOverflowRail";
-import { jget, jsend } from "./api";
+import { apiFetch, jget, jsend } from "./api";
 
 // What POST /api/tasks/:id/sync answers with, across all four of its tiers.
 interface SyncPostResp {
@@ -79,7 +79,7 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSendP
   const [prAcked, setPrAcked] = useState(false);
 
   const load = useCallback(async () => {
-    try { const r = await fetch(`/api/tasks/${taskId}/sync`, { cache: "no-store" }); setSt(await r.json()); }
+    try { const r = await apiFetch(`/api/tasks/${taskId}/sync`, { cache: "no-store" }); setSt(await r.json()); }
     catch { setSt(null); }
   }, [taskId]);
 
@@ -90,7 +90,7 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSendP
   useEffect(() => { if (!running) load(); }, [running, refresh, load]);
 
   const post = useCallback(async (body: Record<string, unknown>): Promise<SyncPostResp> => {
-    const r = await fetch(`/api/tasks/${taskId}/sync`, {
+    const r = await apiFetch(`/api/tasks/${taskId}/sync`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
     });
     const res = (await r.json().catch(() => ({}))) as SyncPostResp;
@@ -291,7 +291,7 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSendP
     setBusy(true);
     setErr(null);
     try {
-      const r = await fetch(`/api/tasks/${taskId}/sync`, { method: "POST" });
+      const r = await apiFetch(`/api/tasks/${taskId}/sync`, { method: "POST" });
       const res: { ok?: boolean; error?: string; conflicts?: string[] } = await r.json().catch(() => ({}));
       // Prediction said clean but the real merge conflicted: escalate to Fix with AI.
       if (res?.conflicts?.length) after(await onResolveWithAI(taskId));
@@ -321,7 +321,7 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSendP
     setBusy(true);
     setErr(null);
     try {
-      const r = await fetch(`/api/tasks/${taskId}/merge/complete`, {
+      const r = await apiFetch(`/api/tasks/${taskId}/merge/complete`, {
         method: "POST",
         ...(prMode ? { headers: { "content-type": "application/json" }, body: JSON.stringify({ resolveOnly: true }) } : {}),
       });
@@ -647,7 +647,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   const [providersMap, setProvidersMap] = useState<Map<string, PresentedProvider>>(new Map());
   useEffect(() => {
     let alive = true;
-    fetch("/api/providers")
+    apiFetch("/api/providers")
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
       .then((body: { providers: PresentedProvider[] }) => {
         if (alive) setProvidersMap(new Map(body.providers.map((p) => [p.id, p] as const)));

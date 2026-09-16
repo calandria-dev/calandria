@@ -17,6 +17,7 @@ import type { ProviderType } from "@/lib/providers/types";
 
 import { Popover } from "./shared";
 import type { AgentsResponseT } from "./types";
+import { apiFetch } from "./api";
 
 export interface ModelPickerValue {
   agent: string | null;
@@ -69,7 +70,7 @@ function fetchTree(agent: string): void {
   if (treeCache.has(agent)) return;
   const epoch = treeEpochs.get(agent) ?? 0;
   treeCache.set(agent, { loading: true });
-  fetch(`/api/models?agent=${encodeURIComponent(agent)}`)
+  apiFetch(`/api/models?agent=${encodeURIComponent(agent)}`)
     .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
     .then((data: ModelsTree) => {
       if ((treeEpochs.get(agent) ?? 0) !== epoch) return;
@@ -116,7 +117,7 @@ function fetchProviders(): void {
   if (providersCache.data || providersCache.loading) return;
   const epoch = providersEpoch;
   providersCache.loading = true;
-  fetch("/api/providers")
+  apiFetch("/api/providers")
     .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
     .then((body: { providers: PresentedProvider[] }) => {
       if (providersEpoch !== epoch) return;

@@ -8,6 +8,7 @@ import { useCoarsePointer } from "./shared";
 import { PASTE_ATTACH_THRESHOLD } from "@/lib/promptLimits";
 import type { AgentCommand } from "@/lib/agents/types";
 import type { TaskRow } from "./types";
+import { apiFetch } from "./api";
 
 // Drafts persist per-task in localStorage so switching tasks, opening Settings,
 // or reloading the page doesn't throw away half-typed messages. (SessionView is
@@ -117,7 +118,7 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
     asked.current = true;
     let alive = true;
     cancelLoad.current = () => { alive = false; };
-    fetch(`/api/tasks/${task.id}/commands`)
+    apiFetch(`/api/tasks/${task.id}/commands`)
       .then((r) => (r.ok ? r.json() : { commands: [] }))
       .then((j: { commands?: AgentCommand[] }) => { if (alive) setAgentCmds(j.commands ?? []); })
       // Discovery failing costs the menu its long tail, nothing else: typing a

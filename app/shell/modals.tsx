@@ -3,7 +3,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LandingMode, Priority } from "@/lib/types";
 import { Icon } from "../icons";
-import { jget, jsend } from "./api";
+import { apiFetch, jget, jsend } from "./api";
 import { nanoid } from "nanoid";
 import { relTime, duration, fmtJobCost, alphabetical, isBlocking, splitAttachments } from "./format";
 import { AttachmentChips, stagedAttachment, uploadToDraft, uploadToTask, useAttachments } from "./attachments";
@@ -302,7 +302,7 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   const draft = useRef(nanoid());
   const files = useAttachments({ upload: uploadToDraft(draft.current) });
   const close = () => {
-    if (files.atts.length) void fetch(`/api/uploads/${draft.current}`, { method: "DELETE" }).catch(() => {});
+    if (files.atts.length) void apiFetch(`/api/uploads/${draft.current}`, { method: "DELETE" }).catch(() => {});
     onClose();
   };
   const [providerId, setProviderId] = useState<string | null>(null);
@@ -1045,7 +1045,7 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
   // saved, or a fresh upload cancelled) are reclaimed right away; the
   // description is the only thing that names them, and it no longer will.
   const discard = (paths: string[]) => {
-    for (const p of paths) void fetch(`/api/tasks/${task.id}/uploads/${p.split(/[\\/]/).pop()}`, { method: "DELETE" }).catch(() => {});
+    for (const p of paths) void apiFetch(`/api/tasks/${task.id}/uploads/${p.split(/[\\/]/).pop()}`, { method: "DELETE" }).catch(() => {});
   };
   const close = () => {
     discard(files.ready.filter((a) => !seedPaths.has(a.path)).map((a) => a.path));
