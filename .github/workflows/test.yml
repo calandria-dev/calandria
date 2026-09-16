@@ -613,8 +613,23 @@ jobs:
         run: npm run test:e2e
 
       # traces (retain-on-failure) and screenshots land in test-results/.
+      #
+      # NOT `failure()`, which throws away the evidence for the one bug these
+      # lanes actually have. Since the in-job retry landed (981f3bc, #274) a
+      # single-spec flake passes on attempt two, the job goes green, and
+      # `failure()` is false, so the trace and screenshot of the attempt that
+      # FAILED are discarded. That is why issue #161 has four sightings and no
+      # artifact anyone can read: every one has now expired, and every
+      # occurrence since 2026-09-08 uploaded nothing at all. Caught in the act
+      # on run 35124160394, where `18-tag-strip.spec.ts:218` failed, retried
+      # green, and left no artifact behind.
+      #
+      # A fully green run writes nothing into test-results/ (trace is
+      # retain-on-failure, screenshot only-on-failure), so with
+      # `if-no-files-found: ignore` below this uploads exactly when there is
+      # something to look at and costs nothing when there is not.
       - name: Upload Playwright artifacts
-        if: failure()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-artifacts-${{ github.run_attempt }}
@@ -774,7 +789,9 @@ jobs:
         run: xvfb-run -a npm run test:desktop:window
 
       - name: Upload desktop artifacts
-        if: failure()
+        # Not `failure()`; see the e2e job's upload step for why a retried
+        # flake must keep its trace.
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: desktop-artifacts-${{ github.run_attempt }}
@@ -840,7 +857,9 @@ jobs:
         run: npm run test:e2e
 
       - name: Upload Playwright artifacts
-        if: failure()
+        # Not `failure()`; see the e2e job's upload step for why a retried
+        # flake must keep its trace.
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-artifacts-windows-${{ github.run_attempt }}
@@ -1208,7 +1227,9 @@ jobs:
           "the uninstaller removed the executable, the payload, both shortcuts and the registry entry"
 
       - name: Upload desktop artifacts
-        if: failure()
+        # Not `failure()`; see the e2e job's upload step for why a retried
+        # flake must keep its trace.
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: desktop-artifacts-windows-${{ github.run_attempt }}
