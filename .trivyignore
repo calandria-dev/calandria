@@ -1,53 +1,51 @@
 # Trivy ignore list for the weekly Security scan (issue #21). Every entry
-# below is verified upstream-blocked as of 2026-08-23 — not fixable by a
-# change in this repo. Do not add a CVE here without the same verification:
-# confirm which artifact it lives in and that no newer upstream release
-# carries the fix.
+# below is verified upstream-blocked as of 2026-09-15: not fixable by a change
+# in this repo. Do not add a CVE here without the same verification: confirm
+# which artifact it lives in and that no newer upstream release carries the
+# fix. Keeping the list to exactly that keeps a red run informative.
 #
-# Revisit policy: re-check this list whenever gh or npm ship a new release.
-# Re-run `trivy image --severity HIGH,CRITICAL ghcr.io/calandria-dev/calandria:latest`
-# WITHOUT --ignorefile and prune any entry that no longer appears. A CVE that
-# isn't in this file will still fail the weekly scan — that's intentional;
-# keeping this list to exactly what's confirmed unfixable is what makes a red
-# run meaningful again.
+# `Image scan (trivy)` runs with `ignore-unfixed: true`, so every finding it
+# reports already has a fix somewhere. Before suppressing one, check the two
+# things that have so far always been the real answer instead:
 #
-# NOT listed here on purpose (verified fixed upstream, just needed a rebuild):
-# the golang stdlib + x/net-vendored-in-stdlib CVEs that were baked into the
-# gh 2.97.0 that shipped in the image at the time this file was written
-# (CVE-2026-33818, CVE-2026-56853, CVE-2026-56858, CVE-2026-56859,
-# CVE-2026-56860, CVE-2026-56862, CVE-2026-39821, CVE-2026-46600). gh 2.98.0
-# is already built with go1.26.7 (>= the 1.26.6 fix for all eight). A first
-# rebuild attempt still shipped 2.97.0 despite that — Docker's layer cache
-# keys on the `apt-get install gh` command's *text*, not on what apt actually
-# resolves, so an unpinned install silently kept the stale cached layer. The
-# Dockerfile now pins `gh=2.98.0` explicitly for this reason; bumping that
-# pin (see the comment there) is how gh updates happen going forward, and how
-# a rebuild is guaranteed to actually change the layer. Confirmed the fix
-# itself by downloading gh_2.98.0_amd64.deb from cli.github.com and checking
-# `strings usr/bin/gh` for the embedded go1.26.7 buildinfo string. 2026-08-23.
-
-# --- golang.org/x/mod, compiled into /usr/bin/gh ---
-# cli/cli's own go.mod pins x/mod v0.38.0; the fix ships in v0.40.0. This is
-# a real dependency bump in cli/cli's code, independent of the Go toolchain
-# version above — confirmed still v0.38.0 in gh's latest release (v2.98.0,
-# 2026-08-20) by downloading the .deb and grepping the binary for the
-# embedded module path/version string.
-# Watch: https://github.com/cli/cli/releases — look for a release whose
-# go.mod reaches golang.org/x/mod v0.40.0 or later.
-# Verified 2026-08-23.
-CVE-2026-56864
-CVE-2026-56865
+# - A stale layer. A Debian finding is the pinned base layer being older than
+#   bookworm's security archive. The base digest can be current and the
+#   packages still old, because the `node:26-bookworm-slim` tag is rebuilt on
+#   Node's cadence while Debian publishes as soon as it builds. The runtime
+#   stage's `apt-get upgrade` is what clears that (issue #363); see the note at
+#   that line.
+# - A cached layer. Docker keys a layer on the RUN command's text, not on what
+#   apt or npm resolved, so a rebuild can ship the old package and leave the
+#   finding in place. publish-image.yml's Sunday cron builds with `no-cache`
+#   and pushes the `:edge` image this scan reads on Monday.
+#
+# Revisit policy: re-check this list whenever gh, npm or the base image move.
+# Re-run the scan WITHOUT the ignore file and prune any entry that no longer
+# appears. Trivy reads `.trivyignore` from the working directory by default, so
+# omitting `--ignorefile` does not disable it and a check run that way reports
+# every entry here as already gone. Run it from somewhere else:
+#
+#   (cd /tmp && trivy image --severity HIGH,CRITICAL --ignore-unfixed \
+#      ghcr.io/calandria-dev/calandria:edge)
+#
+# --- PRUNED 2026-09-15 ---
+# CVE-2026-56864 and CVE-2026-56865, golang.org/x/mod compiled into
+# /usr/bin/gh, were listed here from 2026-08-23. They were blocked on cli/cli's
+# own go.mod reaching x/mod v0.40.0. The `gh=` pin is now 2.101.0 and a scan of
+# a locally built image with no ignore file reports /usr/bin/gh with no
+# findings, so both are gone.
 
 # --- npm's own vendored node_modules, bundled inside npm 12.0.2 ---
-# npm 12.0.2 is npm's newest release (`npm view npm dist-tags` — no dist-tag,
-# including `next-12`, points past 12.0.2), and it vendors brace-expansion
-# 5.0.7, tar 7.5.19, and ip-address 10.2.0 in its own bundled node_modules.
-# None of this is Calandria's dependency tree: package-lock.json already
-# resolves the app's own ip-address to 10.4.0 (above the 10.3.1 fix for
-# CVE-2026-69192, confirmed via `npm ls ip-address --all`), so the
-# ip-address hit below is npm's bundled copy, not ours.
-# Watch: https://www.npmjs.com/package/npm — a release past 12.0.2.
-# Verified 2026-08-23.
+# npm 12.0.2 is still npm's newest release (`dist-tags.latest` and `next-12`
+# both point at it, checked 2026-09-15), and it vendors brace-expansion 5.0.7,
+# tar 7.5.19 and ip-address 10.2.0 in its own bundled node_modules. None of
+# this is Calandria's dependency tree: package-lock.json already resolves the
+# app's own ip-address to 10.4.0 (above the 10.3.1 fix for CVE-2026-69192,
+# confirmed via `npm ls ip-address --all`), so the ip-address hit below is
+# npm's bundled copy. The Dockerfile pins `npm install -g npm@12.0.2`; bumping
+# that pin is how these clear.
+# Watch: https://www.npmjs.com/package/npm - a release past 12.0.2.
+# Verified 2026-09-15 against a locally built image.
 CVE-2026-14257
 CVE-2026-69152
 CVE-2026-73566
