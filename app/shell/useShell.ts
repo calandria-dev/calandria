@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LandingMode, Priority, Status, AskQuestion, AskAnswers, PermissionDecision, PermissionOutcome } from "@/lib/types";
 import type { ResolveResult } from "../TaskChanges";
-import { jget, jsend } from "./api";
+import { apiFetch, jget, jsend } from "./api";
 import { isAwaiting, needsYou, blockerTitles, formatAnswersText } from "./format";
 import { nextWake, wasSnoozed } from "./snooze";
 import { loadPersist, readUrlSel, landingSelection, type StoredSel, type UrlSel } from "./persist";
@@ -436,7 +436,7 @@ export function useShell() {
     setTaskRunning(taskId, true);
     setTasks((prev) => prev.map((x) => (x.id === taskId ? { ...x, started: 1, status: "in_progress", suggested: 0, awaiting_input: 0 } : x)));
     try {
-      const res = await fetch(`/api/tasks/${taskId}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+      const res = await apiFetch(`/api/tasks/${taskId}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
       if (!res.ok) {
         const raw = await res.text(); let msg = raw;
         try { msg = JSON.parse(raw).error ?? raw; } catch {}
@@ -497,14 +497,14 @@ export function useShell() {
   // partial transcript, and publishes turn_end, which the event stream handler
   // turns into a task refresh (now awaiting_input, resumable).
   const stopTurn = useCallback(async (taskId: string) => {
-    try { await fetch(`/api/tasks/${taskId}/abort`, { method: "POST" }); } catch {}
+    try { await apiFetch(`/api/tasks/${taskId}/abort`, { method: "POST" }); } catch {}
   }, []);
 
   // Drop a queued (not-yet-run) follow-up. The server publishes `dequeued`,
   // which the stream handler turns into removing the bubble, so this is
   // fire-and-forget; no optimistic local mutation needed.
   const cancelQueued = useCallback(async (taskId: string, pendingId: string) => {
-    try { await fetch(`/api/tasks/${taskId}/pending`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pendingId }) }); } catch {}
+    try { await apiFetch(`/api/tasks/${taskId}/pending`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pendingId }) }); } catch {}
   }, []);
 
   // Materialize a conflicted merge in the task's worktree, then stream an AI
@@ -512,7 +512,7 @@ export function useShell() {
   // the right follow-up (review state, clean-merge done, or an error).
   const resolveConflictsWithAI = useCallback(async (taskId: string): Promise<ResolveResult> => {
     try {
-      const res = await fetch(`/api/tasks/${taskId}/merge/prepare`, { method: "POST" });
+      const res = await apiFetch(`/api/tasks/${taskId}/merge/prepare`, { method: "POST" });
       const prep = await res.json();
       if (!res.ok || !prep?.ok) return { ok: false, error: prep?.error || "could not prepare the merge" };
       // Clean trial merge: it landed immediately, no AI needed.
@@ -550,7 +550,7 @@ export function useShell() {
   // instead of sitting on a spinner until the whole turn completes.
   const fixCi = useCallback(async (taskId: string): Promise<{ ok: boolean; error?: string }> => {
     try {
-      const res = await fetch(`/api/tasks/${taskId}/pr/fix-ci`, { method: "POST" });
+      const res = await apiFetch(`/api/tasks/${taskId}/pr/fix-ci`, { method: "POST" });
       const body = await res.json().catch(() => ({}));
       if (!res.ok || !body?.ok) return { ok: false, error: body?.error || `could not read the failing checks (HTTP ${res.status})` };
       void runTurn(taskId, body.prompt, false);

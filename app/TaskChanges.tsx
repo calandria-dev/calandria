@@ -9,6 +9,7 @@ import { Icon } from "./icons";
 import { PrChip, type PrChipTask } from "./shell/PrChip";
 import type { LandingMode, TaskComment } from "@/lib/types";
 import { prMergeBlocker, type PrMergeFacts } from "@/lib/prMerge";
+import { apiFetch } from "./shell/api";
 
 /** The PR fields this panel reads: what the merge decision needs, plus what the
  *  status chip in the toolbar draws. Both are satisfied by the client's TaskRow,
@@ -502,7 +503,7 @@ function PushBaseBranch({ projectId }: { projectId: string }) {
     let live = true;
     (async () => {
       try {
-        const r = await fetch(`/api/projects/${projectId}/base-branch`, { cache: "no-store" });
+        const r = await apiFetch(`/api/projects/${projectId}/base-branch`, { cache: "no-store" });
         const j = await r.json();
         if (live && j?.hasRemote && (j.ahead ?? 0) > 0 && !j.diverged) setSt({ ahead: j.ahead, label: j.label || "the remote" });
       } catch { /* no banner beats a wrong one */ }
@@ -518,7 +519,7 @@ function PushBaseBranch({ projectId }: { projectId: string }) {
     setErr("");
     setDetail(undefined);
     try {
-      const r = await fetch(`/api/projects/${projectId}/base-branch`, {
+      const r = await apiFetch(`/api/projects/${projectId}/base-branch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "push" }),
@@ -641,7 +642,7 @@ export default function TaskChanges({
 
   const loadComments = useCallback(async () => {
     try {
-      const r = await fetch(`/api/tasks/${taskId}/comments`, { cache: "no-store" });
+      const r = await apiFetch(`/api/tasks/${taskId}/comments`, { cache: "no-store" });
       const j: { comments?: TaskComment[] } = await r.json();
       setComments(j.comments ?? []);
     } catch { /* comments are supplementary; a failed fetch just shows none */ }
@@ -650,7 +651,7 @@ export default function TaskChanges({
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch(`/api/tasks/${taskId}/diff`, { cache: "no-store" });
+      const r = await apiFetch(`/api/tasks/${taskId}/diff`, { cache: "no-store" });
       const j: DiffResp = await r.json();
       if (!j.error) diffCache.set(taskId, j); // errors are worth retrying, not replaying
       setData(j);
@@ -760,7 +761,7 @@ export default function TaskChanges({
     if (!sel || !draft.trim()) return;
     setCommentBusy(true);
     try {
-      const r = await fetch(`/api/tasks/${taskId}/comments`, {
+      const r = await apiFetch(`/api/tasks/${taskId}/comments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -788,7 +789,7 @@ export default function TaskChanges({
     setMergeRes(null);
     setLocalMergeOpen(false);
     try {
-      const r = await fetch(`/api/tasks/${taskId}/merge`, {
+      const r = await apiFetch(`/api/tasks/${taskId}/merge`, {
         method: "POST",
         ...(stashDirty ? { headers: { "content-type": "application/json" }, body: JSON.stringify({ stashDirty }) } : {}),
       });
@@ -814,7 +815,7 @@ export default function TaskChanges({
     setPrErr(null);
     setPrDetail(undefined);
     try {
-      const r = await fetch(`/api/tasks/${taskId}/pr`, {
+      const r = await apiFetch(`/api/tasks/${taskId}/pr`, {
         method: "POST",
         ...(title !== undefined
           ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) }
@@ -841,7 +842,7 @@ export default function TaskChanges({
     setPrMerging(true);
     setPrMergeRes(null);
     try {
-      const r = await fetch(`/api/tasks/${taskId}/pr/merge`, { method: "POST" });
+      const r = await apiFetch(`/api/tasks/${taskId}/pr/merge`, { method: "POST" });
       const res: PrMergeResp = await r.json();
       setPrMergeRes({ ...res, ok: !!res.ok });
     } catch (e) {
@@ -886,7 +887,7 @@ export default function TaskChanges({
     const resolveOnly = prMode;
     const body = stashDirty || resolveOnly ? JSON.stringify({ ...(stashDirty ? { stashDirty } : {}), ...(resolveOnly ? { resolveOnly } : {}) }) : null;
     try {
-      const r = await fetch(`/api/tasks/${taskId}/merge/complete`, {
+      const r = await apiFetch(`/api/tasks/${taskId}/merge/complete`, {
         method: "POST",
         ...(body ? { headers: { "content-type": "application/json" }, body } : {}),
       });
@@ -906,7 +907,7 @@ export default function TaskChanges({
   const doAbort = async () => {
     setMerging(true);
     try {
-      await fetch(`/api/tasks/${taskId}/merge/abort`, { method: "POST" });
+      await apiFetch(`/api/tasks/${taskId}/merge/abort`, { method: "POST" });
       setMergeRes(null);
       setBinaryConflicts([]);
     } finally {
