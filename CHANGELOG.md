@@ -8,6 +8,28 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.15.0](https://github.com/calandria-dev/calandria/compare/v0.14.2...v0.15.0) (2026-09-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* **db:** drop the legacy agent_env columns ([#368](https://github.com/calandria-dev/calandria/issues/368))
+
+### Features
+
+* **agents:** detect a cut-off tool call on the stdio MCP bridge ([#367](https://github.com/calandria-dev/calandria/issues/367)) ([39c0cb7](https://github.com/calandria-dev/calandria/commit/39c0cb7b72716f6c7226e9e993f66e38c7e94280))
+* **codex:** add independent sandbox settings ([#360](https://github.com/calandria-dev/calandria/issues/360)) ([e00547c](https://github.com/calandria-dev/calandria/commit/e00547ca046f675ec8dd6e71d0b77ed5c6c1e823))
+* **db:** drop the legacy agent_env columns ([#368](https://github.com/calandria-dev/calandria/issues/368)) ([e2825b8](https://github.com/calandria-dev/calandria/commit/e2825b8f0f2d929ed8d4b6c9efd13e2486c1b67b))
+
+
+### Bug Fixes
+
+* **ci:** upgrade base packages so the weekly image scan can pass ([#366](https://github.com/calandria-dev/calandria/issues/366)) ([2d6f309](https://github.com/calandria-dev/calandria/commit/2d6f3095d11c77ffb480edc4a42a53700432da0e)), closes [#363](https://github.com/calandria-dev/calandria/issues/363)
+* **codex:** detect pre-dispatch MCP tool cutoffs ([#371](https://github.com/calandria-dev/calandria/issues/371)) ([3401cb5](https://github.com/calandria-dev/calandria/commit/3401cb510c7fd7f341e22a369d0391e9b8efd185))
+* **mobile:** remove keyboard gap below composer ([#362](https://github.com/calandria-dev/calandria/issues/362)) ([0c4003b](https://github.com/calandria-dev/calandria/commit/0c4003bbe628863d6a18d2283fef4e38e5554855))
+* recover expired forward-auth sessions ([#369](https://github.com/calandria-dev/calandria/issues/369)) ([d523c42](https://github.com/calandria-dev/calandria/commit/d523c424de70f85d89dbfd3deff8b7f81d0056d3))
+* **ui:** stabilize model picker live refreshes ([#358](https://github.com/calandria-dev/calandria/issues/358)) ([aa977ba](https://github.com/calandria-dev/calandria/commit/aa977ba396611f78e6870fe32609e9e6e1506c95))
+
 ## [0.14.2](https://github.com/calandria-dev/calandria/compare/v0.14.1...v0.14.2) (2026-09-15)
 
 
