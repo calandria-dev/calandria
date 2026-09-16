@@ -124,8 +124,10 @@ longer reproduces.
 
 Working and tested (`desktop/test-supervisor.js`, 34 assertions; `desktop/test-real-boot.js`, 8):
 
-- Node resolution: `CALANDRIA_NODE` → bundled → `execPath` (only when not Electron) → PATH,
-  with an actionable error naming everything it tried.
+- Node resolution: `CALANDRIA_NODE` → bundled → `execPath` (only when not Electron) → PATH.
+  An existing bundled runtime is authoritative. Its version probe runs up to three times and
+  records the operating-system error from every failure. If all bundled paths fail, startup stops
+  instead of selecting an unverified PATH runtime. An absent bundle retains the fallback order.
 - macOS launchd-PATH detection and repair from the login shell, fenced against rc-file
   chatter, returning `null` rather than throwing on failure.
 - Port selection that steps past a running instance and never hands both sidecars the same
