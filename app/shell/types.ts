@@ -30,7 +30,6 @@ export interface ProjectRow {
   test_command: string;
   default_agent: string; // agent driver new tasks in this project default to (lib/agents/registry.ts)
   send_context: number; // 1 = new tasks default to sending the saved project context to the agent
-  agent_env?: string; // legacy provider override, absent from current API responses
   default_provider_id: string | null;
   provider: AgentProvider;
   gateway_max_budget: number | null; // dollars; null = no max_budget sent to LiteLLM's /key/generate for this project's per-task keys
@@ -58,7 +57,6 @@ export interface TaskRow {
   suggested: number;
   agent: string; // agent driver this task's sessions run under (lib/agents/); fixed for the task's life
   send_context: number; // 1 = sessions get the saved project context (seeded from the project setting)
-  agent_env?: string; // legacy provider override, absent from current API responses
   provider_id: string | null;
   provider: AgentProvider;
   model: string | null;
@@ -399,9 +397,9 @@ export type AgentInfoT = {
   authBroken?: AgentAuthBrokenT | null;
   sandboxBroken?: AgentSandboxBrokenT | null;
   /** How much of this instance's work for the agent runs on its own login.
-   *  A project's agent_env can point the agent at a local, custom or gateway
-   *  endpoint; the login stays valid and its plan stops describing this
-   *  instance's turns. See lib/planScope.ts. */
+   *  A project's model provider can point the agent at a local, custom or
+   *  gateway endpoint; the login stays valid and its plan stops describing
+   *  this instance's turns. See lib/planScope.ts. */
   planScope?: PlanScopeT | null;
 };
 // Connected, but its login stopped working mid-flight (see lib/authFailure.ts).

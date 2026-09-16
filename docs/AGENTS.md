@@ -508,8 +508,8 @@ router_settings:
 
 Every gateway turn also carries `x-litellm-api-key` and a tag list naming the project, task and
 agent, so LiteLLM's own spend views break down by task with nothing written on Calandria's side.
-Calandria composes those headers per turn. `ANTHROPIC_CUSTOM_HEADERS` stays out of the
-`agent_env` allowlist. The key is absent from provider and project rows. It lives in a 0600 file
+Calandria composes those headers per turn. `ANTHROPIC_CUSTOM_HEADERS` is never taken from
+stored configuration. The key is absent from provider and project rows. It lives in a 0600 file
 beside the database and resolves at turn time. Claude Code also sends
 `x-claude-code-session-id` on its own, so LiteLLM records the task's session as the spend log's
 session id with no configuration needed.

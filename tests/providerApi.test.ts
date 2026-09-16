@@ -23,46 +23,39 @@ beforeEach(() => {
 });
 
 describe("provider ids on project and task routes", () => {
-  it("PATCH /api/projects/[id] stores default_provider_id and ignores legacy agent_env", async () => {
+  it("PATCH /api/projects/[id] stores default_provider_id", async () => {
     const project = createProject({ name: "Project provider" });
     const provider = createProvider({
       type: "custom",
       label: "Private endpoint",
       config: { base_url: "https://models.example.test/v1", api: "openai" },
     });
-    getDb().prepare("UPDATE projects SET agent_env = ? WHERE id = ?").run('{"ANTHROPIC_BASE_URL":"https://old"}', project.id);
-
     const response = await patchProjectRoute(
-      request("PATCH", { default_provider_id: provider.id, agent_env: { ANTHROPIC_API_KEY: "ignored" } }),
+      request("PATCH", { default_provider_id: provider.id }),
       projectParams(project.id),
     );
 
     expect(response.status).toBe(200);
     expect(getProject(project.id)!.default_provider_id).toBe(provider.id);
-    expect(getProject(project.id)!.agent_env).toBe('{"ANTHROPIC_BASE_URL":"https://old"}');
     const body = await response.json();
     expect(body.default_provider_id).toBe(provider.id);
-    expect(body).not.toHaveProperty("agent_env");
     expect(body.provider).toMatchObject({ kind: "custom", openai_base_url: "https://models.example.test/v1", auth_token: null });
   });
 
-  it("PATCH /api/tasks/[id] stores provider_id and ignores legacy agent_env", async () => {
+  it("PATCH /api/tasks/[id] stores provider_id", async () => {
     const project = createProject({ name: "Task provider" });
     const provider = createProvider({ type: "ollama", config: { base_url: "http://ollama.test:11434" } });
     const task = createTask({ project_id: project.id, title: "Task" });
-    getDb().prepare("UPDATE tasks SET agent_env = ? WHERE id = ?").run('{"OPENAI_BASE_URL":"https://old"}', task.id);
-
     const response = await patchTaskRoute(
-      request("PATCH", { provider_id: provider.id, agent_env: { OPENAI_API_KEY: "ignored" } }),
+      request("PATCH", { provider_id: provider.id }),
       projectParams(task.id),
     );
 
     expect(response.status).toBe(200);
     expect(getTask(task.id)!.provider_id).toBe(provider.id);
-    expect(getTask(task.id)!.agent_env).toBe('{"OPENAI_BASE_URL":"https://old"}');
   });
 
-  it("POST /api/tasks accepts provider_id without writing agent_env", async () => {
+  it("POST /api/tasks accepts provider_id", async () => {
     const project = createProject({ name: "Create provider" });
     const provider = createProvider({ type: "lmstudio", config: { base_url: "http://lmstudio.test:1234" } });
     const response = await createTaskRoute(
@@ -70,7 +63,6 @@ describe("provider ids on project and task routes", () => {
         project_id: project.id,
         title: "Created task",
         provider_id: provider.id,
-        agent_env: { ANTHROPIC_BASE_URL: "https://old" },
       }),
     );
 
@@ -78,12 +70,11 @@ describe("provider ids on project and task routes", () => {
     const body = (await response.json()) as Task;
     expect(body.provider_id).toBe(provider.id);
     expect(getTask(body.id)!.provider_id).toBe(provider.id);
-    expect(getTask(body.id)!.agent_env).toBe("");
   });
 });
 
 describe("provider-safe project and task reads", () => {
-  it("GET /api/projects/[id] includes the derived provider and strips legacy fields and secrets", async () => {
+  it("GET /api/projects/[id] includes the derived provider and strips secrets", async () => {
     const project = createProject({ name: "Read project" });
     const provider = createProvider({
       type: "custom",
@@ -97,21 +88,19 @@ describe("provider-safe project and task reads", () => {
       expect(response.status).toBe(200);
       const body = (await response.json()) as Project & { provider: Record<string, unknown> };
       expect(body.provider).toMatchObject({ kind: "custom", openai_base_url: "https://private.example.test/v1", auth_token: null });
-      expect(body).not.toHaveProperty("agent_env");
       expect(body.provider).not.toHaveProperty("super-secret");
       expect(JSON.stringify(body)).not.toContain("super-secret");
 
       const listResponse = await listProjectsRoute();
       const listed = (await listResponse.json()).find((row: { id: string }) => row.id === project.id);
       expect(listed.provider).toMatchObject({ kind: "custom", auth_token: null });
-      expect(listed).not.toHaveProperty("agent_env");
       expect(JSON.stringify(listed)).not.toContain("super-secret");
     } finally {
       deleteProviderSecrets(provider.id);
     }
   });
 
-  it("GET /api/tasks/[id] includes the derived provider and strips legacy fields and secrets", async () => {
+  it("GET /api/tasks/[id] includes the derived provider and strips secrets", async () => {
     const project = createProject({ name: "Read task" });
     const provider = createProvider({ type: "openai_key", config: { default_model: "gpt-test" } });
     setProviderSecret(provider.id, "key", "vendor-secret");
@@ -121,7 +110,6 @@ describe("provider-safe project and task reads", () => {
       expect(response.status).toBe(200);
       const body = (await response.json()) as Task & { provider: Record<string, unknown> };
       expect(body.provider).toMatchObject({ kind: "cloud", pricing: "vendor", model: "gpt-test", auth_token: null });
-      expect(body).not.toHaveProperty("agent_env");
       expect(JSON.stringify(body)).not.toContain("vendor-secret");
       expect(getProvider(provider.id)).not.toHaveProperty("key");
     } finally {

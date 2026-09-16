@@ -1361,9 +1361,9 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   const [landing, setLanding] = useState<LandingMode>(project.landing_mode === "pr" ? "pr" : "merge");
   const [autoReclaim, setAutoReclaim] = useState(project.auto_reclaim === 1);
   // Which model provider this project's turns run against
-  // (docs/superpowers/specs/2026-09-06-model-providers-design.md). Replaces
-  // the old env-shaped agent_env override entirely: default_provider_id names
-  // a model_providers row, and the row's own config (base URL, billing,
+  // (docs/superpowers/specs/2026-09-06-model-providers-design.md).
+  // default_provider_id names a model_providers row, and the row's own
+  // config (base URL, billing,
   // default_model) is edited from Settings → Providers, not here. This dialog
   // only picks WHICH provider (and which model on it) this project defaults
   // to. `providers` is fetched once, shared with the model trigger's resolved

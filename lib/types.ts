@@ -39,7 +39,6 @@ export interface Project {
   port: number; // deterministic per-project port, injected as PORT into services + the PTY
   default_agent: string; // agent driver new tasks in this project run under (lib/agents/registry.ts)
   send_context: number; // 1 = include the saved project context in new agent sessions (default for new tasks)
-  agent_env: string; // provider override for every task's turns, as JSON over the lib/agentEnv.ts allowlist ("" = the agent's own cloud login)
   default_provider_id: string | null; // the model provider every task in this project runs against (lib/providers/); null = the environment's own bundled row
   recap: string; // last LLM "where you left off" recap (auto-generated when idle)
   recap_at: number; // when the recap was generated (0 = none)
@@ -59,7 +58,7 @@ export interface Project {
   gateway_key_duration: string; // a LiteLLM duration string ("30d"); "" = no duration sent (never auto-expires on LiteLLM's clock)
   // Hosted MCP servers this project mounts on every task's turn
   // (docs/AGENTS.md, LiteLLM section): a JSON array of gateway aliases
-  // (lib/gatewayMcp.ts). Independent of agent_env's model-provider kind, so a
+  // (lib/gatewayMcp.ts). Independent of the selected provider's kind, so a
   // cloud-login task can still reach the gateway's hosted tools. "[]" = none
   // selected, the default for every project.
   gateway_mcp: string;
@@ -76,7 +75,6 @@ export interface Task {
   suggested: number; // 1 = Claude-proposed, idle in the suggested tray
   agent: string; // agent driver this task's sessions run under (default "claude"; see lib/agents/)
   send_context: number; // 1 = include the saved project context in this task's sessions (seeded from projects.send_context)
-  agent_env: string; // per-task provider override laid over the project's (lib/agentEnv.ts); "" = inherit the project's
   provider_id: string | null; // the model provider this task's turns run against (lib/providers/); null = the project's default, then the environment's bundled row
   model: string | null; // chosen model alias ("fable"|"opus"|"sonnet"|"haiku"); null = inherit default
   resolved_model: string | null; // model the SDK actually ran last turn (for the badge)
@@ -590,7 +588,8 @@ export interface PlanUsageWindow {
    * key's own budget (GET /key/info), synthesized by GET /api/plan-usage
    * under the `"gateway"` map key rather than reported by an agent driver. A
    * gateway task's turns don't draw on any agent's session/week window
-   * (lib/agentEnv.ts planResetKeyFor), so the session header reads this one
+   * (app/shell/SessionView.tsx picks GATEWAY_PLAN_ID when the resolved
+   * provider row is a `litellm` one), so the session header reads this one
    * instead, where a vendor window would otherwise be shown but doesn't
    * apply.
    */
@@ -608,8 +607,9 @@ export const GATEWAY_PLAN_ID = "gateway";
  * How much of this instance's work for one agent actually runs on that agent's
  * own login, counted over the projects that are not deprecated.
  *
- * A project can redirect an agent's turns to a local, custom or gateway
- * endpoint through `agent_env` (lib/agentEnv.ts). The login stays valid and its
+ * A project can point an agent's turns at a local, custom or gateway
+ * endpoint by selecting a model provider (`projects.default_provider_id`,
+ * lib/providers/). The login stays valid and its
  * plan windows stay true, and they stop describing what this instance spends.
  * The meter is one pill for the whole instance, so the three cases get three
  * answers: `all` renders as before, `some` renders with a note naming the
