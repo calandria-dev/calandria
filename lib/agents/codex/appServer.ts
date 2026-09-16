@@ -17,6 +17,7 @@
 import { spawn } from "node:child_process";
 import os from "node:os";
 import { codexSpawn } from "./bin";
+import { hasProcessGroups, killTree, type ProcessTreeOptions } from "../../processTree";
 import { isProjectUntrustedWarning, parseHooksList, type CodexHookInventory, type CodexConfigEdit } from "./hooks";
 
 // Only echoed back inside the server's `userAgent` string, so a fixed value
@@ -78,6 +79,38 @@ function stderrTail(s: string): string {
   return lines.slice(-2).join(" ").slice(0, 300);
 }
 
+/** The half of a spawned child this teardown needs. */
+interface KillableChild {
+  pid?: number | undefined;
+  kill(signal: NodeJS.Signals): boolean;
+}
+
+/**
+ * Stop the throwaway child. Nothing to drain and no shutdown RPC worth waiting
+ * on: the one answer we came for is already in hand, and a lingering
+ * app-server would outlive the poll.
+ *
+ * On win32 the direct child is cmd.exe wrapping codex's `.cmd` shim, so killing
+ * it leaves the CLI running with the call's `cwd` as its working directory, and
+ * Windows refuses to remove a directory that is any process's cwd. `taskkill
+ * /T` walks the parent chain, so it must run while the direct child is still
+ * alive.
+ *
+ * On POSIX the direct child is the CLI itself, and this spawn never asks for
+ * its own process group, so the negative-pid kill inside killTree would signal
+ * this process too. Keep the tree kill behind the platform check.
+ *
+ * `opts` is for the test that exercises the win32 branch on POSIX.
+ */
+export function teardownChild(child: KillableChild, opts: ProcessTreeOptions = {}): void {
+  if (!hasProcessGroups(opts.platform)) killTree(child.pid ?? 0, "SIGKILL", opts);
+  try {
+    child.kill("SIGKILL");
+  } catch {
+    /* already gone */
+  }
+}
+
 /**
  * Run one `<method>` request against a throwaway `codex app-server`.
  * Never rejects: every failure comes back as `{ error }` so the caller's
@@ -118,14 +151,7 @@ export function callAppServer(
       settled = true;
       clearTimeout(timer);
       if (settleTimer) clearTimeout(settleTimer);
-      // Nothing to drain and no shutdown RPC worth waiting on: the one answer
-      // we came for is already in hand, and a lingering app-server would
-      // outlive the poll.
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        /* already gone */
-      }
+      teardownChild(child);
       resolve({ ...r, handshook });
     };
 
