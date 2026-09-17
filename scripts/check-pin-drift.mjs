@@ -305,10 +305,9 @@ const CLI_NPM_PLAN = [
 ];
 
 /**
- * Selects stale CLI pins for an automated bump. The SDK package is deliberately
- * excluded: it has no Dockerfile CLI coupling and still needs its own
- * behavioral review. The Codex SDK is updated by the caller to the same
- * `codexVersion` after npm regenerates package-lock.json.
+ * Selects stale CLI pins for an automated bump. The Agent SDK has no
+ * Dockerfile CLI coupling and stays on its behavioral-review path. The Codex
+ * SDK moves to the same `codexVersion` when npm regenerates package-lock.json.
  */
 export function npmBumpPlan(pins, observed, stale) {
   const staleByPackage = new Map((stale ?? []).map((entry) => [entry.pkg, entry]));
