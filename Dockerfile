@@ -140,10 +140,11 @@ RUN npm install -g npm@12.0.2 && npm --version
 # A stale pin here still builds and fails later instead: 0.146.0 could not run
 # GPT-6 Astra at all ("model requires a newer version of codex"), because a new
 # model can require a CLI bump and not just a catalog entry. `Pin drift`
-# (.github/workflows/pin-drift.yml) watches both npm pins and files an issue at
-# three weeks old or three newer minors, carrying the bump checklist,
-# including the one step no job can take: exercising the agent against a real
-# login.
+# (.github/workflows/pin-drift.yml) owns all three agent CLI pins and opens one
+# bot PR when an upstream version moves. It dispatches the required test,
+# desktop skip and uncached image workflows against the exact branch head. It
+# verifies that head before enabling squash auto-merge, and GitHub merges only
+# after every required check passes.
 ARG CLAUDE_CODE_VERSION=2.1.260
 ARG CODEX_VERSION=0.153.0
 ARG AGY_VERSION=1.2.4
@@ -183,11 +184,12 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 #
 # These three ARGs are owned by `Pin drift` (.github/workflows/pin-drift.yml).
 # It reads both manifests daily and, when they have moved, force-pushes the
-# rewritten ARGs to the `bot/agy-pin` branch and opens or refreshes one pull
-# request titled `build(deps): bump Antigravity CLI to <version>`. That PR is
-# reviewed and merged by a human and is never automerged. Editing the three by
-# hand still works and costs nothing: the next run sees the pins are current,
-# closes the bot PR and deletes its branch.
+# rewritten ARGs to the bot branch and opens or refreshes one conventional-
+# commit pull request. The workflow dispatches the required checks against the
+# exact branch head and verifies it before enabling squash auto-merge. GitHub
+# merges only after every required check passes. Editing the three by hand still
+# works: the next run sees the pins are current, closes the bot PR and deletes
+# its branch.
 #
 # The values come from
 #   curl -fsSL https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json
@@ -196,7 +198,7 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 # together: the guard below compares the manifest URL against AGY_VERSION, so
 # a version written without its digests fails `sha512sum -c` on both arches.
 # The bot refuses to write anything when the two manifests disagree on the
-# version, and files the usual issue for the other pins in this file.
+# version. Claude Code and Codex updates use the same bot PR and check path.
 #
 # The binary self-updates in the background by default, which would replace
 # this pin mid-turn. AGY_CLI_DISABLE_AUTO_UPDATE below turns that off

@@ -51,15 +51,20 @@ and the Windows e2e pair are label-gated (`e2e`, `macos`), so they report `skipp
 Requiring a check that is usually skipped buys nothing, since skipped satisfies the gate, and it
 would make every labelled PR wait half an hour.
 
-**The bot PR from `Pin drift` reports the seven required contexts from a `workflow_dispatch` run, not from a
-`pull_request` one.** A push made with `GITHUB_TOKEN` fires no `push` or `pull_request` workflow,
-so `.github/workflows/pin-drift.yml` dispatches `test.yml`, `release-desktop.yml` and
-`publish-image.yml` against
-`bot/agy-pin` itself. Check runs attach to a commit, and the PR's head commit is that branch's
-head, so the same seven contexts appear under the same display names and satisfy the same rule. The
-dispatch is why no PAT and no bypass entry are needed for that branch. If a `bot/agy-pin` PR ever
-shows an empty check list, read the `bump` job's log: it fails when a dispatch produces no run for
+**The agent CLI pin PR reports the seven required contexts from `workflow_dispatch` runs.** A push
+made with `GITHUB_TOKEN` fires no `push` or `pull_request` workflow, so
+`.github/workflows/pin-drift.yml` dispatches `test.yml`, `release-desktop.yml` and
+`publish-image.yml` against `bot/agent-cli-pins`. Check runs attach to the branch head, so the same
+seven contexts appear under the same display names and satisfy the rule. The workflow verifies the
+exact PR head before it queues squash auto-merge. No PAT or bypass entry is needed. If this PR ever
+shows an empty check list, read the `bump` job's log. It fails when a dispatch produces no run for
 the SHA it pushed.
+
+Repository auto-merge must stay enabled for this path. Verify the setting with:
+
+```sh
+gh api repos/calandria-dev/calandria --jq .allow_auto_merge
+```
 
 **`strict_required_status_checks_policy` is `false`.** True means "branch must be up to date with
 the base before merging", which in a stacked tag tree forces a rebase of every open PR each time

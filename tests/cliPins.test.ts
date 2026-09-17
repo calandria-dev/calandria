@@ -28,16 +28,16 @@ const pins = extractPins(
  * back to the copy it depends on exactly in `node_modules`. If the two
  * diverge, development and production run different CLI versions.
  *
- * `.github/workflows/pin-drift.yml` covers upstream pins and cannot catch
- * this: it can say a pin is behind but not that two of our own files
- * disagree.
+ * `.github/workflows/pin-drift.yml` updates these files together. This test
+ * rejects a partial bot edit or any later change that separates them.
  */
 describe("Codex CLI pins", () => {
   const declared = pkg.dependencies["@openai/codex-sdk"];
 
   it("pins @openai/codex-sdk exactly, with no range", () => {
     // A caret lets `npm install` float the SDK a patch, desynchronizing it
-    // from ARG CODEX_VERSION. An exact pin means a bump is a reviewed edit.
+    // from ARG CODEX_VERSION. The updater can only preserve the invariant when
+    // both sides are exact.
     expect(declared).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
