@@ -26,7 +26,16 @@ import {
   type Shell,
 } from "./fixtures";
 
-test.describe.configure({ mode: "serial" });
+// Default, not serial, unlike the rest of desktop/e2e. The config pins
+// `workers: 1` and `fullyParallel: false`, so these still run in order in one
+// process either way; what serial adds is that a failure skips every test
+// after it, and a retry re-runs the whole group. One assertion here therefore
+// cost eleven other results (issue #244). The tests read state without
+// mutating the app's lifecycle, as the header says, and the instance is built
+// in `beforeAll`, which Playwright re-runs when it restarts the worker after a
+// failure, so the tests after a red one get a fresh shell rather than a
+// half-used one.
+test.describe.configure({ mode: "default" });
 
 let shell: Shell;
 
@@ -60,8 +69,21 @@ test("the boot screen streams supervisor logs, then hands off to the app", async
   // Those lines also reached the boot screen, a separate claim: they arrive
   // through `webContents.executeJavaScript`, the only bridge main.js has
   // without a preload, past loading.html's `default-src 'none'` CSP.
+  //
+  // Any supervisor line proves that bridge, and which one arrives first is
+  // not part of the claim (issue #244). This asked for `[shell] node: ` and
+  // failed on a fast boot that had already logged it, because the fixture
+  // sampled the pane once and caught only `[shell] payload:`. The fixture now
+  // reads up to the swap, and the assertion no longer names a line whose
+  // delivery it cannot order: main.js drops a line pushed before
+  // loading.html has parsed (`if (!el) return`), so which line is the first
+  // to survive is a DOM-readiness race rather than a product fact.
+  //
+  // The pattern is the shape `supervisor.log()` gives every line it fans out,
+  // a bracketed source tag (`[shell]`, `[env]`, and `[app]`/`[pty]` for
+  // sidecar output), which is the whole of what this pane can contain.
   expect(shell.bootScreenLog, "the boot screen never received a supervisor log line").toMatch(
-    /\[shell] node: /
+    /^\[\w+] \S/m
   );
   // Received, not displayed: the lines land in a pane clipped out of the
   // layout, so a person watching sees only a spinner. That clipping is also

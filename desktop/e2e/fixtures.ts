@@ -100,9 +100,11 @@ export type Shell = {
   /** The URL the window was showing when it first appeared (the boot screen). */
   firstUrl: string;
   /**
-   * What the boot screen's `<pre id="log">` had streamed into it before the
-   * swap. The pane is off screen (the boot screen shows a spinner) but is
-   * still written, and is the only place the supervisor's first lines survive.
+   * Everything the boot screen's `<pre id="log">` received before the swap,
+   * read cumulatively rather than sampled once, so a line that arrived
+   * before the pane went away is still here afterwards. The pane is off
+   * screen (the boot screen shows a spinner) but is still written, and is
+   * the only place the supervisor's first lines survive.
    */
   bootScreenLog: string;
   /**
@@ -396,8 +398,22 @@ export async function launchShell(name: string, opts: LaunchOptions = {}): Promi
   // swap lands the locator stops resolving, and a retrying matcher would
   // run out its own timeout waiting on an element that will not return.
   // Short per-read timeouts; the last non-empty read wins.
+  //
+  // Reads run until the swap rather than stopping at the first non-empty
+  // one (issue #244). `#log` is appended to, so every read is a superset of
+  // the one before and the last one holds everything the boot screen ever
+  // received. Stopping at the first line meant the capture was a snapshot of
+  // one arbitrary instant: on a fast boot it held `[shell] payload:` alone,
+  // and a later line was missing from the transcript even though it had been
+  // streamed in well before the pane went away. Nothing here waits for a
+  // line, so a boot that finishes sooner just ends the loop sooner.
+  //
+  // A launch told there will be no app (`waitForApp: false`) has no swap to
+  // read up to, so it keeps the old first-line exit; no spec reads
+  // `bootScreenLog` on that path.
   let bootScreenLog = "";
   let bootScreen: Shell["bootScreen"] = { spinner: false, logWidth: -1 };
+  const readUntilSwap = opts.waitForApp !== false;
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline && !win.url().startsWith("http://")) {
     bootScreenLog =
@@ -409,16 +425,24 @@ export async function launchShell(name: string, opts: LaunchOptions = {}): Promi
     // loop. A rect, not `isVisible()`: the log pane is clipped to 1×1
     // instead of set to `display: none` (it must stay rendered for
     // `innerText` above), and Playwright treats a 1×1 element as visible.
-    bootScreen = await win
+    //
+    // Only a read that landed ON the boot screen counts. The loop runs to
+    // the swap, so its last pass can evaluate against the app instead, which
+    // has neither element and would otherwise overwrite a good reading with
+    // an empty one.
+    const seen = await win
       .evaluate(() => {
         const log = document.getElementById("log");
+        const spinner = !!document.querySelector(".spinner");
         return {
-          spinner: !!document.querySelector(".spinner"),
+          onBootScreen: !!log || spinner,
+          spinner,
           logWidth: log ? log.getBoundingClientRect().width : -1,
         };
       })
-      .catch(() => bootScreen);
-    if (bootScreenLog.trim()) break;
+      .catch(() => null);
+    if (seen?.onBootScreen) bootScreen = { spinner: seen.spinner, logWidth: seen.logWidth };
+    if (bootScreenLog.trim() && !readUntilSwap) break;
     await new Promise((r) => setTimeout(r, 100));
   }
 
