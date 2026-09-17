@@ -18,11 +18,14 @@
  * saw), and the assertion keeps its exact meaning without depending on the
  * instant the OS gets there.
  *
- * This stays out of `lib/processTree.ts`: making production code wait for a
- * `taskkill` to land would change its behavior to fix a test-timing problem,
- * and boot restore does not need the kill to have completed before it spawns
- * the replacement. It also stays out of `tests/platform.ts`, which imports
- * `vitest` and so cannot be imported from a Playwright spec.
+ * The production code now does its own waiting: `killTreeAndWait` in
+ * `lib/processTree.ts`, because boot restore turned out to need it after all
+ * (the replacement it spawns probes the port the orphan is holding, #324).
+ * This helper stays anyway, and stays separate. It is what a TEST uses to
+ * wait on a fact nobody promised to have settled yet, which is a different
+ * job from a supervisor waiting on a kill it issued itself. It also stays out
+ * of `tests/platform.ts`, which imports `vitest` and so cannot be imported
+ * from a Playwright spec.
  */
 
 export type WaitForTreeOptions = {

@@ -47,6 +47,30 @@ const PORT = numEnv("PTY_PORT", process.env.PTY_PORT, 3001);
 const HOST = process.env.PTY_HOST || "127.0.0.1";
 
 const IS_WINDOWS = process.platform === "win32";
+// Issue #222 has not reproduced outside Windows CI. The protocol test enables
+// this ledger so another receiver failure identifies the send call and payload.
+const TRACE_FRAMES = process.env.CALANDRIA_TEST_PTY_FRAME_TRACE === "1";
+let nextConnectionId = 1;
+
+function traceFrame(ws, connectionId, writer, payload) {
+  if (!TRACE_FRAMES) return;
+  try {
+    const bytes = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, "utf8");
+    const maxBytes = 4096;
+    const trace = {
+      connectionId,
+      writer,
+      binary: Buffer.isBuffer(payload),
+      payloadLength: bytes.length,
+      payloadHex: bytes.subarray(0, maxBytes).toString("hex"),
+      payloadHexTruncated: bytes.length > maxBytes,
+      negotiatedExtensions: ws.extensions,
+      readyState: ws.readyState,
+      bufferedAmount: ws.bufferedAmount,
+    };
+    process.stderr.write(`CALANDRIA_PTY_FRAME_TRACE ${JSON.stringify(trace)}\n`);
+  } catch {}
+}
 
 /** First name in `names` that exists in a PATH directory, or null. */
 function onPath(names) {
@@ -163,6 +187,7 @@ const wss = new WebSocketServer({
 });
 
 wss.on("connection", (ws, req) => {
+  const connectionId = nextConnectionId++;
   const url = new URL(req.url, "http://localhost");
   let cwd = url.searchParams.get("cwd") || os.homedir();
   try {
@@ -189,10 +214,19 @@ wss.on("connection", (ws, req) => {
   });
 
   term.onData((d) => {
-    try { ws.send(Buffer.from(d, "utf8")); } catch {}
+    try {
+      const payload = Buffer.from(d, "utf8");
+      traceFrame(ws, connectionId, "pty_output", payload);
+      ws.send(payload);
+    } catch {}
   });
   term.onExit(({ exitCode }) => {
-    try { ws.send(JSON.stringify({ type: "exit", exitCode })); ws.close(); } catch {}
+    try {
+      const payload = JSON.stringify({ type: "exit", exitCode });
+      traceFrame(ws, connectionId, "exit", payload);
+      ws.send(payload);
+      ws.close();
+    } catch {}
   });
 
   ws.on("message", (raw) => {
@@ -214,7 +248,11 @@ wss.on("connection", (ws, req) => {
   });
   ws.on("close", () => { try { term.kill(); } catch {} });
 
-  try { ws.send(JSON.stringify({ type: "ready", cwd })); } catch {}
+  try {
+    const payload = JSON.stringify({ type: "ready", cwd });
+    traceFrame(ws, connectionId, "ready", payload);
+    ws.send(payload);
+  } catch {}
 });
 
 // Separate process from server.js, so it needs its own inherited-credential

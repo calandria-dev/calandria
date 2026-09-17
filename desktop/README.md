@@ -198,6 +198,12 @@ reproducible, pinned CI build. The download is verified against the official
 `SHASUMS256.txt` before it's unpacked; only the `node` binary is taken, not
 `npm` or the headers.
 
+The bundled binary is authoritative once it exists. The supervisor retries a failed version
+probe three times, logs the operating-system error from each failure, and stops startup if
+every attempt fails. It falls through to a PATH Node only when no bundled binary is present.
+This prevents a transient first-run execution failure from silently changing the runtime used
+for the packaged payload.
+
 Native modules are never rebuilt against Electron's ABI: `npmRebuild: false`
 and `nodeGypRebuild: false` stay set in `electron-builder.cjs`, since the
 addons are only ever loaded by the bundled Node, never by Electron.

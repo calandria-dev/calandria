@@ -26,6 +26,8 @@ const path = require("node:path");
 const { loadEnvFile } = require("./env-file");
 
 const MIN_NODE_MAJOR = 22; // package.json engines: >=22
+const BUNDLED_NODE_PROBE_ATTEMPTS = 3;
+const BUNDLED_NODE_RETRY_MS = 500;
 
 /** Is `port` free to bind on loopback right now? */
 function portFree(port) {
@@ -90,15 +92,15 @@ async function pickPorts({ port = 3000, ptyPort = 3001, probes = 20 } = {}) {
 
 /**
  * Finds a Node the sidecars can run under, in order of preference:
- *   1. CALANDRIA_NODE: explicit override, always wins.
+ *   1. CALANDRIA_NODE: explicit override, checked first.
  *   2. A node bundled into the packaged app's resources (extraResources).
  *   3. The current process's execPath, only when it is already plain Node
  *      (under Electron this is the Electron binary; see the file header).
  *   4. `node` on PATH.
  * Returns { path, version, source } or throws with an actionable message.
  *
- * `execPath`/`isElectron` are injectable so the Electron case, where
- * execPath must be rejected, can be tested without running inside Electron.
+ * The process and probe inputs are injectable so packaged Windows behavior
+ * can be tested without running Electron or a Windows executable.
  */
 function resolveNode({
   env = process.env,
@@ -106,19 +108,34 @@ function resolveNode({
   execPath = process.execPath,
   // Set even under ELECTRON_RUN_AS_NODE, the case this must reject.
   isElectron = !!process.versions.electron,
+  platform = process.platform,
+  probeNode = probeNodeVersion,
+  pathExists = fs.existsSync,
+  sleep = sleepSync,
+  onDiagnostic = () => {},
 } = {}) {
   const candidates = [];
   if (env.CALANDRIA_NODE) candidates.push({ path: env.CALANDRIA_NODE, source: "CALANDRIA_NODE" });
   if (resourcesPath) {
-    const exe = process.platform === "win32" ? "node.exe" : "node";
+    const exe = platform === "win32" ? "node.exe" : "node";
     candidates.push({ path: path.join(resourcesPath, "node", "bin", exe), source: "bundled" });
     candidates.push({ path: path.join(resourcesPath, "node", exe), source: "bundled" });
   }
   if (!isElectron) candidates.push({ path: execPath, source: "execPath" });
-  candidates.push({ path: process.platform === "win32" ? "node.exe" : "node", source: "PATH" });
+  candidates.push({ path: platform === "win32" ? "node.exe" : "node", source: "PATH" });
 
   const tried = [];
+  const bundledFailures = [];
+  let bundledFound = false;
   for (const c of candidates) {
+    if (c.source !== "bundled" && bundledFound) {
+      const err = new Error(
+        `The bundled Node exists but none of its supported paths could be used:\n${bundledFailures.join("\n")}\n` +
+          "Refusing to fall back to PATH because the packaged payload requires its bundled runtime."
+      );
+      err.code = "EBUNDLEDNODE";
+      throw err;
+    }
     // `electron --version` prints a plausible "v44.0.0", so a CALANDRIA_NODE
     // pointed at Electron would pass the version probe and then fail much later
     // with an ABI error from better-sqlite3. Refuse it by name up front.
@@ -126,14 +143,63 @@ function resolveNode({
       tried.push(`${c.source}: ${c.path} (is Electron, not Node)`);
       continue;
     }
+    // A packaged app owns the runtime staged under resourcesPath. If that
+    // file exists but Windows temporarily refuses its first execution (for
+    // example while security software scans a freshly installed binary), a
+    // PATH fallback can silently select a runtime the payload was not built
+    // and tested against. Retry the staged binary, then fail with the probe
+    // errors instead of degrading.
+    let bundledExists = false;
+    try {
+      bundledExists = c.source === "bundled" && pathExists(c.path);
+    } catch (error) {
+      bundledFound = true;
+      const detail = `${c.path} (existence check failed: ${describeError(error)})`;
+      bundledFailures.push(detail);
+      tried.push(`${c.source}: ${detail}`);
+      onDiagnostic(`[shell] bundled Node ${detail}`);
+      continue;
+    }
+    if (c.source === "bundled" && !bundledExists) {
+      tried.push(`${c.source}: ${c.path} (not present)`);
+      continue;
+    }
+    if (bundledExists) bundledFound = true;
     // Probe with the same env the sidecars will get: otherwise a bare `node`
     // resolves against the supervisor's own PATH and reports a runtime the
     // child can't actually find.
-    const version = nodeVersion(c.path, env);
-    tried.push(`${c.source}: ${c.path}${version ? ` (${version})` : " (not runnable)"}`);
-    if (!version) continue;
+    const attempts = bundledExists ? BUNDLED_NODE_PROBE_ATTEMPTS : 1;
+    const failures = [];
+    let version = null;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const result = probeNode(c.path, env);
+      version = result.version;
+      if (version) break;
+      failures.push(`attempt ${attempt}/${attempts}: ${result.detail}`);
+      if (bundledExists) {
+        onDiagnostic(
+          `[shell] bundled Node probe failed (${failures.at(-1)})` +
+            (attempt < attempts ? `; retrying in ${BUNDLED_NODE_RETRY_MS}ms` : "; no retries remain")
+        );
+      }
+      if (attempt < attempts) {
+        sleep(BUNDLED_NODE_RETRY_MS);
+      }
+    }
+    tried.push(
+      `${c.source}: ${c.path}${version ? ` (${version})` : ` (not runnable: ${failures.join("; ")})`}`
+    );
+    if (!version) {
+      if (!bundledExists) continue;
+      bundledFailures.push(`${c.path} could not be executed after ${attempts} attempts:\n  ${failures.join("\n  ")}`);
+      continue;
+    }
     const major = Number(version.replace(/^v/, "").split(".")[0]);
-    if (Number.isFinite(major) && major < MIN_NODE_MAJOR) continue;
+    if (Number.isFinite(major) && major < MIN_NODE_MAJOR) {
+      if (!bundledExists) continue;
+      bundledFailures.push(`${c.path} is ${version}; Calandria requires Node ${MIN_NODE_MAJOR}+.`);
+      continue;
+    }
     return { path: c.path, version, source: c.source };
   }
   const err = new Error(
@@ -144,14 +210,40 @@ function resolveNode({
   throw err;
 }
 
-function nodeVersion(bin, env = process.env) {
-  try {
-    const { execFileSync } = require("node:child_process");
-    const out = execFileSync(bin, ["--version"], { encoding: "utf8", timeout: 5000, env, stdio: ["ignore", "pipe", "ignore"] });
-    return out.trim().startsWith("v") ? out.trim() : null;
-  } catch {
-    return null;
+function probeNodeVersion(bin, env = process.env) {
+  const { spawnSync } = require("node:child_process");
+  const result = spawnSync(bin, ["--version"], {
+    encoding: "utf8",
+    timeout: 5000,
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const out = String(result.stdout || "").trim();
+  const stderr = String(result.stderr || "").trim();
+  if (!result.error && result.status === 0 && out.startsWith("v")) {
+    return { version: out, detail: null };
   }
+  const details = [];
+  if (result.error) details.push(describeError(result.error));
+  if (result.status !== null && result.status !== undefined) details.push(`status=${result.status}`);
+  if (result.signal) details.push(`signal=${result.signal}`);
+  if (out) details.push(`stdout=${JSON.stringify(out)}`);
+  if (stderr) details.push(`stderr=${JSON.stringify(stderr)}`);
+  if (!out && !stderr && !result.error) details.push("no version output");
+  return { version: null, detail: details.join(", ") || "unknown execution failure" };
+}
+
+function describeError(error) {
+  const details = [];
+  if (error?.code) details.push(`code=${error.code}`);
+  if (error?.errno !== undefined) details.push(`errno=${error.errno}`);
+  if (error?.syscall) details.push(`syscall=${error.syscall}`);
+  if (error?.message) details.push(`message=${JSON.stringify(error.message)}`);
+  return details.join(", ") || "unknown error";
+}
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 /**
@@ -432,7 +524,11 @@ class Supervisor {
       this.log(`[shell] PATH is not launchd's stub, using it as-is: ${this.effectiveEnv.PATH}`);
     }
 
-    const node = resolveNode({ env: this.effectiveEnv, resourcesPath: this.resourcesPath });
+    const node = resolveNode({
+      env: this.effectiveEnv,
+      resourcesPath: this.resourcesPath,
+      onDiagnostic: (line) => this.log(line),
+    });
     this.node = node;
     this.log(`[shell] node: ${node.path} ${node.version} (${node.source})`);
 

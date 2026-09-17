@@ -188,6 +188,112 @@ function hold(port) {
     assert.match(n.version, /^v\d+\./);
   });
 
+  await test("resolveNode retries an existing bundled Node before accepting it", async () => {
+    const resourcesPath = path.join(path.sep, "packaged", "resources");
+    const bundled = path.join(resourcesPath, "node", "node.exe");
+    const diagnostics = [];
+    const sleeps = [];
+    let probes = 0;
+    const n = resolveNode({
+      env: { PATH: "/unused" },
+      resourcesPath,
+      execPath: "/fake/electron",
+      isElectron: true,
+      platform: "win32",
+      pathExists: (candidate) => candidate === bundled,
+      probeNode: (candidate) => {
+        assert.equal(candidate, bundled);
+        probes++;
+        return probes === 1
+          ? { version: null, detail: "code=EPERM" }
+          : { version: "v22.23.2", detail: null };
+      },
+      sleep: (ms) => sleeps.push(ms),
+      onDiagnostic: (line) => diagnostics.push(line),
+    });
+    assert.deepEqual(n, { path: bundled, version: "v22.23.2", source: "bundled" });
+    assert.equal(probes, 2);
+    assert.deepEqual(sleeps, [500]);
+    assert.match(diagnostics[0], /code=EPERM/);
+    assert.match(diagnostics[0], /retrying in 500ms/);
+  });
+
+  await test("resolveNode refuses PATH when an existing bundled Node stays unexecutable", async () => {
+    const resourcesPath = path.join(path.sep, "packaged", "resources");
+    const bundled = path.join(resourcesPath, "node", "node.exe");
+    const probed = [];
+    const diagnostics = [];
+    assert.throws(
+      () =>
+        resolveNode({
+          env: { PATH: "/unused" },
+          resourcesPath,
+          execPath: "/fake/electron",
+          isElectron: true,
+          platform: "win32",
+          pathExists: (candidate) => candidate === bundled,
+          probeNode: (candidate) => {
+            probed.push(candidate);
+            return candidate === bundled
+              ? { version: null, detail: "code=EBUSY, status=1" }
+              : { version: "v22.23.2", detail: null };
+          },
+          sleep: () => {},
+          onDiagnostic: (line) => diagnostics.push(line),
+        }),
+      (err) =>
+        err.code === "EBUNDLEDNODE" &&
+        /after 3 attempts/.test(err.message) &&
+        /code=EBUSY, status=1/.test(err.message) &&
+        /Refusing to fall back to PATH/.test(err.message)
+    );
+    assert.deepEqual(probed, [bundled, bundled, bundled], "PATH must not be probed after the bundled runtime fails");
+    assert.equal(diagnostics.length, 3);
+    assert.match(diagnostics[2], /no retries remain/);
+  });
+
+  await test("resolveNode tries the second bundled layout before failing closed", async () => {
+    const resourcesPath = path.join(path.sep, "packaged", "resources");
+    const first = path.join(resourcesPath, "node", "bin", "node.exe");
+    const second = path.join(resourcesPath, "node", "node.exe");
+    const probed = [];
+    const n = resolveNode({
+      env: { PATH: "/unused" },
+      resourcesPath,
+      execPath: "/fake/electron",
+      isElectron: true,
+      platform: "win32",
+      pathExists: (candidate) => candidate === first || candidate === second,
+      probeNode: (candidate) => {
+        probed.push(candidate);
+        return candidate === first
+          ? { version: null, detail: "code=EPERM" }
+          : { version: "v22.23.2", detail: null };
+      },
+      sleep: () => {},
+    });
+    assert.deepEqual(n, { path: second, version: "v22.23.2", source: "bundled" });
+    assert.deepEqual(probed, [first, first, first, second]);
+  });
+
+  await test("resolveNode falls through when the bundled Node is absent", async () => {
+    const probes = [];
+    const n = resolveNode({
+      env: { PATH: "/unused" },
+      resourcesPath: path.join(path.sep, "packaged", "resources"),
+      execPath: "/fake/electron",
+      isElectron: true,
+      platform: "win32",
+      pathExists: () => false,
+      probeNode: (candidate) => {
+        probes.push(candidate);
+        return { version: "v22.23.2", detail: null };
+      },
+    });
+    assert.deepEqual(n, { path: "node.exe", version: "v22.23.2", source: "PATH" });
+    assert.deepEqual(probes, ["node.exe"]);
+  });
+
   await test("resolveNode fails loudly with an actionable message", async () => {
     assert.throws(
       () =>
@@ -196,7 +302,11 @@ function hold(port) {
           execPath: "/nonexistent/electron",
           isElectron: true,
         }),
-      (err) => err.code === "ENONODE" && /CALANDRIA_NODE/.test(err.message) && /Tried:/.test(err.message)
+      (err) =>
+        err.code === "ENONODE" &&
+        /CALANDRIA_NODE/.test(err.message) &&
+        /code=ENOENT/.test(err.message) &&
+        /Tried:/.test(err.message)
     );
   });
 

@@ -68,11 +68,13 @@ Concrete differences between running Calandria on Windows and on Linux/macOS:
   and defaults to `%USERPROFILE%\.local\bin\claude.exe`.
 - **Killing a process tree.** Windows has no process groups and no graceful signal a whole tree can
   receive, so Calandria kills a managed service with `taskkill /pid <pid> /T /F`. That is always a
-  hard kill, with no SIGTERM-then-SIGKILL escalation like on POSIX. Liveness checks use `tasklist`,
-  and a stored PID is checked against that process's own command line before it's treated as still
-  running, so a PID Windows recycled for an unrelated process is never mistaken for the original
-  one. A managed service's `dev`, `setup`, or `test` command is a Windows command line, run
-  through `cmd.exe`; see
+  hard kill, with no SIGTERM-then-SIGKILL escalation like on POSIX. Liveness checks use signal 0
+  rather than `tasklist`, since a real `tasklist` call measured 9.5 to 10.5 seconds on a Windows
+  desktop. A stored PID is checked against that process's own command line before it's treated as
+  still running, so a PID Windows recycled for an unrelated process is never mistaken for the
+  original one; that check is tri-state, so a lookup that cannot answer is retried and then
+  declined rather than reported as a mismatch (issue #324). A managed service's `dev`, `setup`, or
+  `test` command is a Windows command line, run through `cmd.exe`; see
   [Services → Windows command syntax](SERVICES.md#windows-command-syntax) for the syntax
   differences.
 - **Case-insensitive paths.** NTFS doesn't distinguish path case. Calandria accounts for this when

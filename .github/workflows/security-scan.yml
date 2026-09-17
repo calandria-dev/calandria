@@ -48,10 +48,13 @@ jobs:
         with:
           node-version-file: .nvmrc
 
-      # --package-lock-only: the advisory set is keyed off the lockfile
-      # against the registry, not off an installed tree, so there's no need
-      # to `npm ci` first. See test.yml's `audit` job for the measurement.
-      - run: npm audit --package-lock-only --omit=dev --audit-level=high
+      # `npm audit --package-lock-only --omit=dev --audit-level=high` plus the
+      # registry-failure guard from issue #207. The advisory set is keyed off the
+      # lockfile against the registry, not off an installed tree, so there's no
+      # need to `npm ci` first. See test.yml's `audit` job for the measurement
+      # and scripts/npm-audit.mjs for how a failed endpoint is told apart from a
+      # real advisory. Both lanes run this one line so they cannot drift.
+      - run: node scripts/npm-audit.mjs
 
   image-scan:
     name: Image scan (trivy)
