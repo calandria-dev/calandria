@@ -211,8 +211,10 @@ export function codexContextWindow(slug: string, fallback: number): number {
   return window > 0 ? Math.floor(window) : fallback;
 }
 
-/** Drop the cached read. Tests point CODEX_HOME at a scratch dir per case, and
- *  the cache would otherwise carry one case's fixture into the next. */
-export function resetCodexCatalogStateForTests(): void {
+/** Drop the cached read so an explicit refresh re-reads the CLI's catalog. */
+export function clearCodexCatalogCache(): void {
   delete (globalThis as Store).__calandriaCodexCatalog;
 }
+
+/** Backward-compatible test name used by the catalog unit tests. */
+export const resetCodexCatalogStateForTests = clearCodexCatalogCache;

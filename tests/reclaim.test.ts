@@ -12,6 +12,8 @@ import { ensureWorktree, unpushedCommits } from "../lib/git";
 import { getDb } from "../lib/db";
 import { landedVia, maybeAutoReclaim, reclaimPreview, reclaimTask } from "../lib/reclaim";
 import { createProject, createTask, getTask, updateProject, updateTask } from "../lib/store";
+import { publish } from "../lib/events";
+import { registerTurn, unregisterTurn } from "../lib/abort";
 import type { Task } from "../lib/types";
 import { commitFile, git, makeRepo, makeRepoWithOrigin, pushFromColleague, writeFile } from "./helpers";
 
@@ -40,6 +42,16 @@ async function taskAwaitingItsPr(opts: { autoReclaim?: boolean } = {}) {
   });
   const land = () => pushFromColleague(colleague, "feature.txt", "the work\n", "main");
   return { origin, repo, colleague, project, task, wt, land };
+}
+
+/**
+ * Wait for a fire-and-forget reclaim to land. maybeAutoReclaim() hands back no
+ * promise, and the checkout directory disappears mid-teardown, before either
+ * DB write, so the cleared column is the only signal that is not a race.
+ */
+async function settle(taskId: string) {
+  for (let i = 0; i < 100 && getTask(taskId)!.worktree_path !== ""; i++)
+    await new Promise((r) => setTimeout(r, 50));
 }
 
 /** What the Sync button does: catch the local base up, then merge it in. */
@@ -80,7 +92,6 @@ const req = (id: string, body?: object) =>
     ...(body ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {}),
   });
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
-
 const branchExists = async (repo: string, branch: string) =>
   git(repo, "rev-parse", "--verify", `refs/heads/${branch}`).then(() => true).catch(() => false);
 
@@ -231,10 +242,13 @@ describe("a squash-merged PR whose branch was deleted, then synced", () => {
   it("no longer stalls the silent auto-reclaim", async () => {
     const { task, wt } = await squashedThenSynced({ deleteRemoteBranch: true, autoReclaim: true });
     prMerged(task.id);
+    // The unattended path only touches a task whose session is over, so say so
+    // here; the point under test is the `4 commits never pushed` reading, not
+    // that gate.
+    updateTask(task.id, { status: "done" });
 
     maybeAutoReclaim(task.id);
-    for (let i = 0; i < 100 && getTask(task.id)!.status !== "done"; i++)
-      await new Promise((r) => setTimeout(r, 50));
+    await settle(task.id);
     expect(getTask(task.id)).toMatchObject({ status: "done", worktree_path: "", work_branch: "" });
     expect(fs.existsSync(wt.path)).toBe(false);
   });
@@ -305,15 +319,15 @@ describe("maybeAutoReclaim", () => {
     const { task, wt, land } = await taskAwaitingItsPr({ autoReclaim: true });
     await land();
     prMerged(task.id);
+    updateTask(task.id, { status: "done" });
 
     maybeAutoReclaim(task.id);
     // Fire-and-forget by contract (a merge route must not hold a request open
     // across a fetch of origin), so this waits on the effect instead of a
-    // promise the caller never sees. It waits on the status specifically: the
-    // directory disappears mid-teardown, before the row is written, so
-    // watching the disk races the two DB writes that follow it.
-    for (let i = 0; i < 100 && getTask(task.id)!.status !== "done"; i++)
-      await new Promise((r) => setTimeout(r, 50));
+    // promise the caller never sees. It waits on the cleared column
+    // specifically: the directory disappears mid-teardown, before the row is
+    // written, so watching the disk races the DB writes that follow it.
+    await settle(task.id);
     expect(getTask(task.id)).toMatchObject({ status: "done", worktree_path: "", work_branch: "" });
     expect(fs.existsSync(wt.path)).toBe(false);
   });
@@ -322,11 +336,73 @@ describe("maybeAutoReclaim", () => {
     const { task, wt, land } = await taskAwaitingItsPr({ autoReclaim: true });
     await land();
     prMerged(task.id);
+    updateTask(task.id, { status: "done" });
     writeFile(wt.path, "scratch.txt", "half a thought\n");
 
     maybeAutoReclaim(task.id);
     await new Promise((r) => setTimeout(r, 300));
     expect(fs.existsSync(wt.path)).toBe(true);
+  });
+
+  it("reclaims a landed idle task even while its status is in progress", async () => {
+    const { task, wt, land } = await taskAwaitingItsPr({ autoReclaim: true });
+    await land();
+    prMerged(task.id);
+    expect(getTask(task.id)!.status).toBe("in_progress");
+
+    maybeAutoReclaim(task.id);
+    await new Promise((r) => setTimeout(r, 300));
+    await settle(task.id);
+    expect(fs.existsSync(wt.path)).toBe(false);
+    expect(getTask(task.id)).toMatchObject({ status: "done", worktree_path: "", work_branch: "" });
+  });
+
+  it("retries after the executing turn publishes turn_end", async () => {
+    const { task, wt, land } = await taskAwaitingItsPr({ autoReclaim: true });
+    await land();
+    prMerged(task.id);
+    const controller = new AbortController();
+    registerTurn(task.id, controller);
+
+    maybeAutoReclaim(task.id);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(fs.existsSync(wt.path)).toBe(true);
+
+    unregisterTurn(task.id, controller);
+    publish(task.id, { type: "turn_end" });
+    await settle(task.id);
+    expect(getTask(task.id)).toMatchObject({ status: "done", worktree_path: "", work_branch: "" });
+    expect(fs.existsSync(wt.path)).toBe(false);
+  });
+
+  // Stale lifecycle flags do not block a landed task when no turn is active.
+  it.each([
+    ["awaiting a permission card", { awaiting_input: 1 }],
+    ["holding an unread scheduled run", { unread_run_at: 1_700_000_000_000 }],
+    ["snoozed into the future", { snoozed_until: Date.now() + 60_000 }],
+  ])("reclaims a done task while it has stale %s state", async (_label, patch) => {
+    const { task, wt, land } = await taskAwaitingItsPr({ autoReclaim: true });
+    await land();
+    prMerged(task.id);
+    updateTask(task.id, { status: "done", ...patch });
+
+    maybeAutoReclaim(task.id);
+    await new Promise((r) => setTimeout(r, 300));
+    await settle(task.id);
+    expect(fs.existsSync(wt.path)).toBe(false);
+    expect(getTask(task.id)!.worktree_path).toBe("");
+  });
+
+  // The button is a request, so it is not held off by any of the above: the
+  // only thing it refuses is a turn that is executing right now.
+  it("does not hold the explicit reclaim button off a live session", async () => {
+    const { task, wt, land } = await taskAwaitingItsPr({ autoReclaim: true });
+    await land();
+    prMerged(task.id);
+
+    expect(await reclaimTask(task.id)).toMatchObject({ ok: true, markedDone: true });
+    expect(getTask(task.id)).toMatchObject({ status: "done", worktree_path: "", work_branch: "" });
+    expect(fs.existsSync(wt.path)).toBe(false);
   });
 });
 

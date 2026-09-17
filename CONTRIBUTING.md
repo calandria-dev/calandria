@@ -25,7 +25,7 @@ lockfile, and without it `npm ci` compiles the package from source and fails on 
 regenerating the lockfile; [docs/WINDOWS.md](docs/WINDOWS.md#what-ci-proves) has the why.
 
 `CLAUDE.md` is the codebase map (architecture, conventions, gotchas). Read it before a
-nontrivial change. TypeScript is strict and there is no lint script, so `npm run typecheck`
+nontrivial change. TypeScript is strict, and no lint script exists, so `npm run typecheck`
 is the only static check. (`next typegen` writes the gitignored `next-env.d.ts`
 and `.next/types` that `tsconfig.json` includes, so a fresh clone checks the same files
 `next build` does.)
@@ -59,9 +59,9 @@ See [Pull requests](#pull-requests) for why the title matters.
 
 ## Pull requests
 
-**Every change lands through a pull request.** Direct pushes to `main` are rejected by a
-repository ruleset — there is no bypass list, so this applies to maintainers and to agents
-as much as to first-time contributors. A branch that is "just a docs fix" still opens a PR.
+**Every change lands through a pull request.** A repository ruleset rejects direct pushes
+to `main`, with no bypass list, so this applies to maintainers and to agents as much as to
+first-time contributors. A branch that is "just a docs fix" still opens a PR.
 
 The ruleset also fixes two things about how a PR lands:
 
@@ -71,15 +71,14 @@ The ruleset also fixes two things about how a PR lands:
 
 ### Your PR title becomes the commit message
 
-Because the merge is a squash, GitHub composes the single resulting commit's subject from
-the pull request, and `.github/workflows/release-please.yml` then reads exactly those
-subjects — every commit since the last tag — to decide the next version number and to write
+The merge is a squash, so GitHub composes the single resulting commit's subject from the
+pull request title. `.github/workflows/release-please.yml` then reads exactly those
+subjects, every commit since the last tag, to decide the next version number and to write
 `CHANGELOG.md`.
 
-A subject release-please can't parse isn't an error. It's simply skipped: no version bump,
-no changelog line, nothing in the logs. A PR titled `Fix the thing` ships a real bug fix
-into a release whose notes don't mention it, and there is no later point at which anybody
-finds out.
+A subject release-please can't parse isn't an error: it's skipped, with no version bump, no
+changelog line, and nothing in the logs. A PR titled `Fix the thing` ships a real bug fix
+into a release whose notes don't mention it, with no later point at which anyone finds out.
 
 So the title has to be a [Conventional Commit](https://www.conventionalcommits.org/):
 
@@ -94,9 +93,9 @@ So the title has to be a [Conventional Commit](https://www.conventionalcommits.o
 | `perf`, `revert` | Listed in the changelog, no bump |
 | `docs`, `style`, `chore`, `refactor`, `test`, `build`, `ci` | Recorded, hidden from the changelog |
 
-Those twelve are the whole list. A type outside it (`update:`, `chores:`) parses as a
-commit and is then dropped by the changelog writer — the same silent loss as no type at
-all — so the CI check refuses it rather than letting it through.
+Those eleven are the whole list. A type outside it (`update:`, `chores:`) parses as a
+commit and is then dropped by the changelog writer, the same silent loss as no type at
+all, so the CI check rejects it before it can land.
 
 A `!` before the colon marks a breaking change. While Calandria is pre-1.0 that moves the
 **minor** version, not the major (`bump-minor-pre-major` in `release-please-config.json`).
@@ -109,15 +108,14 @@ feat!: drop the control-plane interop routes
 ```
 
 Reverting needs the `revert:` type; GitHub's default `Revert "..."` title doesn't parse.
-If the check goes red, edit the title — it re-runs by itself, with no new push.
+If the check goes red, edit the title: it re-runs by itself, with no new push.
 
 **Write your commit subjects the same way.** The repository's `squash_merge_commit_title`
-is `PR_TITLE`, so the title the check just passed is the subject that lands, whether your
-branch has one commit or twenty. Conventional subjects on the branch are still worth
-writing: they are what the squash commit's body preserves, and they are the fallback if
-that setting ever drifts back to `COMMIT_OR_PR_TITLE`, which takes a single-commit
-branch's own subject instead — the way three fixes went missing from the 0.4.0 changelog
-with every check green.
+is `PR_TITLE`: the title the check just passed is the subject that lands, whether your
+branch has one commit or twenty. Write Conventional subjects on the branch too: they're
+what the squash commit's body preserves, and they're the fallback if that setting ever
+drifts back to `COMMIT_OR_PR_TITLE`, which takes a single-commit branch's own subject
+instead.
 
 ## Before starting
 
@@ -146,6 +144,11 @@ with every check green.
 - **Plain comments:** `tests/commentStyle.test.ts` fails any tracked source file that
   contains an em dash or a comment written as a work log (`deliberately`, `the whole
   point`, a dated `Measured` note, and similar) instead of stating the invariant to keep.
+- **Prose stays plain:** `tests/prose.test.ts` fails any tracked Markdown file (and any
+  `.env.example` comment) that has an em dash, a work-log line starting `Measured` or
+  `That is why`, or the phrase `the whole point`, `is what makes`, `load-bearing`, or
+  `deliberately`; a genuine quote of a program string or UI label goes on that test's
+  `ALLOWLIST` instead of being edited.
 
 ## AI-assisted contributions
 

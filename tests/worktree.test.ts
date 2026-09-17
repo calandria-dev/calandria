@@ -115,7 +115,10 @@ describe("ensureWorktree", () => {
   it("is idempotent, since a second call reuses the existing worktree", async () => {
     const { repo, taskId, wt } = await makeRepoWithWorktree(ensureWorktree);
     const again = await ensureWorktree(repo, taskId);
-    expect(again).toEqual(wt);
+    // Everything but the one field that is about THIS call rather than the
+    // checkout: the first cut invented the branch, the second found it.
+    expect(again).toEqual({ ...wt, reattached: true });
+    expect(wt.reattached).toBe(false);
   });
 
   it("re-attaches to a surviving branch when the worktree dir was lost", async () => {

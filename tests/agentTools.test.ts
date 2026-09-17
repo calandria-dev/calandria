@@ -4,6 +4,7 @@ import { createTag, createProject, createTask, deleteTask, getTask, getTaskDeps,
 import {
   createSuggestedTask,
   getTaskForAgent,
+  listProvidersForAgent,
   listTagsForAgent,
   listTasksForAgent,
   registerExposedService,
@@ -12,6 +13,8 @@ import {
   updateTaskForAgent,
   withdrawSuggestionForAgent,
 } from "@/lib/agentTools";
+import { createProvider, bundledProviderFor } from "@/lib/providers/store";
+import { setAgentConnection } from "@/lib/agents/connections";
 import { subscribeGlobal, type BusEvent } from "@/lib/events";
 import { POST as suggestTask } from "@/app/api/internal/agent-tools/suggest-task/route";
 import { POST as exposeService } from "@/app/api/internal/agent-tools/expose-service/route";
@@ -776,25 +779,32 @@ describe("tags on the agent tools", () => {
     expect(getTaskTagIds(target.id)).toEqual([tag.id]);
   });
 
-  it("list_tasks carries every row's tags and filters by one", () => {
+  it("list_tasks carries every row's tags and filters by any or all tags", () => {
     const project = createProject({ name: "T-List" });
-    const tag = createTag({ project_id: project.id, name: "Auth migration" });
-    const mine = createTask({ project_id: project.id, title: "Mine", description: "", tag_ids: [tag.id] });
-    createTask({ project_id: project.id, title: "Sibling", description: "", tag_ids: [tag.id] });
+    const auth = createTag({ project_id: project.id, name: "Auth migration" });
+    const mobile = createTag({ project_id: project.id, name: "Mobile PWA" });
+    const mine = createTask({ project_id: project.id, title: "Mine", description: "", tag_ids: [auth.id, mobile.id] });
+    createTask({ project_id: project.id, title: "Auth only", description: "", tag_ids: [auth.id] });
+    createTask({ project_id: project.id, title: "Mobile only", description: "", tag_ids: [mobile.id] });
     createTask({ project_id: project.id, title: "Unrelated", description: "" });
 
     const all = listTasksForAgent(project, mine.id);
-    expect(all.map((t) => t.title).sort()).toEqual(["Mine", "Sibling", "Unrelated"]);
+    expect(all.map((t) => t.title).sort()).toEqual(["Auth only", "Mine", "Mobile only", "Unrelated"]);
     // Name as well as id, on every row: an id alone would need a list_tags
     // call to mean anything.
-    expect(all.find((t) => t.id === mine.id)!.tags).toEqual([{ id: tag.id, name: "Auth migration" }]);
+    expect(all.find((t) => t.id === mine.id)!.tags).toEqual([
+      { id: auth.id, name: "Auth migration" },
+      { id: mobile.id, name: "Mobile PWA" },
+    ]);
     expect(all.find((t) => t.title === "Unrelated")!.tags).toEqual([]);
 
-    const filtered = listTasksForAgent(project, mine.id, false, tag.id);
-    expect(filtered.map((t) => t.title).sort()).toEqual(["Mine", "Sibling"]);
+    const any = listTasksForAgent(project, mine.id, false, { ids: [auth.id, mobile.id], match: "any" });
+    expect(any.map((t) => t.title).sort()).toEqual(["Auth only", "Mine", "Mobile only"]);
+    const allFiltered = listTasksForAgent(project, mine.id, false, { ids: [auth.id, mobile.id], match: "all" });
+    expect(allFiltered.map((t) => t.title)).toEqual(["Mine"]);
     // The caller's own row is exempt from the STATUS filter but not this one: a
     // filtered list that always contained the caller would misreport membership.
-    const other = listTasksForAgent(project, mine.id, false, tag.id).filter((t) => t.title === "Unrelated");
+    const other = listTasksForAgent(project, mine.id, false, { ids: [auth.id], match: "any" }).filter((t) => t.title === "Unrelated");
     expect(other).toEqual([]);
   });
 
@@ -848,12 +858,13 @@ describe("tags on the agent tools", () => {
     const filtered = await post(listTasksEp, "/api/internal/agent-tools/list-tasks", {
       projectId: project.id,
       taskId: caller.id,
-      tag: "Auth migration",
+      tags: ["Auth migration"],
+      match: "any",
     });
     const filteredJson = (await filtered.json()) as { tasks: { title: string; tags: { name: string }[] }[] };
     expect(filteredJson.tasks.map((t) => t.title)).toEqual(["Tagged"]);
     expect(filteredJson.tasks[0].tags[0]!.name).toBe("Auth migration");
-    const badFilter = await post(listTasksEp, "/api/internal/agent-tools/list-tasks", { projectId: project.id, tag: "ghost" });
+    const badFilter = await post(listTasksEp, "/api/internal/agent-tools/list-tasks", { projectId: project.id, tags: ["Auth migration", "ghost"], match: "all" });
     expect(badFilter.status).toBe(400);
 
     // update-task: strict, and a refusal writes nothing.
@@ -879,5 +890,88 @@ describe("tags on the agent tools", () => {
     expect(listedJson.tags[0].counts.total).toBe(2);
     const badProject = await post(listTagsEp, "/api/internal/agent-tools/list-tags", { projectId: project.id, project: "nope" });
     expect(badProject.status).toBe(400);
+  });
+});
+
+describe("suggest_task provider/model", () => {
+  it('"local" resolves to the first ollama/lmstudio/custom row, in that order', () => {
+    const project = createProject({ name: "Prov-Local" });
+    createProvider({ type: "custom", config: { base_url: "http://localhost:9999", api: "openai" } });
+    const lmstudio = createProvider({ type: "lmstudio", config: { base_url: "http://localhost:1234" } });
+    const { task } = createSuggestedTask(project, { title: "T1", description: "", provider: "local", model: "qwen3-coder" });
+    expect(task!.provider_id).toBe(lmstudio.id);
+
+    const ollama = createProvider({ type: "ollama", config: { base_url: "http://localhost:11434" } });
+    const { task: t2 } = createSuggestedTask(project, { title: "T2", description: "", provider: "local", model: "qwen3-coder" });
+    expect(t2!.provider_id).toBe(ollama.id);
+  });
+
+  it('"cloud" resolves to the connected environment\'s bundled provider', () => {
+    const project = createProject({ name: "Prov-Cloud" });
+    setAgentConnection("claude", { method: "subscription", email: null, plan: null });
+    const anthropic = bundledProviderFor("claude")!;
+    const { task } = createSuggestedTask(project, { title: "T", description: "", provider: "cloud" });
+    expect(task!.provider_id).toBe(anthropic.id);
+  });
+
+  it("resolves an explicit provider id or exact label", () => {
+    const project = createProject({ name: "Prov-Explicit" });
+    const provider = createProvider({ type: "ollama", label: "Mac mini", config: { base_url: "http://localhost:11434" } });
+    const byId = createSuggestedTask(project, { title: "ById", description: "", provider: provider.id }).task!;
+    expect(byId.provider_id).toBe(provider.id);
+    const byLabel = createSuggestedTask(project, { title: "ByLabel", description: "", provider: "mac mini" }).task!;
+    expect(byLabel.provider_id).toBe(provider.id);
+  });
+
+  it("refuses an unrecognized provider and creates nothing", () => {
+    const project = createProject({ name: "Prov-Unknown" });
+    const { task, text } = createSuggestedTask(project, { title: "Nope", description: "", provider: "ghost-provider" });
+    expect(task).toBeNull();
+    expect(text).toMatch(/No provider matches/);
+  });
+
+  it("refuses a model the provider doesn't list", () => {
+    const project = createProject({ name: "Prov-UnknownModel" });
+    const provider = createProvider({
+      type: "ollama",
+      config: { base_url: "http://localhost:11434" },
+      model_policy: { mode: "deny", ids: [], known: ["qwen3-coder", "llama3.3"], unavailable: [] },
+    });
+    const { task, text } = createSuggestedTask(project, { title: "Bad model", description: "", provider: provider.id, model: "made-up-model" });
+    expect(task).toBeNull();
+    expect(text).toMatch(/isn't a model/);
+    expect(text).toMatch(/qwen3-coder/);
+  });
+
+  it("refuses a model turned off under the provider's policy", () => {
+    const project = createProject({ name: "Prov-Off" });
+    const provider = createProvider({
+      type: "ollama",
+      config: { base_url: "http://localhost:11434" },
+      model_policy: { mode: "deny", ids: ["qwen3-coder"], known: ["qwen3-coder", "llama3.3"], unavailable: [] },
+    });
+    const { task, text } = createSuggestedTask(project, { title: "Off model", description: "", provider: provider.id, model: "qwen3-coder" });
+    expect(task).toBeNull();
+    expect(text).toMatch(/is off under/);
+  });
+
+  it("does not check the model against a bundled provider's catalog", () => {
+    const project = createProject({ name: "Prov-Bundled" });
+    setAgentConnection("claude", { method: "subscription", email: null, plan: null });
+    const { task } = createSuggestedTask(project, { title: "Any model", description: "", provider: "cloud", model: "anything-goes" });
+    expect(task!.model).toBe("anything-goes");
+  });
+
+  it("list_providers reports id, label, type, bundled, environments and models_on", () => {
+    const ollama = createProvider({
+      type: "ollama",
+      label: "Home box",
+      config: { base_url: "http://localhost:11434" },
+      model_policy: { mode: "deny", ids: [], known: ["qwen3-coder", "llama3.3"], unavailable: [] },
+    });
+    const rows = listProvidersForAgent();
+    const row = rows.find((r) => r.id === ollama.id)!;
+    expect(row).toMatchObject({ label: "Home box", type: "ollama", bundled: null, models_on: 2 });
+    expect(row.status).toBe("untested");
   });
 });

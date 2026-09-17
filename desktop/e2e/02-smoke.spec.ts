@@ -105,3 +105,44 @@ test("the terminal panel reaches the pty sidecar the shell started", async () =>
 
   await shell.win.getByTitle("Hide terminal (the shell keeps running)").click();
 });
+
+test("the shell announces its updater state to the page", async () => {
+  // The page's update pill is driven by an event main pushes with
+  // executeJavaScript (desktop/main.js pushUpdateState), the same seam
+  // calandria:goto-task uses. There is no preload and no IPC, so this is the
+  // only thing that proves the push reaches a real renderer.
+  //
+  // The push on the FIRST did-finish-load has already happened by the time
+  // launchShell() returns, so this installs the listener through
+  // addInitScript and then navigates: main re-announces on every
+  // did-finish-load of an app URL, and addInitScript runs before the page's
+  // own scripts on that new load.
+  await shell.win.addInitScript(() => {
+    const seen: unknown[] = [];
+    (window as unknown as Record<string, unknown>).__calandriaUpdateEvents = seen;
+    window.addEventListener("calandria:desktop-update", (e) => seen.push((e as CustomEvent).detail));
+  });
+  await shell.win.goto(`${shell.origin}/`);
+
+  const version = await shell.app.evaluate(({ app }) => app.getVersion());
+  const read = () =>
+    shell.win.evaluate(
+      () =>
+        ((window as unknown as Record<string, unknown>).__calandriaUpdateEvents as {
+          shellVersion: string;
+          phase: string;
+          disposition: { enabled: boolean; code: string; reason: string };
+        }[]) || [],
+    );
+  await expect.poll(async () => (await read()).length, { timeout: 30_000 }).toBeGreaterThan(0);
+
+  const detail = (await read())[0];
+  // The shell says which version it is, which is what the page compares
+  // against the newest release to decide whether the app itself is behind.
+  expect(detail.shellVersion).toBe(version);
+  expect(["idle", "checking", "downloading", "ready", "error"]).toContain(detail.phase);
+  // Total by construction (desktop/updater.js pageUpdateState), so the page
+  // never has to test a field for undefined before rendering.
+  expect(typeof detail.disposition.enabled).toBe("boolean");
+  expect(typeof detail.disposition.code).toBe("string");
+});

@@ -9,6 +9,9 @@
 // squash merge leaves a branch permanently ahead of its base with no real
 // unmerged commits. It must not bump `updated_at` except on the status
 // write, so an automatic reclaim can't float a stale task to the top of Done.
+//
+// Both paths refuse while a turn is executing. The automatic path retries from
+// the internal turn_end subscription after the runner releases its slot.
 
 import fs from "node:fs";
 import { clearTaskWorktreePath, getProject, getTask, updateTask } from "@/lib/store";
@@ -26,7 +29,7 @@ import { UNSAFE_DISCARD_REASON } from "@/lib/taskMove";
 import { withTaskLock } from "@/lib/taskLock";
 import { withRepoLock } from "@/lib/repoLock";
 import { hasTurn } from "@/lib/abort";
-import { publishGlobal } from "@/lib/events";
+import { publishGlobal, subscribeGlobal } from "@/lib/events";
 import { heldHandleHint } from "@/lib/paths";
 import type { Task } from "@/lib/types";
 
@@ -80,6 +83,20 @@ export interface ReclaimResult {
 }
 
 const TERMINAL = new Set(["done", "cancelled"]);
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __calandriaReclaimTurnEnd: (() => void) | undefined;
+}
+
+// A PR can land while its turn is executing. The first reclaim attempt then
+// refuses on the live turn, so retry after the runner releases its slot. Keep
+// this subscription internal and HMR-safe; importing the runner back here
+// would close the launcher cycle pinned by tests/importGraph.test.ts.
+global.__calandriaReclaimTurnEnd?.();
+global.__calandriaReclaimTurnEnd = subscribeGlobal((taskId, ev) => {
+  if (ev.type === "turn_end") maybeAutoReclaim(taskId);
+}, { internal: true });
 
 /**
  * Catch the local base branch up with its remote, best-effort.
@@ -297,7 +314,6 @@ export function maybeAutoReclaim(taskId: string): void {
   if (!task.worktree_path && !task.work_branch && TERMINAL.has(task.status)) return;
   const project = getProject(task.project_id);
   if (!project?.auto_reclaim) return;
-
   void reclaimTask(taskId)
     .then((r) => {
       // An unattended reclaim never forces past the safety gate: there is

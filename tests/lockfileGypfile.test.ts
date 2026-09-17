@@ -25,9 +25,11 @@
 // bump, a Dependabot PR) drops the field again, and this test reports it
 // instead of leaving CI green on Linux and red only on Windows.
 //
-// To fix a failure: re-add the named field to the named entry in
-// package-lock.json by hand, and commit it with the lockfile change that
-// removed it.
+// To fix a failure: run `npm run fix-lockfile`, which re-adds the named
+// field to the named entry, and commit that change with the lockfile change
+// that removed it. `npm run fix-lockfile -- --check` reports without writing.
+// The script is scripts/fix-lockfile-gypfile.mjs and its detection mirrors
+// this file's.
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -80,7 +82,7 @@ describe("package-lock.json carries gypfile:false for packages that need it", ()
     // vacuously; this assertion cannot.
     expect(
       lock.packages["node_modules/better-sqlite3"]?.gypfile,
-      'package-lock.json lost `"gypfile": false` on node_modules/better-sqlite3: npm strips it every time it rewrites the lockfile. Re-add it by hand; without it `npm ci` runs `node-gyp rebuild` and fails on Windows with `gyp ERR! find VS`.',
+      'package-lock.json lost `"gypfile": false` on node_modules/better-sqlite3: npm strips it every time it rewrites the lockfile. Run `npm run fix-lockfile` to re-add it; without it `npm ci` runs `node-gyp rebuild` and fails on Windows with `gyp ERR! find VS`.',
     ).toBe(false);
   });
 
@@ -95,7 +97,7 @@ describe("package-lock.json carries gypfile:false for packages that need it", ()
     for (const lockPath of shouldHave) {
       expect(
         lock.packages[lockPath]?.gypfile,
-        `${lockPath} ships a binding.gyp and sets \`gypfile: false\` in its own manifest, but package-lock.json does not repeat it, so \`npm ci\` will run \`node-gyp rebuild\` on it. Add \`"gypfile": false\` to that entry in package-lock.json.`,
+        `${lockPath} ships a binding.gyp and sets \`gypfile: false\` in its own manifest, but package-lock.json does not repeat it, so \`npm ci\` will run \`node-gyp rebuild\` on it. Run \`npm run fix-lockfile\` to add \`"gypfile": false\` to that entry in package-lock.json.`,
       ).toBe(false);
     }
   });

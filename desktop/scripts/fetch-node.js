@@ -1,8 +1,9 @@
 /* Downloads an official Node runtime into desktop/vendor/node.
  *
  * supervisor.js runs the server under a real Node, never under Electron
- * (docs/DESKTOP_APP.md §2), and `resolveNode` prefers this vendored copy so a
- * double-clicked app does not depend on the user's PATH. It also pins the
+ * (desktop/README.md, "The one rule"), and `resolveNode` prefers this vendored
+ * copy so a double-clicked app does not depend on the user's PATH. It also
+ * pins the
  * ABI: better-sqlite3 ships per-`NODE_MODULE_VERSION` prebuilds, so the
  * vendored Node must match whatever installed the payload's node_modules.
  *

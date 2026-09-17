@@ -22,13 +22,20 @@ vi.hoisted(() => {
   process.env.CALANDRIA_PERMISSION_UNATTENDED_MS = "400";
 });
 
+const logAgentToolCutoff = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/agentToolLog", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/agentToolLog")>()),
+  logAgentToolCutoff,
+}));
+
 import { codexDriver } from "@/lib/agents/codex/driver";
-import { createProject, createTask, updateProject, updateTask, getTask, listPermissionRules, listMessages } from "@/lib/store";
+import { createProject, createTask, updateProject, updateTask, getTask, listPermissionRules, listMessages, setSetting } from "@/lib/store";
 import { submitAnswer } from "@/lib/asks";
 import { subscribeGlobal, subscribe } from "@/lib/events";
 import { setRunContext, clearRunContext, SCHEDULED_RUN_CONTEXT } from "@/lib/runContext";
 import { startResumeTurn } from "@/lib/runner";
 import { getCodexPlanUsage, resetCodexPlanUsageStateForTests } from "@/lib/agents/codex/planUsage";
+import { toolCutoffNotice } from "@/lib/agentToolGuard.mjs";
 import type { Project, Task, StreamEvent, TaskStreamEvent, ToolData } from "@/lib/types";
 
 type Ev<T extends StreamEvent["type"]> = Extract<StreamEvent, { type: T }>;
@@ -38,6 +45,8 @@ let logFile = "";
 let offWatcher: (() => void) | null = null;
 
 beforeEach(() => {
+  logAgentToolCutoff.mockClear();
+  setSetting("default_sandbox_mode:codex", null);
   logFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "codex-fake-log-")), "log.jsonl");
   tmp.push(path.dirname(logFile));
   process.env.FAKE_CODEX_LOG = logFile;
@@ -47,6 +56,7 @@ beforeEach(() => {
   offWatcher = subscribeGlobal(() => {});
 });
 afterEach(() => {
+  setSetting("default_sandbox_mode:codex", null);
   offWatcher?.();
   offWatcher = null;
   delete process.env.FAKE_CODEX_LOG;
@@ -114,6 +124,35 @@ async function turn(task: Task, project: Project, opts: { answer?: string[]; onE
 }
 
 describe("codex app-server transport", () => {
+  it("flags Codex's recorded pre-dispatch Calandria MCP failure and tells the user once", async () => {
+    process.env.FAKE_CODEX_SCENARIO = "mcpCutoff";
+    const { project, task } = fixture("acceptEdits");
+    const evs = await turn(task, project);
+    const raw = "MCP tool call requires approval, but approval policy is never";
+
+    expect(evs.find((e) => e.type === "tool" && e.id === "item-mcp-cutoff-1")).toMatchObject({
+      name: "calandria__list_tasks",
+    });
+    for (const id of ["item-mcp-cutoff-1", "item-mcp-cutoff-2"]) {
+      expect(evs.find((e) => e.type === "tool_result" && e.id === id)).toMatchObject({
+        content: raw,
+        isError: true,
+        cutOff: true,
+      });
+    }
+    expect(evs.filter((e) => e.type === "notice" && e.content === toolCutoffNotice("calandria__list_tasks"))).toHaveLength(1);
+    expect(logAgentToolCutoff).toHaveBeenNthCalledWith(1, "calandria__list_tasks", "bridge", task.id, {
+      reached: false,
+      item_id: "item-mcp-cutoff-1",
+      count: 1,
+    });
+    expect(logAgentToolCutoff).toHaveBeenNthCalledWith(2, "calandria__list_tasks", "bridge", task.id, {
+      reached: false,
+      item_id: "item-mcp-cutoff-2",
+      count: 2,
+    });
+  });
+
   it("runs a turn: handshake, thread, config overrides, items, plan, usage, context", async () => {
     const { project, task, repo } = fixture("default");
     const evs = await turn(task, project, { answer: ["allow_once"] });
@@ -275,6 +314,23 @@ describe("codex app-server transport", () => {
     const p = fixture("plan");
     await turn(p.task, p.project, { answer: ["allow_once"] });
     expect(logged("turn/start")).toMatchObject({ approvalPolicy: "never", sandboxPolicy: { type: "readOnly", networkAccess: false } });
+  });
+
+  it("inherits the Settings sandbox for a fresh thread without changing approvals", async () => {
+    setSetting("default_sandbox_mode:codex", "read-only");
+    const { project, task } = fixture("default");
+    await turn(task, project, { answer: ["allow_once"] });
+    expect(logged("thread/start")).toMatchObject({ sandbox: "read-only", approvalPolicy: "on-request", approvalsReviewer: "user" });
+    expect(logged("turn/start")).toMatchObject({ sandboxPolicy: { type: "readOnly", networkAccess: false }, approvalPolicy: "on-request" });
+  });
+
+  it("applies a task sandbox override when resuming a thread", async () => {
+    setSetting("default_sandbox_mode:codex", "read-only");
+    const { project, task } = fixture("auto", { sessionId: "thread-fake-1" });
+    updateTask(task.id, { sandbox_mode: "danger-full-access" });
+    await turn(getTask(task.id)!, project, { answer: ["allow_once"] });
+    expect(logged("thread/resume")).toMatchObject({ sandbox: "danger-full-access", approvalPolicy: "on-request", approvalsReviewer: "auto_review" });
+    expect(logged("turn/start")).toMatchObject({ sandboxPolicy: { type: "dangerFullAccess" }, approvalsReviewer: "auto_review" });
   });
 
   it("renders a file-change approval with its diff and the escape it asks for", async () => {

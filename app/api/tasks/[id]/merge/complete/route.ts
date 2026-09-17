@@ -51,9 +51,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // so nothing is merged and no insight row is owed. Recording either would put
     // a merge on the board that the base branch has never seen.
     if (result.ok && !resolveOnly) {
-      // Record the merge and advance the diff base, but do not change status.
-      // Merging (even after resolving conflicts) is a git action, not a sign the
-      // task is finished; the user owns the "done" status and sets it manually.
+      // Record the merge and advance the diff base. Status remains user-owned
+      // when auto_reclaim is off. An opted-in project closes the landed task
+      // through maybeAutoReclaim below.
       updateTask(id, {
         merged_at: Date.now(),
         ...(result.mergedSha ? { base_sha: result.mergedSha } : {}),

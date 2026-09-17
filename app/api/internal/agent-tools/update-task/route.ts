@@ -27,7 +27,7 @@ export const dynamic = "force-dynamic";
 // validation and the refusal to accept "cancelled", and it is shared with
 // the in-process server, so the two can't drift.
 export async function POST(req: NextRequest) {
-  let body: { taskId?: string; task?: string; title?: string; description?: string; priority?: Priority; status?: Status; blocked_by?: string[]; tags?: string[] };
+  let body: { taskId?: string; task?: string; title?: string; description?: string; priority?: Priority; status?: Status; blocked_by?: string[]; tags?: string[]; attachments?: string[] };
   try {
     body = await req.json();
   } catch {
@@ -51,6 +51,8 @@ export async function POST(req: NextRequest) {
     // because `undefined` means "leave the tags alone" and [] means "clear
     // them", so a malformed value must not arrive as the second one.
     tags: Array.isArray(body.tags) ? body.tags : undefined,
+    // Resolved against the caller's worktree inside updateTaskForAgent.
+    attachments: Array.isArray(body.attachments) ? body.attachments : undefined,
   });
   // 400, not 404: the caller's row exists (just read above), and the
   // request either named a value the tool won't write or aimed at a row it

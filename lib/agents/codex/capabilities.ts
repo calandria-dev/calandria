@@ -101,12 +101,15 @@ export function codexCapabilities(): AgentCapabilities {
     // exec transport auto-rejects them inside the CLI, so under it they run
     // like acceptEdits; ./policy.ts is where that is decided.
     permissionModes: [
-      { value: "auto", label: "auto-review", sub: "workspace-write sandbox, escalations decided by Codex's own reviewer (default)", unattended: true },
-      { value: "default", label: "on-request", sub: "workspace-write sandbox, escalations ask you on a permission card" },
-      { value: "acceptEdits", label: "workspace-write", sub: "writable sandbox, never asks: what the sandbox refuses just fails" },
-      { value: "bypassPermissions", label: "danger-full-access", sub: "no sandbox, never asks" },
-      { value: "plan", label: "read-only", sub: "read-only sandbox: propose without editing" },
+      { value: "auto", label: "auto-review", sub: "Codex's reviewer decides approval requests (default)", unattended: true },
+      { value: "default", label: "on-request", sub: "approval requests ask you on a permission card" },
+      { value: "acceptEdits", label: "never ask", sub: "approval requests are declined; sandbox refusals fail" },
+      { value: "bypassPermissions", label: "bypass approvals", sub: "approval requests are skipped" },
+      { value: "plan", label: "plan", sub: "approval requests are skipped for planning" },
     ],
+    providerTypes: ["openai", "openai_key", "litellm", "ollama", "lmstudio", "custom"],
+    bundledProvider: "openai",
+    endpointTransport: "a model_providers entry written through the SDK's config overrides",
     // Interactive asks arrive via the MCP bridge's ask_user tool (the card UI and
     // /answer route are shared with Claude's AskUserQuestion flow).
     supportsAsks: true,
@@ -127,9 +130,8 @@ export function codexCapabilities(): AgentCapabilities {
     // The hosted-gateway selection (projects.gateway_mcp) is a separate mount
     // from the flag above, and needs its own caveat: MCP tool calls are gated
     // by Codex's own per-server approval mode, separate from approval_policy,
-    // and the mount auto-approves them. It's mounted under every mode but
-    // "plan", which runs read-only and would offer tools that contradict it
-    // (lib/agents/codex/driver.ts).
+    // and the mount auto-approves them. The plan permission mode withholds
+    // these tools independently of the selected filesystem sandbox.
     gatewayMcpNote:
       "Hosted LiteLLM-gateway MCP servers mount under every permission mode but plan, " +
       "and every tool they offer is auto-approved for the task the moment it mounts.",

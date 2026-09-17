@@ -147,10 +147,19 @@ describe("tagContextBlock", () => {
     expect(block).toContain('tagged "Auth migration"');
     expect(block).toContain('tagged "Flaky tests"');
     expect(block.indexOf('tagged "Auth migration"')).toBeLessThan(block.indexOf('tagged "Flaky tests"'));
+    // The order is the user's choice, not filing order, so the preamble says
+    // the first one leads and names it.
+    expect(block).toContain('carries 2 tags, the one it is most about first');
+    expect(block).toContain('it is mainly the "Auth migration" work');
 
     // Reordering the tags on the task reorders the blocks the same way.
     setTaskTags([t.id], [second.id, first.id]);
     const reordered = tagContextBlock(getTask(t.id)!);
     expect(reordered.indexOf('tagged "Flaky tests"')).toBeLessThan(reordered.indexOf('tagged "Auth migration"'));
+    expect(reordered).toContain('it is mainly the "Flaky tests" work');
+
+    // One tag has no order to explain, so it gets no preamble.
+    setTaskTags([t.id], [first.id]);
+    expect(tagContextBlock(getTask(t.id)!)).not.toContain("tags, the one it is most about first");
   });
 });

@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { agentLabel, capsFor } from "./agents";
 import { modelLabel } from "./format";
 import type { AgentsBundle } from "./types";
+import { apiFetch } from "./api";
 
 // Mirrors InsightsData in lib/store.ts.
 interface Payload {
@@ -131,7 +132,7 @@ const JOBS: Record<string, { label: string; settings: string }> = {
   summarizeTranscript: { label: "Session summaries (/clear)", settings: "general" },
   draftProjectContext: { label: "Context drafts (Refresh with AI)", settings: "run" },
   planTagRefresh: { label: "Tag refreshes (Refresh tag)", settings: "run" },
-  verify: { label: "Agent verify", settings: "agents" },
+  verify: { label: "Agent verify", settings: "models" },
 };
 
 // ---------- chart primitives (ported from the design) ----------
@@ -323,7 +324,7 @@ export function InsightsView({ agents, onClose, onOpenSettings }: { agents: Agen
   const [hover, setHover] = useState<Hover>({ chart: null, i: null });
 
   useEffect(() => {
-    fetch("/api/insights")
+    apiFetch("/api/insights")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then(setData)
       .catch(() => setError(true));

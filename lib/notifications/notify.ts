@@ -15,11 +15,14 @@ import { getProject, getSetting, getTask, taskAwaitingInput } from "@/lib/store"
 import type { NotificationKind, NotificationPayload } from "./types";
 
 // Per-kind opt-outs. All default on: a notification feature that ships off
-// is one nobody discovers, and every kind here is a task that has stopped.
+// is one nobody discovers, and every kind here is a task nobody is watching,
+// either stopped or moving on its own at an hour the user is asleep.
 const KIND_SETTING: Record<Exclude<NotificationKind, "test">, string> = {
   awaiting_input: "notify_awaiting_input",
   turn_failed: "notify_turn_failed",
   schedule_failed: "notify_schedule_failed",
+  queued_start: "notify_queued_start",
+  queued_start_skipped: "notify_queued_start_skipped",
 };
 
 /** The master switch. "off" is the only value that disables. */
@@ -211,6 +214,51 @@ export function emitScheduleFailed(a: {
     projectId: a.projectId,
     title: "Scheduled run failed",
     body: `${a.scheduleName}${projectSuffix(a.projectId)}${detail ? `\n${detail}` : ""}`,
+    ts: Date.now(),
+  });
+}
+
+/**
+ * A queued start fired (lib/deferredStart.ts): the sweep launched a task's
+ * first turn, or resumed a started one, at the usage-window reset. The one
+ * kind here that reports work starting instead of stopping, and it is worth a
+ * toast for the same reason the others are: the reset lands at whatever hour
+ * the window happens to expire, so without this the user learns their quota
+ * is being spent by finding the transcript later.
+ */
+export function emitQueuedStart(taskId: string, resumed: boolean): NotificationPayload | null {
+  if (!kindEnabled("queued_start")) return null;
+  const task = getTask(taskId);
+  if (!task) return null;
+  return deliver({
+    id: `queued_start:${taskId}`,
+    kind: "queued_start",
+    taskId,
+    projectId: task.project_id,
+    title: resumed ? "Resumed at the usage-window reset" : "Started at the usage-window reset",
+    body: `${task.title}${projectSuffix(task.project_id)}`,
+    ts: Date.now(),
+  });
+}
+
+/**
+ * A queued start reached its deadline and launched nothing: a turn was
+ * already live, another task still blocks this one, or the project has no
+ * working directory. The deadline is consumed either way, so the task sits
+ * there queued for a reset that has been and gone. `why` is the same sentence
+ * the sweep writes on the transcript, so the two never drift.
+ */
+export function emitQueuedStartSkipped(taskId: string, why: string): NotificationPayload | null {
+  if (!kindEnabled("queued_start_skipped")) return null;
+  const task = getTask(taskId);
+  if (!task) return null;
+  return deliver({
+    id: `queued_start_skipped:${taskId}`,
+    kind: "queued_start_skipped",
+    taskId,
+    projectId: task.project_id,
+    title: "Queued start skipped",
+    body: `${task.title}${projectSuffix(task.project_id)}\n${firstLine(why)}`,
     ts: Date.now(),
   });
 }

@@ -14,6 +14,7 @@ import {
   CODEX_MODES,
   DEFAULT_CODEX_MODE,
 } from "@/lib/agents/codex/policy";
+import { CODEX_SANDBOX_MODES, isCodexSandboxMode } from "@/lib/codexSandbox";
 import { codexCapabilities } from "@/lib/agents/codex/capabilities";
 
 // What each permission mode means to Codex (lib/agents/codex/policy.ts):
@@ -71,6 +72,40 @@ describe("codex permission modes", () => {
     expect(sandboxPolicyObject(plan)).toEqual({ type: "readOnly", networkAccess: false });
   });
 
+  it("accepts each sandbox override without changing permission behavior", () => {
+    const cwd = os.tmpdir();
+    for (const mode of CODEX_MODES) {
+      const legacy = codexRunPolicy(mode, cwd);
+      for (const sandbox of CODEX_SANDBOX_MODES) {
+        const policy = codexRunPolicy(mode, cwd, { sandbox });
+        expect(policy).toMatchObject({
+          mode,
+          sandbox,
+          approval: legacy.approval,
+          reviewer: legacy.reviewer,
+          asks: legacy.asks,
+          network: sandbox !== "read-only",
+        });
+        expect(policy.writableRoots).toEqual(sandbox === "workspace-write" ? legacy.writableRoots : []);
+      }
+    }
+  });
+
+  it("keeps legacy sandbox mapping when the override is absent, null, or invalid", () => {
+    for (const mode of CODEX_MODES) {
+      const legacy = codexRunPolicy(mode, os.tmpdir());
+      expect(codexRunPolicy(mode, os.tmpdir(), { sandbox: null })).toMatchObject(legacy);
+      expect(codexRunPolicy(mode, os.tmpdir(), { sandbox: "invalid" })).toMatchObject(legacy);
+    }
+  });
+
+  it("exports the browser-safe sandbox values and validator", () => {
+    expect(CODEX_SANDBOX_MODES).toEqual(["read-only", "workspace-write", "danger-full-access"]);
+    for (const sandbox of CODEX_SANDBOX_MODES) expect(isCodexSandboxMode(sandbox)).toBe(true);
+    expect(isCodexSandboxMode(null)).toBe(false);
+    expect(isCodexSandboxMode("invalid")).toBe(false);
+  });
+
   it("sends on-request for the never-asking modes once the CLI has downgraded 'never'", () => {
     expect(codexRunPolicy("acceptEdits", os.tmpdir(), { downgraded: true })).toMatchObject({ approval: "on-request", asks: true });
     expect(codexRunPolicy("bypassPermissions", os.tmpdir(), { downgraded: true }).approval).toBe("on-request");
@@ -115,6 +150,16 @@ describe("writable roots for a linked worktree", () => {
     }
     expect(codexRunPolicy("bypassPermissions", wt).writableRoots).toEqual([]);
     expect(codexRunPolicy("plan", wt).writableRoots).toEqual([]);
+  });
+
+  it("computes workspace roots for plan and bypass overrides only", () => {
+    const { wt } = worktreeFixture();
+    for (const mode of ["plan", "bypassPermissions"] as const) {
+      const workspace = codexRunPolicy(mode, wt, { sandbox: "workspace-write" });
+      expect(workspace.writableRoots.some((root) => root.endsWith(path.join("worktrees", "wt")))).toBe(true);
+      expect(codexRunPolicy(mode, wt, { sandbox: "read-only" })).toMatchObject({ network: false, writableRoots: [] });
+      expect(codexRunPolicy(mode, wt, { sandbox: "danger-full-access" }).writableRoots).toEqual([]);
+    }
   });
 
   it("reads CODEX_WRITABLE_ROOTS as absolute paths on the platform delimiter", () => {

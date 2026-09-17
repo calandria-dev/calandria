@@ -1,6 +1,6 @@
 // Shared implementations of Calandria's agent-facing tools
 // (suggest_task / list_tasks / get_task / update_task / move_task /
-//  withdraw_suggestion / list_tags / expose_service / ask_user).
+//  withdraw_suggestion / list_tags / list_providers / expose_service / ask_user).
 // One home for the LOGIC so both callers agree:
 //   - the Claude driver's in-process SDK MCP server (lib/agents/claude/driver.ts)
 //   - the internal HTTP endpoints the stdio bridge proxies to
@@ -11,8 +11,12 @@
 // (scripts/calandria-mcp.mjs) import the defs without pulling in the TS/SQLite
 // graph.
 
+import fs from "node:fs";
+import path from "node:path";
 import { nanoid } from "nanoid";
 import { PRIORITIES, parseTagColor, tagIsDone } from "./types";
+import { copyIntoTaskUploads, MAX_UPLOAD_BYTES, plannedTaskUpload, taskUploadsDir } from "./uploads";
+import { attachmentKindOf, joinAttachmentText, splitAttachmentText } from "./uploadTypes";
 import type { Project, Task, Tag, ServiceInfo, Priority, Status, AskQuestion, PermissionOutcome, PermissionRequest, ToolData, AgentEditChange } from "./types";
 import {
   createTask,
@@ -36,11 +40,15 @@ import {
   updateTag,
 } from "./store";
 import { topoMembers } from "./tagContext";
+import { inTags, type TagFilter } from "./tagFilter";
 // SDK-free, and already pinned that way. `resolveBaseBranch` is what puts the
 // EFFECTIVE base on every task row an agent reads (never the raw column, so it
 // never reimplements the fallback chain); `setTaskBaseBranch` is the whole
 // retarget policy behind `set_base_branch`, shared with the route.
 import { resolveBaseBranch, setTaskBaseBranch } from "./baseBranch";
+// The report_base_rewrite tool's whole policy: flagBaseRewrite re-derives every
+// affected task from git, describeSweep renders the result for the model.
+import { flagBaseRewrite, describeSweep } from "./baseRewrite";
 // One name check, shared with PATCH /api/tags/[id]: a tag's base branch is a
 // string that reaches a `git` argv later, and `--upload-pack=evil` is a
 // perfectly ordinary-looking one.
@@ -56,8 +64,11 @@ import { interactionDenied, recordUnattendedDenial, UNATTENDED_ASK_DENIAL, UNATT
 import { turnSignal } from "./abort";
 import { formatAnswers } from "./agents/shared";
 import { resolveConnectedAgent } from "./agents/connections";
-import { cloudOverrideEnv, describeProvider, providerPresetEnv, taskProvider, type AgentEnv } from "./agentEnv";
-import { LOCAL_MODEL_BASE_URL } from "./config";
+import { checkProviderModel, resolveProviderRef } from "./providers/agentRef";
+import { presentProvider, type ProviderStatus } from "./providers/present";
+import { listProviders } from "./providers/store";
+import type { ModelProvider } from "./providers/rows";
+import type { EnvironmentId, ProviderType } from "./providers/types";
 
 /** What `list_projects` hands the agent: enough to name a target, nothing more. */
 export interface AgentProjectInfo {
@@ -75,6 +86,40 @@ export interface AgentProjectInfo {
  */
 export function listProjectsForAgent(currentId: string): AgentProjectInfo[] {
   return listProjectsPlain().map((p) => ({ id: p.id, name: p.name, repo_path: p.repo_path, current: p.id === currentId }));
+}
+
+/** One row of `list_providers`: enough to name a `provider` reference, nothing secret. */
+export interface AgentProviderInfo {
+  id: string;
+  label: string;
+  type: ProviderType;
+  /** The environment whose login owns this row, or null for a user-added one. */
+  bundled: EnvironmentId | null;
+  environments: EnvironmentId[];
+  status: ProviderStatus;
+  /** How many models are turned on for this provider right now. */
+  models_on: number;
+}
+
+/**
+ * The `list_providers` tool. Instance-wide, like `list_projects`: a provider
+ * isn't scoped to one project. `presentProvider()` is the same synchronous
+ * status/count logic `GET /api/providers` serves the settings page, so the
+ * two never disagree and neither ever probes the network on a tool call.
+ */
+export function listProvidersForAgent(): AgentProviderInfo[] {
+  return listProviders().map((p) => {
+    const presented = presentProvider(p);
+    return {
+      id: p.id,
+      label: p.label,
+      type: p.type,
+      bundled: p.bundled,
+      environments: p.environments,
+      status: presented.status,
+      models_on: presented.model_count,
+    };
+  });
 }
 
 /**
@@ -296,14 +341,64 @@ export interface SuggestTaskInput {
   /** The CALLING session's task, recorded as a new tag's origin. Never the model's word for it. */
   origin_task_id?: string | null;
   /**
-   * Where the new task's turns run (lib/agentEnv.ts). "local" pins it to the
-   * local model server, the delegation case where a frontier-model session
-   * hands routine work to a model that costs no quota. "cloud" pins it to the
-   * agent's own login inside a project whose default is local. Omitted = inherit.
+   * Which model provider the new task's turns run against
+   * (lib/providers/resolve.ts): an id or exact label from `list_providers`,
+   * or the "local"/"cloud" alias (resolveProviderRef). Omitted = inherit the
+   * project's default.
    */
-  provider?: "local" | "cloud";
-  /** The model to run on: an Ollama tag for local, a catalog id for cloud. */
+  provider?: string;
+  /** The model to run on, checked against the resolved provider's on-list. */
   model?: string;
+  /** Files to attach, as the model named them; resolved by resolveAgentAttachments against the CALLER's worktree. */
+  attachments?: string[];
+}
+
+/**
+ * Resolve the paths an agent wants to attach to a task, and refuse the ones it
+ * may not hand over. A path is taken relative to the calling session's
+ * worktree and must resolve (symlinks followed) inside that worktree or inside
+ * the session's own staged uploads, so an attachment it received can be
+ * forwarded. Nothing else on the machine is reachable this way: the server
+ * runs as the user, so a tool that copied any path the model named would turn
+ * a prompt injection into a download link for whatever the user can read.
+ * Each must be a regular file under the upload cap. The whole list resolves or
+ * the whole call is refused, named per path, so a task is never created with
+ * half its attachments.
+ */
+export function resolveAgentAttachments(
+  callerId: string,
+  refs: readonly unknown[]
+): { files: string[] } | { error: string } {
+  const caller = getTask(callerId);
+  const root = caller?.worktree_path || "";
+  if (!caller || !root) return { error: "`attachments` needs a session with a worktree to read them from, and this caller has none" };
+  const roots = [root, taskUploadsDir(caller.id)].flatMap((r) => {
+    try { return [fs.realpathSync(r)]; } catch { return []; }
+  });
+  const inside = (abs: string) => roots.some((r) => abs === r || abs.startsWith(r + path.sep));
+  const files: string[] = [];
+  const problems: string[] = [];
+  for (const ref of refs) {
+    const wanted = typeof ref === "string" ? ref.trim() : "";
+    if (!wanted) { problems.push("an empty path"); continue; }
+    const abs = path.resolve(root, wanted);
+    let real: string;
+    try {
+      real = fs.realpathSync(abs);
+    } catch {
+      problems.push(`"${wanted}" doesn't exist`);
+      continue;
+    }
+    if (!inside(real)) { problems.push(`"${wanted}" is outside this session's worktree`); continue; }
+    let st: fs.Stats;
+    try { st = fs.statSync(real); } catch { problems.push(`"${wanted}" doesn't exist`); continue; }
+    if (!st.isFile()) { problems.push(`"${wanted}" isn't a file`); continue; }
+    if (st.size > MAX_UPLOAD_BYTES) { problems.push(`"${wanted}" is over the ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB attachment cap`); continue; }
+    files.push(real);
+  }
+  if (problems.length)
+    return { error: `${problems.join("; ")}. \`attachments\` takes files inside this session's worktree (or attachments it was sent), relative to the worktree or absolute` };
+  return { files };
 }
 
 /**
@@ -339,37 +434,49 @@ export function createSuggestedTask(project: Project, input: SuggestTaskInput): 
     tags = hit.tags;
     createdTags = hit.created;
   }
-  // The provider override, resolved BEFORE the insert so a task is never
-  // created pointing at nothing. "local" reuses the target project's own
-  // endpoint when it already has one (a project on a LAN box must not be
-  // redirected to the instance default) and falls back to the instance knob;
-  // the model is the caller's, else the project's, and with neither the call
-  // is refused, since a local task with no model would ask Ollama for a Claude id.
+  // The provider override, resolved and validated BEFORE the insert so a
+  // task is never created pointing at something that doesn't exist. "local"
+  // and "cloud" are aliases (resolveProviderRef); anything else must match a
+  // provider id or exact label. The model is checked against the resolved
+  // provider's own list only when a provider was actually named here: a
+  // model passed with no provider inherits whatever the task resolves to at
+  // turn time, which isn't known yet.
+  const environment = resolveConnectedAgent([project.default_agent]) ?? project.default_agent;
   const model = input.model?.trim() || null;
-  let agentEnv: AgentEnv | undefined;
-  if (input.provider === "local") {
-    const current = taskProvider(project);
-    const localModel = model ?? current.model;
-    if (!localModel) {
-      return {
-        task: null,
-        text: `Could not add "${input.title}": provider "local" needs a model. Pass one (an Ollama tag such as qwen3-coder), or set a local model on ${project.name} in its settings. Nothing was created.`,
-      };
+  let resolvedProvider: ModelProvider | null = null;
+  if (input.provider?.trim()) {
+    const ref = resolveProviderRef(input.provider, environment);
+    if ("error" in ref) return { task: null, text: `Could not add "${input.title}": ${ref.error} Nothing was created.` };
+    if (model) {
+      const check = checkProviderModel(ref.provider, model);
+      if ("error" in check) return { task: null, text: `Could not add "${input.title}": ${check.error} Nothing was created.` };
     }
-    agentEnv = providerPresetEnv({
-      baseUrl: current.kind === "cloud" ? LOCAL_MODEL_BASE_URL : (current.anthropic_base_url ?? current.openai_base_url ?? LOCAL_MODEL_BASE_URL),
-      model: localModel,
-      token: current.auth_token ?? undefined,
+    resolvedProvider = ref.provider;
+  }
+  // Attachments, resolved against the CALLER's worktree before the insert so
+  // a bad path refuses the whole call with nothing created. Staged under the
+  // id the row is about to be minted with, and written into the description
+  // as the marker lines the session's context, the task header and the edit
+  // dialog all read (lib/uploadTypes.ts).
+  const id = nanoid();
+  let description = input.description;
+  if (input.attachments?.length) {
+    const hit = resolveAgentAttachments(input.origin_task_id ?? "", input.attachments);
+    if ("error" in hit) return { task: null, text: `Could not add "${input.title}": ${hit.error}. Nothing was created.` };
+    const staged = hit.files.map((f) => {
+      const dest = plannedTaskUpload(id, f);
+      copyIntoTaskUploads(f, dest);
+      return { kind: attachmentKindOf(dest), path: dest };
     });
-  } else if (input.provider === "cloud") {
-    agentEnv = cloudOverrideEnv();
+    description = joinAttachmentText(description, staged);
   }
   const task = createTask({
+    id,
     model,
-    agent_env: agentEnv,
+    provider_id: resolvedProvider?.id ?? null,
     project_id: project.id,
     title: input.title,
-    description: input.description,
+    description,
     priority: input.priority ?? "med",
     suggested: true,
     // Connected-first, matching the New-task dialog (defaultAgentFor). A task's
@@ -391,12 +498,12 @@ export function createSuggestedTask(project: Project, input: SuggestTaskInput): 
   const tagNote =
     (reused.length ? ` Tagged ${reused.map((t) => `"${t.name}"`).join(", ")}.` : "") +
     (createdTags.length ? ` Created tag${createdTags.length === 1 ? "" : "s"} ${createdTags.map((t) => `"${t.name}"`).join(", ")} in ${project.name}.` : "");
-  const providerNote = agentEnv
-    ? ` Runs against ${input.provider === "cloud" ? "the agent's own cloud login" : `the local model server (${describeProvider(agentEnv).host}, model ${describeProvider(agentEnv).model})`}.`
-    : "";
+  const providerNote = resolvedProvider ? ` Runs on ${resolvedProvider.label}${model ? `, model ${model}` : ""}.` : "";
+  const attached = input.attachments?.length ?? 0;
+  const attachNote = attached ? ` Attached ${attached} file${attached === 1 ? "" : "s"}.` : "";
   return {
     task,
-    text: `Suggested task "${input.title}" added to ${project.name}'s tray (id: ${task.id}).${depNote(task, project, input.blocked_by)}${tagNote}${providerNote}`,
+    text: `Suggested task "${input.title}" added to ${project.name}'s tray (id: ${task.id}).${depNote(task, project, input.blocked_by)}${tagNote}${providerNote}${attachNote}`,
   };
 }
 
@@ -551,17 +658,23 @@ function tagNames(projectId: string): Map<string, string> {
  * The caller's own row is exempt from the terminal-status filter: a session that
  * has just marked itself done should still see itself in the list it gets back.
  *
- * `tagId` is an already-resolved filter (resolveTagRefs, so an unknown ref is
- * the caller's own refusal, not an unfiltered board). null lists everything;
- * every row carries its own tags either way, filtered or not. The caller's own
- * row is NOT exempt from this one: a filter that always included a task from
- * another feature would misreport the tag.
+ * `tagFilter.ids` are already resolved (resolveTagRefs, so an unknown ref is the
+ * caller's own refusal, not an unfiltered board). Empty ids list everything;
+ * every row carries its own tags either way. The caller's own row is NOT exempt
+ * from this filter: including a task from another feature would misreport the
+ * selected tags.
  */
-export function listTasksForAgent(project: Project, currentTaskId: string, includeDone = false, tagId: string | null = null): AgentTaskInfo[] {
+export function listTasksForAgent(
+  project: Project,
+  currentTaskId: string,
+  includeDone = false,
+  tagFilter: TagFilter = { ids: [], match: "any" }
+): AgentTaskInfo[] {
   const names = tagNames(project.id);
-  return listTasks(project.id)
-    .filter((t) => includeDone || !TERMINAL.includes(t.status) || t.id === currentTaskId)
-    .filter((t) => !tagId || t.tag_ids.includes(tagId))
+  return inTags(
+    listTasks(project.id).filter((t) => includeDone || !TERMINAL.includes(t.status) || t.id === currentTaskId),
+    tagFilter
+  )
     .map((t) => taskInfo(t, t.depends_on, currentTaskId, names, project.branch));
 }
 
@@ -620,6 +733,13 @@ export interface UpdateTaskInput {
    * the block in the body for why this one won't create.
    */
   tags?: string[];
+  /**
+   * Files to ADD to the task's attachments, resolved against the caller's
+   * worktree (resolveAgentAttachments). Additive, unlike every other list
+   * here: an attachment is a staged file, and dropping one is the user's
+   * call from the edit dialog.
+   */
+  attachments?: string[];
 }
 
 /** ", tagged \"a\", \"b\"" / ", untagged": the tail the no-change reply reads back. */
@@ -768,11 +888,39 @@ export function updateTaskForAgent(
       changes.push({ field: "title", before: cur.title, after: title, before_value: cur.title });
     }
   }
-  if (input.description !== undefined && input.description !== cur.description) {
-    patch.description = input.description;
-    changed.push("description rewritten");
-    // Full text, not a preview: the diff panel is what truncates, not the store.
-    changes.push({ field: "description", before: cur.description, after: input.description, before_value: cur.description });
+  // The description is prose plus the marker lines of its attachments
+  // (lib/uploadTypes.ts). `description` replaces the prose and keeps the
+  // attachments: they are staged files the user or another session put
+  // there, and a brief rewritten from the tool's own text would otherwise
+  // silently drop every one. `attachments` appends, resolved against the
+  // caller's worktree before anything is written, so a bad path refuses the
+  // whole call.
+  // The copies themselves wait until every field below has passed, so a
+  // refusal leaves no orphaned file behind; only the destination paths are
+  // decided here, since the description has to name them.
+  const copies: { from: string; to: string }[] = [];
+  if (input.description !== undefined || input.attachments?.length) {
+    const cut = splitAttachmentText(cur.description);
+    // The new text is split too: get_task hands the description back with
+    // its marker lines in place, and a brief edited from that copy would
+    // otherwise carry them into the prose and duplicate every one below.
+    const given = input.description !== undefined ? splitAttachmentText(input.description) : cut;
+    if (input.attachments?.length) {
+      const hit = resolveAgentAttachments(caller.id, input.attachments);
+      if ("error" in hit) return fail(`Could not update ${what}: ${hit.error}. Nothing was changed.`);
+      for (const from of hit.files) copies.push({ from, to: plannedTaskUpload(cur.id, from) });
+    }
+    const staged = copies.map((c) => ({ kind: attachmentKindOf(c.to), path: c.to }));
+    const seen = new Set<string>();
+    const kept = [...cut.attachments, ...given.attachments, ...staged].filter((a) => !seen.has(a.path) && seen.add(a.path));
+    const description = joinAttachmentText(given.text, kept);
+    if (description !== cur.description) {
+      patch.description = description;
+      if (given.text !== cut.text) changed.push("description rewritten");
+      if (staged.length) changed.push(`${staged.length} file${staged.length === 1 ? "" : "s"} attached`);
+      // Full text, not a preview: the diff panel is what truncates, not the store.
+      changes.push({ field: "description", before: cur.description, after: description, before_value: cur.description });
+    }
   }
   if (input.priority !== undefined) {
     if (!PRIORITIES.includes(input.priority))
@@ -945,6 +1093,9 @@ export function updateTaskForAgent(
       return fail(`Could not update ${what}: ${(e as Error).message}. Nothing was changed.`);
     }
   }
+  // The attachment copies, now that nothing below can refuse: the row patch
+  // names these paths, so they exist before it lands.
+  for (const c of copies) copyIntoTaskUploads(c.from, c.to);
   const updated = updateTask(cur.id, patch);
   if (!updated) return fail(`Could not update ${what}: its row no longer exists.`);
 
@@ -1348,6 +1499,33 @@ export async function setBaseBranchForAgent(
         ? ""
         : " The user can see this on their board as a change made by an agent, with a one-click revert that retargets it back."),
   };
+}
+
+/**
+ * The `report_base_rewrite` tool: flag every other task in the project still
+ * based on a branch this task just rewrote (a rebase plus a force-push).
+ *
+ * This only flags; it never rebases anything and never touches another
+ * task's branch or worktree. The branch name is the model's word, but
+ * `flagBaseRewrite` re-derives which tasks were actually orphaned from git,
+ * one task at a time, so a wrong or stale name flags nobody.
+ */
+export async function reportBaseRewriteForAgent(
+  caller: Task,
+  branchRef: string | undefined
+): Promise<{ ok: boolean; text: string }> {
+  const project = getProject(caller.project_id);
+  if (!project) return { ok: false, text: "Could not report the rewrite: this task's project no longer exists." };
+
+  const branch = branchRef?.trim() || resolveBaseBranch(caller, project);
+  if (!branch)
+    return {
+      ok: false,
+      text: "Could not report the rewrite: name the branch you rewrote, this task has no base branch to fall back on.",
+    };
+
+  const sweep = await flagBaseRewrite({ project, baseBranch: branch, caller });
+  return { ok: true, text: describeSweep(sweep) };
 }
 
 /**

@@ -334,7 +334,7 @@ async function idOf(page: import("@playwright/test").Page, title: string): Promi
 // active Board tab from inside a task pops back to the task list (the board
 // root), the way a native tab bar pops its stack. Tapping Board from another
 // tab only switches tabs, and the session you left stays where you left it,
-// so the pop takes one tap from Board, two from Diffs.
+// so the pop takes one tap from Board, two from Services.
 test.describe("mobile tab bar", () => {
   test.use({ viewport: { width: 390, height: 800 } });
 
@@ -358,16 +358,151 @@ test.describe("mobile tab bar", () => {
     await expect(listRow(page, "Alpha task")).toBeVisible();
     await expect(tab("Board")).toHaveClass(/\bon\b/);
 
-    // From Diffs, the first Board tap restores the session; the second pops.
+    // From Services, the first Board tap restores the session; the second pops.
     await listRow(page, "Alpha task").click();
     await expect(backToTasks).toBeVisible();
-    await tab("Diffs").click();
+    await tab("Services").click();
     await expect(backToTasks).toBeHidden();
     await tab("Board").click();
     await expect(backToTasks).toBeVisible();
     await tab("Board").click();
     await expect(backToTasks).toBeHidden();
     await expect(listRow(page, "Alpha task")).toBeVisible();
+  });
+});
+
+// Keyboard geometry: Chromium has no software keyboard in this suite, so the
+// test supplies the same 336px inset the iOS visual viewport reports. This
+// still exercises the real stylesheet and the actual task modal/composer.
+test.describe("mobile keyboard geometry", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  const KEYBOARD_TASK = `Keyboard task ${uid()}`;
+
+  test.beforeAll(async ({ request }) => {
+    const projects = await (await request.get("/api/projects")).json();
+    const project = projects.find((p: { name: string }) => p.name === PROJECT);
+    const task = await createTask(request, { projectId: project.id, title: KEYBOARD_TASK });
+    await sendMessage(request, task.id);
+    await waitForIdle(request, task.id);
+  });
+
+  test("keeps modal controls and the focused composer above the keyboard", async ({ page }) => {
+    await gotoApp(page);
+    await expect(page.locator(".mtabbar")).toBeVisible();
+    const backToProjects = page.getByRole("button", { name: "Back to projects" });
+    if (await backToProjects.isVisible()) await backToProjects.click();
+    await page.getByText(PROJECT).first().click();
+    await page.getByRole("button", { name: "Task", exact: true }).click();
+
+    const modal = page.locator(".modal");
+    await expect(modal).toBeVisible();
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty("--kb-inset", "336px");
+      document.documentElement.style.removeProperty("--viewport-height");
+    });
+    expect(await page.locator(".app.mobile").evaluate((el) => el.getBoundingClientRect().height)).toBeCloseTo(508, 0);
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty("--viewport-height", "508px");
+    });
+
+    const geometry = await page.evaluate(() => {
+      const scrim = document.querySelector<HTMLElement>(".scrim")!;
+      const modal = document.querySelector<HTMLElement>(".modal")!;
+      return {
+        scrimBottom: scrim.getBoundingClientRect().bottom,
+        modalBottom: modal.getBoundingClientRect().bottom,
+        scrollable: modal.scrollHeight > modal.clientHeight,
+      };
+    });
+    expect(geometry.scrimBottom).toBeCloseTo(508, 0);
+    expect(geometry.modalBottom).toBeLessThanOrEqual(508);
+    expect(geometry.scrollable).toBe(true);
+
+    await modal.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    const create = modal.getByRole("button", { name: "Create task" });
+    const createBox = await create.boundingBox();
+    expect(createBox).not.toBeNull();
+    expect(createBox!.y + createBox!.height).toBeLessThanOrEqual(508);
+
+    await page.keyboard.press("Escape");
+    await expect(modal).toBeHidden();
+    await listRow(page, KEYBOARD_TASK).click();
+    const composer = page.locator(".comp-input");
+    await expect(composer).toBeVisible();
+    await composer.click();
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty("--kb-inset", "336px");
+      document.documentElement.style.setProperty("--viewport-height", "508px");
+    });
+    const composerBox = await composer.boundingBox();
+    expect(composerBox).not.toBeNull();
+    expect(composerBox!.height).toBeGreaterThan(0);
+    expect(composerBox!.y + composerBox!.height).toBeLessThanOrEqual(508);
+    await expect(page.locator(".mtabbar")).toBeHidden();
+    await page.evaluate(() => {
+      const style = document.createElement("style");
+      style.dataset.testSafeArea = "true";
+      style.textContent = `.app.mobile:has(textarea:focus, [contenteditable]:focus, input:is([type=text],[type=search],[type=email],[type=url],[type=number],[type=password]):focus) .composer { padding-bottom: 46px; }`;
+      document.head.appendChild(style);
+    });
+    expect(await page.locator(".composer").evaluate((el) => getComputedStyle(el).paddingBottom)).toBe("46px");
+    await page.setViewportSize({ width: 390, height: 508 });
+    await expect(composer).toBeFocused();
+    await expect(page.locator("html[data-keyboard-open]")).toHaveCount(1);
+    const composerGeometry = await page.evaluate(() => {
+      const composer = document.querySelector<HTMLElement>(".composer")!;
+      const area = document.querySelector<HTMLElement>(".comp-area")!;
+      return {
+        paddingBottom: getComputedStyle(composer).paddingBottom,
+        composerBottom: composer.getBoundingClientRect().bottom,
+        areaBottom: area.getBoundingClientRect().bottom,
+      };
+    });
+    expect(composerGeometry.paddingBottom).toBe("12px");
+    expect(composerGeometry.composerBottom - composerGeometry.areaBottom).toBeCloseTo(13, 0);
+  });
+
+  test("keeps the onboarding wizard usable above the keyboard", async ({ page, request }) => {
+    await request.post("/api/onboarding");
+    await gotoApp(page);
+    await expect(page.locator(".mtabbar")).toBeVisible();
+    const backToProjects = page.getByRole("button", { name: "Back to projects" });
+    if (await backToProjects.isVisible()) await backToProjects.click();
+    await page.getByTitle("App settings").click();
+    await page.getByRole("button", { name: "Setup", exact: true }).click();
+    await page.getByRole("button", { name: "Re-run setup wizard", exact: true }).click();
+
+    const scrim = page.locator(".wiz-scrim");
+    const wizard = page.locator(".wiz");
+    await expect(wizard).toBeVisible();
+    await wizard.evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)));
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty("--kb-inset", "336px");
+      document.documentElement.style.setProperty("--viewport-height", "508px");
+    });
+
+    const geometry = await page.evaluate(() => {
+      const scrim = document.querySelector<HTMLElement>(".wiz-scrim")!;
+      const wizard = document.querySelector<HTMLElement>(".wiz")!;
+      const body = document.querySelector<HTMLElement>(".wiz-body")!;
+      const footer = document.querySelector<HTMLElement>(".wiz-foot")!;
+      return {
+        scrimBottom: scrim.getBoundingClientRect().bottom,
+        wizardBottom: wizard.getBoundingClientRect().bottom,
+        bodyHeight: body.getBoundingClientRect().height,
+        bodyOverflow: getComputedStyle(body).overflowY,
+        footerBottom: footer.getBoundingClientRect().bottom,
+      };
+    });
+    expect(geometry.scrimBottom).toBeCloseTo(508, 0);
+    expect(geometry.wizardBottom).toBeLessThanOrEqual(508);
+    expect(geometry.bodyHeight).toBeGreaterThan(100);
+    expect(geometry.bodyOverflow).toBe("auto");
+    expect(geometry.footerBottom).toBeLessThanOrEqual(508);
+
+    await scrim.getByRole("button", { name: "Skip setup", exact: true }).click();
+    await expect(scrim).toBeHidden();
   });
 });
 
@@ -399,11 +534,11 @@ test.describe("mobile settings nav", () => {
     expect(boxes.some((b) => b.left < 390 && b.right > 390)).toBe(true);
 
     // A section past the fold still selects, and gets scrolled into view.
-    const agents = chips.filter({ hasText: "Agents" });
-    await agents.click();
-    await expect(agents).toHaveClass(/\bactive\b/);
-    await expect(page.getByText("Each task runs as a coding agent.")).toBeVisible();
-    const box = await agents.boundingBox();
+    const models = chips.filter({ hasText: "Models" });
+    await models.click();
+    await expect(models).toHaveClass(/\bactive\b/);
+    await expect(page.getByText("Environments are the coding CLIs a task can run in")).toBeVisible();
+    const box = await models.boundingBox();
     expect(box!.x).toBeGreaterThanOrEqual(0);
     expect(box!.x + box!.width).toBeLessThanOrEqual(390);
   });

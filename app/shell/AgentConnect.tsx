@@ -96,7 +96,7 @@ export function AgentNudge({ ready, onConnect }: { ready: boolean; onConnect: ()
       <p style={{ margin: 0, color: "var(--ink-2)", lineHeight: 1.55 }}>
         Connect {names} with your subscription login (no API key needed) to also pick{" "}
         {pending.length > 1 ? "them" : "it"} for a task. You can always do this later from{" "}
-        <strong>Settings → Agents</strong>.
+        <strong>Settings → Models</strong>.
       </p>
     </Modal>
   );
@@ -161,7 +161,7 @@ function AgentSandboxWarning({ agent }: { agent: AgentInfoT }) {
             </li>
             <li>an AppArmor profile that allows <code>bwrap</code> to create user namespaces</li>
             <li>
-              run the task in <strong>bypassPermissions</strong>, which uses no sandbox at all
+              select the <strong>Full access</strong> sandbox, which uses no Codex sandbox
             </li>
             <li>
               in a container, set <code>CODEX_EXTERNAL_SANDBOX=1</code> so workspace-write turns rely on the
@@ -186,7 +186,7 @@ function AgentSandboxWarning({ agent }: { agent: AgentInfoT }) {
 // descriptor: `loginCompletesOutOfBand` (this login can land without the code
 // box, so watch authStatus too) and `connectHint` (a caveat the generic prose
 // can't carry, e.g. Antigravity's containers having no keyring for its
-// token). Used by the Settings "Agents" section and the post-setup "connect
+// token). Used by the Settings "Models" section and the post-setup "connect
 // another agent" nudge. The first-run wizard keeps its own Claude-specific
 // step to drive the onboarding funnel.
 export function AgentConnect({
@@ -250,6 +250,13 @@ export function AgentConnect({
           <div className="hlp" style={{ margin: "3px 0 0" }}>
             <button className="linkbtn" onClick={() => setReconnect(true)}>Reconnect a different account</button>
           </div>
+          {agent.planScope && agent.planScope.kind !== "all" && (
+            <div className="hlp">
+              {agent.planScope.kind === "none"
+                ? `No project runs ${agent.label} on this login. Every project points it at another endpoint.`
+                : `${agent.planScope.redirected} of ${agent.planScope.redirected + agent.planScope.onPlan} projects point ${agent.label} at another endpoint.`}
+            </div>
+          )}
         </div>
       </div>
       </>

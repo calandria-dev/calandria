@@ -48,7 +48,7 @@ bootstrap commands is worse than none, because now the agent has to choose.
 
 ## Telling the agent about it
 
-The bootstrap only helps if the session knows to run it. Put it near the top of
+The bootstrap only helps if the instruction file tells the session to run it. Put it near the top of
 the instruction file, stated as a precondition rather than a suggestion:
 
 ```markdown
@@ -175,7 +175,7 @@ in a worktree either way, and inside a container it can't resolve at all.
 Also: a plain `git config x.y z` run from a worktree writes to the *shared*
 config, affecting the main checkout. Use `git config --worktree` (after
 `git config extensions.worktreeConfig true`) for anything that should vary per
-worktree. Note that `core.hooksPath` is not among the keys git scopes
+worktree. `core.hooksPath` is not among the keys git scopes
 automatically, which is how worktree tooling has silently disabled a user's
 global hooks in their main repo.
 

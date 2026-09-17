@@ -46,6 +46,7 @@ import {
 import { claimTurn, unregisterTurn, hasTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { publish, publishGlobal } from "@/lib/events";
+import { emitQueuedStart, emitQueuedStartSkipped } from "@/lib/notifications/notify";
 import { AUTO_START_HOOKS, blocks, launchInitialTurn } from "@/lib/autoStart";
 import type { Project, Task } from "@/lib/types";
 
@@ -56,9 +57,12 @@ export const DEFERRED_RESUME_NOTE = "▶ Resumed automatically: queued for the u
 /** What a queued resume sends when nothing was parked in the follow-up queue. */
 export const DEFERRED_RESUME_PROMPT = "The usage limit has reset. Continue where you left off.";
 
-const SKIPPED_LIVE = "ℹ Queued start skipped: a turn was already running.";
-const SKIPPED_BLOCKED = "ℹ Queued start skipped: this task is still blocked by another task.";
-const SKIPPED_NO_REPO = "ℹ Queued start skipped: set this project's working directory first.";
+// Why a due deadline launched nothing, as a bare reason. skipQueued() wraps it
+// into the transcript notice and hands the same sentence to the notification,
+// so the two never drift.
+const SKIPPED_LIVE = "a turn was already running";
+const SKIPPED_BLOCKED = "this task is still blocked by another task";
+const SKIPPED_NO_REPO = "set this project's working directory first";
 
 interface TickerState {
   timer: NodeJS.Timeout | null;
@@ -139,21 +143,31 @@ function clearQueued(taskId: string, notice: string | null): void {
   }
 }
 
+// A skip: the deadline is consumed, the transcript says why, and so does the
+// user's phone. Every outcome of a due deadline is notified, because the whole
+// point of the queue is that nobody is at the screen when it comes due: a task
+// that silently launched nothing is otherwise discovered hours later, still
+// queued for a reset that has passed.
+function skipQueued(taskId: string, why: string): void {
+  clearQueued(taskId, `ℹ Queued start skipped: ${why}.`);
+  emitQueuedStartSkipped(taskId, why);
+}
+
 async function fire(task: Task): Promise<boolean> {
   // A live turn supersedes the queued one: the user acted in the meantime, and
   // that turn's own finally drains the follow-up queue when it ends.
   if (hasTurn(task.id)) {
-    clearQueued(task.id, SKIPPED_LIVE);
+    skipQueued(task.id, SKIPPED_LIVE);
     return false;
   }
   const project = getProject(task.project_id);
   if (!project || !project.repo_path.trim()) {
-    clearQueued(task.id, SKIPPED_NO_REPO);
+    skipQueued(task.id, SKIPPED_NO_REPO);
     return false;
   }
   if (!task.started) {
     if (getTaskDeps(task.id).some(blocks)) {
-      clearQueued(task.id, SKIPPED_BLOCKED);
+      skipQueued(task.id, SKIPPED_BLOCKED);
       return false;
     }
     // The re-check under the lock: still queued (the user can cancel between
@@ -162,6 +176,10 @@ async function fire(task: Task): Promise<boolean> {
     // leave it set for the next tick to find.
     const launched = await launchInitialTurn(task.id, DEFERRED_START_NOTE, (fresh) => fresh.start_at > 0 && !isTerminal(fresh));
     clearQueued(task.id, null);
+    // Only a launch is announced. A re-check that refused (the user cancelled
+    // the deadline, or finished the task) is the user's own decision playing
+    // out, and a launch that threw reports itself as a failed turn.
+    if (launched) emitQueuedStart(task.id, false);
     return launched;
   }
   return resumeQueued(task, project);
@@ -175,7 +193,7 @@ async function fire(task: Task): Promise<boolean> {
 async function resumeQueued(task: Task, project: Project): Promise<boolean> {
   const controller = claimTurn(task.id);
   if (!controller) {
-    clearQueued(task.id, SKIPPED_LIVE);
+    skipQueued(task.id, SKIPPED_LIVE);
     return false;
   }
   let launched = false;
@@ -214,6 +232,10 @@ async function resumeQueued(task: Task, project: Project): Promise<boolean> {
   } finally {
     if (!launched) unregisterTurn(task.id, controller);
   }
+  // A resume that the under-lock re-check refused leaves no notice and no
+  // notification, matching the first-turn path above: the deadline was
+  // withdrawn or the task finished, both of which the user did themselves.
   if (!launched) clearQueued(task.id, null);
+  else emitQueuedStart(task.id, true);
   return launched;
 }

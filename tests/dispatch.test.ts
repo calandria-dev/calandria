@@ -16,6 +16,7 @@ vi.mock("@/lib/schedule/commands", () => ({
 
 import { createProject, getTask, listTasks } from "@/lib/store";
 import { createRunbook } from "@/lib/runbooks/store";
+import { createProvider } from "@/lib/providers/store";
 import { dispatchPromptTask } from "@/lib/dispatch";
 import { setAgentConnection } from "@/lib/agents/connections";
 import { makeRepo } from "./helpers";
@@ -45,7 +46,8 @@ describe("dispatchPromptTask", () => {
 
   it("mints a task carrying the dispatch config and launches its first turn", async () => {
     const p = await projectWithRepo();
-    const res = await dispatchPromptTask({ ...base, project_id: p.id });
+    const provider = createProvider({ type: "ollama", config: { base_url: "http://localhost:11434" } });
+    const res = await dispatchPromptTask({ ...base, project_id: p.id, provider_id: provider.id, model: "qwen3-coder" });
 
     expect(res.ok).toBe(true);
     const task = getTask(res.task!.id)!;
@@ -53,6 +55,8 @@ describe("dispatchPromptTask", () => {
     expect(task.description).toBe(base.description);
     expect(task.priority).toBe("hi");
     expect(task.permission_mode).toBe("bypassPermissions");
+    expect(task.provider_id).toBe(provider.id);
+    expect(task.model).toBe("qwen3-coder");
     expect(task.running).toBe(1);
     // The prompt is the first user message, not the description; a slash
     // command only expands when it arrives as one.

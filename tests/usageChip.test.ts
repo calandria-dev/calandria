@@ -21,7 +21,18 @@ const real: Pick<TaskRow, "total_tokens" | "cache_read_tokens" | "cache_creation
 };
 
 const agent = (over: Partial<AgentInfo>): AgentInfo => ({
-  id: "claude", label: "Claude Code", capabilities: CLAUDE_CAPABILITIES, authenticated: true, ...over,
+  id: "claude",
+  label: "Claude Code",
+  capabilities: CLAUDE_CAPABILITIES,
+  connected: true,
+  authenticated: true,
+  status: "connected",
+  installedVersion: null,
+  bundledProvider: "anthropic",
+  providerTypes: CLAUDE_CAPABILITIES.providerTypes,
+  endpointTransport: CLAUDE_CAPABILITIES.endpointTransport,
+  providers: [],
+  ...over,
 });
 
 describe("usageSplit", () => {

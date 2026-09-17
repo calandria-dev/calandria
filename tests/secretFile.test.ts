@@ -5,8 +5,9 @@
  * icacls aren't available, so it is pinned by structure, the way
  * tests/binPath.test.ts pins the PATHEXT rules: the platform is passed in and
  * the command is asserted as argv, because `chmod 0o600` on NTFS toggles the
- * read-only attribute and nothing else (docs/WINDOWS.md §3, finding 9). The
- * failure path matters most: a key file that outlived a failed ACL call would
+ * read-only attribute and nothing else (docs/WINDOWS.md, "Platform
+ * behavior"). The failure path matters most: a key file that outlived a failed
+ * ACL call would
  * sit readable by every account on the machine while the wizard reported a
  * connected agent. The generated VAPID keypair takes the opposite failure
  * policy; see the `fatal: false` case below.

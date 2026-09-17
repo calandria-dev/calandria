@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ensureNotifier } from "@/lib/notifications/dispatcher";
 import { startPrPolling } from "@/lib/prState";
+import { startUpdateChecker } from "@/lib/updates/check";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +42,11 @@ export async function POST() {
   // SDK-free (PINNED), so there is no async-module hazard to dodge. It starts
   // nothing when no task has an open PR.
   startPrPolling();
+  // The release check rides the same ping too, so a browser tab never has to
+  // ask github.com and the pill is there on the first page load. Statically
+  // imported for the same reason as the sweep above: lib/updates/check.ts is
+  // SDK-free (PINNED). It starts nothing when the check is turned off.
+  startUpdateChecker();
   return NextResponse.json({ ok: true, ...schedulerHealth() });
 }
 

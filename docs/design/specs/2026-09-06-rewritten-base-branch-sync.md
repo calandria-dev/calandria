@@ -88,6 +88,10 @@ It offers no one-click action. There is no safe generic one, for the reasons bel
 
 ## Deliberately not done
 
+Both were filed as follow-up tasks and both are now done. The first is
+`2026-09-08-rebase-onto-rewritten-base.md`; what it decided about each of the four hazards below
+is recorded there.
+
 **An automated rebase button.** Rewriting a task branch's history under the user is not a
 drive-by change. It has to decide what happens to uncommitted work in the worktree, to a branch
 that has already been pushed and has an open PR, and to a rebase that stops on a conflict
@@ -96,10 +100,10 @@ task with its own tests.
 
 **Making the landing-task pattern update its originating task.** A task that rebases and
 force-pushes a branch other tasks are based on should catch those tasks up as its last step,
-rather than leaving them to rot. That is a change to the landing workflow and to what a task may
-do to a sibling task's worktree, not to the sync path.
-
-Both are filed as follow-up tasks.
+instead of leaving them to rot. That is a change to the landing workflow and to what a task may
+do to a sibling task's worktree, not to the sync path. Done in
+`2026-09-09-landing-task-catch-up.md`, as a flag rather than a sweep of rebases; that spec says
+why.
 
 ## Verification
 

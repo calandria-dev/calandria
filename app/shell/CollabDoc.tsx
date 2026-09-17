@@ -3,8 +3,9 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../icons";
-import { Markdown } from "../Markdown";
+import { Markdown, type MarkdownLinks } from "../Markdown";
 import { Modal } from "./Modal";
+import { apiFetch } from "./api";
 import { Skel, ErrNote } from "./shared";
 import { buildCollabPacket, isMarkdownPath, locateQuote, DEFAULT_COLLAB_EDIT_MODE, type CollabEditMode } from "@/lib/collab";
 import type { TaskDocComment, TaskDocDraft } from "@/lib/types";
@@ -142,13 +143,14 @@ function draftPayload(file: string, text: string | null, general: string, anchor
   return JSON.stringify({ file, text, general, anchorSha });
 }
 
-export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }: {
+export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten, links }: {
   taskId: string;
   file: string;
   running?: boolean; // a turn is live: direct writes are refused server-side, so the picker says so up front
   onClose: () => void;
   onSend: (text: string) => void;
   onWritten?: () => void; // the file on disk changed under the Changes tab: refetch the diff
+  links?: MarkdownLinks; // a link in the rendered document to another file opens it in this modal (the host keys the modal on `file`)
 }) {
   const [original, setOriginal] = useState<string | null>(null);
   const [sha, setSha] = useState<string | null>(null); // blob sha of `original`: the anchor new comments and the draft get
@@ -191,7 +193,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
 
   useEffect(() => {
     let dead = false;
-    const fileReq = fetch(`/api/tasks/${taskId}/file?path=${encodeURIComponent(file)}`, { cache: "no-store" })
+    const fileReq = apiFetch(`/api/tasks/${taskId}/file?path=${encodeURIComponent(file)}`, { cache: "no-store" })
       .then((r) => readJson<{ content?: string; sha?: string }>(r));
     fileReq
       .then((j) => { if (!dead) { setOriginal(j.content ?? ""); setSha(j.sha ?? null); setText(j.content ?? ""); } })
@@ -201,7 +203,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
     // still the one it was made against. A failure here leaves draftLoaded
     // false, which also stops this session's edits from being saved, so a
     // read failure never gets overwritten by a fresh save.
-    const draftReq = fetch(`${draftApi}?file=${encodeURIComponent(file)}`, { cache: "no-store" })
+    const draftReq = apiFetch(`${draftApi}?file=${encodeURIComponent(file)}`, { cache: "no-store" })
       .then((r) => readJson<{ draft?: TaskDocDraft | null }>(r));
     Promise.all([fileReq.catch(() => null), draftReq])
       .then(([f, d]) => {
@@ -222,7 +224,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
     // The persisted review, loaded beside the document. A failure here is
     // shown in the side pane rather than blocking the document: the user can
     // still read and edit, they just can't trust the comment list.
-    fetch(`${api}?file=${encodeURIComponent(file)}`, { cache: "no-store" })
+    apiFetch(`${api}?file=${encodeURIComponent(file)}`, { cache: "no-store" })
       .then((r) => readJson<{ comments?: TaskDocComment[] }>(r))
       .then((j) => { if (!dead) setComments(j.comments ?? []); })
       .catch((e) => { if (!dead) setCommentErr(`Couldn't load saved comments: ${e instanceof Error ? e.message : String(e)}`); });
@@ -272,7 +274,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
       const body = pendingSaveRef.current;
       if (!body || stopSavingRef.current) return;
       try {
-        const r = await fetch(draftApi, { method: "PUT", headers: { "Content-Type": "application/json" }, body, keepalive });
+        const r = await apiFetch(draftApi, { method: "PUT", headers: { "Content-Type": "application/json" }, body, keepalive });
         await readJson(r);
         if (pendingSaveRef.current === body) pendingSaveRef.current = null;
         setSyncedKey(body);
@@ -317,15 +319,28 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
   // Closing loses only what isn't on the server: a comment still in the
   // compose box, and the edit draft if saving it failed. Everything else is
   // saved as it's typed, so the scrim, Escape and Cancel just close.
-  const close = useCallback(() => {
+  const leave = useCallback((then: () => void) => {
     const losing: string[] = [];
     if (composing && draft.trim() && !(composing.id && draft.trim() === commentBodyOf(composing.id))) {
       losing.push(composing.id ? "your changes to the comment" : "the comment you're writing");
     }
     if (dirty && (draftErr || !draftLoaded) && !staleDraft) losing.push("your unsent edits, which couldn't be saved");
     if (losing.length && !window.confirm(`Discard ${losing.join(" and ")}? Everything else is saved.`)) return;
-    onClose();
-  }, [composing, draft, comments, dirty, draftErr, draftLoaded, staleDraft, onClose]);
+    then();
+  }, [composing, draft, comments, dirty, draftErr, draftLoaded, staleDraft]);
+  const close = useCallback(() => leave(onClose), [leave, onClose]);
+  // Following a link to another document leaves this one the same way closing
+  // does, so the same guard runs first. Relative links resolve against the
+  // document's own directory, as they would on disk.
+  // `leave` changes with every keystroke in the comment box; read through a
+  // ref so the links object, which Markdown memoizes on, stays put.
+  const leaveRef = useRef(leave);
+  leaveRef.current = leave;
+  const docLinks = useMemo<MarkdownLinks | undefined>(() => {
+    if (!links) return undefined;
+    const slash = file.lastIndexOf("/");
+    return { ...links, baseDir: slash >= 0 ? file.slice(0, slash) : "", onOpen: (rel) => leaveRef.current(() => links.onOpen(rel)) };
+  }, [links, file]);
 
   // Selection → "Add comment" affordance. Runs on mouseup/keyup inside the
   // rendered view; anything collapsed or outside it clears the affordance.
@@ -359,7 +374,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
     try {
       if (composing.id) {
         const id = composing.id;
-        const r = await fetch(`${api}/${encodeURIComponent(id)}`, {
+        const r = await apiFetch(`${api}/${encodeURIComponent(id)}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ body }),
@@ -367,7 +382,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
         const j = await readJson<{ comment?: TaskDocComment }>(r);
         if (j.comment) setComments((cs) => cs.map((c) => (c.id === id ? (j.comment as TaskDocComment) : c)));
       } else {
-        const r = await fetch(api, {
+        const r = await apiFetch(api, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ file, quote: composing.quote, heading: composing.heading, body, anchorSha: sha }),
@@ -409,7 +424,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
     setCommentErr(null);
     if (composing?.id === id) { setComposing(null); setDraft(""); }
     try {
-      const r = await fetch(`${api}/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const r = await apiFetch(`${api}/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (r.status === 404) { setComments((cs) => cs.filter((c) => c.id !== id)); return; } // already gone: same outcome
       await readJson(r);
       setComments((cs) => cs.filter((c) => c.id !== id));
@@ -470,7 +485,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
     setSendError(null);
     try {
       if (edited && effectiveMode === "direct" && written !== text) {
-        const r = await fetch(`/api/tasks/${taskId}/file`, {
+        const r = await apiFetch(`/api/tasks/${taskId}/file`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ path: file, original, content: text }),
@@ -488,7 +503,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
         onWritten?.();
       }
       if (drafts.length) {
-        const r = await fetch(`${api}/sent`, {
+        const r = await apiFetch(`${api}/sent`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ids: drafts.map((c) => c.id) }),
@@ -501,7 +516,7 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
       // Best effort: the packet is what matters, and a draft this leaves
       // behind restores as no change (direct) or as the edits just sent
       // (patch), which the user can discard.
-      await fetch(`${draftApi}?file=${encodeURIComponent(file)}`, { method: "DELETE" }).catch(() => undefined);
+      await apiFetch(`${draftApi}?file=${encodeURIComponent(file)}`, { method: "DELETE" }).catch(() => undefined);
       onSend(packet);
       onClose();
     } catch (e) {
@@ -619,14 +634,14 @@ export function CollabDoc({ taskId, file, running, onClose, onSend, onWritten }:
             </div>
             {markdown && (
               <div className="collab-pane collab-render">
-                <Markdown diagrams>{text}</Markdown>
+                <Markdown diagrams links={docLinks}>{text}</Markdown>
               </div>
             )}
           </div>
         ) : (
           <div className="collab-split">
             <div className="collab-pane collab-render collab-selectable" ref={docRef} onMouseUp={onSelect} onKeyUp={onSelect}>
-              {markdown ? <Markdown diagrams>{text}</Markdown> : <pre className="collab-plain">{text}</pre>}
+              {markdown ? <Markdown diagrams links={docLinks}>{text}</Markdown> : <pre className="collab-plain">{text}</pre>}
               {pending && (
                 <button className="collab-addc" style={{ top: pending.top, left: pending.left }} onMouseDown={(e) => e.preventDefault()} onClick={startComment}>
                   {Icon.plus()} Add comment

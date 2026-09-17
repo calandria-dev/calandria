@@ -54,6 +54,22 @@ import { removeTaskUploads } from "@/lib/uploads";
 /** Task statuses that mean "this is over": the only ones a sweep may touch. */
 const TERMINAL_STATUSES = "'done','cancelled'";
 
+// Every condition that says nobody is still using this task, as one SQL
+// fragment, with the age cutoff left out. Three callers now ask that question
+// (the table prune below, lib/worktreeSweep.ts, lib/reclaim.ts) and each one
+// destroys something on a yes, so a second copy of the clauses would be the
+// copy that goes stale. The single `?` is `now`, for the snooze comparison.
+const FINISHED_WITH = `status IN (${TERMINAL_STATUSES})
+    AND running = 0
+    AND awaiting_input = 0
+    AND unread_run_at = 0
+    AND snoozed_until <= ?
+    AND id NOT IN (SELECT task_id FROM pending_messages)
+    AND id NOT IN (
+      SELECT task_id FROM schedule_runs
+       WHERE task_id IS NOT NULL AND status IN ('claimed','running')
+    )`;
+
 /** Per-table row counts a sweep removed, for the log line and the tests. */
 export interface RetentionCounts {
   messages: number;
@@ -109,21 +125,27 @@ export function prunableTaskIds(cutoff: number, now = Date.now()): string[] {
     getDb()
       .prepare(
         `SELECT id FROM tasks
-          WHERE status IN (${TERMINAL_STATUSES})
-            AND running = 0
-            AND awaiting_input = 0
-            AND unread_run_at = 0
-            AND snoozed_until <= ?
+          WHERE ${FINISHED_WITH}
             AND updated_at <= ?
-            AND id NOT IN (SELECT task_id FROM pending_messages)
-            AND id NOT IN (
-              SELECT task_id FROM schedule_runs
-               WHERE task_id IS NOT NULL AND status IN ('claimed','running')
-            )
           ORDER BY updated_at ASC`
       )
       .all(now, cutoff) as { id: string }[]
   ).map((r) => r.id);
+}
+
+/**
+ * Is this one task finished with, by the same reading prunableTaskIds() uses?
+ *
+ * Age is the only condition left out, because it is the only one a caller
+ * that already knows the work landed has no reason to wait for.
+ * lib/reclaim.ts asks this before an unattended reclaim: a merged pull
+ * request says the work is in the base branch, not that the session is over,
+ * and a reclaim tears down the branch the session would resume onto.
+ */
+export function taskIsFinishedWith(id: string, now = Date.now()): boolean {
+  return !!getDb()
+    .prepare(`SELECT 1 FROM tasks WHERE id = ? AND ${FINISHED_WITH}`)
+    .get(id, now);
 }
 
 /** SQLite caps bound parameters per statement; delete in chunks well under it. */

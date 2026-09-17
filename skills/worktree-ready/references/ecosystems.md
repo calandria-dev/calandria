@@ -115,7 +115,7 @@ install. Check whether that setting is still earning its keep.
 
 ## PHP
 
-`vendor/` is per-worktree with no sharing mechanism. Composer additionally
+`vendor/` is per-worktree with no sharing mechanism. Composer also
 **cannot detect the root package version from a linked worktree**: `.git` is a
 file, so version detection falls back to `1.0.0`, which quietly changes
 constraint resolution. Setting `COMPOSER_ROOT_VERSION`, or a `version` field in

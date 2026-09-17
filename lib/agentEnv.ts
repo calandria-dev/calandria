@@ -1,5 +1,6 @@
 import { readEnv } from "./env.mjs";
 import type { Project, Task } from "./types";
+import type { ResolvedProviderEnv } from "./providers/resolve";
 
 /**
  * The environment a main-turn agent process runs with, plus the per-project /
@@ -24,16 +25,14 @@ import type { Project, Task } from "./types";
  * The provider override is applied after the server env is copied (so it wins
  * over an instance-wide ANTHROPIC_BASE_URL) and before the PORT edit (so it
  * can never repoint PORT). It is an ALLOWLIST, not a free env block:
- * `projects.agent_env` is written from a settings form and reachable through
- * PATCH /api/projects/[id], and a field that could carry PATH, NODE_OPTIONS or
- * LD_PRELOAD would be arbitrary code execution in every turn spawned for that
- * project. Only the keys the two CLIs read to pick a provider, endpoint and
- * model get through; everything else is dropped at parse time, so nothing
- * unlisted ever reaches the DB either.
+ * `lib/providers/resolve.ts` turns a provider row into one of these, and a
+ * key that could carry PATH, NODE_OPTIONS or LD_PRELOAD would be arbitrary
+ * code execution in every turn spawned for that project. Only the keys the
+ * CLIs read to pick a provider, endpoint and model are ever built here.
  *
- * SDK-free and Node-free: the client imports the same helpers to build the
- * settings form and the task-header badge, so the two sides agree on what a
- * stored override means.
+ * SDK-free and Node-free: the client imports the same helpers to describe a
+ * resolved provider in the settings form and the task-header badge, so the
+ * two sides agree on what a provider row means.
  */
 
 /**
@@ -102,57 +101,6 @@ export function isAgentEnvKey(key: string): key is AgentEnvKey {
   return KEY_SET.has(key);
 }
 
-/**
- * The stored form (`projects.agent_env` / `tasks.agent_env`) to the allowlisted
- * record. Tolerates the JSON text, an already-parsed object, null and garbage,
- * because it is reached from a PATCH body, a DB column and the client alike.
- * Unknown keys and non-string values are dropped, never rejected, since the
- * allowlist is enforced here. An EMPTY string value is kept: in
- * `applyProviderEnv` it means "unset this key", which is how a task-level
- * override says "cloud" over a local project.
- */
-export function parseAgentEnv(input: unknown): AgentEnv {
-  let obj: unknown = input;
-  if (typeof input === "string") {
-    const text = input.trim();
-    if (!text) return {};
-    try {
-      obj = JSON.parse(text);
-    } catch {
-      return {};
-    }
-  }
-  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return {};
-  const out: AgentEnv = {};
-  for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
-    if (!isAgentEnvKey(k)) continue;
-    if (typeof v !== "string") continue;
-    // Reject control characters, which would reach a spawned process's
-    // environment, and unbounded values, which have no legitimate form here.
-    if (v.length > 2048 || /[\0-\x1f\x7f]/.test(v)) continue;
-    out[k] = v.trim();
-  }
-  return out;
-}
-
-/** The allowlisted record to the stored form: `""` for "no override", else
- *  compact JSON with keys in allowlist order so equal overrides compare equal. */
-export function serializeAgentEnv(input: unknown): string {
-  const env = parseAgentEnv(input);
-  const ordered: Record<string, string> = {};
-  for (const k of AGENT_ENV_KEYS) if (k in env) ordered[k] = env[k] as string;
-  return Object.keys(ordered).length ? JSON.stringify(ordered) : "";
-}
-
-/** The override a turn runs under: the project's, with the task's keys laid
- *  over it. A task that sets nothing inherits its project whole. */
-export function providerEnvFor(
-  project: Pick<Project, "agent_env"> | null | undefined,
-  task?: Pick<Task, "agent_env"> | null,
-): AgentEnv {
-  return { ...parseAgentEnv(project?.agent_env), ...parseAgentEnv(task?.agent_env) };
-}
-
 const ANTHROPIC_HOST = /(^|\.)anthropic\.com$/i;
 
 function hostOf(url: string): string | null {
@@ -185,23 +133,18 @@ function originOf(url: string): string | null {
 }
 
 /**
- * The instance's LiteLLM gateway (`CALANDRIA_LITELLM_BASE_URL`), or null when
- * none is configured, which is what hides the Gateway preset everywhere.
+ * The LiteLLM gateway exposed to browser-only legacy provider helpers.
  *
  * Read here, not from `lib/config.ts`, because this module is imported
  * by the client too (the settings form and the session badge both describe a
  * stored override), and `lib/config.ts` reaches for `node:path` and `node:os`.
- * Same crossing as `lib/features.ts`: the server reads the env, and
- * `app/layout.tsx` hands the browser the answer on `window`, so both sides
- * classify a stored override identically and SSR and hydration agree.
- * `lib/config.ts` re-exports this as `LITELLM_BASE_URL` so server code has one
- * name for it.
+ * `app/layout.tsx` resolves the oldest provider row and hands the browser the
+ * answer on `window`. Server code resolves rows through lib/providers/resolve.ts.
  */
 export function gatewayBaseUrl(): string | null {
-  const raw =
-    typeof window !== "undefined"
-      ? (window as { __GATEWAY_BASE_URL?: string }).__GATEWAY_BASE_URL
-      : readEnv("CALANDRIA_LITELLM_BASE_URL");
+  const raw = typeof window !== "undefined"
+    ? (window as { __GATEWAY_BASE_URL?: string }).__GATEWAY_BASE_URL
+    : null;
   return normalizeBaseUrl(String(raw ?? "")) || null;
 }
 
@@ -221,8 +164,8 @@ export function isGatewayEndpoint(url: string | null | undefined, gateway: strin
  * Lays a provider override over an env, in place. Three rules beyond "copy the
  * keys in", each about credentials:
  *
- * - `""` UNSETS the key. That is how a task says "cloud" inside a local project
- *   (`cloudOverrideEnv()`), and how a user blanks one key of a preset.
+ * - `""` UNSETS the key. That is how a provider row that names no endpoint
+ *   for one vendor leaves that vendor on its own cloud login.
  * - Redirecting ANTHROPIC_BASE_URL away from Anthropic drops the INHERITED
  *   Anthropic credentials (ANTHROPIC_API_KEY from the persisted key file, an
  *   ANTHROPIC_AUTH_TOKEN kept via CALANDRIA_ALLOW_API_KEY_ENV) before the
@@ -256,18 +199,25 @@ export function applyProviderEnv(out: Record<string, string>, override: AgentEnv
 }
 
 export function agentTurnEnv(
-  project: (Pick<Project, "port" | "agent_env"> & Partial<Pick<Project, "id">>) | null | undefined,
-  task?: (Pick<Task, "agent_env"> & Partial<Pick<Task, "id" | "agent" | "gateway_key">>) | null,
+  project: (Pick<Project, "port"> & Partial<Pick<Project, "id" | "default_provider_id">>) | null | undefined,
+  task?: (Partial<Pick<Task, "id" | "agent" | "provider_id" | "gateway_key">>) | null,
   base: Readonly<Record<string, string | undefined>> = process.env,
   gateway: string | null = gatewayBaseUrl(),
+  resolved?: ResolvedProviderEnv,
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(base)) {
     if (v !== undefined) out[k] = v;
   }
   delete out.NODE_ENV;
-  const override = providerEnvFor(project, task);
+  // Provider rows are resolved by the server-only adapter in
+  // lib/providers/resolve.ts, which hands the resolved override in.
+  const override = resolved?.env ?? {};
   applyProviderEnv(out, override);
+  for (const [key, value] of Object.entries(resolved?.extras ?? {})) {
+    if (value) out[key] = value;
+    else delete out[key];
+  }
   // The instance's gateway key never reaches a spawned CLI under its own name;
   // it is composed into the gateway header below instead. Read before the
   // delete so that block can still use it.
@@ -278,7 +228,7 @@ export function agentTurnEnv(
   // object just before a turn's driver call, never a value getTask() or
   // listTasks() themselves return, so this decides which credential a gateway
   // turn actually bills.
-  const gatewayKey = (task?.gateway_key || out.CALANDRIA_LITELLM_KEY || "").trim();
+  const gatewayKey = (task?.gateway_key || resolved?.extras.CALANDRIA_LITELLM_KEY || "").trim();
   delete out.CALANDRIA_LITELLM_KEY;
   // Composed below for a gateway turn and never inherited, so a stale pair in
   // the server's own environment can't hand a cloud turn a credential and the
@@ -298,9 +248,10 @@ export function agentTurnEnv(
 
 /**
  * The part of a gateway turn's environment that is composed per turn, not
- * stored (docs/AGENTS.md, "The gateway provider kind"). Nothing here can come from
- * `agent_env`: the header carries a credential and the ids of the project and
- * task actually running, and the credential variable decides who pays.
+ * stored (docs/AGENTS.md, "The gateway provider kind"). Nothing here can come
+ * from a provider row: the header carries a credential and the ids of the
+ * project and task actually running, and the credential variable decides who
+ * pays.
  *
  * - `x-litellm-api-key` is how Claude Code authenticates to LiteLLM's proxy
  *   layer while its own `Authorization` header carries whatever the billing
@@ -407,9 +358,9 @@ export function providerPresetEnv(input: { baseUrl: string; model?: string; toke
 
 /**
  * The override for the instance's LiteLLM gateway. Same shape as the local
- * preset minus NO credential. The gateway key is an instance secret
- * (`CALANDRIA_LITELLM_KEY`, or the persisted file behind Settings > Agents)
- * and `agent_env` is served to the browser by `GET /api/projects`, so a key
+ * preset without a credential. The gateway key is an instance secret stored
+ * for the LiteLLM provider row, and provider descriptions are served to the
+ * browser by `GET /api/projects`, so a key
  * stored here would be readable by anyone with the app open.
  * `agentTurnEnv()` resolves it at turn time instead.
  *
@@ -438,15 +389,6 @@ export function gatewayPresetEnv(input: { baseUrl: string; billing: GatewayBilli
     env.CODEX_MODEL = model;
     env.GEMINI_MODEL = model;
   }
-  return env;
-}
-
-/** A task-level override that puts a task back on the agent's own cloud login
- *  inside a project whose default is a local model. Sets every allowlisted key
- *  to `""`, which `applyProviderEnv` reads as "unset". */
-export function cloudOverrideEnv(): AgentEnv {
-  const env: AgentEnv = {};
-  for (const k of AGENT_ENV_KEYS) env[k] = "";
   return env;
 }
 
@@ -623,43 +565,13 @@ export function describeProvider(env: AgentEnv, gateway: string | null = gateway
   };
 }
 
-/**
- * Whether the agent's own subscription plan window says anything about THIS
- * task's turns, which decides if the plan meter's reset time may be offered as
- * "resume when the window rolls" (`lib/usageReset.ts`).
- *
- * Behind a gateway it usually does not, since the meter would describe a quota
- * the turn never touches:
- *
- * - Billed to the gateway's key, the turn draws on that key's account and no
- *   subscription is consumed at all.
- * - Billed to your own plan, only Claude Code forwards its login for the
- *   gateway to pass upstream. Codex's equivalent (`requires_openai_auth`)
- *   sends no `Authorization` header, so its gateway support bills the key in
- *   both modes, its ChatGPT window stays untouched, and its rate-limit
- *   snapshot behind a gateway is empty besides (docs/AGENTS.md, "Codex").
- *
- * Every other kind is left alone. A local endpoint consumes no plan either,
- * but that is a separate question from this one, and an agent whose driver
- * does not route through the gateway at all keeps its meter, since a gateway
- * project changes nothing about the turns it runs.
- */
-export function planWindowApplies(provider: AgentProvider, agent?: string | null): boolean {
-  if (provider.kind !== "gateway") return true;
-  // Add an agent here only once its driver honours the gateway address; until
-  // then a gateway project's tasks on that agent run on its own login and
-  // spend its own plan.
-  const routed = agent === "claude" || agent === "codex" || agent === "gemini";
-  if (!routed) return true;
-  return agent === "claude" && provider.gateway_billing === "subscription";
-}
-
-/** The provider a task's turns run against: the project's override with the
- *  task's laid over it, then described. */
+/** The provider a task's turns run against, as resolved and attached by the
+ *  API (`resolvedTaskProvider`, lib/providers/resolve.ts). A row with nothing
+ *  attached runs on its environment's own cloud login. */
 export function taskProvider(
-  project: Pick<Project, "agent_env"> | null | undefined,
-  task?: Pick<Task, "agent_env"> | null,
+  project: { provider?: AgentProvider } | null | undefined,
+  task?: { provider?: AgentProvider } | null,
   gateway: string | null = gatewayBaseUrl(),
 ): AgentProvider {
-  return describeProvider(providerEnvFor(project, task), gateway);
+  return task?.provider ?? project?.provider ?? describeProvider({}, gateway);
 }

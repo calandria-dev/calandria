@@ -1,7 +1,8 @@
 /* A desktop shell can tell you a task needs you while you are looking at
  * something else, which a browser tab cannot.
  *
- * SPIKE CODE. See ./README.md and docs/DESKTOP_APP.md §5.1.
+ * SPIKE CODE. See ./README.md and docs/DESKTOP_APP.md, "Notifications, tray,
+ * and close vs quit".
  *
  * Electron-free, same split as supervisor.js: the parts with policy in them
  * (which events raise a toast, what the badge count is, when a toast is

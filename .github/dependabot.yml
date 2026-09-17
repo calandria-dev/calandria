@@ -12,11 +12,79 @@
 #
 # DELIBERATELY NOT COVERED:
 #
-# - npm, AT THE ROOT. The lockfile pins ~1k transitive packages and a personal
-#   fork does not want that PR volume; `npm audit` covers the security case —
-#   and actually runs now (the `audit` job in test.yml, on every push/PR, plus a
-#   weekly unattended run in security-scan.yml), not just claimed here. See
-#   issue #17. `/website` is the deliberate exception; its entry below says why.
+# - npm VERSION updates, AT THE ROOT. The lockfile pins ~1k transitive
+#   packages and a personal fork does not want that PR volume. See issue #17.
+#   `/website` is the deliberate exception; its entry below says why.
+#
+#   Root npm SECURITY updates ARE covered when both dependency alerts and
+#   Dependabot security updates are enabled:
+#   `gh api --method PUT repos/calandria-dev/calandria/vulnerability-alerts`
+#   and `gh api --method PUT repos/calandria-dev/calandria/automated-security-fixes`.
+#   That is a different mechanism from the version updates this file
+#   configures, and it needs no entry here. It opens a PR only when a
+#   published advisory matches something already in the lockfile, so its
+#   volume is the advisory rate for this tree: zero PRs between the 0.11.0
+#   release and 2026-09-09, then one. The volume argument above is why root
+#   version updates stay off; it does not reach this.
+#
+#   Both settings were verified enabled on 2026-09-11 after this audit found
+#   them disabled while the prior note said they were enabled.
+#
+#   Three advisories against `next`, `sharp` and `hono` published overnight and
+#   turned `Audit (npm)` red on every open PR at once,
+#   blocking work whose diffs did not touch a lockfile until a human bumped
+#   the deps by hand (issue #286, fixed by PR #289). The `audit` job found
+#   them correctly. What was missing was a PR that fixes them.
+#
+#   `npm audit` remains the gate, and now covers what security updates miss or
+#   have not opened a PR for yet: `npm audit --package-lock-only --omit=dev
+#   --audit-level=high`, in the `audit` job in test.yml on every push and PR,
+#   plus the weekly unattended run in security-scan.yml. It also still catches
+#   MODERATE and below, which security updates raise a PR for but the job's
+#   --audit-level does not fail on.
+#
+#   MANUAL STEP, ONE COMMAND, on any Dependabot PR that touches the root
+#   lockfile: npm strips `"gypfile": false` from the
+#   `node_modules/better-sqlite3` entry every time it regenerates
+#   package-lock.json, so every such PR needs that field re-added before it
+#   can go green. On the PR branch, run `npm run fix-lockfile` and commit the
+#   one-line change; `npm run fix-lockfile -- --check` reports without
+#   writing. The script is `scripts/fix-lockfile-gypfile.mjs`, and its
+#   detection mirrors the test below, so a future package with the same shape
+#   is repaired by the same command.
+#   The `Windows (types + unit)` job runs `npm ci` before any test, and a
+#   missing field fails the install itself with `gyp ERR! find VS`, so no
+#   test-side repair and no root `postinstall` runs early enough to prevent
+#   it; only a committed lockfile edit does.
+#   `tests/lockfileGypfile.test.ts` reports the omission on Linux, where `npm
+#   ci` exits 0 and only Windows would have failed. Its header comment has
+#   the full mechanism.
+#
+#   NOT AUTOMATED, decided 2026-09-09. A bot that re-adds the field on a
+#   Dependabot PR has to push to that PR's branch, and the push has to re-run
+#   the check it is fixing. A push made with GITHUB_TOKEN triggers no
+#   workflow run, so `Windows (types + unit)` would sit at its old red result
+#   and a human would rerun it by hand, which is the step the automation was
+#   supposed to remove. Making the push retrigger CI needs a repo-scoped PAT
+#   held as a secret and exposed to a `pull_request_target` job that runs
+#   against a branch a bot writes. That is a standing repo-write credential
+#   on an automated code path, bought for roughly one PR per advisory (zero
+#   between the 0.11.0 release and 2026-09-09, then one), on a PR a human
+#   reviews and merges either way. The one-command script above collects the
+#   part of the value that does not need the credential.
+#
+#   RETIRED WHEN npm SHIPS THE FIX. npm/cli#9837 tracks this exact defect and
+#   npm/cli#9859 is the fix, open and unmerged as of 2026-09-09. arborist's
+#   `shrinkwrap.js` still omits `gypfile` from the fields it copies into a
+#   lock entry, and `rebuild.js` still schedules `node-gyp rebuild` when the
+#   field reads undefined. Confirmed against npm 10.9.3 on 2026-09-09: a
+#   fresh `npm install better-sqlite3@13.0.3` writes no `gypfile` into the
+#   lockfile it generates. better-sqlite3 13.0.3 still ships `binding.gyp`
+#   alongside its prebuilds and declares no install script, so nothing on
+#   that side retires it either. Once npm/cli#9859 is in a released npm that
+#   both this repo and Dependabot run, delete the script, this note and
+#   `tests/lockfileGypfile.test.ts` together.
+#
 # - The agent CLI versions (CLAUDE_CODE_VERSION / CODEX_VERSION ARGs in the
 #   Dockerfile), bumped deliberately by hand — see the comment there.
 # - The build engine (buildx + BuildKit) in publish-image.yml. Dependabot's
@@ -53,9 +121,10 @@
 #      keeping the bot honest. (Config upkeep is not free either: fileMatch ->
 #      managerFilePatterns was already one breaking migration.)
 #   2. The Dockerfile ARGs are a trap, not a bonus. CODEX_VERSION has to move
-#      in step with @openai/codex-sdk in package-lock.json, and npm is excluded
-#      above, so Renovate would open CLI bumps that are unsafe to merge as
-#      written. @anthropic-ai/claude-code ships ~21 stable releases a month, so
+#      in step with @openai/codex-sdk in package-lock.json, and root npm
+#      version updates are excluded above, so Renovate would open CLI bumps
+#      that are unsafe to merge as written.
+#      @anthropic-ai/claude-code ships ~21 stable releases a month, so
 #      that PR would be rewritten several times a week. Both ARGs are bumped by
 #      hand BECAUSE the upgrade is a behavioural decision, not because no bot
 #      could see them.
@@ -68,6 +137,16 @@
 #      the step-in-with-the-SDK constraint is `tests/cliPins.test.ts`, which
 #      fails on the PR that desynchronizes them; a Renovate PR touching only
 #      the ARG could not have satisfied it.
+#      AGY_VERSION is the exception, and it is the one case where "a bot should
+#      open the PR" was right. The vendor's manifest carries the version AND
+#      the SHA-512, so the bump is three values copied out of two JSON
+#      documents with nothing to judge, and the Dockerfile's own guard rejects
+#      any pair that is not what upstream serves. `Pin drift` owns those three
+#      ARGs outright: it force-pushes `bot/agy-pin` and opens one pull request
+#      per version, dispatches both architecture image builds against that
+#      branch to check the digests it wrote, and never automerges. That is
+#      forty lines in this repo running on `GITHUB_TOKEN`, with no standing PAT
+#      and no third-party app holding write access.
 #   3. The coverage bought is one image that is already recorded (versions plus
 #      resolved digest, to the run summary), floored (hard-fails below the
 #      type=gha minimums), and removed outright from the merge job.
@@ -82,8 +161,9 @@
 # or automerge (which removes the human gate the pin was meant to add).
 #
 # Re-open only if: Renovate is adopted for repo-wide coverage anyway — in which
-# case it takes EVERYTHING and this file is deleted, since one pin must have
-# exactly one owner and two bots on the same SHA is the real failure mode;
+# case it takes EVERYTHING except the three agy ARGs, which `Pin drift` owns and
+# must be excluded from any regex manager, since one pin must have exactly one
+# owner and two bots on the same SHA is the real failure mode;
 # deterministic builder identity becomes a compliance requirement; or
 # `buildx-stable-1` actually causes an incident.
 version: 2
@@ -102,15 +182,25 @@ updates:
       prefix: "ci"
     labels: [dependencies]
 
-  # The one npm ecosystem this file DOES cover, and the exception is narrow on
-  # purpose. The root exclusion above is about volume and about `npm audit`
-  # already covering the security case; neither applies here. website/ is the
-  # calandria.dev Astro site (docs/design/WEBSITE.md) with a single direct
+  # The one npm ecosystem this file DOES cover with version updates, and the
+  # exception is narrow on purpose. The root exclusion above is about the PR
+  # volume of a ~1k-package lockfile, which does not apply here. website/ is
+  # the calandria.dev Astro site (design plan in the private notes repo at
+  # design/WEBSITE.md) with a single direct
   # dependency and ~190 transitive ones, and NOTHING else watches it — the
   # `audit` job in test.yml and the weekly one in security-scan.yml both run
   # against the root lockfile only, and test.yml now ignores website/** outright.
   # Grouped into one PR so the site can never contribute more than a single
   # weekly item to the queue.
+  #
+  # Repo-level security updates cover this directory too, so an advisory
+  # against a website dependency can open a security PR of its own alongside
+  # the weekly group PR. That overlap is accepted and this entry stays. The
+  # duplicate is capped at one extra PR per advisory, and whichever of the two
+  # is rebased second finds the bump already applied and gets closed. Dropping
+  # the version entry to avoid the overlap would leave the only tree with no
+  # audit gate behind it on advisory-only coverage, which is the thing this
+  # entry exists to prevent.
   - package-ecosystem: npm
     directory: /website
     schedule:
@@ -126,8 +216,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    # node:22-bookworm-slim is pinned tag@digest; Dependabot rewrites the digest
-    # (and the tag, if the 22.x line moves) in both FROM lines.
+    # node:26-bookworm-slim is pinned tag@digest; Dependabot rewrites the digest
+    # (and the tag, if the line moves, as it did to 26 in #314) in both FROM
+    # lines. A current digest is not a current Debian package set, so the
+    # runtime stage also runs `apt-get upgrade` (issue #363); the comment there
+    # explains what this entry can and cannot do for the image scan.
     groups:
       base-image:
         patterns: ["*"]

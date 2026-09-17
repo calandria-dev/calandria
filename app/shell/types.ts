@@ -1,13 +1,17 @@
 // Client-side shapes + UI constants shared across the shell modules.
 // Pure data only (no React / no Icon) so any module can import freely.
 import { PRIORITIES, TAG_COLORS, tagIsDone } from "@/lib/types";
-import type { LandingMode, Priority, Status, Tag } from "@/lib/types";
+import type { LandingMode, PlanScope as PlanScopeT, Priority, Status, Tag } from "@/lib/types";
+import type { AgentProvider } from "@/lib/agentEnv";
+import type { CodexSandboxMode } from "@/lib/codexSandbox";
+export type { CodexSandboxMode } from "@/lib/codexSandbox";
 export { PRIORITIES, TAG_COLORS, tagIsDone };
-export type { LandingMode };
+export type { LandingMode, PlanScopeT };
 /** A tag as the project GET embeds it: lib/types' row plus its derived counts. */
 export type TagRow = Tag;
 import type { InternalUsageEstimate } from "@/lib/internalUsage";
-export type { InternalUsageEstimate };
+import type { ProviderType } from "@/lib/providers/types";
+export type { InternalUsageEstimate, ProviderType };
 
 // ---------- client shapes ----------
 export interface ProjectRow {
@@ -20,13 +24,14 @@ export interface ProjectRow {
   repo_path: string;
   branch: string;
   landing_mode: LandingMode; // how work lands on `branch`: "merge" (local merge) or "pr" (protected, finish by opening a PR)
-  auto_reclaim: number; // 1 = once a task's work lands, reclaim its checkout and delete its local branch without being asked (lib/reclaim.ts)
+  auto_reclaim: number; // 1 = once a task's work lands and no turn executes, close it and reclaim its checkout (lib/reclaim.ts)
   dev_command: string;
   setup_command: string;
   test_command: string;
   default_agent: string; // agent driver new tasks in this project default to (lib/agents/registry.ts)
   send_context: number; // 1 = new tasks default to sending the saved project context to the agent
-  agent_env: string; // provider override for the project's turns, JSON over lib/agentEnv.ts's allowlist ("" = the agent's own cloud login)
+  default_provider_id: string | null;
+  provider: AgentProvider;
   gateway_max_budget: number | null; // dollars; null = no max_budget sent to LiteLLM's /key/generate for this project's per-task keys
   gateway_key_duration: string; // a LiteLLM duration string like "30d"; "" = the key never auto-expires on LiteLLM's own clock
   gateway_mcp: string; // hosted MCP server aliases this project mounts, JSON array (lib/gatewayMcp.ts); "[]" = none
@@ -52,11 +57,13 @@ export interface TaskRow {
   suggested: number;
   agent: string; // agent driver this task's sessions run under (lib/agents/); fixed for the task's life
   send_context: number; // 1 = sessions get the saved project context (seeded from the project setting)
-  agent_env: string; // per-task provider override laid over the project's (lib/agentEnv.ts); "" = inherit
+  provider_id: string | null;
+  provider: AgentProvider;
   model: string | null;
   resolved_model: string | null;
   reasoning: string | null; // thinking preset; null = inherit default
   permission_mode: string | null; // run permission; null = bypassPermissions (default)
+  sandbox_mode: CodexSandboxMode | null; // Codex sandbox; null = inherit permission/default
   session_id: string | null;
   worktree_path: string; // isolated git worktree this task runs in ("" = not created yet, appears on the first turn)
   merged_at: number; // when this task's branch was merged into the base branch LOCALLY (0 = never); pairs with pr_state for "has this landed?"
@@ -99,6 +106,7 @@ export interface TaskRow {
   auto_start: number; // 1 = start automatically when the last unfinished blocker is marked done
   withdrawn_reason: string; // an agent retracted this suggestion and said why ("" = live); pairs with status "cancelled" + suggested 1
   agent_edited_at: number; // ms epoch of the most recent agent edit the user hasn't reviewed yet (0 = nothing outstanding), see AgentEdits.tsx
+  base_rewritten_at: number; // ms epoch of an unaddressed base-branch rewrite reported by the task that rewrote it (0 = nothing outstanding), see format.ts isBaseRewritten
   context_tokens: number; // current context-window occupancy: the latest main-session request's input-side tokens
   context_window: number; // the window those tokens sit in; 0 = unknown, which a local-model override always is (see lib/store.ts taskContextWindow)
   context_pct: number; // context_tokens as a percent (0–100) of the model's window; 0 when the window is unknown
@@ -279,6 +287,9 @@ export interface SyncStatusResp {
   unresolved?: string[]; // while paused: files still conflicted (markers or unstaged binaries)
   baseMissing?: boolean; // the base branch has no ref in the repo; the zeros above mean "couldn't compare"
   baseRewritten?: boolean; // the base branch's history was rewritten since this task was cut, so a merge here reconciles two copies of the same work
+  rebaseInProgress?: boolean; // a `rebase --onto` the new base tip stopped on a conflict in the worktree, awaiting resolution then accept/discard
+  prState?: string; // tasks.pr_state, so the rebase offer can warn before it makes an open PR's branch non-fast-forward
+  prNumber?: number;
   projectBranch?: string; // the project default, so the banner can tell whether BaseBranchBanner already covers this base
   workBranch?: string;
   baseSha?: string; // the commit the task was cut from or last synced to, and the rebase --onto cut point
@@ -360,15 +371,36 @@ export type AgentCapabilitiesT = {
   // MCP selection, a separate mount from the two fields above. null = mounts
   // with no special behavior for this driver.
   gatewayMcpNote: string | null;
+  providerTypes: ProviderType[];
+  bundledProvider: ProviderType;
+  endpointTransport: string;
+};
+export type AgentEnvironmentStatusT = "connected" | "installed" | "absent";
+export type AgentProviderSummaryT = {
+  id: string;
+  label: string;
+  type: ProviderType;
+  status: "connected" | "reachable" | "unreachable" | "untested";
 };
 export type AgentInfoT = {
   id: string;
   label: string;
   capabilities: AgentCapabilitiesT;
   connected: boolean;
+  status: AgentEnvironmentStatusT;
+  installedVersion: string | null;
+  bundledProvider: ProviderType;
+  providerTypes: ProviderType[];
+  endpointTransport: string;
+  providers: AgentProviderSummaryT[];
   account: { email: string | null; plan: string | null; method: "subscription" | "api_key" } | null;
   authBroken?: AgentAuthBrokenT | null;
   sandboxBroken?: AgentSandboxBrokenT | null;
+  /** How much of this instance's work for the agent runs on its own login.
+   *  A project's model provider can point the agent at a local, custom or
+   *  gateway endpoint; the login stays valid and its plan stops describing
+   *  this instance's turns. See lib/planScope.ts. */
+  planScope?: PlanScopeT | null;
 };
 // Connected, but its login stopped working mid-flight (see lib/authFailure.ts).
 // `reason` is the provider's own error text; `at` is when it was first seen.
@@ -417,6 +449,9 @@ export interface AgentCapabilities {
   models: AgentModelOption[];
   reasoningOptions: AgentPickerOption[];
   permissionModes: AgentPickerOption[];
+  providerTypes: ProviderType[];
+  bundledProvider: ProviderType;
+  endpointTransport: string;
   supportsAsks: boolean;      // can surface interactive ask cards mid-turn
   supportsMcpTools: boolean;  // can mount the Calandria MCP tools
   reportsCostUsd: boolean;    // usage carries a real dollar cost (not just tokens)
@@ -429,7 +464,22 @@ export interface AgentCapabilities {
 // API-PRICE EQUIVALENT, not a charge; "api_key" means it really is billed.
 // Mirrors lib/agents/connections.ts AgentConnection; null when not connected.
 export interface AgentAccount { email: string | null; plan: string | null; method: "subscription" | "api_key" }
-export interface AgentInfo { id: string; label: string; capabilities: AgentCapabilities; authenticated: boolean; account?: AgentAccount | null; authBroken?: AgentAuthBrokenT | null; sandboxBroken?: AgentSandboxBrokenT | null }
+export interface AgentInfo {
+  id: string;
+  label: string;
+  capabilities: AgentCapabilities;
+  connected: boolean;
+  authenticated: boolean;
+  status: AgentEnvironmentStatusT;
+  installedVersion: string | null;
+  bundledProvider: ProviderType;
+  providerTypes: ProviderType[];
+  endpointTransport: string;
+  providers: AgentProviderSummaryT[];
+  account?: AgentAccount | null;
+  authBroken?: AgentAuthBrokenT | null;
+  sandboxBroken?: AgentSandboxBrokenT | null;
+}
 // `local_base_url` is where the project settings' "Local model" preset points
 // by default: the instance's CALANDRIA_LOCAL_MODEL_BASE_URL, served here so
 // the form writes the instance's answer instead of a guess.
@@ -471,10 +521,76 @@ export interface GatewayHealthT {
 }
 export const EMPTY_AGENTS: AgentsBundle = { default: "claude", agents: [] };
 
+// ---------- model providers (mirrors lib/providers/*) ----------
+// Settings → Models reads these off GET/POST /api/providers and its per-id
+// routes. Mirrored here rather than imported from lib/providers/* because
+// those modules pull in better-sqlite3 and the agent SDKs; the client only
+// ever needs their shapes.
+export type ProviderStatusT = "connected" | "reachable" | "unreachable" | "untested";
+export interface ProviderConfigT {
+  base_url?: string;
+  billing?: "key" | "subscription";
+  mcp?: boolean;
+  key_timeout_ms?: number;
+  api?: "anthropic" | "openai";
+  default_model?: string;
+}
+export interface ModelPolicyT { mode: "allow" | "deny"; ids: string[]; known: string[]; unavailable: string[] }
+export interface ProviderTestResultT {
+  reachable?: boolean; api?: string | null; version?: string | null; latency_ms?: number; error?: string | null;
+  [key: string]: unknown;
+}
+export interface ModelProviderT {
+  id: string;
+  type: ProviderType;
+  label: string;
+  config: ProviderConfigT;
+  model_policy: ModelPolicyT;
+  created_at: number;
+  updated_at: number;
+  last_test_at: number | null;
+  last_test: ProviderTestResultT | null;
+  /** The environment whose login owns this row, or null for a user-added one. */
+  bundled: string | null;
+  /** The environments this row serves, decided by its type. */
+  environments: string[];
+  has_key?: boolean;
+  has_admin_key?: boolean;
+}
+export interface PresentedProviderT extends ModelProviderT { status: ProviderStatusT; model_count: number }
+export interface ProviderProbeModelT {
+  id: string; context_window: number | null; family: string | null; version: string | null;
+  duplicate_of: string | null; chat: boolean;
+}
+export interface ProviderProbeResultT extends ProviderTestResultT {
+  reachable: boolean; api: string | null; version: string | null; latency_ms: number; error: string | null;
+  key: { spend: number | null; max_budget: number | null };
+  models: ProviderProbeModelT[];
+}
+export interface FlatProviderModelT {
+  id: string; ctx: number; family: string; version: string; on: boolean; duplicate_of: string | null; chat: boolean;
+}
+export interface ProviderModelsResponseT { mode: "allow" | "deny"; refreshed_at: number; models: FlatProviderModelT[] }
+export interface ProviderUsageT {
+  projects: { id: string; name: string }[];
+  tasks: { id: string; project_id: string; title: string }[];
+  schedules: { id: string; project_id: string; name: string }[];
+  runbooks: { id: string; project_id: string; name: string }[];
+}
+/** A local server GET /api/providers/detect found with no row yet. */
+export interface DetectedProviderT { type: ProviderType; base_url: string; model_count: number }
+
 // A picker option list. `value: null` is the synthetic inherit head: it
 // persists as null in tasks.model/reasoning/permission_mode, inheriting the
 // app-level (agent-scoped) default, then the driver's built-in.
 export type PickerOption = { value: string | null; label: string; sub: string; group?: string };
+
+export const codexSandboxOptions = (sub = "Use the app-level default", inheritLabel = "Inherit default"): PickerOption[] => [
+  { value: null, label: inheritLabel, sub },
+  { value: "read-only", label: "Read-only", sub: "File reads; no sandboxed writes or network access" },
+  { value: "workspace-write", label: "Workspace write", sub: "Worktree, commit paths, and temporary files; network allowed" },
+  { value: "danger-full-access", label: "Full access", sub: "No Codex filesystem or network isolation" },
+];
 // The head is NOT called "Default": the labels below it are provider-native
 // (Anthropic's own `--permission-mode` strings), and one of those modes is
 // literally spelled "default", so a capital-D head would read as a duplicate
@@ -489,8 +605,9 @@ const INHERIT_HEAD: PickerOption = { value: null, label: INHERIT_LABEL, sub: "us
 const withInherit = (opts: PickerOption[], sub?: string): PickerOption[] =>
   [sub ? { ...INHERIT_HEAD, sub } : INHERIT_HEAD, ...opts];
 // Build each picker's option list from a driver's capabilities. Undefined caps
-// (agent metadata not loaded yet) yields just the inherit head.
-export const modelOptions = (caps?: AgentCapabilities, sub?: string): PickerOption[] => withInherit(caps?.models ?? [], sub);
+// (agent metadata not loaded yet) yields just the inherit head. Model
+// selection moved to the provider tree (ModelPicker.tsx, GET /api/models);
+// `caps.models` itself survives only as modelLabel()'s display fallback.
 export const reasoningOptions = (caps?: AgentCapabilities, sub?: string): PickerOption[] => withInherit(caps?.reasoningOptions ?? [], sub);
 export const permissionOptions = (caps?: AgentCapabilities, sub?: string): PickerOption[] => withInherit(caps?.permissionModes ?? [], sub);
 
@@ -668,6 +785,10 @@ export interface ScheduleRow {
   next_fire_at: number;
   /** The runbook this schedule fires, if any: it supplies the prompt and config. */
   runbook_id: string | null;
+  /** The model provider a firing carries into the task it mints; null = the project's default. */
+  provider_id: string | null;
+  /** The model that task starts on; null = the project's default. */
+  model: string | null;
   last_run: ScheduleRunRow | null;
   runs: ScheduleRunRow[];
   // The row still `claimed`/`running` for this schedule, if any, served
@@ -707,6 +828,10 @@ export interface RunbookRow {
   priority: Priority;
   /** '' = the user wrote it; otherwise the agent id that filed it. */
   created_by: string;
+  /** The model provider a dispatch carries into the task it mints; null = the project's default. */
+  provider_id: string | null;
+  /** The model that task starts on; null = the project's default. */
+  model: string | null;
   /** The most recent task this dispatched; null until it has run once. */
   last_run: { id: string; title: string; status: string; created_at: number } | null;
   /**

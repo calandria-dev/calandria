@@ -16,6 +16,7 @@ const readAccountRateLimits = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/agents/codex/appServer", () => ({ readAccountRateLimits }));
 
 const { getCodexPlanUsage, parseRateLimits, resetCodexPlanUsageStateForTests } = await import("@/lib/agents/codex/planUsage");
+const { headlineWindows } = await import("@/app/shell/PlanUsage");
 
 // A realistic account/rateLimits/read result. Field names and casing come from
 // the CLI's own `codex app-server generate-json-schema` output for
@@ -65,10 +66,23 @@ describe("parseRateLimits", () => {
     expect(parsed.plan).toBe("pro");
     expect(parsed.reached).toBe(false);
     expect(parsed.windows).toEqual([
-      { id: "primary", label: "Current session (5h)", utilization: 18, resetsAt: RESETS_PRIMARY * 1000 },
+      { id: "primary", label: "Current session (5h)", utilization: 18, resetsAt: RESETS_PRIMARY * 1000, kind: "session" },
       // A 7-day secondary is just "the week", no redundant (7d) suffix.
-      { id: "secondary", label: "Current week", utilization: 46, resetsAt: RESETS_SECONDARY * 1000 },
+      { id: "secondary", label: "Current week", utilization: 46, resetsAt: RESETS_SECONDARY * 1000, kind: "week" },
     ]);
+  });
+
+  it("classifies a primary-only weekly Pro window by duration", () => {
+    const parsed = parseRateLimits({
+      rateLimits: {
+        planType: "pro",
+        primary: { usedPercent: 46, windowDurationMins: 10080, resetsAt: RESETS_SECONDARY },
+      },
+    })!;
+    expect(parsed.windows).toEqual([
+      { id: "primary", label: "Current week", utilization: 46, resetsAt: RESETS_SECONDARY * 1000, kind: "week" },
+    ]);
+    expect(headlineWindows(parsed.windows)).toEqual({ session: undefined, week: parsed.windows[0] });
   });
 
   it("accepts a bare snapshot as well as the rateLimits wrapper", () => {

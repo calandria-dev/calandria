@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../icons";
 import { Logo } from "../Logo";
-import { blockedNote, isAwaiting, isPrRed, isUnreadRun, isWithdrawn, needsYou, relTime, withdrawnLast } from "./format";
+import { blockedNote, isAwaiting, isBaseRewritten, isPrRed, isUnreadRun, isWithdrawn, needsYou, relTime, splitAttachments, withdrawnLast } from "./format";
 import { AgentEditedChip } from "./AgentEdits";
 import { isSnoozed, wasSnoozed, wakeLabel } from "./snooze";
 import { isQueuedStart } from "./queuedStart";
@@ -39,6 +39,8 @@ function PickBox({ picked, pickable, onPick }: { picked: boolean; pickable: bool
 }
 
 function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked, onPick, onSnooze, onUnsnooze, onAckRun, onStopTurn, sparkline, tagsById, onSelectTag, projectBranch }: { task: TaskRow; agents: AgentsBundle; selected: boolean; running: boolean; blockedBy?: string[]; onSelect: () => void; picked: boolean; onPick: (id: string, range: boolean) => void; onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void; onAckRun: (id: string) => void; onStopTurn: (id: string) => void; sparkline?: number[]; tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void; projectBranch: string }) {
+  // The card shows the brief's prose; its attachments collapse to a count.
+  const brief = splitAttachments(task.description);
   const sessionCount = task.started ? task.generation : Math.max(0, task.generation - 1);
   const snoozed = isSnoozed(task);
   // Snoozed beats awaiting: parking a task that's asking a question stops it
@@ -110,6 +112,18 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
         <PriPill p={task.priority} />
       </div>
       <AgentEditedChip task={task} variant="list" />
+      {/* The base branch was rewritten under this task by the task that landed
+          it (lib/baseRewrite.ts). The remedy is the Rebase button in this
+          task's own sync banner, which only mounts once the task is selected,
+          so without this chip the fact is invisible from the list. Amber like
+          the blocked chip: both say "this task cannot move as it stands".
+          Clears itself on the next sync read once the cut point is reachable
+          from the base again. */}
+      {isBaseRewritten(task) && (
+        <div className="blocked-chip" title={`${task.base_branch || "This task's base branch"} was rewritten ${relTime(task.base_rewritten_at)}, after this task was cut. Open the task and rebase from the sync banner: syncing would merge two copies of the same work.`}>
+          {Icon.git()} Base rewritten
+        </div>
+      )}
       {/* Why this card is back where you didn't leave it: an unread marker.
           Opening the task clears it (useShell). */}
       {!snoozed && wasSnoozed(task) && (
@@ -148,7 +162,7 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
           {Icon.clock()} {task.started ? "Resumes" : "Starts"} {wakeLabel(task.start_at)}
         </div>
       )}
-      {task.description && <div className="tdesc">{task.description}</div>}
+      {task.description && <div className="tdesc">{brief.text}{brief.attachments.length > 0 && <span className="tdesc-att" title={`${brief.attachments.length} attached`}>{Icon.clip()} {brief.attachments.length}</span>}</div>}
       <DiffFooter task={task} points={sparkline} projectBranch={projectBranch} />
       <div className="task-foot">
         <span className={`activity${idle ? " idle" : ""}`} title={idle ? IDLE_TITLE : undefined}>{awaiting ? <span style={{ color: "var(--blue)" }}>●</span> : running ? <span style={{ color: "var(--amber)" }}>●</span> : null}{activity}</span>

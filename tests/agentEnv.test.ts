@@ -1,25 +1,24 @@
 import { describe, it, expect } from "vitest";
 import {
   AGENT_ENV_KEYS,
-  agentTurnEnv,
+  agentTurnEnv as buildAgentTurnEnv,
   applyProviderEnv,
-  cloudOverrideEnv,
   describeProvider,
   gatewayInsecureForGemini,
   gatewayPresetEnv,
   isGatewayEndpoint,
   isLoopbackHost,
   providerPricing,
-  parseAgentEnv,
-  planWindowApplies,
-  providerEnvFor,
   providerPresetEnv,
   recordedCostUsd,
-  serializeAgentEnv,
   taskProvider,
 } from "@/lib/agentEnv";
-import type { ProviderKind } from "@/lib/agentEnv";
-import type { Project, Task } from "@/lib/types";
+import type { AgentEnv, ProviderKind } from "@/lib/agentEnv";
+import type { Project } from "@/lib/types";
+import { resolvedAgentTurnEnv } from "@/lib/providers/resolve";
+import type { ResolvedProviderEnv } from "@/lib/providers/resolve";
+import { createProvider } from "@/lib/providers/store";
+import { getDb } from "@/lib/db";
 
 // Pins that a main-turn agent process does not inherit the server's own
 // NODE_ENV=production (it makes `npm install` in the user's project skip
@@ -27,12 +26,28 @@ import type { Project, Task } from "@/lib/types";
 // every agent to bind its dev server to $PORT, so an unedited PORT would
 // point a task's server at Calandria itself). Issue #102.
 //
-// Also pins the provider override: projects.agent_env and tasks.agent_env
-// are layered over the copied env through an allowlist, after the copy and
-// before the PORT edit, per the credential rules applyProviderEnv documents.
+// Also pins the provider override: the override resolved from the task's
+// model provider row is layered over the copied env through an allowlist,
+// after the copy and before the PORT edit, per the credential rules
+// applyProviderEnv documents.
 
-const project = (port: number, agent_env = "") => ({ port, agent_env }) as Pick<Project, "port" | "agent_env">;
-const task = (agent_env: string) => ({ agent_env }) as Pick<Task, "agent_env">;
+const project = (port: number) => ({ port }) as Pick<Project, "port">;
+
+// These cases exercise the pure environment-shape rules, so they state the
+// resolved override directly and never reach lib/providers/resolve.ts for it.
+// The row-backed path has its own case below.
+const resolved = (env: AgentEnv, gatewayKey?: string): ResolvedProviderEnv => ({
+  provider: null,
+  env,
+  extras: gatewayKey ? { CALANDRIA_LITELLM_KEY: gatewayKey } : {},
+});
+const agentTurnEnv = (
+  p: Parameters<typeof buildAgentTurnEnv>[0],
+  t: Parameters<typeof buildAgentTurnEnv>[1],
+  base: NonNullable<Parameters<typeof buildAgentTurnEnv>[2]>,
+  gateway?: Parameters<typeof buildAgentTurnEnv>[3],
+  env: AgentEnv = {},
+) => buildAgentTurnEnv(p, t, base, gateway, resolved(env, base.CALANDRIA_LITELLM_KEY));
 
 // Gateway address every case below describes an override against. Passed
 // explicitly instead of set in the environment, keeping these tests pure:
@@ -41,6 +56,23 @@ const task = (agent_env: string) => ({ agent_env }) as Pick<Task, "agent_env">;
 const GW = "http://gw.example.com:4000";
 
 describe("agentTurnEnv", () => {
+  it("resolves the selected provider row at turn time", () => {
+    const provider = createProvider({
+      type: "ollama",
+      config: { base_url: "http://row.example:11434", default_model: "row-model" },
+    });
+    const out = resolvedAgentTurnEnv(
+      { id: "p-row", port: 4301, default_provider_id: provider.id },
+      { id: "t-row", agent: "claude", provider_id: null, gateway_key: "" },
+      "claude",
+      { PATH: "/usr/bin" },
+    );
+    expect(out.PORT).toBe("4301");
+    expect(out.ANTHROPIC_BASE_URL).toBe("http://row.example:11434");
+    expect(out.ANTHROPIC_MODEL).toBe("row-model");
+    getDb().prepare("DELETE FROM model_providers").run();
+  });
+
   it("drops NODE_ENV even when the base env carries it", () => {
     const out = agentTurnEnv(project(4301), null, { NODE_ENV: "production", PATH: "/usr/bin" });
     expect("NODE_ENV" in out).toBe(false);
@@ -83,13 +115,12 @@ describe("agentTurnEnv", () => {
 
   // ---- the provider override ----
 
-  it("lays the project's override over the copied env, after the copy and before PORT", () => {
-    const env = JSON.stringify({ ANTHROPIC_BASE_URL: "http://localhost:11434", ANTHROPIC_MODEL: "qwen3-coder" });
-    const out = agentTurnEnv(project(4301, env), null, {
+  it("lays the resolved override over the copied env, after the copy and before PORT", () => {
+    const out = agentTurnEnv(project(4301), null, {
       PATH: "/usr/bin",
-      ANTHROPIC_BASE_URL: "https://proxy.example.com", // instance-wide value loses to the project's
+      ANTHROPIC_BASE_URL: "https://proxy.example.com", // instance-wide value loses to the row's
       PORT: "3000",
-    });
+    }, undefined, { ANTHROPIC_BASE_URL: "http://localhost:11434", ANTHROPIC_MODEL: "qwen3-coder" });
     expect(out.ANTHROPIC_BASE_URL).toBe("http://localhost:11434");
     expect(out.ANTHROPIC_MODEL).toBe("qwen3-coder");
     expect(out.PATH).toBe("/usr/bin");
@@ -97,15 +128,17 @@ describe("agentTurnEnv", () => {
   });
 
   it("cannot smuggle PATH, NODE_OPTIONS, PORT or NODE_ENV through the override", () => {
-    const env = JSON.stringify({
+    // applyProviderEnv copies the allowlisted keys and nothing else, so an
+    // override carrying any of these reaches no spawned process.
+    const env = {
       PATH: "/evil",
       NODE_OPTIONS: "--require /evil.js",
       LD_PRELOAD: "/evil.so",
       PORT: "1",
       NODE_ENV: "production",
       ANTHROPIC_BASE_URL: "http://localhost:11434",
-    });
-    const out = agentTurnEnv(project(4301, env), null, { PATH: "/usr/bin" });
+    } as unknown as AgentEnv;
+    const out = agentTurnEnv(project(4301), null, { PATH: "/usr/bin" }, undefined, env);
     expect(out.PATH).toBe("/usr/bin");
     expect("NODE_OPTIONS" in out).toBe(false);
     expect("LD_PRELOAD" in out).toBe(false);
@@ -114,16 +147,9 @@ describe("agentTurnEnv", () => {
     expect(out.ANTHROPIC_BASE_URL).toBe("http://localhost:11434");
   });
 
-  it("lays the task's override over the project's, key by key", () => {
-    const proj = JSON.stringify({ ANTHROPIC_BASE_URL: "http://localhost:11434", ANTHROPIC_MODEL: "qwen3-coder" });
-    const out = agentTurnEnv(project(0, proj), task(JSON.stringify({ ANTHROPIC_MODEL: "gemma3" })), { PATH: "/usr/bin" });
-    expect(out.ANTHROPIC_BASE_URL).toBe("http://localhost:11434");
-    expect(out.ANTHROPIC_MODEL).toBe("gemma3");
-  });
-
-  it("reads an empty-string value as 'unset', which is how a task goes back to the cloud", () => {
-    const proj = serializeAgentEnv(providerPresetEnv({ baseUrl: "http://localhost:11434", model: "qwen3-coder" }));
-    const out = agentTurnEnv(project(0, proj), task(serializeAgentEnv(cloudOverrideEnv())), { PATH: "/usr/bin", ANTHROPIC_API_KEY: "sk-real" });
+  it("reads an empty-string value as 'unset', so a row naming no endpoint leaves the login alone", () => {
+    const blank = Object.fromEntries(AGENT_ENV_KEYS.map((k) => [k, ""])) as AgentEnv;
+    const out = agentTurnEnv(project(0), null, { PATH: "/usr/bin", ANTHROPIC_API_KEY: "sk-real" }, undefined, blank);
     for (const k of AGENT_ENV_KEYS) expect(k in out, k).toBe(false);
     // Nothing redirected in the end, so the inherited credential survives.
     expect(out.ANTHROPIC_API_KEY).toBe("sk-real");
@@ -169,41 +195,6 @@ describe("applyProviderEnv credential rules", () => {
   });
 });
 
-describe("parseAgentEnv / serializeAgentEnv", () => {
-  it("accepts JSON text or an object, keeps only allowlisted string values", () => {
-    const obj = { ANTHROPIC_BASE_URL: " http://localhost:11434 ", PATH: "/x", CODEX_MODEL: 7, OPENAI_BASE_URL: null };
-    expect(parseAgentEnv(obj)).toEqual({ ANTHROPIC_BASE_URL: "http://localhost:11434" });
-    expect(parseAgentEnv(JSON.stringify(obj))).toEqual({ ANTHROPIC_BASE_URL: "http://localhost:11434" });
-  });
-
-  it("returns {} for null, blank, garbage and non-object JSON", () => {
-    expect(parseAgentEnv(null)).toEqual({});
-    expect(parseAgentEnv("")).toEqual({});
-    expect(parseAgentEnv("   ")).toEqual({});
-    expect(parseAgentEnv("{not json")).toEqual({});
-    expect(parseAgentEnv("[1,2]")).toEqual({});
-    expect(parseAgentEnv(42)).toEqual({});
-  });
-
-  it("refuses control characters and oversized values", () => {
-    expect(parseAgentEnv({ ANTHROPIC_MODEL: "a\nb" })).toEqual({});
-    expect(parseAgentEnv({ ANTHROPIC_MODEL: "x".repeat(3000) })).toEqual({});
-  });
-
-  it("serializes to '' when empty and to key-ordered compact JSON otherwise", () => {
-    expect(serializeAgentEnv(null)).toBe("");
-    expect(serializeAgentEnv({ PATH: "/x" })).toBe("");
-    const a = serializeAgentEnv({ OPENAI_BASE_URL: "http://h/v1", ANTHROPIC_BASE_URL: "http://h" });
-    const b = serializeAgentEnv({ ANTHROPIC_BASE_URL: "http://h", OPENAI_BASE_URL: "http://h/v1" });
-    expect(a).toBe(b);
-    expect(a).toBe('{"ANTHROPIC_BASE_URL":"http://h","OPENAI_BASE_URL":"http://h/v1"}');
-  });
-
-  it("round-trips an empty-string 'unset' value", () => {
-    expect(parseAgentEnv(serializeAgentEnv({ ANTHROPIC_BASE_URL: "" }))).toEqual({ ANTHROPIC_BASE_URL: "" });
-  });
-});
-
 describe("presets", () => {
   it("writes both CLIs' endpoints, the token, the model aliases and the quiet flag from one base URL", () => {
     const env = providerPresetEnv({ baseUrl: "http://host.docker.internal:11434/v1/", model: "qwen3-coder" });
@@ -230,12 +221,6 @@ describe("presets", () => {
 
   it("is empty for a blank base URL", () => {
     expect(providerPresetEnv({ baseUrl: "  " })).toEqual({});
-  });
-
-  it("cloudOverrideEnv unsets every allowlisted key", () => {
-    const env = cloudOverrideEnv();
-    expect(Object.keys(env).sort()).toEqual([...AGENT_ENV_KEYS].sort());
-    expect(Object.values(env).every((v) => v === "")).toBe(true);
   });
 });
 
@@ -287,11 +272,16 @@ describe("describeProvider / taskProvider", () => {
     expect(recordedCostUsd("gateway", 0.42)).toBe(null);
   });
 
-  it("taskProvider merges project and task the way the turn env does", () => {
-    const proj = project(0, serializeAgentEnv(providerPresetEnv({ baseUrl: "http://localhost:11434", model: "qwen3-coder" })));
-    expect(taskProvider(proj, null)).toMatchObject({ kind: "local", model: "qwen3-coder" });
-    expect(taskProvider(proj, task(serializeAgentEnv(cloudOverrideEnv()))).kind).toBe("cloud");
-    expect(providerEnvFor(proj, task(JSON.stringify({ CODEX_MODEL: "gpt-oss:20b" }))).CODEX_MODEL).toBe("gpt-oss:20b");
+  // The API attaches the resolved provider to each row it serves
+  // (resolvedTaskProvider, lib/providers/resolve.ts). taskProvider reads that
+  // attachment for the badge, taking the task's over the project's.
+  it("taskProvider prefers the task's attached provider, then the project's", () => {
+    const local = describeProvider({ ANTHROPIC_BASE_URL: "http://localhost:11434", ANTHROPIC_MODEL: "qwen3-coder" });
+    const cloud = describeProvider({});
+    expect(taskProvider({ provider: local }, null)).toMatchObject({ kind: "local", model: "qwen3-coder" });
+    expect(taskProvider({ provider: local }, { provider: cloud }).kind).toBe("cloud");
+    // A row with nothing attached runs on its environment's own cloud login.
+    expect(taskProvider(null, null).kind).toBe("cloud");
   });
 });
 
@@ -304,7 +294,7 @@ describe("describeProvider / taskProvider", () => {
 
 describe("the gateway preset", () => {
   const gwEnv = (billing: "key" | "subscription" = "key", model?: string) =>
-    serializeAgentEnv(gatewayPresetEnv({ baseUrl: GW, billing, model }));
+    gatewayPresetEnv({ baseUrl: GW, billing, model });
 
   it("writes the three base URLs and the billing marker, and never a credential", () => {
     expect(gatewayPresetEnv({ baseUrl: `${GW}/v1/`, billing: "key" })).toEqual({
@@ -320,9 +310,9 @@ describe("the gateway preset", () => {
     expect(withModel.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("claude-sonnet-4-5");
     expect(withModel.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe("claude-sonnet-4-5");
     expect(withModel.GEMINI_MODEL).toBe("claude-sonnet-4-5");
-    // The key lives in lib/litellm-key.ts. agent_env is served to the browser
-    // by GET /api/projects, so a token here would be a token anyone with the
-    // app open could read.
+    // The key lives in lib/litellm-key.ts. A provider row is served to the
+    // browser by GET /api/providers, so a token here would be a token anyone
+    // with the app open could read.
     expect("ANTHROPIC_AUTH_TOKEN" in withModel).toBe(false);
     expect(gatewayPresetEnv({ baseUrl: "  ", billing: "key" })).toEqual({});
   });
@@ -347,8 +337,8 @@ describe("the gateway preset", () => {
   });
 
   it("reads the billing marker, defaulting an unmarked override to the key", () => {
-    expect(describeProvider(parseAgentEnv(gwEnv("subscription")), GW).gateway_billing).toBe("subscription");
-    expect(describeProvider(parseAgentEnv(gwEnv("key")), GW).gateway_billing).toBe("key");
+    expect(describeProvider(gwEnv("subscription"), GW).gateway_billing).toBe("subscription");
+    expect(describeProvider(gwEnv("key"), GW).gateway_billing).toBe("key");
     // An unmarked gateway base URL defaults to billing "key", the token it carries.
     expect(describeProvider({ ANTHROPIC_BASE_URL: GW }, GW).gateway_billing).toBe("key");
     // Not a gateway, so there is nothing to say.
@@ -357,10 +347,11 @@ describe("the gateway preset", () => {
 
   it("composes ANTHROPIC_CUSTOM_HEADERS per turn from the key and the live ids", () => {
     const out = agentTurnEnv(
-      { id: "p1", port: 0, agent_env: gwEnv("key") },
-      { id: "t1", agent: "claude", agent_env: "" },
+      { id: "p1", port: 0 },
+      { id: "t1", agent: "claude" },
       { PATH: "/usr/bin", CALANDRIA_LITELLM_KEY: "sk-litellm" },
       GW,
+      gwEnv("key"),
     );
     expect(out.ANTHROPIC_CUSTOM_HEADERS).toBe("x-litellm-api-key: Bearer sk-litellm\nx-litellm-tags: calandria,project:p1,task:t1,agent:claude");
     // Billing "key": the gateway key is the credential, so the turn bills it.
@@ -371,10 +362,11 @@ describe("the gateway preset", () => {
 
   it("sets no credential variable under subscription billing", () => {
     const out = agentTurnEnv(
-      { id: "p1", port: 0, agent_env: gwEnv("subscription") },
-      { id: "t1", agent: "claude", agent_env: "" },
+      { id: "p1", port: 0 },
+      { id: "t1", agent: "claude" },
       { PATH: "/usr/bin", CALANDRIA_LITELLM_KEY: "sk-litellm", ANTHROPIC_API_KEY: "sk-ant-real" },
       GW,
+      gwEnv("subscription"),
     );
     // The CLI keeps its own /login and the gateway forwards it.
     expect("ANTHROPIC_AUTH_TOKEN" in out).toBe(false);
@@ -384,7 +376,7 @@ describe("the gateway preset", () => {
   });
 
   it("still tags the turn when the instance has no key", () => {
-    const out = agentTurnEnv({ id: "p1", port: 0, agent_env: gwEnv("key") }, { id: "t1", agent: "claude", agent_env: "" }, { PATH: "/usr/bin" }, GW);
+    const out = agentTurnEnv({ id: "p1", port: 0 }, { id: "t1", agent: "claude" }, { PATH: "/usr/bin" }, GW, gwEnv("key"));
     expect(out.ANTHROPIC_CUSTOM_HEADERS).toBe("x-litellm-tags: calandria,project:p1,task:t1,agent:claude");
     expect("ANTHROPIC_AUTH_TOKEN" in out).toBe(false);
   });
@@ -394,10 +386,11 @@ describe("the gateway preset", () => {
   // there is no ANTHROPIC_CUSTOM_HEADERS equivalent for it.
   it("sets GEMINI_API_KEY for a gateway turn on the gemini agent, and no attribution header", () => {
     const out = agentTurnEnv(
-      { id: "p1", port: 0, agent_env: gwEnv("key") },
-      { id: "t1", agent: "gemini", agent_env: "" },
+      { id: "p1", port: 0 },
+      { id: "t1", agent: "gemini" },
       { PATH: "/usr/bin", CALANDRIA_LITELLM_KEY: "sk-litellm" },
       GW,
+      gwEnv("key"),
     );
     expect(out.GEMINI_API_KEY).toBe("sk-litellm");
     expect("ANTHROPIC_CUSTOM_HEADERS" in out).toBe(false);
@@ -407,49 +400,61 @@ describe("the gateway preset", () => {
   });
 
   it("leaves GEMINI_API_KEY unset for a gateway turn with no instance key", () => {
-    const out = agentTurnEnv({ id: "p1", port: 0, agent_env: gwEnv("key") }, { id: "t1", agent: "gemini", agent_env: "" }, { PATH: "/usr/bin" }, GW);
+    const out = agentTurnEnv({ id: "p1", port: 0 }, { id: "t1", agent: "gemini" }, { PATH: "/usr/bin" }, GW, gwEnv("key"));
     expect("GEMINI_API_KEY" in out).toBe(false);
   });
 
   it("never sets GEMINI_API_KEY for a non-gateway turn", () => {
     const out = agentTurnEnv(
-      project(0, serializeAgentEnv(providerPresetEnv({ baseUrl: "http://localhost:11434", model: "qwen3-coder" }))),
-      { id: "t1", agent: "gemini", agent_env: "" },
+      project(0),
+      { id: "t1", agent: "gemini" },
       { PATH: "/usr/bin", CALANDRIA_LITELLM_KEY: "sk-litellm" },
       GW,
+      providerPresetEnv({ baseUrl: "http://localhost:11434", model: "qwen3-coder" }),
     );
     expect("GEMINI_API_KEY" in out).toBe(false);
   });
 
   // ANTHROPIC_CUSTOM_HEADERS is composed instead of stored because it is
-  // Claude Code's only knob for arbitrary request headers: a project row that
-  // could set it would let every turn in that project send anything to
+  // Claude Code's only knob for arbitrary request headers: a provider row that
+  // could set it would let every turn using that row send anything to
   // whatever endpoint the same row names.
-  it("cannot be told what headers to send by a project row", () => {
+  it("cannot be told what headers to send by a provider row", () => {
     expect(AGENT_ENV_KEYS).not.toContain("ANTHROPIC_CUSTOM_HEADERS");
-    const smuggled = JSON.stringify({ ANTHROPIC_BASE_URL: "http://localhost:11434", ANTHROPIC_CUSTOM_HEADERS: "x-evil: 1" });
-    const out = agentTurnEnv(project(0, smuggled), null, { PATH: "/usr/bin" }, GW);
+    const smuggled = {
+      ANTHROPIC_BASE_URL: "http://localhost:11434",
+      ANTHROPIC_CUSTOM_HEADERS: "x-evil: 1",
+    } as unknown as AgentEnv;
+    const out = agentTurnEnv(project(0), null, { PATH: "/usr/bin" }, GW, smuggled);
     expect("ANTHROPIC_CUSTOM_HEADERS" in out).toBe(false);
-    expect(parseAgentEnv(smuggled)).toEqual({ ANTHROPIC_BASE_URL: "http://localhost:11434" });
+    expect(out.ANTHROPIC_BASE_URL).toBe("http://localhost:11434");
   });
 
   it("leaves a non-gateway turn's headers and the instance key alone in every other respect", () => {
-    const out = agentTurnEnv(project(0, serializeAgentEnv(providerPresetEnv({ baseUrl: "http://localhost:11434", model: "qwen3-coder" }))), null, {
+    const out = agentTurnEnv(project(0), null, {
       PATH: "/usr/bin",
       CALANDRIA_LITELLM_KEY: "sk-litellm",
       ANTHROPIC_CUSTOM_HEADERS: "x-instance: 1",
-    }, GW);
+    }, GW, providerPresetEnv({ baseUrl: "http://localhost:11434", model: "qwen3-coder" }));
     // Composed only for the gateway kind; an instance-wide header survives.
     expect(out.ANTHROPIC_CUSTOM_HEADERS).toBe("x-instance: 1");
     // The key is stripped from every turn, gateway or not.
     expect("CALANDRIA_LITELLM_KEY" in out).toBe(false);
   });
 
-  it("carries a task's own override, so one task can be sent to the gateway", () => {
-    const proj = project(0, serializeAgentEnv(providerPresetEnv({ baseUrl: "http://localhost:11434", model: "qwen3-coder" })));
-    const t = { id: "t9", agent: "claude", agent_env: gwEnv("key", "claude-sonnet-4-5") };
-    expect(taskProvider(proj, t, GW)).toMatchObject({ kind: "gateway", model: "claude-sonnet-4-5" });
-    const out = agentTurnEnv({ id: "p9", ...proj }, t, { PATH: "/usr/bin", CALANDRIA_LITELLM_KEY: "sk-litellm" }, GW);
+  it("carries the task's own provider row, so one task can be sent to the gateway", () => {
+    const env = gwEnv("key", "claude-sonnet-4-5");
+    expect(taskProvider(null, { provider: describeProvider(env, GW) }, GW)).toMatchObject({
+      kind: "gateway",
+      model: "claude-sonnet-4-5",
+    });
+    const out = agentTurnEnv(
+      { id: "p9", port: 0 },
+      { id: "t9", agent: "claude" },
+      { PATH: "/usr/bin", CALANDRIA_LITELLM_KEY: "sk-litellm" },
+      GW,
+      env,
+    );
     expect(out.ANTHROPIC_BASE_URL).toBe(GW);
     expect(out.ANTHROPIC_CUSTOM_HEADERS).toContain("task:t9");
   });
@@ -460,45 +465,15 @@ describe("the gateway preset", () => {
 // refuses one (lib/litellm-key.ts); this is the line where it would matter.
 describe("the gateway header is not injectable", () => {
   it("drops a key carrying a newline rather than composing a second header", () => {
-    const env = serializeAgentEnv(gatewayPresetEnv({ baseUrl: GW, billing: "key" }));
     const out = agentTurnEnv(
-      { id: "p1", port: 0, agent_env: env },
-      { id: "t1", agent: "claude", agent_env: "" },
+      { id: "p1", port: 0 },
+      { id: "t1", agent: "claude" },
       { PATH: "/usr/bin", CALANDRIA_LITELLM_KEY: "sk-good\nx-evil: 1" },
       GW,
+      gatewayPresetEnv({ baseUrl: GW, billing: "key" }),
     );
     expect(out.ANTHROPIC_CUSTOM_HEADERS).toBe("x-litellm-tags: calandria,project:p1,task:t1,agent:claude");
     expect("ANTHROPIC_AUTH_TOKEN" in out).toBe(false);
-  });
-});
-
-// Which tasks the plan meter's reset time may be offered for (SessionView's
-// queue-at-reset). A window nobody is spending is not a window to wait on.
-describe("planWindowApplies", () => {
-  const gw = (billing: "key" | "subscription") =>
-    describeProvider(gatewayPresetEnv({ baseUrl: "http://gw.example:4000", billing }), "http://gw.example:4000");
-
-  it("holds for every non-gateway task", () => {
-    for (const agent of ["claude", "codex", "gemini"]) {
-      expect(planWindowApplies(describeProvider({}), agent)).toBe(true);
-      expect(planWindowApplies(describeProvider({ ANTHROPIC_BASE_URL: "http://localhost:11434" }), agent)).toBe(true);
-    }
-  });
-
-  it("drops for a key-billed gateway task on any routed agent", () => {
-    expect(planWindowApplies(gw("key"), "claude")).toBe(false);
-    expect(planWindowApplies(gw("key"), "codex")).toBe(false);
-    expect(planWindowApplies(gw("key"), "gemini")).toBe(false);
-  });
-
-  it("holds for Claude on a subscription-billed gateway, and never for Codex or Antigravity", () => {
-    expect(planWindowApplies(gw("subscription"), "claude")).toBe(true);
-    // `requires_openai_auth` is unimplemented, so Codex bills the key here
-    // too and its ChatGPT window is untouched.
-    expect(planWindowApplies(gw("subscription"), "codex")).toBe(false);
-    // `agy` has no equivalent of Claude Code's own-plan forwarding, so it
-    // always bills the gateway's key regardless of the billing marker.
-    expect(planWindowApplies(gw("subscription"), "gemini")).toBe(false);
   });
 });
 

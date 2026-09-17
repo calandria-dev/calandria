@@ -1,8 +1,9 @@
-import { serializeAgentEnv, taskProvider, type ProviderKind } from "./agentEnv";
+import type { ProviderKind } from "./agentEnv";
 import { gatewayContextWindow } from "./gatewayModels";
 import { serializeGatewayMcp } from "./gatewayMcp";
 import { nanoid } from "nanoid";
 import { getDb } from "./db";
+import { getProviderRow } from "./providers/rows";
 // Capability data comes from the SDK-free lib/agents/capabilities.ts. Importing the
 // driver registry here would drag the agent SDKs (async Turbopack externals) into
 // every module that touches the store and break sync route entries at runtime (see
@@ -291,21 +292,17 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
   getDb()
     .prepare(
       `UPDATE projects SET name = ?, icon = ?, sub = ?, color = ?, context = ?, repo_path = ?, branch = ?, landing_mode = ?,
-        auto_reclaim = ?, dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, send_context = ?, deprecated = ?, agent_env = ?,
+        auto_reclaim = ?, dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, send_context = ?, deprecated = ?, default_provider_id = ?,
         gateway_max_budget = ?, gateway_key_duration = ?, gateway_mcp = ? WHERE id = ?`
     )
     // landing_mode is normalized, not trusted as given: the column has no CHECK
     // constraint and this is reached straight from PATCH /api/projects/[id].
-    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.auto_reclaim ? 1 : 0, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0,
-      // agent_env is normalized, not trusted: the allowlist in lib/agentEnv.ts is
-      // enforced here, so nothing unlisted reaches the DB regardless of what a
-      // PATCH body (object or JSON text) carried.
-      serializeAgentEnv(n.agent_env),
+    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.auto_reclaim ? 1 : 0, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0, n.default_provider_id ?? null,
       // A budget of 0 is a legitimate (if pointless) cap, so only null/undefined
       // clear it, matching gateway_max_budget's own null-is-unlimited contract.
       n.gateway_max_budget ?? null, n.gateway_key_duration?.trim() ?? "",
-      // Same normalize-don't-trust treatment as agent_env (docs/AGENTS.md, LiteLLM
-      // section, "Hosted MCP servers").
+      // Normalized, not trusted, since this is reached straight from a PATCH
+      // body (docs/AGENTS.md, LiteLLM section, "Hosted MCP servers").
       serializeGatewayMcp(n.gateway_mcp), id);
   return getProject(id);
 }
@@ -389,12 +386,11 @@ const CONTEXT_ESTIMATED_SQL = (t: string) =>
  */
 export function listTasks(projectId: string): TaskWithUsage[] {
   const db = getDb();
-  // One read for the whole list: the provider override a row inherits is the
-  // project's, with only the task's own agent_env laid over it per row. Rows
-  // where neither carries one skip the describe entirely, which is almost every
-  // row on almost every instance, and this runs on every task-list load.
+  // One read of the project for the whole list: a row's provider is its own
+  // provider_id when set, otherwise the project's default_provider_id. Rows
+  // with neither skip the lookup entirely, which is almost every row on
+  // almost every instance, and this runs on every task-list load.
   const project = getProject(projectId);
-  const anyOverride = !!project?.agent_env;
   const rows = db
     .prepare(
       `SELECT t.*,
@@ -450,8 +446,8 @@ export function listTasks(projectId: string): TaskWithUsage[] {
   }
   return rows.map((r) => {
     redactGatewayKey(r);
-    const kind = (anyOverride || !!r.agent_env) ? taskProvider(project, r).kind : "cloud";
-    const window = taskContextWindow(r.agent, r.model, kind);
+    const provider = providerRuntimeForTask(project, r);
+    const window = taskContextWindow(r.agent, r.model, provider.kind, provider.gatewayBaseUrl);
     return {
       ...r,
       context_window: window,
@@ -690,6 +686,13 @@ export function setTaskGatewayKeySpend(id: string, spend: number): void {
 }
 
 export function createTask(input: {
+  /**
+   * The id to mint the row under, when the caller has to know it before the
+   * insert: a task created with attachments stages them under uploads/<id>
+   * and writes those paths into the description in the same call. Omitted
+   * everywhere else.
+   */
+  id?: string;
   project_id: string;
   title: string;
   description?: string;
@@ -704,6 +707,8 @@ export function createTask(input: {
    * other creation path relies on.
    */
   permission_mode?: string | null;
+  /** Codex filesystem sandbox. null/undefined inherits default_sandbox_mode:codex. */
+  sandbox_mode?: string | null;
   /**
    * The model the task's sessions run on, settable at creation for the same
    * reason as permission_mode: the New-task dialog can start the first turn in
@@ -711,22 +716,17 @@ export function createTask(input: {
    * the inherit-the-default behavior (agent's Settings default, then the CLI's).
    */
   model?: string | null;
+  /** The provider override for this task. null inherits the project provider. */
+  provider_id?: string | null;
   /** The schedule that minted this task (lib/scheduler.ts). null for hand-made tasks. */
   schedule_id?: string | null;
   /** The runbook that dispatched this task (lib/dispatch.ts). null for hand-made tasks. */
   runbook_id?: string | null;
   /** The tags it carries at birth (validated against the project by the caller). */
   tag_ids?: string[];
-  /**
-   * A provider override laid over the project's (lib/agentEnv.ts), settable at
-   * creation because `suggest_task` can delegate work to a different agent and
-   * the task's first turn may be an auto-start with no PATCH in between.
-   * Object or JSON text; normalized here.
-   */
-  agent_env?: string | Record<string, string> | null;
 }): Task {
   const now = Date.now();
-  const id = nanoid();
+  const id = input.id || nanoid();
   const project = getProject(input.project_id);
   // Which agent driver the task runs under: explicit choice, else the owning
   // project's default (see lib/agents/registry.ts for resolution).
@@ -743,13 +743,13 @@ export function createTask(input: {
   ).n;
   getDb()
     .prepare(
-      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, model, permission_mode, schedule_id, runbook_id, agent_env, position, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO tasks (id, project_id, title, description, priority, status, suggested, agent, send_context, model, provider_id, permission_mode, sandbox_mode, schedule_id, runbook_id, position, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'not_started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id, input.project_id, input.title, input.description ?? "", input.priority ?? "med", input.suggested ? 1 : 0,
-      agent, sendContext ? 1 : 0, input.model || null, input.permission_mode || null, input.schedule_id ?? null, input.runbook_id ?? null,
-      serializeAgentEnv(input.agent_env), position, now, now
+      agent, sendContext ? 1 : 0, input.model || null, input.provider_id ?? null, input.permission_mode || null, input.sandbox_mode ?? null, input.schedule_id ?? null, input.runbook_id ?? null,
+      position, now, now
     );
   // Tags are a second write because they are a second table. setTaskTags does
   // the project check for us, so a caller that got the tags wrong fails here
@@ -993,7 +993,7 @@ export function moveTasks(
     // at its next cut. Empty inherits the destination project's default.
     const reparent = db.prepare(
       `UPDATE tasks SET project_id = ?, position = ?, agent = ?, send_context = ?, model = ?, resolved_model = ?,
-        reasoning = ?, permission_mode = ?, session_id = ?, base_branch = '', updated_at = ? WHERE id = ?`
+        reasoning = ?, permission_mode = ?, sandbox_mode = ?, session_id = ?, base_branch = '', updated_at = ? WHERE id = ?`
     );
     // Tags a row leaves behind, when the rest of their members stayed. Kept
     // out of the reparent above because a whole selection keeps its tags, so
@@ -1047,7 +1047,7 @@ export function moveTasks(
     // takes its repo's.
     const dropSettings = db.prepare("DELETE FROM task_settings_snapshots WHERE task_id = ?");
     for (const r of rows) {
-      reparent.run(projectId, r.position, r.agent, r.send_context, r.model, r.resolved_model, r.reasoning, r.permission_mode, r.session_id, now, r.id);
+      reparent.run(projectId, r.position, r.agent, r.send_context, r.model, r.resolved_model, r.reasoning, r.permission_mode, r.sandbox_mode, r.session_id, now, r.id);
       dropSettings.run(r.id);
       if (opts.resetCheckout?.has(r.id)) clearCheckout.run(r.id);
       for (const tagId of leftBehind.get(r.id) ?? []) untag.run(r.id, tagId);
@@ -1101,6 +1101,7 @@ function deriveMoved(task: Task, dest: Project) {
     resolved_model: switched ? null : task.resolved_model,
     reasoning: switched ? null : task.reasoning,
     permission_mode: switched ? null : task.permission_mode,
+    sandbox_mode: switched ? null : task.sandbox_mode,
     session_id: switched ? null : task.session_id,
   };
 }
@@ -1130,12 +1131,12 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   const n = { ...cur, ...patch, updated_at: Date.now() };
   getDb()
     .prepare(
-      `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, send_context=?, model=?, resolved_model=?, reasoning=?, permission_mode=?,
-        session_id=?, worktree_path=?, work_branch=?, base_sha=?, base_branch=?, merged_at=?, pr_url=?, pr_number=?, pr_state=?, pr_checks=?, pr_review=?, pr_merged_at=?, pr_synced_at=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, snoozed_until=?, unread_run_at=?, start_at=?, context_measured=?, agent_env=?, gateway_mcp=?, updated_at=? WHERE id=?`
+      `UPDATE tasks SET title=?, description=?, priority=?, status=?, suggested=?, agent=?, send_context=?, model=?, resolved_model=?, reasoning=?, permission_mode=?, sandbox_mode=?,
+        session_id=?, worktree_path=?, work_branch=?, base_sha=?, base_branch=?, merged_at=?, pr_url=?, pr_number=?, pr_state=?, pr_checks=?, pr_review=?, pr_merged_at=?, pr_synced_at=?, generation=?, started=?, auto_start=?, withdrawn_reason=?, agent_edited_at=?, running=?, awaiting_input=?, background_pending=?, background_note=?, schedule_id=?, provider_id=?, snoozed_until=?, unread_run_at=?, base_rewritten_at=?, start_at=?, context_measured=?, gateway_mcp=?, updated_at=? WHERE id=?`
     )
-    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.base_branch ?? "", n.merged_at, n.pr_url, n.pr_number ?? 0, n.pr_state ?? "", n.pr_checks ?? "", n.pr_review ?? "", n.pr_merged_at ?? 0, n.pr_synced_at ?? 0, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.start_at ?? 0, n.context_measured ?? null, serializeAgentEnv(n.agent_env),
+    .run(n.title, n.description, n.priority, n.status, n.suggested, n.agent, n.send_context ? 1 : 0, n.model ?? null, n.resolved_model ?? null, n.reasoning ?? null, n.permission_mode ?? null, n.sandbox_mode ?? null, n.session_id, n.worktree_path, n.work_branch, n.base_sha, n.base_branch ?? "", n.merged_at, n.pr_url, n.pr_number ?? 0, n.pr_state ?? "", n.pr_checks ?? "", n.pr_review ?? "", n.pr_merged_at ?? 0, n.pr_synced_at ?? 0, n.generation, n.started, n.auto_start, n.withdrawn_reason ?? "", n.agent_edited_at ?? 0, n.running, n.awaiting_input, n.background_pending ?? 0, n.background_note ?? "", n.schedule_id ?? null, n.provider_id ?? null, n.snoozed_until ?? 0, n.unread_run_at ?? 0, n.base_rewritten_at ?? 0, n.start_at ?? 0, n.context_measured ?? null,
       // null means inherit the project's selection; anything else is
-      // normalized, not trusted, same as agent_env (docs/AGENTS.md, LiteLLM section).
+      // normalized, not trusted (docs/AGENTS.md, LiteLLM section).
       n.gateway_mcp == null ? null : serializeGatewayMcp(n.gateway_mcp),
       n.updated_at, id);
   return getTask(id);
@@ -1220,13 +1221,15 @@ export function setTaskPrState(
  * moment ago isn't re-fetched by the next tick. Oldest sync first, so a
  * capped batch always makes progress rather than re-serving the same rows.
  */
-export function stalePrTasks(staleBefore: number, limit: number): Task[] {
+export function stalePrTasks(staleBefore: number, limit: number, opts: { autoReclaimOnly?: boolean } = {}): Task[] {
+  const autoReclaim = opts.autoReclaimOnly ? " AND p.auto_reclaim = 1" : "";
   return getDb()
     .prepare(
-      `SELECT * FROM tasks
-       WHERE pr_url != '' AND pr_number > 0 AND pr_state NOT IN ('merged', 'closed')
-         AND pr_synced_at < ?
-       ORDER BY pr_synced_at ASC LIMIT ?`
+      `SELECT t.* FROM tasks t
+       JOIN projects p ON p.id = t.project_id
+       WHERE t.pr_url != '' AND t.pr_number > 0 AND t.pr_state NOT IN ('merged', 'closed')
+         AND t.pr_synced_at < ?${autoReclaim}
+       ORDER BY t.pr_synced_at ASC LIMIT ?`
     )
     .all(staleBefore, limit) as Task[];
 }
@@ -1236,6 +1239,19 @@ export function openPrTaskCount(): number {
   const row = getDb()
     .prepare(
       `SELECT COUNT(*) AS n FROM tasks WHERE pr_url != '' AND pr_number > 0 AND pr_state NOT IN ('merged', 'closed')`
+    )
+    .get() as { n: number };
+  return row.n;
+}
+
+/** How many open PRs belong to projects that need unattended merge detection. */
+export function openAutoReclaimPrTaskCount(): number {
+  const row = getDb()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM tasks t
+       JOIN projects p ON p.id = t.project_id
+       WHERE t.pr_url != '' AND t.pr_number > 0
+         AND t.pr_state NOT IN ('merged', 'closed') AND p.auto_reclaim = 1`
     )
     .get() as { n: number };
   return row.n;
@@ -2115,13 +2131,38 @@ export function getTaskUsage(taskId: string): UsageTotals {
 // lib/gatewayModels.ts), so a task pointed there is sized from that catalog
 // instead of reported unknown. A model missing from the catalog (a stale
 // pick, or nothing probed yet) falls back to 0.
-function taskContextWindow(agent: string | null | undefined, model: string | null | undefined, kind: ProviderKind): number {
+function taskContextWindow(
+  agent: string | null | undefined,
+  model: string | null | undefined,
+  kind: ProviderKind,
+  gatewayBaseUrl: string | null = null,
+): number {
   if (kind === "cloud") return modelContextWindow(agent, model);
   if (kind === "gateway") {
-    const window = gatewayContextWindow(model);
+    const window = gatewayContextWindow(model, gatewayBaseUrl);
     if (window > 0) return window;
   }
   return 0;
+}
+
+// Context sizing follows the same task -> project provider precedence as turn
+// execution. This stays in the store so listTasks and getTaskContext agree
+// without importing the DB-bound provider resolver back into this module.
+function providerRuntimeForTask(
+  project: Project | null | undefined,
+  task: Task | null | undefined,
+): { kind: ProviderKind; gatewayBaseUrl: string | null } {
+  const db = getDb();
+  const row = task?.provider_id
+    ? getProviderRow(db, task.provider_id)
+    : project?.default_provider_id
+      ? getProviderRow(db, project.default_provider_id)
+      : null;
+  if (!row) return { kind: "cloud", gatewayBaseUrl: null };
+  if (row.type === "litellm") return { kind: "gateway", gatewayBaseUrl: row.config.base_url ?? null };
+  if (row.type === "ollama" || row.type === "lmstudio") return { kind: "local", gatewayBaseUrl: null };
+  if (row.type === "custom") return { kind: "custom", gatewayBaseUrl: null };
+  return { kind: "cloud", gatewayBaseUrl: null };
 }
 
 // Percent (0-100, one decimal) of that window `tokens` occupies. 0 when the
@@ -2168,8 +2209,8 @@ export function getTaskContext(taskId: string): TaskContext {
     )
     .get(taskId) as { context_tokens: number; context_estimated: number } | undefined;
   const context_tokens = row?.context_tokens ?? 0;
-  const kind = taskProvider(task ? getProject(task.project_id) : null, task).kind;
-  const context_window = taskContextWindow(task?.agent, task?.model, kind);
+  const provider = providerRuntimeForTask(task ? getProject(task.project_id) : null, task);
+  const context_window = taskContextWindow(task?.agent, task?.model, provider.kind, provider.gatewayBaseUrl);
   return {
     context_tokens,
     context_window,

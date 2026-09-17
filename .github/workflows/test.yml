@@ -56,7 +56,7 @@
 #           same specs and can say nothing about any of it.
 #   macos-desktop — the `desktop` suite on macos-latest against the dev shell
 #           and then the packaged .app, plus a launch of the .app unpacked from
-#           the .dmg that same build produced (docs/DESKTOP_APP.md §6.1).
+#           the .dmg that same build produced (desktop/README.md, "Packaging").
 #           Plus the two behaviours
 #           that exist nowhere else: the launchd PATH repair (a .app opened
 #           through LaunchServices inherits /usr/bin:/bin:/usr/sbin:/sbin, not
@@ -105,7 +105,8 @@
 name: Test
 
 # `paths-ignore: website/**` keeps the site out of this gate. website/ is the
-# calandria.dev Astro project (docs/design/WEBSITE.md) — its own package.json,
+# calandria.dev Astro project (design plan in the private notes repo at
+# design/WEBSITE.md) — its own package.json,
 # its own lockfile, no import into the app — so a site-only change cannot break
 # anything here, and running the Windows lanes plus a full production build for
 # a copy edit is the wrong bill. website.yml builds and deploys it instead.
@@ -176,12 +177,26 @@ on:
         type: choice
         options: [auto, "on", "off"]
         default: auto
+      # `macos-desktop` has its own gate and its own cost, so it needs its own
+      # switch. `auto` is exactly what the gate did before this input existed:
+      # a manual dispatch opts in. A dispatch made by a WORKFLOW rather than by
+      # a person passes `off`, because a machine that runs daily cannot be the
+      # thing that decides to buy a Mac run (.github/workflows/pin-drift.yml).
+      macos:
+        description: "Run the macOS desktop lane (auto = yes for a manual run)"
+        type: choice
+        options: [auto, "on", "off"]
+        default: auto
   # Called by publish-image.yml, which wants the unit gate without paying for
   # e2e a second time on the publish path.
   workflow_call:
     inputs:
       e2e:
         description: "auto (main/dispatch/labelled PR) | on (always) | off (never)"
+        type: string
+        default: auto
+      macos:
+        description: "auto (schedule/dispatch/labelled PR) | on (always) | off (never)"
         type: string
         default: auto
 
@@ -265,7 +280,7 @@ jobs:
     outputs:
       app: ${{ steps.filter.outputs.app }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: github.event_name == 'pull_request'
         with:
           # Full history: the diff is against the base SHA, which a shallow
@@ -338,14 +353,16 @@ jobs:
 
       # No `cache: npm`: that caches npm's download cache for an `npm ci` this
       # job doesn't run, so there is nothing here for it to speed up.
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
 
-      # dependabot.yml excludes npm on the claim that `npm audit` covers it —
-      # this job is what makes that claim true. --omit=dev matches what
-      # actually ships; --audit-level=high fails on HIGH/CRITICAL only, so a
-      # moderate advisory in a transitive dep doesn't red-flag every PR.
+      # dependabot.yml excludes root npm VERSION updates; repo-level Dependabot
+      # security updates deliver an advisory fix as a PR, and this job is the
+      # gate behind that, catching anything the bot has not opened a PR for
+      # yet. --omit=dev matches what actually ships; --audit-level=high fails
+      # on HIGH/CRITICAL only, so a moderate advisory in a transitive dep
+      # doesn't red-flag every PR.
       #
       # --package-lock-only, and deliberately no `npm ci` before it: the
       # advisory set npm reports is keyed off the lockfile against the
@@ -379,7 +396,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -425,7 +442,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -476,7 +493,7 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -581,7 +598,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -605,8 +622,23 @@ jobs:
         run: npm run test:e2e
 
       # traces (retain-on-failure) and screenshots land in test-results/.
+      #
+      # NOT `failure()`, which throws away the evidence for the one bug these
+      # lanes actually have. Since the in-job retry landed (981f3bc, #274) a
+      # single-spec flake passes on attempt two, the job goes green, and
+      # `failure()` is false, so the trace and screenshot of the attempt that
+      # FAILED are discarded. That is why issue #161 has four sightings and no
+      # artifact anyone can read: every one has now expired, and every
+      # occurrence since 2026-09-08 uploaded nothing at all. Caught in the act
+      # on run 35124160394, where `18-tag-strip.spec.ts:218` failed, retried
+      # green, and left no artifact behind.
+      #
+      # A fully green run writes nothing into test-results/ (trace is
+      # retain-on-failure, screenshot only-on-failure), so with
+      # `if-no-files-found: ignore` below this uploads exactly when there is
+      # something to look at and costs nothing when there is not.
       - name: Upload Playwright artifacts
-        if: failure()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-artifacts-${{ github.run_attempt }}
@@ -641,7 +673,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -651,9 +683,8 @@ jobs:
       # The only Linux-specific step in this job — a macOS or Windows desktop
       # lane would copy this job and drop exactly this step plus the
       # `xvfb-run` prefix on the final one. Electron's own `--headless` mode is
-      # not a substitute: docs/DESKTOP_E2E.md §1 measured the process dying
-      # with SIGTRAP before the CDP socket settles, so a virtual display is
-      # mandatory here, not a preference.
+      # not a substitute: the process dies with SIGTRAP before the CDP socket
+      # settles, so a virtual display is mandatory here, not a preference.
       - name: Install a virtual display
         run: sudo apt-get update && sudo apt-get install -y xvfb
 
@@ -736,7 +767,7 @@ jobs:
       # still could not exercise: what makes the sandbox work is the .deb's
       # postinst, which installs an AppArmor profile — or, on a kernel without
       # user namespaces, the SUID bit — and only an INSTALL runs it. That run
-      # is the bench lane's (docs/DESKTOP_E2E.md §4).
+      # is the bench lane's (docs/DESKTOP_E2E.md §2).
       - name: Package the desktop app
         working-directory: desktop
         run: |
@@ -767,7 +798,9 @@ jobs:
         run: xvfb-run -a npm run test:desktop:window
 
       - name: Upload desktop artifacts
-        if: failure()
+        # Not `failure()`; see the e2e job's upload step for why a retried
+        # flake must keep its trace.
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: desktop-artifacts-${{ github.run_attempt }}
@@ -808,7 +841,7 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -833,7 +866,9 @@ jobs:
         run: npm run test:e2e
 
       - name: Upload Playwright artifacts
-        if: failure()
+        # Not `failure()`; see the e2e job's upload step for why a retried
+        # flake must keep its trace.
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-artifacts-windows-${{ github.run_attempt }}
@@ -859,8 +894,7 @@ jobs:
                       || contains(github.event.pull_request.labels.*.name, 'e2e'))))) }}
     #
     # GITHUB-HOSTED, NOT THE HOMELAB'S WINDOWS VM (Proxmox template 9911).
-    # docs/DESKTOP_E2E.md §4 left that open; this lane closes it, and the
-    # deciding question is what a real logged-in Windows session buys.
+    # The deciding question is what a real logged-in Windows session buys.
     #
     # For the LINUX desktop lane the answer was "quite a lot" — hence the bench
     # VM — because a runner there has no display at all and `xvfb-run` hides a
@@ -900,7 +934,7 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -963,7 +997,8 @@ jobs:
       # observed from a runner is SmartScreen. It fires on the `Zone.Identifier`
       # stream a DOWNLOAD attaches, so an installer built here carries no mark
       # and never trips the interstitial a user gets. That cost is documented
-      # (docs/WINDOWS.md "Known limits", docs/DESKTOP_APP.md §6/§7) rather than
+      # (docs/WINDOWS.md, "Known limits"; docs/DESKTOP_APP.md, "Installing";
+      # desktop/README.md, "What signing costs") rather than
       # tested, and stays that way until the artifacts are signed.
       #
       # Each command is exit-checked by hand because this job's shell is pwsh,
@@ -1008,8 +1043,9 @@ jobs:
       # installer honours it. Deliberately no `/D=`: pinning the directory would
       # test that the flag works, where the interesting fact is where a
       # `perMachine: false` build goes when nobody tells it — the per-user
-      # location §6 documents. So the path is READ BACK from the uninstall
-      # registry entry the installer wrote (the same entry Settings → Apps
+      # location documented in desktop/README.md, "Packaging". So the path is
+      # READ BACK from the uninstall registry entry the installer wrote (the
+      # same entry Settings → Apps
       # reads, found by DisplayName because electron-builder keys it under a
       # GUID derived from appId) and then asserted against
       # %LOCALAPPDATA%\Programs\Calandria.
@@ -1200,7 +1236,9 @@ jobs:
           "the uninstaller removed the executable, the payload, both shortcuts and the registry entry"
 
       - name: Upload desktop artifacts
-        if: failure()
+        # Not `failure()`; see the e2e job's upload step for why a retried
+        # flake must keep its trace.
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: desktop-artifacts-windows-${{ github.run_attempt }}
@@ -1219,20 +1257,23 @@ jobs:
     # bills at roughly ten times a Linux one, and hanging it off the `e2e`
     # label would mean every PR that wanted a browser run silently bought a Mac
     # run too. So: the weekly cron, a manual dispatch, and a PR that asks for it
-    # by name with the `macos` label.
+    # by name with the `macos` label. The `macos` input above overrides all
+    # three, and `off` is what a dispatch made by another workflow passes.
     #
     # GITHUB-HOSTED, AND NOT NEGOTIABLE HERE. The homelab has no Apple hardware
     # and macOS cannot be virtualised on Proxmox/KVM with any legal path, so
     # unlike the Linux bench VM and the Windows lane this one had no
-    # alternative to weigh. docs/DESKTOP_E2E.md §4 records that.
+    # alternative to weigh.
     # The closed-PR clause is the other three lanes'; on the priciest runner in
     # the file it matters most, since a merged PR is awaiting nothing.
     if: >-
       ${{ needs.changes.outputs.app == 'true' && ((github.event_name != 'pull_request'
            || github.event.pull_request.state == 'open')
-          && (github.event_name == 'schedule'
-              || github.event_name == 'workflow_dispatch'
-              || contains(github.event.pull_request.labels.*.name, 'macos'))) }}
+          && (inputs.macos == 'on'
+              || (inputs.macos != 'off'
+                  && (github.event_name == 'schedule'
+                      || github.event_name == 'workflow_dispatch'
+                      || contains(github.event.pull_request.labels.*.name, 'macos'))))) }}
     runs-on: macos-latest
     # Above the Ubuntu desktop lane's 45 and the Windows one's 60. Ubuntu's two
     # passes (dev shell, then the packaged artifact) plus one extra GUI launch,
@@ -1250,7 +1291,7 @@ jobs:
       # that is already covered by `unit`, which this lane does not repeat.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -1286,12 +1327,15 @@ jobs:
       #
       # All three of `mac.target`, and DELIBERATELY ad-hoc rather than
       # Developer ID signed. This is the test lane; the release lane is what
-      # holds the certificate and notarizes (docs/DESKTOP_APP.md §6.2, §7).
+      # holds the certificate and notarizes (desktop/README.md, "Signing and
+      # publishing").
       # `dir` is what the packaged pass below launches and the only form the
       # launchd spec can `open`; `dmg` and `zip` are what a person would
       # actually download, and building them here is the only way to find out
       # whether they open.
       - name: Package the desktop app
+        # Installer checks below require this step to produce the dmg and zip.
+        id: package
         working-directory: desktop
         env:
           # electron-builder otherwise scans the keychain for a Developer ID and
@@ -1360,15 +1404,17 @@ jobs:
       # This step used to BE the ad-hoc signing (`codesign --force --deep --sign
       # -`). It moved into the build — `mac.identity: "-"` in
       # desktop/package.json — and what is left here is the assertion that it
-      # happened. docs/DESKTOP_APP.md §6 records why; the short version is that
-      # signing here is too late for an installer. electron-builder cuts the
+      # happened. desktop/README.md, "Signing and publishing", records why; the
+      # short version is that signing here is too late for an installer.
+      # electron-builder cuts the
       # .dmg and the .zip from the .app during the packaging step above, so a
       # signature applied afterwards, to a bundle already moved out of
       # desktop/dist, reaches the copy this lane tests and NOT the copies a user
       # would download. Both would ship an app the kernel kills.
       #
-      # An ad-hoc signature is still not code signing in the sense §6 is about:
-      # it carries no identity, satisfies no Gatekeeper policy and notarizes
+      # An ad-hoc signature is still not code signing in the sense that section
+      # is about: it carries no identity, satisfies no Gatekeeper policy and
+      # notarizes
       # nothing. It is only what makes the file runnable at all, because arm64
       # macOS will not exec a Mach-O with NO signature and electron-builder
       # invalidates the one Electron's prebuilt arrived with.
@@ -1396,7 +1442,7 @@ jobs:
       # domain's own PATH is printed every run as the evidence for it — to this
       # job's log, not only to an attachment, since a green run uploads no
       # artifacts. Grep for `[08-macos-launchd]`.
-      # See the spec header and docs/DESKTOP_APP.md §5.
+      # See the spec header and docs/DESKTOP_APP.md, "Known limitations".
       - name: Run the desktop suite against the package
         run: npm run test:desktop:window
 
@@ -1412,10 +1458,11 @@ jobs:
       # $RUNNER_TEMP is where the `dir` bundle already went — desktop/e2e/
       # fixtures.ts refuses to launch a binary from inside this checkout.
       - name: Unpack the app from the dmg
-        # See the launch step below: the packaged pass carries a pre-existing
-        # failure, and gating the installer checks behind it would mean the .dmg
-        # goes unverified every run without saying so.
-        if: ${{ !cancelled() }}
+        # The packaged suite runs after packaging and can fail independently.
+        # That failure must not suppress installer checks.
+        # A failure before packaging leaves no dmg to inspect, so these checks
+        # must stay skipped in that case.
+        if: ${{ !cancelled() && steps.package.conclusion == 'success' }}
         run: |
           set -euo pipefail
           dmg=$(find desktop/dist -maxdepth 1 -name '*.dmg' -type f | head -n 1)
@@ -1470,7 +1517,7 @@ jobs:
           # a notarized artifact, and expects the opposite answer.
           echo "--- spctl assessment (a refusal here is the expected result) ---"
           if spctl --assess --type execute --verbose=4 "$dest"/*.app; then
-            echo "::error::Gatekeeper ACCEPTED an app this lane is supposed to sign ad-hoc. A Developer ID reached the test lane; signing belongs in the release lane only. See docs/DESKTOP_APP.md §6.2."
+            echo "::error::Gatekeeper ACCEPTED an app this lane is supposed to sign ad-hoc. A Developer ID reached the test lane; signing belongs in the release lane only. See desktop/README.md, Signing and publishing."
             exit 1
           fi
 
@@ -1500,9 +1547,9 @@ jobs:
       # `workers: 1`, so the two boots are sequential and cannot fight over the
       # single-instance lock.
       - name: Launch the app from the dmg
-        # This step's dependency is the packaging step, not the suite above: a
-        # skipped dmg check reads as "fine" when it is really "never ran".
-        if: ${{ !cancelled() }}
+        # This check depends on a successful packaging step. A red packaged
+        # suite still leaves a dmg available for verification.
+        if: ${{ !cancelled() && steps.package.conclusion == 'success' }}
         run: npx playwright test --config playwright.desktop.config.ts 06-packaged 08-macos-launchd
 
       # The .zip is the load-bearing macOS artifact even though nothing consumes
@@ -1511,7 +1558,9 @@ jobs:
       # at all. Checking it exists and holds an intact bundle is cheap; the feed
       # itself arrives with the publish block in the auto-update task.
       - name: Check the zip carries an intact bundle
-        if: ${{ !cancelled() }}
+        # A failed step before packaging means there is no zip to inspect.
+        # A later packaged-suite failure must not suppress this artifact check.
+        if: ${{ !cancelled() && steps.package.conclusion == 'success' }}
         run: |
           set -euo pipefail
           zip=$(find desktop/dist -maxdepth 1 -name '*.zip' -type f | head -n 1)
@@ -1530,10 +1579,9 @@ jobs:
 
       # `always()`, not `failure()`, unlike every other lane here.
       # 07-macos.spec.ts attaches a screenshot of the hiddenInset title bar and
-      # the element stack underneath the traffic lights, and the whole point of
-      # those is that a human looks at them once on a GREEN run —
-      # docs/DESKTOP_APP.md §5 has carried "needs a look on a real screen" since
-      # the spike, and a failure-only upload would never deliver it.
+      # the element stack underneath the traffic lights. Those exist for a human
+      # to look at once on a GREEN run, and a failure-only upload would never
+      # deliver them.
       - name: Upload desktop artifacts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -15,13 +15,18 @@
 # Run:    see docker-compose.yml or the reference `docker run` in docs/DEPLOY.md.
 
 # ---- build stage: install all deps (incl. dev), compile Next ----------------
-# Pinned by digest rather than the `22-bookworm-slim` tag, which moves on every
+# Pinned by digest rather than the `26-bookworm-slim` tag, which moves on every
 # Node patch and Debian security rebuild, so a tag reference would not give two
 # builds of the same commit the same image. The digest is the multi-arch index
 # digest (linux/amd64 + linux/arm64/v8), so both matrix legs resolve their own
 # manifest from it. .github/dependabot.yml bumps it weekly; keep the two FROM
 # lines identical or the runtime stage diverges from the build stage.
-FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS build
+#
+# A current digest is not a current Debian package set. The tag is rebuilt on
+# Node's cadence, so between rebuilds this layer holds packages Debian has
+# already fixed. The runtime stage runs `apt-get upgrade` for that reason; the
+# note at that line carries the reasoning.
+FROM node:26-bookworm-slim@sha256:cd9f682fa2885cd1056e830424764158570061c59736a1da836bc3d73df095ae AS build
 WORKDIR /app
 
 # The toolchain is a fallback for node-pty, which fetches a per-ABI Linux
@@ -58,11 +63,31 @@ RUN npm prune --omit=dev && node scripts/fix-pty.js
 
 # ---- runtime stage -----------------------------------------------------------
 # Same digest as the build stage above.
-FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
+FROM node:26-bookworm-slim@sha256:cd9f682fa2885cd1056e830424764158570061c59736a1da836bc3d73df095ae
 
 # git: project repos and per-task worktrees. openssh-client: git over ssh.
 # tini: PID 1, reaps the pty shells' orphans. procps: ps for debugging shells.
+#
+# `apt-get upgrade` covers the packages the base image already carries and
+# this line does not name. The FROM above is pinned by digest and Dependabot
+# rewrites it weekly, but Debian publishes a security update against bookworm
+# as soon as it is built, while the `node:26-bookworm-slim` tag is rebuilt on
+# Node's cadence. Between those two the pinned layer accumulates CVEs that
+# Debian has already fixed, which is what `Image scan (trivy)` reports: every
+# finding is `ignore-unfixed: true`, so every finding has a fixed version in
+# the archive. Installing only the seven packages named here left
+# libpcre2-8-0 at 10.42-1 with 10.42-1+deb12u1 sitting in the archive
+# (CVE-2026-86145, CVE-2026-89161, issue #363).
+#
+# This depends on the layer actually being rebuilt. Docker keys a layer on the
+# RUN command's text, so a cached build reuses whatever apt resolved the last
+# time the cache was cold, the same hazard the `gh=` pin note below describes.
+# publish-image.yml's Sunday cron (09:23 UTC) builds with `no-cache` and
+# pushes `:edge`; security-scan.yml reads `:edge` on Monday at 06:00 UTC. The
+# cold build is the one the scan sees, so this repeats every week on its own
+# instead of needing a digest bump by hand.
 RUN apt-get update \
+  && apt-get upgrade -y \
   && apt-get install -y --no-install-recommends \
        git openssh-client ca-certificates curl bash tini procps \
   && rm -rf /var/lib/apt/lists/*
@@ -89,7 +114,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list \
   && apt-get update \
-  && apt-get install -y --no-install-recommends gh=2.100.0 \
+  && apt-get install -y --no-install-recommends gh=2.101.0 \
   && rm -rf /var/lib/apt/lists/* \
   && gh --version
 
@@ -103,7 +128,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # npm 12.0.2 in turn vendors its own newer but still-vulnerable copies of tar,
 # brace-expansion, and ip-address, unfixable here since it is npm's newest
 # release. Tracked in .trivyignore; see that file for the current CVE list and
-# revisit policy.
+# revisit policy. Bumping this pin is how those four clear.
 RUN npm install -g npm@12.0.2 && npm --version
 
 # The agent CLIs, pinned. A floating `@latest` install would make a
@@ -121,7 +146,7 @@ RUN npm install -g npm@12.0.2 && npm --version
 # login.
 ARG CLAUDE_CODE_VERSION=2.1.260
 ARG CODEX_VERSION=0.153.0
-ARG AGY_VERSION=1.1.27
+ARG AGY_VERSION=1.2.4
 
 # The `claude` CLI: the Agent SDK spawns it, and login state lives in
 # ~/.claude on the volume. Pinned location via CLAUDE_CLI_PATH; updates ship as
@@ -156,17 +181,28 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 # here against a pinned version instead of piping the script, so the build is
 # reproducible and the checksum is reviewed in this file rather than fetched.
 #
-# Refresh both digests together when bumping AGY_VERSION; they come from
+# These three ARGs are owned by `Pin drift` (.github/workflows/pin-drift.yml).
+# It reads both manifests daily and, when they have moved, force-pushes the
+# rewritten ARGs to the `bot/agy-pin` branch and opens or refreshes one pull
+# request titled `build(deps): bump Antigravity CLI to <version>`. That PR is
+# reviewed and merged by a human and is never automerged. Editing the three by
+# hand still works and costs nothing: the next run sees the pins are current,
+# closes the bot PR and deletes its branch.
+#
+# The values come from
 #   curl -fsSL https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json
-# (and .../linux_arm64.json), whose `version` field is what the ARG must match.
-# `Pin drift` (.github/workflows/pin-drift.yml) reads those same two manifests
-# daily and files an issue when this ARG or either digest falls behind.
+# (and .../linux_arm64.json). The `version` field is what AGY_VERSION must
+# match, the `sha512` field is the digest for that arch, and all three move
+# together: the guard below compares the manifest URL against AGY_VERSION, so
+# a version written without its digests fails `sha512sum -c` on both arches.
+# The bot refuses to write anything when the two manifests disagree on the
+# version, and files the usual issue for the other pins in this file.
 #
 # The binary self-updates in the background by default, which would replace
 # this pin mid-turn. AGY_CLI_DISABLE_AUTO_UPDATE below turns that off
 # image-wide, and the driver sets it on every spawn as a second guard.
-ARG AGY_SHA512_AMD64=793d4b9ea2c08d9a7e50bafa02cfc8c19424bd60d6e83f91408d45f9c6d4ce79a5d576fede5bef164d823abf84f81359a14b4ca665952c47b0a7cfd743bb69c0
-ARG AGY_SHA512_ARM64=ed45f6930785aa4b42f14e07ace1c9d91a94fb76e760f54acbd7d3d3951e1f957fd456a0dae2a3124dd9a3b689bf7afb7c9303a3e4ba95037fc10063424d9bf9
+ARG AGY_SHA512_AMD64=5811d39ec1bf96a82ed06de6b8ee2bb7f5be8d74423b8c52b6b975e8f0e2c84c6cc2fa0baf902aad942c7566509c3ba6ddb5ef076260c6a635c4616e6ae17897
+ARG AGY_SHA512_ARM64=75f9c48ca778328642f20e80bc4d4a95646ea42ce13bd31bf0c8a5d050174bd2ec4dd6cd99a4b63930586efdb38b0de87f9f562ec300d52987679b8e27aa24be
 RUN set -eu; \
     case "$(dpkg --print-architecture)" in \
       amd64) manifest=linux_amd64; sha="${AGY_SHA512_AMD64}" ;; \
@@ -303,8 +339,11 @@ VOLUME ["/home/calandria"]
 # layer's cache.
 ARG GIT_SHA=unknown
 ARG BUILT_AT=unknown
+# CALANDRIA_CONTAINER tells the update check this is an image install, so the
+# update popover offers the compose upgrade steps.
 ENV CALANDRIA_GIT_SHA=$GIT_SHA \
-    CALANDRIA_BUILT_AT=$BUILT_AT
+    CALANDRIA_BUILT_AT=$BUILT_AT \
+    CALANDRIA_CONTAINER=1
 
 # /api/version doubles as the health probe: it exercises Next and
 # SQLite-backed routing. It presents SERVICE_TOKEN, the one path middleware.ts

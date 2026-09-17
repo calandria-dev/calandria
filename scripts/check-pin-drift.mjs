@@ -2,11 +2,24 @@
 // Checks the Dockerfile's pinned CLI versions against upstream. A pin that's
 // GONE (`gh=`, `AGY_VERSION`: their upstreams serve only the newest build)
 // fails the image build outright; a pin that's merely BEHIND
-// (CLAUDE_CODE_VERSION, CODEX_VERSION) still builds but can ship a model the
-// CLI is too old to run, so it's reported on staleness instead. Run daily by
-// .github/workflows/pin-drift.yml, which files or updates one labeled issue.
+// (CLAUDE_CODE_VERSION, CODEX_VERSION, and the exactly pinned
+// `@anthropic-ai/claude-agent-sdk` in package.json) still builds but can ship a
+// model the CLI is too old to run, so it's reported on staleness instead. Run
+// daily by .github/workflows/pin-drift.yml, which files or updates one labeled
+// issue.
 //
-// Usage: node scripts/check-pin-drift.mjs [--dockerfile <path>] [--report <path>]
+// The agy pins are the exception. `--update-agy` rewrites AGY_VERSION and both
+// SHA-512 ARGs from the manifests this run already fetched, and the workflow
+// turns that into a pull request instead of an issue paragraph. All three ARGs
+// move together or none of them move, a manifest pair that disagrees on the
+// version is refused outright, and the agy findings drop out of the report so
+// the issue keeps reporting only the pins a human still has to bump. The
+// checksum a bump writes is reviewed by building the image on the bot branch,
+// which is what .github/workflows/pin-drift.yml dispatches.
+//
+// Usage: node scripts/check-pin-drift.mjs [--dockerfile <path>]
+//        [--package-json <path>] [--report <path>]
+//        [--update-agy] [--agy-summary <path>] [--apply-agy <path>]
 // Exit codes: 0 = current, 1 = drift found (report written), 2 = check itself failed.
 
 import { readFile, writeFile } from "node:fs/promises";
@@ -30,6 +43,22 @@ const NPM_PINS = [
   { pkg: "@openai/codex", pin: "codexVersion", arg: "CODEX_VERSION" },
 ];
 
+// npm packages pinned in package.json `dependencies` instead of by a
+// Dockerfile ARG. The Agent SDK has no ARG because the image installs no copy
+// of it. It is an ordinary dependency, and it is the turn contract itself, not
+// a subprocess. `tests/cliPins.test.ts` holds it to an exact version, so
+// nothing floats it and nothing else reports that it is behind.
+//
+// Only age can fire for this one. The SDK moves on the PATCH inside a single
+// 0.3.x minor (0.3.159 to 0.3.263 is 104 patches and zero minors), so
+// MAX_MINORS_BEHIND never counts anything. This check adds no patch-distance
+// trigger: a threshold low enough to catch a real gap fires every few days on
+// this cadence, which is the noise MAX_MINORS_BEHIND is shaped to avoid, and
+// there is no measured number to set one at. Age is
+// bounded to one notice per package per MAX_PIN_AGE_DAYS and the issue closes
+// itself on the bump, so a stalled pin still surfaces within three weeks.
+const PACKAGE_JSON_PINS = [{ pkg: "@anthropic-ai/claude-agent-sdk" }];
+
 // A class-two pin is reported once it reaches this age, regardless of
 // whether something newer exists. Age is the only metric that stays quiet
 // under a fast release cadence on one minor line: each package can produce
@@ -52,16 +81,42 @@ const FETCH_TIMEOUT_MS = 20_000;
 const FETCH_ATTEMPTS = 3;
 
 function parseArgs(argv) {
-  const opts = { dockerfile: "Dockerfile", report: null };
+  const opts = {
+    dockerfile: "Dockerfile",
+    packageJson: "package.json",
+    report: null,
+    updateAgy: false,
+    agySummary: null,
+    applyAgy: null,
+  };
+  const paths = {
+    "--dockerfile": "dockerfile",
+    "--package-json": "packageJson",
+    "--report": "report",
+    "--agy-summary": "agySummary",
+    "--apply-agy": "applyAgy",
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "--dockerfile" || arg === "--report") {
+    if (arg === "--update-agy") {
+      opts.updateAgy = true;
+    } else if (paths[arg]) {
       const value = argv[++i];
       if (!value) throw new Error(`${arg} needs a path`);
-      opts[arg === "--dockerfile" ? "dockerfile" : "report"] = value;
+      opts[paths[arg]] = value;
     } else {
       throw new Error(`unrecognized argument: ${arg}`);
     }
+  }
+  if (opts.agySummary && !opts.updateAgy) {
+    throw new Error(
+      "--agy-summary describes what --update-agy wrote, so it needs --update-agy",
+    );
+  }
+  if (opts.applyAgy && opts.updateAgy) {
+    throw new Error(
+      "--apply-agy replays a decision --update-agy already made; pass one or the other",
+    );
   }
   return opts;
 }
@@ -97,6 +152,182 @@ export function extractPins(source, dockerfilePath) {
     ),
     codexVersion: find(/^ARG CODEX_VERSION=(\S+)/m, "`ARG CODEX_VERSION`"),
   };
+}
+
+// The three ARGs an agy bump moves, paired with the key each takes its new
+// value from. One list, so extraction and rewriting can never watch different
+// ARGs.
+const AGY_ARGS = [
+  { arg: "AGY_VERSION", key: "version" },
+  { arg: "AGY_SHA512_AMD64", key: "amd64" },
+  { arg: "AGY_SHA512_ARM64", key: "arm64" },
+];
+
+// What the Dockerfile will accept. The version goes into a `case` glob against
+// the manifest URL and the digests go into `sha512sum -c`, so anything outside
+// these shapes would fail the build after the PR is open rather than here.
+const AGY_VERSION_SHAPE = /^\d+(?:\.\d+){1,3}$/;
+const SHA512_SHAPE = /^[0-9a-f]{128}$/;
+
+/**
+ * What an agy bump would write, or null when the Dockerfile already says it.
+ * Pure, so tests/pinDrift.test.ts can drive every refusal without a network.
+ *
+ * Refuses rather than guesses. A manifest missing a field, a version or digest
+ * in a shape the Dockerfile could not use, and two arches advertising
+ * different versions are all upstream states this cannot turn into one
+ * reviewable commit, and half a bump is worse than none: the Dockerfile's own
+ * guard compares the manifest URL against AGY_VERSION, so a version written
+ * without its digests fails `sha512sum -c` on both arches.
+ *
+ * A version going BACKWARDS is not refused. The manifest is the only thing the
+ * build resolves against, so a vendor rollback has to be followed, not ignored.
+ */
+export function agyBumpPlan(pins, perArch) {
+  const seen = {};
+  for (const arch of ARCHES) {
+    const manifest = perArch?.[arch];
+    if (
+      !manifest ||
+      typeof manifest.version !== "string" ||
+      typeof manifest.sha512 !== "string"
+    ) {
+      throw new Error(
+        `the agy ${arch} manifest has no version/sha512, so there is nothing ` +
+          "safe to write into the Dockerfile",
+      );
+    }
+    const sha512 = manifest.sha512.trim().toLowerCase();
+    if (!AGY_VERSION_SHAPE.test(manifest.version)) {
+      throw new Error(
+        `the agy ${arch} manifest names version \`${manifest.version}\`, ` +
+          "which is not a shape the Dockerfile's AGY_VERSION guard can match",
+      );
+    }
+    if (!SHA512_SHAPE.test(sha512)) {
+      throw new Error(
+        `the agy ${arch} manifest's sha512 is not 128 hex characters, so ` +
+          "`sha512sum -c` could not read it",
+      );
+    }
+    seen[arch] = { version: manifest.version, sha512 };
+  }
+
+  if (seen.amd64.version !== seen.arm64.version) {
+    throw new Error(
+      "the agy manifests disagree on the version: amd64 serves " +
+        `${seen.amd64.version} and arm64 serves ${seen.arm64.version}. One ` +
+        "AGY_VERSION covers both arches, so this waits for upstream to settle",
+    );
+  }
+
+  const version = seen.amd64.version;
+  const from = pins.agyVersion.value;
+  const current =
+    version === from &&
+    seen.amd64.sha512 === pins.agySha.amd64.value.toLowerCase() &&
+    seen.arm64.sha512 === pins.agySha.arm64.value.toLowerCase();
+  if (current) return null;
+
+  return {
+    // A rebuilt tarball under an unchanged version is a different sentence for
+    // whoever reads the PR title, and it is the case worth looking at hardest.
+    kind: version === from ? "digest" : "version",
+    version,
+    from,
+    amd64: seen.amd64.sha512,
+    arm64: seen.arm64.sha512,
+  };
+}
+
+/**
+ * The bump applied to the Dockerfile source. Returns the whole new text, so
+ * the caller writes once and the three ARGs land together or not at all.
+ * `changed` is false when the source already carries every value, which is
+ * what makes re-running this a no-op.
+ */
+export function applyAgyPin(source, plan, dockerfilePath = "Dockerfile") {
+  // Located before anything is rewritten: a Dockerfile missing one of the
+  // three must not come back with the other two moved.
+  const sites = AGY_ARGS.map(({ arg, key }) => {
+    const value = plan?.[key];
+    if (typeof value !== "string" || !value) {
+      throw new Error(`the agy bump has no \`${key}\` to write into ${arg}`);
+    }
+    const match = new RegExp(`^ARG ${arg}=(\\S+)`, "m").exec(source);
+    if (!match) {
+      throw new Error(
+        `could not find \`ARG ${arg}\` in ${dockerfilePath}: the pin moved ` +
+          "or was renamed, so this check is no longer looking at the real thing",
+      );
+    }
+    return { match, value };
+  });
+
+  let out = source;
+  let changed = false;
+  // Highest offset first, so a replacement can never shift an offset that has
+  // not been used yet. Sorted rather than assumed: the offsets come from the
+  // file, and nothing says the ARGs appear in AGY_ARGS order.
+  const ordered = [...sites].sort((a, b) => b.match.index - a.match.index);
+  for (const { match, value } of ordered) {
+    if (match[1] === value) continue;
+    // Only the captured value is replaced, so anything the line carries after
+    // it survives.
+    const start = match.index + match[0].length - match[1].length;
+    out = out.slice(0, start) + value + out.slice(start + match[1].length);
+    changed = true;
+  }
+  return { source: out, changed };
+}
+
+/**
+ * The PACKAGE_JSON_PINS half, keyed by package name. Separate from
+ * extractPins() so that function's signature and return shape stay exactly
+ * what tests/cliPins.test.ts imports and reads.
+ *
+ * The version must be exact: a range means the drift check would report a pin
+ * that npm is already free to move, and the exactness is what
+ * tests/cliPins.test.ts asserts in the first place.
+ *
+ * @returns {Record<string, { value: string, where: string }>}
+ */
+export function extractPackagePins(source, packageJsonPath) {
+  let json;
+  try {
+    json = JSON.parse(source);
+  } catch {
+    throw new Error(`${packageJsonPath} is not JSON`);
+  }
+  const out = {};
+  for (const { pkg } of PACKAGE_JSON_PINS) {
+    const value = json.dependencies?.[pkg];
+    if (!value) {
+      throw new Error(
+        `could not find \`${pkg}\` in ${packageJsonPath} dependencies: the ` +
+          "dependency moved or was renamed, so this check is no longer " +
+          "looking at the real thing",
+      );
+    }
+    if (!/^\d+\.\d+\.\d+$/.test(value)) {
+      throw new Error(
+        `\`${pkg}\` is \`${value}\` in ${packageJsonPath}, not an exact ` +
+          "version: a range floats on its own and is not a pin this check " +
+          "can report on",
+      );
+    }
+    // The dependency block is one entry per line, so locating the key in the
+    // raw text gives a `package.json:32` an issue body can be clicked through.
+    const index = source.indexOf(`"${pkg}"`);
+    out[pkg] = {
+      value,
+      where:
+        index === -1
+          ? packageJsonPath
+          : `${packageJsonPath}:${lineOf(source, index)}`,
+    };
+  }
+  return out;
 }
 
 async function fetchText(url) {
@@ -195,7 +426,8 @@ function compareVersions(a, b) {
  * the prerelease handling without reaching the registry.
  *
  * Returns null when the pin is current enough to stay quiet: being merely
- * behind is the normal state of these two and doesn't warrant an issue.
+ * behind is the normal state of every npm pin here and doesn't warrant an
+ * issue.
  */
 export function npmStaleness({ pinned, latest, pinnedAt, versions, now }) {
   if (pinned === latest) return null;
@@ -246,7 +478,39 @@ export function byUpstreamValue(perArch) {
   }));
 }
 
-async function collectFindings(pins) {
+/**
+ * One row per npm pin, whichever file it lives in, so the staleness loop and
+ * the observed-upstream table read both sources the same way. `pinLabel` is
+ * what the tables print: an ARG carries its name, a package.json dependency is
+ * already named by its package.
+ */
+export function npmPinEntries(pins, packagePins) {
+  return [
+    ...NPM_PINS.map(({ pkg, pin, arg }) => ({
+      pkg,
+      pin: `\`${arg}\``,
+      where: pins[pin].where,
+      pinned: pins[pin].value,
+      pinLabel: `${arg}=${pins[pin].value}`,
+    })),
+    ...PACKAGE_JSON_PINS.map(({ pkg }) => ({
+      pkg,
+      pin: `\`${pkg}\``,
+      where: packagePins[pkg].where,
+      pinned: packagePins[pkg].value,
+      pinLabel: packagePins[pkg].value,
+    })),
+  ];
+}
+
+/**
+ * `updateAgy` drops the agy rows from `findings`. Under --update-agy the bump
+ * is a pull request, and repeating it in the issue would ask a human to do
+ * work a branch is already carrying. The manifests are still fetched and still
+ * appear in the observed-upstream table, since that is what the bump is
+ * computed from.
+ */
+async function collectFindings(pins, packagePins, { updateAgy = false } = {}) {
   const findings = [];
 
   const gh = Object.fromEntries(
@@ -273,7 +537,7 @@ async function collectFindings(pins) {
   const agyVersions = Object.fromEntries(
     ARCHES.map((a) => [a, agy[a].version]),
   );
-  for (const { value: upstream, label } of byUpstreamValue(agyVersions)) {
+  for (const { value: upstream, label } of updateAgy ? [] : byUpstreamValue(agyVersions)) {
     if (upstream === pins.agyVersion.value) continue;
     findings.push({
       pin: `\`AGY_VERSION\`${label}`,
@@ -292,7 +556,7 @@ async function collectFindings(pins) {
   // Digests are inherently per-arch, so these are never collapsed. Only
   // meaningful where the version still matches; a moved version is already
   // reported above and takes both digests with it.
-  for (const arch of ARCHES) {
+  for (const arch of updateAgy ? [] : ARCHES) {
     if (agy[arch].version !== pins.agyVersion.value) continue;
     if (agy[arch].sha512 !== pins.agySha[arch].value) {
       // Same version, different digest: a rebuilt tarball. `sha512sum -c`
@@ -317,27 +581,28 @@ async function collectFindings(pins) {
   // model releases behind" are different jobs for whoever reads the issue.
   const stale = [];
   const npm = {};
-  for (const { pkg, pin, arg } of NPM_PINS) {
-    const up = await upstreamNpm(pkg);
-    npm[pkg] = up.latest;
+  const entries = npmPinEntries(pins, packagePins);
+  for (const entry of entries) {
+    const up = await upstreamNpm(entry.pkg);
+    npm[entry.pkg] = up.latest;
     const verdict = npmStaleness({
-      pinned: pins[pin].value,
+      pinned: entry.pinned,
       latest: up.latest,
-      pinnedAt: up.time[pins[pin].value],
+      pinnedAt: up.time[entry.pinned],
       versions: up.versions,
     });
     if (!verdict) continue;
     stale.push({
-      pin: `\`${arg}\``,
-      pkg,
-      where: pins[pin].where,
-      pinned: pins[pin].value,
+      pin: entry.pin,
+      pkg: entry.pkg,
+      where: entry.where,
+      pinned: entry.pinned,
       upstream: up.latest,
       why: verdict.reasons.join(", "),
     });
   }
 
-  return { findings, stale, observed: { gh, agy, npm } };
+  return { findings, stale, entries, observed: { gh, agy, npm } };
 }
 
 // The step no job can take. Exercising an agent CLI needs a real Claude or
@@ -345,7 +610,7 @@ async function collectFindings(pins) {
 // a documented manual step, carried in the issue body itself instead of a
 // doc that would go stale unopened.
 const BUMP_CHECKLIST = [
-  "### Before merging a bump",
+  "### Before merging a CLI bump",
   "",
   "No job can do this part: exercising an agent CLI needs a real Claude or",
   "ChatGPT login. Do it by hand on the bump PR.",
@@ -354,7 +619,9 @@ const BUMP_CHECKLIST = [
   "   commit (`npm install --save-exact @openai/codex-sdk@<version>`): the SDK",
   "   exact-depends on `@openai/codex`, and outside the image, where",
   "   `CODEX_CLI_PATH` is empty, that vendored copy is the binary that runs.",
-  "   `tests/cliPins.test.ts` fails if the two disagree.",
+  "   `tests/cliPins.test.ts` fails if the two disagree. Any `npm install` here",
+  "   rewrites the lockfile, so the `gypfile` step below applies to this bump",
+  "   too.",
   "2. `npm run typecheck && npm test`.",
   "3. Build the image and run one real turn per bumped agent against a live",
   "   login: a plain prompt, one tool call, one `/clear`. A CLI too old for a",
@@ -363,10 +630,31 @@ const BUMP_CHECKLIST = [
   "4. Check the driver's model catalog against what the new CLI actually",
   "   offers, and add anything it has gained.",
   "",
+  "### Before merging an `@anthropic-ai/claude-agent-sdk` bump",
+  "",
+  "Different work from the CLI above. The CLI is a subprocess; the SDK is the",
+  "turn contract, so a bump can change how any turn behaves without changing a",
+  "line of this repo. Bump it with",
+  "`npm install --save-exact @anthropic-ai/claude-agent-sdk@<version>`, then:",
+  "",
+  '1. Re-add `"gypfile": false` to the `node_modules/better-sqlite3` entry in',
+  "   `package-lock.json`. `npm install` strips it every time it rewrites the",
+  "   lockfile, and `tests/lockfileGypfile.test.ts` goes red until it is put",
+  "   back by hand.",
+  "2. `npm run typecheck && npm test`.",
+  "3. Run one real turn against a live login, covering all six of these:",
+  "   a plain prompt; a tool call; a `/clear`; a turn resuming after that",
+  "   `/clear`; a permission card under a NON-bypass permission mode, so",
+  "   `canUseTool` actually gates instead of being skipped; and a",
+  "   background/lingering turn with a mid-turn message injection. The 0.3.263",
+  "   bump proved each of these is a distinct path through the SDK.",
+  "",
 ];
 
-function buildReport({ findings, stale, observed }, pins) {
+function buildReport({ findings, stale, entries, observed }, pins, agyNote) {
   const lines = [];
+
+  if (agyNote) lines.push(agyNote, "");
 
   if (findings.length) {
     lines.push(
@@ -396,6 +684,8 @@ function buildReport({ findings, stale, observed }, pins) {
       "npm keeps old versions, so these still install. What goes wrong is",
       "behaviour: a new model can require a newer CLI, not just a catalog",
       "entry, so a pin this far back can make a shipped feature fail outright.",
+      "The Agent SDK is the same problem one layer in, since it is the turn",
+      "contract every Claude session runs through.",
       "",
       "| Pin | Where | Pinned | Latest | Why now |",
       "|-|-|-|-|-|",
@@ -424,9 +714,9 @@ function buildReport({ findings, stale, observed }, pins) {
     "",
     "| Package | Latest | Pinned |",
     "|-|-|-|",
-    ...NPM_PINS.map(
-      ({ pkg, pin, arg }) =>
-        `| \`${pkg}\` | \`${observed.npm[pkg]}\` | \`${arg}=${pins[pin].value}\` |`,
+    ...entries.map(
+      ({ pkg, pinLabel }) =>
+        `| \`${pkg}\` | \`${observed.npm[pkg]}\` | \`${pinLabel}\` |`,
     ),
     "",
     `Dockerfile pins: \`gh=${pins.gh.value}\`, \`AGY_VERSION=${pins.agyVersion.value}\`.`,
@@ -445,11 +735,83 @@ function buildReport({ findings, stale, observed }, pins) {
   return lines.join("\n");
 }
 
+/**
+ * Replays a summary --update-agy already wrote, against whatever Dockerfile is
+ * on disk now. No network and no decision of its own: the branch a bump is cut
+ * on must carry the exact three values the check reported, not a second answer
+ * from a manifest that may have moved in between.
+ */
+async function applySavedBump(opts) {
+  const plan = JSON.parse(await readFile(opts.applyAgy, "utf8"));
+  if (!plan.changed) {
+    console.log("Nothing to apply: the summary records no bump.");
+    return 0;
+  }
+  const source = await readFile(opts.dockerfile, "utf8");
+  const applied = applyAgyPin(source, plan, opts.dockerfile);
+  if (applied.changed) await writeFile(opts.dockerfile, applied.source, "utf8");
+  console.log(
+    applied.changed
+      ? `Applied AGY_VERSION=${plan.version} and both SHA-512s to ${opts.dockerfile}.`
+      : `${opts.dockerfile} already carries AGY_VERSION=${plan.version} and both SHA-512s.`,
+  );
+  return 0;
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
-  const source = await readFile(opts.dockerfile, "utf8");
-  const pins = extractPins(source, opts.dockerfile);
-  const result = await collectFindings(pins);
+  if (opts.applyAgy) return applySavedBump(opts);
+  let source = await readFile(opts.dockerfile, "utf8");
+  let pins = extractPins(source, opts.dockerfile);
+  const packagePins = extractPackagePins(
+    await readFile(opts.packageJson, "utf8"),
+    opts.packageJson,
+  );
+  const result = await collectFindings(pins, packagePins, {
+    updateAgy: opts.updateAgy,
+  });
+
+  let agyNote = null;
+  if (opts.updateAgy) {
+    // Throws on an upstream state no commit could be cut from, which exits 2
+    // and goes red rather than writing half a bump.
+    const plan = agyBumpPlan(pins, result.observed.agy);
+    if (plan) {
+      const applied = applyAgyPin(source, plan, opts.dockerfile);
+      if (applied.changed) {
+        await writeFile(opts.dockerfile, applied.source, "utf8");
+        source = applied.source;
+        // Re-read so the report's pin lines describe the file as it now
+        // stands, not the version this run replaced.
+        pins = extractPins(source, opts.dockerfile);
+      }
+      agyNote =
+        plan.kind === "version"
+          ? `The agy pins moved from \`${plan.from}\` to \`${plan.version}\` in a pull request, not here.`
+          : `The agy ${plan.version} digests were refreshed in a pull request, not here.`;
+      console.error(
+        `Wrote AGY_VERSION=${plan.version} and both SHA-512s to ${opts.dockerfile}.`,
+      );
+    }
+    if (opts.agySummary) {
+      await writeFile(
+        opts.agySummary,
+        `${JSON.stringify(
+          {
+            changed: Boolean(plan),
+            kind: plan?.kind ?? null,
+            version: plan?.version ?? pins.agyVersion.value,
+            from: plan?.from ?? pins.agyVersion.value,
+            amd64: plan?.amd64 ?? pins.agySha.amd64.value,
+            arm64: plan?.arm64 ?? pins.agySha.arm64.value,
+          },
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
+    }
+  }
 
   const total = result.findings.length + result.stale.length;
   if (total === 0) {
@@ -457,12 +819,16 @@ async function main() {
       `Pins are current: gh=${pins.gh.value}, ` +
         `AGY_VERSION=${pins.agyVersion.value}, ` +
         `CLAUDE_CODE_VERSION=${pins.claudeCode.value}, ` +
-        `CODEX_VERSION=${pins.codexVersion.value}.`,
+        `CODEX_VERSION=${pins.codexVersion.value}, ` +
+        PACKAGE_JSON_PINS.map(
+          ({ pkg }) => `${pkg}=${packagePins[pkg].value}`,
+        ).join(", ") +
+        ".",
     );
     return 0;
   }
 
-  const report = buildReport(result, pins);
+  const report = buildReport(result, pins, agyNote);
   if (opts.report) await writeFile(opts.report, report, "utf8");
   console.log(report);
   console.error(

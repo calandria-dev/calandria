@@ -22,6 +22,7 @@ function detail(e: LifecycleEvent): string {
   if (e.gapMs !== undefined) parts.push(`${(e.gapMs / 1000).toFixed(0)}s late`);
   if (e.monoMs !== undefined) parts.push(`clock advanced ${(e.monoMs / 1000).toFixed(0)}s`);
   if (e.hiddenMs !== undefined) parts.push(`hidden ${(e.hiddenMs / 60000).toFixed(0)} min`);
+  if (e.waitMs !== undefined) parts.push(`terminal socket stuck connecting for ${(e.waitMs / 1000).toFixed(0)}s`);
   if (e.persisted !== undefined) parts.push(e.persisted ? "from back/forward cache" : "fresh");
   if (e.standalone !== undefined) parts.push(e.standalone ? "installed app" : "browser tab");
   if (e.ios !== undefined && e.ios) parts.push("iOS");

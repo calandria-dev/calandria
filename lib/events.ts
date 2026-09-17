@@ -65,6 +65,7 @@ export type TaskMutationEvent =
   | { type: "tasks_moved"; taskIds: string[]; fromProjectIds: string[]; toProjectId: string }
   | { type: "runbooks_changed"; projectId: string }
   | { type: "tags_changed"; projectId: string }
+  | { type: "updates_changed" }
   | { type: "notification"; payload: NotificationPayload };
 
 /** Everything a global listener can see: turn events plus route mutations. */
@@ -115,6 +116,15 @@ export type TagsChangedWireEvent = {
   type: "tags_changed";
   projectId: string;
 };
+/**
+ * The instance's update check found something different, or somebody skipped a
+ * version or turned the check off. Payload-free and project-free: the update
+ * state is one fact about the whole instance, so every tab refetches
+ * GET /api/updates. See lib/updates/check.ts.
+ */
+export type UpdatesChangedWireEvent = {
+  type: "updates_changed";
+};
 /** A composed, ready-to-render notification. See lib/notifications/. */
 export type NotificationWireEvent = { type: "notification"; payload: NotificationPayload };
 export type GlobalWireEvent =
@@ -123,6 +133,7 @@ export type GlobalWireEvent =
   | TasksMovedWireEvent
   | RunbooksChangedWireEvent
   | TagsChangedWireEvent
+  | UpdatesChangedWireEvent
   | NotificationWireEvent
   | AgentAuthEvent;
 

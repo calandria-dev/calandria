@@ -4,6 +4,15 @@ import { useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 import type { Terminal as XTerm, ITheme } from "@xterm/xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
+import { recordLifecycleEvent } from "./shell/useLifecycleDiagnostics";
+
+// How long a socket may sit at CONNECTING before the shell is called dead.
+// WebKit bug 308073 (iOS 26.x): after the page has been in the background for
+// more than about 10 seconds, Safari closes the page's WebSocket and every
+// later `new WebSocket()` hangs at CONNECTING until the page is reloaded. That
+// state fires no error and no close, so without a deadline the terminal shows
+// an empty pane forever with nothing to act on.
+const WS_OPEN_TIMEOUT_MS = 8_000;
 
 // Reads a CSS custom property's resolved value off <html>.
 function cssVar(name: string, fallback = ""): string {
@@ -53,7 +62,7 @@ function buildXtermTheme(): ITheme {
 // Ctrl-C buttons) without owning the websocket itself.
 export interface TermApi { send: (data: string) => void; }
 
-export function TerminalView({ cwd, port, fontSize = 12.5, monoFontFamily, onReady }: { cwd: string; port?: number; fontSize?: number; monoFontFamily?: string; onReady?: (api: TermApi) => void }) {
+export function TerminalView({ cwd, port, fontSize = 12.5, monoFontFamily, onReady, onClosed }: { cwd: string; port?: number; fontSize?: number; monoFontFamily?: string; onReady?: (api: TermApi) => void; onClosed?: () => void }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddonType | null>(null);
@@ -74,6 +83,7 @@ export function TerminalView({ cwd, port, fontSize = 12.5, monoFontFamily, onRea
     let term: XTerm | null = null;
     let fit: FitAddonType | null = null;
     let ws: WebSocket | null = null;
+    let openTimer: number | null = null;
     let ro: ResizeObserver | null = null;
     let mo: MutationObserver | null = null;
     let disposed = false;
@@ -126,6 +136,25 @@ export function TerminalView({ cwd, port, fontSize = 12.5, monoFontFamily, onRea
       ws = new WebSocket(url);
       ws.binaryType = "arraybuffer";
 
+      // A socket that never opens is reported once and the shell is called
+      // dead, so Enter retries it the way it does after an ordinary
+      // disconnect. A plain timer, not a reconnect loop: on an affected iOS
+      // build every retry hangs the same way until the page is reloaded, so
+      // retrying on the user's behalf would only hide that.
+      openTimer = window.setTimeout(() => {
+        openTimer = null;
+        if (disposed || !ws || ws.readyState !== WebSocket.CONNECTING) return;
+        recordLifecycleEvent({ kind: "ws_stuck", waitMs: WS_OPEN_TIMEOUT_MS, online: navigator.onLine });
+        dead = true;
+        try { ws.close(); } catch {}
+        term!.write("\r\n\x1b[33m[connection never opened: press Enter to retry, or reload the app, which always fixes it]\x1b[0m\r\n");
+        onClosed?.();
+      }, WS_OPEN_TIMEOUT_MS);
+      ws.onopen = () => {
+        if (openTimer !== null) window.clearTimeout(openTimer);
+        openTimer = null;
+      };
+
       ws.onmessage = (e) => {
         if (typeof e.data === "string") {
           try {
@@ -138,9 +167,15 @@ export function TerminalView({ cwd, port, fontSize = 12.5, monoFontFamily, onRea
       };
       ws.onerror = () => { if (!disposed) term!.write(`\r\n\x1b[31m[terminal unreachable: is the pty-server sidecar running?]\x1b[0m\r\n`); };
       ws.onclose = () => {
-        if (disposed) return;
+        if (openTimer !== null) window.clearTimeout(openTimer);
+        openTimer = null;
+        // `dead` is already set when the deadline above gave up on a socket
+        // stuck at CONNECTING, and closing it lands right back here: that case
+        // has said its piece, so don't say it again.
+        if (disposed || dead) return;
         dead = true;
         term!.write("\r\n\x1b[90m[disconnected: press Enter to start a new shell]\x1b[0m\r\n");
+        onClosed?.();
       };
 
       // Single input path for both typed keystrokes and the mobile button-bar:
@@ -169,6 +204,8 @@ export function TerminalView({ cwd, port, fontSize = 12.5, monoFontFamily, onRea
 
     return () => {
       disposed = true;
+      if (openTimer !== null) window.clearTimeout(openTimer);
+      openTimer = null;
       termRef.current = null;
       fitRef.current = null;
       try { ro?.disconnect(); } catch {}

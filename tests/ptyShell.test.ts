@@ -90,7 +90,7 @@ afterEach(() => {
 // name. The win32 half is covered where it can be: the default is exercised
 // end-to-end by the case below, and by tests/ptyOrigin.test.ts and
 // tests/ptyProtocol.test.ts, which spawn real Windows shells through the
-// knob (docs/WINDOWS.md §7).
+// knob (docs/WINDOWS.md, "Platform behavior").
 describe.skipIf(IS_WIN)("pty sidecar shell resolution", () => {
   it("uses CALANDRIA_PTY_SHELL ahead of $SHELL", async () => {
     // $SHELL points at nothing, so if precedence were the other way round the

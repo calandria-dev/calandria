@@ -1,15 +1,37 @@
 import { describe, it, expect } from "vitest";
 import { codexProviderConfig, CODEX_LOCAL_PROVIDER_ID, CODEX_GATEWAY_PROVIDER_ID, CODEX_GATEWAY_KEY_VAR } from "@/lib/agents/codex/provider";
-import { agentTurnEnv, gatewayPresetEnv, providerPresetEnv, serializeAgentEnv, cloudOverrideEnv } from "@/lib/agentEnv";
-import type { Project, Task } from "@/lib/types";
+import { agentTurnEnv as buildAgentTurnEnv, gatewayPresetEnv, providerPresetEnv } from "@/lib/agentEnv";
+import type { AgentEnv } from "@/lib/agentEnv";
+import type { Project } from "@/lib/types";
+import type { ResolvedProviderEnv } from "@/lib/providers/resolve";
+import { resolveProviderEnv } from "@/lib/providers/resolve";
+import { createProvider } from "@/lib/providers/store";
+import { deleteProviderSecrets, setProviderSecret } from "@/lib/providerSecrets";
+import { getDb } from "@/lib/db";
 
 // The Codex half of a provider override (lib/agents/codex/provider.ts): the
 // codex CLI reads its provider from config.toml, not the environment, so the
 // override becomes a `--config` provider entry the driver spreads into the
 // SDK's `config`. Pure data, so this runs without the SDK or a codex binary.
 
-const project = (agent_env: string) => ({ port: 0, agent_env }) as Pick<Project, "port" | "agent_env">;
-const task = (agent_env: string) => ({ agent_env }) as Pick<Task, "agent_env">;
+const project = () => ({ port: 0 }) as Pick<Project, "port">;
+
+// These cases state the resolved override directly, the same shape
+// lib/providers/resolve.ts builds from a provider row.
+const agentTurnEnv = (
+  p: Parameters<typeof buildAgentTurnEnv>[0],
+  t: Parameters<typeof buildAgentTurnEnv>[1],
+  base: NonNullable<Parameters<typeof buildAgentTurnEnv>[2]>,
+  gateway?: Parameters<typeof buildAgentTurnEnv>[3],
+  env: AgentEnv = {},
+) => {
+  const resolved: ResolvedProviderEnv = {
+    provider: null,
+    env,
+    extras: base.CALANDRIA_LITELLM_KEY ? { CALANDRIA_LITELLM_KEY: base.CALANDRIA_LITELLM_KEY } : {},
+  };
+  return buildAgentTurnEnv(p, t, base, gateway, resolved);
+};
 
 describe("codexProviderConfig", () => {
   it("emits nothing for the cloud", () => {
@@ -41,13 +63,30 @@ describe("codexProviderConfig", () => {
     expect(out.config.model_provider).toBe(CODEX_LOCAL_PROVIDER_ID);
   });
 
-  it("reads the MERGED turn env, so a task-level cloud override wins over a local project", () => {
-    const proj = project(serializeAgentEnv(providerPresetEnv({ baseUrl: "http://localhost:11434", model: "qwen3-coder" })));
-    const local = codexProviderConfig(agentTurnEnv(proj, null, { PATH: "/usr/bin" }));
+  it("reads the turn env, so a row that names no endpoint leaves the CLI on its own login", () => {
+    const local = codexProviderConfig(
+      agentTurnEnv(project(), null, { PATH: "/usr/bin" }, undefined, providerPresetEnv({ baseUrl: "http://localhost:11434", model: "qwen3-coder" })),
+    );
     expect(local.config.model_provider).toBe(CODEX_LOCAL_PROVIDER_ID);
     expect(local.model).toBe("qwen3-coder");
-    const cloud = codexProviderConfig(agentTurnEnv(proj, task(serializeAgentEnv(cloudOverrideEnv())), { PATH: "/usr/bin" }));
+    const cloud = codexProviderConfig(agentTurnEnv(project(), null, { PATH: "/usr/bin" }));
     expect(cloud).toEqual({ config: {}, model: null });
+  });
+
+  it("maps an openai_key row to the vendor URL and OPENAI_API_KEY env_key", () => {
+    const provider = createProvider({ type: "openai_key", config: { default_model: "gpt-5.2" } });
+    setProviderSecret(provider.id, "key", "sk-row-secret");
+    const resolved = resolveProviderEnv({ project: { default_provider_id: provider.id }, environment: "codex" });
+    const out = codexProviderConfig({ ...resolved.env, ...resolved.extras });
+    const entry = (out.config.model_providers as Record<string, Record<string, unknown>>)[CODEX_LOCAL_PROVIDER_ID];
+    expect(out.model).toBe("gpt-5.2");
+    expect(entry).toMatchObject({
+      base_url: "https://api.openai.com/v1",
+      env_key: "OPENAI_API_KEY",
+      wire_api: "responses",
+    });
+    deleteProviderSecrets(provider.id);
+    getDb().prepare("DELETE FROM model_providers WHERE id = ?").run(provider.id);
   });
 });
 
@@ -105,15 +144,16 @@ describe("codexProviderConfig through the gateway", () => {
 });
 
 describe("agentTurnEnv gateway key injection for Codex", () => {
-  const gatewayProject = (billing: "key" | "subscription" = "key") =>
-    project(serializeAgentEnv(gatewayPresetEnv({ baseUrl: GATEWAY, billing, model: "gpt-5-codex" })));
+  const gatewayEnv = (billing: "key" | "subscription" = "key") =>
+    gatewayPresetEnv({ baseUrl: GATEWAY, billing, model: "gpt-5-codex" });
 
   it("sets CALANDRIA_GATEWAY_KEY and the tag list, and the entry picks both up", () => {
     const env = agentTurnEnv(
-      { ...gatewayProject(), id: "p1" },
-      { agent_env: "", id: "t1", agent: "codex" },
+      { ...project(), id: "p1" },
+      { id: "t1", agent: "codex" },
       { PATH: "/usr/bin", CALANDRIA_LITELLM_KEY: "sk-gw" },
       GATEWAY,
+      gatewayEnv(),
     );
     expect(env.CALANDRIA_GATEWAY_KEY).toBe("sk-gw");
     expect(env.CALANDRIA_GATEWAY_TAGS).toBe("calandria,project:p1,task:t1,agent:codex");
@@ -131,10 +171,11 @@ describe("agentTurnEnv gateway key injection for Codex", () => {
 
   it("keys Codex in both billing modes: `requires_openai_auth` is not implemented", () => {
     const env = agentTurnEnv(
-      { ...gatewayProject("subscription"), id: "p1" },
-      { agent_env: "", id: "t1", agent: "codex" },
+      { ...project(), id: "p1" },
+      { id: "t1", agent: "codex" },
       { PATH: "/usr/bin", CALANDRIA_LITELLM_KEY: "sk-gw" },
       GATEWAY,
+      gatewayEnv("subscription"),
     );
     expect(env.CALANDRIA_GATEWAY_KEY).toBe("sk-gw");
     // Claude's half is unchanged: subscription billing sets no Anthropic credential.
@@ -143,10 +184,11 @@ describe("agentTurnEnv gateway key injection for Codex", () => {
 
   it("never leaves an inherited key or tag list on a non-gateway turn", () => {
     const env = agentTurnEnv(
-      project(serializeAgentEnv(providerPresetEnv({ baseUrl: "http://localhost:11434", model: "qwen3-coder" }))),
+      project(),
       null,
       { PATH: "/usr/bin", CALANDRIA_GATEWAY_KEY: "stale", CALANDRIA_GATEWAY_TAGS: "stale" },
       GATEWAY,
+      providerPresetEnv({ baseUrl: "http://localhost:11434", model: "qwen3-coder" }),
     );
     expect(env.CALANDRIA_GATEWAY_KEY).toBeUndefined();
     expect(env.CALANDRIA_GATEWAY_TAGS).toBeUndefined();

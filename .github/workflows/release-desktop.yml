@@ -1,249 +1,183 @@
-# Build the Electron desktop shell on all three platforms and publish the
-# artifacts to the GitHub Release that release-please just cut. Dispatched by
-# hand it does everything except the publishing, which is the only way to
-# exercise the signed path before a tag exists — see the `workflow_dispatch`
-# comment below.
+# Build signed desktop installers on the generated release-please PR. Store the
+# installers, update feeds, blockmaps, signing notes, and checksums as workflow
+# artifacts. When release-please merges the PR and creates the tag, verify and
+# attach those same bytes to the published GitHub Release.
 #
-# Until this existed, a release published a multi-arch Docker image and nothing
-# else: the desktop app built only when somebody ran `npm run dist:*` by hand, or
-# when a test lane packaged one to prove it packages and then threw it away. The
-# only way to obtain the app was to build it, and there was no release channel
-# for an updater to read.
+# The prebuild uses pull_request_target so GitHub reads this workflow from the
+# protected base branch. The gate validates the release-please branch and every
+# changed executable manifest before any job receives signing credentials. The
+# release PR may change only version fields plus CHANGELOG.md.
 #
-# ELECTRON-BUILDER UPLOADS ITS OWN ARTIFACTS, AND THAT IS THE POINT. The
-# `github` publish provider (`publish` in desktop/electron-builder.cjs, driven by
-# `--publish always` below) attaches each artifact to the Release *and* writes
-# the per-platform update feed beside it — latest.yml, latest-mac.yml,
-# latest-linux.yml and the .blockmap files electron-updater needs for
-# differential downloads. A lane that built locally and then ran
-# `gh release upload` would produce artifacts with no feed, which is an updater
-# that silently never finds anything. Do not replace the provider with a manual
-# upload. The one thing uploaded by hand here is SHA256SUMS.txt, because
-# electron-builder does not produce it.
-#
-# ...AND IT DECLINES BY LOGGING, WHICH IS WHY THIS FILE ASSERTS. v0.2.0 through
-# v0.5.1 all have ZERO assets attached. The provider defaults to publishing into
-# a *draft*, found the published release release-please had already cut, decided
-# the types were incompatible, and emitted one `skipped publishing` warning per
-# artifact — installers and update feeds alike — before exiting 0. Three green
-# legs, six empty releases, no failure anywhere. `releaseType: "release"` in
-# desktop/electron-builder.cjs and EP_GH_IGNORE_TIME below close the two
-# declines we have hit; "Assert the artifacts actually reached the release"
-# closes the class, by asking GitHub what is on the release rather than trusting
-# an exit code. If you add a publishing step, assert it landed.
-#
-# THE GATE IS publish-image.yml's, NOT A SECOND ONE. Both call
-# .github/actions/require-green-test-run, which waits for the tagged commit's
-# push-to-main Test run to conclude and fails unless it succeeded. That action's
-# header carries the reasoning — why it waits rather than querying for a
-# completed run, why the filter is `event=push`, why `cancelled` is not a red
-# verdict, and why the 45-minute ceiling sits where it does. Read it there.
-#
-# SIGNING IS SUPPLIED HERE, NOT WRITTEN HERE. desktop/signing.js decides the
-# policy and desktop/electron-builder.cjs assembles it; this workflow only puts
-# credentials in the environment and then asserts the result. Which credentials
-# and how to obtain each is docs/DESKTOP_APP.md §6.4. Two properties of that
-# policy shape the job below:
-#
-#   - Signing is opt-in BY NAME. `CALANDRIA_MAC_SIGN_IDENTITY` is the only
-#     switch; unset or "-" is ad-hoc. So a fork, or this repository before the
-#     secrets existed, produces an unsigned build rather than a failure.
-#   - A HALF-configured request is an error, never a downgrade. Setting the
-#     identity without notarization credentials fails the build on purpose: a
-#     signed, un-notarized app is still refused on download, so that combination
-#     is the most plausible way to ship a broken release from a green run.
-#
-#     Which is why the `signing` job below decides all-or-nothing per platform
-#     and the build gets either the whole credential set or none of it. As of
-#     2026-08-30 the Apple secrets exist and the Azure ones do not, so macOS
-#     publishes signed and notarized while Windows publishes unsigned — and the
-#     release notes say so per platform rather than leaving people to find out.
-#
-# DO NOT COPY test.yml's `macos-desktop` ENVIRONMENT. That lane runs
-# `unset GITHUB_BASE_REF` in its shell and sets `CSC_IDENTITY_AUTO_DISCOVERY:
-# "false"`. This lane needs neither: it runs on a tag, where GITHUB_BASE_REF is
-# unset anyway, and it must NOT disable identity discovery. `CSC_FOR_PULL_REQUEST`
-# is gone from the repository and must not come back — it means "sign pull
-# requests with the real certificate", which is a real hazard now that a
-# certificate exists.
-#
-# THE spctl CHECK IS POINTED THE OTHER WAY from the test lane's. `macos-desktop`
-# asserts that Gatekeeper REFUSES what it built, because that lane is ad-hoc by
-# construction and an acceptance there would mean a certificate leaked into a
-# PR-triggered build. Here the same command is an ordinary assertion expecting
-# the opposite answer, plus `stapler validate` on both the .app and the .dmg.
-# Neither is satisfied by `codesign --verify`, which passes on ad-hoc bundles.
-#
-# NOTARIZATION IS SLOW AND MUST NOT BE RETRIED IMPATIENTLY. Apple documents
-# "most within 5 minutes, 98% within 15" against a guideline of 75 submissions
-# per day, but 2026 reports of Electron bundles sitting In Progress for hours are
-# common. Hence the macOS job's three-hour ceiling and `fail-fast: false`: a slow
-# Apple must not take the two artifacts that already built down with it.
-#
-# THIS LANE GATED THE UPDATER, AND THAT GATE IS NOW SATISFIED. The recorded
-# position (2026-08-28) was that the update mechanism gates the RELEASE LANE
-# rather than the merge to main, because this is the first thing that puts a
-# binary in anybody's hands and a binary that cannot update itself is one people
-# keep. `electron-updater` landed on 2026-08-30 (desktop/updater.js,
-# docs/DESKTOP_APP.md §6.6), so a release cut through this lane now ships
-# downloads that read the feed it publishes.
-#
-# NOTHING HERE CHANGED TO MAKE THAT TRUE, which was the prediction and is worth
-# recording as confirmed: the feed is the `publish` provider's doing, written
-# either way, so the updater was a purely client-side addition. What that costs
-# this file is a rule rather than a step — the `--publish` below must stay, and
-# must never be replaced by a hand-rolled `gh release upload` of the artifacts.
-# That would still attach the downloads and would silently stop writing
-# latest.yml / latest-mac.yml / latest-linux.yml, which is an updater that never
-# finds anything and never says so. SHA256SUMS.txt is uploaded that way on
-# purpose; it is not part of the feed.
-#
-# WHAT STILL HAS TO HAPPEN AFTER THIS LANE'S FIRST REAL RUN, recorded because
-# both places say they are waiting on exactly this: the quarantine workaround in
-# docs/DESKTOP_APP.md §6.3 and desktop/README.md is the correct instruction for a
-# self-built or CI-pulled ad-hoc bundle and stays until a notarized artifact
-# exists AND somebody has confirmed it opens after a browser download on a
-# machine that has never seen it. A `curl` or an `scp` does not reproduce that —
-# only a browser attaches `com.apple.quarantine`.
+# The tag job identifies the merged release PR through GitHub's commit-to-PR
+# association. Every platform manifest must match that PR's head SHA and tree,
+# and the released version. The tag may differ only in CI, tests, and agent
+# instructions that cannot enter the packaged app. It also verifies each asset's
+# byte count and SHA-256 digest before upload. A new commit on the release PR
+# produces new artifact names, so a stale run cannot be promoted.
 name: Publish desktop artifacts
 
 on:
-  # ON THE RELEASE TAG ONLY. This is the most expensive lane in the repository —
-  # three runners, one of them macOS, each doing a production `next build`, a
-  # production `npm ci` into a staging payload and an Electron package — and
-  # proving that the shell still builds is already the desktop / windows-desktop
-  # / macos-desktop lanes' job in test.yml. There is deliberately no `push:
-  # branches` trigger here.
+  pull_request_target:
+    branches: ["**"]
+    types: [opened, synchronize, reopened]
   push:
     tags: ["v*"]
-  # TWO JOBS, AND THE DEFAULT IS THE SAFE ONE.
-  #
-  # A DRY RUN is what you get by default, and it is the only way to exercise the
-  # signed path before a tag exists. Dispatch on any ref and this builds, signs,
-  # notarizes, staples and asserts all of it, then stops short of publishing and
-  # uploads the installers as workflow artifacts you can download and actually
-  # open. Every signing bug this repository has shipped was one that only the
-  # release lane could reach, because signing needs the real secrets and no
-  # pull-request lane may have them: test.yml's macos-desktop job deliberately
-  # leaves CALANDRIA_MAC_SIGN_IDENTITY unset and signs ad-hoc. Run this before
-  # tagging and the release stops being the first execution of its own code.
-  #
-  # THE ESCAPE HATCH is the same dispatch with `publish` ticked, and it is not
-  # hypothetical: release-please.yml's header records that a tag pushed with
-  # GITHUB_TOKEN rather than RELEASE_PLEASE_TOKEN fires no `push: tags:` trigger
-  # at all. `gh workflow run release-desktop.yml --ref vX.Y.Z -f publish=true`
-  # then behaves exactly like the missing tag push, gate included. Ticking it off
-  # a tag is refused by the gate rather than left to mint a stray release.
   workflow_dispatch:
     inputs:
       publish:
-        description: "Attach the artifacts to the release for this tag (leave off for a dry run)"
+        description: "Attach the release PR's prebuilt artifacts to this tag"
         type: boolean
         default: false
+        required: false
+      check_only:
+        description: "Report the required skip check without building"
+        type: boolean
+        default: false
+        required: false
+      release_tag:
+        description: "Existing vX.Y.Z tag to promote when dispatching from a branch"
+        type: string
+        default: ""
         required: false
 
 permissions:
   contents: read
 
 concurrency:
-  # Never cancel a publish mid-flight. A half-uploaded Release is worse than a
-  # queued rerun, and on the macOS leg a cancellation can land in the middle of a
-  # notarization round trip that has already cost Apple's clock.
-  group: release-desktop-${{ github.ref }}
-  cancel-in-progress: false
+  group: release-desktop-${{ github.event.pull_request.number || inputs.release_tag || github.ref_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
 env:
-  # THE VENDORED NODE IS PINNED HERE, and it is the one thing that separates this
-  # from a test lane. desktop/scripts/fetch-node.js defaults to the HOST's Node
-  # version, which is right when the question is "does it build on whatever this
-  # runner has" and wrong when the artifact is going to somebody's machine: two
-  # releases cut a week apart would ship different runtimes for no reason anybody
-  # chose. `.nvmrc` cannot serve — it says `22`, and fetch-node.js needs a full
-  # version to name a file on nodejs.org.
-  #
-  # setup-node is pinned to the SAME version below rather than reading .nvmrc, so
-  # the Node that installs the payload's node_modules and the Node the packaged
-  # app runs them under are one decision instead of two that happen to agree.
-  # build-payload.js's final check — running the vendored binary against
-  # `require('better-sqlite3'); require('node-pty')` — is what would catch them
-  # diverging.
   CALANDRIA_DESKTOP_NODE_VERSION: "22.23.2"
+  RELEASE_BRANCH: release-please--branches--main--components--calandria
 
 jobs:
-  # Everything that must be decided once, before three runners spend an hour
-  # each: is this commit releasable, and which platforms can sign.
   gate:
-    name: Gate
+    name: Release artifact gate
     runs-on: ubuntu-24.04
-    # Above the gate action's 2700-second wait, or the job timeout becomes the
-    # thing that fails releases. Same reasoning, same shape, as publish-image.yml's
-    # `prepare`.
-    timeout-minutes: 50
+    timeout-minutes: 10
     permissions:
       contents: read
-      # The gate polls test.yml's run history for this SHA.
-      actions: read
+      pull-requests: read
+      statuses: write
     outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+      source_sha: ${{ steps.mode.outputs.source_sha }}
+      source_pr: ${{ steps.mode.outputs.source_pr }}
+      artifact_suffix: ${{ steps.mode.outputs.artifact_suffix }}
+      release_tag: ${{ steps.mode.outputs.release_tag }}
       mac_signing: ${{ steps.credentials.outputs.mac }}
       win_signing: ${{ steps.credentials.outputs.win }}
-      publish: ${{ steps.mode.outputs.publish }}
     steps:
-      # DECIDED ONCE, HERE, rather than re-derived in each of the three build
-      # legs and again in `notes`. Publishing is the irreversible half of this
-      # workflow and four copies of the condition is four chances to disagree
-      # about it.
-      #
-      # Publishing off a tag is refused rather than tolerated: electron-builder
-      # derives its target release from desktop/package.json's version, so a
-      # dispatch on `main` with the box ticked would not fail, it would mint a
-      # release named after whatever version main is carrying and fill it with
-      # artifacts built from an unreleased commit.
-      - name: Decide whether this run publishes
+      - name: Select the workflow mode
         id: mode
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
-          publish=false
-          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            publish=true
-          elif [ "${{ inputs.publish }}" = "true" ]; then
-            if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
-              echo "::error::publish was requested on ${GITHUB_REF_NAME}, which is not a tag. Re-dispatch on the release tag (gh workflow run release-desktop.yml --ref vX.Y.Z -f publish=true), or leave publish off for a dry run."
-              exit 1
-            fi
-            publish=true
+          mode=skip
+          source_sha=""
+          source_pr=""
+          suffix=""
+          release_tag=""
+
+          case "$GITHUB_EVENT_NAME" in
+            pull_request_target)
+              source_sha="$HEAD_SHA"
+              source_pr="$PR_NUMBER"
+              if [ "$BASE_REF" = "main" ] && [ "$HEAD_REF" = "$RELEASE_BRANCH" ]; then
+                if [ "$HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ]; then
+                  echo "::error::The release branch must belong to $GITHUB_REPOSITORY."
+                  exit 1
+                fi
+                mode=prebuild
+                suffix="pr-${PR_NUMBER}-${HEAD_SHA}"
+              fi
+              ;;
+            push)
+              if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+                echo "::error::The push trigger accepts release tags only."
+                exit 1
+              fi
+              mode=promote
+              release_tag="$GITHUB_REF_NAME"
+              ;;
+            workflow_dispatch)
+              if [ "${{ inputs.check_only }}" = "true" ]; then
+                if [ "${{ inputs.publish }}" = "true" ]; then
+                  echo "::error::check_only and publish cannot both be true."
+                  exit 1
+                fi
+                mode=check
+                source_sha="$GITHUB_SHA"
+              elif [ "${{ inputs.publish }}" = "true" ]; then
+                if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+                  if [ -n "$REQUESTED_RELEASE_TAG" ] && [ "$REQUESTED_RELEASE_TAG" != "$GITHUB_REF_NAME" ]; then
+                    echo "::error::release_tag must match the tag selected as the workflow ref."
+                    exit 1
+                  fi
+                  release_tag="$GITHUB_REF_NAME"
+                else
+                  release_tag="$REQUESTED_RELEASE_TAG"
+                fi
+                mode=promote
+              else
+                mode=dry-run
+                source_sha="$GITHUB_SHA"
+                suffix="run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+              fi
+              ;;
+          esac
+
+          if [ "$mode" = "promote" ] &&
+             [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Publishing requires release_tag to name a vX.Y.Z tag."
+            exit 1
           fi
-          echo "publish=${publish}" >> "$GITHUB_OUTPUT"
-          if [ "$publish" = "true" ]; then
-            echo "::notice::Publishing to the ${GITHUB_REF_NAME} release."
-          else
-            echo "::notice::DRY RUN — building, signing and notarizing, publishing nothing. The installers are attached to this run as workflow artifacts."
-          fi
+
+          {
+            echo "mode=$mode"
+            echo "source_sha=$source_sha"
+            echo "source_pr=$source_pr"
+            echo "artifact_suffix=$suffix"
+            echo "release_tag=$release_tag"
+          } >> "$GITHUB_OUTPUT"
+          echo "selected mode: $mode"
+
+      - name: Mark the release artifact check pending
+        if: steps.mode.outputs.mode == 'prebuild'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: ${{ steps.mode.outputs.source_sha }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${TARGET_SHA}" \
+            -f state=pending \
+            -f context='Desktop release artifacts' \
+            -f description='Signed desktop release artifacts are building'
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.mode.outputs.mode == 'prebuild'
         with:
           persist-credentials: false
+          fetch-depth: 0
 
-      - name: Refuse a tag whose Test run is not green
-        if: github.ref_type == 'tag'
-        uses: ./.github/actions/require-green-test-run
-        with:
-          sha: ${{ github.sha }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-          refusing: publish desktop artifacts for ${{ github.ref_name }}
+      - name: Validate the generated release PR
+        if: steps.mode.outputs.mode == 'prebuild'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$HEAD_SHA"
+          node scripts/validate-release-pr.mjs --base "$BASE_SHA" --head "$HEAD_SHA"
 
-      # ALL OR NOTHING, PER PLATFORM, DECIDED ONCE. desktop/signing.js throws on a
-      # half-filled credential group — deliberately, because a partial set is how
-      # a green build ships an artifact that only misbehaves on somebody else's
-      # machine. That throw is the right answer for a developer who set four of
-      # six variables by hand; it is the wrong answer for a release lane, where a
-      # single lapsed secret would take the whole platform's artifact down
-      # instead of producing the unsigned one that is still worth having.
-      #
-      # So the decision is made here, from presence alone, and the build gets
-      # either the complete set or none of it. What is missing is named — a
-      # release that silently stopped signing is exactly the failure this whole
-      # chain is built against.
       - name: Decide which platforms can sign
+        if: steps.mode.outputs.mode == 'prebuild' || steps.mode.outputs.mode == 'dry-run'
         id: credentials
         env:
           CALANDRIA_MAC_SIGN_IDENTITY: ${{ secrets.CALANDRIA_MAC_SIGN_IDENTITY }}
@@ -252,9 +186,6 @@ jobs:
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          # Non-secret by design: Azure Artifact Signing authenticates through
-          # OIDC workload-identity federation, so there is no certificate and no
-          # secret to store. Repository variables, not secrets.
           AZURE_CODE_SIGNING_ENDPOINT: ${{ vars.AZURE_CODE_SIGNING_ENDPOINT }}
           AZURE_CODE_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_CODE_SIGNING_ACCOUNT_NAME }}
           AZURE_CODE_SIGNING_CERT_PROFILE_NAME: ${{ vars.AZURE_CODE_SIGNING_CERT_PROFILE_NAME }}
@@ -263,7 +194,6 @@ jobs:
           AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
         run: |
           set -euo pipefail
-
           decide() {
             local platform="$1"; shift
             local missing=()
@@ -273,158 +203,95 @@ jobs:
             if [ ${#missing[@]} -eq 0 ]; then
               echo "${platform}=true" >> "$GITHUB_OUTPUT"
               echo "${platform}: signing configured"
-              return
-            fi
-            echo "${platform}=false" >> "$GITHUB_OUTPUT"
-            if [ ${#missing[@]} -eq $# ]; then
-              echo "::notice::${platform}: no signing credentials are configured; this release's ${platform} artifacts will be published unsigned. See docs/DESKTOP_APP.md §6.4."
             else
-              # A partial set is a lapsed or mistyped secret, not a deliberate
-              # choice, and it is worth a warning rather than a notice.
-              echo "::warning::${platform}: signing is only PARTLY configured — missing ${missing[*]}. Publishing unsigned rather than failing the release. See docs/DESKTOP_APP.md §6.4."
+              echo "${platform}=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::${platform}: publishing unsigned because these settings are absent: ${missing[*]}"
             fi
           }
 
           decide mac CALANDRIA_MAC_SIGN_IDENTITY CSC_LINK CSC_KEY_PASSWORD \
-                     APPLE_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER
+            APPLE_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER
           decide win AZURE_CODE_SIGNING_ENDPOINT AZURE_CODE_SIGNING_ACCOUNT_NAME \
-                     AZURE_CODE_SIGNING_CERT_PROFILE_NAME AZURE_CODE_SIGNING_PUBLISHER_NAME \
-                     AZURE_CLIENT_ID AZURE_TENANT_ID
+            AZURE_CODE_SIGNING_CERT_PROFILE_NAME AZURE_CODE_SIGNING_PUBLISHER_NAME \
+            AZURE_CLIENT_ID AZURE_TENANT_ID
 
   build:
     name: ${{ matrix.label }}
     needs: gate
+    if: needs.gate.outputs.mode == 'prebuild' || needs.gate.outputs.mode == 'dry-run'
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout }}
+    environment: windows-signing
     permissions:
-      # electron-builder's github provider attaches artifacts to the Release.
-      contents: write
-      # Azure Artifact Signing authenticates with an OIDC token minted here.
-      # Harmless on the legs that never ask for one.
+      contents: read
       id-token: write
     strategy:
-      # A slow Apple, a flaky apt mirror or an Azure outage must not discard the
-      # platforms that already built. Every leg publishes independently; a
-      # missing one is a rerun of that leg, not of the release.
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-24.04
             platform: linux
-            label: Linux (deb, AppImage)
-            # `dir` is in electron-builder.cjs's target list for the test lanes to
-            # launch; it is not a thing anyone downloads, so it is not built here.
+            label: Linux release (deb, AppImage)
             targets: --linux deb AppImage
-            # The update feed this platform's artifacts are useless without. The
-            # publish assertion below checks for it BY NAME, because a release
-            # with every installer attached and no feed is an updater that
-            # silently never finds anything — the exact failure this file's
-            # publish comment warns about, and one no download test would catch.
-            feed: latest-linux.yml
             timeout: 45
           - os: macos-latest
             platform: mac
-            # dmg is the download people expect; the zip is the one Squirrel.Mac
-            # — and so electron-updater — actually consumes, and a dmg-only build
-            # emits no latest-mac.yml at all. Both, always.
-            label: macOS (dmg, zip)
+            label: macOS release (dmg, zip)
             targets: --mac dmg zip
-            feed: latest-mac.yml
-            # Three hours. The build itself is under one; the rest is Apple's
-            # notarization queue, which happens twice — electron-builder
-            # notarizes and staples the .app inside MacPackager.sign(), and
-            # desktop/scripts/notarize-dmg.js notarizes and staples the .dmg from
-            # the artifactBuildCompleted hook. See this file's header.
             timeout: 180
           - os: windows-latest
             platform: win
-            label: Windows (NSIS, zip)
+            label: Windows release (NSIS, zip)
             targets: --win nsis zip
-            feed: latest.yml
             timeout: 90
     defaults:
       run:
-        # bash on all three, including Windows. GitHub's pwsh wrapper only
-        # propagates the LAST command's status, which the windows-desktop lane
-        # has to work around by exit-checking every line by hand; bash is `-e` and
-        # aborts on the first failure. There is no Windows-specific shell work in
-        # this job that would justify paying that cost again.
         shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.gate.outputs.source_sha }}
           persist-credentials: false
+          fetch-depth: 0
 
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          # Not `.nvmrc`. See CALANDRIA_DESKTOP_NODE_VERSION at the top: the Node
-          # that installs the payload and the Node the packaged app runs it under
-          # are one pinned decision on a release.
           node-version: ${{ env.CALANDRIA_DESKTOP_NODE_VERSION }}
           cache: npm
 
-      # THE VERSION IN THE ARTIFACT MUST BE THE VERSION IN THE TAG, and this is
-      # not cosmetic. electron-builder's github publisher looks the Release up BY
-      # TAG, and it derives that tag from desktop/package.json's `version` — so a
-      # desktop package still saying 0.3.0 during a v0.4.2 release would not fail:
-      # it would quietly create a DRAFT release called v0.3.0, upload every
-      # artifact into it, and leave the real Release empty. release-please keeps
-      # the two in step through `extra-files` in release-please-config.json;
-      # tests/desktopSigning.test.ts pins that they agree in the tree. This is the
-      # third check, and the only one that can see the tag actually being built.
-      - name: Check the artifact version matches the tag
-        if: github.ref_type == 'tag'
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/electron-builder-cache
+          key: electron-builder-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/package-lock.json') }}
+
+      - name: Record the artifact identity
+        id: source
         run: |
           set -euo pipefail
-          version=$(node -p "require('./desktop/package.json').version")
-          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
-            echo "::error::desktop/package.json is version ${version} but this is ${GITHUB_REF_NAME}. electron-builder would publish into a draft v${version} release instead of this one. Check release-please-config.json's extra-files entry for desktop/package.json."
+          version=$(node -p "require('./package.json').version")
+          desktop_version=$(node -p "require('./desktop/package.json').version")
+          manifest_version=$(node -p "require('./.release-please-manifest.json')['.']")
+          if [ "$version" != "$desktop_version" ] || [ "$version" != "$manifest_version" ]; then
+            echo "::error::Root, desktop, and release manifest versions must agree."
             exit 1
           fi
-          echo "desktop/package.json is ${version}, matching ${GITHUB_REF_NAME}"
+          {
+            echo "version=$version"
+            echo "tree=$(git rev-parse 'HEAD^{tree}')"
+          } >> "$GITHUB_OUTPUT"
 
       - run: npm ci
 
-      # The payload ships a production build of the app, so this is not optional
-      # scaffolding — it is the thing being packaged.
       - name: Build the app the shell serves
         run: npm run build
 
-      # desktop/ is its own private package so ~280 MB of Electron never lands in
-      # the app's node_modules or the Docker image. The install script passes
-      # --include=dev and then runs electron/install.js explicitly, because
-      # Electron is a devDependency and any environment exporting
-      # NODE_ENV=production makes npm report "up to date" and fetch nothing.
-      #
-      # MACOS SIGNING DEPENDS ON THIS STEP for more than Electron. desktop's
-      # postinstall runs scripts/patch-electron-builder-keychain.js, which fixes
-      # the argument app-builder-lib passes to `security set-key-partition-list`.
-      # Unpatched, every signed macOS build fails on the current runner image with
-      # "SecKeychainUnlock: The user name or passphrase you entered is not
-      # correct" — the reason v0.10.0 has no macOS assets. The script's header and
-      # docs/DESKTOP_APP.md §6.4.1 carry the why, and both say when to delete it.
       - name: Install Electron
         run: npm run desktop:install
 
-      # Staged separately from the package step so a payload failure is reported
-      # as one. `--no-build` reuses the .next above rather than building twice.
-      # This is also where CALANDRIA_DESKTOP_NODE_VERSION is spent: the vendored
-      # runtime is downloaded and sha256-verified against nodejs.org's own
-      # SHASUMS256.txt here.
       - name: Stage the server payload and vendor Node
         working-directory: desktop
         run: npm run payload -- --no-build
 
-      # APPLE_API_KEY IS A FILE PATH, NOT THE KEY. `notarytool --key` takes a
-      # path and @electron/notarize passes the value straight through, so a
-      # secret wired directly to APPLE_API_KEY fails at the notarization step —
-      # after the build has already spent its time. The secret holds the .p8's
-      # CONTENTS under a different name; this writes them to a file OUTSIDE the
-      # checkout (nothing under desktop/ may pick it up as packageable content)
-      # and the package step points APPLE_API_KEY at that path.
-      #
-      # base64 or raw, because both are easy to paste and only one is documented;
-      # verify-signing-credentials.yml accepts the same two forms.
       - name: Write the App Store Connect key to a file
         if: matrix.platform == 'mac' && needs.gate.outputs.mac_signing == 'true'
         env:
@@ -435,173 +302,103 @@ jobs:
           if printf '%s' "$APPLE_API_KEY_P8" | grep -q 'BEGIN PRIVATE KEY'; then
             printf '%s\n' "$APPLE_API_KEY_P8" > "$key"
           else
-            printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$key" || {
-              echo "::error::APPLE_API_KEY_P8 is neither valid base64 nor a raw .p8. It should be the CONTENTS of AuthKey_<KEYID>.p8 — see docs/DESKTOP_APP.md §6.4."
-              exit 1
-            }
+            printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$key"
           fi
           chmod 600 "$key"
 
-      # No secret and no certificate: Entra ID's ambient credential chain, which
-      # on GitHub Actions is OIDC workload-identity federation. electron-builder
-      # reads none of these variables itself — the Azure signing library does,
-      # from the token this step writes.
       - name: Authenticate to Azure for Artifact Signing
         if: matrix.platform == 'win' && needs.gate.outputs.win_signing == 'true'
-        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
           allow-no-subscriptions: true
 
-      # The provider does the upload, not a later step. See this file's header
-      # for why a `gh release upload` lane would be an updater that never finds
-      # anything.
-      #
-      # The credential expressions are the all-or-nothing decision from the gate
-      # job, applied: either the complete set reaches desktop/signing.js or none
-      # of it does, so its half-filled-group error can only fire on a genuine
-      # misconfiguration rather than on a lapsed secret. On the two legs that are
-      # not this platform every value is the empty string, which `signing.js`
-      # reads as unset.
-      - name: Package and publish
+      - name: Package the release artifacts
         working-directory: desktop
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-          # THE SECOND SILENT SKIP. electron-publish's getOrCreateRelease also
-          # refuses a release that was published more than two hours ago —
-          # `reason: "existing release published more than 2 hours ago"`, one
-          # warning per artifact, exit 0, nothing uploaded. The window is meant
-          # to stop a stale local build from overwriting an old release; here it
-          # is only ever measured from a release release-please minted minutes
-          # before this run, so what it actually catches is a macOS leg that
-          # spent three hours in Apple's notarization queue, or one leg re-run
-          # the next morning after a transient failure. Both are the cases where
-          # we most need the upload to work.
-          EP_GH_IGNORE_TIME: "true"
-
           CALANDRIA_MAC_SIGN_IDENTITY: ${{ (matrix.platform == 'mac' && needs.gate.outputs.mac_signing == 'true') && secrets.CALANDRIA_MAC_SIGN_IDENTITY || '' }}
           CSC_LINK: ${{ (matrix.platform == 'mac' && needs.gate.outputs.mac_signing == 'true') && secrets.CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ (matrix.platform == 'mac' && needs.gate.outputs.mac_signing == 'true') && secrets.CSC_KEY_PASSWORD || '' }}
           APPLE_API_KEY: ${{ (matrix.platform == 'mac' && needs.gate.outputs.mac_signing == 'true') && format('{0}/AuthKey.p8', runner.temp) || '' }}
           APPLE_API_KEY_ID: ${{ (matrix.platform == 'mac' && needs.gate.outputs.mac_signing == 'true') && secrets.APPLE_API_KEY_ID || '' }}
           APPLE_API_ISSUER: ${{ (matrix.platform == 'mac' && needs.gate.outputs.mac_signing == 'true') && secrets.APPLE_API_ISSUER || '' }}
-
           AZURE_CODE_SIGNING_ENDPOINT: ${{ (matrix.platform == 'win' && needs.gate.outputs.win_signing == 'true') && vars.AZURE_CODE_SIGNING_ENDPOINT || '' }}
           AZURE_CODE_SIGNING_ACCOUNT_NAME: ${{ (matrix.platform == 'win' && needs.gate.outputs.win_signing == 'true') && vars.AZURE_CODE_SIGNING_ACCOUNT_NAME || '' }}
           AZURE_CODE_SIGNING_CERT_PROFILE_NAME: ${{ (matrix.platform == 'win' && needs.gate.outputs.win_signing == 'true') && vars.AZURE_CODE_SIGNING_CERT_PROFILE_NAME || '' }}
           AZURE_CODE_SIGNING_PUBLISHER_NAME: ${{ (matrix.platform == 'win' && needs.gate.outputs.win_signing == 'true') && vars.AZURE_CODE_SIGNING_PUBLISHER_NAME || '' }}
-        #
-        # `never` on a dry run. Everything up to this point is identical either
-        # way — the same signing, the same notarization, the same assertions —
-        # which is the point: the dry run has to be the release lane, not a
-        # cheaper thing that resembles it.
-        run: npx electron-builder ${{ matrix.targets }} --publish ${{ needs.gate.outputs.publish == 'true' && 'always' || 'never' }}
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
+          DEBUG: electron-builder*,@electron/get*
+        run: |
+          set -euo pipefail
+          unset GITHUB_BASE_REF
+          for attempt in 1 2; do
+            log="$RUNNER_TEMP/electron-builder-attempt-${attempt}.log"
+            set +e
+            npx electron-builder ${{ matrix.targets }} --publish never 2>&1 | tee "$log"
+            status=${PIPESTATUS[0]}
+            set -e
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 1 ] && grep -Eq 'HTTPError: Response code (500|502|503|504)' "$log"; then
+              echo "::warning::electron-builder failed with a transient HTTP error; retrying once after 60 seconds"
+              rm -rf dist
+              sleep 60
+              continue
+            fi
+            exit "$status"
+          done
 
-      # THE OPPOSITE ANSWER TO THE TEST LANE'S. `macos-desktop` asserts that
-      # Gatekeeper REFUSES what it built; here it must ACCEPT, and the ticket must
-      # be stapled to both the bundle and the disk image. None of this is implied
-      # by `codesign --verify`, which passes on an ad-hoc bundle — that is exactly
-      # the pair §6.3 records: internally valid, and refused anyway.
-      #
-      # `stapler validate` on the .dmg is what proves notarize-dmg.js ran at all.
-      # It is a separate submission from the .app's, on a separate artifact, and
-      # it is the one the browser tags with com.apple.quarantine.
-      - name: Assert the macOS artifacts are signed, notarized and stapled
+      - name: Assert the macOS artifacts are signed, notarized, and stapled
         if: matrix.platform == 'mac' && needs.gate.outputs.mac_signing == 'true'
         run: |
           set -euo pipefail
-          # Named for the arch (mac-arm64 on the current hosted image), so it is
-          # discovered rather than spelled.
           app=$(find desktop/dist -maxdepth 2 -name '*.app' -type d | head -n 1)
-          test -n "$app" || { echo "::error::electron-builder produced no .app under desktop/dist"; exit 1; }
           dmg=$(find desktop/dist -maxdepth 1 -name '*.dmg' -type f | head -n 1)
-          test -n "$dmg" || { echo "::error::electron-builder produced no .dmg under desktop/dist"; exit 1; }
-
-          echo "--- codesign ---"
+          test -n "$app" && test -n "$dmg"
           codesign --verify --deep --strict --verbose=2 "$app"
-
-          echo "--- Gatekeeper assessment (must ACCEPT) ---"
-          if ! spctl --assess --type execute -vvv "$app"; then
-            echo "::error::Gatekeeper REFUSED a build this lane signed and notarized. The artifact would show 'Calandria is damaged and can't be opened' on a downloaded copy. See docs/DESKTOP_APP.md §6.3."
-            exit 1
-          fi
-
-          echo "--- stapled ticket on the .app ---"
+          spctl --assess --type execute -vvv "$app"
           xcrun stapler validate "$app"
+          xcrun stapler validate "$dmg"
 
-          echo "--- stapled ticket on the .dmg ---"
-          if ! xcrun stapler validate "$dmg"; then
-            echo "::error::The .dmg carries no stapled ticket. desktop/scripts/notarize-dmg.js runs from electron-builder's artifactBuildCompleted hook; check it was not moved to afterAllArtifactBuild, which runs after the upload has begun."
-            exit 1
-          fi
-
-      # THE STEP THAT WOULD HAVE CAUGHT SIX EMPTY RELEASES.
-      #
-      # `npx electron-builder --publish always` exiting 0 does not mean anything
-      # was uploaded. Its publisher declines by LOGGING — one
-      # `skipped publishing` line per artifact — and returns normally, so the
-      # step goes green having attached nothing. That is how v0.2.0 through
-      # v0.5.1 all ended up with zero assets while this lane reported success.
-      # `releaseType` and EP_GH_IGNORE_TIME above close the two declines we know
-      # about; this closes the class, by asking GitHub what is actually on the
-      # release instead of trusting an exit code.
-      #
-      # Derived from what this leg BUILT rather than from a hardcoded list, so a
-      # target added to the matrix is covered without anyone remembering to come
-      # back here — the same reasoning as the checksum step below, which globs
-      # the same set.
-      - name: Assert the artifacts actually reached the release
-        if: needs.gate.outputs.publish == 'true'
+      - name: Stage the release handoff
+        if: needs.gate.outputs.mode == 'prebuild'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # This job checks out the repo, so `gh` could infer this — but it is
-          # spelled anyway, because the `notes` job's identical calls failed on
-          # v0.5.1 for exactly the lack of it.
-          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.source.outputs.version }}
+          SOURCE_TREE: ${{ steps.source.outputs.tree }}
         run: |
           set -euo pipefail
-          # `find <dir>` and strip the path, rather than `cd <dir> && find .`:
-          # a `cd` inside a command substitution prints the directory under any
-          # shell with CDPATH set, and that string lands in the list as if it
-          # were a filename.
-          built=$(find desktop/dist -maxdepth 1 -type f \
-            \( -name '*.dmg' -o -name '*.zip' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.exe' \) \
-            | sed 's|.*/||')
+          stage="$RUNNER_TEMP/desktop-${{ matrix.platform }}"
+          mkdir -p "$stage"
+          find desktop/dist -maxdepth 1 -type f \
+            \( -name '*.dmg' -o -name '*.zip' -o -name '*.deb' -o -name '*.AppImage' \
+               -o -name '*.exe' -o -name 'latest*.yml' -o -name '*.blockmap' \) \
+            -exec cp {} "$stage/" \;
+          node scripts/release-artifact-manifest.mjs create \
+            --dir "$stage" \
+            --platform "${{ matrix.platform }}" \
+            --version "$VERSION" \
+            --source-sha "${{ needs.gate.outputs.source_sha }}" \
+            --source-tree "$SOURCE_TREE" \
+            --source-pr "${{ needs.gate.outputs.source_pr }}"
 
-          # electron-builder renames on upload: the NSIS installer is
-          # `Calandria Setup 0.5.1.exe` on disk and `Calandria-Setup-0.5.1.exe`
-          # on the release. Spaces become dashes, so the comparison is on that
-          # form rather than on the local filename.
-          #
-          # The feed is appended by hand: it is not a distributable, so the glob
-          # above does not find it, and a release with every installer and no
-          # `${{ matrix.feed }}` is an updater that silently never finds
-          # anything — the one missing file no download test would notice.
-          expected=$(printf '%s\n%s\n' "$built" "${{ matrix.feed }}" \
-            | sed '/^[[:space:]]*$/d' | tr ' ' '-' | sort)
-          attached=$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | sort)
-
-          echo "--- built by this leg ---"; echo "$expected"
-          echo "--- attached to $GITHUB_REF_NAME ---"; echo "$attached"
-
-          missing=$(comm -23 <(echo "$expected") <(echo "$attached") || true)
-          if [ -n "$missing" ]; then
-            echo "::error::Built but NOT attached to ${GITHUB_REF_NAME}: $(echo "$missing" | tr '\n' ' '). electron-builder's publisher logs a warning and exits 0 when it declines to upload — read the Package and publish step for 'GitHub release not created' or 'skipped publishing' and the reason it gives."
-            exit 1
-          fi
-          echo "every ${{ matrix.platform }} artifact and its update feed are on the release"
-
-      # A dry run's whole point is that somebody can open the thing. Without
-      # this the run proves only that packaging did not throw, which is the level
-      # of assurance that produced this file's last three fixes.
-      - name: Upload the installers for a dry run
-        if: needs.gate.outputs.publish != 'true'
+      - name: Upload the release handoff
+        if: needs.gate.outputs.mode == 'prebuild'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: desktop-${{ matrix.platform }}
+          name: desktop-${{ matrix.platform }}-${{ needs.gate.outputs.artifact_suffix }}
+          path: ${{ runner.temp }}/desktop-${{ matrix.platform }}/
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
+
+      - name: Upload the installers for a manual dry run
+        if: needs.gate.outputs.mode == 'dry-run'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-${{ matrix.platform }}-${{ needs.gate.outputs.artifact_suffix }}
           path: |
             desktop/dist/*.dmg
             desktop/dist/*.zip
@@ -609,184 +406,282 @@ jobs:
             desktop/dist/*.AppImage
             desktop/dist/*.exe
             desktop/dist/latest*.yml
+            desktop/dist/*.blockmap
           if-no-files-found: error
           retention-days: 7
 
-      # electron-builder publishes sha512 inside the update feed, which is for
-      # the updater rather than for a person. A SHA-256 manifest is the
-      # convention for checking a download by hand, and on Linux — where there is
-      # no signature at all and none is expected — it is the only integrity story
-      # there is.
-      #
-      # Only the artifacts a person downloads. The .blockmap files are the
-      # updater's differential-download index, and checksumming them would pad
-      # the manifest with lines nobody verifies.
-      - name: Checksum the published artifacts
-        id: checksums
+      - name: Write checksums and signing notes
+        if: needs.gate.outputs.mode == 'prebuild'
         run: |
           set -euo pipefail
-          # macOS has no sha256sum; Git Bash on Windows and Ubuntu have no shasum
-          # worth relying on. Pick whichever exists.
-          sum() {
-            if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi
-          }
-
           out="$RUNNER_TEMP/release-notes-fragment"
           mkdir -p "$out"
-
           cd desktop/dist
           files=$(find . -maxdepth 1 -type f \
             \( -name '*.dmg' -o -name '*.zip' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.exe' \) \
-            | sed 's|^\./||' | sort)
-          if [ -z "$files" ]; then
-            echo "::error::no distributable artifacts under desktop/dist — electron-builder published nothing"
-            exit 1
-          fi
-          echo "$files" | while IFS= read -r f; do sum "$f"; done \
-            > "$out/SHA256SUMS-${{ matrix.platform }}.txt"
+            | sed 's|^./||' | sort)
+          test -n "$files"
+          echo "$files" | while IFS= read -r file; do
+            if command -v sha256sum >/dev/null 2>&1; then sha256sum "$file"; else shasum -a 256 "$file"; fi
+          done > "$out/SHA256SUMS-${{ matrix.platform }}.txt"
 
-          echo "--- SHA256SUMS-${{ matrix.platform }}.txt ---"
-          cat "$out/SHA256SUMS-${{ matrix.platform }}.txt"
-
-          # The per-platform row of the release-notes table, written by the leg
-          # that actually knows what it did rather than inferred later from the
-          # secrets that happened to exist.
           case "${{ matrix.platform }}" in
             mac)
               if [ "${{ needs.gate.outputs.mac_signing }}" = "true" ]; then
-                signing="Signed with a Developer ID Application certificate, notarized by Apple and stapled. Opens without a Gatekeeper warning."
+                signing="Signed with a Developer ID Application certificate, notarized by Apple, and stapled."
               else
-                signing="**Unsigned** (ad-hoc signature only). macOS will refuse a downloaded copy with \"Calandria is damaged and can't be opened\"; see \`desktop/README.md\` for the \`xattr\` workaround."
+                signing="**Unsigned** with an ad-hoc signature. See desktop/README.md for the xattr workaround."
               fi
               ;;
             win)
               if [ "${{ needs.gate.outputs.win_signing }}" = "true" ]; then
                 signing="Signed with Azure Artifact Signing."
               else
-                signing="**Unsigned.** Microsoft Defender SmartScreen will show \"Windows protected your PC\" on first run — choose More info, then Run anyway. The zip is not a way around it: Explorer propagates the mark of the web to what it extracts."
+                signing="**Unsigned.** Microsoft Defender SmartScreen will warn on first run."
               fi
               ;;
             linux)
-              signing="Unsigned by convention — Linux packaging has no code-signing story to enrol in. Verify with \`SHA256SUMS.txt\` below."
+              signing="Unsigned by convention. Verify the download with SHA256SUMS.txt."
               ;;
           esac
           printf '| %s | %s |\n' "${{ matrix.label }}" "$signing" > "$out/signing-${{ matrix.platform }}.md"
 
-      - name: Upload the checksum fragment
+      - name: Upload checksums and signing notes
+        if: needs.gate.outputs.mode == 'prebuild'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-notes-fragment-${{ matrix.platform }}
+          name: release-notes-fragment-${{ matrix.platform }}-${{ needs.gate.outputs.artifact_suffix }}
           path: ${{ runner.temp }}/release-notes-fragment/
           if-no-files-found: error
-          retention-days: 7
+          overwrite: true
+          retention-days: 90
 
-  # One SHA256SUMS.txt for the whole release, plus the paragraph that says which
-  # of these artifacts is signed and which is not. Both belong to the release as
-  # a whole rather than to any one platform, so they are a job rather than three.
-  notes:
-    name: Checksums and release notes
+  release-artifacts:
+    name: Desktop release artifacts
     needs: [gate, build]
-    # `!cancelled()` rather than `success()`: if one platform fails, the release
-    # still has two artifacts and they still need checksums and an honest note
-    # saying which platform is missing.
-    if: ${{ !cancelled() && needs.gate.result == 'success' && needs.gate.outputs.publish == 'true' }}
+    if: ${{ always() && (github.event_name == 'pull_request_target' || (github.event_name == 'workflow_dispatch' && inputs.check_only)) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 5
     permissions:
-      contents: write
-    env:
-      # THIS JOB HAS NO CHECKOUT, and `gh` resolves the repository from git
-      # remotes unless it is told. Every `gh` call below therefore died on
-      # v0.5.1 with `failed to run git: fatal: not a git repository`, after
-      # correctly assembling a SHA256SUMS.txt it then could not upload. GH_REPO
-      # is the fix rather than adding a checkout: this job wants three artifacts
-      # and an API, not a source tree.
-      GH_REPO: ${{ github.repository }}
+      contents: read
+      statuses: write
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: release-notes-fragment-*
-          merge-multiple: true
-          path: fragments
-
-      - name: Assemble and attach SHA256SUMS.txt
+      - name: Require every release prebuild
         env:
+          MODE: ${{ needs.gate.outputs.mode }}
+          GATE_RESULT: ${{ needs.gate.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: ${{ needs.gate.outputs.source_sha }}
         run: |
           set -euo pipefail
-          if ! ls fragments/SHA256SUMS-*.txt >/dev/null 2>&1; then
-            echo "::error::no checksum fragments — every platform's build failed"
+          state=success
+          description='Desktop release artifacts are not required for this PR'
+          if [ "$MODE" = "skip" ] || [ "$MODE" = "check" ]; then
+            :
+          elif [ "$GATE_RESULT" = "success" ] && [ "$BUILD_RESULT" = "success" ]; then
+            description='Signed desktop release artifacts are ready'
+          else
+            state=failure
+            description='Desktop release artifacts failed'
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${TARGET_SHA}" \
+            -f state="$state" \
+            -f context='Desktop release artifacts' \
+            -f description="$description"
+          [ "$state" = success ]
+
+  promote:
+    name: Promote prebuilt desktop artifacts
+    needs: gate
+    if: needs.gate.outputs.mode == 'promote'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: read
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ needs.gate.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: refs/tags/${{ needs.gate.outputs.release_tag }}
+
+      - name: Find the release PR and artifact run
+        id: source
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./desktop/package.json').version")
+          if [ "v${version}" != "$RELEASE_TAG" ]; then
+            echo "::error::desktop/package.json is ${version}, which does not match ${RELEASE_TAG}."
             exit 1
           fi
-          # Sorted so the file is stable across reruns and across whichever
-          # platform finished first.
-          cat fragments/SHA256SUMS-*.txt | sort -k2 > SHA256SUMS.txt
 
-          # GITHUB RENAMES ASSETS ON UPLOAD AND THE MANIFEST DOES NOT KNOW.
-          # The checksums are taken in desktop/dist, where electron-builder names
-          # the NSIS installer `Calandria Setup 0.10.0.exe`; the release serves
-          # that as `Calandria-Setup-0.10.0.exe`. So every release back to at
-          # least v0.9.0 shipped a SHA256SUMS.txt whose Windows line names a file
-          # nobody can download. `sha256sum -c` calls it missing, and with the
-          # `--ignore-missing` these notes recommend it says OK having verified
-          # nothing, which is the worse half of the bug.
-          #
-          # Reconciled against what the release actually serves rather than by
-          # applying a substitution rule of our own, which would need revisiting
-          # the next time GitHub picks a different replacement character. The
-          # comparison normalises every non-alphanumeric to the same thing on
-          # both sides, so it holds whichever one it picks.
-          gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' > assets.txt
+          tag_sha=$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")
+          pull=$(gh api "repos/${GH_REPO}/commits/${tag_sha}/pulls" \
+            -H "Accept: application/vnd.github+json" \
+            --jq '[.[] | select(.merged_at != null and .base.ref == "main" and .head.ref == env.RELEASE_BRANCH and .head.repo.full_name == env.GH_REPO)] | if length == 1 then .[0] else error("expected one merged release-please PR") end')
+          pr=$(printf '%s' "$pull" | jq -r .number)
+          head_sha=$(printf '%s' "$pull" | jq -r .head.sha)
+          git fetch --no-tags origin "refs/pull/${pr}/head"
+          fetched_head=$(git rev-parse FETCH_HEAD)
+          if [ "$fetched_head" != "$head_sha" ]; then
+            echo "::error::Release PR ${pr} head moved from ${head_sha} to ${fetched_head}."
+            exit 1
+          fi
+
+          unexpected_changes=$(git diff --name-only "$head_sha" "$tag_sha" -- . \
+            ':(exclude).github/**' \
+            ':(exclude)CLAUDE.md' \
+            ':(exclude)tests/**')
+          if [ -n "$unexpected_changes" ]; then
+            echo "::error::The release tag differs from the prebuilt source in packaged-app inputs."
+            printf '%s\n' "$unexpected_changes"
+            exit 1
+          fi
+
+          suffix="pr-${pr}-${head_sha}"
+          artifact="desktop-linux-${suffix}"
+          run_id=$(gh api --method GET "repos/${GH_REPO}/actions/artifacts" \
+            -f name="$artifact" -f per_page=100 \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last | .workflow_run.id')
+          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+            echo "::error::No unexpired ${artifact} handoff exists. Re-run the release PR workflow."
+            exit 1
+          fi
+
+          workflow_id=$(gh api "repos/${GH_REPO}/actions/workflows/release-desktop.yml" --jq .id)
+          run=$(gh api "repos/${GH_REPO}/actions/runs/${run_id}")
+          if ! printf '%s' "$run" | jq -e \
+            --argjson workflow_id "$workflow_id" \
+            --arg head_sha "$head_sha" '
+              .workflow_id == $workflow_id and
+              .event == "pull_request_target" and
+              .status == "completed" and
+              .conclusion == "success" and
+              .head_sha == $head_sha and
+              .head_branch == env.RELEASE_BRANCH
+            ' >/dev/null; then
+            echo "::error::Artifact run ${run_id} is not the successful release prebuild for PR ${pr} at ${head_sha}."
+            exit 1
+          fi
+
+          {
+            echo "version=$version"
+            echo "source_pr=$pr"
+            echo "source_sha=$head_sha"
+            echo "source_tree=$(git rev-parse "${head_sha}^{tree}")"
+            echo "suffix=$suffix"
+            echo "run_id=$run_id"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download the prebuilt platform artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: desktop-*-${{ steps.source.outputs.suffix }}
+          path: handoff
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.source.outputs.run_id }}
+
+      - name: Download checksums and signing notes
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-notes-fragment-*-${{ steps.source.outputs.suffix }}
+          path: fragments
+          merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.source.outputs.run_id }}
+
+      - name: Verify the handoff and attach every asset
+        env:
+          VERSION: ${{ steps.source.outputs.version }}
+          SOURCE_PR: ${{ steps.source.outputs.source_pr }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          SOURCE_TREE: ${{ steps.source.outputs.source_tree }}
+        run: |
+          set -euo pipefail
+          node scripts/release-artifact-manifest.mjs verify \
+            --root handoff \
+            --version "$VERSION" \
+            --source-pr "$SOURCE_PR" \
+            --source-sha "$SOURCE_SHA" \
+            --source-tree "$SOURCE_TREE" \
+            --asset-list "$RUNNER_TEMP/release-assets.txt"
+          awk '!/\/builder-debug\.yml$/' "$RUNNER_TEMP/release-assets.txt" \
+            > "$RUNNER_TEMP/release-assets.filtered.txt"
+          mv "$RUNNER_TEMP/release-assets.filtered.txt" "$RUNNER_TEMP/release-assets.txt"
+          mapfile -t assets < "$RUNNER_TEMP/release-assets.txt"
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "::error::The verified handoff contains no assets."
+            exit 1
+          fi
+
+          declare -A upload_names=()
+          for asset in "${assets[@]}"; do
+            name=${asset##*/}
+            normalized=$(printf '%s' "$name" | tr -c 'A-Za-z0-9' '-')
+            if [ -n "${upload_names[$normalized]:-}" ]; then
+              echo "::error::${asset} and ${upload_names[$normalized]} map to the same GitHub release asset name."
+              exit 1
+            fi
+            upload_names[$normalized]=$asset
+          done
+
+          cd handoff
+          for asset in "${assets[@]}"; do
+            gh release upload "$RELEASE_TAG" "$asset" --clobber
+          done
+
+      - name: Assert every prebuilt asset reached the release
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | sort > attached.txt
           norm() { printf '%s' "$1" | tr -c 'A-Za-z0-9' '-'; }
+          while IFS= read -r asset; do
+            name=${asset##*/}
+            want=$(norm "$name")
+            found=$(awk -v want="$want" '{ value=$0; gsub(/[^A-Za-z0-9]/, "-", value) } value == want { count++ } END { print count+0 }' attached.txt)
+            if [ "$found" != "1" ]; then
+              echo "::error::${name} matches ${found} release assets after GitHub filename normalization."
+              exit 1
+            fi
+          done < "$RUNNER_TEMP/release-assets.txt"
 
+      - name: Assemble and attach SHA256SUMS.txt
+        run: |
+          set -euo pipefail
+          cat fragments/SHA256SUMS-*.txt | sort -k2 > SHA256SUMS.txt
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' > assets.txt
+          norm() { printf '%s' "$1" | tr -c 'A-Za-z0-9' '-'; }
           : > SHA256SUMS.reconciled
           while IFS= read -r line; do
             [ -n "$line" ] || continue
-            # `<hash>  <name>` for text mode, `<hash> *<name>` for binary. The
-            # Windows leg emits the latter and `sha256sum -c` reads both.
             hash=${line:0:64}
             sep=${line:64:2}
             name=${line:66}
             want=$(norm "$name")
-            # awk rather than a shell loop over assets.txt: under `set -e` an
-            # assignment from a command substitution takes the substitution's
-            # exit status, and a loop whose final comparison does not match ends
-            # non-zero, so the step died on its first artifact.
-            match=$(awk -v want="$want" '
-              { normalised = $0; gsub(/[^A-Za-z0-9]/, "-", normalised) }
-              normalised == want { print }
-            ' assets.txt)
+            match=$(awk -v want="$want" '{ value=$0; gsub(/[^A-Za-z0-9]/, "-", value) } value == want { print }' assets.txt)
             found=$(printf '%s\n' "$match" | grep -c . || true)
             if [ "$found" != "1" ]; then
-              echo "::error::SHA256SUMS.txt names '${name}', which matches ${found} of the assets on ${GITHUB_REF_NAME}. A manifest naming a file the release does not serve verifies nothing. Assets: $(tr '\n' ' ' < assets.txt)"
+              echo "::error::Checksum entry ${name} matches ${found} release assets."
               exit 1
             fi
             printf '%s%s%s\n' "$hash" "$sep" "$match" >> SHA256SUMS.reconciled
           done < SHA256SUMS.txt
           mv SHA256SUMS.reconciled SHA256SUMS.txt
+          gh release upload "$RELEASE_TAG" SHA256SUMS.txt --clobber
 
-          cat SHA256SUMS.txt
-          # --clobber so a rerun of this job replaces the manifest rather than
-          # failing on an asset that already exists. This is the ONLY thing this
-          # workflow uploads by hand; electron-builder's provider owns the
-          # artifacts and their update feed.
-          gh release upload "$GITHUB_REF_NAME" SHA256SUMS.txt --clobber
-
-      # Appended to release-please's notes, not written over them: the changelog
-      # is its output and this section is ours. The marker makes a rerun replace
-      # its own section instead of stacking a second copy.
-      - name: Record what is signed and what is not
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Record signing and download details
         run: |
           set -euo pipefail
           marker='<!-- desktop-artifacts -->'
-
-          gh release view "$GITHUB_REF_NAME" --json body --jq .body > body.md
-          # Everything from a previous run of this step onwards goes; what
-          # release-please wrote stays.
-          awk -v m="$marker" 'index($0, m) { exit } { print }' body.md > notes.md
-
+          gh release view "$RELEASE_TAG" --json body --jq .body > body.md
+          awk -v marker="$marker" 'index($0, marker) { exit } { print }' body.md > notes.md
           {
             echo "$marker"
             echo
@@ -796,47 +691,16 @@ jobs:
             echo "|-|-|"
             cat fragments/signing-*.md
             echo
-            echo "Verify a download against \`SHA256SUMS.txt\`, attached to this release:"
+            echo "These installers were built and verified on the release PR. Verify a download with:"
             echo
             echo '```'
             echo "sha256sum -c SHA256SUMS.txt --ignore-missing   # shasum -a 256 -c on macOS"
             echo '```'
             echo
-            # SAID PER PLATFORM, BECAUSE A LEG CAN FAIL AND THIS JOB STILL RUNS.
-            # The `!cancelled()` above is deliberate — two artifacts and an
-            # honest note beat no release notes at all — but this paragraph
-            # described all three unconditionally, so v0.10.0, whose macOS leg
-            # died before it produced anything, shipped notes promising a `.dmg`
-            # and a `.zip` that are not attached. Release notes that advertise a
-            # download the release does not have are worse than a gap the reader
-            # can see. Each sentence now depends on the fragment its leg uploads,
-            # which exists only once that leg has something to checksum.
-            if [ -f fragments/signing-mac.md ]; then
-              echo "macOS ships \`.dmg\` for people and \`.zip\` for the updater — both hold the same app."
-            fi
-            if [ -f fragments/signing-win.md ]; then
-              echo "Windows ships an NSIS installer that installs per-user, and a zip for anyone who would"
-              echo "rather unpack a folder."
-            fi
-            if [ -f fragments/signing-linux.md ]; then
-              echo "Linux ships \`.deb\` and \`.AppImage\`."
-            fi
-            if [ -f fragments/signing-mac.md ]; then
-              echo "Every platform is x64 except macOS, which is Apple silicon (arm64)."
-            else
-              echo "Everything here is x64."
-            fi
-
-            missing=""
-            for p in mac win linux; do
-              [ -f "fragments/signing-$p.md" ] || missing="${missing} ${p}"
-            done
-            if [ -n "$missing" ]; then
-              echo
-              echo "> **Missing from this release:**${missing}. That platform's build did not complete,"
-              echo "> so it has no artifacts here. A later release carries them."
-            fi
+            echo "macOS ships a dmg for installation and a zip for updates."
+            echo "Windows ships an NSIS installer and a zip."
+            echo "Linux ships a deb and an AppImage."
+            echo "Every platform is x64 except macOS, which is Apple silicon arm64."
           } >> notes.md
-
-          gh release edit "$GITHUB_REF_NAME" --notes-file notes.md
+          gh release edit "$RELEASE_TAG" --notes-file notes.md
           cat notes.md >> "$GITHUB_STEP_SUMMARY"

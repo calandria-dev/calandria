@@ -39,7 +39,7 @@ export interface Project {
   port: number; // deterministic per-project port, injected as PORT into services + the PTY
   default_agent: string; // agent driver new tasks in this project run under (lib/agents/registry.ts)
   send_context: number; // 1 = include the saved project context in new agent sessions (default for new tasks)
-  agent_env: string; // provider override for every task's turns, as JSON over the lib/agentEnv.ts allowlist ("" = the agent's own cloud login)
+  default_provider_id: string | null; // the model provider every task in this project runs against (lib/providers/); null = the environment's own bundled row
   recap: string; // last LLM "where you left off" recap (auto-generated when idle)
   recap_at: number; // when the recap was generated (0 = none)
   recap_covers_at: number; // the project's last-activity ts the recap was based on
@@ -58,7 +58,7 @@ export interface Project {
   gateway_key_duration: string; // a LiteLLM duration string ("30d"); "" = no duration sent (never auto-expires on LiteLLM's clock)
   // Hosted MCP servers this project mounts on every task's turn
   // (docs/AGENTS.md, LiteLLM section): a JSON array of gateway aliases
-  // (lib/gatewayMcp.ts). Independent of agent_env's model-provider kind, so a
+  // (lib/gatewayMcp.ts). Independent of the selected provider's kind, so a
   // cloud-login task can still reach the gateway's hosted tools. "[]" = none
   // selected, the default for every project.
   gateway_mcp: string;
@@ -75,11 +75,12 @@ export interface Task {
   suggested: number; // 1 = Claude-proposed, idle in the suggested tray
   agent: string; // agent driver this task's sessions run under (default "claude"; see lib/agents/)
   send_context: number; // 1 = include the saved project context in this task's sessions (seeded from projects.send_context)
-  agent_env: string; // per-task provider override laid over the project's (lib/agentEnv.ts); "" = inherit the project's
+  provider_id: string | null; // the model provider this task's turns run against (lib/providers/); null = the project's default, then the environment's bundled row
   model: string | null; // chosen model alias ("fable"|"opus"|"sonnet"|"haiku"); null = inherit default
   resolved_model: string | null; // model the SDK actually ran last turn (for the badge)
   reasoning: string | null; // thinking preset ("off"|"think"|"think_hard"|"ultrathink"); null = inherit default
   permission_mode: string | null; // run permission ("auto"|"default"|"acceptEdits"|"bypassPermissions"|"plan"); null = the agent's default
+  sandbox_mode: string | null; // Codex filesystem sandbox; null = inherit default_sandbox_mode:codex
   session_id: string | null; // the agent's opaque session/thread id for the current generation
   worktree_path: string; // isolated git worktree this task runs in ("" = runs in repo_path)
   work_branch: string; // the worktree's branch (e.g. "calandria/<id>")
@@ -130,6 +131,9 @@ export interface Task {
   // starts on the task and by any explicit status write. `status` itself is
   // untouched, the same as a snooze.
   unread_run_at: number;
+  // ms epoch of an unaddressed base-branch rewrite reported by the task that
+  // did the rewriting (lib/baseRewrite.ts); 0 = nothing outstanding.
+  base_rewritten_at: number;
   // When this task is queued to start on its own (ms epoch; 0 = not queued):
   // "start at the usage-window reset" (lib/deferredStart.ts). For a
   // never-started task the sweep launches its first turn; for a started one
@@ -584,7 +588,8 @@ export interface PlanUsageWindow {
    * key's own budget (GET /key/info), synthesized by GET /api/plan-usage
    * under the `"gateway"` map key rather than reported by an agent driver. A
    * gateway task's turns don't draw on any agent's session/week window
-   * (lib/agentEnv.ts planWindowApplies), so the session header reads this one
+   * (app/shell/SessionView.tsx picks GATEWAY_PLAN_ID when the resolved
+   * provider row is a `litellm` one), so the session header reads this one
    * instead, where a vendor window would otherwise be shown but doesn't
    * apply.
    */
@@ -597,6 +602,27 @@ export interface PlanUsageWindow {
  *  between that route, app/shell/PlanUsage.tsx and app/shell/SessionView.tsx
  *  so the writer and both readers use the same string. */
 export const GATEWAY_PLAN_ID = "gateway";
+
+/**
+ * How much of this instance's work for one agent actually runs on that agent's
+ * own login, counted over the projects that are not deprecated.
+ *
+ * A project can point an agent's turns at a local, custom or gateway
+ * endpoint by selecting a model provider (`projects.default_provider_id`,
+ * lib/providers/). The login stays valid and its
+ * plan windows stay true, and they stop describing what this instance spends.
+ * The meter is one pill for the whole instance, so the three cases get three
+ * answers: `all` renders as before, `some` renders with a note naming the
+ * count, `none` hides the meter, since every percentage in it would be about
+ * turns this instance never runs.
+ */
+export interface PlanScope {
+  kind: "all" | "some" | "none";
+  /** Projects whose turns for this agent still bill the agent's own login. */
+  onPlan: number;
+  /** Projects that point this agent at another endpoint. */
+  redirected: number;
+}
 
 // Instance-wide snapshot of one agent's subscription-plan usage, what the
 // titlebar meter renders. Two sources merged server-side (see
@@ -622,6 +648,12 @@ export interface PlanUsageSnapshot {
   fetchedAt: number | null;
   /** The last refetch failed; `windows` is being served from an older fetch. */
   stale: boolean;
+  /** How much of this instance points at the login these windows describe.
+   *  Set by GET /api/plan-usage, never by a driver: a driver reads one login,
+   *  while which projects aim at it is instance state the driver seam can't
+   *  see (lib/agents/types.ts: `planUsage()` takes no arguments on purpose).
+   *  Absent, or `kind: "all"`, means every project does. */
+  scope?: PlanScope | null;
 }
 
 // One rendered diff line: added (+, green), removed (-, red), or unchanged
@@ -752,7 +784,14 @@ export type StreamEvent =
   // driver's account of which schedule fired and the prompt it submitted,
   // persisted so the transcript explains the unprompted continuation.
   | { type: "background_resumed"; status: "completed" | "failed" | "stopped" | "woke"; summary: string }
-  | { type: "error"; content: string }
+  // `resetAt` (ms epoch) is when the quota behind a usage-limit failure heals,
+  // as the provider itself reported it, and is set only on that failure. It is
+  // what lets lib/runner.ts queue the resume without a person reading the
+  // reset off the meter and clicking (the opt-in `auto_resume_on_limit:<agent>`
+  // setting, lib/usageReset.ts). Optional because it is the driver's to know:
+  // one that never learns a reset time simply doesn't arm the queued resume,
+  // and the notice keeps saying the limit has to reset first.
+  | { type: "error"; content: string; resetAt?: number }
   | { type: "done"; sessionId: string | null };
 
 // Events as delivered over the task event bus and the GET /messages SSE tail.
@@ -940,6 +979,10 @@ export interface Schedule {
    * runbook if it is ever deleted (see deleteRunbook).
    */
   runbook_id: string | null;
+  /** The model provider a firing carries into the task it mints; null = the project's default. */
+  provider_id: string | null;
+  /** The model that task starts on; null = the project's default. */
+  model: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -959,6 +1002,10 @@ export interface Runbook {
   position: number;
   /** '' = written by the user; otherwise the agent id that filed it. */
   created_by: string;
+  /** The model provider a dispatch carries into the task it mints; null = the project's default. */
+  provider_id: string | null;
+  /** The model that task starts on; null = the project's default. */
+  model: string | null;
   created_at: number;
   updated_at: number;
 }

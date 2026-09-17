@@ -93,6 +93,19 @@ const updater = require(path.join(DESKTOP, "updater.js")) as {
   classifyUpdaterError: (err: unknown) => { message: string; fatal: boolean };
   CHECK_INTERVAL_MS: number;
   FIRST_CHECK_DELAY_MS: number;
+  pageUpdateState: (
+    state?: { phase?: string; version?: string | null; percent?: number | null; error?: string | null } | null,
+    disposition?: Disposition | null,
+    shellVersion?: string | null,
+  ) => {
+    shellVersion: string;
+    phase: "idle" | "checking" | "downloading" | "ready" | "error";
+    version: string | null;
+    percent: number | null;
+    disposition: Disposition;
+    error: string | null;
+  };
+  parseDesktopCommand: (url: string) => { command: "install" | "check" } | null;
 };
 
 // The structural assertions below read main.js as text, so they have to read
@@ -649,5 +662,84 @@ describe("the clocks", () => {
   it("checks well after launch, and rarely after that", () => {
     expect(updater.FIRST_CHECK_DELAY_MS).toBeGreaterThanOrEqual(30_000);
     expect(updater.CHECK_INTERVAL_MS).toBeGreaterThanOrEqual(60 * 60 * 1000);
+  });
+});
+
+describe("the page's view of the updater is total, so it never has to guess", () => {
+  const disposition: Disposition = { enabled: true, code: "ok", reason: "" };
+
+  it("carries every field for an in-flight download", () => {
+    expect(updater.pageUpdateState({ phase: "downloading", version: "0.12.0", percent: 42 }, disposition, "0.11.0")).toEqual({
+      shellVersion: "0.11.0",
+      phase: "downloading",
+      version: "0.12.0",
+      percent: 42,
+      disposition: { enabled: true, code: "ok", reason: "" },
+      error: null,
+    });
+  });
+
+  it("carries the error message through an error phase, and drops a stale one from any other phase", () => {
+    expect(updater.pageUpdateState({ phase: "error", error: "network down" }, disposition, "0.11.0").error).toBe(
+      "network down",
+    );
+    expect(
+      updater.pageUpdateState({ phase: "idle", error: "network down" }, disposition, "0.11.0").error,
+    ).toBe(null);
+  });
+
+  // The page has no rendering for "none" (checked, nothing found), and no
+  // rendering for a phase it does not recognise either; both fall back to
+  // "idle" rather than reaching the page as an unstyled raw string.
+  it("maps 'none' and an unrecognised phase onto idle", () => {
+    expect(updater.pageUpdateState({ phase: "none" }, disposition, "0.11.0").phase).toBe("idle");
+    expect(updater.pageUpdateState({ phase: "something-new" }, disposition, "0.11.0").phase).toBe("idle");
+  });
+
+  it("reports a missing or non-finite percent as null", () => {
+    expect(updater.pageUpdateState({ phase: "downloading" }, disposition, "0.11.0").percent).toBe(null);
+    for (const percent of [NaN, Infinity, -Infinity, "42", null, undefined]) {
+      expect(updater.pageUpdateState({ phase: "downloading", percent } as never, disposition, "0.11.0").percent).toBe(
+        null,
+      );
+    }
+  });
+
+  // Missing state or disposition must not throw: a total object comes back
+  // either way.
+  it("does not throw on a missing state or disposition, and still returns a total object", () => {
+    expect(updater.pageUpdateState(null, null, "0.11.0")).toEqual({
+      shellVersion: "0.11.0",
+      phase: "idle",
+      version: null,
+      percent: null,
+      disposition: { enabled: false, code: "", reason: "" },
+      error: null,
+    });
+    expect(updater.pageUpdateState(undefined, undefined, undefined)).toEqual({
+      shellVersion: "",
+      phase: "idle",
+      version: null,
+      percent: null,
+      disposition: { enabled: false, code: "", reason: "" },
+      error: null,
+    });
+  });
+});
+
+describe("a calandria-desktop: URL is a call the page makes, never a page to load", () => {
+  it("recognises the two commands the shell answers", () => {
+    expect(updater.parseDesktopCommand("calandria-desktop://update/install")).toEqual({ command: "install" });
+    expect(updater.parseDesktopCommand("calandria-desktop://update/check")).toEqual({ command: "check" });
+  });
+
+  // The scheme is never registered with the OS, so nothing outside these two
+  // paths means anything; everything else, including a plausible-looking
+  // sibling path, comes back null.
+  it("is null for anything else, including a scheme mismatch and unparseable input", () => {
+    expect(updater.parseDesktopCommand("calandria-desktop://other")).toBe(null);
+    expect(updater.parseDesktopCommand("calandria-desktop://update/other")).toBe(null);
+    expect(updater.parseDesktopCommand("https://example.com/update/install")).toBe(null);
+    expect(updater.parseDesktopCommand("nonsense")).toBe(null);
   });
 });

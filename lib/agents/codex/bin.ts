@@ -7,7 +7,7 @@
 // because its failure is silent by contract (a dead `codex mcp list` degrades
 // to "leave the user's MCP servers mounted"), so a Windows instance would pay
 // the context cost of uncallable inherited tools on every turn with no error
-// anywhere. See docs/WINDOWS.md §6.
+// anywhere. See docs/WINDOWS.md, "Platform behavior".
 //
 // SDK-free (config + lib/binPath only), and resolved per call rather than at
 // import, matching resolveGhBin: a handful of stat()s, and installing codex

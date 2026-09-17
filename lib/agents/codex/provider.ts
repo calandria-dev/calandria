@@ -87,7 +87,9 @@ export function codexProviderConfig(
   // already write it that way, and a hand-typed bare host gets it added. It is
   // also where LiteLLM serves `/v1/responses`.
   const base = `${normalizeBaseUrl(raw)}/v1`;
-  const id = isGatewayEndpoint(raw, gateway) ? CODEX_GATEWAY_PROVIDER_ID : CODEX_LOCAL_PROVIDER_ID;
+  const id = env.CALANDRIA_GATEWAY_BILLING || isGatewayEndpoint(raw, gateway)
+    ? CODEX_GATEWAY_PROVIDER_ID
+    : CODEX_LOCAL_PROVIDER_ID;
   const entry: Record<string, CodexConfigValue> =
     id === CODEX_GATEWAY_PROVIDER_ID
       ? {
@@ -103,6 +105,7 @@ export function codexProviderConfig(
       : {
           name: "Local model (Calandria)",
           base_url: base,
+          ...(env.OPENAI_API_KEY ? { env_key: "OPENAI_API_KEY" } : {}),
           wire_api: "responses",
         };
   return {

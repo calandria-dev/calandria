@@ -72,6 +72,9 @@ export const GEMINI_CAPABILITIES: AgentCapabilities = {
     { value: "acceptEdits", label: "accept-edits", sub: "auto-approve file edits, still ask for other tools" },
     { value: "plan", label: "plan", sub: "propose without editing" },
   ],
+  providerTypes: ["google", "gemini_key", "litellm"],
+  bundledProvider: "google",
+  endpointTransport: "GOOGLE_GEMINI_BASE_URL and GEMINI_API_KEY in the turn's environment",
   // Interactive asks arrive via the MCP bridge's ask_user tool (the card UI and
   // /answer route are shared with Claude's AskUserQuestion flow).
   supportsAsks: true,

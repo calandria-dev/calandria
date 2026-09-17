@@ -84,10 +84,12 @@ describe("desktop release publishing", () => {
       delete require.cache[configPath];
       const config = require(configPath) as {
         publish: Array<{ provider: string; owner: string; repo: string; releaseType: string }>;
+        nsis: { artifactName?: string };
       };
       expect(config.publish).toEqual([
         { provider: "github", owner: "calandria-dev", repo: "calandria", releaseType: "release" },
       ]);
+      expect(config.nsis.artifactName).toBe("Calandria-Setup-${version}.${ext}");
     } finally {
       for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
       Object.assign(process.env, saved);
@@ -123,12 +125,8 @@ describe("desktop release publishing", () => {
 // release and watch it not happen.
 describe("no lane publishes by accident", () => {
   const WORKFLOWS = path.join(ROOT, ".github", "workflows");
+  const RELEASE_WORKFLOW = fs.readFileSync(path.join(WORKFLOWS, "release-desktop.yml"), "utf8");
 
-  // The release lane passes `--publish` as an expression: `always` when its
-  // gate job decided this run publishes, `never` otherwise, so it is asserted
-  // on separately rather than being expected to read literally "never". The
-  // gate is where "only from a tag" is actually enforced: a tag push publishes,
-  // a dispatch publishes only if asked, and asking off a tag is refused there.
   const RELEASE_LANE = "release-desktop.yml";
 
   const invocations = fs
@@ -164,13 +162,109 @@ describe("no lane publishes by accident", () => {
   });
 
   it("has the release lane publish only from a tag", () => {
-    const release = invocations.filter((i) => i.file === RELEASE_LANE);
-    expect(release).not.toHaveLength(0);
-    for (const { text } of release) {
-      // Explicit either way: an expression is fine, an omission is not.
-      expect(text).toMatch(/--publish\s/);
-      expect(text).toContain("always");
-      expect(text).toContain("never");
+    expect(RELEASE_WORKFLOW).toContain('pull_request_target:');
+    expect(RELEASE_WORKFLOW).toContain('branches: ["**"]');
+    expect(RELEASE_WORKFLOW).toContain('if [ "$BASE_REF" = "main" ] && [ "$HEAD_REF" = "$RELEASE_BRANCH" ]; then');
+    expect(RELEASE_WORKFLOW).toContain('if [ "$HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ]; then');
+    expect(RELEASE_WORKFLOW).toContain('types: [opened, synchronize, reopened]');
+    expect(RELEASE_WORKFLOW).toContain('push:\n    tags: ["v*"]');
+    expect(RELEASE_WORKFLOW).toContain('if [ "$GITHUB_REF_TYPE" != "tag" ]; then');
+    expect(RELEASE_WORKFLOW).toContain('[ "${{ inputs.publish }}" = "true" ]; then');
+    expect(RELEASE_WORKFLOW).toContain('if [ "${{ inputs.check_only }}" = "true" ]; then');
+    expect(RELEASE_WORKFLOW).toContain("mode=promote");
+    expect(RELEASE_WORKFLOW).toContain('mode=dry-run');
+    expect(RELEASE_WORKFLOW).toContain('source_sha="$GITHUB_SHA"');
+    expect(RELEASE_WORKFLOW).toContain("if: needs.gate.outputs.mode == 'promote'");
+    expect(RELEASE_WORKFLOW).toContain('release_tag:');
+    expect(RELEASE_WORKFLOW).toContain('release_tag="$GITHUB_REF_NAME"');
+    expect(RELEASE_WORKFLOW).toContain('REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}');
+    expect(RELEASE_WORKFLOW).toContain('release_tag="$REQUESTED_RELEASE_TAG"');
+    expect(RELEASE_WORKFLOW).toContain('[[ ! "$release_tag" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+');
+    expect(RELEASE_WORKFLOW).toContain('ref: refs/tags/${{ needs.gate.outputs.release_tag }}');
+    expect(RELEASE_WORKFLOW).toContain('tag_sha=$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")');
+    expect(RELEASE_WORKFLOW).toContain('commits/${tag_sha}/pulls');
+    expect(RELEASE_WORKFLOW).toContain('RELEASE_TAG: ${{ needs.gate.outputs.release_tag }}');
+    expect(RELEASE_WORKFLOW).not.toContain('gh release upload "$GITHUB_REF_NAME"');
+    expect(RELEASE_WORKFLOW).not.toContain('gh release view "$GITHUB_REF_NAME"');
+    expect(RELEASE_WORKFLOW).not.toContain('gh release edit "$GITHUB_REF_NAME"');
+    expect(RELEASE_WORKFLOW).toMatch(/npx electron-builder[^\n]*--publish never/);
+    expect(RELEASE_WORKFLOW).not.toContain("require-green-test-run");
+    expect(fs.readFileSync(path.join(WORKFLOWS, "pin-drift.yml"), "utf8")).toContain(
+      'dispatch_and_confirm release-desktop.yml "Desktop release artifacts"',
+    );
+    const imageWorkflow = fs.readFileSync(path.join(WORKFLOWS, "publish-image.yml"), "utf8");
+    expect(imageWorkflow).toContain("require-green-test-run");
+  });
+
+  it("validates and hands off every release artifact", () => {
+    expect(RELEASE_WORKFLOW).toContain("node scripts/validate-release-pr.mjs --base");
+    expect(RELEASE_WORKFLOW).toContain("release-artifact-manifest.mjs create");
+    expect(RELEASE_WORKFLOW).toContain("release-artifact-manifest.mjs verify");
+    expect(RELEASE_WORKFLOW).toContain("retention-days: 90");
+    expect(RELEASE_WORKFLOW).toContain("name: Desktop release artifacts");
+    expect(RELEASE_WORKFLOW).toContain("statuses: write");
+    expect(RELEASE_WORKFLOW).toContain("/statuses/${TARGET_SHA}");
+    expect(RELEASE_WORKFLOW).toContain("name: Promote prebuilt desktop artifacts");
+    expect(RELEASE_WORKFLOW).toContain('gh release upload "$RELEASE_TAG" "$asset" --clobber');
+    expect(RELEASE_WORKFLOW).toContain('.workflow_id == $workflow_id');
+    expect(RELEASE_WORKFLOW).toContain('.event == "pull_request_target"');
+    expect(RELEASE_WORKFLOW).toContain('.status == "completed"');
+    expect(RELEASE_WORKFLOW).toContain('.conclusion == "success"');
+    expect(RELEASE_WORKFLOW).toContain('.head_sha == $head_sha');
+    expect(RELEASE_WORKFLOW).toContain('.head_branch == env.RELEASE_BRANCH');
+    expect(RELEASE_WORKFLOW).not.toContain('.pull_requests');
+    expect(RELEASE_WORKFLOW).toContain('.head.repo.full_name == env.GH_REPO');
+    expect(RELEASE_WORKFLOW).toContain('git fetch --no-tags origin "refs/pull/${pr}/head"');
+    expect(RELEASE_WORKFLOW).toContain('if [ "$fetched_head" != "$head_sha" ]; then');
+    expect(RELEASE_WORKFLOW).toContain("':(exclude).github/**'");
+    expect(RELEASE_WORKFLOW).toContain("':(exclude)CLAUDE.md'");
+    expect(RELEASE_WORKFLOW).toContain("':(exclude)tests/**'");
+    expect(RELEASE_WORKFLOW).toContain('git rev-parse "${head_sha}^{tree}"');
+    expect(RELEASE_WORKFLOW).toMatch(/- name: Stage the release handoff[\s\S]*- name: Upload the release handoff/);
+    expect(RELEASE_WORKFLOW).not.toContain("-name '*.yml'");
+    expect(RELEASE_WORKFLOW).toContain("awk '!/\\/builder-debug\\.yml$/'");
+    expect(RELEASE_WORKFLOW).toContain("declare -A upload_names=()");
+    expect(RELEASE_WORKFLOW).toContain('for asset in "${assets[@]}"; do');
+    expect(RELEASE_WORKFLOW).toContain('gh release upload "$RELEASE_TAG" "$asset" --clobber');
+    expect(RELEASE_WORKFLOW).not.toContain('gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber');
+    for (const pattern of ["latest*.yml", "*.blockmap", "*.dmg", "*.zip", "*.deb", "*.AppImage", "*.exe"]) {
+      expect(RELEASE_WORKFLOW).toContain(`-name '${pattern}'`);
     }
+  });
+
+  it("caches electron-builder downloads and retries transient HTTP failures once", () => {
+    expect(RELEASE_WORKFLOW).toContain(
+      "ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache",
+    );
+    expect(RELEASE_WORKFLOW).toContain(
+      "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0",
+    );
+    expect(RELEASE_WORKFLOW).toContain("path: ${{ runner.temp }}/electron-builder-cache");
+    expect(RELEASE_WORKFLOW).toContain(
+      "key: electron-builder-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('desktop/package-lock.json') }}",
+    );
+    expect(RELEASE_WORKFLOW).toContain("DEBUG: electron-builder*,@electron/get*");
+    expect(RELEASE_WORKFLOW).toContain("for attempt in 1 2; do");
+    expect(RELEASE_WORKFLOW).toContain(
+      'log="$RUNNER_TEMP/electron-builder-attempt-${attempt}.log"',
+    );
+    expect(RELEASE_WORKFLOW).toContain('status=${PIPESTATUS[0]}');
+    expect(RELEASE_WORKFLOW).toContain(
+      "grep -Eq 'HTTPError: Response code (500|502|503|504)' \"$log\"",
+    );
+    expect(RELEASE_WORKFLOW).toContain('rm -rf dist');
+    expect(RELEASE_WORKFLOW).not.toContain('rm -rf desktop/dist');
+    expect(RELEASE_WORKFLOW).not.toContain('rm -rf .');
+  });
+});
+
+describe("required release checks", () => {
+  it("requires the desktop artifact aggregate", () => {
+    const rules = readJson(".github", "rulesets", "required-checks.json") as {
+      parameters: { required_status_checks: Array<{ context: string }> };
+    };
+    expect(rules.parameters.required_status_checks.map(({ context }) => context)).toContain(
+      "Desktop release artifacts",
+    );
   });
 });

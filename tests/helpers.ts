@@ -77,7 +77,9 @@ export async function pushFromColleague(
 }
 
 /** Repo + task worktree via ensureWorktree, with the boilerplate unpacked. */
-export async function makeRepoWithWorktree(ensureWorktree: (repoPath: string, taskId: string) => Promise<{ path: string; branch: string; baseSha: string } | null>) {
+export async function makeRepoWithWorktree(
+  ensureWorktree: (repoPath: string, taskId: string) => Promise<{ path: string; branch: string; baseSha: string; reattached: boolean } | null>
+) {
   const repo = await makeRepo();
   const taskId = uid();
   const wt = await ensureWorktree(repo, taskId);

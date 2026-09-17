@@ -1,6 +1,7 @@
 /* Platform facts the suite itself needs, so no test file has to guess.
  *
- * Two rules, both from docs/WINDOWS.md §7, and the split matters:
+ * Two rules, both from docs/WINDOWS.md, "Platform behavior", and the split
+ * matters:
  *
  *   * A test that merely USES a POSIX construct on its way to the thing it is
  *     actually about (a shell to hand the pty sidecar, a way to kill what it

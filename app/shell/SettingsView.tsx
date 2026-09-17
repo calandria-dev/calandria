@@ -1,27 +1,27 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState } from "react";
-import { Icon } from "../icons";
+import { Icon, EnvMark } from "../icons";
 import {
-  DEFAULT_SETTINGS, modelOptions, reasoningOptions, permissionOptions, INHERIT_LABEL, MONO_FONTS, PROMPT_FONTS,
+  DEFAULT_SETTINGS, reasoningOptions, permissionOptions, codexSandboxOptions, INHERIT_LABEL, MONO_FONTS, PROMPT_FONTS,
   type Settings, type AgentsBundle, type Appearance, type Palette, type MonoFontId, type PromptFontId,
 } from "./types";
 import { capsFor, agentLabel } from "./agents";
-import { ModelField } from "./Modal";
+import { ModelPicker } from "./ModelPicker";
 import { GitHubSettings } from "./github";
 import { WorktreePrune } from "./WorktreePrune";
 import { Diagnostics } from "./Diagnostics";
-import { AgentConnect } from "./AgentConnect";
-import { endpointSummary } from "./modelEndpoint";
-import { ErrNote, LoadNote } from "./shared";
-import { usePlanUsage, planUsageShown } from "./PlanUsage";
-import { jget, jsend } from "./api";
+import { ModelsSection } from "./ModelsSection";
+import { CodexHooksPanel } from "./CodexHooks";
+import { ErrNote } from "./shared";
+import { autoResumeOnLimitKey } from "@/lib/usageReset";
+import { apiFetch, jget, jsend } from "./api";
 import { notificationPermission, type BrowserNotificationState } from "./useNotifications";
 import { disablePush, enablePush, pushSupport, syncPushSubscription, type PushSupportState } from "./usePush";
 import { modelLabel, relTime } from "./format";
 import type { PushDevice } from "@/lib/push/types";
-import type { AgentInfoT, AgentsResponseT, EndpointStatusT, GatewayHealthT } from "./types";
 import type { PermissionMatchKind, PermissionRule } from "@/lib/types";
+import type { Updates } from "./useUpdates";
 
 // Log out, at the foot of the settings nav rather than in a section of its own.
 // Calandria has no users, so there is no account to show: the only session that
@@ -34,7 +34,7 @@ function NavLogout() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/auth/whoami")
+    apiFetch("/api/auth/whoami")
       .then((r) => r.json())
       .then((d) => {
         if (!cancelled) setSignedIn(d?.signedIn === true);
@@ -48,7 +48,7 @@ function NavLogout() {
   async function logout() {
     setBusy(true);
     try {
-      const res = await fetch("/api/auth/logout", { method: "POST" });
+      const res = await apiFetch("/api/auth/logout", { method: "POST" });
       const data = await res.json().catch(() => ({}));
       // Top-level navigation so the provider's logout loads as a real page.
       window.location.href = data?.redirect || "/";
@@ -70,200 +70,6 @@ function NavLogout() {
   );
 }
 
-// The "Agents" section: connect coding agents beyond the required first-run
-// Claude one. Claude appears here as already-connected; Codex (and any future
-// agent) gets a "connect another agent" card driven by AgentConnect against the
-// generic /api/agents/[id]/* routes. Reads the same GET /api/agents the task
-// pickers gate on, so connecting here immediately un-grays the agent there.
-function AgentsSection({ defaultAgent, appDefaults, setAppDefault, onChanged }: {
-  defaultAgent: string;
-  appDefaults: Record<string, string>;
-  setAppDefault: (key: string, value: string | null) => void;
-  onChanged?: () => void;
-}) {
-  const [agents, setAgents] = useState<AgentInfoT[] | null>(null);
-  // Which agents the titlebar could meter, so the show/hide switch below only
-  // appears on cards where there is something to show. Same shared poll the
-  // pill itself subscribes to, and it lists an agent regardless of the setting
-  // (the server doesn't know about it), so hiding a tracker doesn't hide the
-  // switch that brings it back.
-  const planUsage = usePlanUsage();
-  const [def, setDef] = useState<string>(defaultAgent);
-  // Reachability of the instance's local model endpoint, which is NOT any
-  // agent's connection state: a project on Ollama runs through a Claude login
-  // it never uses, and fails with a perfectly good one when Ollama is down. The
-  // server probes it (lib/modelEndpoint.ts); this is the only place the
-  // instance-wide default endpoint is reported.
-  const [endpoint, setEndpoint] = useState<EndpointStatusT | null>(null);
-  // Same fact for the LiteLLM gateway, and null unless one is configured.
-  const [gateway, setGateway] = useState<GatewayHealthT | null>(null);
-
-  const load = () =>
-    jget<AgentsResponseT>("/api/agents")
-      .then((r) => { setAgents(r.agents); setDef(r.default); setEndpoint(r.local_endpoint ?? null); setGateway(r.gateway ?? null); })
-      .catch(() => setAgents([]));
-  useEffect(() => { load(); }, []);
-
-  if (agents == null) return <LoadNote style={{ padding: 0 }}>Loading agents…</LoadNote>;
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-      <div className="hlp" style={{ marginTop: 0 }}>
-        Each task runs as a coding agent. Connect a subscription login or API key once to make it selectable for new tasks. {def === "claude" ? "Claude is the default and runs Calandria's own jobs (summaries, recaps); keep it connected." : ""}
-      </div>
-      {agents.map((a) => (
-        <div key={a.id} className="field" style={{ marginBottom: 0 }}>
-          <div className="lab" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {Icon.spark()} {a.label}
-            {a.id === def && <span className="opt">(default)</span>}
-            {a.authBroken
-              // Its login died (still on record) or its record was dropped for
-              // a provider change. Either way a green check here would
-              // contradict the card below it (and the titlebar banner).
-              ? <span className="wiz-warn" style={{ marginLeft: "auto" }} title="Needs reconnecting">{Icon.bolt()}</span>
-              : a.connected && <span className="wiz-ok" style={{ marginLeft: "auto" }}>{Icon.check()}</span>}
-          </div>
-          <McpInheritance agent={a} />
-          {planUsage[a.id]?.available && planUsage[a.id].windows.length > 0 && (
-            <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 4 }}>
-              <div style={{ flex: 1 }}>
-                <div className="hlp" style={{ marginTop: 0 }}>
-                  Show {a.label}&apos;s plan usage in the titlebar.
-                </div>
-              </div>
-              <button
-                role="switch"
-                aria-label={`Show ${a.label}'s plan usage in the titlebar`}
-                aria-checked={planUsageShown(appDefaults, a.id)}
-                className={`in-switch${planUsageShown(appDefaults, a.id) ? " on" : ""}`}
-                onClick={() => setAppDefault(`plan_usage:${a.id}`, planUsageShown(appDefaults, a.id) ? "off" : null)}
-              ><span /></button>
-            </div>
-          )}
-          <AgentConnect agent={a} compact onConnected={() => { load(); onChanged?.(); }} />
-        </div>
-      ))}
-      {endpoint?.base_url && (
-        <div className="field" style={{ marginBottom: 0 }}>
-          <div className="lab" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {Icon.spark()} Local model endpoint
-            {endpoint.reachable
-              ? <span className="wiz-ok" style={{ marginLeft: "auto" }}>{Icon.check()}</span>
-              : <span className="wiz-warn" style={{ marginLeft: "auto" }} title="Nothing answered at this address">{Icon.bolt()}</span>}
-          </div>
-          <div className="hlp">
-            {endpointSummary(endpoint)}. A project runs here by setting its <strong>Model provider</strong> to
-            {" "}<em>Local model</em>; the address is <code className="ctx-mono">CALANDRIA_LOCAL_MODEL_BASE_URL</code>.
-          </div>
-        </div>
-      )}
-      {gateway?.base_url && <GatewayCard gateway={gateway} onChanged={load} />}
-    </div>
-  );
-}
-
-// The LiteLLM gateway's own card, beside the local-endpoint one above and for
-// the same reason: an agent's `connected` is its CLI login and says nothing
-// about whether the gateway is up. Rendered only when CALANDRIA_LITELLM_BASE_URL
-// is set, which is also what puts the Gateway preset in a project's settings.
-//
-// The three facts come from lib/gatewayHealth.ts. `database: false` is the
-// no-Postgres 500 from /key/info, and it is stated instead of shown as blank
-// rows: every key, budget and spend feature on a LiteLLM proxy needs that
-// database, so a card that just omitted them would read like a bug.
-function GatewayCard({ gateway, onChanged }: { gateway: GatewayHealthT; onChanged: () => void }) {
-  const [key, setKey] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const where = gateway.base_url.replace(/^https?:\/\//, "");
-
-  const save = async (clear: boolean) => {
-    setBusy(true);
-    setErr(null);
-    try {
-      if (clear) await jsend("/api/settings/gateway-key", "DELETE");
-      else await jsend("/api/settings/gateway-key", "POST", { key: key.trim() });
-      setKey("");
-      onChanged();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="field" style={{ marginBottom: 0 }}>
-      <div className="lab" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        {Icon.spark()} LiteLLM gateway
-        {gateway.reachable
-          ? <span className="wiz-ok" style={{ marginLeft: "auto" }}>{Icon.check()}</span>
-          : <span className="wiz-warn" style={{ marginLeft: "auto" }} title="Nothing answered at this address">{Icon.bolt()}</span>}
-      </div>
-      <div className="hlp">
-        {gateway.reachable
-          ? `${where}: reachable${gateway.version ? `, LiteLLM ${gateway.version}` : ""}${gateway.model_count === null ? "" : `, ${gateway.model_count} ${gateway.model_count === 1 ? "model" : "models"}`}.`
-          : `${where}: ${gateway.error || "not reachable"}.`}
-        {" "}A project runs here by setting its <strong>Model provider</strong> to <em>Gateway</em>; the address is
-        {" "}<code className="ctx-mono">CALANDRIA_LITELLM_BASE_URL</code>.
-      </div>
-      {gateway.database === false && (
-        <div className="hlp">Keys, budgets and spend need LiteLLM&apos;s database, which this proxy doesn&apos;t have. The card shows liveness, version and model count only.</div>
-      )}
-      {gateway.database === true && (
-        <div className="hlp">
-          {gateway.max_budget == null
-            ? `Spend so far: $${gateway.spend?.toFixed(2) ?? "0.00"} (no budget set on this key).`
-            : `Spend: $${gateway.spend?.toFixed(2) ?? "0.00"} of a $${gateway.max_budget.toFixed(2)} budget${gateway.spend != null && gateway.spend >= gateway.max_budget ? ", exhausted" : ""}.`}
-          {gateway.budget_reset_at && ` Resets ${new Date(gateway.budget_reset_at).toLocaleString()}.`}
-          {!!gateway.key_models?.length && ` Allowed models: ${gateway.key_models.join(", ")}.`}
-        </div>
-      )}
-      {!!gateway.gemini_missing_models?.length && (
-        <div className="hlp wiz-warn">
-          {Icon.bolt()} Antigravity uses <code className="ctx-mono">{gateway.gemini_missing_models.join(", ")}</code>, missing from this gateway&apos;s catalog.
-          Add {gateway.gemini_missing_models.length === 1 ? "it" : "them"} to LiteLLM&apos;s <code className="ctx-mono">model_list</code>, or Antigravity turns
-          against this gateway will fail.
-        </div>
-      )}
-      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-        <input type="password" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={key} autoComplete="off"
-          placeholder={gateway.has_key ? "a key is set, type a new one to replace it" : "virtual key (sk-…)"}
-          title="The instance's LiteLLM virtual key, stored 0600 and never sent to the browser."
-          onChange={(e) => setKey(e.target.value)} />
-        <button className="btn btn-line" disabled={busy || !key.trim()} onClick={() => save(false)}>{Icon.check()} Save key</button>
-        {gateway.has_key && <button className="btn btn-ghost" disabled={busy} onClick={() => save(true)}>{Icon.x()} Clear</button>}
-      </div>
-      {err && <div className="hlp wiz-warn">{Icon.bolt()} {err}</div>}
-      <div className="hlp">
-        Sent as <code className="ctx-mono">x-litellm-api-key</code> on every gateway turn, alongside tags naming the project, task and agent.
-        {" "}<code className="ctx-mono">CALANDRIA_LITELLM_KEY</code> sets the same thing from the environment.
-      </div>
-    </div>
-  );
-}
-
-// Whether a task on this agent can use the MCP servers the user configured for
-// its own CLI. This capability difference changes what a task can do, not just
-// how its controls look. A Claude task reaches the tools in ~/.claude; an
-// otherwise-identical Codex task reaches only Calandria's, so it's worth
-// knowing before choosing an agent for a task. Both the verdict and the
-// explanation come from the driver's descriptor (lib/agents/types.ts
-// AgentCapabilities), never from the agent's id, so a third agent states its
-// own position here with no edit to this file.
-function McpInheritance({ agent }: { agent: AgentInfoT }) {
-  const { inheritsUserMcpServers: inherits, userMcpServersNote: note, gatewayMcpNote } = agent.capabilities;
-  return (
-    <div className="hlp" style={{ marginTop: 2, marginBottom: 12 }}>
-      <strong style={{ color: "var(--ink-2)" }}>
-        {inherits ? "Uses your own MCP servers." : "Calandria's tools only."}
-      </strong>
-      {note ? ` ${note}` : ""}
-      {gatewayMcpNote && <div style={{ marginTop: 4 }}>{gatewayMcpNote}</div>}
-    </div>
-  );
-}
-
 // The effective utility agent, resolved connected-first by the server
 // (lib/agents/oneshots.ts). The buttons above show what's *configured*; this
 // line shows what will actually run. They diverge whenever the configured
@@ -276,7 +82,7 @@ function UtilityEffective({ agents }: { agents: AgentsBundle }) {
   if (!u.id)
     return (
       <div className="hlp" style={{ marginTop: 8 }}>
-        {Icon.bolt()} No agent is connected. Recaps and context refresh are paused. Connect one in Settings → Agents.
+        {Icon.bolt()} No agent is connected. Recaps and context refresh are paused. Connect one in Settings → Models.
       </div>
     );
   const label = agentLabel(agents, u.id);
@@ -487,6 +293,8 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
     ["notify_awaiting_input", "A task is waiting for input", "An agent asked a question, needs a tool approved, or ended its turn with the work back in your hands. Either way the task has stopped until you pick it up."],
     ["notify_turn_failed", "A turn failed", "The session died: a dead login, a spent quota, a full context window, or a crash."],
     ["notify_schedule_failed", "A scheduled run failed", "A schedule fired and got nowhere, with nobody watching to notice otherwise."],
+    ["notify_queued_start", "A queued start fired", "A task queued for the usage-window reset started or resumed on its own. The reset lands whenever the window expires, so this is how you learn the quota is being spent."],
+    ["notify_queued_start_skipped", "A queued start was skipped", "The reset came and the task launched nothing: a turn was already running, another task still blocks it, or the project has no working directory. The deadline is gone either way."],
   ];
 
   async function sendTest() {
@@ -601,7 +409,7 @@ function NotificationSettings({ appDefaults, setAppDefault }: {
       <div className="field">
         <div className="lab">{Icon.list()} What to notify me about</div>
         <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-          Each of these means a task has STOPPED. Finished turns and new suggestions stay quiet.
+          Each of these means a task has STOPPED, or has moved on its own while you were away. Finished turns and new suggestions stay quiet.
         </div>
         {kinds.map(([key, label, help]) => {
           const kindOn = appDefaults[key] !== "off";
@@ -728,6 +536,101 @@ function AppearanceSection({ appearance, setAppearance }: {
   );
 }
 
+// This is also the only place the app shows its own version. The check
+// itself runs in the server process (GET/POST /api/updates), so no browser
+// ever calls github.com; this only reads what the server found.
+function UpdatesField({ updates, appDefaults, setAppDefault }: {
+  updates: Updates;
+  appDefaults: Record<string, string>;
+  setAppDefault: (key: string, value: string | null) => void;
+}) {
+  const { state } = updates;
+  if (!state) return null;
+  const { current } = state;
+  // The setting isn't what turned the check off, so the env var did.
+  const envOff = state.enabled === false && appDefaults.update_check !== "off";
+  const on = appDefaults.update_check !== "off";
+  const installLabel = current.installMethod === "container"
+    ? "container"
+    : current.installMethod === "source"
+      ? "source checkout"
+      : "bundled";
+  const versionLine = [
+    current.version,
+    current.sha !== "unknown" ? current.sha.slice(0, 7) : null,
+    current.builtAt !== "unknown"
+      ? `built ${new Date(current.builtAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`
+      : null,
+    installLabel,
+    current.instanceName || null,
+  ].filter((part): part is string => !!part).join(" · ");
+
+  return (
+    <div className="field">
+      <div className="lab" style={{ display: "flex", alignItems: "center", gap: 8 }}>{Icon.arrowUp()} Updates</div>
+      <div className="hlp mono" style={{ marginTop: 0, marginBottom: 10 }}>{versionLine}</div>
+      {envOff ? (
+        <div className="hlp">
+          Update checks are off for this instance (<code>CALANDRIA_UPDATE_CHECK</code>).
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{ flex: 1 }}>
+              <div className="lab" style={{ marginBottom: 2 }}>Check for updates</div>
+              <div className="hlp" style={{ marginTop: 0 }}>
+                Asks github.com for the newest release every six hours. The request carries this instance&apos;s version and nothing else.
+              </div>
+            </div>
+            <button
+              role="switch"
+              aria-label="Check for updates"
+              aria-checked={on}
+              className={`in-switch${on ? " on" : ""}`}
+              onClick={() => setAppDefault("update_check", on ? "off" : null)}
+            ><span /></button>
+          </div>
+          <button
+            className="btn btn-line btn-sm"
+            style={{ marginTop: 10 }}
+            onClick={() => void updates.checkNow()}
+            disabled={updates.checking}
+          >
+            {Icon.arrowUp()} {updates.checking ? "Checking…" : "Check now"}
+          </button>
+        </>
+      )}
+      <div className="hlp" style={{ marginTop: 10 }}>
+        {state.error
+          ? `Last check failed: ${state.error}`
+          : state.available && state.latest
+            ? (
+              <button
+                onClick={() => window.dispatchEvent(new CustomEvent("calandria:open-updates"))}
+                style={{ background: "none", border: "none", padding: 0, color: "var(--accent)", textDecoration: "underline", cursor: "pointer", font: "inherit" }}
+              >
+                {state.latest.version} is available
+              </button>
+            )
+            : state.checkedAt
+              ? `Last checked ${relTime(new Date(state.checkedAt).getTime())} · up to date`
+              : "Not checked yet."}
+      </div>
+      {state.dismissedVersion && (
+        <div className="hlp" style={{ marginTop: 4 }}>
+          {state.dismissedVersion} is skipped.{" "}
+          <button
+            onClick={() => void updates.unskip()}
+            style={{ background: "none", border: "none", padding: 0, color: "var(--accent)", textDecoration: "underline", cursor: "pointer", font: "inherit" }}
+          >
+            Show again
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // The settings surface is a two-pane view that replaces the work area: a category
 // nav (left) + the active section's content (right). Sections are data-driven so
 // growing settings is adding an entry here plus a branch in renderSection, with
@@ -738,26 +641,32 @@ const SETTINGS_SECTIONS: { id: string; label: string; icon: () => React.ReactNod
   { id: "background", label: "Background jobs", icon: Icon.clock },
   { id: "notifications", label: "Notifications", icon: Icon.bell },
   { id: "run", label: "Run defaults", icon: Icon.spark },
-  { id: "agents", label: "Agents", icon: Icon.bolt },
+  { id: "models", label: "Models", icon: Icon.bolt },
   { id: "storage", label: "Storage", icon: Icon.archive },
   { id: "github", label: "GitHub", icon: Icon.github },
   { id: "diagnostics", label: "Diagnostics", icon: Icon.chart },
   { id: "setup", label: "Setup", icon: Icon.bolt },
 ];
 
-export function SettingsView({ settings, setSetting, appearance, setAppearance, appDefaults, setAppDefault, agents, onAgentsRefresh, onReset, onRerunSetup, onClose, initialSection }: {
+export function SettingsView({ settings, setSetting, appearance, setAppearance, appDefaults, setAppDefault, setAppDefaultMany, agents, onAgentsRefresh, onReset, onRerunSetup, onClose, initialSection, updates, currentProjectId, projects }: {
   settings: Settings;
   setSetting: <K extends keyof Settings>(k: K, v: Settings[K]) => void;
   appearance: Appearance;
   setAppearance: (k: keyof Appearance, v: string) => void;
   appDefaults: Record<string, string>;
   setAppDefault: (key: string, value: string | null) => void;
+  setAppDefaultMany: (entries: Record<string, string | null>) => void;
   agents: AgentsBundle;
   onAgentsRefresh?: () => void;
   onReset: () => void;
   onRerunSetup: () => void;
   onClose: () => void;
   initialSection?: string;
+  updates: Updates;
+  /** The project selected in the workspace when Settings was opened, null when none is. Scopes the Codex hooks panel, which needs a working directory. */
+  currentProjectId?: string | null;
+  /** Every active project, for the hooks panel's fallback picker when no project is selected. */
+  projects?: { id: string; name: string }[];
 }) {
   const [section, setSection] = useState<string>(
     initialSection && SETTINGS_SECTIONS.some((s) => s.id === initialSection) ? initialSection : SETTINGS_SECTIONS[0].id
@@ -771,13 +680,24 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   // driver's resolution) so pre-existing settings still show as selected.
   const reasoningVal = appDefaults[`default_reasoning:${editAgent}`] ?? appDefaults.default_reasoning ?? null;
   const permissionVal = appDefaults[`default_permission_mode:${editAgent}`] ?? appDefaults.default_permission_mode ?? null;
-  // The model default has no legacy un-suffixed key to fall back to: it shipped
-  // agent-scoped, and a model id names one provider's catalog anyway.
-  const modelVal = appDefaults[`default_model:${editAgent}`] ?? null;
+  const sandboxVal = appDefaults["default_sandbox_mode:codex"] ?? null;
   // The internal one-shots, in the two tiers lib/agents/oneshots.ts routes them
   // by. Agent-scoped like the model default above, and for the same reason.
   const lightJobModel = appDefaults[`job_model_light:${editAgent}`] ?? null;
   const heavyJobModel = appDefaults[`job_model_heavy:${editAgent}`] ?? null;
+  const lightJobProvider = appDefaults[`job_provider_light:${editAgent}`] ?? null;
+  const heavyJobProvider = appDefaults[`job_provider_heavy:${editAgent}`] ?? null;
+  // The Default model grid: one pinned ModelPicker per connected environment,
+  // no editAgent switcher needed since every environment's own default is
+  // shown at once. Falls back to every registered agent so the grid isn't
+  // empty before anything is connected (matches the old single-picker's
+  // behavior of always rendering for editAgent regardless of connection).
+  const modelGridAgents = agents.agents.filter((a) => a.status === "connected");
+  if (modelGridAgents.length === 0) modelGridAgents.push(...agents.agents);
+  // Opt-in: when a turn on this agent dies on its spent plan quota, the runner
+  // queues the resume for the reset itself (lib/usageReset.ts). Stored "on" or
+  // absent, so an instance that never opens this page keeps the click.
+  const autoResume = appDefaults[autoResumeOnLimitKey(editAgent)] === "on";
   // What the agent being edited calls its never-asks mode. The labels are the
   // provider's own vocabulary (Claude: "bypassPermissions", Codex:
   // "danger-full-access"), so the help copy resolves the name per agent instead of
@@ -787,6 +707,13 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   // inherits differs by surface: a task inherits THESE defaults, and these
   // defaults inherit the driver's own. Only the sub says so.
   const inheritSub = `hand the choice to ${agentLabel(agents, editAgent)}'s own default`;
+  // The agent that will actually run project-scoped internal jobs right now
+  // (lib/agents/oneshots.ts resolveUtilityAgent()), null when nothing is
+  // connected. There's no separate "utility agent model": the jobs run on
+  // whichever environment this names, at THAT environment's own
+  // job_model_light/heavy settings, so the Background jobs picker below just
+  // points a pinned ModelPicker at whichever agent is currently effective.
+  const utilityAgentId = agents.utility?.id ?? null;
   const multiAgent = agents.agents.length > 1;
   const backgroundJobs = appDefaults.background_jobs !== "off";
   const recapMode = appDefaults.recap_mode === "on_open" || appDefaults.recap_mode === "off"
@@ -857,7 +784,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
           ))}
           <NavLogout />
         </div>
-        <div className="settings-nav-foot">{section === "appearance" ? "theme, mode & fonts · saved on this browser" : section === "background" ? "agent utility work · saved to this workspace" : section === "notifications" ? "alerts · saved to this workspace" : section === "run" ? "run defaults · saved to this workspace" : section === "agents" ? "coding agent logins · stored in this workspace" : section === "storage" ? "disk cleanup · acts on this workspace" : section === "github" ? "GitHub connection · stored in this workspace" : section === "setup" ? "first-run setup · stored in this workspace" : "app-level preferences · saved on this browser"}</div>
+        <div className="settings-nav-foot">{section === "appearance" ? "theme, mode & fonts · saved on this browser" : section === "background" ? "agent utility work · saved to this workspace" : section === "notifications" ? "alerts · saved to this workspace" : section === "run" ? "run defaults · saved to this workspace" : section === "models" ? "environments & providers · stored in this workspace" : section === "storage" ? "disk cleanup · acts on this workspace" : section === "github" ? "GitHub connection · stored in this workspace" : section === "setup" ? "first-run setup · stored in this workspace" : "app-level preferences · saved on this browser"}</div>
       </div>
       <div className="col col-session">
         <div className="settings-head">
@@ -869,33 +796,36 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
         <div className="scroll">
           <div className="settings-body">
             {section === "general" && (
-              <div className="field">
-                <div className="lab">{Icon.clear()} /clear recommendation threshold</div>
-                <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                  When a session&apos;s context window crosses either limit, the app nudges you to run <code>/clear</code> to start fresh. Whichever is hit first wins.
-                </div>
-                <div style={{ display: "flex", gap: 14, maxWidth: 420 }}>
-                  <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-                    <div className="lab">Percent of window <span className="opt">(%)</span></div>
-                    <input
-                      type="number" min={1} max={100} value={settings.clearThresholdPct}
-                      onChange={(e) => setSetting("clearThresholdPct", Number(e.target.value) || 0)}
-                      onBlur={(e) => setSetting("clearThresholdPct", clampPct(Number(e.target.value) || DEFAULT_SETTINGS.clearThresholdPct))}
-                    />
+              <>
+                <div className="field">
+                  <div className="lab">{Icon.clear()} /clear recommendation threshold</div>
+                  <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+                    When a session&apos;s context window crosses either limit, the app nudges you to run <code>/clear</code> to start fresh. Whichever is hit first wins.
                   </div>
-                  <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-                    <div className="lab">Absolute tokens <span className="opt">(count)</span></div>
-                    <input
-                      type="number" min={1000} step={1000} value={settings.clearThresholdTokens}
-                      onChange={(e) => setSetting("clearThresholdTokens", Number(e.target.value) || 0)}
-                      onBlur={(e) => setSetting("clearThresholdTokens", clampTokens(Number(e.target.value) || DEFAULT_SETTINGS.clearThresholdTokens))}
-                    />
+                  <div style={{ display: "flex", gap: 14, maxWidth: 420 }}>
+                    <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+                      <div className="lab">Percent of window <span className="opt">(%)</span></div>
+                      <input
+                        type="number" min={1} max={100} value={settings.clearThresholdPct}
+                        onChange={(e) => setSetting("clearThresholdPct", Number(e.target.value) || 0)}
+                        onBlur={(e) => setSetting("clearThresholdPct", clampPct(Number(e.target.value) || DEFAULT_SETTINGS.clearThresholdPct))}
+                      />
+                    </div>
+                    <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+                      <div className="lab">Absolute tokens <span className="opt">(count)</span></div>
+                      <input
+                        type="number" min={1000} step={1000} value={settings.clearThresholdTokens}
+                        onChange={(e) => setSetting("clearThresholdTokens", Number(e.target.value) || 0)}
+                        onBlur={(e) => setSetting("clearThresholdTokens", clampTokens(Number(e.target.value) || DEFAULT_SETTINGS.clearThresholdTokens))}
+                      />
+                    </div>
+                  </div>
+                  <div className="hlp" style={{ marginTop: 8 }}>
+                    Defaults: {DEFAULT_SETTINGS.clearThresholdPct}% or {DEFAULT_SETTINGS.clearThresholdTokens.toLocaleString()} tokens.
                   </div>
                 </div>
-                <div className="hlp" style={{ marginTop: 8 }}>
-                  Defaults: {DEFAULT_SETTINGS.clearThresholdPct}% or {DEFAULT_SETTINGS.clearThresholdTokens.toLocaleString()} tokens.
-                </div>
-              </div>
+                <UpdatesField updates={updates} appDefaults={appDefaults} setAppDefault={setAppDefault} />
+              </>
             )}
             {section === "appearance" && <AppearanceSection appearance={appearance} setAppearance={setAppearance} />}
             {section === "background" && (
@@ -954,11 +884,30 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                     ))}
                   </div>
                   <UtilityEffective agents={agents} />
-                  <div className="hlp" style={{ marginTop: 8 }}>
-                    Which MODEL these jobs run on is set per agent under <strong>Run defaults</strong>, split into quick jobs
-                    (recaps, <strong>/clear</strong> notes) and repo-reading ones (<strong>Refresh with AI</strong>). Left alone, each
-                    inherits the agent&apos;s own default.
-                  </div>
+                  {utilityAgentId && (
+                    <div style={{ marginTop: 10 }}>
+                      <div className="hlp" style={{ marginTop: 0, marginBottom: 6 }}>
+                        The model quick jobs (recaps, <strong>/clear</strong> notes) run on right now, on{" "}
+                        {agentLabel(agents, utilityAgentId)}. Repo-reading jobs (<strong>Refresh with AI</strong>) are set
+                        per agent under <strong>Run defaults</strong>.
+                      </div>
+                      <ModelPicker
+                        pinned
+                        variant="inline"
+                        value={{
+                          agent: utilityAgentId,
+                          provider_id: appDefaults[`job_provider_light:${utilityAgentId}`] ?? null,
+                          model: appDefaults[`job_model_light:${utilityAgentId}`] ?? null,
+                        }}
+                        onChange={(v) => setAppDefaultMany({
+                          [`job_model_light:${utilityAgentId}`]: v.model,
+                          [`job_provider_light:${utilityAgentId}`]: v.provider_id,
+                        })}
+                        inherit={{ label: "Environment default", sub: `${agentLabel(agents, utilityAgentId)}'s own setting` }}
+                        env={{ current: utilityAgentId, options: [{ id: utilityAgentId, label: agentLabel(agents, utilityAgentId) }] }}
+                      />
+                    </div>
+                  )}
                   <div className="hlp" style={{ marginTop: 10 }}>{jobUsage === null ? "Loading last-30-day usage…" : usageLine("Utility agent jobs", utilityUsage)}</div>
                 </div>
               </>
@@ -986,11 +935,38 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                     </div>
                   </div>
                 )}
+                <div className="field">
+                  <div className="lab">{Icon.spark()} Default model</div>
+                  <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+                    The model a task runs on when its own picker is set to <strong>{INHERIT_LABEL}</strong>. Per-task choices
+                    always override this. One picker per connected environment: <strong>Environment default</strong> hands
+                    the choice back to that environment&apos;s own default.
+                  </div>
+                  <div className="envgrid">
+                    {modelGridAgents.map((a) => {
+                      const gModel = appDefaults[`default_model:${a.id}`] ?? null;
+                      const gProvider = appDefaults[`default_provider:${a.id}`] ?? null;
+                      return (
+                        <div key={a.id} className="envgrid-card">
+                          <div className="envgrid-h">{EnvMark[a.id]?.()} {a.label}</div>
+                          <ModelPicker
+                            pinned
+                            variant="inline"
+                            value={{ agent: a.id, provider_id: gProvider, model: gModel }}
+                            onChange={(v) => setAppDefaultMany({ [`default_model:${a.id}`]: v.model, [`default_provider:${a.id}`]: v.provider_id })}
+                            inherit={{ label: "Environment default", sub: `${a.label}'s own setting` }}
+                            env={{ current: a.id, options: [{ id: a.id, label: a.label }] }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
                 {multiAgent && (
                   <div className="field">
                     <div className="lab">Run defaults for</div>
                     <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                      Each agent carries its own model, reasoning &amp; permission defaults. Pick which to edit.
+                      Each agent carries its own internal-job models, reasoning &amp; permission defaults. Pick which to edit.
                     </div>
                     <div className="seg wrap" style={{ maxWidth: 520 }}>
                       {agents.agents.map((a) => (
@@ -999,43 +975,37 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                     </div>
                   </div>
                 )}
-                <ModelField
-                  label="Default model"
-                  options={modelOptions(caps, inheritSub)}
-                  value={modelVal}
-                  onChange={(m) => setAppDefault(`default_model:${editAgent}`, m)}
-                  note={
-                    <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                      The model a task runs on when its own picker is set to <strong>{INHERIT_LABEL}</strong>. Per-task choices
-                      always override this, and <strong>{INHERIT_LABEL}</strong> here hands the choice back to {agentLabel(agents, editAgent)}&apos;s own.
-                    </div>
-                  }
-                />
-                <ModelField
-                  label="Quick internal jobs"
-                  options={modelOptions(caps, inheritSub)}
-                  value={lightJobModel}
-                  onChange={(m) => setAppDefault(`job_model_light:${editAgent}`, m)}
-                  note={
-                    <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                      Calandria&apos;s own short jobs on {agentLabel(agents, editAgent)}: <strong>/clear</strong> handoff notes and
-                      project recaps, each one turn of text in and out with no tools.
-                    </div>
-                  }
-                />
-                <ModelField
-                  label="Repo-reading internal jobs"
-                  options={modelOptions(caps, inheritSub)}
-                  value={heavyJobModel}
-                  onChange={(m) => setAppDefault(`job_model_heavy:${editAgent}`, m)}
-                  note={
-                    <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
-                      The <strong>Refresh with AI</strong> project-context draft and the <strong>Refresh tag</strong> plan check. Both
-                      explore the repository read-only, then produce something durable: context prepended to every new session, or
-                      which of a tag&apos;s tasks have gone stale.
-                    </div>
-                  }
-                />
+                <div className="field">
+                  <div className="lab">{Icon.spark()} Quick internal jobs</div>
+                  <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+                    Calandria&apos;s own short jobs on {agentLabel(agents, editAgent)}: <strong>/clear</strong> handoff notes and
+                    project recaps, each one turn of text in and out with no tools.
+                  </div>
+                  <ModelPicker
+                    pinned
+                    variant="inline"
+                    value={{ agent: editAgent, provider_id: lightJobProvider, model: lightJobModel }}
+                    onChange={(v) => setAppDefaultMany({ [`job_model_light:${editAgent}`]: v.model, [`job_provider_light:${editAgent}`]: v.provider_id })}
+                    inherit={{ label: "Environment default", sub: `${agentLabel(agents, editAgent)}'s own setting` }}
+                    env={{ current: editAgent, options: [{ id: editAgent, label: agentLabel(agents, editAgent) }] }}
+                  />
+                </div>
+                <div className="field">
+                  <div className="lab">{Icon.spark()} Repo-reading internal jobs</div>
+                  <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+                    The <strong>Refresh with AI</strong> project-context draft and the <strong>Refresh tag</strong> plan check. Both
+                    explore the repository read-only, then produce something durable: context prepended to every new session, or
+                    which of a tag&apos;s tasks have gone stale.
+                  </div>
+                  <ModelPicker
+                    pinned
+                    variant="inline"
+                    value={{ agent: editAgent, provider_id: heavyJobProvider, model: heavyJobModel }}
+                    onChange={(v) => setAppDefaultMany({ [`job_model_heavy:${editAgent}`]: v.model, [`job_provider_heavy:${editAgent}`]: v.provider_id })}
+                    inherit={{ label: "Environment default", sub: `${agentLabel(agents, editAgent)}'s own setting` }}
+                    env={{ current: editAgent, options: [{ id: editAgent, label: agentLabel(agents, editAgent) }] }}
+                  />
+                </div>
                 <div className="field">
                   <div className="lab">{Icon.spark()} Default reasoning level</div>
                   <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
@@ -1080,10 +1050,48 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                     ))}
                   </div>
                 </div>
+                {editAgent === "codex" && (
+                  <div className="field">
+                    <div className="lab">Default Codex sandbox</div>
+                    <div className="hlp" style={{ marginTop: 0, marginBottom: 10 }}>
+                      The sandbox a Codex task uses when its own picker is set to <strong>Inherit default</strong>. This is independent of the permission mode.
+                    </div>
+                    <div className="seg wrap" style={{ maxWidth: 520 }}>
+                      {codexSandboxOptions("Use the sandbox associated with the task's permission mode", "Follow permission mode").map((s) => <button key={s.label} className={sandboxVal === s.value ? "on" : ""} title={s.sub} onClick={() => setAppDefault("default_sandbox_mode:codex", s.value)}>{s.label}</button>)}
+                    </div>
+                  </div>
+                )}
+                {editAgent === "codex" && (
+                  <CodexHooksPanel
+                    agentId="codex"
+                    currentProjectId={currentProjectId ?? null}
+                    projects={projects ?? []}
+                  />
+                )}
+                <div className="field">
+                  <div className="lab" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {Icon.clock()} Resume automatically when the limit resets
+                    <button
+                      role="switch"
+                      aria-label={`Resume ${agentLabel(agents, editAgent)} tasks automatically when the usage limit resets`}
+                      aria-checked={autoResume}
+                      className={`in-switch${autoResume ? " on" : ""}`}
+                      style={{ marginLeft: "auto" }}
+                      onClick={() => setAppDefault(autoResumeOnLimitKey(editAgent), autoResume ? null : "on")}
+                    ><span /></button>
+                  </div>
+                  <div className="hlp" style={{ marginTop: 0 }}>
+                    When a turn dies because {agentLabel(agents, editAgent)}&apos;s plan quota is spent, queue the task to resume on its
+                    own once the window resets, instead of leaving the <strong>Resume when the limit resets</strong> button on the
+                    transcript for you to press. Off by default: the next window&apos;s quota is finite, and pressing that button is
+                    where you decide this task is what it should go on. Needs a reset time from the agent, so a task whose agent
+                    reports none keeps the button.
+                  </div>
+                </div>
                 <PermissionRules />
               </>
             )}
-            {section === "agents" && <AgentsSection defaultAgent="claude" appDefaults={appDefaults} setAppDefault={setAppDefault} onChanged={onAgentsRefresh} />}
+            {section === "models" && <ModelsSection appDefaults={appDefaults} setAppDefault={setAppDefault} onChanged={onAgentsRefresh} />}
             {section === "storage" && <WorktreePrune />}
             {section === "diagnostics" && <Diagnostics settings={settings} setSetting={setSetting} />}
             {section === "github" && <GitHubSettings />}

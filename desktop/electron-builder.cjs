@@ -25,6 +25,15 @@ const win = windowsSigning(process.env);
 
 module.exports = {
   appId: "dev.calandria.desktop",
+  // `productName` is the app exe's FileDescription and ProductName
+  // (out/winPackager.js, signAndEditResources). package.json's `description`
+  // is user-facing too and has no override here: it becomes the NSIS
+  // installer exe's FileDescription, which is the program name Windows shows
+  // in the UAC elevation prompt (out/targets/nsis/NsisTarget.js), the Start
+  // Menu and desktop shortcut tooltips, the uninstall entry's Comments value
+  // (templates/nsis/include/installer.nsh) and the deb package description
+  // (out/targets/LinuxTargetHelper.js). Keep it one short product sentence.
+  // Notes about how this package is built belong in desktop/README.md.
   productName: "Calandria",
   copyright: "Copyright © Calandria contributors",
   directories: {
@@ -57,6 +66,7 @@ module.exports = {
     "ssh-tunnel.js",
     "tray-residency.js",
     "updater.js",
+    "window-state.js",
     "loading.html",
     "assets/**",
     "package.json",
@@ -129,6 +139,9 @@ module.exports = {
     oneClick: false,
     perMachine: false,
     allowToChangeInstallationDirectory: true,
+    // Keep the installer name stable and identical to the filename written in
+    // latest.yml. The updater downloads the feed's path verbatim.
+    artifactName: "Calandria-Setup-${version}.${ext}",
   },
 
   // Controls where a release's artifacts go, and, easy to miss, where the
@@ -153,27 +166,10 @@ module.exports = {
   // .github/workflows/release-desktop.yml checks the two agree before it
   // builds.
   //
-  // `releaseType: "release"` matters because electron-publish's
-  // GitHubPublisher otherwise defaults it to "draft"
-  // (out/gitHubPublisher.js: `this.releaseType = options.draft === false ?
-  // "release" : "draft"`), while release-please has already created a
-  // published release for the tag by the time this workflow runs. The
-  // publisher refuses to write into a release whose type does not match what
-  // it is publishing, logs one warning per skipped artifact, and exits 0:
-  // every artifact and every update feed is skipped and the lane goes green
-  // having uploaded nothing. Declaring the type we are actually publishing
-  // into makes the publisher adopt the existing release instead
-  // (`getOrCreateRelease` only takes the refuse branch when releaseType is
-  // "draft").
-  //
-  // Because "log a warning and continue" is this publisher's normal
-  // behavior, the workflow asserts the assets actually landed instead of
-  // trusting the exit code. The same function also refuses a release
-  // published more than two hours ago, which a slow notarization or a
-  // re-run can cross; EP_GH_IGNORE_TIME=true in
-  // .github/workflows/release-desktop.yml turns that second refusal off. It
-  // is set there, not here, because it is only correct for a lane whose
-  // release was minted minutes earlier by release-please.
+  // `releaseType: "release"` documents the published release that receives
+  // these files. The release workflow builds with `--publish never`, stages
+  // the local feeds and blockmaps, and uploads every verified file with
+  // `gh release upload` after the tag exists.
   //
   // This config is not inert outside a release, either. With no `--publish`
   // flag, PublishManager decides a policy itself: `always` when

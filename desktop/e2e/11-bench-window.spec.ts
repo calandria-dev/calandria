@@ -19,7 +19,7 @@
  * and quitting is asked for by name, but only while a status area is really
  * drawing the tray icon. `desktop/tray-residency.js` asks the session, so on a
  * session whose panel dropped the icon (this bench, see `10-bench-tray.spec.ts`
- * and docs/DESKTOP_E2E.md §5), a close quits instead of hiding into nowhere.
+ * and docs/DESKTOP_E2E.md §6), a close quits instead of hiding into nowhere.
  *
  * The close test reads the shell's own verdict and asserts the matching
  * behavior, instead of requiring the host (which would fail this whole file

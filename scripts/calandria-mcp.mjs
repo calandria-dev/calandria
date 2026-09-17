@@ -36,8 +36,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../lib/agentToolDefs.mjs";
-import { guardToolHandler, DEFAULT_AGENT_TOOL_TIMEOUT_MS } from "../lib/agentToolGuard.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_PROVIDERS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, REPORT_BASE_REWRITE, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../lib/agentToolDefs.mjs";
+import { guardToolHandler, watchToolCancellation, DEFAULT_AGENT_TOOL_TIMEOUT_MS } from "../lib/agentToolGuard.mjs";
 
 const TASK_ID = process.env.CALANDRIA_TASK_ID || "";
 const PROJECT_ID = process.env.CALANDRIA_PROJECT_ID || "";
@@ -114,9 +114,41 @@ const TOOL_TIMEOUT_MS = (() => {
   const n = Number(process.env.CALANDRIA_AGENT_TOOL_TIMEOUT_MS);
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_AGENT_TOOL_TIMEOUT_MS;
 })();
+/**
+ * Report a call the CLI cut off after dispatching it. Best effort in both
+ * directions: the stderr line lands even when the app is unreachable or this
+ * process is about to be killed, and a failed POST is swallowed, because the
+ * tool call it belongs to is already lost and there is nothing to retry for.
+ */
+async function reportCutoff({ tool, reason, ms }) {
+  process.stderr.write(
+    `[calandria-mcp] ${tool} was cancelled by the agent CLI after ${ms}ms, so its answer was discarded` +
+      `${reason ? `: ${reason}` : ""}\n`
+  );
+  try {
+    await callInternal("tool-cutoff", { tool, reason, ms });
+  } catch {
+    /* the answer is already lost; a failed report must not add noise on stdout */
+  }
+}
+
 const registerToolUnguarded = server.registerTool.bind(server);
+// Two wraps, outermost first. watchToolCancellation sees the whole in-flight
+// window, including the guard's own deadline, and reports the one failure the
+// guard cannot answer: a cancellation after dispatch, which makes the MCP SDK
+// drop whatever the guard returns (lib/agentToolGuard.mjs). This is where the
+// bridge closes the gap the Claude driver's stream pump closes in-process
+// (issue #364).
 server.registerTool = (name, config, handler) =>
-  registerToolUnguarded(name, config, guardToolHandler(name, handler, { timeoutMs: name === ASK_USER.name ? 0 : TOOL_TIMEOUT_MS }));
+  registerToolUnguarded(
+    name,
+    config,
+    watchToolCancellation(name, guardToolHandler(name, handler, { timeoutMs: name === ASK_USER.name ? 0 : TOOL_TIMEOUT_MS }), {
+      onCutoff: (cut) => {
+        void reportCutoff(cut);
+      },
+    })
+  );
 
 server.registerTool(
   EXPOSE_SERVICE.name,
@@ -143,6 +175,15 @@ server.registerTool(
 );
 
 server.registerTool(
+  LIST_PROVIDERS.name,
+  { description: LIST_PROVIDERS.description, inputSchema: {} },
+  async () => {
+    const data = await callInternal("list-providers", {});
+    return { content: [{ type: "text", text: JSON.stringify(data.providers ?? [], null, 2) }] };
+  }
+);
+
+server.registerTool(
   SUGGEST_TASK.name,
   {
     description: SUGGEST_TASK.description,
@@ -153,11 +194,12 @@ server.registerTool(
       project: z.string().optional().describe(SUGGEST_TASK.params.project),
       blocked_by: z.array(z.string()).optional().describe(SUGGEST_TASK.params.blocked_by),
       tags: z.array(z.string()).optional().describe(SUGGEST_TASK.params.tags),
-      provider: z.enum(SUGGEST_TASK.providers).optional().describe(SUGGEST_TASK.params.provider),
+      provider: z.string().optional().describe(SUGGEST_TASK.params.provider),
       model: z.string().optional().describe(SUGGEST_TASK.params.model),
+      attachments: z.array(z.string()).optional().describe(SUGGEST_TASK.params.attachments),
     },
   },
-  async ({ title, description, priority, project, blocked_by, tags, provider, model }) => {
+  async ({ title, description, priority, project, blocked_by, tags, provider, model, attachments }) => {
     // Resolve refs before handing off (an id passes through; a title filed
     // earlier this turn into the same project resolves to its id). The
     // endpoint just forwards ids to setTaskDeps, which only keeps
@@ -169,7 +211,10 @@ server.registerTool(
     // `tags` are forwarded as the model typed them: the endpoint resolves
     // them in the project the task actually lands in (creating it on a
     // miss), which is where `project` resolves to a real row.
-    const data = await callInternal("suggest-task", { title, description, priority, project, blocked_by: deps, tags, provider, model });
+    // `attachments` are forwarded as typed: the endpoint resolves them
+    // against the caller's worktree (CALANDRIA_TASK_ID's), never this
+    // process's cwd.
+    const data = await callInternal("suggest-task", { title, description, priority, project, blocked_by: deps, tags, provider, model, attachments });
     if (data.id) {
       // The ref as typed is the alias that always exists ("" when omitted).
       // The resolved id/name (echoed by the endpoint) additionally let a
@@ -194,11 +239,12 @@ server.registerTool(
     inputSchema: {
       project: z.string().optional().describe(LIST_TASKS.params.project),
       include_done: z.boolean().optional().describe(LIST_TASKS.params.include_done),
-      tag: z.string().optional().describe(LIST_TASKS.params.tag),
+      tags: z.array(z.string()).optional().describe(LIST_TASKS.params.tags),
+      match: z.enum(["any", "all"]).optional().describe(LIST_TASKS.params.match),
     },
   },
-  async ({ project, include_done, tag }) => {
-    const data = await callInternal("list-tasks", { project, include_done, tag });
+  async ({ project, include_done, tags, match }) => {
+    const data = await callInternal("list-tasks", { project, include_done, tags, match });
     return { content: [{ type: "text", text: JSON.stringify({ project: data.project, tasks: data.tasks ?? [] }, null, 2) }] };
   }
 );
@@ -242,15 +288,16 @@ server.registerTool(
       // next; the two-phase recipe hands the model real ids anyway.
       blocked_by: z.array(z.string()).optional().describe(UPDATE_TASK.params.blocked_by),
       tags: z.array(z.string()).optional().describe(UPDATE_TASK.params.tags),
+      attachments: z.array(z.string()).optional().describe(UPDATE_TASK.params.attachments),
     },
   },
-  async ({ task, title, description, priority, status, blocked_by, tags }) => {
+  async ({ task, title, description, priority, status, blocked_by, tags, attachments }) => {
     // `task` is the target the model chose and is forwarded unvalidated;
     // this bridge holds no policy. The endpoint decides what may be written
     // (any task in any project, refused only while it has a turn running
     // right now), against CALANDRIA_TASK_ID (sent by callInternal as the
     // trusted caller identity, which nothing here can override).
-    const data = await callInternal("update-task", { task, title, description, priority, status, blocked_by, tags });
+    const data = await callInternal("update-task", { task, title, description, priority, status, blocked_by, tags, attachments });
     return { content: [{ type: "text", text: data.text }] };
   }
 );
@@ -308,6 +355,23 @@ server.registerTool(
     // (any task in the same project, never one with a live turn that isn't
     // the caller's own), against CALANDRIA_TASK_ID as the trusted caller identity.
     const data = await callInternal("set-base-branch", { branch, task });
+    return { content: [{ type: "text", text: data.text }] };
+  }
+);
+
+server.registerTool(
+  REPORT_BASE_REWRITE.name,
+  {
+    description: REPORT_BASE_REWRITE.description,
+    inputSchema: {
+      branch: z.string().optional().describe(REPORT_BASE_REWRITE.params.branch),
+    },
+  },
+  async ({ branch }) => {
+    // `branch` is the model's word for what it rewrote and is forwarded
+    // unvalidated; the endpoint re-derives which tasks were actually
+    // orphaned from git, against CALANDRIA_TASK_ID as the trusted caller.
+    const data = await callInternal("report-base-rewrite", { branch });
     return { content: [{ type: "text", text: data.text }] };
   }
 );
@@ -418,6 +482,8 @@ server.registerTool(
       priority: z.enum(["hi", "med", "lo"]).optional().describe(CREATE_RUNBOOK.params.priority),
       permission_mode: z.string().optional().describe(CREATE_RUNBOOK.params.permission_mode),
       project: z.string().optional().describe(CREATE_RUNBOOK.params.project),
+      provider: z.string().optional().describe(CREATE_RUNBOOK.params.provider),
+      model: z.string().optional().describe(CREATE_RUNBOOK.params.model),
     },
   },
   async (args) => {
@@ -451,6 +517,8 @@ server.registerTool(
       prompt: z.string().optional().describe(UPDATE_RUNBOOK.params.prompt),
       priority: z.enum(["hi", "med", "lo"]).optional().describe(UPDATE_RUNBOOK.params.priority),
       permission_mode: z.string().optional().describe(UPDATE_RUNBOOK.params.permission_mode),
+      provider: z.string().optional().describe(UPDATE_RUNBOOK.params.provider),
+      model: z.string().optional().describe(UPDATE_RUNBOOK.params.model),
     },
   },
   async (args) => {

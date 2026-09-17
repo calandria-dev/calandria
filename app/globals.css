@@ -169,9 +169,10 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .tnum{font-variant-numeric:tabular-nums;}
 
 /* ============================== app shell ============================== */
-/* dvh tracks the *visible* viewport as mobile browser chrome / the on-screen
-   keyboard expand and collapse, so the composer never ends up behind them; vh
-   is the desktop fallback. */
+/* dvh tracks the mobile browser chrome as it expands and collapses; vh is the
+   desktop fallback. The phone block below uses the measured viewport height
+   from app/shell/useViewportInsets.ts, which handles both engines that resize
+   layout for the keyboard and iOS, which resizes only the visual viewport. */
 .app{height:100vh;height:100dvh;display:flex;flex-direction:column;background:var(--chrome);}
 .titlebar{
   height:50px;flex:0 0 auto;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:14px;
@@ -247,7 +248,9 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .col-projects{flex:0 0 var(--col-proj);min-width:0;border-right:1px solid var(--line);background:var(--panel-2);}
 .col-tasks{flex:0 0 var(--col-task);min-width:0;border-right:1px solid var(--line);}
 .col-session{flex:1;min-width:0;background:var(--surface);}
-.col-diffs{flex:1;min-width:0;background:var(--surface);}  /* mobile Diffs tab: full-pane TaskChanges */
+/* mobile Services tab: the service list or one service's log, full pane, with a
+   header of its own. Column so the header sits above the scrolling body. */
+.col-services{--term-bg:var(--term);flex:1;min-width:0;display:flex;flex-direction:column;background:var(--surface);}
 /* mobile project pane: ProjectLanding (recap, Tags, Runbooks, Schedules)
    with a header of its own. Column so the header sits above the scrolling body. */
 .col-project{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--surface);}
@@ -761,6 +764,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .bc-foot .sp{flex:1;}
 .bc-chip{font-family:var(--mono);font-size:9px;letter-spacing:.04em;color:var(--ink-3);border:1px solid var(--line);border-radius:5px;padding:2.5px 6px;display:flex;align-items:center;gap:5px;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
 .bc-chip.block{color:var(--amber);border-color:var(--amber);background:var(--amber-soft);}
+.bc-chip.rewritten{color:var(--amber);border-color:var(--amber);background:var(--amber-soft);}
 .bc-chip.autostart{color:var(--blue);border-color:var(--blue);background:var(--blue-soft);}
 /* an agent edited this task since you accepted it: see .blocked-chip.changed */
 .bc-chip.changed{color:var(--violet);border-color:var(--violet);background:var(--violet-soft);}
@@ -849,9 +853,35 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .plan-pill .pp-left{opacity:.7;}
 .plan-pill.warn{color:var(--warn);border-color:var(--warn);background:var(--amber-soft);}
 .plan-pill.limit{color:var(--err);border-color:var(--err);background:var(--red-soft);}
+
+/* The update indicator. Accent-tinted, which no other titlebar pill is, so a
+   new release reads as new information and not as trouble. */
+.update-pill{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 10px;border-radius:999px;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;font-weight:500;color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent-soft);cursor:pointer;transition:filter .12s;white-space:nowrap;flex:0 0 auto;}
+.update-pill:hover{filter:brightness(1.12);}
+.update-pill svg{width:11px;height:11px;}
+.update-pill .spinner{width:11px;height:11px;border-width:1.5px;}
+.update-pill.ready{background:var(--accent);color:var(--on-accent);border-color:var(--accent);}
+/* The mobile form: the labelled pill does not fit beside the terminal button. */
+.tb-icon{position:relative;}
+.tb-icon .upd-dot{position:absolute;top:3px;right:3px;width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px var(--surface);}
+.update-menu{width:400px;max-width:calc(100vw - 24px);max-height:min(70vh,560px);overflow:auto;}
+.update-menu .um-head{padding:11px 13px 9px;border-bottom:1px solid var(--line);}
+.update-menu .um-title{font-size:13px;font-weight:600;color:var(--ink);}
+.update-menu .um-target{padding:11px 13px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:8px;align-items:flex-start;}
+.update-menu .um-tt{font-size:12px;font-weight:600;color:var(--ink);}
+.update-menu .um-target summary{font-size:12px;color:var(--accent);cursor:pointer;}
+.update-menu .um-cmds{margin-top:8px;display:flex;flex-direction:column;gap:6px;align-items:flex-start;}
+.update-menu .um-cmds pre{margin:0;padding:8px 10px;border-radius:var(--r-sm);background:var(--surface-2);border:1px solid var(--line);font-family:var(--mono);font-size:11px;line-height:1.6;white-space:pre-wrap;word-break:break-all;width:100%;}
+.update-menu .um-prog{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-2);}
+.update-menu .um-err{color:var(--err);}
+.update-menu .um-notes{padding:9px 13px;display:flex;flex-direction:column;gap:10px;align-items:flex-start;}
+.update-menu .um-note{font-size:12px;width:100%;}
+.update-menu .um-nv{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.06em;color:var(--ink-3);margin-bottom:4px;}
+.update-menu .um-foot{padding:9px 13px;border-top:1px solid var(--line);display:flex;gap:8px;align-items:center;}
 .pu-menu{width:270px;padding-bottom:8px;}
 .pu-note{margin:2px 13px 8px;padding:7px 9px;border-radius:var(--r-sm);font-size:11.5px;line-height:1.4;}
 .pu-note.limit{background:var(--red-soft);color:var(--err);}
+.pu-note.scoped{background:var(--surface-2);color:var(--ink-2);border:1px solid var(--line);}
 .pu-row{padding:5px 13px 7px;}
 .pu-row-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;}
 .pu-label{font-size:12px;font-weight:600;color:var(--ink);}
@@ -1229,7 +1259,7 @@ a.tc-btn{display:inline-flex;align-items:center;text-decoration:none;line-height
    every row, and row highlights stay full-width across the scrolled area.
    container-type is what lets a review comment stay the width of the VISIBLE
    pane (100cqi) instead of stretching to that max-content width. */
-.tc-hunks{font-family:var(--mono);font-size:12px;line-height:1.75;background:var(--surface);overflow-x:auto;border-radius:0 0 var(--r) var(--r);container-type:inline-size;}
+.tc-hunks{font-family:var(--mono);font-size:12px;line-height:1.75;-webkit-text-size-adjust:100%;text-size-adjust:100%;background:var(--surface);overflow-x:auto;border-radius:0 0 var(--r) var(--r);container-type:inline-size;}
 .tc-rows,.tc-split{width:max-content;min-width:100%;}
 .dl{padding:0 12px;white-space:pre;color:var(--ink);}
 .dl.add{background:var(--diff-add-bg);color:var(--run);}
@@ -1503,6 +1533,37 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .field .perm-add input[type=text]{flex:1;min-width:160px;padding:7px 10px;font-size:12.5px;}
 .perm-add .btn{flex-shrink:0;}
 
+/* Settings → Run defaults' Codex hooks panel: the inventory of hook
+   definitions Codex will run on a lifecycle event, and the per-hook trust
+   review. A hook that won't fire (`.chk-hook.off`) has to read as visibly
+   inert, not just carry a small chip, since a hook silently skipped is the
+   exact failure this panel exists to surface. */
+.chk-picker{margin-bottom:10px;}
+.chk-picker select{font-size:11.5px;color:var(--ink-2);background:var(--raise);border:1px solid var(--line-strong);border-radius:7px;padding:7px 10px;cursor:pointer;max-width:280px;}
+.chk-suppressed{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;margin-bottom:12px;border:1px solid var(--amber);border-radius:var(--r);background:var(--amber-soft);}
+.chk-warnic{flex:0 0 20px;height:20px;display:grid;place-items:center;color:var(--amber);}
+.chk-warnic svg{width:14px;height:14px;}
+.chk-suppressed-t{font-size:12.5px;font-weight:600;color:var(--ink);}
+.chk-scope{margin-bottom:16px;}
+.chk-scope:last-child{margin-bottom:0;}
+.chk-scope-h{font-size:11px;color:var(--ink-3);margin-bottom:8px;word-break:break-all;}
+.chk-scope-warn{font-size:11.5px;color:var(--amber);margin-bottom:6px;}
+.chk-hooks{display:flex;flex-direction:column;gap:8px;}
+.chk-hook{padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r);background:var(--panel);}
+.chk-hook.off{border-color:var(--line);background:var(--surface-2);opacity:.82;}
+.chk-hook-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;}
+.chk-event{font-size:12.5px;font-weight:600;color:var(--ink);}
+.chk-hook.off .chk-event{color:var(--ink-3);}
+.chk-chip{display:inline-flex;align-items:center;gap:5px;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:600;letter-spacing:.02em;white-space:nowrap;}
+.chk-chip.ok{color:var(--green);background:var(--green-soft);}
+.chk-chip.warn{color:var(--amber);background:var(--amber-soft);}
+.chk-chip.mute{color:var(--ink-4);background:var(--surface-2);}
+.chk-skip{font-size:11px;font-weight:600;color:var(--red);}
+.chk-hook-what{font-size:11.5px;color:var(--ink-2);word-break:break-all;margin-bottom:4px;}
+.chk-hook-src{font-size:11px;color:var(--ink-4);margin-bottom:8px;word-break:break-all;}
+.chk-hook-acts{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.chk-managed{font-size:11px;color:var(--ink-4);}
+
 /* ---------------- markdown (assistant / user message bodies) ---------------- */
 .md > :first-child{margin-top:0;}
 .md > :last-child{margin-bottom:0;}
@@ -1520,6 +1581,16 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .md code{font-family:var(--mono);font-size:12.5px;background:var(--surface-2);border:1px solid var(--line-2);padding:1px 5px;border-radius:5px;color:var(--accent-ink);}
 .md pre{margin:0 0 12px;background:var(--panel-2);border:1px solid var(--line-2);border-radius:var(--r);padding:12px 14px;overflow-x:auto;}
 .md pre code{display:block;background:none;border:none;padding:0;color:var(--ink);font-size:12.5px;line-height:1.55;}
+/* Copy-on-hover for a fenced block. The wrapper carries the positioning; the
+   <pre> keeps its own margin, which collapses through the wrapper unchanged. */
+.md-pre{position:relative;}
+.md-copy{position:absolute;top:7px;right:7px;display:grid;place-items:center;width:26px;height:26px;padding:0;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--surface);color:var(--ink-3);cursor:pointer;opacity:0;transition:opacity .12s ease,color .12s ease,border-color .12s ease;}
+.md-copy svg{width:14px;height:14px;}
+.md-pre:hover .md-copy,.md-pre:focus-within .md-copy{opacity:1;}
+.md-copy:hover{color:var(--ink);border-color:var(--line-strong);}
+.md-copy.on{opacity:1;color:var(--green);border-color:var(--green);}
+/* No hover to reveal it on touch, so it stays visible there. */
+@media (hover:none){.md-copy{opacity:1;}}
 .md blockquote{margin:8px 0;padding:2px 0 2px 14px;border-left:3px solid var(--line-strong);color:var(--ink-2);}
 .md hr{border:none;border-top:1px solid var(--line);margin:14px 0;}
 .md table{border-collapse:collapse;margin:8px 0;font-size:13px;width:100%;}
@@ -1642,24 +1713,23 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .comp-box{border:1px solid var(--line-strong);border-radius:var(--r-lg);background:var(--raise);box-shadow:var(--sh-1);transition:border-color .12s,box-shadow .12s;overflow:hidden;}
 .comp-box:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
 /* The row bottom-aligns so the send button hugs the last line as the box grows.
-   The textarea's vertical padding is sized so ONE line of text stands as tall
+   The field's vertical padding is sized so ONE line of text stands as tall
    as the send button (21px line + 2×6.5 = 34px desktop; 24px + 2×8 = 40px
-   mobile, see the phone block). Without it the empty-ish textarea bottom-aligns
+   mobile, see the phone block). Without it the short field bottom-aligns
    inside the taller row and the first line of text sits at the bottom of the
-   box. scrollHeight includes the padding, so autosize keeps working. */
+   box. .comp-input is the contenteditable message field (see Composer.tsx): it
+   grows with its own content to max-height and scrolls past it, so nothing
+   measures or sets its height. */
 .comp-area{display:flex;align-items:flex-end;gap:10px;padding:11px 12px 11px 15px;}
-.comp-area textarea{flex:1;border:none;background:none;resize:none;outline:none;font-family:var(--font-prompt);font-size:14px;line-height:1.5;color:var(--ink);max-height:160px;min-height:22px;padding:6.5px 0;}
-.comp-area textarea::placeholder{color:var(--ink-4);}
-/* Empty box: the placeholder is the only text in it, so keep it on the one line
-   the box is (see autosize in Composer.tsx) rather than letting it wrap into a
-   second line the box doesn't have and a scrollbar nobody can use. The
-   placeholders are written to fit that line; this is the guarantee for the ones
-   that can't be (a long agent label, a hand-narrowed rail). No text-overflow:
-   Chromium ignores it on a textarea placeholder. Dropped the moment there's a
-   value, so typed text wraps normally. Named "blank" rather than "empty":
-   .empty above is the empty-STATE panel, and its text-align:center reached the
-   textarea's placeholder through the shared class name. */
-.comp-area textarea.blank{white-space:nowrap;overflow:hidden;}
+.comp-area .comp-input{flex:1;min-width:0;border:none;background:none;outline:none;font-family:var(--font-prompt);font-size:14px;line-height:1.5;color:var(--ink);max-height:160px;min-height:22px;padding:6.5px 0;white-space:pre-wrap;overflow-wrap:break-word;overflow-x:hidden;overflow-y:auto;cursor:text;}
+.comp-area .comp-input[aria-disabled=true]{cursor:default;}
+/* Empty box: the placeholder is the only thing in it, so keep it on the one
+   line the box is, and ellipsize the placeholders that can't fit (a long agent
+   label, a hand-narrowed rail), which a textarea placeholder could not do. The
+   field is emptied down to zero child nodes on delete-to-empty (see the input
+   handler in Composer.tsx), so :empty stays true and the box stays one line
+   tall. */
+.comp-area .comp-input:empty::before{content:attr(data-placeholder);display:block;color:var(--ink-4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;}
 .send{width:34px;height:34px;flex:0 0 auto;border-radius:9px;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;box-shadow:var(--sh-1);transition:filter .12s,opacity .12s;}
 .send:hover{filter:brightness(1.07);}
 .send:disabled{opacity:.4;cursor:default;filter:none;}
@@ -1748,7 +1818,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .hero .h-prompt .hp-list .hp-fixed::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--ink-4);}
 
 /* ============================== modal ============================== */
-.scrim{position:fixed;inset:0;background:rgba(38,36,31,.42);backdrop-filter:blur(3px);display:grid;place-items:center;z-index:200;animation:fadein .15s ease;}
+.scrim{position:fixed;inset:0;bottom:var(--kb-inset, 0px);background:rgba(38,36,31,.42);backdrop-filter:blur(3px);display:grid;place-items:center;z-index:200;animation:fadein .15s ease;}
 @keyframes fadein{from{opacity:0;}to{opacity:1;}}
 .modal{width:560px;max-width:calc(100vw - 40px);max-height:calc(100vh - 60px);overflow-y:auto;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh-3);animation:pop .18s cubic-bezier(.2,.9,.3,1.2);}
 @keyframes pop{from{opacity:0;transform:translateY(10px) scale(.98);}to{opacity:1;transform:none;}}
@@ -1764,6 +1834,13 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 
 .field{margin-bottom:18px;}
 .field:last-child{margin-bottom:0;}
+/* Settings → Run defaults: one pinned ModelPicker card per connected
+   environment, so every environment's default model is visible without
+   switching an agent selector. */
+.envgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;}
+.envgrid-card{border:1px solid var(--line);border-radius:var(--r-sm);padding:12px;min-width:0;}
+.envgrid-h{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;margin-bottom:10px;}
+.envgrid-card .mpick{width:100%;}
 /* Body-face caps, matching the design language's section headers (.ap-h2 /
    handoff Settings.html .sec h2): the mono-caps version was the pre-revamp
    style. */
@@ -1961,10 +2038,51 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .svc-cfg-row input{flex:1;min-width:0;}
 @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.4;}}
 
+/* ============================ services on a phone ============================ */
+/* The Services tab (ServicesPane): one full-width card per service, then one
+   service's log. Same stream and routes as the drawer above, laid out in a
+   single column with touch-sized controls, because the drawer's 280px list
+   beside a log pane has no room on a 390px screen. */
+.msvc-bar{
+  display:flex;align-items:center;gap:8px;flex:0 0 auto;
+  min-height:46px;padding:8px 12px;
+  background:var(--chrome);border-bottom:1px solid var(--line);
+}
+.msvc-bar>svg{width:16px;height:16px;color:var(--ink-3);flex:0 0 auto;}
+.msvc-bar .msvc-status{margin-left:auto;}
+.msvc-title{font-size:14px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.msvc-sub{margin-left:auto;font-size:11.5px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.msvc-status{flex:0 0 auto;font-size:11.5px;color:var(--ink-3);}
+.msvc-list{flex:1;min-height:0;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px;}
+.msvc-empty{padding:18px 4px;font-size:13px;color:var(--ink-3);line-height:1.55;}
+.msvc-row{
+  display:flex;flex-direction:column;gap:5px;width:100%;text-align:left;
+  padding:12px;border-radius:var(--r-sm);border:1px solid var(--line);
+  background:var(--panel);color:var(--ink-2);
+}
+.msvc-row:active{background:var(--surface-2);}
+.msvc-row-top{display:flex;align-items:center;gap:8px;}
+.msvc-name{font-size:14px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.msvc-cmd{font-family:var(--mono);font-size:11px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.msvc-err{font-size:11.5px;line-height:1.45;color:var(--red);white-space:normal;}
+.msvc-act{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:0 0 auto;
+  min-height:36px;padding:0 14px;border-radius:var(--r-sm);
+  border:1px solid var(--line-strong);background:var(--raise);
+  font-size:12.5px;font-weight:600;color:var(--ink);
+}
+.msvc-act svg{width:13px;height:13px;}
+.msvc-act:active{background:var(--surface-2);}
+.msvc-controls{display:flex;align-items:center;flex-wrap:wrap;gap:8px;flex:0 0 auto;padding:10px 12px;border-bottom:1px solid var(--line);}
+.msvc-controls .btn{min-height:36px;}
+.msvc-vis{display:flex;align-items:center;gap:10px;flex:0 0 auto;padding:8px 12px;border-bottom:1px solid var(--line);font-size:12px;color:var(--ink-3);}
+.msvc-vis select{flex:1;min-width:0;min-height:34px;padding:0 8px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface);color:var(--ink-2);font-size:12.5px;}
+
 /* status menu (popover) */
 /* max-height + scroll: the model picker now carries Claude Code's full list
    (families, 1M variants, pinned versions), which is taller than a viewport. */
 .popover{position:absolute;z-index:60;background:var(--raise);border:1px solid var(--line-strong);border-radius:var(--r);box-shadow:var(--sh-3);overflow-y:auto;overscroll-behavior:contain;max-height:min(60vh,440px);min-width:200px;animation:pop .14s ease;}
+.popover:has(> .mpick){z-index:220;}
 .pop-item{display:flex;align-items:center;gap:10px;padding:10px 13px;cursor:pointer;font-size:13px;font-weight:600;}
 .pop-item:hover{background:var(--surface-2);}
 .pop-item .pi-check{margin-left:auto;color:var(--accent);}
@@ -2086,6 +2204,12 @@ button.tpeek-more:hover{color:var(--accent-ink);}
    each header; this block makes that pane fill the screen, fattens hit targets
    to a thumb-friendly ~44px, and respects the notch / home-indicator insets. */
 @media (max-width:760px){
+  /* Keep the shell's bottom edge above the keyboard. The measured property
+     handles engines that resize either viewport, and its fallback preserves
+     the manual/no-JavaScript --kb-inset fallback. min() also keeps a stale
+     measurement from making the shell taller than the current dynamic height. */
+  .app.mobile{height:min(100dvh,var(--viewport-height,calc(100dvh - var(--kb-inset, 0px))));}
+
   /* The mounted pane is the only flex child of .body: let it fill the width.
      Column direction matters only for Settings, which mounts its section nav +
      content together; the other panes mount one child. !important beats the
@@ -2164,14 +2288,17 @@ button.tpeek-more:hover{color:var(--accent-ink);}
      composer takes the inset only while the tab bar is hidden, on the SAME
      focus selector that hides it (see .mtabbar below; keep the two in step):
      with a hardware keyboard the field is focused, nothing covers the
-     indicator, and the box would otherwise sit on it. With the software
-     keyboard up iOS reports the inset as 0, so that case costs nothing.
+     indicator, and the box would otherwise sit on it. A software keyboard
+     covers the indicator itself. --kb-inset removes the safe area when only
+     the visual viewport shrinks. data-keyboard-open covers browsers that
+     shrink both viewports, where the measured overlap is zero.
      The keyboard hints are mouse-era noise on a phone. */
   .app.mobile .composer{padding:10px 12px 12px;}
-  .app.mobile:has(textarea:focus, input:is([type=text],[type=search],[type=email],[type=url],[type=number],[type=password]):focus) .composer{padding-bottom:calc(12px + env(safe-area-inset-bottom));}
+  .app.mobile:has(textarea:focus, [contenteditable]:focus, input:is([type=text],[type=search],[type=email],[type=url],[type=number],[type=password]):focus) .composer{padding-bottom:calc(12px + max(0px, env(safe-area-inset-bottom) - var(--kb-inset, 0px)));}
+  html[data-keyboard-open] .app.mobile:has(textarea:focus, [contenteditable]:focus, input:is([type=text],[type=search],[type=email],[type=url],[type=number],[type=password]):focus) .composer{padding-bottom:12px;}
   /* 16px stops iOS zooming on focus; 8px vertical padding centers a single
      line against the 40px send button (see .comp-area's comment). */
-  .app.mobile .comp-area textarea{font-size:16px;padding:8px 0;}
+  .app.mobile .comp-area .comp-input{font-size:16px;padding:8px 0;}
   .app.mobile .comp-foot{display:none;}
   .app.mobile .send{width:40px;height:40px;}
 
@@ -2180,7 +2307,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   .app.mobile .ask-other{padding:11px;font-size:16px;}
 
   /* Modals go near-fullscreen so their forms are usable. */
-  .app.mobile .modal{width:100%;max-width:calc(100vw - 16px);max-height:calc(100dvh - 32px);}
+  .app.mobile .modal{width:100%;max-width:calc(100vw - 16px);max-height:calc(min(100dvh,var(--viewport-height,calc(100dvh - var(--kb-inset, 0px)))) - 32px);}
   .app.mobile .field input[type=text],
   .app.mobile .field input[type=number],
   .app.mobile .field textarea{font-size:16px;}
@@ -2219,26 +2346,26 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   .app.mobile .task-group-h{font-size:10.5px;}
 }
 
-/* ── Bottom tab bar (Board / Diffs / Terminals / Insights) ──────────────────
+/* ── Bottom tab bar (Board / Services / Terminals / Insights) ──────────────
    A plain flex sibling of .body inside .app.mobile (not a fixed overlay): it
    claims its own row and .body's flex:1 shrinks to fit above it, so no
    bottom-padding/z-index bookkeeping is needed. The full-screen terminal sheet
    (z-index 150, see .mterm) paints over it when the Terminals tab is open. */
 .mtabbar{display:flex;flex:0 0 auto;border-top:1px solid var(--line);background:var(--panel);padding-bottom:env(safe-area-inset-bottom);}
 /* While the on-screen keyboard is up (a text field is focused), the tab bar
-   would otherwise ride on top of it: 100dvh shrinks to the visible viewport
-   and the bottom-docked bar lands right above the keys, between them and the
-   composer. Hide it for the duration; it returns on blur. Text-type inputs
-   only: focusing a checkbox raises no keyboard and must not blink the bar.
+   would otherwise sit between the keys and the composer: the shell shrinks by
+   --kb-inset and the bottom-docked bar rides up with it. Hide it for the
+   duration; it returns on blur. Text-type inputs only: focusing a checkbox
+   raises no keyboard and must not blink the bar.
    The composer's home-indicator rule (the phone block above) keys off this
    same selector, since while the bar is gone the composer is bottom-most. */
-.app.mobile:has(textarea:focus, input:is([type=text],[type=search],[type=email],[type=url],[type=number],[type=password]):focus) .mtabbar{display:none;}
+.app.mobile:has(textarea:focus, [contenteditable]:focus, input:is([type=text],[type=search],[type=email],[type=url],[type=number],[type=password]):focus) .mtabbar{display:none;}
 .mtabbar-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:44px;padding:8px 0;background:none;border:0;color:var(--dim);font-size:10px;cursor:pointer;}
 .mtabbar-item svg{width:18px;height:18px;}
 .mtabbar-item.on{color:var(--accent);}
 
 /* ── First-run onboarding wizard ─────────────────────────────────────────── */
-.wiz-scrim{position:fixed;inset:0;background:rgba(38,36,31,.55);backdrop-filter:blur(4px);display:grid;place-items:center;z-index:300;animation:fadein .18s ease;padding:24px;}
+.wiz-scrim{position:fixed;inset:0;bottom:var(--kb-inset, 0px);background:rgba(38,36,31,.55);backdrop-filter:blur(4px);display:grid;place-items:center;z-index:300;animation:fadein .18s ease;padding:24px;}
 .wiz{display:flex;width:min(940px,100%);height:min(640px,calc(100vh - 48px));background:var(--panel);border:1px solid var(--line-strong);border-radius:var(--r-xl,16px);box-shadow:var(--sh-3);overflow:hidden;animation:pop .22s cubic-bezier(.2,.9,.3,1.2);}
 .wiz-rail{flex:0 0 230px;display:flex;flex-direction:column;gap:4px;padding:22px 18px;background:var(--panel-2);border-right:1px solid var(--line);}
 .wiz-brand{display:flex;align-items:center;gap:6px;font-family:var(--font-display);font-weight:500;font-size:15px;letter-spacing:.005em;color:var(--ink);}
@@ -2254,7 +2381,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .wiz-stepitem.active .wiz-stepnum{border-color:var(--accent);color:var(--accent-ink);}
 .wiz-stepitem.done .wiz-stepnum{border-color:var(--green,#5C8C5A);color:var(--green,#5C8C5A);}
 .wiz-skip{align-self:flex-start;}
-.wiz-main{flex:1;min-width:0;display:flex;flex-direction:column;}
+.wiz-main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;}
 .wiz-head{padding:30px 34px 16px;border-bottom:1px solid var(--line);}
 .wiz-step-tag{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-ink);margin-bottom:8px;}
 .wiz-title{font-size:21px;font-weight:700;letter-spacing:-.02em;}
@@ -2519,8 +2646,18 @@ button.gbadge{cursor:pointer;transition:background .12s,border-color .12s;}
 button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,transparent);border-color:var(--gc,var(--ink-3));}
 /* "+N": the badges TagBadges' `max` cropped off a row with several tags. No
    single tag's tint applies to a pill naming more than one, so it stays the
-   neutral ink rather than reading as an untinted tag of its own. */
-.gbadge.more{color:var(--ink-4);background:var(--surface-2);border-color:var(--line-2);cursor:default;}
+   neutral ink rather than reading as an untinted tag of its own, including on
+   hover, where the generic button.gbadge rule would tint it with the --gc
+   fallback. It opens the cropped names in a popover, so it takes a real tap
+   target under a finger: the 16px line box is half the 24px minimum. */
+.gbadge.more{color:var(--ink-4);background:var(--surface-2);border-color:var(--line-2);}
+button.gbadge.more:hover,button.gbadge.more[aria-expanded="true"]{color:var(--ink-3);background:var(--line-2);border-color:var(--ink-4);}
+.gmore{position:relative;display:inline-flex;flex:0 0 auto;}
+@media (pointer:coarse){button.gbadge.more{padding:5px 10px;}}
+/* The cropped names, one badge per line, each still a way into that tag's
+   filter. Stacked rather than wrapped so a long name reads whole. */
+.gmore-list{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:8px;}
+.gmore-list .gbadge{max-width:100%;}
 .task .task-top .gbadge{min-width:0;flex:0 1 auto;}
 .bcard .bc-meta .gbadge{font-size:9.5px;line-height:14px;}
 .sug .sg-name .gbadge{margin-left:6px;vertical-align:1px;}
@@ -2628,6 +2765,17 @@ button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,tra
    "New tag…" text field. */
 .model-field select{width:100%;max-width:520px;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--raise);padding:11px 13px;font-family:var(--sans);font-size:14px;color:var(--ink);outline:none;transition:border-color .12s,box-shadow .12s;}
 .model-field select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+/* The picked list's rows carry a star, so the row is a div with the checkbox
+   half wrapped in its own label: a button inside a label would toggle the
+   checkbox on every press. The `tagf-` prefix keeps these off `.tag-row`, the
+   project landing page's tag card, which is a column-flexed bordered box. */
+.tag-field .tagf-row{cursor:default;gap:6px;}
+.tag-field .tagf-pick{display:flex;align-items:center;gap:9px;flex:1;min-width:0;cursor:pointer;}
+.tag-field .tagf-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;}
+.tag-field .tagf-star{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;flex:0 0 auto;
+  border:none;background:none;border-radius:6px;color:var(--ink-4);font-size:13px;cursor:pointer;}
+.tag-field .tagf-star:hover{background:var(--raise);color:var(--ink);}
+.tag-field .tagf-star.on{color:var(--amber);}
 .tag-field .tag-new{display:flex;align-items:center;gap:6px;margin-top:8px;}
 .tag-field .tag-new input[type=text]{flex:1;min-width:0;}
 
@@ -2638,3 +2786,175 @@ button.gbadge:hover{background:color-mix(in oklab,var(--gc,var(--ink-3)) 22%,tra
 .diag-kind{font-weight:600;color:var(--ink-2);}
 .diag-kind.warn{color:var(--warn);}
 .diag-detail{color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;}
+
+/* ---------- task dialog attachments (app/shell/modals.tsx DescriptionField) ---------- */
+.desc-drop{border-radius:8px;}
+.desc-drop.dropping{box-shadow:0 0 0 3px var(--accent-soft);}
+.desc-drop .attach-row{padding:8px 0 0;}
+.desc-tools{display:flex;align-items:center;gap:10px;margin-top:6px;}
+.task .tdesc .tdesc-att{display:inline-flex;align-items:center;gap:3px;margin-left:6px;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
+.task .tdesc .tdesc-att svg{width:11px;height:11px;}
+.hero .msg-attachments{justify-content:center;margin-bottom:12px;}
+/* ---- ModelPicker (app/shell/ModelPicker.tsx) ---- */
+.mpick{display:flex;flex-direction:column;width:380px;max-width:100%;font-size:13px;}
+.mpick-sheet{width:100%;}
+.mpick-panes{position:relative;height:352px;overflow:hidden;}
+.mpick-sheet .mpick-panes{position:static;height:auto;max-height:60vh;overflow-y:auto;}
+.mpick-pane{position:absolute;inset:0;display:flex;flex-direction:column;min-height:0;transition:transform .22s cubic-bezier(.2,.7,.2,1);}
+.mpick-sheet .mpick-pane{position:static;transform:none !important;}
+.mpick-search{padding:4px 8px;border-bottom:1px solid var(--line);flex:none;}
+.mpick-search input{width:100%;height:30px;border:1px solid var(--line);border-radius:7px;background:var(--bg-2);color:var(--ink);padding:0 8px;font-size:12.5px;}
+.mpick-search input:focus-visible{outline:2px solid var(--accent);outline-offset:-1px;}
+.mpick-sheet .mpick-search input{height:40px;font-size:14px;}
+.mpick-scroll{flex:1;overflow-y:auto;padding:4px 0;min-height:0;}
+.mpick-scroll.mpick-flat{max-height:352px;}
+.mpick-ph{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line);font-weight:600;font-size:12.5px;flex:none;}
+.mpick-back{width:28px;height:28px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:6px;border:1px solid transparent;background:transparent;color:var(--dim);cursor:pointer;}
+.mpick-back:hover{background:var(--surface-2);color:var(--ink);}
+.mpick-row{display:flex;align-items:center;gap:8px;min-height:36px;border-radius:6px;margin:1px 4px;padding:0 8px;cursor:pointer;}
+.mpick-row:hover{background:var(--surface-2);}
+.mpick-row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
+.mpick-row.on{background:color-mix(in oklab, var(--accent) 9%, transparent);font-weight:600;}
+.mpick-row.off{cursor:default;color:var(--dim);}
+.mpick-row.off:hover{background:transparent;}
+.mpick-row.off .mpick-nm{text-decoration:line-through;}
+.mpick-row.mpick-head{min-height:44px;}
+.mpick-row.mpick-fam{min-height:40px;}
+.mpick-sheet .mpick-row{min-height:48px;}
+.mpick-lbl{display:flex;flex-direction:column;min-width:0;flex:1;}
+.mpick-nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mpick-sub{font-size:11px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mpick-sheet .mpick-lbl,.mpick-sheet .mpick-sub{white-space:normal;}
+.mpick-trail{display:flex;align-items:center;gap:6px;flex:none;color:var(--dim);}
+.mpick-ctx{font-family:var(--mono);font-size:11px;color:var(--dim);}
+.mpick-price{font-size:11px;color:var(--dim);flex:none;}
+.mpick-sheet .mpick-price{display:none;}
+.mpick-marks{display:flex;align-items:center;}
+.mpick-marks span{width:18px;height:18px;border-radius:50%;background:var(--panel);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:11px;margin-left:-6px;}
+.mpick-marks span:first-child{margin-left:0;}
+.mpick-marks.one{background:none;}
+.mpick-marks.one span{margin-left:0;background:none;border:none;width:auto;height:auto;}
+.mpick-more{font-size:10px;color:var(--dim);margin-left:2px;}
+.mpick-pm{width:22px;height:22px;flex:none;display:flex;align-items:center;justify-content:center;color:var(--dim);}
+.mpick-chk{color:var(--accent);flex:none;display:flex;}
+.mpick-mid{font-family:var(--mono);font-size:11px;color:var(--dim);flex:none;}
+.mpick-grp{padding:6px 10px 2px;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);}
+.mpick-empty{padding:16px 10px;font-size:12px;color:var(--dim);}
+.mpick-linklike{background:none;border:none;padding:0;color:var(--accent);cursor:pointer;font:inherit;text-decoration:underline;}
+.mpick-note{padding:8px 10px;font-size:11px;color:var(--dim);border-top:1px solid var(--line);flex:none;}
+.mpick-note-below{padding:8px 10px;font-size:12px;color:var(--dim);}
+.mpick-foot{display:flex;align-items:center;gap:6px;padding:8px 12px;border-top:1px solid var(--line);border-left:none;border-right:none;border-bottom:none;background:var(--panel);font-size:12px;color:var(--dim);width:100%;text-align:left;cursor:pointer;flex:none;}
+.mpick-foot b{color:var(--ink);font-weight:600;}
+.mpick-foot:hover{background:var(--surface-2);}
+.mpick-foot-still{cursor:default;}
+.mpick-foot-still:hover{background:var(--panel);}
+.mpick-chg{margin-left:auto;color:var(--accent);}
+.mpick-sheet-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:80;display:flex;align-items:flex-end;}
+.mpick-sheet-shell{background:var(--panel);border-radius:16px 16px 0 0;width:100%;max-height:80vh;display:flex;flex-direction:column;box-shadow:var(--sh-3);}
+.mpick-grabber{width:36px;height:4px;border-radius:2px;background:var(--line-strong);margin:8px auto;flex:none;}
+.mpick-sheet-head{display:flex;align-items:center;justify-content:space-between;padding:0 16px 8px;font-weight:600;flex:none;}
+.mpick-close{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:6px;border:none;background:transparent;color:var(--dim);cursor:pointer;}
+.mpick-inline .mpick-scroll{max-height:280px;}
+/* Settings -> Models: the environments/providers lists (ModelsSection.tsx)
+   and the add/detail provider modal (ProviderModal.tsx). Measurements from
+   the design handoff: modal 720px (passed as Modal's `width`), tabs 40px,
+   model rows 44px, chips 11px/600 with a 6px dot. Switches reuse the app's
+   existing 34x18 .in-switch rather than the handoff's 32x18, for consistency
+   with every other toggle in Settings. */
+.mv-lede{margin:-4px 0 6px;font-size:12.5px;line-height:1.6;color:var(--ink-2);max-width:720px;}
+.mv-sec{margin-bottom:26px;}
+.mv-sec-h{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.mv-sec-h h2{font-family:var(--font-display);font-size:15px;font-weight:var(--display-weight);letter-spacing:var(--display-tracking);flex:1;margin:0;}
+.mv-list{display:flex;flex-direction:column;gap:8px;}
+.mv-row{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r);background:var(--raise);}
+.mv-row.dimmed{opacity:.7;}
+.mv-row.link{width:100%;text-align:left;cursor:pointer;font:inherit;color:inherit;transition:border-color .12s,background .12s;}
+.mv-row.link:hover{border-color:var(--line-strong);background:var(--surface-2);}
+.mv-row.link:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+.mv-mark{flex:0 0 auto;width:22px;height:22px;display:grid;place-items:center;color:var(--ink-2);}
+.mv-mark svg{width:20px;height:20px;}
+.mv-id{flex:1;min-width:0;}
+.mv-nm{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:600;color:var(--ink);}
+.mv-ty{margin-top:2px;font-size:11.5px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mv-bund{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:11.5px;color:var(--ink-3);}
+.mv-bund svg{width:13px;height:13px;flex:0 0 auto;}
+.mv-envs{display:flex;align-items:center;gap:5px;flex:0 0 auto;color:var(--ink-4);}
+.mv-envs span{display:grid;place-items:center;width:16px;height:16px;opacity:.32;}
+.mv-envs span svg{width:14px;height:14px;}
+.mv-envs span.on{opacity:1;color:var(--accent);}
+.mv-count{flex:0 0 auto;font-size:11.5px;color:var(--ink-3);white-space:nowrap;}
+.mv-go{flex:0 0 auto;color:var(--ink-4);font-size:16px;}
+.mv-acts{flex:0 0 auto;display:flex;gap:6px;}
+.mv-chip{display:inline-flex;align-items:center;gap:5px;padding:1px 7px 1px 6px;border-radius:999px;font-size:11px;font-weight:600;letter-spacing:.02em;white-space:nowrap;}
+.mv-chip::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;flex:0 0 auto;}
+.mv-chip.ok{color:var(--green);background:var(--green-soft);}
+.mv-chip.warn{color:var(--amber);background:var(--amber-soft);}
+.mv-chip.mute{color:var(--ink-4);background:var(--surface-2);}
+.mv-detect{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px dashed var(--line-strong);border-radius:var(--r);}
+
+/* Add-provider type grid and shared connection form. */
+.mv-types{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+.mv-tc{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:12px;border:1px solid var(--line-strong);border-radius:var(--r);background:var(--raise);text-align:left;transition:border-color .12s,background .12s;}
+.mv-tc:hover{background:var(--surface-2);}
+.mv-tc.on{border-color:var(--accent);background:var(--accent-soft);}
+.mv-tc:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+.mv-tc .mv-t{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--ink);}
+.mv-tc .mv-t svg{width:18px;height:18px;flex:0 0 auto;}
+.mv-fine{margin:10px 0 0;font-size:11.5px;color:var(--ink-3);line-height:1.5;}
+.mv-sect{margin-top:18px;}
+.mv-sect h3{font-family:var(--font-display);font-size:13px;font-weight:var(--display-weight);margin:0 0 10px;}
+.mv-form .field{margin-bottom:14px;}
+.mv-serves{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-2);flex-wrap:wrap;}
+.mv-keyrow{display:flex;align-items:center;gap:6px;}
+.mv-keyrow input{flex:1;min-width:0;}
+.mv-eye{flex:0 0 auto;width:30px;height:30px;display:grid;place-items:center;color:var(--ink-3);border-radius:var(--r-sm);}
+.mv-eye:hover{background:var(--surface-2);color:var(--ink);}
+.mv-eye:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+.mv-test{margin-top:8px;padding:10px 12px;border-radius:var(--r);border:1px solid var(--line);background:var(--surface-2);}
+.mv-test.ok{border-color:var(--green);background:var(--green-soft);}
+.mv-test.bad{border-color:var(--red);background:var(--red-soft);}
+.mv-trow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.mv-tmsg{font-size:12px;color:var(--ink-2);}
+.mv-errlog{margin:8px 0 0;padding:8px 10px;background:var(--term,#0c0d10);color:var(--red);font-family:var(--mono);font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-word;border-radius:6px;}
+
+/* Provider detail modal: header, tabs, read-only Connection, model rows, Remove. */
+.mv-bigmark{flex:0 0 auto;width:36px;height:36px;display:grid;place-items:center;border-radius:10px;background:var(--surface-2);color:var(--ink-2);}
+.mv-bigmark svg{width:22px;height:22px;}
+.mv-ttl{flex:1;min-width:0;}
+.mv-ttl h2{display:flex;align-items:center;gap:8px;font-family:var(--font-display);font-size:17px;font-weight:var(--display-weight);margin:0;}
+.mv-ttl .mv-sub{margin-top:3px;font-size:11.5px;color:var(--ink-3);}
+.mv-tabs{display:flex;gap:16px;margin-top:16px;border-bottom:1px solid var(--line);}
+.mv-tab{height:40px;font-size:12.5px;font-weight:600;color:var(--ink-3);border-bottom:2px solid transparent;margin-bottom:-1px;}
+.mv-tab[aria-selected="true"]{color:var(--ink);border-color:var(--accent);}
+.mv-tab.dng{margin-left:auto;color:var(--red);}
+.mv-tab:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+.mv-bd{padding-top:16px;min-height:120px;}
+.mv-ro{display:flex;flex-direction:column;gap:10px;}
+.mv-rrow{display:flex;gap:14px;font-size:12.5px;align-items:center;}
+.mv-rrow dt{flex:0 0 110px;color:var(--ink-3);}
+.mv-rrow dd{flex:1;min-width:0;color:var(--ink);margin:0;display:flex;align-items:center;gap:6px;}
+.mv-pol{display:flex;align-items:flex-start;gap:14px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r);background:var(--raise);margin-bottom:14px;}
+.mv-pol b{display:block;font-size:12.5px;margin-bottom:3px;}
+.mv-pol span{display:block;font-size:11.5px;color:var(--ink-3);line-height:1.5;}
+.mv-pacts{display:flex;gap:6px;flex:0 0 auto;}
+.mv-mhead{display:flex;align-items:center;gap:12px;font-size:11.5px;color:var(--ink-3);padding:0 2px 8px;}
+.mv-mhead .mv-dim{color:var(--ink-4);}
+.mv-mlist{border:1px solid var(--line);border-radius:var(--r);overflow:hidden;}
+.mv-mrow{display:flex;align-items:center;gap:10px;height:44px;padding:0 12px;border-top:1px solid var(--line);font-size:12px;}
+.mv-mrow:first-child{border-top:none;}
+.mv-mrow.off{opacity:.55;}
+.mv-mrow code{font-family:var(--mono);font-size:11.5px;color:var(--ink);}
+.mv-mrow .mv-tag{padding:1px 6px;border-radius:999px;font-size:10px;font-weight:600;color:var(--amber);background:var(--amber-soft);white-space:nowrap;}
+.mv-mrow .mv-ctx{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink-3);white-space:nowrap;}
+.mv-mrow .mv-fam{font-size:11px;color:var(--ink-3);min-width:120px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mv-mrow .mv-fam.un{color:var(--ink-4);}
+.mv-danger{display:flex;align-items:center;gap:16px;padding:14px 16px;border:1px solid color-mix(in oklab,var(--err) 30%,transparent);border-radius:var(--r);background:var(--red-soft);}
+.mv-danger b{display:block;font-size:13px;color:var(--ink);margin-bottom:3px;}
+.mv-danger span{font-size:11.5px;color:var(--ink-2);line-height:1.5;}
+
+@media (max-width:460px){
+  .mv-types{grid-template-columns:repeat(2,1fr);}
+  .mv-tc{min-height:44px;}
+  .mv-row{min-height:44px;}
+  .mv-nm,.mv-ty{white-space:normal;}
+}

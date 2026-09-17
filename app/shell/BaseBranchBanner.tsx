@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Icon } from "../icons";
 import type { BaseBranchResp } from "./types";
-import { jget } from "./api";
+import { apiFetch, jget } from "./api";
 import { ErrDetail } from "./shared";
 
 /**
@@ -45,7 +45,7 @@ export function BaseBranchBanner({ projectId, refreshKey }: { projectId: string;
     setErr("");
     setDetail(undefined);
     try {
-      const r = await fetch(`/api/projects/${projectId}/base-branch`, {
+      const r = await apiFetch(`/api/projects/${projectId}/base-branch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),

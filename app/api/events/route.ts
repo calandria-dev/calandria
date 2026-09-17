@@ -131,6 +131,14 @@ export async function GET(req: Request) {
           send({ type: "tags_changed", projectId: ev.projectId });
           return;
         }
+        // The instance's update check changed, or a version was skipped.
+        // Carries nothing at all: it is one fact about the whole instance, so
+        // there is no row and no project to name, and the client refetches
+        // GET /api/updates the way runbooks_changed makes it refetch a card.
+        if (ev.type === "updates_changed") {
+          send({ type: "updates_changed" });
+          return;
+        }
         // A composed notification (lib/notifications/notify.ts). Bypasses the
         // re-read below because the payload is a message already written for a
         // human, screened against the row when it was minted. A test

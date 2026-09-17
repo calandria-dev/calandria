@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LandingMode, Priority, Status, AskQuestion, AskAnswers, PermissionDecision, PermissionOutcome } from "@/lib/types";
 import type { ResolveResult } from "../TaskChanges";
-import { jget, jsend } from "./api";
+import { apiFetch, jget, jsend } from "./api";
 import { isAwaiting, needsYou, blockerTitles, formatAnswersText } from "./format";
 import { nextWake, wasSnoozed } from "./snooze";
 import { loadPersist, readUrlSel, landingSelection, type StoredSel, type UrlSel } from "./persist";
@@ -406,10 +406,26 @@ export function useShell() {
     return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
 
+  // `agents.default` and `agents.utility` are resolved on the server
+  // (resolveUtilityAgent() is connected-first with a fallback chain), so these
+  // two settings change the bundle and cannot be re-derived from appDefaults
+  // alone. Anything reading agents.utility, the Background jobs ModelPicker
+  // included, would otherwise stay pinned to the old agent until a reload.
+  const refreshAgentsIfResolutionChanged = async (keys: string[]) => {
+    if (keys.some((k) => k === "utility_agent" || k === "default_agent")) await refreshAgents();
+  };
   // Persist a server-backed app default and adopt the server's echoed-back state.
   const setAppDefault = async (key: string, value: string | null) => {
     const fresh = await jsend<Record<string, string>>("/api/settings", "PATCH", { [key]: value });
     setAppDefaults(fresh);
+    await refreshAgentsIfResolutionChanged([key]);
+  };
+  // Same, for a picker that writes two keys at once (a ModelPicker's paired
+  // `model` and `provider_id`): one PATCH instead of two round trips.
+  const setAppDefaultMany = async (entries: Record<string, string | null>) => {
+    const fresh = await jsend<Record<string, string>>("/api/settings", "PATCH", entries);
+    setAppDefaults(fresh);
+    await refreshAgentsIfResolutionChanged(Object.keys(entries));
   };
 
   // ---------- sending a turn ----------
@@ -420,7 +436,7 @@ export function useShell() {
     setTaskRunning(taskId, true);
     setTasks((prev) => prev.map((x) => (x.id === taskId ? { ...x, started: 1, status: "in_progress", suggested: 0, awaiting_input: 0 } : x)));
     try {
-      const res = await fetch(`/api/tasks/${taskId}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+      const res = await apiFetch(`/api/tasks/${taskId}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
       if (!res.ok) {
         const raw = await res.text(); let msg = raw;
         try { msg = JSON.parse(raw).error ?? raw; } catch {}
@@ -481,14 +497,14 @@ export function useShell() {
   // partial transcript, and publishes turn_end, which the event stream handler
   // turns into a task refresh (now awaiting_input, resumable).
   const stopTurn = useCallback(async (taskId: string) => {
-    try { await fetch(`/api/tasks/${taskId}/abort`, { method: "POST" }); } catch {}
+    try { await apiFetch(`/api/tasks/${taskId}/abort`, { method: "POST" }); } catch {}
   }, []);
 
   // Drop a queued (not-yet-run) follow-up. The server publishes `dequeued`,
   // which the stream handler turns into removing the bubble, so this is
   // fire-and-forget; no optimistic local mutation needed.
   const cancelQueued = useCallback(async (taskId: string, pendingId: string) => {
-    try { await fetch(`/api/tasks/${taskId}/pending`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pendingId }) }); } catch {}
+    try { await apiFetch(`/api/tasks/${taskId}/pending`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pendingId }) }); } catch {}
   }, []);
 
   // Materialize a conflicted merge in the task's worktree, then stream an AI
@@ -496,7 +512,7 @@ export function useShell() {
   // the right follow-up (review state, clean-merge done, or an error).
   const resolveConflictsWithAI = useCallback(async (taskId: string): Promise<ResolveResult> => {
     try {
-      const res = await fetch(`/api/tasks/${taskId}/merge/prepare`, { method: "POST" });
+      const res = await apiFetch(`/api/tasks/${taskId}/merge/prepare`, { method: "POST" });
       const prep = await res.json();
       if (!res.ok || !prep?.ok) return { ok: false, error: prep?.error || "could not prepare the merge" };
       // Clean trial merge: it landed immediately, no AI needed.
@@ -534,7 +550,7 @@ export function useShell() {
   // instead of sitting on a spinner until the whole turn completes.
   const fixCi = useCallback(async (taskId: string): Promise<{ ok: boolean; error?: string }> => {
     try {
-      const res = await fetch(`/api/tasks/${taskId}/pr/fix-ci`, { method: "POST" });
+      const res = await apiFetch(`/api/tasks/${taskId}/pr/fix-ci`, { method: "POST" });
       const body = await res.json().catch(() => ({}));
       if (!res.ok || !body?.ok) return { ok: false, error: body?.error || `could not read the failing checks (HTTP ${res.status})` };
       void runTurn(taskId, body.prompt, false);
@@ -581,7 +597,7 @@ export function useShell() {
   // navEpoch bumps on every jump, including one to the already-selected task:
   // the mobile shell watches selTask changes to snap its tab bar back to the
   // board, and a jump that changes nothing (you were in that chat, then went
-  // to Diffs) would otherwise leave the screen where it is, looking like the
+  // to Services) would otherwise leave the screen where it is, looking like the
   // tap did nothing.
   const [navEpoch, setNavEpoch] = useState(0);
   const goToTask = (projectId: string, taskId: string) => {
@@ -738,9 +754,16 @@ export function useShell() {
     const fresh = await jsend<TaskRow>(`/api/tasks/${task.id}`, "PATCH", { priority: p });
     setTasks((prev) => prev.map((x) => (x.id === task.id ? { ...x, ...fresh } : x)));
   };
-  const setModel = async (m: string | null) => {
+  // Persists a ModelPickerValue in one PATCH: model and provider_id always,
+  // agent only when it actually changed and the task hasn't started, since
+  // PATCH /api/tasks/[id] refuses ANY `agent` key once started=1 or running=1
+  // (the session's driver is fixed for its lifetime), even one that names the
+  // task's own current agent.
+  const setModel = async (v: { agent?: string | null; provider_id: string | null; model: string | null }) => {
     if (!task) return;
-    const fresh = await jsend<TaskRow>(`/api/tasks/${task.id}`, "PATCH", { model: m });
+    const body: Record<string, unknown> = { model: v.model, provider_id: v.provider_id };
+    if (v.agent && v.agent !== task.agent && task.started !== 1 && task.running !== 1) body.agent = v.agent;
+    const fresh = await jsend<TaskRow>(`/api/tasks/${task.id}`, "PATCH", body);
     setTasks((prev) => prev.map((x) => (x.id === task.id ? { ...x, ...fresh } : x)));
   };
   const setReasoning = async (r: string | null) => {
@@ -751,6 +774,11 @@ export function useShell() {
   const setPermission = async (p: string | null) => {
     if (!task) return;
     const fresh = await jsend<TaskRow>(`/api/tasks/${task.id}`, "PATCH", { permission_mode: p });
+    setTasks((prev) => prev.map((x) => (x.id === task.id ? { ...x, ...fresh } : x)));
+  };
+  const setSandbox = async (s: string | null) => {
+    if (!task) return;
+    const fresh = await jsend<TaskRow>(`/api/tasks/${task.id}`, "PATCH", { sandbox_mode: s });
     setTasks((prev) => prev.map((x) => (x.id === task.id ? { ...x, ...fresh } : x)));
   };
   // The task-start "Send saved project context" checkbox (TaskHero) persists
@@ -803,13 +831,13 @@ export function useShell() {
     }
   }, [loadTasks]);
 
-  const createTask = async (input: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; permission_mode: string | null; tag_ids: string[] }) => {
+  const createTask = async (input: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; provider_id: string | null; permission_mode: string | null; sandbox_mode: string | null; tag_ids: string[]; attachments: string[] }) => {
     if (!project) return;
-    // model and permission_mode go in the create call, since `startNow` below
+    // model, provider_id and permission_mode go in the create call, since `startNow` below
     // launches the first turn, and either applied as a follow-up PATCH would
     // miss the very turn the user picked it for. The tags ride the create too,
     // so the first turn's context (phase 2 of the tags spec) sees them.
-    const t = await jsend<TaskRow>("/api/tasks", "POST", { project_id: project.id, title: input.title, description: input.desc, priority: input.priority, agent: input.agent, send_context: input.sendContext, ...(input.model ? { model: input.model } : {}), ...(input.permission_mode ? { permission_mode: input.permission_mode } : {}), tag_ids: input.tag_ids });
+    const t = await jsend<TaskRow>("/api/tasks", "POST", { project_id: project.id, title: input.title, description: input.desc, priority: input.priority, agent: input.agent, send_context: input.sendContext, ...(input.model ? { model: input.model } : {}), ...(input.provider_id ? { provider_id: input.provider_id } : {}), ...(input.permission_mode ? { permission_mode: input.permission_mode } : {}), ...(input.sandbox_mode ? { sandbox_mode: input.sandbox_mode } : {}), tag_ids: input.tag_ids, attachments: input.attachments });
     // Dependencies (and the auto-start opt-in that rides on them) are an
     // edit-after-create step (the task id doesn't exist until now).
     if (input.depends_on.length) await jsend(`/api/tasks/${t.id}`, "PATCH", { depends_on: input.depends_on, auto_start: input.auto_start ? 1 : 0 });
@@ -874,7 +902,7 @@ export function useShell() {
   // clears a withdrawal (reason + cancelled status) for free.
   const saveTask = async (
     id: string,
-    patch: { title: string; description: string; priority: Priority; agent?: string; model: string | null; depends_on: string[]; auto_start: boolean; tag_ids: string[] },
+    patch: { title: string; description: string; priority: Priority; agent?: string; model: string | null; provider_id: string | null; depends_on: string[]; auto_start: boolean; tag_ids: string[] },
     action?: SaveAction,
   ) => {
     const fresh = await jsend<TaskRow>(`/api/tasks/${id}`, "PATCH", {
@@ -976,7 +1004,7 @@ export function useShell() {
     if (selProj) await loadTasks(selProj, false);
   };
 
-  const saveContext = async (patch: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string; agent_env: string; gateway_max_budget: number | null; gateway_key_duration: string; gateway_mcp: string[] }) => {
+  const saveContext = async (patch: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string; default_provider_id: string | null; gateway_max_budget: number | null; gateway_key_duration: string; gateway_mcp: string[] }) => {
     if (!project) return;
     await jsend(`/api/projects/${project.id}`, "PATCH", patch);
     const ps = await jget<ProjectRow[]>("/api/projects");
@@ -1030,6 +1058,7 @@ export function useShell() {
   const RESET_KEYS = new Set([
     "utility_agent", "background_jobs", "recap_mode",
     "notifications", "notify_awaiting_input", "notify_turn_failed", "notify_schedule_failed",
+    "notify_queued_start", "notify_queued_start_skipped",
   ]);
   const resetSettings = () => {
     setSettings(DEFAULT_SETTINGS);
@@ -1054,7 +1083,7 @@ export function useShell() {
     blockedBy, liveAwaiting, needsYouTotal,
     modal, setModal, editId, setEditId, view, setView, taskView, setTaskView,
     appearance, setAppearance, appearanceOpen, setAppearanceOpen,
-    settings, setSetting, appDefaults, setAppDefault, agents, refreshAgents, brokenAgents,
+    settings, setSetting, appDefaults, setAppDefault, setAppDefaultMany, agents, refreshAgents, brokenAgents,
     onboarding, wizardOpen, finishWizard, rerunOnboarding, nudge, setNudge, onMerged, onPrCreated, baseBranchTick,
     layout, setLayout, recaps,
     termOpen, setTermOpen, termMounted, setTermMounted, termHeight, setTermHeight,
@@ -1062,7 +1091,7 @@ export function useShell() {
     // actions
     projectHome, setSelTask, showProjectHome, setProjectHome, goBack, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI, fixCi,
     selectProject, jumpToNeedsYou, goToTask, navEpoch, clearSession, setStatus, setPriority, setModel, snoozeTask, unsnoozeTask, ackRun, queueStart, cancelQueuedStart,
-    setReasoning, setPermission, setSendContext, setAutoStart, createTask, createTag, tagTasks, runRunbook, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
+    setReasoning, setPermission, setSandbox, setSendContext, setAutoStart, createTask, createTag, tagTasks, runRunbook, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,
     resetSettings, setProjectDefaultAgent,
   };

@@ -28,6 +28,7 @@ const {
   shell,
   dialog,
   safeStorage,
+  screen,
   session,
   clipboard,
 } = require("electron");
@@ -98,18 +99,28 @@ const {
   installStageOf,
   installStageTimeout,
   macBundlePath,
+  pageUpdateState,
   parseActiveTurns,
   parseCodesign,
+  parseDesktopCommand,
   quitAction,
   restartNotice,
   updateMenuItem,
   updaterDisposition,
 } = require("./updater");
+const {
+  MIN_SIZE,
+  fitToWorkAreas,
+  loadWindowState,
+  normalizeWindowState,
+  sameWindowState,
+  saveWindowState,
+} = require("./window-state");
 
 // Persistent logging, set up before anything else writes a line. Everything
 // logged through `console.log`, including sidecar lines the Supervisor
 // relays through it, lands in electron-log's file as well as on stdout (path
-// differs per platform, see docs/DESKTOP_APP.md §6.6), which captures
+// differs per platform, see desktop/README.md, "Updates"), which captures
 // failures after the drain with no terminal attached. The console transport
 // stays plain text so stdout is byte-identical: desktop/e2e reads `[shell]`
 // lines off it with `startsWith`.
@@ -214,6 +225,15 @@ let attachSeq = 0;
 // different partition means a new window; this is how that decision is made
 // without recreating one when nothing changed.
 let winPartition = null;
+// The size and position the window should open at, in memory so a rebuild
+// mid-session never has to wait on a disk read. Kept current by the handlers
+// `trackWindowGeometry()` wires onto every window, written to
+// `window-state.json` a moment after it settles, and read back at boot. See
+// window-state.js for why it exists at all.
+let windowGeometry = normalizeWindowState({});
+// The last state written, so an idle app rewrites nothing.
+let savedGeometry = null;
+let geometryFlushTimer = null;
 // The modal instance dialog, at most one. Held so a second "Add instance…"
 // focuses it instead of stacking a second copy on the same list.
 let instanceDialog = null;
@@ -294,8 +314,8 @@ if (!app.requestSingleInstanceLock()) {
 function main() {
   app.on("window-all-closed", () => {
     // Normally unreachable: the close handler hides the window instead of
-    // destroying it, on every platform (see "Close vs quit" in
-    // docs/DESKTOP_APP.md §5.1). Reached when a close arrives before boot()
+    // destroying it, on every platform (see "Notifications, tray, and close vs
+    // quit" in docs/DESKTOP_APP.md). Reached when a close arrives before boot()
     // finished (no server to keep alive, no confirmed tray yet) or when an
     // instance switch destroys the old window and builds a new one in the
     // same tick, which also fires this event. Checking for a live window
@@ -320,6 +340,12 @@ function main() {
     quitting = true;
     console.log("[shell] quitting");
     event.preventDefault();
+    // Read off the live window and written synchronously, before the drain
+    // gets a chance to fail or the update installer replaces the process. A
+    // debounced flush from the last resize may still be pending, and its
+    // timer is unref'd, so this is the only guaranteed write.
+    captureWindowGeometry(win);
+    flushWindowGeometry();
     // Nothing that arrives from here on has anywhere to go: the badge is
     // about to disappear with the process, and a toast raised during a
     // shutdown is one the user cannot act on. Stops every instance's stream,
@@ -363,6 +389,9 @@ function main() {
     loadInstanceList();
     Menu.setApplicationMenu(buildMenu());
     announceShell();
+    // Before the window, for the same reason as the instance list: the size
+    // and position are constructor options Electron will not revisit.
+    loadWindowGeometry();
     createWindow();
     // AFTER the window, and before the first attach.
     //
@@ -442,7 +471,8 @@ function serviceTokenFor(inst) {
 /* ------------------------------------------------------------------------- *
  * Instance sign-in: the Electron half. instance-auth.js and oauth.js hold
  * everything that can be decided without a display; this is the part that
- * needs a session, a browser and a window. docs/DESKTOP_APP.md §8.8.
+ * needs a session, a browser and a window. See "Signing in to an instance" in
+ * docs/DESKTOP_APP.md.
  * ------------------------------------------------------------------------- */
 
 /** The keyring's answer, once it has given one. See `credentialCipher`. */
@@ -847,13 +877,114 @@ function wireContextMenu(window) {
   });
 }
 
+/* ------------------------------------------------------------------------- *
+ * Window geometry.
+ *
+ * A window this shell builds is not the window the user left: an instance
+ * switch across partitions destroys and rebuilds it (`applyActiveInstance`),
+ * an update installs by restarting the process, and macOS destroys it
+ * outright when the last window closes. All three used to open at the
+ * constructor's literals. These four functions keep one geometry alive across
+ * every one of them.
+ * ------------------------------------------------------------------------- */
+
+/** Read the saved geometry, once, before the first window is built. */
+function loadWindowGeometry() {
+  const loaded = loadWindowState();
+  windowGeometry = loaded.state;
+  savedGeometry = loaded.found ? loaded.state : null;
+  if (loaded.error) console.log(`[shell] could not read ${loaded.path}: ${loaded.error.message || loaded.error}`);
+}
+
+/** Write it, best-effort: a read-only config dir must not break the window. */
+function flushWindowGeometry() {
+  if (geometryFlushTimer) {
+    clearTimeout(geometryFlushTimer);
+    geometryFlushTimer = null;
+  }
+  if (sameWindowState(windowGeometry, savedGeometry)) return;
+  try {
+    savedGeometry = saveWindowState(windowGeometry).state;
+  } catch (err) {
+    console.log(`[shell] could not save the window geometry: ${err?.message || err}`);
+  }
+}
+
+/**
+ * Write it a moment after the window stops moving.
+ *
+ * A drag emits `resize` per frame, and each one would otherwise be a
+ * synchronous write plus a rename. The timer is unref'd so a pending flush
+ * cannot hold the process open; the quit path calls `flushWindowGeometry()`
+ * directly for the same reason.
+ */
+function scheduleGeometryFlush() {
+  if (geometryFlushTimer) clearTimeout(geometryFlushTimer);
+  geometryFlushTimer = setTimeout(flushWindowGeometry, 500);
+  geometryFlushTimer.unref?.();
+}
+
+/**
+ * Copy a live window's geometry into `windowGeometry`.
+ *
+ * `getNormalBounds()`, not `getBounds()`: while a window is maximized or
+ * full-screen, `getBounds()` reports the screen, and restoring that would
+ * leave a window with nothing left to un-maximize into.
+ */
+function captureWindowGeometry(window) {
+  if (!window || window.isDestroyed() || window.isMinimized()) return;
+  try {
+    windowGeometry = normalizeWindowState({
+      ...window.getNormalBounds(),
+      maximized: window.isMaximized(),
+      fullScreen: window.isFullScreen(),
+    });
+  } catch {
+    // A window torn down between the check and the read: keep what we had.
+  }
+}
+
+/** Follow a window for as long as it lives. */
+function trackWindowGeometry(window) {
+  const record = () => {
+    captureWindowGeometry(window);
+    scheduleGeometryFlush();
+  };
+  for (const event of ["resize", "move", "maximize", "unmaximize", "enter-full-screen", "leave-full-screen"]) {
+    window.on(event, record);
+  }
+  // Hiding to the tray is where a session usually ends, and the process can
+  // then be killed without another chance to write.
+  window.on("hide", () => flushWindowGeometry());
+}
+
+/**
+ * The geometry to build the next window with, fitted to the displays that are
+ * attached right now. Asked per window, not cached: a monitor can be unplugged
+ * between two of them.
+ */
+function openingGeometry() {
+  let workAreas = [];
+  try {
+    workAreas = screen.getAllDisplays().map((d) => d.workArea);
+  } catch {
+    // Before `app.whenReady()`, or a platform with no display server: the
+    // saved state is used unchecked, which is what an empty list means.
+  }
+  return fitToWorkAreas(windowGeometry, workAreas, MIN_SIZE);
+}
+
 function createWindow() {
   winPartition = partitionFor(instance || activeInstance(instancesState));
+  const geometry = openingGeometry();
   win = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 720,
-    minHeight: 480,
+    width: geometry.width,
+    height: geometry.height,
+    // Absent on a first launch and whenever the saved position no longer
+    // lands on a screen, which is Electron's cue to place the window itself.
+    ...(geometry.x !== undefined ? { x: geometry.x, y: geometry.y } : {}),
+    minWidth: MIN_SIZE.width,
+    minHeight: MIN_SIZE.height,
     backgroundColor: "#0b0d10",
     show: true,
     title: windowTitle(instance || activeInstance(instancesState)),
@@ -882,6 +1013,14 @@ function createWindow() {
     },
   });
 
+  // After construction, since neither is a constructor option that also
+  // remembers what to restore into: the bounds above are the shape the window
+  // takes when the user leaves either state. Maximize first, so leaving
+  // full-screen lands back on a maximized window when it was saved as both.
+  if (geometry.maximized) win.maximize();
+  if (geometry.fullScreen) win.setFullScreen(true);
+  trackWindowGeometry(win);
+
   // Per session, not once per process: a partition is its own cookie jar and
   // permission store, so an instance added after launch would otherwise get
   // Electron's defaults, including the notification check answering
@@ -898,11 +1037,29 @@ function createWindow() {
   // browser: GitHub PR links, docs, a task's exposed service. A new
   // BrowserWindow for those would be a browser this app then has to maintain.
   win.webContents.setWindowOpenHandler(({ url }) => {
+    // The page asking the shell to act, over a scheme never registered with
+    // the OS: the request never becomes a real navigation, only a call.
+    const cmd = parseDesktopCommand(url);
+    if (cmd) {
+      if (cmd.command === "install") void requestInstall();
+      else void checkForUpdates(true);
+      return { action: "deny" };
+    }
     if (isAppUrl(url)) return { action: "allow" };
     shell.openExternal(url);
     return { action: "deny" };
   });
   win.webContents.on("will-navigate", (event, url) => {
+    // Same recognition as setWindowOpenHandler above, for the case where the
+    // page's request arrives as a top-level navigation instead of a new
+    // window; always denied, since it is a call, not a page to load.
+    const cmd = parseDesktopCommand(url);
+    if (cmd) {
+      if (cmd.command === "install") void requestInstall();
+      else void checkForUpdates(true);
+      event.preventDefault();
+      return;
+    }
     if (isAppUrl(url) || url.startsWith("file://")) return;
     event.preventDefault();
     shell.openExternal(url);
@@ -913,12 +1070,17 @@ function createWindow() {
   // and it is the only moment the shell can tell that the window is looking at
   // somebody else's login form.
   win.webContents.on("did-navigate", (_event, url) => maybeOfferNativeSignIn(url));
+  // A reload or a first paint starts with no state of its own; the shell
+  // re-announces what it already knows instead of leaving the pill blank
+  // until the next update event happens to fire.
+  win.webContents.on("did-finish-load", () => pushUpdateState());
   wireContextMenu(win);
 
   // Close vs quit, one rule on all three platforms: the X button (and Cmd+W)
   // hides the window, and quitting is something you ask for by name (see
-  // "Close vs quit" in docs/DESKTOP_APP.md §5.1). A hidden window keeps
-  // working, the tray icon still shows the "N need you" count, and Show is
+  // "Notifications, tray, and close vs quit" in docs/DESKTOP_APP.md). A hidden
+  // window keeps working, the tray icon still shows the "N need you" count,
+  // and Show is
   // one click away, so this avoids an absent-minded X killing an in-flight
   // agent turn (desktop/e2e/03-quit-drain.spec.ts pins the drain). Hiding
   // instead of destroying also preserves renderer state (open transcript,
@@ -1443,6 +1605,10 @@ async function applyActiveInstance() {
     // screen instead, which the attach is about to show anyway.
     appUrl = null;
     const old = win;
+    // Before `createWindow()` reads it, and before the destroy below takes the
+    // window it has to be read off. The replacement opens on the size and
+    // position the user left, so switching servers is not a resize.
+    captureWindowGeometry(old);
     // Build the replacement first. Electron emits `window-all-closed`
     // synchronously from the destroy below, and this shell quits on that
     // event when no status area hosts its tray icon; building first means
@@ -2502,7 +2668,7 @@ function applyBadge() {
  * background subscriber for every saved ssh host would mean opening an SSH
  * connection per host, to machines the user isn't looking at, on every
  * launch. So it contributes to the badge while attached and drops out on
- * leaving; see docs/DESKTOP_APP.md §8.
+ * leaving; see docs/DESKTOP_APP.md, "Instances".
  */
 function subscriberOrigin(inst) {
   if (!inst) return null;
@@ -2713,6 +2879,26 @@ function gotoTask(payload) {
     .catch(() => {});
 }
 
+/**
+ * Mirror the tray's update item into the page, the same way gotoTask() above
+ * mirrors a notification click: by evaluating in the page, since this file
+ * has no preload and no IPC. The page renders an update pill from this event
+ * instead of polling anything.
+ *
+ * Skipped when there is nothing to draw it on: no window, a destroyed one, no
+ * app URL yet, or a window currently showing something other than the app
+ * (the loading screen, a sign-in page), where the event would fire into a
+ * document with no listener for it.
+ */
+function pushUpdateState() {
+  if (!win || win.isDestroyed() || !appUrl) return;
+  if (!isAppUrl(win.webContents.getURL())) return;
+  const detail = JSON.stringify(pageUpdateState(updateState, updateDisposition, app.getVersion()));
+  win.webContents
+    .executeJavaScript(`window.dispatchEvent(new CustomEvent("calandria:desktop-update", { detail: ${detail} }))`)
+    .catch(() => {});
+}
+
 /* ------------------------------------------------------------------------- *
  * Auto-update.
  *
@@ -2842,8 +3028,12 @@ function setUpdateState(patch) {
     error: patch.phase === "error" ? patch.error || null : null,
   };
   const after = updateMenuItem({ ...updateState, disposition: updateDisposition });
-  if (after.label === before.label && after.enabled === before.enabled) return;
-  refreshUpdateMenus();
+  // The menus only redraw when the label or enabled flag actually moved, but
+  // the page push always runs: download progress moves `percent` on every
+  // event without ever moving the menu label, and the page needs each of
+  // those to animate the pill.
+  if (after.label !== before.label || after.enabled !== before.enabled) refreshUpdateMenus();
+  pushUpdateState();
 }
 
 // Both menus, since they cover different situations. The tray is what works

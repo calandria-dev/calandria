@@ -23,7 +23,7 @@ import type {
 import type { AgentDriver, OneShotOptions, OneShotResult, TurnHooks } from "../types";
 import { claudeCapabilities } from "./capabilities";
 import { listClaudeCommands, recordMcpPrompts } from "./commands";
-import { getClaudePlanUsage, recordClaudeRateLimit } from "./planUsage";
+import { getClaudePlanUsage, recordClaudeRateLimit, claudeLimitResetAt } from "./planUsage";
 import { getSetting } from "../../store";
 import { registerTurnInput, unregisterTurnInput, type TurnInputHandle } from "../../turnInput";
 import {
@@ -31,6 +31,7 @@ import {
   getTaskForAgent,
   listTagsForAgent,
   listProjectsForAgent,
+  listProvidersForAgent,
   listTasksForAgent,
   moveTasksForAgent,
   registerExposedService,
@@ -38,12 +39,13 @@ import {
   resolveTagRefs,
   resolveTargetProject,
   resolveTitleRefs,
+  reportBaseRewriteForAgent,
   setBaseBranchForAgent,
   updateTagForAgent,
   updateTaskForAgent,
   withdrawSuggestionForAgent,
 } from "../../agentTools";
-import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../../agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_PROVIDERS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, REPORT_BASE_REWRITE, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../../agentToolDefs.mjs";
 import { createPrForAgent } from "../../prTools";
 import { createRunbookForAgent, listRunbooksForAgent, updateRunbookForAgent } from "../../runbookTools";
 import { publishGlobal } from "../../events";
@@ -59,7 +61,7 @@ import {
   CLAUDE_TOOL_TRANSPORT,
 } from "../../config";
 import { guardToolHandler, isCalandriaToolName, isCliInterruptedToolResult, toolCutoffNotice, toolInterruptedMessage } from "../../agentToolGuard.mjs";
-import { logAgentToolArrival, logAgentToolOutcome, type AgentToolOutcome } from "../../agentToolLog";
+import { logAgentToolArrival, logAgentToolCutoff, logAgentToolOutcome, type AgentToolOutcome } from "../../agentToolLog";
 import { calandriaBridgeServer } from "./mcp";
 import fs from "node:fs";
 import path from "node:path";
@@ -89,8 +91,9 @@ import {
   verifyTurn,
 } from "../../claude-auth";
 import { claudeUsage, claudeSubagentTokens, claudeMessageModel } from "./usage";
-import { agentTurnEnv } from "../../agentEnv";
+import { resolvedAgentTurnEnv, resolvedProviderDefaultModel } from "../../providers/resolve";
 import { gatewayMcpServersFor } from "../../gatewayMcp";
+import { ATTACHMENT_NUDGE, hasAttachmentMarkers } from "../../uploadTypes";
 
 const log = createLogger("claude");
 
@@ -334,6 +337,9 @@ function calandriaServer(
       tool(LIST_PROJECTS.name, LIST_PROJECTS.description, {}, async () => ({
         content: [{ type: "text", text: JSON.stringify(listProjectsForAgent(project.id), null, 2) }],
       })),
+      tool(LIST_PROVIDERS.name, LIST_PROVIDERS.description, {}, async () => ({
+        content: [{ type: "text", text: JSON.stringify(listProvidersForAgent(), null, 2) }],
+      })),
       tool(
         SUGGEST_TASK.name,
         SUGGEST_TASK.description,
@@ -344,10 +350,11 @@ function calandriaServer(
           project: z.string().optional().describe(SUGGEST_TASK.params.project),
           blocked_by: z.array(z.string()).optional().describe(SUGGEST_TASK.params.blocked_by),
           tags: z.array(z.string()).optional().describe(SUGGEST_TASK.params.tags),
-          provider: z.enum(["local", "cloud"]).optional().describe(SUGGEST_TASK.params.provider),
+          provider: z.string().optional().describe(SUGGEST_TASK.params.provider),
           model: z.string().optional().describe(SUGGEST_TASK.params.model),
+          attachments: z.array(z.string()).optional().describe(SUGGEST_TASK.params.attachments),
         },
-        async (args: { title: string; description: string; priority: "hi" | "med" | "lo"; project?: string; blocked_by?: string[]; tags?: string[]; provider?: "local" | "cloud"; model?: string }) => {
+        async (args: { title: string; description: string; priority: "hi" | "med" | "lo"; project?: string; blocked_by?: string[]; tags?: string[]; provider?: string; model?: string; attachments?: string[] }) => {
           // Resolve which project this lands in before anything else: the
           // task's agent, send_context and board position all come from it,
           // and a wrong answer is a misfiled task, not a visible
@@ -375,6 +382,8 @@ function calandriaServer(
             origin_task_id: originTaskId,
             provider: args.provider,
             model: args.model,
+            // Resolved against the caller's worktree inside createSuggestedTask.
+            attachments: args.attachments,
           });
           // A null task means the project was deleted mid-turn; `text` already says so.
           if (created) {
@@ -390,9 +399,10 @@ function calandriaServer(
         {
           project: z.string().optional().describe(LIST_TASKS.params.project),
           include_done: z.boolean().optional().describe(LIST_TASKS.params.include_done),
-          tag: z.string().optional().describe(LIST_TASKS.params.tag),
+          tags: z.array(z.string()).optional().describe(LIST_TASKS.params.tags),
+          match: z.enum(["any", "all"]).optional().describe(LIST_TASKS.params.match),
         },
-        async (args: { project?: string; include_done?: boolean; tag?: string }) => {
+        async (args: { project?: string; include_done?: boolean; tags?: string[]; match?: "any" | "all" }) => {
           // Same strict resolution suggest_task uses. Reads are inert, but a
           // board listed from the wrong project is still a lie.
           const target = resolveTargetProject(project, args.project);
@@ -400,10 +410,15 @@ function calandriaServer(
           // Same for the tag filter: an unrecognized one must not hand back
           // the whole board as if the feature had that many members. Never
           // creates: this is a read.
-          const tag = resolveTagRefs(target.project, args.tag ? [args.tag] : []);
-          if ("error" in tag)
-            return { content: [{ type: "text", text: `Could not list tasks: ${tag.error}.` }], isError: true };
-          const tasks = listTasksForAgent(target.project, task.id, args.include_done ?? false, tag.tags[0]?.id ?? null);
+          const tagRefs = resolveTagRefs(target.project, args.tags ?? []);
+          if ("error" in tagRefs)
+            return { content: [{ type: "text", text: `Could not list tasks: ${tagRefs.error}.` }], isError: true };
+          const tasks = listTasksForAgent(
+            target.project,
+            task.id,
+            args.include_done ?? false,
+            { ids: tagRefs.tags.map((tag) => tag.id), match: args.match ?? "any" },
+          );
           return { content: [{ type: "text", text: JSON.stringify({ project: target.project.name, tasks }, null, 2) }] };
         }
       ),
@@ -444,8 +459,9 @@ function calandriaServer(
           status: z.enum(["not_started", "in_progress", "on_hold", "done"]).optional().describe(UPDATE_TASK.params.status),
           blocked_by: z.array(z.string()).optional().describe(UPDATE_TASK.params.blocked_by),
           tags: z.array(z.string()).optional().describe(UPDATE_TASK.params.tags),
+          attachments: z.array(z.string()).optional().describe(UPDATE_TASK.params.attachments),
         },
-        async (args: { task?: string; title?: string; description?: string; priority?: Priority; status?: TaskStatus; blocked_by?: string[]; tags?: string[] }) => {
+        async (args: { task?: string; title?: string; description?: string; priority?: Priority; status?: TaskStatus; blocked_by?: string[]; tags?: string[]; attachments?: string[] }) => {
           // The closed-over `task` is the caller: the snapshot taken at turn
           // start, and the one identity the model can't influence. `args.task`
           // is the target it named; updateTaskForAgent decides whether that may
@@ -509,6 +525,17 @@ function calandriaServer(
           return { content: [{ type: "text", text }], ...(updated ? {} : { isError: true }) };
         }
       ),
+      tool(
+        REPORT_BASE_REWRITE.name,
+        REPORT_BASE_REWRITE.description,
+        { branch: z.string().optional().describe(REPORT_BASE_REWRITE.params.branch) },
+        async (args: { branch?: string }) => {
+          // The caller is the server's word, closed over from the turn. `branch` is
+          // the model's, and every task the sweep flags is re-checked against git.
+          const { ok, text } = await reportBaseRewriteForAgent(task, args.branch);
+          return { content: [{ type: "text", text }], ...(ok ? {} : { isError: true }) };
+        }
+      ),
       // Only on a project that lands by pull request. On a merge project there
       // is nothing for it to open, so it is absent instead of present and
       // refusing: an offered tool reads as a sanctioned move, and the session
@@ -561,8 +588,10 @@ function calandriaServer(
           priority: z.enum(["hi", "med", "lo"]).optional().describe(CREATE_RUNBOOK.params.priority),
           permission_mode: z.string().optional().describe(CREATE_RUNBOOK.params.permission_mode),
           project: z.string().optional().describe(CREATE_RUNBOOK.params.project),
+          provider: z.string().optional().describe(CREATE_RUNBOOK.params.provider),
+          model: z.string().optional().describe(CREATE_RUNBOOK.params.model),
         },
-        async (args: { name: string; description: string; prompt: string; priority?: "hi" | "med" | "lo"; permission_mode?: string; project?: string }) => {
+        async (args: { name: string; description: string; prompt: string; priority?: "hi" | "med" | "lo"; permission_mode?: string; project?: string; provider?: string; model?: string }) => {
           // The agent id is the server's word (this driver is Claude), never a
           // parameter: a model must not be able to file a recipe under another
           // agent's name.
@@ -593,8 +622,10 @@ function calandriaServer(
           prompt: z.string().optional().describe(UPDATE_RUNBOOK.params.prompt),
           priority: z.enum(["hi", "med", "lo"]).optional().describe(UPDATE_RUNBOOK.params.priority),
           permission_mode: z.string().optional().describe(UPDATE_RUNBOOK.params.permission_mode),
+          provider: z.string().optional().describe(UPDATE_RUNBOOK.params.provider),
+          model: z.string().optional().describe(UPDATE_RUNBOOK.params.model),
         },
-        async (args: { runbook: string; name?: string; description?: string; prompt?: string; priority?: "hi" | "med" | "lo"; permission_mode?: string }) => {
+        async (args: { runbook: string; name?: string; description?: string; prompt?: string; priority?: "hi" | "med" | "lo"; permission_mode?: string; provider?: string; model?: string }) => {
           const { runbook: updated, text } = updateRunbookForAgent(project, args.runbook, args);
           if (updated) publishGlobal("", { type: "runbooks_changed", projectId: updated.project_id });
           return { content: [{ type: "text", text }], ...(updated ? {} : { isError: true }) };
@@ -711,16 +742,30 @@ async function* runTurn(
   // Latest usage-limit reset time the SDK reported this turn (rate_limit_event,
   // for claude.ai subscription users). When the turn then dies on a usage-limit
   // error, the raw error text usually says what happened but not when it heals;
-  // this timestamp does, so withResetTime() folds it into the error event and it
-  // lands in the persisted transcript line, the durable channel the UI renders.
+  // this timestamp does, so errorEvent() folds it into the error event and it
+  // lands in the persisted transcript line, the durable channel the UI renders,
+  // as well as on the event's own `resetAt` for the runner to queue against.
   let limitResetsAt: number | null = null;
-  // Appends the reset time to a usage-limit error's text, human-readably. The
-  // SDK reports `resetsAt` as a unix timestamp, epoch seconds in practice, but
-  // tolerate milliseconds defensively (values past ~2001 in ms terms).
-  const withResetTime = (text: string): string => {
-    if (limitResetsAt == null || !isUsageLimit(text)) return text;
-    const ms = limitResetsAt > 1e12 ? limitResetsAt : limitResetsAt * 1000;
-    return `${text}. Resets at ${new Date(ms).toLocaleString()}`;
+  // The reset as an epoch in MILLISECONDS, or null when nothing reported one.
+  // The SDK reports `resetsAt` as a unix timestamp, epoch seconds in practice,
+  // but tolerate milliseconds defensively (values past ~2001 in ms terms).
+  // Falls back to the plan meter's passive signal (./planUsage.ts), which the
+  // same events feed: a rejection can arrive with no rate_limit_event beside
+  // it, and an earlier turn's event still says when the window heals. Read
+  // from cache only, never fetched, so this stays free on the failure path.
+  const resetAtMs = (): number | null => {
+    if (limitResetsAt == null) return claudeLimitResetAt();
+    return limitResetsAt > 1e12 ? limitResetsAt : limitResetsAt * 1000;
+  };
+  // An error event, carrying the reset instant twice on a usage-limit failure:
+  // appended to the text human-readably, and as data on `resetAt`, which is
+  // what lib/runner.ts queues the automatic resume off (StreamEvent in
+  // lib/types.ts). Parsing the instant back out of a localized date string
+  // would be a second, worse copy of the same fact.
+  const errorEvent = (text: string): StreamEvent => {
+    const ms = isUsageLimit(text) ? resetAtMs() : null;
+    if (ms == null) return { type: "error", content: text };
+    return { type: "error", content: `${text}. Resets at ${new Date(ms).toLocaleString()}`, resetAt: ms };
   };
 
   // Resolve the run controls with a two-level fallback: the task's own choice wins;
@@ -734,18 +779,16 @@ async function* runTurn(
   // The model default is agent-scoped only, with no legacy un-suffixed key to
   // read and none worth minting: a model id names one provider's catalog, so
   // an instance-wide "opus" would be a value Codex could never run.
-  const model = task.model ?? getSetting(`default_model:${task.agent}`);
+  const model = task.model ?? getSetting(`default_model:${task.agent}`) ?? resolvedProviderDefaultModel(project, task, "claude");
 
   // Chat attachments travel as "[Attached image: /abs/path]" (images) or
   // "[Attached file: /abs/path]" (any other type) marker lines in the message
-  // text (composed in app/shell/format.ts; files live outside the worktree, see
+  // text (lib/uploadTypes.ts; files live outside the worktree, see
   // lib/uploads.ts). The bytes are not in the prompt: the nudge hands over a
   // staged path and leaves the how to Claude, since Read renders images and
   // text natively but a PDF, an archive or a spreadsheet needs a shell tool.
   // Prompt-only: the persisted transcript keeps the bare markers.
-  const prompt = /^\[Attached (image|file): .+\]$/m.test(userText)
-    ? `${userText}\n\nEach attachment above is a file staged on disk at that absolute path, outside the worktree. Inspect the ones you need before responding: the Read tool handles images and text, and any other format needs whatever shell tooling suits it. Don't assume the contents from the filename.`
-    : userText;
+  const prompt = hasAttachmentMarkers(userText) ? `${userText}\n\n${ATTACHMENT_NUDGE}` : userText;
 
   const permissionMode = permissionModeFor(permission);
 
@@ -1014,7 +1057,7 @@ async function* runTurn(
       cwd,
       // Drops NODE_ENV and repoints PORT at the project's own port; see
       // lib/agentEnv.ts for why a turn can't just inherit the server's env.
-      env: agentTurnEnv(project, task),
+      env: resolvedAgentTurnEnv(project, task, "claude"),
       resume: task.session_id ?? undefined,
       // Model selection ("opus"/"sonnet"/"haiku" alias): the task's own pick,
       // else this agent's Settings default. Omit to inherit Claude Code's own.
@@ -1359,9 +1402,12 @@ async function* runTurn(
                 const cutOff = !!cut && isCliInterruptedToolResult(raw);
                 if (cut && cutOff) {
                   toolCutoffs++;
-                  log.warn("agent tool call cut off before Calandria answered", {
-                    task: task.id,
-                    tool: cut,
+                  // One wording for both transports (lib/agentToolLog.ts): the
+                  // bridge reports its own half of this failure through
+                  // lib/agentToolCutoff.ts, and an operator greps for one line.
+                  // `reached` is unknown here: the CLI's sentence is the same
+                  // whether the abort beat the request or landed mid-flight.
+                  logAgentToolCutoff(cut, CLAUDE_TOOL_TRANSPORT === "stdio" ? "bridge" : "in-process", task.id, {
                     tool_use_id: b.tool_use_id,
                     count: toolCutoffs,
                   });
@@ -1437,7 +1483,7 @@ async function* runTurn(
           }
           queue.push({ type: "usage", usage });
           if (message.subtype !== "success" && "result" in message === false) {
-            queue.push({ type: "error", content: withResetTime(`Run ended: ${message.subtype}`) });
+            queue.push(errorEvent(`Run ended: ${message.subtype}`));
           }
           // The linger decision. The Stop hook has already fired for this turn,
           // so pendingBg/pendingCrons are current: nothing to honor means the
@@ -1482,7 +1528,7 @@ async function* runTurn(
       // An abort (Stop button / disconnect) ends the stream on purpose, not as
       // an error. The partial transcript is already persisted by the consumer.
       if (!abortController?.signal.aborted) {
-        queue.push({ type: "error", content: withResetTime(err instanceof Error ? err.message : String(err)) });
+        queue.push(errorEvent(err instanceof Error ? err.message : String(err)));
       }
     } finally {
       // However the stream ended (clean close, Stop, a thrown transport

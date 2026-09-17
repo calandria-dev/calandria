@@ -4,13 +4,14 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import { GATEWAY_PLAN_ID, type Status, type Priority, type AskQuestion, type AskAnswers, type PermissionDecision } from "@/lib/types";
 import { Icon } from "../icons";
 import TaskChanges, { type ResolveResult } from "../TaskChanges";
-import { Markdown } from "../Markdown";
-import { fmtTokens, fmtCostTotal, fmtJobCost, modelLabel, isAwaiting, isPrRed, prFailingChecks, buildSessions, usageSplit, costDisplay, usageTooltip, blockedNote } from "./format";
+import { Markdown, type MarkdownLinks } from "../Markdown";
+import { fmtTokens, fmtCostTotal, fmtJobCost, modelLabel, isAwaiting, isPrRed, prFailingChecks, buildSessions, usageSplit, costDisplay, usageTooltip, blockedNote, splitAttachments } from "./format";
+import { AttachmentStrip } from "./attachments";
 import { pendingPromptIds, promptsAreLive } from "./pendingPrompt";
 import {
   SLABEL, SSUB, AWAIT_LABEL, STATUSES, PLABEL, PRIORITIES,
-  modelOptions, reasoningOptions, permissionOptions, INHERIT_LABEL, RAIL_W, SESS_MAIN_MIN,
-  type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle, type InternalUsageEstimate, type TagRow, type PickerOption,
+  reasoningOptions, permissionOptions, codexSandboxOptions, INHERIT_LABEL, RAIL_W, SESS_MAIN_MIN,
+  type ProjectRow, type TaskRow, type Msg, type SyncStatusResp, type AgentsBundle, type InternalUsageEstimate, type TagRow,
 } from "./types";
 import { TagBadges, selectOneTag } from "./TagChips";
 import { isSnoozed, wakeLabel } from "./snooze";
@@ -21,8 +22,9 @@ import { usePlanUsage } from "./PlanUsage";
 import { usageResetAt, deferredStartFor } from "@/lib/usageReset";
 import { capsFor, agentLabel, findAgent } from "./agents";
 import { StatusDot, Avatar, Popover, AgentBadge, ProviderBadge, Skel } from "./shared";
-import { useEndpointModels } from "./modelEndpoint";
-import { planWindowApplies, taskProvider } from "@/lib/agentEnv";
+import { ModelPicker, useModelTree, resolveModelLabel, type ModelPickerValue, type ModelPickerEnvOption } from "./ModelPicker";
+import type { PresentedProvider } from "@/lib/providers/present";
+import { taskProvider } from "@/lib/agentEnv";
 import { MessageView, SessionBreak, type LimitResume, type SuggestionActions } from "./Transcript";
 import { CollabDoc } from "./CollabDoc";
 import { Composer } from "./Composer";
@@ -31,7 +33,19 @@ import { ReclaimButton } from "./ReclaimButton";
 import { usePrOpenRefresh } from "./PrChip";
 import { ColResize, ColRail } from "./Layout";
 import { useOverflowRail } from "./useOverflowRail";
-import { jget, jsend } from "./api";
+import { apiFetch, jget, jsend } from "./api";
+
+// What POST /api/tasks/:id/sync answers with, across all four of its tiers.
+interface SyncPostResp {
+  ok?: boolean;
+  error?: string;
+  conflicts?: string[];
+  prompt?: string; // the resolution-turn prompt for whichever operation conflicted
+  prOpen?: boolean; // the rebase was refused once because a PR is open on this branch
+  rebased?: boolean;
+  done?: boolean; // rebase-continue ran the replay to completion
+  forcePushCommand?: string; // set when the rebased branch has a PR whose head now needs one
+}
 
 // Banner for a reopened task whose worktree is behind its base branch. Read-only
 // on open; the git op fires only on click. A fast-forward-able task catches up
@@ -41,13 +55,18 @@ import { jget, jsend } from "./api";
 // Review opens the Changes tab, Discard lives there. Under a PR landing policy,
 // Accept commits the base-branch merge into the task's branch but does not land
 // it; only the PR moves the base.
-function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitchToChat, onReview, onMerged, onChanged }: {
+function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSendPrompt, onSwitchToChat, onReview, onMerged, onChanged }: {
   taskId: string; running: boolean;
   prMode: boolean; // the project lands through pull requests (projects.landing_mode === "pr")
   // Bumped by the parent when Changes mutates the merge state (accept, discard,
   // land); the banner otherwise re-reads only when a turn ends.
   refresh: number;
   onResolveWithAI: (taskId: string) => Promise<ResolveResult>;
+  // Start a turn on this task with a prompt this banner already has in hand.
+  // The rebase tiers need it because their conflicts are handed back by the
+  // sync route itself; `onResolveWithAI` can't serve them, since it re-enters
+  // /merge/prepare and would start the very merge the rebase exists to avoid.
+  onSendPrompt: (prompt: string) => void;
   onSwitchToChat: () => void;
   onReview: () => void;
   onMerged?: () => void; // the task landed, same hook TaskChanges fires
@@ -56,9 +75,11 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitc
   const [st, setSt] = useState<SyncStatusResp | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // The open-PR refusal, remembered so the second click can acknowledge it.
+  const [prAcked, setPrAcked] = useState(false);
 
   const load = useCallback(async () => {
-    try { const r = await fetch(`/api/tasks/${taskId}/sync`, { cache: "no-store" }); setSt(await r.json()); }
+    try { const r = await apiFetch(`/api/tasks/${taskId}/sync`, { cache: "no-store" }); setSt(await r.json()); }
     catch { setSt(null); }
   }, [taskId]);
 
@@ -67,6 +88,62 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitc
   // mid-merge reads. `refresh` is a dependency only; the parent bumps it after
   // Changes acts.
   useEffect(() => { if (!running) load(); }, [running, refresh, load]);
+
+  const post = useCallback(async (body: Record<string, unknown>): Promise<SyncPostResp> => {
+    const r = await apiFetch(`/api/tasks/${taskId}/sync`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    });
+    const res = (await r.json().catch(() => ({}))) as SyncPostResp;
+    return res.ok === undefined && !r.ok ? { ok: false, error: `sync failed (HTTP ${r.status})` } : res;
+  }, [taskId]);
+
+  /**
+   * Start the rebase onto the rewritten base, or, over a replay already
+   * stopped in the worktree, re-report the conflicts it is sitting on. One
+   * handler for both: the route answers a paused rebase with those conflicts
+   * and their prompt, which is exactly what "Fix with AI" over that state
+   * wants to send.
+   */
+  const doRebase = useCallback(async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await post({ action: "rebase", ...(prAcked ? { acknowledgePr: true } : {}) });
+      if (res.prOpen) { setPrAcked(true); setErr(res.error ?? "this branch has an open pull request"); return; }
+      if (!res.ok) { setErr(res.error || "rebase failed"); return; }
+      if (res.conflicts?.length && res.prompt) { onSendPrompt(res.prompt); onSwitchToChat(); return; }
+      // Landed. The branch was rewritten locally only; nothing here pushes, so
+      // say what publishing it takes rather than leaving an open PR silently
+      // pointing at commits that no longer exist.
+      if (res.forcePushCommand) setErr(`Rebased. The open PR still points at the old commits: ${res.forcePushCommand}`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); load(); onChanged(); }
+  }, [post, prAcked, onSendPrompt, onSwitchToChat, load, onChanged]);
+
+  const doRebaseContinue = useCallback(async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await post({ action: "rebase-continue" });
+      if (!res.ok) { setErr(res.error || "could not finish the rebase"); return; }
+      // Stopped again on a later commit: same escalation as the first stop.
+      if (!res.done && res.prompt) { onSendPrompt(res.prompt); onSwitchToChat(); }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); load(); onChanged(); }
+  }, [post, onSendPrompt, onSwitchToChat, load, onChanged]);
+
+  const doRebaseAbort = useCallback(async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await post({ action: "rebase-abort" });
+      if (!res.ok) setErr(res.error || "could not abort the rebase");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); load(); onChanged(); }
+  }, [post, load, onChanged]);
 
   if (!st || !st.isolated) return null;
 
@@ -101,14 +178,48 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitc
     );
   }
 
+  // A `rebase --onto` the rewritten base stopped on a conflict. It owns the
+  // checkout until it is finished or discarded, so it outranks every state
+  // below, the rewrite banner that started it included: that banner would
+  // otherwise offer Rebase again over a replay that is already half done.
+  if (st.rebaseInProgress) {
+    const left = st.unresolved?.length ?? st.conflicts?.length ?? 0;
+    const done = left === 0;
+    const why = done
+      ? `The replay of this task's commits onto ${st.baseBranch} is paused with every conflict resolved. Finish it to commit the resolution and replay whatever is left, or discard it to put the branch back where it started.`
+      : `Replaying this task's commits onto the rewritten ${st.baseBranch} stopped on a conflict. The markers are in the worktree. Resolve them and finish the rebase, or discard it to put the branch back where it started.`;
+    return (
+      <div className={`sync-banner ${done ? "resolved" : "conflict"}`} data-sync-state={done ? "rebase-resolved" : "rebase-conflict"} title={why}>
+        <span className="sync-msg">
+          {done
+            ? `Rebase onto ${st.baseBranch} resolved: review it, then finish or discard`
+            : `Rebase onto ${st.baseBranch} stopped: ${left} file${left === 1 ? "" : "s"} conflicted`}
+        </span>
+        {err && <span className="sync-err" title={err}>{err}</span>}
+        <span className="sync-spacer" />
+        <button className="tc-btn" onClick={doRebaseAbort} disabled={busy || running}>Discard rebase</button>
+        {done ? (
+          <>
+            <button className="tc-btn" onClick={onReview} disabled={busy || running}>Review</button>
+            <button className="tc-btn primary" onClick={doRebaseContinue} disabled={busy || running}>{busy ? "Finishing…" : "Finish rebase"}</button>
+          </>
+        ) : (
+          <button className="tc-btn primary" onClick={doRebase} disabled={busy || running}>{busy ? "…" : "Fix with AI"}</button>
+        )}
+      </div>
+    );
+  }
+
   // The base branch's history was rewritten out from under this task, or the
   // local base ref is itself out of step with its remote. Either way the
   // ahead/behind numbers below describe a comparison against history that no
   // longer exists upstream, and the ordinary Sync (a merge of base into work)
   // is the wrong move: it reconciles two copies of the same commits under
   // different SHAs and conflicts in every file the rewrite touched. So this
-  // states the situation and the command that replays cleanly, and offers no
-  // one-click action, because there is no safe generic one.
+  // states the situation, and for a rewrite offers Rebase: a `git rebase --onto`
+  // that replays this task's own commits onto the new tip. The command stays
+  // beside it for the cases the button won't take (no recorded cut point) and
+  // for anyone who'd rather run it themselves.
   // A base that IS the project default already has BaseBranchBanner reporting its
   // remote divergence above the task list, so repeating it here is noise. The gap
   // this covers is a task on a base of its OWN (a tag's integration branch, a
@@ -128,8 +239,17 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitc
     return (
       <div className="sync-banner conflict" data-sync-state={st.baseRewritten ? "base-rewritten" : "base-diverged"} title={hint}>
         <span className="sync-msg">{msg}</span>
+        {err && <span className="sync-err" title={err}>{err}</span>}
         <span className="sync-spacer" />
-        {rebaseCmd && st.baseRewritten ? <code className="sync-cmd">{rebaseCmd}</code> : null}
+        {/* The command stays for the case the button can't serve (no cut point
+            recorded, or a user who'd rather do it in a terminal), and steps
+            aside once there is something more urgent to read. */}
+        {rebaseCmd && st.baseRewritten && !err ? <code className="sync-cmd">{rebaseCmd}</code> : null}
+        {st.baseRewritten && st.baseSha ? (
+          <button className="tc-btn primary" onClick={doRebase} disabled={busy || running}>
+            {busy ? "Rebasing…" : prAcked ? "Rebase anyway" : "Rebase"}
+          </button>
+        ) : null}
       </div>
     );
   }
@@ -171,7 +291,7 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitc
     setBusy(true);
     setErr(null);
     try {
-      const r = await fetch(`/api/tasks/${taskId}/sync`, { method: "POST" });
+      const r = await apiFetch(`/api/tasks/${taskId}/sync`, { method: "POST" });
       const res: { ok?: boolean; error?: string; conflicts?: string[] } = await r.json().catch(() => ({}));
       // Prediction said clean but the real merge conflicted: escalate to Fix with AI.
       if (res?.conflicts?.length) after(await onResolveWithAI(taskId));
@@ -201,7 +321,7 @@ function SyncBanner({ taskId, running, refresh, prMode, onResolveWithAI, onSwitc
     setBusy(true);
     setErr(null);
     try {
-      const r = await fetch(`/api/tasks/${taskId}/merge/complete`, {
+      const r = await apiFetch(`/api/tasks/${taskId}/merge/complete`, {
         method: "POST",
         ...(prMode ? { headers: { "content-type": "application/json" }, body: JSON.stringify({ resolveOnly: true }) } : {}),
       });
@@ -312,7 +432,7 @@ function CiBanner({ task, running, onFixCi, onSwitchToChat }: {
   );
 }
 
-function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoStart, running, blockedBy, resetAt, onQueueStart, onCancelQueuedStart }: { task: TaskRow; project: ProjectRow; onStart: () => void; onEdit: () => void; onSetSendContext: (v: boolean) => void; onSetAutoStart: (v: boolean) => void; running: boolean; blockedBy?: string[]; resetAt: number | null; onQueueStart: (at: number) => void; onCancelQueuedStart: () => void }) {
+function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoStart, running, blockedBy, resetAt, onQueueStart, onCancelQueuedStart, links }: { task: TaskRow; project: ProjectRow; links?: MarkdownLinks; onStart: () => void; onEdit: () => void; onSetSendContext: (v: boolean) => void; onSetAutoStart: (v: boolean) => void; running: boolean; blockedBy?: string[]; resetAt: number | null; onQueueStart: (at: number) => void; onCancelQueuedStart: () => void }) {
   const carried = task.generation > 1;
   const blockNote = task.started ? undefined : blockedNote(blockedBy);
   const blocked = !!blockNote;
@@ -321,6 +441,7 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoS
   const queued = isQueuedStart(task);
   const sendContext = task.send_context !== 0;
   const tagCount = task.tag_ids.length;
+  const brief = splitAttachments(task.description);
   const statusLine = carried ? "Fresh window · summary carried" : `${SLABEL[task.status]} · no session yet`;
   return (
     <div className="hero">
@@ -334,7 +455,11 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoS
        * the centred hero, since a bulleted list centred line by line is
        * unreadable.
        */}
-      {task.description && <div className="h-desc"><Markdown>{task.description}</Markdown></div>}
+      {brief.text && <div className="h-desc"><Markdown links={links}>{brief.text}</Markdown></div>}
+      {/* Files attached to the task itself, staged the way a chat attachment
+          is and named in the description as marker lines. Same strip as a
+          transcript message. */}
+      <AttachmentStrip items={brief.attachments} />
       {/*
        * The card must not restate the brief above. The opening user turn is
        * the fixed INITIAL_TASK_PROMPT; title and details reach the session
@@ -435,14 +560,14 @@ function useStableAsync<A extends unknown[], R>(fn: (...args: A) => Promise<R>):
   return useCallback((...args: A) => ref.current(...args), []);
 }
 
-export function SessionView({ project, task, tagsById, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSendContext, onSetAutoStart, onSnooze, onUnsnooze, onQueueStart, onCancelQueuedStart, onResolveWithAI, onFixCi, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
+export function SessionView({ project, task, tagsById, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSandbox, onSetSendContext, onSetAutoStart, onSnooze, onUnsnooze, onQueueStart, onCancelQueuedStart, onResolveWithAI, onFixCi, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
   project: ProjectRow; task: TaskRow; tagsById: Map<string, TagRow>; agents: AgentsBundle; messages: Msg[]; running: boolean; blockedBy?: string[]; transcriptLoading?: boolean;
   onSend: (t: string) => void; onStart: () => void; onStop: () => void; onClear: () => void; onEdit: () => void;
   clearConfirming?: boolean; onConfirmClear?: () => void; onCancelClear?: () => void;
-  // Deep-link to Settings → Agents, for the transcript's "your login died" recovery button.
+  // Deep-link to Settings → Models, for the transcript's "your login died" recovery button.
   onReconnect?: () => void;
-  onSetStatus: (s: Status) => void; onSetPriority: (p: Priority) => void; onSetModel: (m: string | null) => void;
-  onSetReasoning: (r: string | null) => void; onSetPermission: (p: string | null) => void;
+  onSetStatus: (s: Status) => void; onSetPriority: (p: Priority) => void; onSetModel: (v: ModelPickerValue) => void;
+  onSetReasoning: (r: string | null) => void; onSetPermission: (p: string | null) => void; onSetSandbox: (s: string | null) => void;
   onSetSendContext: (v: boolean) => void;
   // The blocked-task hero's "Start when unblocked" toggle (tasks.auto_start).
   onSetAutoStart: (v: boolean) => void;
@@ -515,20 +640,34 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   const stableClear = useStableHandler(onClear);
   const stableReconnect = useStableHandler(onReconnect);
   const provider = useMemo(() => taskProvider(project, task), [project, task]);
-  // When this task's agent says its usage window resets: the plan meter's
-  // snapshot, keyed by agent, so only an agent that reports one gets the
-  // queue-at-reset offers (the hero's button, the usage-limit notice's).
+  // The plan meter's snapshots, keyed by agent id plus the gateway's own, so
+  // only a snapshot that reports a reset gets the queue-at-reset offers (the
+  // hero's button, the usage-limit notice's).
   const planUsage = usePlanUsage();
-  // Applies only when this task's turns actually draw on that plan. Behind a
-  // LiteLLM gateway a vendor window usually doesn't apply (`planWindowApplies`):
-  // the turn bills the gateway key, not the agent's own subscription, so
-  // offering to resume when a window rolls that the turn never touched would
-  // strand the task until a reset that changes nothing for it. There the key's
-  // own budget gates the next turn, so this reads the synthetic "gateway"
-  // snapshot instead (app/api/plan-usage/route.ts).
-  const resetAt = provider.kind === "gateway"
-    ? usageResetAt(planUsage[GATEWAY_PLAN_ID] ?? null)
-    : planWindowApplies(provider, task.agent) ? usageResetAt(planUsage[task.agent] ?? null) : null;
+  const [providersMap, setProvidersMap] = useState<Map<string, PresentedProvider>>(new Map());
+  useEffect(() => {
+    let alive = true;
+    apiFetch("/api/providers")
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+      .then((body: { providers: PresentedProvider[] }) => {
+        if (alive) setProvidersMap(new Map(body.providers.map((p) => [p.id, p] as const)));
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  // Applies only when this task's turns actually draw on that plan.
+  // The provider row selected on the task or project decides which snapshot
+  // gates the next turn. A bundled provider uses the environment's plan, a
+  // LiteLLM row uses the gateway budget, and every other row uses neither.
+  const effectiveProviderId = task.provider_id ?? project.default_provider_id;
+  const effectiveProvider = effectiveProviderId ? providersMap.get(effectiveProviderId) : null;
+  const resetKey = useMemo(() => {
+    if (!effectiveProviderId) return task.agent;
+    if (!effectiveProvider) return null;
+    if (effectiveProvider.type === "litellm") return GATEWAY_PLAN_ID;
+    return effectiveProvider.bundled === task.agent ? task.agent : null;
+  }, [effectiveProvider, effectiveProviderId, task.agent]);
+  const resetAt = resetKey ? usageResetAt(planUsage[resetKey] ?? null) : null;
   const stableQueueStart = useStableHandler(onQueueStart);
   const stableCancelQueuedStart = useStableHandler(onCancelQueuedStart);
   const limitResume = useMemo<LimitResume>(
@@ -588,6 +727,14 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   const [collab, setCollab] = useState<string | null>(null);
   useEffect(() => { setCollab(null); }, [task.id]);
   const closeCollab = useCallback(() => setCollab(null), []);
+  // A markdown link to a file in the checkout opens through the same setter.
+  // Memoized because Markdown is memo'd on it; an absolute path an agent
+  // names is re-rooted against the worktree first, then the project's repo.
+  const links = useMemo<MarkdownLinks>(() => ({
+    taskId: task.id,
+    roots: [task.worktree_path, project.repo_path].filter((r) => !!r),
+    onOpen: setCollab,
+  }), [task.id, task.worktree_path, project.repo_path]);
   useEffect(() => {
     if (!clearConfirming) { setClearEstimate(null); return; }
     let alive = true;
@@ -600,19 +747,24 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   // capabilities, not a hardcoded list, so the options always match the agent
   // it runs under.
   const caps = capsFor(agents, task.agent);
-  // The rail's model list. Under a provider override the driver's catalog is
-  // the vendor's cloud line-up, none of which is runnable here, so the list is
-  // what the endpoint itself reports instead, under the same inherit head. A
-  // model typed in the Edit dialog is kept as its own entry so the chip shows
-  // what will actually run instead of "Inherit".
-  const endpoint = useEndpointModels(project.id, "", provider.kind !== "cloud");
-  const models = useMemo<PickerOption[]>(() => {
-    if (provider.kind === "cloud") return modelOptions(caps);
-    const ids = endpoint.models.includes(task.model ?? "") || !task.model ? endpoint.models : [task.model, ...endpoint.models];
-    return [...modelOptions(undefined), ...ids.map((m) => ({ value: m, label: m, sub: `on ${provider.host}` }))];
-  }, [provider, endpoint.models, caps, task.model]);
+  // The model chip/picker: a tree for this task's own environment, and the
+  // provider catalog to resolve a {provider_id, model} pair into a label
+  // ("via Provider" only when the version has more than one source or the
+  // provider isn't the environment's bundled one). ModelPicker keeps its own
+  // /api/providers cache internally, but doesn't export it, so this is a
+  // second, page-scoped fetch rather than a shared cache.
+  const { tree: modelTree } = useModelTree(task.agent);
+  const modelLabelResolved = resolveModelLabel(modelTree, providersMap, { provider_id: task.provider_id, model: task.model });
+  // ModelPicker's own connectedEnvOptions() takes AgentsResponseT (the raw
+  // /api/agents shape); this component holds the client-normalized
+  // AgentsBundle instead, so the same "connected" filter is inlined here
+  // rather than fighting the two types' shapes into alignment.
+  const connectedEnvOptions: ModelPickerEnvOption[] = agents.agents
+    .filter((a) => a.status === "connected")
+    .map((a) => ({ id: a.id, label: a.label }));
   const reasoningOpts = reasoningOptions(caps);
   const permissionOpts = permissionOptions(caps);
+  const sandboxOpts = task.agent === "codex" ? codexSandboxOptions("Use the Codex Settings default, or follow the permission mode", "Inherit default") : [];
   // Usage chip: tokens split into fresh work and re-read cache (the raw total
   // is mostly cache reads and overstates what ran), and a dollar figure whose
   // presentation follows how this agent is signed in: a subscription login's
@@ -730,7 +882,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
                 // still sees it, so the assistant run's header stays collapsed
                 // exactly as it would have with the card in place.
                 if (pendingSet.has(m.id)) return null;
-                return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} onRetry={stableRetry} onRepairWorktree={stableRepairWorktree} onCollaborate={setCollab} suggestionActions={suggestionActions} limitResume={last ? limitResume : undefined} />;
+                return <MessageView key={m.id} m={m} initial={mi === 0 && m.role === "user"} hideWho={hideWho} running={running} agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} onClear={stableClear} onReconnect={stableReconnect} onRetry={stableRetry} onRepairWorktree={stableRepairWorktree} onCollaborate={setCollab} links={links} suggestionActions={suggestionActions} limitResume={last ? limitResume : undefined} />;
               })}
             </div>
           ))}
@@ -756,7 +908,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
           {/* Follow-ups queued mid-turn, pinned below the live turn. They
               send in order once it ends. */}
           {messages.filter((m) => m.role === "queued").map((m) => (
-            <MessageView key={m.id} m={m} initial={false} hideWho={false} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} suggestionActions={suggestionActions} />
+            <MessageView key={m.id} m={m} initial={false} hideWho={false} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} links={links} suggestionActions={suggestionActions} />
           ))}
         </div>
       </div>
@@ -782,7 +934,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
         <div className="prompt-dock" role="group" aria-label="Waiting for your answer">
           <div className="prompt-dock-in">
             {pendingMsgs.map((m) => (
-              <MessageView key={m.id} m={m} initial={false} hideWho agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} suggestionActions={suggestionActions} />
+              <MessageView key={m.id} m={m} initial={false} hideWho agent={task.agent} agentLabel={agentLabel(agents, task.agent)} onAnswer={stableAnswer} onDecidePermission={stableDecidePermission} onCancelQueued={stableCancelQueued} links={links} suggestionActions={suggestionActions} />
             ))}
           </div>
         </div>
@@ -848,31 +1000,27 @@ export function SessionView({ project, task, tagsById, agents, messages, running
         {Icon.spark()}
         {/*
          * The chip says INHERIT_LABEL, never "Default": the same word the
-         * picker's head uses, so the two read as the same state.
+         * picker's head uses, so the two read as the same state. "via
+         * Provider" only when resolveModelLabel says the version has more
+         * than one source or the provider isn't the environment's bundled one.
          */}
-        <span className="cv">{models.find((m) => m.value === task.model)?.label ?? task.model ?? INHERIT_LABEL}</span>
+        <span className="cv">
+          {modelLabelResolved
+            ? modelLabelResolved.via ? `${modelLabelResolved.name} via ${modelLabelResolved.via}` : modelLabelResolved.name
+            : INHERIT_LABEL}
+        </span>
         {task.resolved_model && <span className="model-badge" title={`Last ran on ${task.resolved_model}`}>{modelLabel(task.resolved_model, caps)}</span>}
         {Icon.chevDown()}
       </button>
       {modelOpen && (
-        <Popover onClose={() => setModelOpen(false)}>
-          {models.map((m, i) => (
-            <Fragment key={m.label}>
-              {/*
-               * Section header whenever the group changes: Claude Code's
-               * list runs to a dozen-plus pins, so it needs the structure.
-               */}
-              {m.group && m.group !== models[i - 1]?.group && <div className="pop-sec">{m.group}</div>}
-              <div className="pop-item" onClick={() => { onSetModel(m.value); setModelOpen(false); }}>
-                <div><div>{m.label}</div><div className="pi-sub">{m.sub}</div></div>
-                {(task.model ?? null) === m.value && <span className="pi-check">{Icon.check()}</span>}
-              </div>
-              {/* Rule under the inherit head: everything below it is the
-                  provider's own catalog, spelled the provider's way. */}
-              {m.value === null && <div className="divider" />}
-            </Fragment>
-          ))}
-        </Popover>
+        <ModelPicker
+          variant={mobile ? "sheet" : "popover"}
+          value={{ agent: task.agent, provider_id: task.provider_id, model: task.model }}
+          onChange={onSetModel}
+          onClose={() => setModelOpen(false)}
+          inherit={{ label: "Project default" }}
+          env={{ current: task.agent, options: connectedEnvOptions, projectDefault: project.default_agent }}
+        />
       )}
     </div>
   );
@@ -909,6 +1057,19 @@ export function SessionView({ project, task, tagsById, agents, messages, running
               {p.value === null && <div className="divider" />}
             </Fragment>
           ))}
+          {sandboxOpts.length > 0 && <>
+            <div className="divider" />
+            <div className="pop-sec">Sandbox</div>
+            {sandboxOpts.map((s) => (
+              <Fragment key={s.label}>
+                <div className="pop-item" onClick={() => { onSetSandbox(s.value); setSettingsOpen(false); }}>
+                  <div><div>{s.label}</div><div className="pi-sub">{s.sub}</div></div>
+                  {(task.sandbox_mode ?? null) === s.value && <span className="pi-check">{Icon.check()}</span>}
+                </div>
+                {s.value === null && <div className="divider" />}
+              </Fragment>
+            ))}
+          </>}
         </Popover>
       )}
     </div>
@@ -1076,7 +1237,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
         </div>
 
         {hasSession && (
-          <SyncBanner taskId={task.id} running={running} refresh={syncTick} prMode={project.landing_mode === "pr"} onResolveWithAI={onResolveWithAI} onSwitchToChat={() => setView("chat")} onReview={onReview} onMerged={onMerged} onChanged={onBannerChanged} />
+          <SyncBanner taskId={task.id} running={running} refresh={syncTick} prMode={project.landing_mode === "pr"} onResolveWithAI={onResolveWithAI} onSendPrompt={onSend} onSwitchToChat={() => setView("chat")} onReview={onReview} onMerged={onMerged} onChanged={onBannerChanged} />
         )}
 
         {/*
@@ -1099,7 +1260,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
         )}
 
         {!hasSession ? (
-          <TaskHero task={task} project={project} onStart={onStart} onEdit={onEdit} onSetSendContext={onSetSendContext} onSetAutoStart={onSetAutoStart} running={running} blockedBy={blockedBy} resetAt={resetAt} onQueueStart={onQueueStart} onCancelQueuedStart={onCancelQueuedStart} />
+          <TaskHero task={task} project={project} onStart={onStart} onEdit={onEdit} onSetSendContext={onSetSendContext} onSetAutoStart={onSetAutoStart} running={running} blockedBy={blockedBy} resetAt={resetAt} onQueueStart={onQueueStart} onCancelQueuedStart={onCancelQueuedStart} links={links} />
         ) : !mobile ? (
           // Desktop: transcript beside the DIFF / PREVIEW / CONTEXT rail. The
           // zero-width seam between them holds the drag handle (a 0px grid track),
@@ -1126,7 +1287,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
             </div>
           )
         ) : view === "changes" ? (
-          <TaskChanges taskId={task.id} projectId={project.id} running={running} pr={task} landingMode={project.landing_mode} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} refresh={changesTick} onSend={onSend} onResolveWithAI={async (id) => {
+          <TaskChanges taskId={task.id} taskTitle={task.title} projectId={project.id} running={running} pr={task} landingMode={project.landing_mode} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} refresh={changesTick} onSend={onSend} onResolveWithAI={async (id) => {
             const res = await onResolveWithAI(id);
             // A resolution turn started (conflicts, not a clean merge), so jump
             // back to Chat so the user sees the message stream in. When nothing
@@ -1141,7 +1302,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
       {/* Collaboration mode opened from a transcript tool card (the Changes
           tab mounts its own for files it lists). Same modal, same send path. */}
       {collab && (
-        <CollabDoc taskId={task.id} file={collab} running={running} onClose={closeCollab} onSend={onSend} />
+        <CollabDoc key={collab} taskId={task.id} file={collab} running={running} onClose={closeCollab} onSend={onSend} links={links} />
       )}
       </div>
   );

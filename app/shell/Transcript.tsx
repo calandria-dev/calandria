@@ -3,11 +3,11 @@
 import { memo, useCallback, useEffect, useState } from "react";
 import type { ToolData, ToolPeek, AskQuestion, AskAnswers, PermissionDecision, SuggestionCard } from "@/lib/types";
 import { Icon } from "../icons";
-import { Markdown } from "../Markdown";
+import { Markdown, type MarkdownLinks } from "../Markdown";
 import { jget } from "./api";
 import { PriPill } from "./shared";
-import { blockedNote, clockTime, diffCls, isBlocking, splitAttachments, type MsgAttachment } from "./format";
-import { displayFileName } from "@/lib/uploadTypes";
+import { blockedNote, clockTime, diffCls, isBlocking, splitAttachments } from "./format";
+import { AttachmentStrip } from "./attachments";
 import { CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
 import { AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
 import { USAGE_LIMIT_NOTICE } from "@/lib/usageLimit";
@@ -450,32 +450,6 @@ function SuggestionView({ data, actions }: { data: ToolData; actions?: Suggestio
   );
 }
 
-// Attachment chips parsed out of a user message's markers: image thumbnails
-// (click opens full size) and file chips for every other type (click opens or
-// downloads it, per lib/uploadTypes.ts servedType). Both are served from the
-// task's uploads dir. The chip shows the user's own filename (the staged name
-// minus its unique prefix), since with any type accepted "attached file" no
-// longer says anything.
-function AttachmentStrip({ items }: { items: MsgAttachment[] }) {
-  if (!items.length) return null;
-  return (
-    <div className="msg-attachments">
-      {items.map((a, i) =>
-        a.kind === "image" ? (
-          <a key={i} href={a.url} target="_blank" rel="noreferrer" title="Open full size">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={a.url} alt="attached image" loading="lazy" />
-          </a>
-        ) : (
-          <a key={i} href={a.url} target="_blank" rel="noreferrer" className="file-chip" title={`Open ${displayFileName(a.name)}`}>
-            {Icon.clip()} <span>{displayFileName(a.name)}</span>
-          </a>
-        )
-      )}
-    </div>
-  );
-}
-
 // Memoized: during a live turn every SSE event re-renders the transcript's
 // parents, but message objects are append-only (replaced only when their content
 // changes), so unchanged messages skip re-rendering, and re-parsing their
@@ -523,7 +497,7 @@ function RepairWorktree({ msgId, running, onRepair }: { msgId: string; running?:
   );
 }
 
-export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onDecidePermission, onCancelQueued, onClear, onReconnect, onRetry, onRepairWorktree, onCollaborate, suggestionActions, limitResume }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onDecidePermission?: (permId: string, decision: PermissionDecision, note: string) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void; onRetry?: (msgId: string) => void; onRepairWorktree?: (msgId: string) => Promise<string | null>; onCollaborate?: (file: string) => void; suggestionActions?: SuggestionActions; limitResume?: LimitResume }) {
+export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onDecidePermission, onCancelQueued, onClear, onReconnect, onRetry, onRepairWorktree, onCollaborate, links, suggestionActions, limitResume }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onDecidePermission?: (permId: string, decision: PermissionDecision, note: string) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void; onRetry?: (msgId: string) => void; onRepairWorktree?: (msgId: string) => Promise<string | null>; onCollaborate?: (file: string) => void; links?: MarkdownLinks; suggestionActions?: SuggestionActions; limitResume?: LimitResume }) {
   if (m.role === "queued") {
     // A follow-up the user typed mid-turn, waiting its turn. Reads like a user
     // bubble but dimmed, tagged "Queued", with an × to drop it before it runs.
@@ -532,7 +506,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
       <div className="msg user queued">
         <div className="who"><Avatar who="user" /> You<span className="badge queued-badge">queued</span>{m.ts != null && <span className="msg-time">{clockTime(m.ts)}</span>}</div>
         <div className="msg-body">
-          {text && <Markdown>{text}</Markdown>}
+          {text && <Markdown links={links}>{text}</Markdown>}
           <AttachmentStrip items={attachments} />
           {onCancelQueued && <button className="queued-x" title="Remove from queue" aria-label="Remove from queue" onClick={() => onCancelQueued(m.id)}>{Icon.x()}</button>}
         </div>
@@ -580,7 +554,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
       );
     }
     // The agent's login died: same shape as the overflow case, the warning line
-    // plus the one action that fixes it (Settings → Agents, where the connect
+    // plus the one action that fixes it (Settings → Models, where the connect
     // flow lives). Instance-wide, so the titlebar banner says it too; this is
     // the in-context copy for whoever is reading the failed task.
     if (m.content.includes(AUTH_EXPIRED_NOTICE)) {
@@ -710,7 +684,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
           <div className="who"><Avatar who="cc" agent={agent} /> {thinking ? "Thinking" : "Agent"}</div>
         )}
         <div className="msg-body">
-          {thinking ? <div className="stream-think">{m.content}</div> : <Markdown>{m.content}</Markdown>}
+          {thinking ? <div className="stream-think">{m.content}</div> : <Markdown links={links}>{m.content}</Markdown>}
           <span className="stream-caret" aria-hidden />
         </div>
       </div>
@@ -731,7 +705,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
       )}
       <div className="msg-body">
         {initial && <div className="initial-tag">{Icon.spark()} sent with project context</div>}
-        {text && <Markdown>{text}</Markdown>}
+        {text && <Markdown links={links}>{text}</Markdown>}
         <AttachmentStrip items={attachments} />
       </div>
     </div>

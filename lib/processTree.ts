@@ -37,7 +37,8 @@
 // runner, as arguments, so the Windows branches are unit-testable from the
 // Linux/macOS suite. Liveness is the exception, and does not need the hook:
 // under `platform: "win32"` it runs for real on POSIX too, since the only
-// difference left is whether the pid is negated. See docs/WINDOWS.md §2.
+// difference left is whether the pid is negated. See docs/WINDOWS.md,
+// "Platform behavior".
 
 import { execFileSync } from "node:child_process";
 

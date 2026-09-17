@@ -5,7 +5,6 @@ import { resolveLogFormat } from "./log.mjs";
 import { findInDirs, findOnPath } from "./binPath";
 import { resolveDbLocation, resolveWorktreesDir } from "./storage.mjs";
 import { DEFAULT_AGENT_TOOL_TIMEOUT_MS } from "./agentToolGuard.mjs";
-import { gatewayBaseUrl } from "./agentEnv";
 import { DEFAULT_MAX_UPLOAD_MB } from "./uploadTypes";
 
 /**
@@ -403,73 +402,97 @@ export const CODEX_INHERIT_MCP = !["0", "false", "off"].includes(
 );
 
 /**
- * The endpoint the "Local model" preset in a project's settings points at, and
- * what `suggest_task`'s `provider: "local"` uses: an Ollama or LM Studio
- * server, or anything that speaks both the Anthropic Messages and the OpenAI
- * Responses API (lib/agentEnv.ts, docs/AGENTS.md "Local models"). One knob so
- * a Docker instance can say `http://host.docker.internal:11434` once instead
- * of in every project. Only the default is instance-wide: the preset writes
- * the resolved URL into the project's override, where it can be edited per
- * project. A trailing `/v1` is tolerated and stripped.
+ * Whether every Codex hook run posts a transcript notice, including clean
+ * passes and start events. Off by default: a hook that blocks a call or
+ * fails already posts a notice regardless of this flag (lib/agents/codex/
+ * appServerEvents.ts), and a clean pass on every tool call would flood the
+ * transcript with nothing a user could not already infer. Set to 1/true/on
+ * to trace every run while reviewing a hook's behavior.
+ *
+ * Read per call, not frozen at import: the hook mapper is a pure function the
+ * suite drives directly, and a frozen read would pin the flag to whatever the
+ * env held when the module graph loaded.
+ */
+export function codexHookTrace(): boolean {
+  return ["1", "true", "on"].includes(String(process.env.CALANDRIA_CODEX_HOOK_TRACE || "").toLowerCase());
+}
+
+/**
+ * The first-boot seed for one local provider row. A trailing `/v1` is
+ * tolerated and stripped. Existing rows are authoritative. The legacy
+ * suggest_task provider argument still uses this value until its provider-id
+ * migration lands.
  */
 export const LOCAL_MODEL_BASE_URL =
   String(readEnv("CALANDRIA_LOCAL_MODEL_BASE_URL") || "http://localhost:11434").trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
 
 /**
- * The LiteLLM gateway this instance runs the "Gateway" model provider against
- * (docs/AGENTS.md "LiteLLM gateway"). An unset value is the off switch: with no
- * address there is no gateway to route to, so the preset is absent from the
- * project settings form and the health card is not rendered or probed.
- *
- * The value is resolved by `gatewayBaseUrl()` instead of read here, because
- * the client has to classify a stored override the same way the server does
- * and cannot import this file. Re-exported so server code has one name for it.
+ * The first-boot seed for one LiteLLM provider row. Existing rows are
+ * authoritative. Runtime callers resolve the selected row through
+ * lib/providers/resolve.ts.
  */
-export const LITELLM_BASE_URL = gatewayBaseUrl();
+export const LITELLM_BASE_URL = String(readEnv("CALANDRIA_LITELLM_BASE_URL") || "").trim().replace(/\/+$/, "").replace(/\/v1$/i, "") || null;
 
 /**
- * Whether hosted MCP servers on that gateway may be mounted at all. On by
- * default and unused until the hosted-MCP step: it exists now so an operator
- * who wants the routing without the tool surface can say so once, instead of
- * discovering the knob only after servers appear.
+ * The first-boot value for the seeded LiteLLM row's hosted MCP setting.
  */
 export const LITELLM_MCP = !["0", "off", "false", "no"].includes(
   String(readEnv("CALANDRIA_LITELLM_MCP") || "").toLowerCase(),
 );
 
 /**
- * A LiteLLM key allowed to call `/key/generate` and `/key/delete`: a master
- * key, or a key granted just that route (docs/AGENTS.md, "Per-task virtual
- * keys"). An unset value is the off switch for the whole step: with no admin
- * key, tasks keep running on the shared instance key (`CALANDRIA_LITELLM_KEY`)
- * and get tags and estimates but no per-task key, no exact spend
- * reconciliation, and nothing for lib/gatewayKeys.ts to mint or delete.
- *
- * Never sent to the client and never stored on a project/task row; see
- * lib/gatewayKeys.ts, which is the only module that reads this constant.
- * `/key/generate` and `/key/delete` are LiteLLM's own admin surface and take
- * this as `Authorization: Bearer …`, distinct from the `x-litellm-api-key`
- * header every other gateway call in this codebase sends a virtual key on.
+ * The first-boot admin-key seed for one LiteLLM provider row. The provider
+ * secret file is authoritative after the row exists.
  */
 export const LITELLM_ADMIN_KEY = String(readEnv("CALANDRIA_LITELLM_ADMIN_KEY") || "").trim();
 
-/** Whether the admin key is set, without the key itself. This is the one
- *  that's safe to hand to the client (app/layout.tsx's window.__GATEWAY_KEYS_ENABLED),
- *  so the project settings form can show the max_budget/duration fields only
- *  when minting a per-task key is actually possible. */
+/** Whether the first-boot admin-key seed is set. */
 export const LITELLM_ADMIN_KEY_SET = !!LITELLM_ADMIN_KEY;
 
 /**
- * Bound on one call to LiteLLM's key-management surface
- * (`/key/generate`, `/key/delete`, `/key/info`; lib/gatewayKeys.ts). Longer
- * than MODEL_PROBE_MS's 2.5s: minting and deleting touch LiteLLM's own
- * Postgres, not just an in-memory catalog, but this still runs on a task's
- * first-turn launch path and a turn's own settle, so it must never wait
- * indefinitely on a stalled proxy. A timeout falls back to the instance key
- * (mint) or leaves the key for the retention backstop to retry (delete),
- * and never blocks the turn.
+ * The first-boot timeout seed for one LiteLLM provider row.
  */
 export const LITELLM_KEY_TIMEOUT_MS = ms(readEnv("CALANDRIA_LITELLM_KEY_TIMEOUT_MS"), 8000);
+
+/** Everything the provider env seed reads (lib/providers/seed.ts). */
+export interface ProviderSeedEnv {
+  /** The gateway to seed a `litellm` row from, or null when none is configured. */
+  litellmBaseUrl: string | null;
+  litellmKey: string;
+  litellmAdminKey: string;
+  litellmMcp: boolean;
+  litellmKeyTimeoutMs: number;
+  /** The local server to seed a row from. */
+  localBaseUrl: string;
+  /** Whether CALANDRIA_LOCAL_MODEL_BASE_URL names it, as opposed to the default. */
+  localBaseUrlSet: boolean;
+}
+
+/**
+ * The seed's view of the environment, read live rather than captured in a
+ * const, because it runs at boot AFTER the persisted gateway key has been
+ * mirrored into the environment (lib/providerSecrets.ts), and a value read at
+ * import time would miss it.
+ *
+ * `localBaseUrlSet` is the difference between "this instance runs a local
+ * server" and "nobody said". The default URL seeds nothing: a row for a
+ * server most instances do not run would be an unreachable provider on every
+ * fresh install.
+ */
+export function providerSeedEnv(): ProviderSeedEnv {
+  return {
+    litellmBaseUrl: String(readEnv("CALANDRIA_LITELLM_BASE_URL") || "").trim().replace(/\/+$/, "").replace(/\/v1$/i, "") || null,
+    litellmKey: String(readEnv("CALANDRIA_LITELLM_KEY") || "").trim(),
+    litellmAdminKey: LITELLM_ADMIN_KEY,
+    litellmMcp: LITELLM_MCP,
+    litellmKeyTimeoutMs: LITELLM_KEY_TIMEOUT_MS,
+    localBaseUrl: String(readEnv("CALANDRIA_LOCAL_MODEL_BASE_URL") || "http://localhost:11434")
+      .trim()
+      .replace(/\/+$/, "")
+      .replace(/\/v1$/i, ""),
+    localBaseUrlSet: !!String(readEnv("CALANDRIA_LOCAL_MODEL_BASE_URL") || "").trim(),
+  };
+}
 
 /**
  * How long Calandria will wait for a local model server to say which models it

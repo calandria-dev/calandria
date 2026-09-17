@@ -153,3 +153,84 @@ export function maxUploadBytes(): number {
     : (window as unknown as { __MAX_UPLOAD_MB?: number }).__MAX_UPLOAD_MB;
   return (typeof mb === "number" && mb > 0 ? mb : DEFAULT_MAX_UPLOAD_MB) * 1024 * 1024;
 }
+
+// ---------- attachment markers ----------
+// An attachment travels inside prose as one marker line per file:
+// "[Attached image: /abs/path.png]" for images, "[Attached file: /abs/path.ext]"
+// for every other type. The same line serves both sides. The agent reads an
+// absolute path to a file staged outside the worktree and decides how to open
+// it; the UI strips the line back out and renders a thumbnail or a file chip.
+// A chat message carries them after the typed text (app/shell/Composer.tsx),
+// and a task's description carries them after the brief (the task dialogs and
+// the suggest_task / update_task tools), so the same parser reads both.
+
+export const attachmentMarker = (absPath: string) => `[Attached image: ${absPath}]`;
+export const fileAttachmentMarker = (absPath: string) => `[Attached file: ${absPath}]`;
+const ATTACHMENT_RE = /^\[Attached (image|file): (.+)\]$/;
+
+export type AttachmentKind = "image" | "file";
+
+/** One recognized marker: the kind, the absolute path, and the uploads/<task>/<file> tail it resolved to. */
+export interface AttachmentRef { kind: AttachmentKind; path: string; taskId: string; file: string }
+
+/** Image or file, from a staged path's extension (a staged name always carries one). */
+export function attachmentKindOf(absPath: string): AttachmentKind {
+  const file = absPath.split(/[\\/]/).pop() ?? "";
+  const ext = file.slice(file.lastIndexOf(".") + 1).toLowerCase();
+  return isImageExt(ext) ? "image" : "file";
+}
+
+/** The marker line for a staged path. */
+export const markerFor = (absPath: string): string =>
+  attachmentKindOf(absPath) === "image" ? attachmentMarker(absPath) : fileAttachmentMarker(absPath);
+
+/**
+ * Read one line as a marker. Only a path ending in uploads/<task>/<file>
+ * counts; a hand-typed lookalike stays prose, so the parser can't be talked
+ * into stripping text or minting a URL for a path it didn't stage.
+ */
+export function parseAttachmentMarker(line: string): AttachmentRef | null {
+  const m = ATTACHMENT_RE.exec(line.trim());
+  if (!m) return null;
+  const parts = m[2].split(/[\\/]/).filter(Boolean);
+  if (parts.length < 3 || parts[parts.length - 3] !== "uploads") return null;
+  const [taskId, file] = parts.slice(-2);
+  return { kind: m[1] === "image" ? "image" : "file", path: m[2], taskId, file };
+}
+
+/** Quick test before the line-by-line split, since most text has no marker. */
+export const hasAttachmentMarkers = (text: string): boolean =>
+  text.includes("[Attached image: ") || text.includes("[Attached file: ");
+
+/** Split prose from its marker lines. Unrecognized lines stay in `text` untouched. */
+export function splitAttachmentText(content: string): { text: string; attachments: AttachmentRef[] } {
+  if (!hasAttachmentMarkers(content)) return { text: content, attachments: [] };
+  const attachments: AttachmentRef[] = [];
+  const kept: string[] = [];
+  for (const line of content.split("\n")) {
+    const ref = parseAttachmentMarker(line);
+    if (ref) attachments.push(ref);
+    else kept.push(line);
+  }
+  return { text: kept.join("\n").trim(), attachments };
+}
+
+/** Prose followed by one marker line per attachment, the layout every writer produces. */
+export function joinAttachmentText(text: string, attachments: readonly Pick<AttachmentRef, "kind" | "path">[]): string {
+  const markers = attachments.map((a) => (a.kind === "image" ? attachmentMarker(a.path) : fileAttachmentMarker(a.path)));
+  return [text.trim(), ...markers].filter(Boolean).join("\n\n");
+}
+
+/**
+ * What the agent is told once about marker lines, agent-neutral. Appended to
+ * a chat message that carries attachments (the drivers) and to the task
+ * context when the description does (buildProjectContext). The bytes are
+ * never in the prompt: the sentence hands over a path and leaves the how to
+ * the agent, since a file-reading tool renders images and text but a PDF or
+ * an archive needs a shell tool.
+ */
+export const ATTACHMENT_NUDGE =
+  "Each [Attached ...] line above names a file staged on disk at that absolute path, outside the " +
+  "worktree. Inspect the ones you need before acting: your file-reading tool handles images and " +
+  "text, and any other format needs whatever shell tooling suits it. Don't assume the contents " +
+  "from the filename.";

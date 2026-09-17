@@ -98,13 +98,22 @@ function toEpochMs(v: unknown): number | null {
 const clampPct = (n: number) => Math.max(0, Math.min(100, n));
 
 // The app-server names its windows by rank (which limit binds first), not by
-// duration, so the label states the duration it actually reported instead of
-// assuming the plan's shape. In practice primary is the ~5h session and
-// secondary the week, which is what the ids are matched on client-side.
-function windowLabel(kind: "primary" | "secondary", mins: number | null): string {
-  const base = kind === "primary" ? "Current session" : "Current week";
+// duration. Standard durations expose their semantic kind for clients, while
+// an unusual or missing duration keeps the rank-based fallback and states any
+// reported span in its label.
+type WindowKind = "session" | "week";
+
+function semanticKind(mins: number | null): WindowKind | null {
+  if (mins == null || mins <= 0) return null;
+  if (mins === 5 * 60) return "session";
+  if (mins === 7 * 24 * 60) return "week";
+  return null;
+}
+
+function windowLabel(rank: "primary" | "secondary", kind: WindowKind | null, mins: number | null): string {
+  const base = (kind ?? (rank === "primary" ? "session" : "week")) === "session" ? "Current session" : "Current week";
   if (mins == null || mins <= 0) return base;
-  if (kind === "secondary" && Math.round(mins / 1440) === 7) return base;
+  if (base === "Current week" && Math.round(mins / 1440) === 7) return base;
   const span = mins % 1440 === 0 ? `${mins / 1440}d` : mins % 60 === 0 ? `${mins / 60}h` : `${mins}m`;
   return `${base} (${span})`;
 }
@@ -114,7 +123,14 @@ function windowFrom(kind: "primary" | "secondary", raw: unknown): PlanUsageWindo
   const w = raw as { usedPercent?: unknown; windowDurationMins?: unknown; resetsAt?: unknown };
   if (typeof w.usedPercent !== "number" || !Number.isFinite(w.usedPercent)) return null;
   const mins = typeof w.windowDurationMins === "number" && Number.isFinite(w.windowDurationMins) ? w.windowDurationMins : null;
-  return { id: kind, label: windowLabel(kind, mins), utilization: clampPct(w.usedPercent), resetsAt: toEpochMs(w.resetsAt) };
+  const semantic = semanticKind(mins);
+  return {
+    id: kind,
+    label: windowLabel(kind, semantic, mins),
+    utilization: clampPct(w.usedPercent),
+    resetsAt: toEpochMs(w.resetsAt),
+    ...(semantic ? { kind: semantic } : {}),
+  };
 }
 
 /**

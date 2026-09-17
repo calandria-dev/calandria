@@ -4,7 +4,8 @@ import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { nextFireAt, partsIn } from "@/lib/schedule/time";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
-import { agentLabel, capsFor, defaultAgentFor, pickerAgents } from "./agents";
+import { agentEnvOptions, agentLabel, capsFor, defaultAgentFor } from "./agents";
+import { ModelPicker } from "./ModelPicker";
 import { schedulerAlert } from "./format";
 import { ErrNote } from "./shared";
 import type { AgentPickerOption, AgentsBundle, ProjectRow, RunbookRow, RunbooksResponse, ScheduleRow, ScheduleRunRow, SchedulesResponse } from "./types";
@@ -161,6 +162,8 @@ function ScheduleForm({
   const [repeats, setRepeats] = useState<"weekly" | "once">(initial?.once_date ? "once" : "weekly");
   const [onceDate, setOnceDate] = useState(initial?.once_date || todayInZone(tz));
   const [agent, setAgent] = useState(initial?.agent ?? defaultAgentFor(agents, project.default_agent));
+  const [providerId, setProviderId] = useState(initial?.provider_id ?? null);
+  const [model, setModel] = useState(initial?.model ?? null);
   const [permissionMode, setPermissionMode] = useState(initial?.permission_mode ?? "bypassPermissions");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
@@ -251,8 +254,8 @@ function ScheduleForm({
     // linked. They are the fallback the moment the link goes away, and writing
     // them now means an unlink leaves a working schedule rather than a blank one.
     const recipe = linked
-      ? { prompt: linked.prompt, agent: linked.agent, permission_mode: linked.permission_mode }
-      : { prompt, agent, permission_mode: permissionMode };
+      ? { prompt: linked.prompt, agent: linked.agent, permission_mode: linked.permission_mode, provider_id: linked.provider_id, model: linked.model }
+      : { prompt, agent, permission_mode: permissionMode, provider_id: providerId, model };
     const body = {
       name: name.trim(), days_mask: mask, time_of_day: time, timezone: tz,
       // days_mask is sent unchanged even in Once mode. The server ignores it,
@@ -407,12 +410,20 @@ function ScheduleForm({
       {!runbookId && (
       <>
       <div className="field">
-        <label className="lab" htmlFor={`${uid}-agent`}>Agent</label>
-        <select id={`${uid}-agent`} value={agent} onChange={(e) => { setAgent(e.target.value); void validate(prompt, e.target.value); }}>
-          {pickerAgents(agents, agent).map((a) => (
-            <option key={a.id} value={a.id}>{a.label}{a.authenticated ? "" : " (not connected)"}</option>
-          ))}
-        </select>
+        <label className="lab">Agent</label>
+        <ModelPicker
+          variant="inline"
+          value={{ agent, provider_id: providerId, model }}
+          onChange={(v) => {
+            const agentChanged = v.agent !== agent;
+            setAgent(v.agent ?? agent);
+            setProviderId(v.provider_id);
+            setModel(v.model);
+            if (agentChanged) void validate(prompt, v.agent ?? agent);
+          }}
+          inherit={{ label: "Project default" }}
+          env={{ current: agent, options: agentEnvOptions(agents), projectDefault: project.default_agent }}
+        />
       </div>
       {/* A scheduled run cannot answer a permission prompt: nobody is there, so
           the gate declines and the turn degrades. Saying so beside the picker

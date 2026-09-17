@@ -130,6 +130,106 @@ describe("app-server item respelling", () => {
   });
 });
 
+describe("hook run notifications", () => {
+  const withTrace = <T>(value: string | undefined, fn: () => T): T => {
+    const prior = process.env.CALANDRIA_CODEX_HOOK_TRACE;
+    if (value === undefined) delete process.env.CALANDRIA_CODEX_HOOK_TRACE;
+    else process.env.CALANDRIA_CODEX_HOOK_TRACE = value;
+    try {
+      return fn();
+    } finally {
+      if (prior === undefined) delete process.env.CALANDRIA_CODEX_HOOK_TRACE;
+      else process.env.CALANDRIA_CODEX_HOOK_TRACE = prior;
+    }
+  };
+
+  const run = (overrides: Record<string, unknown> = {}) => ({
+    id: "run1",
+    eventName: "preToolUse",
+    handlerType: "command",
+    executionMode: "sync",
+    scope: "turn",
+    sourcePath: "/repo/.codex/hooks.json",
+    source: "project",
+    status: "completed",
+    statusMessage: null,
+    durationMs: 12,
+    entries: [],
+    ...overrides,
+  });
+
+  it("always posts a notice for a blocked run, tracing off", () => {
+    withTrace(undefined, () => {
+      const st = newAppServerTurnState();
+      st.turnId = "t1";
+      const m = mapNotification("hook/completed", { turnId: "t1", run: run({ status: "blocked" }) }, st);
+      expect(m.notice).toContain("blocked the call");
+    });
+  });
+
+  it("posts no notice for a clean completed run, tracing off", () => {
+    withTrace(undefined, () => {
+      const st = newAppServerTurnState();
+      st.turnId = "t1";
+      const m = mapNotification("hook/completed", { turnId: "t1", run: run() }, st);
+      expect(m.notice).toBeUndefined();
+    });
+  });
+
+  it("posts a notice for the same clean run once tracing is on", () => {
+    withTrace("1", () => {
+      const st = newAppServerTurnState();
+      st.turnId = "t1";
+      const m = mapNotification("hook/completed", { turnId: "t1", run: run() }, st);
+      expect(m.notice).toContain("passed");
+    });
+  });
+
+  it("posts a notice for a completed run carrying a stop entry, tracing off", () => {
+    withTrace(undefined, () => {
+      const st = newAppServerTurnState();
+      st.turnId = "t1";
+      const m = mapNotification(
+        "hook/completed",
+        { turnId: "t1", run: run({ entries: [{ kind: "stop", text: "don't do that" }] }) },
+        st,
+      );
+      expect(m.notice).toContain("don't do that");
+    });
+  });
+
+  it("drops a run for a different turn", () => {
+    withTrace(undefined, () => {
+      const st = newAppServerTurnState();
+      st.turnId = "t1";
+      const m = mapNotification("hook/completed", { turnId: "other", run: run({ status: "blocked" }) }, st);
+      expect(m.notice).toBeUndefined();
+    });
+  });
+
+  it("accepts a thread-scoped run whose turnId is null", () => {
+    withTrace(undefined, () => {
+      const st = newAppServerTurnState();
+      st.turnId = "t1";
+      const m = mapNotification(
+        "hook/completed",
+        { turnId: null, run: run({ eventName: "sessionStart", scope: "thread", status: "blocked" }) },
+        st,
+      );
+      expect(m.notice).toContain("blocked the call");
+    });
+  });
+
+  it("posts no notice on hook/started while tracing is off", () => {
+    withTrace(undefined, () => {
+      const st = newAppServerTurnState();
+      st.turnId = "t1";
+      const m = mapNotification("hook/started", { turnId: "t1", run: run({ status: "running" }) }, st);
+      expect(m.notice).toBeUndefined();
+    });
+  });
+});
+
 describe("diff and config helpers", () => {
   it("unwraps the CLI's shell wrapper so rules match the command a human typed", () => {
     // Captured from a live 0.153.0 approval request.

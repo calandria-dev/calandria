@@ -3,10 +3,13 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Skel, ErrNote, ErrDetail } from "./shell/shared";
 import { CollabDoc } from "./shell/CollabDoc";
+import { Modal } from "./shell/Modal";
+import type { MarkdownLinks } from "./Markdown";
 import { Icon } from "./icons";
 import { PrChip, type PrChipTask } from "./shell/PrChip";
 import type { LandingMode, TaskComment } from "@/lib/types";
 import { prMergeBlocker, type PrMergeFacts } from "@/lib/prMerge";
+import { apiFetch } from "./shell/api";
 
 /** The PR fields this panel reads: what the merge decision needs, plus what the
  *  status chip in the toolbar draws. Both are satisfied by the client's TaskRow,
@@ -86,6 +89,7 @@ export interface ResolveResult {
 }
 
 const STATUS_LABEL: Record<string, string> = { A: "added", M: "modified", D: "deleted", R: "renamed", "?": "new" };
+const CONVENTIONAL_COMMIT_TITLE = /^[a-z][a-z0-9-]*(?:\([^)]+\))?!?: \S.*$/;
 
 // The merge routes always answer JSON, but a layer above them can still hand
 // back HTML (a tunnel 502, a request killed at maxDuration). Parse defensively
@@ -499,7 +503,7 @@ function PushBaseBranch({ projectId }: { projectId: string }) {
     let live = true;
     (async () => {
       try {
-        const r = await fetch(`/api/projects/${projectId}/base-branch`, { cache: "no-store" });
+        const r = await apiFetch(`/api/projects/${projectId}/base-branch`, { cache: "no-store" });
         const j = await r.json();
         if (live && j?.hasRemote && (j.ahead ?? 0) > 0 && !j.diverged) setSt({ ahead: j.ahead, label: j.label || "the remote" });
       } catch { /* no banner beats a wrong one */ }
@@ -515,7 +519,7 @@ function PushBaseBranch({ projectId }: { projectId: string }) {
     setErr("");
     setDetail(undefined);
     try {
-      const r = await fetch(`/api/projects/${projectId}/base-branch`, {
+      const r = await apiFetch(`/api/projects/${projectId}/base-branch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "push" }),
@@ -547,6 +551,7 @@ function PushBaseBranch({ projectId }: { projectId: string }) {
 
 export default function TaskChanges({
   taskId,
+  taskTitle,
   projectId,
   running,
   pr,
@@ -559,6 +564,7 @@ export default function TaskChanges({
   landingMode = "merge",
 }: {
   taskId: string;
+  taskTitle: string;
   projectId: string;
   running?: boolean;
   // The project's landing policy. Under "pr" the base branch only moves through a
@@ -592,6 +598,8 @@ export default function TaskChanges({
   const [loading, setLoading] = useState(true);
   const [merging, setMerging] = useState(false);
   const [prBusy, setPrBusy] = useState(false);
+  const [prTitleOpen, setPrTitleOpen] = useState(false);
+  const [prTitle, setPrTitle] = useState("");
   const [prErr, setPrErr] = useState<string | null>(null);
   const [prDetail, setPrDetail] = useState<string | undefined>(undefined);
   const [prMerging, setPrMerging] = useState(false);
@@ -615,6 +623,9 @@ export default function TaskChanges({
   const [comments, setComments] = useState<TaskComment[]>([]);
   const [sel, setSel] = useState<CommentSel | null>(null); // line range being commented on, if any
   const [collab, setCollab] = useState<string | null>(null); // file path open in collaboration mode, if any
+  // Links inside an open document to other files reopen the modal on them.
+  // No roots here: the tab knows only the task id, so only relative links resolve.
+  const collabLinks = useMemo<MarkdownLinks>(() => ({ taskId, roots: [], onOpen: setCollab }), [taskId]);
   const [draft, setDraft] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -631,7 +642,7 @@ export default function TaskChanges({
 
   const loadComments = useCallback(async () => {
     try {
-      const r = await fetch(`/api/tasks/${taskId}/comments`, { cache: "no-store" });
+      const r = await apiFetch(`/api/tasks/${taskId}/comments`, { cache: "no-store" });
       const j: { comments?: TaskComment[] } = await r.json();
       setComments(j.comments ?? []);
     } catch { /* comments are supplementary; a failed fetch just shows none */ }
@@ -640,7 +651,7 @@ export default function TaskChanges({
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch(`/api/tasks/${taskId}/diff`, { cache: "no-store" });
+      const r = await apiFetch(`/api/tasks/${taskId}/diff`, { cache: "no-store" });
       const j: DiffResp = await r.json();
       if (!j.error) diffCache.set(taskId, j); // errors are worth retrying, not replaying
       setData(j);
@@ -654,6 +665,8 @@ export default function TaskChanges({
   useEffect(() => {
     setMergeRes(null);
     setPrErr(null);
+    setPrTitleOpen(false);
+    setPrTitle("");
     setToggled(new Set());
     setManualOpen(false);
     setLocalMergeOpen(false);
@@ -748,7 +761,7 @@ export default function TaskChanges({
     if (!sel || !draft.trim()) return;
     setCommentBusy(true);
     try {
-      const r = await fetch(`/api/tasks/${taskId}/comments`, {
+      const r = await apiFetch(`/api/tasks/${taskId}/comments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -776,7 +789,7 @@ export default function TaskChanges({
     setMergeRes(null);
     setLocalMergeOpen(false);
     try {
-      const r = await fetch(`/api/tasks/${taskId}/merge`, {
+      const r = await apiFetch(`/api/tasks/${taskId}/merge`, {
         method: "POST",
         ...(stashDirty ? { headers: { "content-type": "application/json" }, body: JSON.stringify({ stashDirty }) } : {}),
       });
@@ -797,12 +810,17 @@ export default function TaskChanges({
   // Review-on-GitHub path: push the branch + open (or update) a PR. The server
   // commits any dirty work first and is idempotent, so a second click on an
   // already-open PR just pushes the new commits to it.
-  const doCreatePr = async () => {
+  const doCreatePr = async (title?: string) => {
     setPrBusy(true);
     setPrErr(null);
     setPrDetail(undefined);
     try {
-      const r = await fetch(`/api/tasks/${taskId}/pr`, { method: "POST" });
+      const r = await apiFetch(`/api/tasks/${taskId}/pr`, {
+        method: "POST",
+        ...(title !== undefined
+          ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) }
+          : {}),
+      });
       const res: { ok?: boolean; url?: string; error?: string; detail?: string } = await r.json();
       if (res.ok && res.url) onPrCreated?.(res.url);
       else {
@@ -824,7 +842,7 @@ export default function TaskChanges({
     setPrMerging(true);
     setPrMergeRes(null);
     try {
-      const r = await fetch(`/api/tasks/${taskId}/pr/merge`, { method: "POST" });
+      const r = await apiFetch(`/api/tasks/${taskId}/pr/merge`, { method: "POST" });
       const res: PrMergeResp = await r.json();
       setPrMergeRes({ ...res, ok: !!res.ok });
     } catch (e) {
@@ -869,7 +887,7 @@ export default function TaskChanges({
     const resolveOnly = prMode;
     const body = stashDirty || resolveOnly ? JSON.stringify({ ...(stashDirty ? { stashDirty } : {}), ...(resolveOnly ? { resolveOnly } : {}) }) : null;
     try {
-      const r = await fetch(`/api/tasks/${taskId}/merge/complete`, {
+      const r = await apiFetch(`/api/tasks/${taskId}/merge/complete`, {
         method: "POST",
         ...(body ? { headers: { "content-type": "application/json" }, body } : {}),
       });
@@ -889,7 +907,7 @@ export default function TaskChanges({
   const doAbort = async () => {
     setMerging(true);
     try {
-      await fetch(`/api/tasks/${taskId}/merge/abort`, { method: "POST" });
+      await apiFetch(`/api/tasks/${taskId}/merge/abort`, { method: "POST" });
       setMergeRes(null);
       setBinaryConflicts([]);
     } finally {
@@ -940,6 +958,7 @@ export default function TaskChanges({
   // A conflict resolution is staged in the worktree, awaiting accept/discard.
   const reviewing = !!data.mergeInProgress;
   const prUrl = pr?.pr_url || "";
+  const prTitleIsConventional = CONVENTIONAL_COMMIT_TITLE.test(prTitle.trim());
   // Why the PR can't be landed right now, or null when it can. Same predicate
   // the route re-runs server-side (lib/prMerge.ts), so the tooltip on the
   // disabled button is literally the refusal the POST would have returned.
@@ -1010,7 +1029,13 @@ export default function TaskChanges({
             {(data.ahead > 0 || data.isDirty) && (
               <button
                 className={`tc-btn${prMode ? " primary" : ""}`}
-                onClick={doCreatePr}
+                onClick={() => {
+                  if (prUrl) void doCreatePr();
+                  else {
+                    setPrTitle(taskTitle);
+                    setPrTitleOpen(true);
+                  }
+                }}
                 disabled={prBusy || merging}
                 title={prUrl ? "Push the branch's new commits to the open PR" : "Push the branch to origin and open a GitHub PR"}
               >
@@ -1057,6 +1082,42 @@ export default function TaskChanges({
           </>
         )}
       </div>
+
+      {prTitleOpen && !prUrl && (
+        <Modal
+          title="Create pull request"
+          sub="Review the title before opening the PR on GitHub."
+          onClose={() => setPrTitleOpen(false)}
+          width={480}
+          footer={<>
+            <span className="spacer" />
+            <button className="btn btn-ghost" onClick={() => setPrTitleOpen(false)}>Cancel</button>
+            <button
+              className="btn btn-accent"
+              onClick={() => {
+                setPrTitleOpen(false);
+                void doCreatePr(prTitle);
+              }}
+            >
+              Create PR
+            </button>
+          </>}
+        >
+          <div className="field">
+            <label className="lab" htmlFor="create-pr-title">Title</label>
+            <input
+              id="create-pr-title"
+              type="text"
+              value={prTitle}
+              onChange={(e) => setPrTitle(e.target.value)}
+              autoFocus
+            />
+            {!prTitleIsConventional && (
+              <div className="hlp">Conventional Commit format: &lt;type&gt;[(scope)][!]: &lt;description&gt;</div>
+            )}
+          </div>
+        </Modal>
+      )}
 
       {localMergeOpen && !merging && (
         <div className="tc-mergebar review">
@@ -1258,7 +1319,7 @@ export default function TaskChanges({
         </div>
       )}
       {collab && onSend && (
-        <CollabDoc taskId={taskId} file={collab} running={running} onClose={() => setCollab(null)} onSend={onSend} onWritten={load} />
+        <CollabDoc key={collab} taskId={taskId} file={collab} running={running} onClose={() => setCollab(null)} onSend={onSend} onWritten={load} links={collabLinks} />
       )}
     </div>
   );

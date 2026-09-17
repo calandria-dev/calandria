@@ -24,22 +24,25 @@
 import { Codex } from "@openai/codex-sdk";
 import type { SandboxMode, ApprovalMode, ModelReasoningEffort, ThreadOptions, CodexOptions } from "@openai/codex-sdk";
 import type { Project, Task, StreamEvent, TurnUsage } from "../../types";
-import type { AgentDriver, OneShotOptions, OneShotResult } from "../types";
+import type { AgentDriver, AgentHookInventoryResult, AgentHookReview, OneShotOptions, OneShotResult } from "../types";
 import { codexCapabilities } from "./capabilities";
 import { getSetting, setSetting, getThreadUsageCum, setThreadUsageCum } from "../../store";
 import { AGENT_TOOL_TIMEOUT_MS, CODEX_CLI_PATH, CODEX_TRANSPORT, INTERNAL_BASE_URL, CALANDRIA_MCP_SCRIPT } from "../../config";
 import { isApprovalDowngrade } from "../../approvalFailure";
 import { buildProjectContext, buildTagRefreshPrompt } from "../shared";
+import { ATTACHMENT_NUDGE, hasAttachmentMarkers } from "../../uploadTypes";
 import { mapThreadEvent, newState, ZERO_CUM, type CodexCum } from "./events";
 import { inheritedServerOverrides, type DisabledMcpServer } from "./mcp";
 import { gatewayMcpServersForCodex, type GatewayMcpCodexServer } from "../../gatewayMcp";
 import { resolveCodexModel } from "./pricing";
 import { codexStatus, verifyCodexTurn, startCodexLogin, getCodexLogin, submitCodexCode, cancelCodexLogin, codexApiKey } from "./auth";
-import { agentTurnEnv } from "../../agentEnv";
+import { resolvedAgentTurnEnv, resolvedProviderDefaultModel } from "../../providers/resolve";
 import { codexProviderConfig } from "./provider";
 import { verifyCodexProvider } from "./providerCheck";
 import { sandboxRefusal, noteCodexSandboxWarning, noteCodexSandboxHealthy, probeCodexSandbox } from "./sandbox";
 import { getCodexPlanUsage } from "./planUsage";
+import { listCodexHooks, writeCodexConfig } from "./appServer";
+import { hookTrustEdit, hookUntrustEdit, hookEnabledEdit, allHooks, type CodexConfigEdit } from "./hooks";
 import { codexRunPolicy, neverAskPolicy, resolveCodexMode, type CodexRunPolicy } from "./policy";
 import { runAppServerTurn } from "./appServerTurn";
 import type { ConfigObject } from "./appServerClient";
@@ -210,12 +213,12 @@ async function* runTurn(
   // the project/task provider override laid over it and PORT repointed (see
   // lib/agentEnv.ts). Built first because the override also decides the
   // provider entry and the fallback model below.
-  const env = agentTurnEnv(project, task);
+  const env = resolvedAgentTurnEnv(project, task, "codex");
   const local = codexProviderConfig(env);
   // Below the task's own choice and the agent's Settings default sits the
   // override's CODEX_MODEL: a local endpoint serves its own model names, and
   // with no choice at all the CLI would ask a local server for gpt-5.x.
-  const chosen = task.model ?? getSetting(`default_model:${task.agent}`) ?? local.model;
+  const chosen = task.model ?? getSetting(`default_model:${task.agent}`) ?? resolvedProviderDefaultModel(project, task, "codex") ?? local.model;
   // The model the turn effectively runs: that choice, else the CLI's default
   // (codex emits no model event of its own, so this resolved value is the best
   // truth available). It prices the cost estimate and is reported as a `model`
@@ -229,7 +232,7 @@ async function* runTurn(
   // Codex reports the thread's cumulative token counts on every turn.completed,
   // so a resumed thread starts from the baseline the last turn stored (see
   // events.ts). A fresh thread starts from zero.
-  const state = newState(model, (task.session_id ? getThreadUsageCum<CodexCum>(task.session_id) : null) ?? ZERO_CUM);
+  const state = newState(model, (task.session_id ? getThreadUsageCum<CodexCum>(task.session_id) : null) ?? ZERO_CUM, task.id);
 
   // Fallback (task choice -> agent-scoped app default -> legacy default ->
   // codex built-in), matching the Claude driver.
@@ -240,12 +243,10 @@ async function* runTurn(
   const permission = task.permission_mode ?? getSetting(`default_permission_mode:${task.agent}`);
   // Prefer the task's isolated worktree; fall back to the shared repo path.
   const cwd = task.worktree_path || project.repo_path || process.cwd();
-  const policy = codexRunPolicy(permission, cwd, { downgraded: approvalDowngraded() });
+  const sandbox = task.sandbox_mode ?? getSetting("default_sandbox_mode:codex");
+  const policy = codexRunPolicy(permission, cwd, { sandbox, downgraded: approvalDowngraded() });
 
-  // The host has already told us its sandbox can't be created, and this mode
-  // needs one. Refuse before spending a turn: it would start, look normal, and
-  // fail every command it ran (lib/agents/codex/sandbox.ts). The message names
-  // the fixes, bypassPermissions among them, since that mode uses no sandbox.
+  // Refuse a selected sandbox that the host cannot create before starting a turn.
   const refusal = sandboxRefusal(policy.sandbox);
   if (refusal) {
     yield { type: "error", content: refusal };
@@ -279,9 +280,18 @@ async function* runTurn(
   // a ChatGPT login ignores OPENAI_BASE_URL outright (lib/agents/codex/provider.ts).
   const config = { ...calandriaMcpConfig(project, task, await inheritedServerOverrides(), gatewayServers), ...local.config };
 
+  // Chat attachments travel as "[Attached image: /abs/path]" (images) or
+  // "[Attached file: /abs/path]" (any other type) marker lines in the message
+  // text (lib/uploadTypes.ts; the files live outside the worktree, see
+  // lib/uploads.ts). The bytes are not in the prompt: the nudge hands over a
+  // staged path and leaves the how to the agent. Prompt-only, on both the
+  // fresh and the resumed path: the persisted transcript keeps the bare
+  // markers. Task-description attachments are covered by buildProjectContext().
+  const message = hasAttachmentMarkers(userText) ? `${userText}\n\n${ATTACHMENT_NUDGE}` : userText;
+
   // Fresh session: seed the opening prompt with the project context (project
   // description, task framing, and carried summaries from prior generations).
-  const prompt = (fresh: boolean) => (fresh ? `${buildProjectContext(project, task)}\n\n---\n\n${userText}` : userText);
+  const prompt = (fresh: boolean) => (fresh ? `${buildProjectContext(project, task)}\n\n---\n\n${message}` : message);
 
   yield { type: "model", model };
 
@@ -556,6 +566,48 @@ async function summarizeProjectRecap(project: Project, digest: string, opts?: On
   return { text: result.text || "(no recap produced)", usage: result.usage, model: result.model };
 }
 
+/** The hooks configured for `cwd`, as `hooks/list` reports them. */
+async function listHooks(cwd: string): Promise<AgentHookInventoryResult> {
+  return listCodexHooks(cwd);
+}
+
+/**
+ * Apply a batch of trust/enabled reviews. Re-reads the current inventory
+ * first: trust is pinned to a hook's `currentHash`, which must come from the
+ * definition as it reads right now rather than a hash the client sent, since
+ * a client could otherwise ratify a definition it never saw. A key missing
+ * from the current inventory, or a hook an administrator pinned (isManaged),
+ * refuses the whole call rather than applying the edits it could.
+ */
+async function reviewHooks(cwd: string, reviews: AgentHookReview[]): Promise<{ ok: boolean; error?: string }> {
+  const { inventory, error } = await listCodexHooks(cwd);
+  if (error) return { ok: false, error };
+  const byKey = new Map(allHooks(inventory ?? { scopes: [] }).map((h) => [h.key, h]));
+  const edits: CodexConfigEdit[] = [];
+  for (const review of reviews) {
+    const hook = byKey.get(review.key);
+    if (!hook) return { ok: false, error: `no such hook: ${review.key}` };
+    if (hook.isManaged && (review.action === "trust" || review.action === "untrust")) {
+      return { ok: false, error: `${review.key} is pinned by an administrator and cannot be reviewed` };
+    }
+    switch (review.action) {
+      case "trust":
+        edits.push(hookTrustEdit(hook));
+        break;
+      case "untrust":
+        edits.push(hookUntrustEdit(hook));
+        break;
+      case "enable":
+        edits.push(hookEnabledEdit(hook, true));
+        break;
+      case "disable":
+        edits.push(hookEnabledEdit(hook, false));
+        break;
+    }
+  }
+  return writeCodexConfig(edits, cwd);
+}
+
 export const codexDriver: AgentDriver = {
   id: "codex",
   label: "Codex",
@@ -586,4 +638,6 @@ export const codexDriver: AgentDriver = {
   // time (lib/agents/codex/sandbox.ts).
   sandboxHealth: probeCodexSandbox,
   apiKey: codexApiKey,
+  listHooks,
+  reviewHooks,
 };

@@ -153,7 +153,7 @@ export function instanceRoot(name: string): string {
  * environment would be inherited by the sidecars incorrectly.
  *
  * The bench-VM specs that assert notifications reach the bus override this
- * and run under a real session with a daemon (dunst).
+ * and run under a real session with a daemon (dunst), docs/DESKTOP_E2E.md §3.
  */
 const NO_NOTIFICATION_BUS: Record<string, string> =
   process.platform === "linux"
@@ -256,6 +256,13 @@ function launchEnv(root: string, port: number, opts: LaunchOptions): Record<stri
     // instance, and written synchronously by main.js so it survives a main
     // thread that stopped.
     CALANDRIA_DESKTOP_LOG_FILE: bootTracePath(root),
+    // Per instance, for the same reason as the user-data dir: the default is
+    // the developer's own `~/.config/calandria/window-state.json`, which a
+    // suite would both read (opening at whatever size their real app was left
+    // at, and every lane's specs assume 1440x900, see docs/DESKTOP_E2E.md) and
+    // write. A spec that wants geometry to survive a relaunch overrides this
+    // with a path it keeps, through `opts.env` below.
+    CALANDRIA_WINDOW_STATE_FILE: path.join(root, "window-state.json"),
     ...(opts.env ?? {}),
   };
 }
@@ -294,8 +301,25 @@ export function bootTrace(shell: Shell): string[] {
  * unrelated timeout with no clue to the actual cause. The boot trace is the
  * app's own account of how far it got; the last line in it is the statement
  * that did not return.
+ *
+ * This error is the ONLY evidence a failed launch leaves. `attachShellLog()`
+ * takes the `Shell` a spec assigned from `launchShell()`, and a launch that
+ * threw assigned nothing, so its early return on a null shell means no
+ * shell.log, no boot trace and no screenshot are attached for exactly the
+ * failure that needs them (issue #218 uploaded a 4,797-byte artifact for this
+ * reason). Hence `extra`: whatever the caller has collected by the wait that
+ * failed goes into the message itself, where it survives.
  */
-function launchFailure(root: string, err: unknown): Error {
+type LaunchContext = {
+  /** Supervisor stdout/stderr captured since `electron.launch()` resolved. */
+  log?: string[];
+  /** What the window was showing when the wait gave up. */
+  url?: string;
+  /** The boot screen's own `<pre id="log">`, read on the way past. */
+  bootScreenLog?: string;
+};
+
+function launchFailure(root: string, err: unknown, extra: LaunchContext = {}): Error {
   const message = err instanceof Error ? err.message : String(err);
   let trace: string[] = [];
   try {
@@ -306,19 +330,38 @@ function launchFailure(root: string, err: unknown): Error {
   } catch {
     // No trace file at all: the binary never got as far as running main.js.
   }
+  const parts = [message];
   if (!trace.length) {
-    return new Error(
-      `${message}\n\nThe shell wrote no boot trace, so main.js never ran; ` +
+    parts.push(
+      `The shell wrote no boot trace, so main.js never ran; ` +
         `suspect the binary itself (signature, missing payload, wrong architecture).`,
     );
+  } else {
+    const tail = trace.slice(-12);
+    parts.push(
+      `The shell started but never finished booting. Its last line was:\n` +
+        `  ${trace[trace.length - 1]}\n\n` +
+        `Whatever follows that statement in main.js is where it stopped. Last ${tail.length} lines:\n` +
+        tail.map((l) => `  ${l}`).join("\n"),
+    );
   }
-  const tail = trace.slice(-12);
-  return new Error(
-    `${message}\n\nThe shell started but never finished booting. Its last line was:\n` +
-      `  ${trace[trace.length - 1]}\n\n` +
-      `Whatever follows that statement in main.js is where it stopped. Last ${tail.length} lines:\n` +
-      tail.map((l) => `  ${l}`).join("\n"),
-  );
+  // The url separates the two ways the app-navigation wait can fail, which
+  // otherwise read identically: still on loading.html means the server never
+  // answered /api/version, while an http origin means it did and the pattern
+  // the wait was given did not match it.
+  if (extra.url !== undefined) {
+    parts.push(`The window was showing: ${extra.url || "(no url yet)"}`);
+  }
+  if (extra.bootScreenLog?.trim()) {
+    parts.push(`The boot screen said:\n` + extra.bootScreenLog.trim().split(/\r?\n/).map((l) => `  ${l}`).join("\n"));
+  }
+  if (extra.log?.length) {
+    const tail = extra.log.slice(-20);
+    parts.push(`Last ${tail.length} supervisor lines:\n` + tail.map((l) => `  ${l}`).join("\n"));
+  } else if (extra.log) {
+    parts.push(`The supervisor printed nothing at all.`);
+  }
+  return new Error(parts.join("\n\n"));
 }
 
 /**
@@ -448,9 +491,18 @@ export async function launchShell(name: string, opts: LaunchOptions = {}): Promi
 
   let origin = "";
   if (opts.waitForApp !== false) {
-    await win.waitForURL(/^http:\/\/127\.0\.0\.1:\d+/, { timeout: 120_000 });
-    origin = new URL(win.url()).origin;
-    await win.waitForLoadState("domcontentloaded");
+    // The same enrichment the two waits above get, and for a sharper reason:
+    // this is the wait that actually hangs (issue #218, the Windows packaged
+    // pass, 120s on a navigation that a healthy run completes in 3-5s). At
+    // 120s against a 3-5s norm the app is stuck, not slow, so a longer
+    // deadline would buy nothing; what was missing was any account of where.
+    try {
+      await win.waitForURL(/^http:\/\/127\.0\.0\.1:\d+/, { timeout: 120_000 });
+      origin = new URL(win.url()).origin;
+      await win.waitForLoadState("domcontentloaded");
+    } catch (err) {
+      throw launchFailure(root, err, { log, url: win.url(), bootScreenLog });
+    }
   }
 
   return {

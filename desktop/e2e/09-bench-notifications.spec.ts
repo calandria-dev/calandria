@@ -13,7 +13,7 @@
  * Calandria, with a given title and body, and accepted it. That is not
  * assertable on a runner with no daemon, which is why `fixtures.ts` points
  * every other Linux run at a dead bus and why these specs are gated to the
- * bench (docs/DESKTOP_E2E.md §4).
+ * bench (docs/DESKTOP_E2E.md §3).
  *
  * The wording asserted here is the server's. `lib/notifications/notify.ts`
  * composes the title and body and publishes them on GET /api/events; the shell
@@ -55,7 +55,7 @@ test.beforeAll(async () => {
   if (!BENCH) return;
   // The daemon is the subject; the display is what the shell needs to start at
   // all, not the status area. This file never touches the status area, which
-  // disappears mid-launch on this bench (docs/DESKTOP_E2E.md §4).
+  // disappears mid-launch on this bench (docs/DESKTOP_E2E.md §6).
   assertBenchSession(["x", "notifications"]);
   // Started before the launch: a monitor started afterward would miss any
   // notification the boot itself raises, leaving "nothing was captured"

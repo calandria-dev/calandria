@@ -60,6 +60,8 @@ beforeAll(async () => {
         res.end(JSON.stringify({ ok: true, id: body.taskId, title: body.title, text: `Updated "${body.title}".` }));
       } else if (req.url?.endsWith("/set-base-branch")) {
         res.end(JSON.stringify({ ok: true, id: body.task || body.taskId, base_branch: body.branch, text: `Now based on ${body.branch}.` }));
+      } else if (req.url?.endsWith("/report-base-rewrite")) {
+        res.end(JSON.stringify({ ok: true, text: `Flagged 1 task based on ${body.branch || "the task base"}.` }));
       } else if (req.url?.endsWith("/update-tag")) {
         res.end(JSON.stringify({ ok: true, id: body.tag, name: body.name, base_branch: body.base_branch, text: `Updated tag "${body.tag}".` }));
       } else if (req.url?.endsWith("/withdraw-suggestion")) {
@@ -124,10 +126,12 @@ describe("calandria-mcp stdio bridge", () => {
         "expose_service",
         "get_task",
         "list_projects",
+        "list_providers",
         "list_runbooks",
         "list_tags",
         "list_tasks",
         "move_task",
+        "report_base_rewrite",
         "set_base_branch",
         "suggest_task",
         "update_runbook",
@@ -165,10 +169,12 @@ describe("calandria-mcp stdio bridge", () => {
         "expose_service",
         "get_task",
         "list_projects",
+        "list_providers",
         "list_runbooks",
         "list_tags",
         "list_tasks",
         "move_task",
+        "report_base_rewrite",
         "set_base_branch",
         "suggest_task",
         "update_runbook",
@@ -194,7 +200,7 @@ describe("calandria-mcp stdio bridge", () => {
       const schema = tools.find((t) => t.name === "update_task")!.inputSchema as {
         properties?: Record<string, { enum?: string[] }>;
       };
-      expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["blocked_by", "description", "priority", "status", "tags", "task", "title"]);
+      expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["attachments", "blocked_by", "description", "priority", "status", "tags", "task", "title"]);
       // Cancelling is the user's call: on the caller's own row it would abort
       // the very turn making the call.
       expect(schema.properties!.status.enum).not.toContain("cancelled");
@@ -217,7 +223,7 @@ describe("calandria-mcp stdio bridge", () => {
       // the card shows that value to the user as provenance.
       expect(Object.keys(schema.properties ?? {})).not.toContain("created_by");
       expect(Object.keys(schema.properties ?? {}).sort()).toEqual(
-        ["description", "name", "permission_mode", "priority", "project", "prompt"]
+        ["description", "model", "name", "permission_mode", "priority", "project", "prompt", "provider"]
       );
       expect((schema.required ?? []).sort()).toEqual(["description", "name", "prompt"]);
 
@@ -300,6 +306,10 @@ describe("calandria-mcp stdio bridge", () => {
     calls.length = 0;
     const { client, close } = await connectBridge();
     try {
+      const listTasksTool = (await client.listTools()).tools.find((t) => t.name === "list_tasks")!;
+      const schema = listTasksTool.inputSchema as { properties?: Record<string, unknown> };
+      expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["include_done", "match", "project", "tags"]);
+
       const res = (await client.callTool({ name: "list_tasks", arguments: {} })) as { content: { text: string }[] };
       const call = calls.find((c) => c.path.endsWith("/list-tasks"))!;
       expect(call.body).toMatchObject({ projectId: "proj-abc", taskId: "task-xyz" });
@@ -309,10 +319,17 @@ describe("calandria-mcp stdio bridge", () => {
       expect(parsed.tasks[0].current).toBe(true);
 
       // A `project` ref travels through for the server to resolve strictly.
-      await client.callTool({ name: "list_tasks", arguments: { project: "Other Project", include_done: true } });
+      await client.callTool({ name: "list_tasks", arguments: {
+        project: "Other Project",
+        include_done: true,
+        tags: ["Auth migration", "Mobile PWA"],
+        match: "all",
+      } });
       expect(calls.filter((c) => c.path.endsWith("/list-tasks"))[1].body).toMatchObject({
         project: "Other Project",
         include_done: true,
+        tags: ["Auth migration", "Mobile PWA"],
+        match: "all",
       });
     } finally {
       await close();

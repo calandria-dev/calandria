@@ -27,7 +27,7 @@ import path from "node:path";
 import type { Project, Task } from "../../types";
 import { GEMINI_HOMES_DIR } from "../../config";
 import { bridgeConfig } from "./mcp";
-import { taskProvider } from "../../agentEnv";
+import { resolvedTaskProvider } from "../../providers/resolve";
 import { writeModelProviderSetting } from "./auth";
 
 /** The one directory that must stay shared: it carries the login. */
@@ -117,7 +117,7 @@ export function prepareTaskHome(project: Project, task: Task): TaskHome {
   // settings.json (see writeModelProviderSetting), the same file the API-key
   // connect card writes; there is no per-task HOME for it, unlike the MCP
   // config above.
-  if (taskProvider(project, task).kind === "gateway") writeModelProviderSetting(true);
+  if (resolvedTaskProvider(project, task, "gemini").kind === "gateway") writeModelProviderSetting(true);
 
   return { home, cwd: task.worktree_path || project.repo_path || process.cwd() };
 }

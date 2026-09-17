@@ -1,15 +1,19 @@
 import { NextResponse } from "next/server";
 import { listDrivers, DEFAULT_AGENT } from "@/lib/agents/registry";
-import { getSetting } from "@/lib/store";
+import { getSetting, listProjectsPlain } from "@/lib/store";
+import { agentPlanScope } from "@/lib/planScope";
 import { getAgentConnection, getAgentAuthBroken, getAgentSandboxBroken } from "@/lib/agents/connections";
 import { resolveUtilityAgent } from "@/lib/agents/oneshots";
-import { LITELLM_ADMIN_KEY_SET, LITELLM_BASE_URL, LITELLM_MCP, LOCAL_MODEL_BASE_URL } from "@/lib/config";
 import { endpointModels, summarizeEndpoint } from "@/lib/modelEndpoint";
 import { gatewayHealth } from "@/lib/gatewayHealth";
-import { gatewayKey } from "@/lib/litellm-key";
 import { ensureClaudeModelIds } from "@/lib/agents/claude/modelProbe";
+import { claudeCapabilities } from "@/lib/agents/claude/capabilities";
 import { gatewayModelCatalog } from "@/lib/gatewayModels";
 import { geminiGatewayModelCheck, lastGeminiGatewayModelCheck } from "@/lib/agents/gemini/gatewayCheck";
+import { detectAgentInstallation } from "@/lib/agents/detect";
+import { listProviders } from "@/lib/providers/store";
+import { presentProvider } from "@/lib/providers/present";
+import { litellmRuntimeFor, localProviderBaseUrl } from "@/lib/providers/resolve";
 
 export const dynamic = "force-dynamic";
 
@@ -19,10 +23,14 @@ export const dynamic = "force-dynamic";
 // a "Connect" CTA for agents that aren't wired up yet, all from data with no
 // hardcoded per-agent lists in the UI. Connection state is read from the
 // settings record (lib/agents/connections.ts), written on a successful login,
-// verify or api-key save; the route never shells out to an agent's CLI on
-// each page load. `authenticated` mirrors `connected` for the run-control
-// pickers.
+// verify or api-key save. Installation detection checks the filesystem and
+// reads `--version` through a per-binary cache. `authenticated` mirrors
+// `connected` for the run-control pickers.
 export async function GET() {
+  const gatewayRuntime = litellmRuntimeFor();
+  const gatewayUrl = gatewayRuntime?.baseUrl ?? null;
+  const gatewayKeyValue = gatewayRuntime?.key ?? "";
+  const localBaseUrl = localProviderBaseUrl();
   // Is anything actually listening at the instance's local endpoint, and how
   // many models does it have? An agent's `connected` above is its CLI LOGIN,
   // which says nothing about a local server: a project on Ollama runs fine with
@@ -30,11 +38,13 @@ export async function GET() {
   // healthy login when Ollama isn't up. So the two states are reported
   // separately. Cached (lib/modelEndpoint.ts) and time-boxed, because every tab
   // loads this route.
-  const local = summarizeEndpoint(await endpointModels(LOCAL_MODEL_BASE_URL));
+  const local = localBaseUrl
+    ? summarizeEndpoint(await endpointModels(localBaseUrl))
+    : { reachable: false, models: 0 };
   // The same question for the LiteLLM gateway, and only when one is configured:
-  // an instance with no CALANDRIA_LITELLM_BASE_URL has no gateway preset, no
+  // an instance with no LiteLLM provider row has no gateway preset, no
   // health card and nothing to probe, so it pays nothing for this route.
-  const gateway = LITELLM_BASE_URL ? await gatewayHealth(LITELLM_BASE_URL, gatewayKey()) : null;
+  const gateway = gatewayUrl ? await gatewayHealth(gatewayUrl, gatewayKeyValue) : null;
   // What Claude's family aliases resolve to, for the picker's subtitles. Not
   // awaited and not on the boot path: the sweep is several CLI spawns, so it
   // runs detached and lands in the descriptor for a later read of this same
@@ -46,13 +56,16 @@ export async function GET() {
   // branch and lib/gatewayPricing.ts's rate table read on their next call.
   // gatewayHealth() above already hits /model/info too, but only for a count;
   // this is the full parse, cached separately (lib/gatewayModels.ts).
-  if (LITELLM_BASE_URL) void gatewayModelCatalog(LITELLM_BASE_URL, gatewayKey());
+  if (gatewayUrl) void gatewayModelCatalog(gatewayUrl, gatewayKeyValue);
   // Whether the gateway's catalog covers what `agy` needs. This is a real CLI
   // spawn, so it's fired the same way and read from whatever the last one found
   // (lib/agents/gemini/gatewayCheck.ts). Harmless when Antigravity isn't
   // connected or isn't installed: agyModelSlugs() returns null and the field
   // stays null instead of claiming every model is missing.
-  if (LITELLM_BASE_URL) void geminiGatewayModelCheck(LITELLM_BASE_URL, gatewayKey());
+  if (gatewayUrl) void geminiGatewayModelCheck(gatewayUrl, gatewayKeyValue);
+  // Read once, shared by every agent's scope below (lib/planScope.ts).
+  const projects = listProjectsPlain();
+  const providers = listProviders().map(presentProvider);
   return NextResponse.json({
     // The app-level default agent (Settings → Run defaults) is the client's
     // ultimate fallback when a project hasn't set its own; unset → the built-in.
@@ -62,29 +75,28 @@ export async function GET() {
     // show the effective choice, and flag it as a fallback when the configured
     // agent isn't connected. `id: null` means nothing is connected at all.
     utility: resolveUtilityAgent(),
-    // Where the "Local model" preset in a project's settings points by default
-    // (CALANDRIA_LOCAL_MODEL_BASE_URL). The client can't read the env, so the
-    // preset writes the instance's own answer here.
-    local_base_url: LOCAL_MODEL_BASE_URL,
+    // The oldest configured local provider remains available to the legacy
+    // health card until the Models settings surface replaces it.
+    local_base_url: localBaseUrl,
     // …and whether that endpoint answered just now.
     local_endpoint: local,
     // The LiteLLM gateway's address, which the settings form needs to offer the
     // Gateway preset at all (null hides it), and what it answered just now. The
     // KEY is never on this wire: only whether one is configured, so the card can
     // say "set a key" without ever being a way to read it.
-    gateway_base_url: LITELLM_BASE_URL,
-    // Whether CALANDRIA_LITELLM_ADMIN_KEY is set. The key itself is never sent;
+    gateway_base_url: gatewayUrl,
+    // Whether the LiteLLM provider has an admin key. The key itself is never sent;
     // this just says whether minting a per-task key is possible at all
     // (docs/AGENTS.md, "Per-task virtual keys"), so the project settings form
     // can show the max_budget/duration fields only when they'd do something.
-    gateway_keys_enabled: LITELLM_ADMIN_KEY_SET,
+    gateway_keys_enabled: !!gatewayRuntime?.adminKey,
     // Whether the project settings picker should offer hosted MCP servers at
-    // all (docs/AGENTS.md, "Hosted MCP servers"): CALANDRIA_LITELLM_MCP on and
+    // all (docs/AGENTS.md, "Hosted MCP servers"): the provider's MCP flag on and
     // a gateway actually configured, mirroring gateway_keys_enabled's "would
     // this do anything" gate.
-    gateway_mcp_enabled: LITELLM_MCP && !!LITELLM_BASE_URL,
+    gateway_mcp_enabled: !!gatewayRuntime?.mcp && !!gatewayUrl,
     gateway: gateway
-      ? { ...gateway, gemini_missing_models: LITELLM_BASE_URL ? (lastGeminiGatewayModelCheck(LITELLM_BASE_URL)?.missing ?? null) : null }
+      ? { ...gateway, gemini_missing_models: gatewayUrl ? (lastGeminiGatewayModelCheck(gatewayUrl)?.missing ?? null) : null }
       : gateway,
     agents: listDrivers().map((d) => {
       const conn = getAgentConnection(d.id);
@@ -93,12 +105,25 @@ export async function GET() {
       // the CALANDRIA_ALLOW_API_KEY_ENV opt-in) is what turns actually bill. It
       // outranks a stored subscription login, so the route reports the live key.
       const keyed = !!d.apiKey?.has();
+      const connected = keyed || !!conn;
+      const installation = detectAgentInstallation(d.id);
+      const capabilities = d.id === "claude" && gatewayUrl
+        ? claudeCapabilities({ ...process.env, ANTHROPIC_BASE_URL: gatewayUrl }, gatewayUrl)
+        : d.capabilities;
       return {
         id: d.id,
         label: d.label,
-        capabilities: d.capabilities,
-        connected: keyed || !!conn,
-        authenticated: keyed || !!conn,
+        capabilities,
+        connected,
+        authenticated: connected,
+        status: connected ? "connected" as const : installation.installed ? "installed" as const : "absent" as const,
+        installedVersion: installation.installedVersion,
+        bundledProvider: capabilities.bundledProvider,
+        providerTypes: capabilities.providerTypes,
+        endpointTransport: capabilities.endpointTransport,
+        providers: providers
+          .filter((provider) => capabilities.providerTypes.includes(provider.type))
+          .map(({ id, label, type, status }) => ({ id, label, type, status })),
         account: keyed
           ? { email: null, plan: "API", method: "api_key" as const }
           : conn
@@ -117,6 +142,14 @@ export async function GET() {
         // (lib/agents/codex/sandbox.ts). Drives the card's warning, and the
         // driver refuses the affected modes rather than running them.
         sandboxBroken: getAgentSandboxBroken(d.id),
+        // How much of the instance this login actually runs. `connected` and
+        // `account` describe the login itself, which a project's provider
+        // selection cannot invalidate: the credentials stay good and Reconnect
+        // must keep working. What the selection changes is whether the plan
+        // named beside them has anything to do with this instance's turns, so
+        // the card states that separately. Same source as the titlebar meter's
+        // hide rule (app/api/plan-usage/route.ts), so the two never disagree.
+        planScope: agentPlanScope(d.id, projects),
       };
     }),
   });

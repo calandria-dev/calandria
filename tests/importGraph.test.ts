@@ -21,6 +21,7 @@ const FORBIDDEN = ["@anthropic-ai/claude-agent-sdk", "@openai/codex-sdk"];
 
 // Modules that must stay SDK-free, and why:
 const PINNED = [
+  "lib/codexSandbox.ts", // shared sandbox values for settings validation and the browser
   "lib/store.ts", //     imported by nearly everything, so it must stay SDK-free
   "lib/services.ts", //  behind sync-compiled routes (grant, services-restore)
   "lib/db.ts",
@@ -31,6 +32,7 @@ const PINNED = [
   "lib/storage.mjs", //          where the db/worktrees live incl. the pre-rename fallback; fs + env only, and server.js reads it before Next exists
   "lib/agents/capabilities.ts", // capability data with no SDK imports, why this module exists
   "lib/agents/connections.ts", // connection state is ID lookups only, no driving
+  "lib/agents/detect.ts", //      host CLI and config-directory detection; fs + child_process only
   "lib/agentEnv.ts", //          the main-turn process env (issue #102); types-only, no driving
   "lib/agents/codex/catalog.ts", // ~/.codex models_cache.json + config.toml; node:fs only, and ./capabilities.ts reads it on the request path
   "lib/agents/codex/provider.ts", // the override → codex config.toml mapping; pure data, tested without the SDK
@@ -40,10 +42,13 @@ const PINNED = [
   "lib/gatewayHealth.ts", //     what models a local endpoint reports; fetch + agentEnv + config, and GET /api/agents probes it on every load
   "lib/agentTools.ts", //        behind the internal agent-tools routes (stdio bridge)
   "lib/agentToolLog.ts", //      the arrival/settle log line every agent-tool call gets; log.mjs only, no driving
+  "lib/agentToolCutoff.ts", //   the bridge's cut-off report (issue #364); store + events + the .mjs guard, behind a sync-compiled route
   "lib/suggestionCard.ts", //    which transcript row a filed suggestion settles onto; store + types only, and the bridge's suggest-task route sits on it
+  "lib/tagFilter.ts", //         pure any/all tag predicate shared by agent routes and the client
   "lib/tagContext.ts", //        the tag blocks buildProjectContext appends; store + types only
   "lib/taskMove.ts", //          behind both move routes; store + locks + bus, no driving
   "lib/baseBranch.ts", //        which branch a task is based on + the retarget policy; store + git + bus, no driving
+  "lib/baseRewrite.ts", //     which sibling tasks a rewritten base orphaned + the flag; store + git + baseBranch + bus, no driving
   "lib/baseDrift.ts", //         the stale-base note a cut records for the opening turn; git + globalThis, no driving
   "lib/prMerge.ts", //          may this PR be squash-merged, and if not why not; pure types-only policy the client bundles alongside the route that enforces it
   "lib/prTools.ts", //          the commit/push/`gh pr create` both POST /api/tasks/[id]/pr and the create_pr tool run; store + git + github, no driving
@@ -56,9 +61,20 @@ const PINNED = [
   "lib/binPath.ts", //           where a CLI is on disk + how to launch it on Windows; node:fs/node:path only
   "lib/processTree.ts", //       how to kill a spawned command's whole tree per platform; node:child_process only, and lib/services.ts sits on it
   "lib/secretFile.ts", //        how a persisted credential is locked to its owner on each platform; node:fs/node:os/node:path only
+  "lib/providers/types.ts", //   the provider registry: which environments a type serves, its policy mode, its config schema and its secret fields; zod only, and the client bundles it alongside the routes
+  "lib/providers/rows.ts", //    the model_providers SQL over a caller's connection; better-sqlite3 + the registry, and lib/db.ts's init() reaches it through the seed
+  "lib/providers/store.ts", //   the same CRUD on the shared connection; DB only, no driving, and lib/agents/connections.ts sits on it
+  "lib/providers/seed.ts", //    first-boot provider rows from the env; reached from lib/db.ts's init(), so it must never grow an import that calls getDb()
+  "lib/providers/families.ts", // automatic family/version placement; registry types only
+  "lib/providers/catalog.ts", //  model source reads and picker-tree assembly behind sync route entries
+  "lib/providers/present.ts", //  status + on-model count for a row, synchronous, no catalog probe
+  "lib/providers/agentRef.ts", // provider-ref/model-policy resolution shared by suggest_task and the runbook tools
+  "lib/providerSecrets.ts", //   every provider credential in one 0600 file; fs + secretFile only, and lib/db.ts loads the legacy gateway key from it at boot
+  "lib/litellm-key.ts", //       the gateway key as the rest of the app asks for it; wrappers over the litellm row's key field, and lib/gatewayMcp.ts sits on it
   "lib/agents/codex/bin.ts", //  which `codex` to spawn; config + binPath, no driving
   "lib/worktreeFailure.ts", //   how a failed worktree prep is classified + its recovery notice, which the client imports to render the button
   "lib/usageReset.ts", //        which usage-window reset a queued start targets, which the client derives the button from
+  "lib/planScope.ts", //         which projects still run an agent on its own login; store + agentEnv only, no driving
   "lib/agents/claude/planUsage.ts", // plan-usage cache + fetch policy, fs/fetch only, no driving
   "lib/schedule/time.ts", //     pure wall-clock math, no DB, no SDK
   "lib/retention.ts", //         the scheduled prune of the unbounded tables; DB + fs only, no driving
@@ -86,12 +102,14 @@ const PINNED = [
   "lib/push/send.ts", //          the push channel notify.ts fans out to; fetch only
   "app/api/notifications/push/route.ts",
   "lib/collab.ts", //             document-collaboration packet; pure (jsdiff only), bundled for the client too
+  "lib/localLink.ts", //          markdown file-link resolver; string-only, bundled for the client too
   "lib/worktreeFile.ts", //       the collaboration modal's worktree read guard; fs only
   "lib/paths.ts", //              case-folded path identity + EBUSY-tolerant rm; fs + path only, and lib/git.ts and lib/repoLock.ts both sit on it
   "app/api/settings/permissions/route.ts",
   "app/api/services/grant/route.ts",
   "app/api/instance/services-restore/route.ts",
   "app/api/instance/metrics/route.ts", // the scrape target; a "which agents are configured?" series later must use capabilities.ts
+  "lib/updates/check.ts", // imported by the update routes and by the scheduler boot ping; needs only the database, the event bus and fetch
 ];
 
 // Modules that MAY reach an SDK, but only ever through a dynamic `import()`.

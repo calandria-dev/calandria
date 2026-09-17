@@ -1,6 +1,6 @@
 // Per-task LiteLLM virtual keys and spend reconciliation (docs/AGENTS.md).
-// Opt-in behind CALANDRIA_LITELLM_ADMIN_KEY: unset, this module is inert and
-// every gateway turn runs on the shared instance key.
+// Opt-in behind the selected LiteLLM row's admin-key secret. Without it every
+// gateway turn runs on the shared provider key.
 //
 // SDK-free and Node-free beyond fetch (tests/importGraph.test.ts pins the
 // set). Must never import lib/runner.ts or lib/agents/registry.ts, since
@@ -11,17 +11,19 @@
 // goes terminal, and reconcile (reconcileTaskGatewaySpend) after a turn ends
 // to correct spend against LiteLLM's own ledger.
 
-import { LITELLM_ADMIN_KEY, LITELLM_KEY_TIMEOUT_MS } from "./config";
-import { gatewayBaseUrl, taskProvider } from "./agentEnv";
+import { resolvedTaskProvider } from "./providers/resolve";
 import { resolveGatewayMcp } from "./gatewayMcp";
 import { taskGatewayKeyState, setTaskGatewayKey, setTaskGatewayKeySpend, addUsage } from "./store";
+import { getProject, getTask } from "./store";
+import { litellmRuntimeFor } from "./providers/resolve";
 import { prunableTaskIds } from "./retention";
 import type { Project, Task } from "./types";
 
 /** Whether per-task virtual keys are switched on at all: an admin key with a
  *  gateway to mint against. Every operation below is a no-op without this. */
 export function gatewayKeysEnabled(): boolean {
-  return !!LITELLM_ADMIN_KEY && !!gatewayBaseUrl();
+  const runtime = litellmRuntimeFor();
+  return !!runtime?.adminKey;
 }
 
 // Same shape as lib/gatewayHealth.ts's reason(): a Node fetch failure's useful
@@ -48,20 +50,19 @@ function clearWarned(kind: string): void {
   warned.delete(kind);
 }
 
-async function adminCall(path: string, body: unknown): Promise<{ ok: true; body: unknown } | { ok: false; detail: string }> {
-  const gw = gatewayBaseUrl();
-  if (!gw || !LITELLM_ADMIN_KEY) return { ok: false, detail: "no gateway or admin key configured" };
+async function adminCall(runtime: ReturnType<typeof litellmRuntimeFor>, path: string, body: unknown): Promise<{ ok: true; body: unknown } | { ok: false; detail: string }> {
+  if (!runtime?.baseUrl || !runtime.adminKey) return { ok: false, detail: "no gateway or admin key configured" };
   try {
-    const r = await fetch(`${gw}${path}`, {
+    const r = await fetch(`${runtime.baseUrl}${path}`, {
       method: "POST",
-      signal: AbortSignal.timeout(LITELLM_KEY_TIMEOUT_MS),
+      signal: AbortSignal.timeout(runtime.keyTimeoutMs ?? 8000),
       headers: {
         accept: "application/json",
         "content-type": "application/json",
         // LiteLLM's key-management surface takes the admin/master key as a
         // bearer token, distinct from the x-litellm-api-key header every
         // other gateway call in this codebase sends a virtual key on.
-        authorization: `Bearer ${LITELLM_ADMIN_KEY}`,
+        authorization: `Bearer ${runtime.adminKey}`,
       },
       body: JSON.stringify(body),
       cache: "no-store",
@@ -105,9 +106,10 @@ async function adminCall(path: string, body: unknown): Promise<{ ok: true; body:
  */
 export async function ensureTaskGatewayKey(task: Task, project: Project): Promise<void> {
   task.gateway_key = "";
-  if (!gatewayKeysEnabled()) return;
-  const provider = taskProvider(project, task);
+  const provider = resolvedTaskProvider(project, task, task.agent as "claude" | "codex" | "gemini");
   if (provider.kind !== "gateway") return;
+  const runtime = litellmRuntimeFor(project, task, task.agent as "claude" | "codex" | "gemini");
+  if (!runtime?.adminKey) return;
   const state = taskGatewayKeyState(task.id);
   if (state?.key) {
     task.gateway_key = state.key;
@@ -135,7 +137,7 @@ export async function ensureTaskGatewayKey(task: Task, project: Project): Promis
   const mcp = resolveGatewayMcp(project, task);
   if (mcp.length) body.object_permission = { mcp_servers: mcp };
 
-  const res = await adminCall("/key/generate", body);
+  const res = await adminCall(runtime, "/key/generate", body);
   if (!res.ok) {
     warnOnce("mint", res.detail);
     return;
@@ -165,10 +167,13 @@ export async function ensureTaskGatewayKey(task: Task, project: Project): Promis
  * LiteLLM already agrees there's nothing left to delete.
  */
 export async function deleteTaskGatewayKey(taskId: string): Promise<void> {
-  if (!gatewayKeysEnabled()) return;
   const state = taskGatewayKeyState(taskId);
   if (!state?.key) return;
-  const res = await adminCall("/key/delete", { keys: [state.key] });
+  const task = getTask(taskId);
+  const project = task ? getProject(task.project_id) : null;
+  const runtime = litellmRuntimeFor(project, task, (task?.agent as "claude" | "codex" | "gemini") ?? "claude");
+  if (!runtime?.adminKey) return;
+  const res = await adminCall(runtime, "/key/delete", { keys: [state.key] });
   if (!res.ok && !/not found|no such key|404/i.test(res.detail)) {
     warnOnce("delete", res.detail);
     return;
@@ -231,14 +236,16 @@ export async function reconcileTaskGatewaySpend(input: {
   host: string;
   agent: string;
 }): Promise<void> {
-  const gw = gatewayBaseUrl();
-  if (!gw || !input.key) return;
+  const task = getTask(input.taskId);
+  const project = task ? getProject(task.project_id) : null;
+  const runtime = litellmRuntimeFor(project, task, (task?.agent as "claude" | "codex" | "gemini") ?? "claude");
+  if (!runtime?.baseUrl || !input.key) return;
   const state = taskGatewayKeyState(input.taskId);
   if (!state?.key || state.key !== input.key) return;
   let spend: number;
   try {
-    const r = await fetch(`${gw}/key/info`, {
-      signal: AbortSignal.timeout(LITELLM_KEY_TIMEOUT_MS),
+    const r = await fetch(`${runtime.baseUrl}/key/info`, {
+      signal: AbortSignal.timeout(runtime.keyTimeoutMs ?? 8000),
       headers: { accept: "application/json", "x-litellm-api-key": `Bearer ${input.key}` },
       cache: "no-store",
     });

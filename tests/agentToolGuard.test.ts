@@ -14,10 +14,14 @@ import {
   toolErrorResult,
   DEFAULT_AGENT_TOOL_TIMEOUT_MS,
   CLI_INTERRUPTED_TOOL_RESULT,
+  CODEX_PRE_DISPATCH_TOOL_CUTOFFS,
   isCliInterruptedToolResult,
+  isCodexPreDispatchToolCutoff,
   isCalandriaToolName,
   toolInterruptedMessage,
   toolCutoffNotice,
+  toolDiscardedNotice,
+  watchToolCancellation,
 } from "@/lib/agentToolGuard.mjs";
 
 /** The shape every guarded answer has to have, whatever went wrong. */
@@ -228,6 +232,25 @@ describe("the CLI's own interrupted tool result", () => {
   });
 });
 
+describe("Codex's pre-dispatch MCP failures", () => {
+  it("recognizes both recorded Codex failure texts", () => {
+    expect(CODEX_PRE_DISPATCH_TOOL_CUTOFFS).toEqual([
+      "MCP tool call requires approval, but approval policy is never",
+      "user cancelled MCP tool call",
+    ]);
+    for (const text of CODEX_PRE_DISPATCH_TOOL_CUTOFFS) {
+      expect(isCodexPreDispatchToolCutoff(`Codex error: ${text}.`)).toBe(true);
+    }
+  });
+
+  it("leaves unrelated MCP failures alone", () => {
+    expect(isCodexPreDispatchToolCutoff("MCP tool call requires approval")).toBe(false);
+    expect(isCodexPreDispatchToolCutoff("user cancelled the turn")).toBe(false);
+    expect(isCodexPreDispatchToolCutoff(toolCutoffNotice("calandria__list_tasks"))).toBe(false);
+    expect(isCodexPreDispatchToolCutoff(undefined)).toBe(false);
+  });
+});
+
 /* The observation hooks: where the server-side record of a call is written
  * (lib/agentToolLog.ts). They observe, and can never become a fourth way for
  * a call to fail. */
@@ -275,5 +298,123 @@ describe("guardToolHandler's onStart / onSettle hooks", () => {
   it("is optional: a handler guarded without hooks is guarded as before", async () => {
     expect(await guardToolHandler("t", async () => ok("fine"))({})).toEqual(ok("fine"));
     expectLoudFailure(await guardToolHandler("t", async () => ({ content: [] }))({}), "t");
+  });
+});
+
+/* watchToolCancellation: the stdio bridge's half of the cut-off detection
+ * (issue #364). The MCP SDK aborts a request handler's signal when the client
+ * cancels or the transport drops, and then discards whatever the handler
+ * returns, so an abort seen here means this answer will never reach the model.
+ * The bridge reports that; the Claude stream pump can't, and doesn't need to.
+ */
+describe("watchToolCancellation", () => {
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  /** The `extra` argument the MCP SDK passes a tool handler, reduced to what is read. */
+  const extra = (signal: AbortSignal) => ({ signal, requestId: 1 });
+
+  it("reports a cancellation that lands while the call is still running", async () => {
+    const seen: { tool: string; ms: number; reason: string }[] = [];
+    const ac = new AbortController();
+    const watched = watchToolCancellation("create_pr", async () => {
+      // What the real failure looks like: the client gives up on a call
+      // Calandria is still working on, and the work goes on to finish.
+      ac.abort("client gave up");
+      await sleep(10);
+      return ok("pushed");
+    }, { onCutoff: (c: { tool: string; ms: number; reason: string }) => seen.push(c) });
+
+    // The handler's own answer is untouched: this observes, it does not rewrite.
+    expect(await watched({}, extra(ac.signal))).toEqual(ok("pushed"));
+    expect(seen).toHaveLength(1);
+    expect(seen[0].tool).toBe("create_pr");
+    expect(seen[0].reason).toBe("client gave up");
+    expect(seen[0].ms).toBeGreaterThanOrEqual(0);
+  });
+
+  it("reports as soon as the abort is seen, not once the handler unwinds", async () => {
+    const seen: unknown[] = [];
+    const ac = new AbortController();
+    let released: () => void = () => {};
+    const watched = watchToolCancellation("create_pr", () => new Promise<unknown>((r) => (released = () => r(ok("pushed")))), {
+      onCutoff: (c: unknown) => seen.push(c),
+    });
+    const call = watched({}, extra(ac.signal));
+    ac.abort();
+    // The transport that cancelled may be about to take this process with it,
+    // so the report cannot wait on a handler that has not returned.
+    await sleep(10);
+    expect(seen).toHaveLength(1);
+    released();
+    await call;
+    expect(seen).toHaveLength(1);
+  });
+
+  it("counts a signal already aborted before the handler ran", async () => {
+    const seen: unknown[] = [];
+    const ac = new AbortController();
+    ac.abort();
+    const watched = watchToolCancellation("list_tasks", async () => ok("[]"), { onCutoff: (c: unknown) => seen.push(c) });
+    await watched({}, extra(ac.signal));
+    // Once, not twice: the entry check and the post-handler check are the same
+    // report, so one call can only ever produce one line.
+    expect(seen).toHaveLength(1);
+  });
+
+  it("stays quiet on an ordinary call, and on a throw that was not cancelled", async () => {
+    const seen: unknown[] = [];
+    const ac = new AbortController();
+    const onCutoff = (c: unknown) => seen.push(c);
+    expect(await watchToolCancellation("list_tasks", async () => ok("[]"), { onCutoff })({}, extra(ac.signal))).toEqual(ok("[]"));
+    await expect(
+      watchToolCancellation("list_tasks", async () => {
+        throw new Error("endpoint down");
+      }, { onCutoff })({}, extra(ac.signal))
+    ).rejects.toThrow("endpoint down");
+    expect(seen).toEqual([]);
+  });
+
+  it("finds the signal wherever the SDK put it, and passes the call through when there is none", async () => {
+    const seen: unknown[] = [];
+    const ac = new AbortController();
+    ac.abort();
+    const onCutoff = (c: unknown) => seen.push(c);
+    // A tool with no input schema is called `(extra)`, with no args object.
+    await watchToolCancellation("list_projects", async () => ok("[]"), { onCutoff })(extra(ac.signal));
+    expect(seen).toHaveLength(1);
+    // No signal at all (a host that passes none): the handler still runs.
+    expect(await watchToolCancellation("list_projects", async () => ok("[]"), { onCutoff })({})).toEqual(ok("[]"));
+    expect(seen).toHaveLength(1);
+  });
+
+  it("never lets a throwing observer change the answer", async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const watched = watchToolCancellation("create_pr", async () => ok("pushed"), {
+      onCutoff: () => {
+        throw new Error("observer down");
+      },
+    });
+    expect(await watched({}, extra(ac.signal))).toEqual(ok("pushed"));
+  });
+
+  it("is optional: no hook means the handler is returned unwrapped", () => {
+    const handler = async () => ok("fine");
+    expect(watchToolCancellation("t", handler)).toBe(handler);
+  });
+});
+
+describe("toolDiscardedNotice", () => {
+  it("names the tool, warns that the work may be done twice, and points at /clear", () => {
+    const msg = toolDiscardedNotice("create_pr");
+    expect(msg).toContain("create_pr");
+    expect(msg).toMatch(/may still have taken effect/);
+    expect(msg).toMatch(/done twice/);
+    // The recovery a person can actually perform.
+    expect(msg).toContain("/clear");
+    // The in-process wording claims nothing was done. This half must not: the
+    // call reached Calandria, which is the whole difference between the two.
+    expect(msg).not.toContain("nothing was done");
+    // And it may not be mistaken for the CLI's own sentence.
+    expect(isCliInterruptedToolResult(msg)).toBe(false);
   });
 });

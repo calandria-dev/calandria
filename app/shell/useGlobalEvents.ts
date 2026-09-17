@@ -4,6 +4,7 @@ import { useEffect, useRef, type MutableRefObject } from "react";
 import type { GlobalWireEvent } from "@/lib/events";
 import type { NotificationPayload } from "@/lib/notifications/types";
 import { jget } from "./api";
+import { invalidateModelPickerData } from "./ModelPicker";
 import type { ProjectRow, TaskRow } from "./types";
 
 // One always-open EventSource on GET /api/events: coarse lifecycle events for
@@ -31,7 +32,17 @@ export function useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProje
     // An agent's login died or came back. Refetch the shared agents bundle
     // instead of patching state locally, so the reconnect banner, the
     // Settings cards and the New-task picker all read one server-side truth.
-    if (ev.type === "agent_auth") { void refreshAgents(); return; }
+    if (ev.type === "agent_auth") {
+      invalidateModelPickerData();
+      void refreshAgents();
+      // Settings → Models keeps its own richer fetch of GET /api/agents (the
+      // shared AgentsBundle above drops fields AgentConnect needs), so it
+      // can't read the refresh this triggers. Relay it as a window event,
+      // same pattern as calandria:runbooks, so the environments and
+      // providers lists refetch too.
+      window.dispatchEvent(new CustomEvent("calandria:agent_auth"));
+      return;
+    }
     // A task was hard-deleted, possibly in another tab (in this one the local
     // removal already happened, so the replay is a no-op). Drop it and adopt
     // the recomputed project badge the event carries; there's no row left to
@@ -62,6 +73,14 @@ export function useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProje
     // hook has no state of theirs to patch.
     if (ev.type === "runbooks_changed") {
       window.dispatchEvent(new CustomEvent("calandria:runbooks", { detail: ev.projectId }));
+      return;
+    }
+    // The instance's release check found something different, or somebody
+    // skipped a version or turned the check off. Relayed for the same reason
+    // as runbooks above: useUpdates owns its own fetch, and this hook holds
+    // nothing of the update state. No project id, since there isn't one.
+    if (ev.type === "updates_changed") {
+      window.dispatchEvent(new CustomEvent("calandria:updates"));
       return;
     }
     // A project's tags changed (create, rename, recolor, delete, or
@@ -148,6 +167,7 @@ export function useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProje
       // stream is a live tail), leaving a stale banner or missing one when the
       // login is actually dead. The bundle carries the persisted flag, so
       // refetch it too.
+      invalidateModelPickerData();
       void refreshAgents();
     };
     es.onmessage = (e) => {

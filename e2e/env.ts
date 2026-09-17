@@ -22,7 +22,10 @@ function ensureRoot(): string {
     // report the resolved spelling, so resolving up front keeps the paths the
     // specs compare identical to the ones the server persists.
     root = fs.mkdtempSync(
-      path.join(fs.realpathSync.native(os.tmpdir()).replace(/^\\\\\?\\/, ""), "calandria-e2e-")
+      path.join(
+        fs.realpathSync.native(os.tmpdir()).replace(/^\\\\\?\\/, ""),
+        "calandria-e2e-",
+      ),
     );
     process.env.CALANDRIA_E2E_ROOT = root;
     // Ownership, not just the path: e2e/cleanup-reporter.ts only deletes a root
@@ -34,7 +37,13 @@ function ensureRoot(): string {
     // is never removed.
     process.env.CALANDRIA_E2E_ROOT_OWNED = "1";
   }
-  for (const d of ["db", "worktrees", "projects", "fixtures", "claude-config"]) {
+  for (const d of [
+    "db",
+    "worktrees",
+    "projects",
+    "fixtures",
+    "claude-config",
+  ]) {
     fs.mkdirSync(path.join(root, d), { recursive: true });
   }
   // Pinned git identity/config for both the server (worktree + merge commits)
@@ -61,7 +70,7 @@ function ensureRoot(): string {
         "\tlongpaths = true",
         `\thooksPath = ${os.platform() === "win32" ? "NUL" : "/dev/null"}`,
         "",
-      ].join("\n")
+      ].join("\n"),
     );
   }
   return root;
@@ -72,6 +81,9 @@ export const E2E_ROOT = ensureRoot();
 export const E2E_ROOT_OWNED = process.env.CALANDRIA_E2E_ROOT_OWNED === "1";
 export const E2E_PORT = Number(process.env.CALANDRIA_E2E_PORT || 4711);
 export const E2E_BASE_URL = `http://127.0.0.1:${E2E_PORT}`;
+/** The releases fixture (e2e/releases-server.mjs), so no run reaches github.com. */
+export const E2E_FEED_PORT = E2E_PORT + 2;
+export const E2E_FEED_URL = `http://127.0.0.1:${E2E_FEED_PORT}/releases`;
 export const FIXTURES_DIR = path.join(E2E_ROOT, "fixtures");
 
 export const GIT_ENV = {
@@ -111,5 +123,10 @@ export const SERVER_ENV: Record<string, string> = {
   // `claude` five times on the first page load of the suite. The mock agent is
   // what these specs drive; Claude's picker subtitles are not under test here.
   CALANDRIA_CLAUDE_MODEL_PROBE: "0",
+  // The release check (lib/updates/check.ts) starts on the boot self-ping and
+  // asks its feed a minute later, so without this every spec's server would
+  // call api.github.com mid-suite. e2e/releases-server.mjs answers instead,
+  // with releases derived from the running package.json version.
+  CALANDRIA_UPDATE_FEED_URL: E2E_FEED_URL,
   ...GIT_ENV,
 };

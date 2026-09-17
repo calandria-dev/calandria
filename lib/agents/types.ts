@@ -7,6 +7,8 @@
 // lib/control-plane/provisioner/.
 
 import type { PlanUsageSnapshot, Project, Task, StreamEvent, TurnUsage } from "../types";
+import type { ProviderType } from "../providers/types";
+import type { CodexHookInventory } from "./codex/hooks";
 
 export type { StreamEvent };
 
@@ -49,6 +51,12 @@ export interface AgentCapabilities {
   models: AgentModelOption[];
   reasoningOptions: AgentPickerOption[];
   permissionModes: AgentPickerOption[];
+  /** Provider types this coding environment can route a turn through. */
+  providerTypes: ProviderType[];
+  /** Provider type created and removed with this environment's own login. */
+  bundledProvider: ProviderType;
+  /** How Calandria passes a provider endpoint and credential to this CLI. */
+  endpointTransport: string;
   /** Can surface interactive AskUserQuestion-style prompts mid-turn ("ask" events). */
   supportsAsks: boolean;
   /** Can mount Calandria's MCP tools (suggest_task / expose_service). */
@@ -436,6 +444,19 @@ export interface AgentDriver {
    * as a side effect, so the caller only decides WHEN to ask.
    */
   sandboxHealth?(): Promise<AgentSandboxHealth>;
+  /**
+   * The hooks configured for a working directory, and which of them the
+   * agent will actually run (a hook can be configured and still inert:
+   * disabled, never reviewed, or edited since it was reviewed). Optional,
+   * because only Codex has a hook system of its own to inventory.
+   */
+  listHooks?(cwd: string): Promise<AgentHookInventoryResult>;
+  /**
+   * Apply a batch of trust/enabled reviews to hooks configured for a working
+   * directory. Optional, alongside listHooks: an agent with no hook system
+   * has nothing to review.
+   */
+  reviewHooks?(cwd: string, edits: AgentHookReview[]): Promise<{ ok: boolean; error?: string }>;
 }
 
 export interface AgentSandboxHealth {
@@ -445,4 +466,16 @@ export interface AgentSandboxHealth {
   reason: string | null;
   /** The check couldn't run at all: neither healthy nor broken. */
   error: string | null;
+}
+
+/** The hook inventory for one working directory, or why there isn't one. */
+export interface AgentHookInventoryResult {
+  inventory?: CodexHookInventory;
+  error?: string;
+}
+
+/** One requested change to a hook's trust or on/off state, keyed by its `key`. */
+export interface AgentHookReview {
+  key: string;
+  action: "trust" | "untrust" | "enable" | "disable";
 }
