@@ -1400,6 +1400,30 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .sugcard-acts .sugcard-note{padding:0;}
 .sugcard-title:last-child,.sugcard-why:last-child,.sugcard-blocked:last-child,.sugcard-note:last-child{padding-bottom:11px;}
 
+/* Issue-report card. Rides .sugcard for the frame and only adds what a card
+   the user TYPES INTO needs, so the two stay visually one family. */
+.issuecard-repo{display:inline-flex;align-items:center;gap:4px;margin-left:auto;font-size:10.5px;font-weight:600;color:var(--ink-4);}
+.issuecard-repo svg{width:12px;height:12px;}
+.issuecard-title,.issuecard-body{display:block;width:calc(100% - 26px);margin:10px 13px 0;padding:6px 8px;border:1px solid var(--line-2);border-radius:calc(var(--r) - 2px);background:var(--surface);color:var(--ink);font-family:inherit;}
+.issuecard-title{font-size:13px;font-weight:600;}
+.issuecard-body{font-size:11.5px;line-height:1.5;resize:vertical;min-height:70px;}
+.issuecard-title:focus,.issuecard-body:focus{outline:none;border-color:var(--accent,var(--line-strong));}
+.issuecard-title:disabled,.issuecard-body:disabled{opacity:.6;}
+.issuecard-dupes{padding:10px 13px 0;}
+.issuecard-dupes-head{font-size:10.5px;font-weight:700;letter-spacing:.02em;color:var(--ink-4);margin-bottom:5px;}
+.issuecard-dupe{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11.5px;}
+.issuecard-dupe a{color:var(--ink-2);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.issuecard-dupe a:hover{text-decoration:underline;}
+.issuecard-dupe .btn{margin-left:auto;flex:none;}
+.issuecard-state{flex:none;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--ink-4);}
+.issuecard-state.open{color:var(--green,var(--ink-3));}
+.issuecard-state.closed{color:var(--ink-4);}
+.issuecard-link{display:inline-flex;align-items:center;gap:5px;color:var(--ink-2);text-decoration:none;}
+.issuecard-link:hover{text-decoration:underline;}
+.issuecard-link svg{width:12px;height:12px;}
+.issuecard-error{display:flex;align-items:flex-start;gap:6px;margin:10px 13px 0;padding:7px 9px;border-radius:calc(var(--r) - 2px);background:var(--danger-bg,var(--panel-2));font-size:11px;line-height:1.45;color:var(--danger,var(--ink-3));}
+.issuecard-error svg{width:12px;height:12px;flex:none;margin-top:1px;}
+
 /* Settings → Run defaults: the remembered "always allow" list. */
 .perm-rules{display:flex;flex-direction:column;gap:6px;max-width:620px;}
 .perm-rule{display:flex;align-items:center;gap:10px;padding:7px 11px;border:1px solid var(--line-2);border-radius:9px;background:var(--panel);}

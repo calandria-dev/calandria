@@ -102,6 +102,22 @@ export const CODEX_CLI_PATH = process.env.CODEX_CLI_PATH || "";
  */
 export const GH_BIN = readEnv("CALANDRIA_GH_BIN") || "";
 
+/**
+ * GitHub repository (`owner/name`) that the agent's `report_issue` tool files
+ * Calandria bug reports and feature requests into. Defaults to the upstream
+ * project, so a user who hits a bug in the app they are using can send it where
+ * it gets fixed, without leaving the session to find the tracker. Point it at a
+ * fork to keep reports in-house. Set it to `off` to remove the tool from every
+ * agent's prompt entirely — nothing is ever filed without the user clicking
+ * File on the card, but an instance that never wants the offer made shouldn't
+ * have to keep declining it.
+ */
+export const ISSUE_REPO = (() => {
+  const raw = (readEnv("CALANDRIA_ISSUE_REPO") || "").trim();
+  if (!raw) return "calandria-dev/calandria";
+  return raw.toLowerCase() === "off" ? "" : raw;
+})();
+
 // Number of milliseconds from an env var, falling back to `def` for anything
 // unset, unparseable, or negative. (0 is meaningful for the knobs below — it
 // means "no deadline" — so it must survive.)

@@ -45,9 +45,10 @@ import {
   updateTaskForAgent,
   withdrawSuggestionForAgent,
 } from "../../agentTools";
-import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, UPDATE_TAG, SET_BASE_BRANCH, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../../agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, UPDATE_TAG, SET_BASE_BRANCH, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK, REPORT_ISSUE } from "../../agentToolDefs.mjs";
 import { createPrForAgent } from "../../prTools";
 import { createRunbookForAgent, listRunbooksForAgent, updateRunbookForAgent } from "../../runbookTools";
+import { draftIssueReport, issueReportsEnabled } from "../../issueReports";
 import { publishGlobal } from "../../events";
 import { waitForAnswer } from "../../asks";
 import {
@@ -270,6 +271,7 @@ function calandriaServer(
   project: Project,
   task: Task,
   onSuggest: (s: { title: string; projectId: string; taskId: string }) => void,
+  onIssueReport: (r: { reportId: string }) => void,
   onExpose: (info: { name: string; url: string }) => void,
   // Injected, never imported: see TurnHooks in lib/agents/types.ts for why this
   // file must not name lib/autoStart.ts. Absent = nothing to notify (a driver
@@ -347,6 +349,28 @@ function calandriaServer(
           return { content: [{ type: "text", text }] };
         }
       ),
+      // Only when this instance has a repo configured to receive reports —
+      // an instance with CALANDRIA_ISSUE_REPO off must not offer a tool every
+      // call to which would be refused, the same reasoning create_pr's gate
+      // above gives.
+      ...(issueReportsEnabled()
+        ? [
+            tool(
+              REPORT_ISSUE.name,
+              REPORT_ISSUE.description,
+              {
+                kind: z.enum(["bug", "feature"]).default("bug").describe(REPORT_ISSUE.params.kind),
+                title: z.string().describe(REPORT_ISSUE.params.title),
+                body: z.string().describe(REPORT_ISSUE.params.body),
+              },
+              async (args: { kind: "bug" | "feature"; title: string; body: string }) => {
+                const { report, text } = await draftIssueReport(task, args);
+                if (report) onIssueReport({ reportId: report.id });
+                return { content: [{ type: "text", text }] };
+              }
+            ),
+          ]
+        : []),
       tool(
         LIST_TASKS.name,
         LIST_TASKS.description,
@@ -998,6 +1022,7 @@ async function* runTurn(
           // would keep the receiving tray stale for as long as the turn runs —
           // hours, if it parks on a question.
           ({ title, projectId, taskId }) => queue.push({ type: "suggested", title, projectId, taskId }),
+          ({ reportId }) => queue.push({ type: "issue_report", reportId }),
           ({ name, url }) => queue.push({ type: "notice", content: `Service "${name}" is live at ${url}` }),
           hooks
         ),

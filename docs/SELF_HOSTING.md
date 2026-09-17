@@ -412,6 +412,7 @@ Verify the copy (the database and `projects/` are there) before
 | `CALANDRIA_PR_STALE_MS` | `60000` | How long a task's PR state counts as fresh. Opening a task, the chip's Refresh button and the create-PR trigger all skip `gh pr view` inside this window |
 | `CALANDRIA_PR_POLL_MS` | `300000` | How often the background sweep re-reads tasks whose PR is still open. `0` disables the sweep, leaving the on-open and explicit-Refresh triggers. The sweep stops itself when no PR is open and skips a pass when no browser tab is watching |
 | `CALANDRIA_PR_POLL_BATCH` | `5` | Most PRs refreshed per sweep (one `gh pr view` each, oldest-synced first) |
+| `CALANDRIA_ISSUE_REPO` | `calandria-dev/calandria` | Repository (`owner/name`) the agent's `report_issue` tool drafts Calandria bug reports and feature requests into. The tool files nothing on its own — it drafts, searches that repo for duplicates and renders a card the user edits and sends — so this only decides where a click would go. Point it at a fork to keep reports in-house, or set `off` to drop the tool from every agent's prompt |
 | `CALANDRIA_CI_LOG_TAIL_LINES` | `200` | Lines of a failed job's log the **Fix CI** button seeds its turn with, per failing check. `gh run view --log-failed` already drops the green steps, but only the end of a failing suite says what broke |
 
 Example: relocate an instance entirely via env.

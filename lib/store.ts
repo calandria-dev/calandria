@@ -6,7 +6,7 @@ import { getDb } from "./db";
 // break sync route entries at runtime (see the note in that file).
 import { modelContextWindow } from "./agents/capabilities";
 import { SERVICE_PORT_BASE } from "./config";
-import type { Project, Task, Tag, Message, PendingMessage, TaskComment, TaskDocComment, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind, AgentEditChange, TaskAgentEdit, SettingsSnapshot } from "./types";
+import type { Project, Task, Tag, Message, PendingMessage, TaskComment, TaskDocComment, Summary, Session, Priority, Status, MsgRole, TurnUsage, UsageTotals, PermissionRule, PermissionMatchKind, AgentEditChange, TaskAgentEdit, SettingsSnapshot, IssueReport } from "./types";
 import { isLandingMode, type LandingMode } from "./types";
 export { addInternalUsage, type InternalJob } from "./internalUsage";
 
@@ -1551,6 +1551,46 @@ export function recordSettingsSnapshot(taskId: string, file: string, hash: strin
        ON CONFLICT(task_id, file) DO UPDATE SET hash = excluded.hash, content = excluded.content, updated_at = excluded.updated_at`
     )
     .run(taskId, file, hash, content, Date.now());
+}
+
+// ---------- issue reports ----------
+
+export function createIssueReport(input: {
+  task_id: string;
+  project_id: string;
+  kind: string;
+  repo: string;
+  title: string;
+  body: string;
+  matches?: string;
+  error?: string;
+}): IssueReport {
+  const id = nanoid();
+  const now = Date.now();
+  getDb()
+    .prepare(
+      `INSERT INTO issue_reports (id, task_id, project_id, kind, repo, title, body, status, matches, issue_number, issue_url, error, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, NULL, '', ?, ?, ?)`
+    )
+    .run(id, input.task_id, input.project_id, input.kind, input.repo, input.title, input.body, input.matches ?? "[]", input.error ?? "", now, now);
+  return getIssueReport(id)!;
+}
+
+export function getIssueReport(id: string): IssueReport | null {
+  return (getDb().prepare("SELECT * FROM issue_reports WHERE id = ?").get(id) as IssueReport | undefined) ?? null;
+}
+
+export function updateIssueReport(
+  id: string,
+  patch: Partial<Pick<IssueReport, "title" | "body" | "status" | "issue_number" | "issue_url" | "error">>
+): IssueReport | null {
+  if (!getIssueReport(id)) return null;
+  const entries = Object.entries(patch).filter(([, v]) => v !== undefined);
+  if (!entries.length) return getIssueReport(id);
+  getDb()
+    .prepare(`UPDATE issue_reports SET ${entries.map(([k]) => `${k} = ?`).join(", ")}, updated_at = ? WHERE id = ?`)
+    .run(...entries.map(([, v]) => v as string | number | null), Date.now(), id);
+  return getIssueReport(id)!;
 }
 
 // ---------- settings (app-level key/value, readable server-side) ----------

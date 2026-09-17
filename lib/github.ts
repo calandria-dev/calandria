@@ -7,7 +7,7 @@ import { spawn as ptySpawn, type IPty } from "node-pty";
 import { GH_BIN, PROJECTS_DIR } from "./config";
 import { findInDirs, findOnPath, type BinLookupOptions } from "./binPath";
 import { gitErrorDetail } from "./git";
-import type { LandingMode } from "./types";
+import type { IssueMatch, LandingMode } from "./types";
 
 const run = promisify(execFile);
 
@@ -967,5 +967,111 @@ export async function mergeTaskPr(input: { repoPath: string; number: number }): 
     // two cliErrorMessage picks is not something to hang the fallback on.
     if (autoMergeRefused(rawStderr(e) || msg)) return squashNow(msg);
     return { ok: false, error: msg };
+  }
+}
+
+// ---------- issues ----------
+
+export type IssueSearchResult = { ok: true; issues: IssueMatch[] } | { ok: false; error: string };
+export type IssueWriteResult = { ok: true; number: number; url: string } | { ok: false; error: string };
+
+/**
+ * Reduce a report title to something GitHub search will actually match.
+ * gh hands `--search` straight to GitHub's query parser, where a stray colon or
+ * quote is an operator rather than a word — so an unsanitized title can turn a
+ * duplicate check into a syntax error, or worse into a silent zero-hit
+ * qualifier like `merge:conflict`. Words only, and capped, since precision past
+ * a handful of terms is noise anyway.
+ */
+export function issueSearchTerms(title: string, max = 10): string {
+  return title
+    .replace(/[^A-Za-z0-9 _-]+/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2)
+    .slice(0, max)
+    .join(" ");
+}
+
+// gh not installed / not signed in, in the exact wording the report card
+// needs — factored out because all three issue calls below need the same two
+// guards before touching the network.
+async function issueGhGuard(): Promise<string> {
+  const st = await ghStatus();
+  if (!st.installed) return ghMissingMessage();
+  if (!st.authenticated) return "GitHub CLI isn't signed in. Connect GitHub in Settings, or run `gh auth login` on the server.";
+  return "";
+}
+
+/**
+ * Possible duplicates for a drafted report. Best-effort, like every other
+ * network call in this file: a missing repo, dead gh, or signed-out login all
+ * come back as a reported failure rather than blocking the draft — the card
+ * just lists no matches and says why.
+ */
+export async function searchIssues(repo: string, title: string, limit = 5): Promise<IssueSearchResult> {
+  if (!repo) return { ok: false, error: "No issue repository is configured (CALANDRIA_ISSUE_REPO)." };
+  const guard = await issueGhGuard();
+  if (guard) return { ok: false, error: guard };
+
+  const terms = issueSearchTerms(title);
+  if (!terms) return { ok: true, issues: [] };
+
+  try {
+    const { stdout } = await run(
+      resolveGhBin(),
+      ["issue", "list", "--repo", repo, "--state", "all", "--search", terms, "--limit", String(limit), "--json", "number,title,url,state"],
+      { timeout: 30_000, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1" } }
+    );
+    const parsed = JSON.parse(stdout || "[]") as unknown;
+    const rows = Array.isArray(parsed) ? parsed : [];
+    const issues = rows.filter((r): r is IssueMatch => typeof (r as IssueMatch)?.number === "number");
+    return { ok: true, issues };
+  } catch (e) {
+    return { ok: false, error: cliErrorMessage(e, "gh issue list errored") };
+  }
+}
+
+/**
+ * Open a fresh issue from a drafted report. Never passes `--label`: a label
+ * that doesn't exist in the target repo makes gh reject the whole create, and
+ * this app has no way to know what labels a user's repo (or fork) has defined.
+ */
+export async function createIssue(input: { repo: string; title: string; body: string }): Promise<IssueWriteResult> {
+  if (!input.repo) return { ok: false, error: "No issue repository is configured (CALANDRIA_ISSUE_REPO)." };
+  const guard = await issueGhGuard();
+  if (guard) return { ok: false, error: guard };
+
+  try {
+    // `--flag=value` form so a title/body that begins with "-" can't be read as a flag.
+    const { stdout } = await run(
+      resolveGhBin(),
+      ["issue", "create", "--repo", input.repo, `--title=${input.title}`, `--body=${input.body}`],
+      { timeout: 30_000, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1" } }
+    );
+    const url = stdout.trim();
+    const number = Number(/\/issues\/(\d+)/.exec(url)?.[1]);
+    if (!url || !Number.isFinite(number)) return { ok: false, error: "GitHub accepted the issue but returned no URL." };
+    return { ok: true, number, url };
+  } catch (e) {
+    return { ok: false, error: cliErrorMessage(e, "gh issue create errored") };
+  }
+}
+
+/** Add a report to an existing issue instead of opening a duplicate. */
+export async function commentOnIssue(input: { repo: string; number: number; body: string }): Promise<IssueWriteResult> {
+  if (!input.repo) return { ok: false, error: "No issue repository is configured (CALANDRIA_ISSUE_REPO)." };
+  const guard = await issueGhGuard();
+  if (guard) return { ok: false, error: guard };
+
+  try {
+    const { stdout } = await run(
+      resolveGhBin(),
+      ["issue", "comment", String(input.number), "--repo", input.repo, `--body=${input.body}`],
+      { timeout: 30_000, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1" } }
+    );
+    // Empty stdout is not an error here — the comment landed either way.
+    return { ok: true, number: input.number, url: stdout.trim() };
+  } catch (e) {
+    return { ok: false, error: cliErrorMessage(e, "gh issue comment errored") };
   }
 }

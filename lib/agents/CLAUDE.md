@@ -9,7 +9,8 @@ runs on which agent). What follows is the per-driver detail.
 `driver.ts` runs a turn through the Agent SDK, resuming the task's session or starting a fresh
 one, with project context appended to the Claude Code system prompt by `buildProjectContext()`.
 It also hosts the Calandria MCP tools (`suggest_task`, `list_tasks`, `get_task`, `update_task`,
-`withdraw_suggestion`, `set_base_branch`, `create_pr`, `list_projects`, `expose_service`),
+`withdraw_suggestion`, `set_base_branch`, `create_pr`, `list_projects`, `expose_service`,
+`report_issue`),
 `summarizeTranscript()` for `/clear` and `draftProjectContext()`, a read-only repo-exploring
 agent. Auth delegates to
 `lib/claude-auth.ts`.

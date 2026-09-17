@@ -143,8 +143,33 @@ describe("calandria-mcp stdio bridge", () => {
       // there is no PR to open. The tool is absent rather than present-and-
       // refusing — an offered tool reads as a sanctioned move.
       expect(tools.map((t) => t.name)).not.toContain("create_pr");
+      // And no report_issue, for the same reason one step further out: this
+      // connection passes no CALANDRIA_ISSUE_REPO, so there is nowhere to file.
+      // A tool that offers to post on the user's GitHub account must not appear
+      // on an instance that turned it off.
+      expect(tools.map((t) => t.name)).not.toContain("report_issue");
       // Descriptions come from the shared defs — sanity check they're populated.
       expect(tools.find((t) => t.name === "suggest_task")?.description).toContain("Suggested tray");
+    } finally {
+      await close();
+    }
+  });
+
+  it("offers report_issue once the instance has somewhere to file", async () => {
+    const { client, close } = await connectBridge({ CALANDRIA_ISSUE_REPO: "calandria-dev/calandria" });
+    try {
+      const { tools } = await client.listTools();
+      expect(tools.map((t) => t.name)).toContain("report_issue");
+      // The whole point of the tool, stated where the model reads it: this is a
+      // draft-and-offer, not a file. If that sentence ever leaves the
+      // description, the model has no reason not to treat the call as the send.
+      expect(tools.find((t) => t.name === "report_issue")?.description).toContain("FILES NOTHING");
+      // No way for the model to name the task it files under; callInternal
+      // supplies that from CALANDRIA_TASK_ID, same rule as update_task below.
+      const schema = tools.find((t) => t.name === "report_issue")!.inputSchema as {
+        properties?: Record<string, unknown>;
+      };
+      expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["body", "kind", "title"]);
     } finally {
       await close();
     }
