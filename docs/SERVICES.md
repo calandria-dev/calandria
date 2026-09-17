@@ -21,7 +21,10 @@ If Calandria previously stopped unexpectedly, startup checks for and reaps the o
 process tree before relaunching the service: on Linux and macOS by signalling the process
 group, on Windows with `taskkill /T /F`. In both cases the reaper first confirms the
 recorded process still carries that service's command line, so it never kills a recycled
-PID. Port conflicts with unmanaged processes show up as readable errors instead of crash
+PID. If that check cannot answer, it is retried before the reaper gives up, and giving up
+is logged: a Windows lookup that stumbled once used to read as "not ours" and leave the
+orphan holding the port. The kill is then waited on until the tree is actually gone,
+because `taskkill` returns once it has asked. Port conflicts with unmanaged processes show up as readable errors instead of crash
 loops. Log retention is bounded by `CALANDRIA_SERVICE_LOG_LINES` (1,500 lines by default).
 
 Managed services are on by default. Set `CALANDRIA_FEATURE_SERVICES=0` to remove the
