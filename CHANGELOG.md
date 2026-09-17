@@ -8,6 +8,18 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.16.0](https://github.com/calandria-dev/calandria/compare/v0.15.0...v0.16.0) (2026-09-17)
+
+
+### Features
+
+* **codex:** expose hook inventory, per-hook review and run lifecycle ([#377](https://github.com/calandria-dev/calandria/issues/377)) ([6c62b01](https://github.com/calandria-dev/calandria/commit/6c62b01f4b01bd7ee656b1d19ca9159db8d28029))
+
+
+### Bug Fixes
+
+* harden the Windows process reap, the desktop Node probe and the CI lanes ([#383](https://github.com/calandria-dev/calandria/issues/383)) ([a31979b](https://github.com/calandria-dev/calandria/commit/a31979bff7f2319d4f9cb3ba076835cb7acf34ec))
+
 ## [0.15.0](https://github.com/calandria-dev/calandria/compare/v0.14.2...v0.15.0) (2026-09-16)
 
 
