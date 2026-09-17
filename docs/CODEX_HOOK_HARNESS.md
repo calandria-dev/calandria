@@ -52,8 +52,8 @@ One run does this, in order:
 fresh each run. No `auth.json` is written, so the CLI has no login to inherit,
 and the provider override names no `env_key`, so the CLI never asks for a key.
 
-The root defaults to `~/.calandria/codex-hook-harness` and is deliberately not
-under the system temp directory. A `CODEX_HOME` under `/tmp` makes the CLI print
+The root defaults to `~/.calandria/codex-hook-harness` and is not under
+the system temp directory. A `CODEX_HOME` under `/tmp` makes the CLI print
 `Refusing to create helper binaries under temporary dir`. It proceeds anyway,
 but the warning is noise in a harness whose whole output is evidence. Override
 the location with `CALANDRIA_CODEX_HARNESS_DIR`, and keep it off `/tmp` unless
@@ -85,14 +85,14 @@ makes:
 ] }
 ```
 
-`match` is resolved against the tool names the CLI actually advertised in that
+`match` is resolved against the tool names the CLI advertised in that
 request, so the plan does not hard-code how Codex namespaces an MCP tool. `name`
 (with optional `namespace`) calls a literal name instead, without resolving it,
 and `raw` emits a literal output item for probing a wire form the fixture does
 not otherwise model. Requests past the end of the plan get a plain text answer,
 so an unexpected extra round trip ends the turn instead of hanging it.
 
-### How an MCP tool is actually called
+### How an MCP tool is called
 
 An MCP server does not reach the model as top-level functions. It arrives as one
 namespace tool holding the server's own tools:
@@ -163,7 +163,7 @@ anything you want to keep.
 
 |File|What it holds|
 |-|-|
-|`ledger.jsonl`|One line per MCP tool call that actually reached the stub: tool name and arguments. This is the evidence.|
+|`ledger.jsonl`|One line per MCP tool call that reached the stub: tool name and arguments. This is the evidence.|
 |`hook-log.jsonl`|One line per hook invocation: the raw payload the CLI sent the hook on stdin, and its parse.|
 |`model-requests.jsonl`|One line per request the CLI made to the model fixture: model, advertised tool names, input items.|
 |`model-tools.json`|The full tool definitions from the first request, with schemas.|
@@ -173,7 +173,7 @@ anything you want to keep.
 |`workspace/`|The git repo the turn ran in, including `.codex/hooks.json`.|
 
 The ledger is what the assertions read. An allowed call must appear in it with
-its arguments unchanged. A call the hook denied must leave no line at all.
+its arguments unchanged. A call the hook denied must leave no line.
 
 A passing run leaves a ledger holding exactly one line:
 

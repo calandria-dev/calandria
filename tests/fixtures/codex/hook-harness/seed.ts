@@ -4,7 +4,7 @@
 //
 // One harness root holds everything: the private CODEX_HOME, the workspace the
 // turn runs in, and the evidence files. The root defaults to
-// ~/.calandria/codex-hook-harness and deliberately sits outside the system temp
+// ~/.calandria/codex-hook-harness and sits outside the system temp
 // directory: a CODEX_HOME under /tmp makes the CLI print "Refusing to create
 // helper binaries under temporary dir". It proceeds anyway, but the warning is
 // noise in a harness whose whole output is evidence.

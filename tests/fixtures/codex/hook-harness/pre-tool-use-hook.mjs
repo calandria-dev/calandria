@@ -3,8 +3,8 @@
 //
 // It records every invocation to CALANDRIA_HARNESS_HOOK_LOG, one JSON line per
 // call holding the raw payload the CLI sent on stdin. That log is how the
-// harness proves the hook ran at all, and it is the record of the stdin
-// contract the CLI actually uses.
+// harness proves the hook ran, and it is the record of the stdin contract
+// the CLI uses.
 //
 // The decision is a substring test against that raw payload:
 // CALANDRIA_HARNESS_HOOK_DENY names a marker, and a payload containing it is

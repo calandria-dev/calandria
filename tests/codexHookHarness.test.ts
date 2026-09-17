@@ -66,8 +66,8 @@ describe.skipIf(!ON)("codex hook harness (isolated launch)", () => {
 
     // Trust the hook through Calandria's own review path, the call Settings
     // makes. Per-hook trust is separate from project trust: the project is
-    // trusted in config.toml, which is what makes the hook visible at all, and
-    // this pins its current hash so the CLI will run it. Doing it this way
+    // trusted in config.toml, so the hook is visible, and this pins its
+    // current hash so the CLI will run it. Doing it this way
     // means the harness never passes --dangerously-bypass-hook-trust, so a turn
     // here is configured exactly like an ordinary one.
     const result = await codexDriver.listHooks!(p.workspace);
@@ -85,7 +85,7 @@ describe.skipIf(!ON)("codex hook harness (isolated launch)", () => {
     updateProject(project.id, { default_agent: "codex" });
     // bypassPermissions is the only mode that reaches danger-full-access, and
     // on a host whose AppArmor policy denies bwrap user namespaces it is the
-    // only mode under which the CLI can run any command at all.
+    // only mode under which the CLI can run a command.
     const task = createTask({
       project_id: project.id,
       title: "hook-harness",

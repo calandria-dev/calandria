@@ -13,7 +13,7 @@
 //
 //   { "kind": "tool", "match": "ledger_note", "arguments": { ... } }
 //     Answer with a function_call. `match` is a substring; the fixture resolves
-//     it against the tool names the CLI actually advertised in the request, so
+//     it against the tool names the CLI advertised in the request, so
 //     the plan does not have to hard-code how Codex namespaces an MCP tool.
 //   { "kind": "text", "text": "..." }
 //     Answer with an assistant message and end the turn.
@@ -23,7 +23,7 @@
 //
 // Every request is appended to CALANDRIA_HARNESS_REQUESTS as one JSON line
 // (model, advertised tool names, the input items), which is what tells you
-// whether an MCP tool reached the model as a top-level function at all.
+// whether an MCP tool reached the model as a top-level function.
 
 import fs from "node:fs";
 import http from "node:http";

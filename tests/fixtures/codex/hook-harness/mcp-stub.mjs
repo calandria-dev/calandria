@@ -5,7 +5,7 @@
 // line to CALANDRIA_HARNESS_LEDGER holding the tool name and the arguments
 // exactly as they arrived. The ledger is the harness's evidence: an allowed
 // call must appear with its arguments unchanged, and a call a hook denied must
-// leave no line at all. Nothing here touches the network or the filesystem
+// leave no line. Nothing here touches the network or the filesystem
 // outside that one append-only file.
 
 import fs from "node:fs";
