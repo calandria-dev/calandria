@@ -10,11 +10,15 @@ import {
   npmStaleness,
   agyBumpPlan,
   applyAgyPin,
+  npmBumpPlan,
+  applyNpmDockerfilePins,
+  applyNpmPackagePins,
 } from "../scripts/check-pin-drift.mjs";
 
 const ROOT = path.join(__dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
 const PACKAGE_JSON = path.join(ROOT, "package.json");
+const PIN_WORKFLOW = path.join(ROOT, ".github/workflows/pin-drift.yml");
 
 /**
  * scripts/check-pin-drift.mjs reads the Dockerfile with regexes, and the only
@@ -230,6 +234,96 @@ describe("agy bump", () => {
     expect(() =>
       applyAgyPin(source, { version: "9.9.9", amd64: AMD }, "Dockerfile"),
     ).toThrow(/AGY_SHA512_ARM64/);
+  });
+});
+
+describe("npm CLI bump", () => {
+  const dockerfile = readFileSync(DOCKERFILE, "utf8");
+  const packageJson = readFileSync(PACKAGE_JSON, "utf8");
+  const pins = extractPins(dockerfile, "Dockerfile");
+
+  it("selects only stale CLI pins and preserves the SDK issue path", () => {
+    const plan = npmBumpPlan(
+      pins,
+      {
+        "@anthropic-ai/claude-code": "9.9.9",
+        "@openai/codex": "8.8.8",
+      },
+      [
+        { pkg: "@anthropic-ai/claude-code" },
+        { pkg: "@openai/codex" },
+        { pkg: "@anthropic-ai/claude-agent-sdk" },
+      ],
+    );
+    expect(plan).toEqual({ claudeCode: "9.9.9", codexVersion: "8.8.8" });
+  });
+
+  it("rejects an upstream version that is not exact semver", () => {
+    expect(
+      () => npmBumpPlan(
+        pins,
+        { "@openai/codex": "8.8.8-beta" },
+        [{ pkg: "@openai/codex" }],
+      ),
+    ).toThrow(/exact stable semver/);
+  });
+
+  it("rewrites only the selected Dockerfile ARGs", () => {
+    const applied = applyNpmDockerfilePins(dockerfile, {
+      claudeCode: "9.9.9",
+      codexVersion: "8.8.8",
+    });
+    expect(applied.changed).toBe(true);
+    const rewritten = extractPins(applied.source, "Dockerfile");
+    expect(rewritten.claudeCode.value).toBe("9.9.9");
+    expect(rewritten.codexVersion.value).toBe("8.8.8");
+    expect(rewritten.agyVersion.value).toBe(pins.agyVersion.value);
+    expect(applyNpmDockerfilePins(applied.source, {
+      claudeCode: "9.9.9",
+      codexVersion: "8.8.8",
+    })).toEqual({ source: applied.source, changed: false });
+  });
+
+  it("updates Codex SDK in package.json and refuses a missing dependency", () => {
+    const applied = applyNpmPackagePins(packageJson, { codexVersion: "8.8.8" });
+    expect(JSON.parse(applied.source).dependencies["@openai/codex-sdk"]).toBe(
+      "8.8.8",
+    );
+    expect(applyNpmPackagePins(applied.source, { codexVersion: "8.8.8" })).toEqual(
+      { source: applied.source, changed: false },
+    );
+    expect(() =>
+      applyNpmPackagePins(
+        packageJson.replace('"@openai/codex-sdk"', '"@openai/codex-sdk-old"'),
+        { codexVersion: "8.8.8" },
+      ),
+    ).toThrow(/codex-sdk/);
+  });
+});
+
+describe("pin drift workflow", () => {
+  const workflow = readFileSync(PIN_WORKFLOW, "utf8");
+
+  it("applies both npm CLI plans and repairs the Codex lockfile", () => {
+    expect(workflow).toContain("--update-npm");
+    expect(workflow).toContain("--apply-npm");
+    expect(workflow).toContain("npm install --package-lock-only");
+    expect(workflow).toContain("npm run fix-lockfile");
+  });
+
+  it("dispatches CI and enables exact-head squash auto-merge", () => {
+    expect(workflow).toContain("dispatch_and_confirm test.yml Test");
+    expect(workflow).toContain(
+      'dispatch_and_confirm release-desktop.yml "Desktop release artifacts"',
+    );
+    expect(workflow).toContain(
+      'dispatch_and_confirm publish-image.yml "Publish image"',
+    );
+    expect(workflow).toContain("--auto --squash --delete-branch");
+    expect(workflow).toContain('--match-head-commit "$SHA"');
+    expect(workflow).toContain(
+      "--json state,isDraft,headRefOid,autoMergeRequest",
+    );
   });
 });
 
