@@ -1063,7 +1063,7 @@ export type IssueWriteResult = { ok: true; number: number; url: string } | { ok:
 /**
  * Reduce a report title to something GitHub search will actually match.
  * gh hands `--search` straight to GitHub's query parser, where a stray colon or
- * quote is an operator rather than a word — so an unsanitized title can turn a
+ * quote is an operator rather than a word, so an unsanitized title can turn a
  * duplicate check into a syntax error, or worse into a silent zero-hit
  * qualifier like `merge:conflict`. Words only, and capped, since precision past
  * a handful of terms is noise anyway.
@@ -1078,7 +1078,7 @@ export function issueSearchTerms(title: string, max = 10): string {
 }
 
 // gh not installed / not signed in, in the exact wording the report card
-// needs — factored out because all three issue calls below need the same two
+// needs: factored out because all three issue calls below need the same two
 // guards before touching the network.
 async function issueGhGuard(): Promise<string> {
   const st = await ghStatus();
@@ -1090,7 +1090,7 @@ async function issueGhGuard(): Promise<string> {
 /**
  * Possible duplicates for a drafted report. Best-effort, like every other
  * network call in this file: a missing repo, dead gh, or signed-out login all
- * come back as a reported failure rather than blocking the draft — the card
+ * come back as a reported failure rather than blocking the draft: the card
  * just lists no matches and says why.
  */
 export async function searchIssues(repo: string, title: string, limit = 5): Promise<IssueSearchResult> {
@@ -1154,7 +1154,7 @@ export async function commentOnIssue(input: { repo: string; number: number; body
       ["issue", "comment", String(input.number), "--repo", input.repo, `--body=${input.body}`],
       { timeout: 30_000, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1" } }
     );
-    // Empty stdout is not an error here — the comment landed either way.
+    // Empty stdout is not an error here: the comment landed either way.
     return { ok: true, number: input.number, url: stdout.trim() };
   } catch (e) {
     return { ok: false, error: cliErrorMessage(e, "gh issue comment errored") };

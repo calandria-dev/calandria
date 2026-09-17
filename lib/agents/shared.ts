@@ -180,17 +180,17 @@ export function buildProjectContext(project: Project, task: Task): string {
   if (issueRepo) {
     lines.push(
       `\nYou also have a \`report_issue\` tool, and part of the job is NOTICING when it applies. ` +
-        `If the user hits a bug in Calandria itself — the app running this session, not the code you ` +
-        `are editing — or says a feature would help them ("I wish it would…", "it's annoying that…", ` +
+        `If the user hits a bug in Calandria itself (the app running this session, not the code you ` +
+        `are editing) or says a feature would help them ("I wish it would…", "it's annoying that…", ` +
         `"why can't I…"), call \`report_issue(kind, title, body)\`. It FILES NOTHING: it drafts the ` +
         `report, searches ${issueRepo} for issues that already cover it, and puts a card in the ` +
         `transcript where the user edits the wording and clicks to open a new issue or add to a ` +
-        `matching one. The card IS how you ask, so don't ask for permission in prose first — that ` +
-        `just makes them answer twice — and don't try to file it any other way. One call per ` +
+        `matching one. The card IS how you ask, so don't ask for permission in prose first: that ` +
+        `just makes them answer twice, and don't try to file it any other way. One call per ` +
         `distinct problem; mention that the card is there and let them decide. Write the body for a ` +
         `maintainer who wasn't in this session (what happened, what was expected, what they were ` +
         `doing, the exact error text), not as a quote of the chat, and keep out anything the user ` +
-        `wouldn't publish — the tracker may be public. Wants about the USER'S OWN project are not ` +
+        `wouldn't publish: the tracker may be public. Wants about the USER'S OWN project are not ` +
         `this tool; those are \`suggest_task\`.`
     );
   }

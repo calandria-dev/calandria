@@ -152,7 +152,6 @@ describe("calandria-mcp stdio bridge", () => {
       // A tool that offers to post on the user's GitHub account must not appear
       // on an instance that turned it off.
       expect(tools.map((t) => t.name)).not.toContain("report_issue");
-      // Descriptions come from the shared defs — sanity check they're populated.
       // Descriptions come from the shared defs; sanity check they're populated.
       expect(tools.find((t) => t.name === "suggest_task")?.description).toContain("Suggested tray");
     } finally {
@@ -165,7 +164,7 @@ describe("calandria-mcp stdio bridge", () => {
     try {
       const { tools } = await client.listTools();
       expect(tools.map((t) => t.name)).toContain("report_issue");
-      // The whole point of the tool, stated where the model reads it: this is a
+      // What the tool is for, stated where the model reads it: this is a
       // draft-and-offer, not a file. If that sentence ever leaves the
       // description, the model has no reason not to treat the call as the send.
       expect(tools.find((t) => t.name === "report_issue")?.description).toContain("FILES NOTHING");

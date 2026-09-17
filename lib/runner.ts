@@ -547,7 +547,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // assistant message, and each call gets exactly one card.
   const pendingSuggestCalls: string[] = [];
   // report_issue tool_use ids whose `issue_report` event hasn't arrived yet,
-  // oldest first — same reasoning as pendingSuggestCalls above.
+  // oldest first: same reasoning as pendingSuggestCalls above.
   const pendingIssueCalls: string[] = [];
   // Everything currently parked on the user: AskUserQuestion cards and
   // permission prompts alike. One assistant message can park several at
@@ -896,8 +896,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         const t = toolMsgs[ev.id];
         if (t) {
           // A suggest_task or report_issue row can have been given its card
-          // out of band
-          // while the call was in flight: the stdio bridge's endpoint
+          // out of band while the call was in flight: the stdio bridge's endpoint
           // writes straight to the message row, since a Codex session's MCP
           // client never touches this event stream. The in-memory copy
           // predates that write, so re-read it before stamping the result

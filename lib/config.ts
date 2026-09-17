@@ -142,7 +142,7 @@ export const GH_BIN = readEnv("CALANDRIA_GH_BIN") || "";
  * project, so a user who hits a bug in the app they are using can send it where
  * it gets fixed, without leaving the session to find the tracker. Point it at a
  * fork to keep reports in-house. Set it to `off` to remove the tool from every
- * agent's prompt entirely — nothing is ever filed without the user clicking
+ * agent's prompt entirely: nothing is ever filed without the user clicking
  * File on the card, but an instance that never wants the offer made shouldn't
  * have to keep declining it.
  */

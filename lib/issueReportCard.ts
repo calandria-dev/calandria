@@ -1,8 +1,8 @@
 /**
  * Bug reports and feature requests, rendered where they were raised.
  *
- * Sibling of `lib/suggestionCard.ts`, and deliberately a separate module rather
- * than a generalization of it: the two settle the same way but point at very
+ * Sibling of `lib/suggestionCard.ts`, kept as a separate module on purpose
+ * rather than a generalization of it: the two settle the same way but point at very
  * different things. A suggestion stores a pair of ids and re-reads a TASK row,
  * which anyone may start, accept or hard-delete underneath it. An issue report
  * stores one id and re-reads a row THIS feature owns, whose whole lifecycle is
@@ -10,8 +10,8 @@
  * to two sets of rules.
  *
  * What is persisted onto the tool row is only the report id. Everything the
- * card shows — the editable title and body, the possible duplicates, whether it
- * has been filed yet and at what number — is re-read per render
+ * card shows (the editable title and body, the possible duplicates, whether it
+ * has been filed yet and at what number) is re-read per render
  * (GET /api/issue-reports/[id]), for the reason the suggestion card gives: a
  * transcript is durable and a card that froze "File issue" into it would still
  * be offering to file something that had already been filed.
@@ -46,7 +46,7 @@ export function withIssueReport(data: ToolData, reportId: string): ToolData {
  *
  * Only the stdio-bridge path needs this; a turn running through the runner
  * holds its own tool rows in memory and settles there. Newest-first with a
- * claimed-row skip is what makes two reports raised in one turn land one card
+ * claimed-row skip makes two reports raised in one turn land one card
  * each rather than stacking on the first row.
  */
 export function attachIssueReportToCall(taskId: string, reportId: string): string | null {

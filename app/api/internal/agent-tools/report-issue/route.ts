@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
   // Same move as suggest-task's endpoint: the runner settles a card onto the
   // report_issue tool row for a driver whose calls ride its event stream, but
   // this endpoint is reached out-of-band by a Codex session's MCP client and
-  // never passes through that loop — so the row is found and patched here
+  // never passes through that loop, so the row is found and patched here
   // instead. `msgId` rides along so an open transcript patches the card in
   // without refetching.
   const msgId = attachIssueReportToCall(task.id, report.id);

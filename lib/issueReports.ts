@@ -1,12 +1,12 @@
 /**
- * `report_issue` — the agent noticing that the user just reported a bug in
+ * `report_issue`: the agent noticing that the user just reported a bug in
  * Calandria, or wished for a feature, and offering to send it upstream.
  *
  * THE TOOL CALL FILES NOTHING. It drafts: it writes a row, asks GitHub whether
  * an issue already covers this, and puts a card in the transcript. The only
  * thing that leaves the machine at draft time is a READ (the duplicate search).
  * Publishing to a public tracker is outward-facing and irreversible-ish, so the
- * consent is a click on the card — which is also where the user edits the text,
+ * consent is a click on the card, which is also where the user edits the text,
  * because the words that become a public issue should be theirs, not a model's
  * paraphrase of them that they only got to approve wholesale.
  *
@@ -23,7 +23,7 @@
  *    clicks landing inside one round trip would both pass it.
  *
  * A failed submit records the reason and leaves the report a draft, so the
- * user's report is never lost to a dead `gh` — they can connect GitHub and
+ * user's report is never lost to a dead `gh`: they can connect GitHub and
  * press the same button again.
  *
  * SDK-free (store + github + config) and pinned by tests/importGraph.test.ts:
@@ -140,7 +140,7 @@ export async function draftIssueReport(
     report,
     text:
       `Drafted a ${kind === "bug" ? "bug report" : "feature request"} for ${repo}: "${title}". ` +
-      `NOTHING HAS BEEN FILED — a card in the transcript lets the user edit the title and body and choose to open a new issue or add to an existing one.${dupes}${trouble} ` +
+      `NOTHING HAS BEEN FILED: a card in the transcript lets the user edit the title and body and choose to open a new issue or add to an existing one.${dupes}${trouble} ` +
       `Tell them the card is there and let them decide; don't ask for permission again in prose, and don't try to file it yourself.`,
   };
 }

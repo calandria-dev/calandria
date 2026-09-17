@@ -957,7 +957,7 @@ export interface IssueMatch {
   number: number;
   title: string;
   url: string;
-  /** "OPEN" / "CLOSED" as gh reports it — shown so adding to a closed issue is a considered choice. */
+  /** "OPEN" / "CLOSED" as gh reports it: shown so adding to a closed issue is a considered choice. */
   state: string;
 }
 

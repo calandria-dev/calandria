@@ -502,8 +502,8 @@ function RepairWorktree({ msgId, running, onRepair }: { msgId: string; running?:
  *
  * Unlike the suggestion card this one takes no handlers from the shell: every
  * action it offers is its own API route, and none of them navigate. It is also
- * the only card in the transcript whose content is EDITABLE, which is the point
- * — the text becomes a public issue under the user's GitHub account, so the
+ * the only card in the transcript whose content is EDITABLE: the text becomes
+ * a public issue under the user's GitHub account, so the
  * wording has to be theirs rather than a model's paraphrase they approved
  * wholesale. Nothing has left the machine when this renders: the tool drafted,
  * and the buttons below are the send.
@@ -523,7 +523,7 @@ function IssueReportView({ data }: { data: ToolData }) {
       setCard(c);
       // Seed the editable fields ONCE. `load()` runs again after every action,
       // and re-seeding there would throw away what the user was in the middle
-      // of typing the moment a send failed — exactly when they need it kept.
+      // of typing the moment a send failed, exactly when they need it kept.
       setEdit((prev) => prev ?? { title: c.title, body: c.body });
       setState("ready");
     } catch (e) {
@@ -578,8 +578,8 @@ function IssueReportView({ data }: { data: ToolData }) {
         : card.status === "dismissed"
           ? "Report dismissed"
           : feature
-            ? "Feature request — nothing filed yet"
-            : "Bug report — nothing filed yet";
+            ? "Feature request: nothing filed yet"
+            : "Bug report: nothing filed yet";
   const trouble = failure || (draft ? card.error : "");
 
   return (
@@ -623,7 +623,7 @@ function IssueReportView({ data }: { data: ToolData }) {
 
       {draft && !!card.matches.length && (
         <div className="issuecard-dupes">
-          <div className="issuecard-dupes-head">Possibly already reported — add to one instead of opening another:</div>
+          <div className="issuecard-dupes-head">Possibly already reported: add to one instead of opening another:</div>
           {card.matches.map((m) => (
             <div className="issuecard-dupe" key={m.number}>
               <a href={m.url} target="_blank" rel="noreferrer" title={m.title}>
@@ -652,7 +652,7 @@ function IssueReportView({ data }: { data: ToolData }) {
           >
             {Icon.github()} File new issue
           </button>
-          <button className="btn btn-sm btn-danger" disabled={busy} title="Drop this report — nothing is sent" onClick={() => void act("dismiss")}>
+          <button className="btn btn-sm btn-danger" disabled={busy} title="Drop this report: nothing is sent" onClick={() => void act("dismiss")}>
             {Icon.x()} Dismiss
           </button>
         </div>

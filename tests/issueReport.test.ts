@@ -1,8 +1,8 @@
-// `report_issue` — the tool that files nothing.
+// `report_issue`: the tool that files nothing.
 //
 // The whole feature rests on one property: a tool call DRAFTS, and only a click
 // on the transcript card publishes. Everything pinned here is a way that could
-// silently stop being true —
+// silently stop being true:
 //   - the draft never reaches GitHub, and a dead `gh` costs the user nothing;
 //   - a settled report cannot be sent a second time, so a stale tab or a double
 //     click cannot open a duplicate issue on a public tracker;
@@ -137,7 +137,7 @@ describe("draftIssueReport", () => {
     expect(text).toContain("#42");
   });
 
-  it("survives a dead gh — the report is kept, with the reason", async () => {
+  it("survives a dead gh: the report is kept, with the reason", async () => {
     const task = session("NoGh");
     searchIssuesMock.mockResolvedValue({ ok: false, error: "gh not found" });
     const { report, text } = await draft(task.id);

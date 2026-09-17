@@ -395,7 +395,7 @@ function calandriaServer(
           return { content: [{ type: "text", text }] };
         }
       ),
-      // Only when this instance has a repo configured to receive reports —
+      // Only when this instance has a repo configured to receive reports:
       // an instance with CALANDRIA_ISSUE_REPO off must not offer a tool every
       // call to which would be refused, the same reasoning create_pr's gate
       // above gives.

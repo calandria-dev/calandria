@@ -56,7 +56,7 @@ const LANDING_MODE = process.env.CALANDRIA_LANDING_MODE || "merge";
 const ASK_USER_ENABLED = !["0", "off", "false", "no"].includes(String(process.env.CALANDRIA_MCP_ASK_USER || "").toLowerCase());
 // Absent means NOT OFFERED, not "use the default". The driver always passes the
 // resolved value, so the only way to get here empty is an instance that turned
-// the tool off — or a bridge started outside a turn, which has no business
+// the tool off, or a bridge started outside a turn, which has no business
 // offering to file on the user's GitHub account either.
 const ISSUE_REPO = (process.env.CALANDRIA_ISSUE_REPO || "").trim();
 
@@ -238,12 +238,12 @@ server.registerTool(
   }
 );
 
-// Registered UNCONDITIONALLY here — unlike the in-process server's gate, this
+// Registered UNCONDITIONALLY here: unlike the in-process server's gate, this
 // bridge is a separate process with no view of CALANDRIA_ISSUE_REPO; the
 // endpoint is what refuses when the instance has the feature off.
 // Only when the instance has somewhere to file. Same reasoning as create_pr
 // above: absent rather than present-and-refusing, because an offered tool reads
-// as a sanctioned move — and this one would read as "Calandria wants you to
+// as a sanctioned move, and this one would read as "Calandria wants you to
 // post this publicly".
 if (ISSUE_REPO) {
   server.registerTool(
