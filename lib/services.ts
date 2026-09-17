@@ -32,7 +32,7 @@ import { getProject, getSetting, setSetting } from "./store";
 import { resolveFeatures } from "./features";
 import { SERVICE_LOG_LINES } from "./config";
 import { appHostFromEnv, serviceHostsEnabled, slugifyServiceName } from "./service-host.mjs";
-import { hasProcessGroups, killTree, treeAlive, treeMatchesCommand } from "./processTree";
+import { confirmTreeCommand, hasProcessGroups, killTree, killTreeAndWait } from "./processTree";
 
 // Per-service log ring buffer cap (lines): CALANDRIA_SERVICE_LOG_LINES, default 1500.
 const LOG_CAP = SERVICE_LOG_LINES;
@@ -664,14 +664,24 @@ export function rotateShareToken(project: Project, name: string): ServiceInfo {
 // the port must be free before startService probes it.
 async function reapOrphan(row: ServiceRow): Promise<void> {
   if (!row.pid) return;
-  if (treeMatchesCommand(row.pid, row.command)) {
-    killTree(row.pid, "SIGKILL");
-    const deadline = Date.now() + 2000;
-    while (Date.now() < deadline) {
-      if (!treeAlive(row.pid)) break;
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    console.log(`[services] reaped orphaned process tree ${row.pid} (${row.name}) from a previous server`);
+  const probe = await confirmTreeCommand(row.pid, row.command);
+  if (probe === "match") {
+    // Confirmed dead, not merely asked to die: the replacement is about to
+    // probe this service's port, and on win32 `taskkill` returns before the
+    // tree is gone.
+    const gone = await killTreeAndWait(row.pid, "SIGKILL", { timeoutMs: 5000 });
+    console.log(
+      gone
+        ? `[services] reaped orphaned process tree ${row.pid} (${row.name}) from a previous server`
+        : `[services] orphaned process tree ${row.pid} (${row.name}) was still alive 5s after the kill; the respawn may find its port held`
+    );
+  } else if (probe === "unknown") {
+    // The old line for this case was no line at all, which is how issue #324
+    // stayed a hypothesis: a declined reap and a pid that was never ours look
+    // identical in the log.
+    console.warn(
+      `[services] could not read the command line of process ${row.pid} (${row.name}); leaving it alone in case the pid was recycled`
+    );
   }
   setPid(row.project_id, row.name, 0);
 }
