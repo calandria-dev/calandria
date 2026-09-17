@@ -285,6 +285,12 @@ Calandria adds no hook gate of its own. Codex already refuses to run an unreview
 reviewing a hook is a judgment about a script, separate from the permission card every tool call
 still goes through.
 
+To exercise all of this against the real binary without spending an account or touching a live
+service, run the hook harness: a throwaway `CODEX_HOME`, an inert MCP stub, and a loopback model
+fixture, launched through this driver. `docs/CODEX_HOOK_HARNESS.md` covers how to run it, what it
+does and does not isolate, and the `.codex/hooks.json` schema and hook stdin/stdout contract it
+captured live.
+
 Verified against codex-cli 0.153.0. Codex exposes no protocol method to mark a hook trusted;
 Calandria writes the trust record through the CLI's own generic configuration-write request, the
 one its own TUI uses for the same purpose. A future CLI release could add a dedicated method.
