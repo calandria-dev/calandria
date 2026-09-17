@@ -3,7 +3,9 @@
 #
 # Nine jobs, deliberately on different schedules:
 #
-#   audit — `npm audit --package-lock-only --omit=dev --audit-level=high`.
+#   audit — `npm audit --package-lock-only --omit=dev --audit-level=high`, via
+#           scripts/npm-audit.mjs so a failed advisory endpoint reads as
+#           unavailable instead of as a finding (issue #207).
 #           Seconds — genuinely, now: no `npm ci` precedes it, since the
 #           advisory set comes from the registry keyed on the lockfile, not
 #           from an installed tree, so the install bought this job nothing but
@@ -355,7 +357,14 @@ jobs:
       # reds unrelated PRs at random (issue #203). Measured with no
       # node_modules present: `npm audit --package-lock-only --omit=dev
       # --audit-level=high` completes in well under a minute.
-      - run: npm audit --package-lock-only --omit=dev --audit-level=high
+      #
+      # The wrapper is that exact command plus one guard (issue #207): npm exits
+      # 1 both for an advisory and for the advisory endpoint failing, so an
+      # unguarded step makes a red check mean either. It retries a failed
+      # endpoint, then passes with a `::warning::` when the advisory set could
+      # not be read at all, and still fails on a report that contains
+      # advisories. security-scan.yml's weekly lane runs the same line.
+      - run: node scripts/npm-audit.mjs
 
   typecheck:
     name: Types (tsc)
