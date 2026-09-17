@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Icon } from "./icons";
 import { Logo } from "./Logo";
 import { TerminalView, type TermApi } from "./Terminal";
-import TaskChanges from "./TaskChanges";
 import { PROJ_W, TASK_W, DEFAULT_LAYOUT, AUTO_COLLAPSE_BELOW } from "./shell/types";
+import { INITIAL_POLICY, applyShed, applyOverride, isCollapsed, shedLabel, type Col, type CollapsePolicy } from "./shell/collapsePolicy";
 import { useShell } from "./shell/useShell";
 import { ProjectsColumn } from "./shell/ProjectsColumn";
 import { TasksColumn } from "./shell/TasksColumn";
@@ -15,9 +15,11 @@ import { ProjectLanding } from "./shell/ProjectLanding";
 import { selectOneTag } from "./shell/TagChips";
 import { SettingsView } from "./shell/SettingsView";
 import { InsightsView } from "./shell/InsightsView";
+import { UpdatePill } from "./shell/UpdatePill";
+import { useUpdates } from "./shell/useUpdates";
 import { AppearancePanel } from "./shell/AppearancePanel";
 import { ColResize, ColRail, TerminalDrawer, BootSkeleton } from "./shell/Layout";
-import { ServicesDrawer } from "./shell/Services";
+import { ServicesDrawer, ServicesPane } from "./shell/Services";
 import { clientFeatures } from "@/lib/features";
 import { NewTaskModal, EditTaskModal, MoveTasksModal, TagTasksModal, ContextModal, NewProjectModal, SessionsModal } from "./shell/modals";
 import { OnboardingWizard } from "./shell/OnboardingWizard";
@@ -27,11 +29,14 @@ import { NeedsYouMenu } from "./shell/NeedsYouMenu";
 import { PlanUsagePill } from "./shell/PlanUsage";
 import { CommandPalette, type PaletteCommand } from "./shell/CommandPalette";
 import { MobileTabBar, type MobileTabId } from "./shell/MobileTabBar";
+import { isMacDesktopShell } from "./shell/useNotifications";
+import { terminalShouldSuspend } from "./shell/lifecycle";
+import { useViewportInsets } from "./shell/useViewportInsets";
 
 // Below this width the three columns can't coexist, so the workspace collapses to
-// one pane at a time (projects → tasks → session) with back affordances. matchMedia
-// keeps it in sync with rotation/resize; SSR renders the desktop layout (false) and
-// the effect corrects on mount — selection state alone drives which pane shows.
+// one pane at a time (projects -> tasks -> session) with back affordances. matchMedia
+// keeps it in sync with rotation/resize. SSR renders the desktop layout (false), and
+// the effect corrects on mount. Selection state alone drives which pane shows.
 const MOBILE_QUERY = "(max-width: 760px)";
 function useIsMobile() {
   const [mobile, setMobile] = useState(false);
@@ -45,41 +50,61 @@ function useIsMobile() {
   return mobile;
 }
 
+// On macOS the desktop shell hides the native title bar, so the app's own
+// titlebar inherits both of its jobs: leaving room for the traffic lights that
+// float over its top-left corner, and being the thing you drag the window by.
+// Both are CSS; this only decides whether to ask for them.
+//
+// Same SSR contract as useIsMobile: the server renders the browser layout
+// (false) and the effect corrects on mount, since the UA this depends on is a
+// fact about the client and one server serves both (see isMacDesktopShell).
+function useMacDesktopChrome() {
+  const [macChrome, setMacChrome] = useState(false);
+  useEffect(() => setMacChrome(isMacDesktopShell(navigator.userAgent)), []);
+  return macChrome;
+}
+
 // Which side columns the window is too narrow to keep open, per
-// AUTO_COLLAPSE_BELOW. Same matchMedia contract as useIsMobile: SSR renders the
-// full-width layout (nothing shed) and the effect corrects on mount, so the
-// first paint never disagrees with the server. Below 760px it stops mattering —
-// the phone layout mounts one pane at a time and none of these coexist.
-type Col = "proj" | "task" | "rail";
-function useAutoCollapse(): Record<Col, boolean> {
-  const [shed, setShed] = useState({ proj: false, task: false, rail: false });
+// AUTO_COLLAPSE_BELOW, together with the spines' "show it anyway" overrides,
+// held as one value since an override is only good at the shed set it was
+// granted under (collapsePolicy.ts has the why). Same matchMedia contract as
+// useIsMobile: SSR renders the full-width layout (nothing shed) and the effect
+// corrects on mount, so the first paint never disagrees with the server. Below
+// 760px it stops mattering: the phone layout mounts one pane at a time and
+// none of these coexist.
+function useAutoCollapse(): { policy: CollapsePolicy; override: (col: Col, open: boolean) => void } {
+  const [policy, setPolicy] = useState<CollapsePolicy>(INITIAL_POLICY);
   useEffect(() => {
     const qs: Record<Col, MediaQueryList> = {
       proj: window.matchMedia(`(max-width:${AUTO_COLLAPSE_BELOW.proj - 1}px)`),
       task: window.matchMedia(`(max-width:${AUTO_COLLAPSE_BELOW.task - 1}px)`),
       rail: window.matchMedia(`(max-width:${AUTO_COLLAPSE_BELOW.rail - 1}px)`),
     };
-    const sync = () => setShed({ proj: qs.proj.matches, task: qs.task.matches, rail: qs.rail.matches });
+    // Functional, so two change events that land in one batch each apply in
+    // turn and each drops the overrides. The intermediate shed set is never
+    // rendered and doesn't need to be.
+    const sync = () => setPolicy((p) => applyShed(p, { proj: qs.proj.matches, task: qs.task.matches, rail: qs.rail.matches }));
     sync();
     for (const mq of Object.values(qs)) mq.addEventListener("change", sync);
     return () => { for (const mq of Object.values(qs)) mq.removeEventListener("change", sync); };
   }, []);
-  return shed;
+  const override = useCallback((col: Col, open: boolean) => setPolicy((p) => applyOverride(p, col, open)), []);
+  return { policy, override };
 }
 
 // Phone terminal: a full-screen sheet (vs. the cramped desktop bottom-drawer) so
-// output is actually legible. It's a read-mostly surface — glancing at a dev
-// server, reading an error, pasting the Claude login code, tapping the OAuth URL
-// — not a place to hand-type code, so input is just the few buttons people need.
+// output is legible. It's a read-mostly surface: glancing at a dev server,
+// reading an error, pasting the Claude login code, tapping the OAuth URL, not a
+// place to hand-type code, so input is just the few buttons people need.
 function MobileTerminalSheet({ cwd, port, visible, onClose }: { cwd: string; port?: number; visible: boolean; onClose: () => void }) {
-  const [epoch, setEpoch] = useState(0);   // bump → fresh shell
+  const [epoch, setEpoch] = useState(0);   // bump for a fresh shell
   const [fontSize, setFontSize] = useState(13);
   const apiRef = useRef<TermApi | null>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
 
-  // Pin the sheet to the *visual* viewport so the on-screen keyboard pushes the
-  // button-bar and output up rather than covering them. visualViewport shrinks
-  // when the keyboard opens; falling back to 100% when it's unavailable.
+  // Pin the sheet to the *visual* viewport, so the on-screen keyboard pushes
+  // the button-bar and output up instead of covering them. visualViewport
+  // shrinks when the keyboard opens; falls back to 100% when it's unavailable.
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv || !visible) return;
@@ -90,9 +115,52 @@ function MobileTerminalSheet({ cwd, port, visible, onClose }: { cwd: string; por
     return () => { vv.removeEventListener("resize", apply); vv.removeEventListener("scroll", apply); };
   }, [visible]);
 
+  // A hidden sheet holds a shell, an xterm buffer and a WebSocket for nobody.
+  // iOS drops the socket during a background anyway, so what it would keep is
+  // a dead buffer. Tear it down when the page goes to the background while the
+  // sheet is hidden (lifecycle.ts has the decision); the next open spawns a
+  // fresh shell. A sheet the user is looking at is left alone.
+  const [suspended, setSuspended] = useState(false);
+  useEffect(() => {
+    const onBackground = () => {
+      const pageHidden = document.visibilityState === "hidden";
+      if (terminalShouldSuspend({ mobile: true, sheetVisible: visible, pageHidden })) setSuspended(true);
+    };
+    document.addEventListener("visibilitychange", onBackground);
+    window.addEventListener("pagehide", onBackground);
+    return () => {
+      document.removeEventListener("visibilitychange", onBackground);
+      window.removeEventListener("pagehide", onBackground);
+    };
+  }, [visible]);
+  useEffect(() => { if (visible) setSuspended(false); }, [visible]);
+
+  // A sheet the user left open backgrounds with its socket alive, and iOS
+  // closes it a few seconds in. It would come back showing "press Enter to
+  // start a new shell", and on a build carrying WebKit 308073 that respawn
+  // hangs at CONNECTING. Respawn on resume instead, which remounts the whole
+  // terminal and so gives the retry a fresh xterm as well. Only when the
+  // socket actually closed: a live shell (a long `npm run dev`, say) must
+  // survive a glance at another app.
+  const closedRef = useRef(false);
+  useEffect(() => {
+    if (!visible) return;
+    const onResume = () => {
+      if (document.visibilityState !== "visible" || !closedRef.current) return;
+      closedRef.current = false;
+      setEpoch((e) => e + 1);
+    };
+    document.addEventListener("visibilitychange", onResume);
+    window.addEventListener("pageshow", onResume);
+    return () => {
+      document.removeEventListener("visibilitychange", onResume);
+      window.removeEventListener("pageshow", onResume);
+    };
+  }, [visible]);
+
   const send = (d: string) => apiRef.current?.send(d);
   const paste = async () => {
-    try { const t = await navigator.clipboard.readText(); if (t) send(t); } catch { /* clipboard blocked — long-press paste still works */ }
+    try { const t = await navigator.clipboard.readText(); if (t) send(t); } catch { /* clipboard blocked, long-press paste still works */ }
   };
 
   return (
@@ -106,7 +174,11 @@ function MobileTerminalSheet({ cwd, port, visible, onClose }: { cwd: string; por
         <button className="icon-btn" onClick={() => setEpoch((e) => e + 1)} title="Restart shell">{Icon.clear()}</button>
         <button className="icon-btn" onClick={onClose} title="Close terminal (the shell keeps running)">{Icon.x()}</button>
       </div>
-      <TerminalView key={epoch} cwd={cwd} port={port} fontSize={fontSize} onReady={(api) => { apiRef.current = api; }} />
+      {suspended
+        ? <div className="term-host" />
+        : <TerminalView key={epoch} cwd={cwd} port={port} fontSize={fontSize}
+            onReady={(api) => { apiRef.current = api; closedRef.current = false; }}
+            onClosed={() => { closedRef.current = true; }} />}
       <div className="mterm-keys">
         <button className="mtk" onClick={paste}>Paste</button>
         <span style={{ flex: 1 }} />
@@ -117,7 +189,8 @@ function MobileTerminalSheet({ cwd, port, visible, onClose }: { cwd: string; por
   );
 }
 
-export default function Shell() {
+/** @param instanceName CALANDRIA_INSTANCE_NAME, or "" on an unnamed instance. */
+export default function Shell({ instanceName = "" }: { instanceName?: string }) {
   const o = useShell();
   const { project, task, selProj, selTask, layout } = o;
   // Tags by id, for the session header's badges (a task can carry several).
@@ -125,26 +198,32 @@ export default function Shell() {
   // slide-over) need it.
   const tagsById = useMemo(() => new Map(o.tags.map((t) => [t.id, t])), [o.tags]);
   const isMobile = useIsMobile();
+  const macChrome = useMacDesktopChrome();
+  // Keeps --kb-inset (the on-screen keyboard's overlap) on <html> and undoes
+  // the document scroll WebKit applies to clear a focused field. Both are
+  // things the phone layout cannot see from CSS; see shell/viewport.ts.
+  useViewportInsets(isMobile);
+  // One instance-wide fact, read once here and handed to the two places that
+  // render it: the titlebar pill and the Updates field in Settings.
+  const updates = useUpdates();
 
   // Auto-collapse: the shed set the window width implies, plus the columns the
   // user has re-opened from their spine in spite of it. The override is what
-  // keeps the spine's button honest — without it, clicking "Show projects
+  // keeps the spine's button honest: without it, clicking "Show projects
   // panel" at 1024px would flip `layout.projCollapsed` and change nothing
-  // visible — and it is deliberately session-only. Persisting it would carry a
-  // decision made at one size into every later window; instead it is cleared
-  // whenever the shed set changes, so widening and re-narrowing starts the
-  // policy over. `layout` itself is never written by the policy, only by the
-  // user's own collapse/expand clicks, which do persist.
-  const shed = useAutoCollapse();
-  const [reopened, setReopened] = useState<Partial<Record<Col, boolean>>>({});
-  const shedKey = `${shed.proj}${shed.task}${shed.rail}`;
-  useEffect(() => { setReopened((r) => (Object.keys(r).length ? {} : r)); }, [shedKey]);
-  const projCollapsed = layout.projCollapsed || (shed.proj && !reopened.proj);
-  const taskCollapsed = layout.taskCollapsed || (shed.task && !reopened.task);
-  const railCollapsed = layout.railCollapsed || (shed.rail && !reopened.rail);
+  // visible. It is session-only: persisting it would carry a decision made at
+  // one size into every later window. Instead it lives with the shed set it
+  // was granted under and goes with it, so widening and re-narrowing starts
+  // the policy over (collapsePolicy.ts). `layout` itself is never written by
+  // the policy, only by the user's own collapse/expand clicks, which do
+  // persist.
+  const { policy: collapse, override } = useAutoCollapse();
+  const projCollapsed = isCollapsed(collapse, "proj", layout.projCollapsed);
+  const taskCollapsed = isCollapsed(collapse, "task", layout.taskCollapsed);
+  const railCollapsed = isCollapsed(collapse, "rail", layout.railCollapsed);
   const setCollapsed = (col: Col, v: boolean) => {
     o.setLayout((l) => (col === "proj" ? { ...l, projCollapsed: v } : col === "task" ? { ...l, taskCollapsed: v } : { ...l, railCollapsed: v }));
-    setReopened((r) => ({ ...r, [col]: !v }));
+    override(col, !v);
   };
 
   const features = clientFeatures();
@@ -164,8 +243,8 @@ export default function Shell() {
   // "connect another agent" nudge deep-links to Agents). undefined = default.
   const [settingsSection, setSettingsSection] = useState<string | undefined>();
   const openSettings = (sect?: string) => { setSettingsSection(sect); o.setView("settings"); };
-  // Drop the open flag if the pill itself disappears (count → 0), so it doesn't
-  // silently re-open when a task next starts waiting.
+  // Drop the open flag if the pill itself disappears (count reaches 0), so it
+  // doesn't re-open when a task next starts waiting.
   useEffect(() => { if (o.needsYouTotal === 0) setNeedsYouOpen(false); }, [o.needsYouTotal]);
 
   // Tab title names the selected project so parallel Calandria tabs are
@@ -178,11 +257,11 @@ export default function Shell() {
   // re-enabling the feature turns on both the visual affordance and the shortcut.
   const [paletteOpen, setPaletteOpen] = useState(false);
   // Ids handed up by the task list's multi-select when "Move to project…" is
-  // pressed. Held here rather than in the column because every modal is mounted
-  // by the shell; the column keeps owning the selection itself, so a task the
-  // server refuses stays picked when the modal closes.
+  // pressed. Held here because every modal is mounted by the shell; the column
+  // keeps owning the selection itself, so a task the server refuses stays
+  // picked when the modal closes.
   const [bulkMoveIds, setBulkMoveIds] = useState<string[] | null>(null);
-  // The same shape for the selection bar's other verb — add/remove tags over a
+  // The same shape for the selection bar's other verb: add/remove tags over a
   // whole selection (app/shell/modals TagTasksModal).
   const [bulkTagIds, setBulkTagIds] = useState<string[] | null>(null);
   const [clearRequest, setClearRequest] = useState<string | null>(null);
@@ -208,12 +287,12 @@ export default function Shell() {
   }, [omniEnabled]);
 
   // Board mode (desktop): the board replaces BOTH the tasks column and the
-  // session pane — it owns everything right of the projects sidebar. On mobile
+  // session pane, owning everything right of the projects sidebar. On mobile
   // the board still renders inside the tasks pane (single-pane navigation).
   const boardMode = o.taskView === "board" && !isMobile && o.view === "workspace" && !!project;
-  // The slide-over session panel opens only from an explicit card click — the
+  // The slide-over session panel opens only from an explicit card click. The
   // app's auto-selection paths (landing on a project picks its first task)
-  // just highlight the card, they don't pop a panel over the board.
+  // just highlight the card; they don't pop a panel over the board.
   const [boardPanel, setBoardPanel] = useState(false);
   const openBoardTask = (id: string) => { o.setSelTask(id); setBoardPanel(true); };
   const closeBoardPanel = () => { setBoardPanel(false); o.setSelTask(null); };
@@ -222,7 +301,7 @@ export default function Shell() {
     o.setTaskView(v);
   };
 
-  // ⌘⇧B — flip list/board (sticky, same pref the header toggles write).
+  // ⌘⇧B: flip list/board (sticky, same pref the header toggles write).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "b") {
@@ -249,33 +328,34 @@ export default function Shell() {
   // selection state, so the titlebar "needs you" pill (which drives selection)
   // navigates correctly from any level.
   //
-  // "project" is the phone's fourth level, and it exists because ProjectLanding
-  // had no mount point here at all: on desktop that pane IS "a project is open
-  // and no task is selected", but on a phone that same state shows the task
-  // list, so Runbooks, Schedules, the Tags card and the recap — every
-  // project-level surface ProjectLanding hosts — were unreachable by
-  // construction. It's entered by tapping the project name in the task list's
-  // header (the same "Project home" control desktop has) and sits between the
-  // task list and the session in the Back stack (navHistory.ts).
+  // "project" is the phone's fourth level, added because ProjectLanding had no
+  // mount point here at all: on desktop that pane IS "a project is open and no
+  // task is selected", but on a phone that same state shows the task list, so
+  // Runbooks, Schedules, the Tags card and the recap (every project-level
+  // surface ProjectLanding hosts) were unreachable by construction. It's
+  // entered by tapping the project name in the task list's header (the same
+  // "Project home" control desktop has) and sits between the task list and
+  // the session in the Back stack (navHistory.ts).
   const mobilePane: "projects" | "tasks" | "project" | "session" =
     !project ? "projects" : task ? "session" : o.projectHome ? "project" : "tasks";
 
   // Bottom tab bar (mobile only). Board reuses the drill-down above unchanged;
-  // Diffs/Terminals are new full-pane surfaces; Insights mirrors the existing
+  // Services/Terminals are full-pane surfaces; Insights mirrors the existing
   // o.view toggle so the URL and the desktop chart icon stay in sync with it.
   const [mobileTab, setMobileTab] = useState<MobileTabId>("board");
   useEffect(() => { if (isMobile && o.view === "insights") setMobileTab("insights"); }, [isMobile, o.view]);
   // Programmatic navigation to a different task (NEED-YOU pill, notification
-  // click, ⌘K) changes selTask without going through the tab bar, so a tab
-  // left on insights/diffs/terminals swallowed the drill-down silently — the
-  // screen never moved. Snap back to the board, where the task is visible.
+  // click, ⌘K) changes selTask without going through the tab bar. A tab left
+  // on insights/diffs/terminals would otherwise swallow the drill-down with
+  // the screen never moving, so snap back to the board, where the task is
+  // visible.
   const prevSelTaskRef = useRef(selTask);
   useEffect(() => {
     if (isMobile && selTask && selTask !== prevSelTaskRef.current) setMobileTab("board");
     prevSelTaskRef.current = selTask;
   }, [isMobile, selTask]);
   // …and the selTask watch above can't see a jump to the task that's ALREADY
-  // selected (needs-you row for the chat you left to look at Diffs), so every
+  // selected (needs-you row for the chat you left to look at Services), so every
   // goToTask also bumps navEpoch: an explicit "navigate somewhere" signal that
   // snaps the tab back to the board even when no selection changed.
   useEffect(() => {
@@ -284,12 +364,11 @@ export default function Shell() {
   }, [isMobile, o.navEpoch]);
   const selectMobileTab = (t: MobileTabId) => {
     // Re-tapping the ACTIVE Board tab from inside a task pops back to the
-    // board root — the project's task list — the way a native tab bar pops
-    // its stack. It was a dead tap before: the tab was already "board", so
-    // nothing changed and the session stayed on screen. Deselecting is
-    // enough (mobile skips the desktop auto-pick-first-task landing in
-    // useRecaps); the URL/history trap re-mirrors off the new selection.
-    // The project-home pane pops the same way, to the same root.
+    // board root (the project's task list), the way a native tab bar pops
+    // its stack. Deselecting is enough: mobile skips the desktop
+    // auto-pick-first-task landing in useRecaps, and the URL/history trap
+    // re-mirrors off the new selection. The project-home pane pops the same
+    // way, to the same root.
     if (t === "board" && mobileTab === "board" && o.view === "workspace") {
       if (mobilePane === "session") { o.setSelTask(null); return; }
       if (mobilePane === "project") { o.setProjectHome(false); return; }
@@ -314,7 +393,7 @@ export default function Shell() {
   const tasksColumn = project && (
     <TasksColumn
       mobile={isMobile}
-      onBack={isMobile ? () => window.history.back() : undefined}
+      onBack={isMobile ? o.goBack : undefined}
       width={layout.taskW}
       onCollapse={() => setCollapsed("task", true)}
       project={project} agents={o.agents} tasks={o.realTasks} suggested={o.suggested} tags={o.tags} selTaskId={selTask} running={o.running} blockedBy={o.blockedBy}
@@ -339,16 +418,16 @@ export default function Shell() {
           <SessionView
             key={task.id}
             mobile={isMobile}
-            onBack={isMobile ? () => window.history.back() : undefined}
+            onBack={isMobile ? o.goBack : undefined}
             project={project} task={task} tagsById={tagsById} agents={o.agents} messages={o.messages} running={o.running.has(task.id)} blockedBy={o.blockedBy.get(task.id)}
             transcriptLoading={o.transcriptLoading}
             onSend={(text) => o.runTurn(task.id, text, false)}
             onStart={() => o.runTurn(task.id, "", true)}
             onStop={() => o.stopTurn(task.id)}
             onClear={() => requestClear(task.id)} clearConfirming={clearRequest === task.id} onConfirmClear={confirmClear} onCancelClear={() => setClearRequest(null)} onEdit={() => o.setEditId(task.id)}
-            onReconnect={() => openSettings("agents")}
+            onReconnect={() => openSettings("models")}
             onSetStatus={o.setStatus} onSetPriority={o.setPriority} onSetModel={o.setModel}
-            onSetReasoning={o.setReasoning} onSetPermission={o.setPermission} onSetSendContext={o.setSendContext} onSetAutoStart={o.setAutoStart}
+            onSetReasoning={o.setReasoning} onSetPermission={o.setPermission} onSetSandbox={o.setSandbox} onSetSendContext={o.setSendContext} onSetAutoStart={o.setAutoStart}
                 onSnooze={(until) => o.snoozeTask(task.id, until)} onUnsnooze={() => o.unsnoozeTask(task.id)}
             onQueueStart={(at) => o.queueStart(task.id, at)} onCancelQueuedStart={() => o.cancelQueuedStart(task.id)}
             onResolveWithAI={o.resolveConflictsWithAI}
@@ -386,17 +465,13 @@ export default function Shell() {
           </div>
         )}
       </div>
-      {/* Managed services: desktop only, and that is ACCIDENTAL, not a decision
-          — the same class of gap as the one this pane fixes. `.tb-actions` is
-          `display:none` on a phone (globals.css) so the Services button isn't
-          even rendered there, and this gate then declines to mount the drawer,
-          so a phone has no way to start, stop or read the log of a project's
-          dev server. Unlike the terminal below there is no mobile substitute.
-          It is left alone here rather than half-fixed because the drawer needs
-          real work to fit a phone — a mouse-only drag-to-resize handle and a
-          side-by-side service-list/log split — and that is its own task, not a
-          rider on this one. When it is done, the project pane above is where it
-          belongs: it is the project-level surface a phone now has. */}
+      {/* Managed services: this bottom drawer is desktop only. A
+          phone gets ServicesPane on its own Services tab instead, which is the
+          same stream and the same routes in a shape that fits 390px: a list,
+          then one service's log, rather than a pixel-height sheet with a
+          mouse-drag resize handle and a list sitting beside its log pane.
+          `.tb-actions` is `display:none` on a phone (globals.css), so the
+          Services button that toggles this drawer isn't rendered there either. */}
       {project && features.services && o.servicesMounted && !isMobile && (
         <ServicesDrawer
           key={`svc-${project.id}`}
@@ -408,11 +483,11 @@ export default function Shell() {
           onResize={o.setServicesHeight}
         />
       )}
-      {/* Terminal: desktop only ON PURPOSE — a phone gets MobileTerminalSheet
-          (mounted at the bottom of this file), a full-screen sheet with real
-          text sizing and a Paste/Ctrl-C/Enter key row, plus its own Terminals
-          tab. This bottom drawer is the cramped desktop form; mounting both
-          would put two live shells in the same project. Deliberate omission. */}
+      {/* Terminal: desktop only. A phone gets MobileTerminalSheet (mounted at
+          the bottom of this file), a full-screen sheet with real text sizing
+          and a Paste/Ctrl-C/Enter key row, plus its own Terminals tab. This
+          bottom drawer is the cramped desktop form; mounting both would put
+          two live shells in the same project. */}
       {project && o.termMounted && !isMobile && (
         <TerminalDrawer
           key={project.id}
@@ -461,9 +536,9 @@ export default function Shell() {
                 onStart={() => o.runTurn(task.id, "", true)}
                 onStop={() => o.stopTurn(task.id)}
                 onClear={() => requestClear(task.id)} clearConfirming={clearRequest === task.id} onConfirmClear={confirmClear} onCancelClear={() => setClearRequest(null)} onEdit={() => o.setEditId(task.id)}
-                onReconnect={() => openSettings("agents")}
+                onReconnect={() => openSettings("models")}
                 onSetStatus={o.setStatus} onSetPriority={o.setPriority} onSetModel={o.setModel}
-                onSetReasoning={o.setReasoning} onSetPermission={o.setPermission} onSetSendContext={o.setSendContext} onSetAutoStart={o.setAutoStart}
+                onSetReasoning={o.setReasoning} onSetPermission={o.setPermission} onSetSandbox={o.setSandbox} onSetSendContext={o.setSendContext} onSetAutoStart={o.setAutoStart}
                 onSnooze={(until) => o.snoozeTask(task.id, until)} onUnsnooze={() => o.unsnoozeTask(task.id)}
                 onQueueStart={(at) => o.queueStart(task.id, at)} onCancelQueuedStart={() => o.cancelQueuedStart(task.id)}
                 onResolveWithAI={o.resolveConflictsWithAI}
@@ -515,7 +590,7 @@ export default function Shell() {
   // Mobile project pane: ProjectLanding with a header of its own. On desktop
   // this component lives in the session column, framed by the task list beside
   // it; on a phone that frame is a different pane, so the back chevron (to the
-  // task list, one Back level — navHistory.ts), the project name and the New
+  // task list, one Back level, navHistory.ts), the project name and the New
   // task action have to travel with the pane. Everything below the header is
   // the same component desktop renders, so Runbooks/Schedules/Tags/recap
   // can't drift between the two.
@@ -543,7 +618,7 @@ export default function Shell() {
           recap={o.recaps[project.id]}
           tags={o.tags}
           // A tag chip is a filter on the TASK LIST, so picking one has to
-          // leave this pane — otherwise the tap looks dead on a phone.
+          // leave this pane; otherwise the tap looks dead on a phone.
           onSelectTag={(id) => { selectOneTag(project.id, id); o.setProjectHome(false); }}
           onNewTask={() => o.setModal("task")}
           onRefreshRecap={() => o.fetchRecap(project.id, true)}
@@ -553,24 +628,24 @@ export default function Shell() {
     </div>
   );
 
-  // Mobile Diffs tab: the same TaskChanges the desktop rail mounts, full-pane
-  // and task-scoped, wired to onSend the same way SessionView does.
-  const diffsColumn = (
-    <div className="col col-diffs">
-      {task && project ? (
-        <TaskChanges
-          taskId={task.id} projectId={project.id} running={o.running.has(task.id)} pr={task} landingMode={project.landing_mode}
-          onMerged={o.onMerged} onPrCreated={o.onPrCreated}
-          onSend={(text) => o.runTurn(task.id, text, false)}
-          onResolveWithAI={o.resolveConflictsWithAI}
-        />
-      ) : (
-        <div className="empty void" style={{ margin: "auto" }}>
-          <div className="e-ic"><Logo size={40} /></div>
-          <div className="e-t">No task selected</div>
-          <div className="e-s">Select a task to see its changes.</div>
-        </div>
-      )}
+  // Mobile Services tab: the project's managed services full-pane, the phone's
+  // substitute for the desktop bottom drawer (which stays desktop-only, see the
+  // ServicesDrawer mount above). Project-scoped, so it stands on its own with
+  // no task selected, and it is reachable from inside a task too.
+  const servicesColumn = project ? (
+    <ServicesPane
+      key={`msvc-${project.id}`}
+      projectId={project.id}
+      projectName={project.name}
+      hasConfig={!!(project.dev_command || project.setup_command || project.test_command)}
+    />
+  ) : (
+    <div className="col col-services">
+      <div className="empty void" style={{ margin: "auto" }}>
+        <div className="e-ic"><Logo size={40} /></div>
+        <div className="e-t">No project selected</div>
+        <div className="e-s">Pick a project to see its services.</div>
+      </div>
     </div>
   );
 
@@ -587,17 +662,21 @@ export default function Shell() {
       setAppearance={o.setAppearance}
       appDefaults={o.appDefaults}
       setAppDefault={o.setAppDefault}
+      setAppDefaultMany={o.setAppDefaultMany}
       agents={o.agents}
       onAgentsRefresh={o.refreshAgents}
       onReset={o.resetSettings}
       onRerunSetup={o.rerunOnboarding}
       onClose={() => o.setView("workspace")}
       initialSection={settingsSection}
+      updates={updates}
+      currentProjectId={project?.id ?? null}
+      projects={o.activeProjects.map((p) => ({ id: p.id, name: p.name }))}
     />
   );
 
   return (
-    <div className={`app${isMobile ? " mobile" : ""}`}>
+    <div className={`app${isMobile ? " mobile" : ""}${macChrome ? " mac-chrome" : ""}`}>
       <div className="titlebar">
         <div className="tb-left">
           <div className="tb-logo" title="Calandria">
@@ -608,8 +687,11 @@ export default function Shell() {
             <>
               <span className="tb-div" />
               <div className="tb-crumb">
-                <span className="cz">fleet</span><span className="cs">/</span>
-                <span className="cn">{o.view === "insights" ? "insights" : project ? project.name : "—"}</span>
+                {/* The breadcrumb root names the INSTANCE when it has a name
+                    (CALANDRIA_INSTANCE_NAME), so two tabs open on two servers
+                    are told apart on sight. Unnamed instances keep "fleet". */}
+                <span className="cz" title={instanceName || undefined}>{instanceName || "fleet"}</span><span className="cs">/</span>
+                <span className="cn">{o.view === "insights" ? "insights" : project ? project.name : "–"}</span>
               </div>
             </>
           )}
@@ -624,7 +706,8 @@ export default function Shell() {
         )}
 
         <div className="tb-right">
-          <PlanUsagePill />
+          <UpdatePill updates={updates} isMobile={isMobile} />
+          <PlanUsagePill agents={o.agents} appDefaults={o.appDefaults} />
           {o.needsYouTotal > 0 && (
             <div style={{ position: "relative" }}>
               <button
@@ -688,15 +771,17 @@ export default function Shell() {
         </div>
       </div>
 
-      {/* An agent's login died — nothing can run until it's reconnected, and that
-          is true for every project, so it lives above the whole workspace rather
-          than inside the task that happened to hit it first. */}
-      <AgentAuthBanner broken={o.brokenAgents} onReconnect={() => openSettings("agents")} />
+      {/* An agent's login died, so nothing can run until it's reconnected, and
+          that is true for every project. It lives above the whole workspace
+          instead of inside the task that happened to hit it first. */}
+      <AgentAuthBanner broken={o.brokenAgents} onReconnect={() => openSettings("models")} />
 
-      <div className={`body${isMobile ? " mobile" : ""}`}>
+      {/* data-shed: the auto-collapse policy as the app currently sees it, its
+          one observable (collapsePolicy.ts). */}
+      <div className={`body${isMobile ? " mobile" : ""}`} data-shed={shedLabel(collapse.shed)}>
         {o.bootError ? (
-          // The very first fetch failed — nothing to render behind this, so a
-          // centered retry beats an empty workspace that looks "hung".
+          // The very first fetch failed, so there is nothing to render behind
+          // this; a centered retry beats an empty workspace that looks "hung".
           <div className="empty" style={{ margin: "auto" }}>
             <div className="e-ic">{Icon.bolt()}</div>
             <div className="e-t">Couldn&apos;t reach the workspace</div>
@@ -708,7 +793,7 @@ export default function Shell() {
         ) : isMobile ? (
           o.view === "settings" ? settingsColumn
             : mobileTab === "insights" ? insightsColumn
-            : mobileTab === "diffs" ? diffsColumn
+            : mobileTab === "services" ? servicesColumn
             : mobileTab === "terminals" ? null /* the full-screen terminal sheet below covers this pane */
             : mobilePane === "projects" ? projectsColumn
             : mobilePane === "tasks" ? tasksColumn
@@ -745,9 +830,9 @@ export default function Shell() {
                     </>
                   )
                 ) : (
-                  // First-run (or everything deprecated): make the empty shell a
-                  // doorway, not a dead end — explain what a project is and offer
-                  // the create action right here.
+                  // First-run (or everything deprecated): the empty shell
+                  // explains what a project is and offers the create action
+                  // right here.
                   <div className="col col-tasks">
                     <div className="empty void" style={{ margin: "auto", maxWidth: 340 }}>
                       <div className="e-ic"><Logo size={48} /></div>
@@ -772,17 +857,17 @@ export default function Shell() {
       </div>
 
       {isMobile && o.booted && !o.bootError && (
-        <MobileTabBar active={o.view === "settings" ? null : mobileTab} onSelect={selectMobileTab} />
+        <MobileTabBar active={o.view === "settings" ? null : mobileTab} onSelect={selectMobileTab} services={features.services} />
       )}
 
-      {o.modal === "task" && project && <NewTaskModal project={project} agents={o.agents} tasks={o.realTasks} tags={o.tags} onClose={() => o.setModal(null)} onCreate={o.createTask} onCreateTag={o.createTag} onOpenSetup={o.rerunOnboarding} />}
+      {o.modal === "task" && project && <NewTaskModal project={project} agents={o.agents} tasks={o.tasks} tags={o.tags} onClose={() => o.setModal(null)} onCreate={o.createTask} onCreateTag={o.createTag} onOpenSetup={o.rerunOnboarding} />}
       {o.editId && o.tasks.find((t) => t.id === o.editId) && (
-        <EditTaskModal task={o.tasks.find((t) => t.id === o.editId)!} tasks={o.realTasks} tags={o.tags} projects={o.activeProjects} agents={o.agents} onClose={() => o.setEditId(null)} onSave={o.saveTask} onDelete={o.removeTask} onMove={o.moveTaskToProject} onCreateTag={o.createTag} onOpenSetup={o.rerunOnboarding} />
+        <EditTaskModal task={o.tasks.find((t) => t.id === o.editId)!} tasks={o.tasks} tags={o.tags} projects={o.activeProjects} agents={o.agents} onClose={() => o.setEditId(null)} onSave={o.saveTask} onDelete={o.removeTask} onMove={o.moveTaskToProject} onCreateTag={o.createTag} onOpenSetup={o.rerunOnboarding} />
       )}
       {bulkMoveIds && project && (
         <MoveTasksModal
           // Resolved from the live rows in list order, so the modal shows what
-          // the tray shows — and so a task that vanished under the selection
+          // the tray shows, and a task that vanished under the selection
           // (moved in another tab, deleted) simply isn't in it.
           selected={o.tasks.filter((t) => bulkMoveIds.includes(t.id))}
           tasks={o.tasks} projects={o.activeProjects} agents={o.agents} sourceProjectId={project.id}
@@ -820,10 +905,9 @@ export default function Shell() {
           commands={([
             { id: "new-project", label: "New project", keywords: "create add repo", icon: Icon.plus(), run: () => o.setModal("project") },
             project && { id: "new-task", label: "New task", hint: `in ${project.name}`, keywords: "new session create start", icon: Icon.plus(), run: () => o.setModal("task") },
-            // One row per runbook rather than a "Run runbook…" row that opens a
-            // picker: the whole value of a saved recipe is ⌘K, three letters,
-            // Enter, and a picker costs an extra keystroke and a second list to
-            // read — enough to send someone back to retyping the prompt.
+            // One row per runbook, not a single "Run runbook…" row that opens a
+            // picker: the value of a saved recipe is ⌘K, three letters, Enter.
+            // A picker costs an extra keystroke and a second list to read.
             ...(project ? o.runbooks.map((r): PaletteCommand => ({
               id: `runbook-${r.id}`,
               label: `Run: ${r.name}`,
@@ -837,7 +921,7 @@ export default function Shell() {
             { id: "toggle-text-width", label: o.appearance.wide === "1" ? "Use reading-width text" : "Use full-width text", hint: o.appearance.wide === "1" ? "760px measure" : "fill the pane", keywords: "wide full width narrow measure transcript column appearance", icon: Icon.sliders(), run: () => o.setAppearance("wide", o.appearance.wide === "1" ? "0" : "1") },
             { id: "open-settings", label: "Open Settings", keywords: "preferences defaults setup", icon: Icon.gear(), run: () => openSettings() },
             { id: "open-insights", label: "Open Insights", keywords: "usage spend cost tokens analytics dashboard metrics stats", icon: Icon.chart(), run: () => o.setView("insights") },
-            { id: "connect-agent", label: "Connect an agent", keywords: "codex claude agent connect login subscription", icon: Icon.bolt(), run: () => openSettings("agents") },
+            { id: "connect-agent", label: "Connect an agent", keywords: "codex claude agent connect login subscription", icon: Icon.bolt(), run: () => openSettings("models") },
             { id: "open-appearance", label: "Open Appearance", keywords: "appearance density theme dark light mode width", icon: Icon.sliders(), run: () => o.setAppearanceOpen(true) },
             project && features.services && { id: "toggle-services", label: "Toggle Services", hint: o.servicesOpen ? "hide" : "show", keywords: "dev server setup test drawer", icon: Icon.sliders(), run: () => { o.setServicesMounted(true); o.setServicesOpen((s) => !s); } },
             project && { id: "toggle-terminal", label: "Toggle Terminal", hint: o.termOpen ? "hide" : "show", keywords: "shell console pty", icon: Icon.terminal(), run: () => { o.setTermMounted(true); o.setTermOpen((t) => !t); } },
@@ -855,7 +939,7 @@ export default function Shell() {
           (hidden) while a project is selected so a dev server survives pane hops. */}
       {/* Also doubles as the Terminals tab's full pane: it's already a fixed,
           full-screen sheet (z-index above the tab bar), so opening it here is
-          the same "mount it open as a pane" the tab needs — no second instance
+          the same "mount it open as a pane" the tab needs. No second instance
           of the terminal (and its live shell) gets created. */}
       {isMobile && project && o.termMounted && (
         <MobileTerminalSheet
@@ -865,7 +949,7 @@ export default function Shell() {
         />
       )}
 
-      {/* First-run onboarding — a full-screen wizard over the (empty) workspace
+      {/* First-run onboarding: a full-screen wizard over the (empty) workspace
           on a fresh instance, or when re-run from Settings. */}
       {o.wizardOpen && o.onboarding && (
         <OnboardingWizard initial={o.onboarding} onFinish={o.finishWizard} />
@@ -875,7 +959,7 @@ export default function Shell() {
           the required first-run wizard is done, and never stacked on the wizard
           or the tutorial-payoff modal. Dismissible once (localStorage). */}
       {o.onboarding?.complete && !o.wizardOpen && !o.nudge && (
-        <AgentNudge ready onConnect={() => openSettings("agents")} />
+        <AgentNudge ready onConnect={() => openSettings("models")} />
       )}
 
       {/* Post-tutorial payoff: fires once the seeded "Welcome" task is merged. */}

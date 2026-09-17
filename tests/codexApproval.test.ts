@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { approvalOverride, noteApprovalDowngrade } from "@/lib/agents/codex/driver";
 import { setSetting } from "@/lib/store";
 
@@ -12,6 +12,7 @@ import { setSetting } from "@/lib/store";
 const DOWNGRADE =
   "Configured value for `approval_policy` is disallowed by requirements; falling back to required value UnlessTrusted.";
 
+beforeEach(() => setSetting("codex_approval_downgraded", null));
 afterAll(() => setSetting("codex_approval_downgraded", null));
 
 describe("codex approval-policy negotiation", () => {
@@ -21,14 +22,14 @@ describe("codex approval-policy negotiation", () => {
 
   it("ignores errors that are not the downgrade warning", () => {
     noteApprovalDowngrade("Run ended: model_error");
-    noteApprovalDowngrade('exec_command failed: Rejected("approval request failed")'); // symptom, not the downgrade signal
+    noteApprovalDowngrade('exec_command failed: Rejected("approval request failed")'); // an error distinct from the downgrade signal
     expect(approvalOverride()).toEqual({ approvalPolicy: "never" });
   });
 
   it("switches to on-request once the CLI reports the managed downgrade, and stays there", () => {
     noteApprovalDowngrade(DOWNGRADE);
     expect(approvalOverride()).toEqual({ approvalPolicy: "on-request" });
-    // Sticky across repeats — a second sighting must not reset or change it.
+    // Sticky across repeats: a second sighting must not reset or change it.
     noteApprovalDowngrade(DOWNGRADE);
     expect(approvalOverride()).toEqual({ approvalPolicy: "on-request" });
   });

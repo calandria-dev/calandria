@@ -1,10 +1,10 @@
 // PWA installability surface: the manifest route, the icons it points at, and
-// the credentialed <link> in the document head. The link assertion is the
-// load-bearing one — the manifest fetch only carries cookies when the link says
-// use-credentials, and middleware gates every route, so losing that attribute
-// (e.g. by switching to the app/manifest.ts convention, whose auto-injected
-// link can't be told to say it) silently breaks install behind Cloudflare
-// Access while local-mode testing stays green.
+// the credentialed <link> in the document head. The manifest fetch only
+// carries cookies when the link says use-credentials, and middleware gates
+// every route, so losing that attribute (for example by switching to the
+// app/manifest.ts convention, whose auto-injected link can't be told to say
+// it) breaks install behind Cloudflare Access while local-mode testing stays
+// green.
 
 import { expect, test } from "@playwright/test";
 import { ensureOnboarded } from "./helpers";

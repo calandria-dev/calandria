@@ -1,20 +1,20 @@
 "use strict";
 
 // The electron-builder configuration, moved out of desktop/package.json's
-// `build` field because signing has to be a decision made at build time and JSON
-// cannot make one.
+// `build` field because signing has to be a decision made at build time and
+// JSON cannot make one.
 //
-// THE MOVE IS ALL-OR-NOTHING, which is worth knowing before anyone puts a
-// `build` key back. app-builder-lib's config loader (out/util/config/load.js,
-// `loadConfig`) reads package.json's `build` field FIRST and only falls back to
-// scanning for a standalone config file when that field is absent. It does not
-// merge them and it does not warn. A `build` field in package.json would
-// silently shadow this entire file, including every signing branch below.
+// The move is all-or-nothing: app-builder-lib's config loader
+// (out/util/config/load.js, `loadConfig`) reads package.json's `build` field
+// first and only falls back to scanning for a standalone config file when
+// that field is absent. It does not merge them and does not warn. A `build`
+// field in package.json would shadow this entire file, including every
+// signing branch below, with no error.
 //
-// The filename is likewise not free: the loader probes `electron-builder` +
-// {.yml,.yaml,.json,.json5,.toml,.js,.cjs,.ts}, in that order. `electron-builder.cjs`
-// is on that list; `electron-builder.config.cjs`, the name most projects use,
-// is not, and would be ignored just as quietly.
+// The filename is likewise fixed: the loader probes `electron-builder` +
+// {.yml,.yaml,.json,.json5,.toml,.js,.cjs,.ts}, in that order.
+// `electron-builder.cjs` is on that list; `electron-builder.config.cjs`, the
+// name most projects use, is not, and would be ignored with no error either.
 //
 // Everything that is not signing is unchanged from the JSON it replaces.
 
@@ -25,20 +25,52 @@ const win = windowsSigning(process.env);
 
 module.exports = {
   appId: "dev.calandria.desktop",
+  // `productName` is the app exe's FileDescription and ProductName
+  // (out/winPackager.js, signAndEditResources). package.json's `description`
+  // is user-facing too and has no override here: it becomes the NSIS
+  // installer exe's FileDescription, which is the program name Windows shows
+  // in the UAC elevation prompt (out/targets/nsis/NsisTarget.js), the Start
+  // Menu and desktop shortcut tooltips, the uninstall entry's Comments value
+  // (templates/nsis/include/installer.nsh) and the deb package description
+  // (out/targets/LinuxTargetHelper.js). Keep it one short product sentence.
+  // Notes about how this package is built belong in desktop/README.md.
   productName: "Calandria",
   copyright: "Copyright © Calandria contributors",
   directories: {
     output: "dist",
   },
-  // Source files only. `node_modules` is deliberately absent and adding it
+  // Source files only. `node_modules` is absent on purpose, and adding it
   // would do nothing: app-builder-lib collects production dependencies through
   // a separate mechanism (`getNodeModuleFileMatcher` +
   // `computeNodeModuleFileSets`, out/platformPackager.js) and splices
   // `!**/node_modules/**` into these globs unconditionally
   // (out/fileMatcher.js). So `electron-updater`, this package's one runtime
-  // dependency, is packed because it is in `dependencies` — not because it is
+  // dependency, is packed because it is in `dependencies`, not because it is
   // named here, and it must not be moved to `devDependencies`.
-  files: ["main.js", "supervisor.js", "notifier.js", "tray-residency.js", "updater.js", "loading.html", "assets/**", "package.json"],
+  // An explicit whitelist: a new module supervisor.js requires has to be
+  // added here too, or the packaged app dies on the require with a stack that
+  // does not reproduce from a checkout, since `npm start` resolves it from
+  // disk either way. desktop/test-supervisor.js pins this list against
+  // exactly that.
+  files: [
+    "main.js",
+    "supervisor.js",
+    "env-file.js",
+    "instances.js",
+    "instances-path.js",
+    "instance-auth.js",
+    "oauth.js",
+    "instances.html",
+    "signin.html",
+    "notifier.js",
+    "ssh-tunnel.js",
+    "tray-residency.js",
+    "updater.js",
+    "window-state.js",
+    "loading.html",
+    "assets/**",
+    "package.json",
+  ],
   extraResources: [
     { from: "payload", to: "app-payload" },
     { from: "payload/node_modules", to: "app-payload/node_modules" },
@@ -55,10 +87,10 @@ module.exports = {
     gatekeeperAssess: false,
 
     // `identity`, `hardenedRuntime`, `entitlements`, `entitlementsInherit` and
-    // `notarize`, all decided by desktop/signing.js from the environment.
-    // Default (nothing set): ad-hoc identity "-", hardened runtime on, the
-    // ad-hoc entitlements, no notarization. Opt in with
-    // CALANDRIA_MAC_SIGN_IDENTITY plus App Store Connect credentials.
+    // `notarize` are all decided by desktop/signing.js from the environment.
+    // With nothing set: ad-hoc identity "-", hardened runtime on, the ad-hoc
+    // entitlements, no notarization. Opt in with CALANDRIA_MAC_SIGN_IDENTITY
+    // plus App Store Connect credentials.
     identity: mac.identity,
     hardenedRuntime: mac.hardenedRuntime,
     entitlements: mac.entitlements,
@@ -66,23 +98,23 @@ module.exports = {
     notarize: mac.notarize,
   },
 
-  // ONLY THE AppImage SELF-UPDATES, and that is a decision, not an omission.
+  // Only the AppImage self-updates; the .deb does not.
   //
-  // Because a `publish` config is present, electron-builder's FpmTarget writes a
-  // `resources/package-type` marker containing "deb" into the .deb (it does this
-  // for deb, rpm and pacman; the AppImage gets no marker). electron-updater
+  // Because a `publish` config is present, electron-builder's FpmTarget writes
+  // a `resources/package-type` marker containing "deb" into the .deb (it does
+  // this for deb, rpm and pacman; the AppImage gets no marker). electron-updater
   // reads that marker the first time anything touches its exported `autoUpdater`
   // and, on finding it, returns a DebUpdater whose install path is
   // `sudo dpkg -i <downloaded .deb>`, falling back to
-  // `apt install --allow-unauthenticated`. There is no setting that turns the
-  // unverified-package install off — `allowUnverifiedLinuxPackages` was checked
+  // `apt install --allow-unauthenticated`. No setting turns the
+  // unverified-package install off (`allowUnverifiedLinuxPackages` was checked
   // against electron-builder 26.15.3 and electron-updater 6.8.9 and exists in
-  // neither — so "make it deliberate" can only mean declining to be on that path.
+  // neither), so the only way to avoid that path is to not be on it.
   //
-  // desktop/updater.js therefore gates on `process.env.APPIMAGE` BEFORE the
-  // require, and a .deb install says so in its menus instead of raising a sudo
-  // prompt the user has no reason to trust. Removing that gate is what would
-  // silently opt every .deb user into it.
+  // desktop/updater.js gates on `process.env.APPIMAGE` before the require, and
+  // a .deb install says so in its menus instead of raising a sudo prompt the
+  // user has no reason to trust. Removing that gate would opt every .deb user
+  // into it with no warning.
   linux: {
     target: ["dir", "deb", "AppImage"],
     executableName: "calandria-desktop",
@@ -96,9 +128,10 @@ module.exports = {
   win: {
     target: ["nsis", "zip"],
     icon: "../public/icons/icon-512.png",
-    // Absent unless all four AZURE_CODE_SIGNING_* variables are set. Present, it
-    // switches electron-builder from signtool to Azure Artifact Signing
-    // (winPackager.js picks WindowsSignAzureManager on `azureSignOptions != null`).
+    // Absent unless all four AZURE_CODE_SIGNING_* variables are set. When
+    // present, it switches electron-builder from signtool to Azure Artifact
+    // Signing (winPackager.js picks WindowsSignAzureManager on
+    // `azureSignOptions != null`).
     ...(win.signed ? { azureSignOptions: win.azureSignOptions } : {}),
   },
 
@@ -106,43 +139,62 @@ module.exports = {
     oneClick: false,
     perMachine: false,
     allowToChangeInstallationDirectory: true,
+    // Keep the installer name stable and identical to the filename written in
+    // latest.yml. The updater downloads the feed's path verbatim.
+    artifactName: "Calandria-Setup-${version}.${ext}",
   },
 
-  // WHERE A RELEASE'S ARTIFACTS GO, and — the half that is easy to miss — where
-  // the UPDATE FEED comes from. With a `github` provider configured,
-  // electron-builder's PublishManager both attaches each artifact to the Release
-  // and writes the per-platform feed beside it: latest.yml, latest-mac.yml,
-  // latest-linux.yml, plus the .blockmap files electron-updater uses for
-  // differential downloads. Building locally and uploading with
-  // `gh release upload` produces the artifacts and none of the feed, which is an
-  // updater that silently never finds anything.
+  // Controls where a release's artifacts go, and, easy to miss, where the
+  // update feed comes from. With a `github` provider configured,
+  // electron-builder's PublishManager both attaches each artifact to the
+  // Release and writes the per-platform feed beside it: latest.yml,
+  // latest-mac.yml, latest-linux.yml, plus the .blockmap files
+  // electron-updater uses for differential downloads. Building locally and
+  // uploading with `gh release upload` produces the artifacts and none of
+  // the feed, so the updater never finds anything.
   //
-  // owner/repo are spelled out rather than inferred. electron-builder would fall
-  // back to parsing package.json's `repository` field, which this package does
-  // not have, and then to the CI environment — a chain whose failure mode is
-  // publishing into the wrong place rather than an error.
+  // owner/repo are spelled out instead of inferred. electron-builder would
+  // otherwise fall back to parsing package.json's `repository` field, which
+  // this package does not have, and then to the CI environment: a chain
+  // whose failure mode is publishing into the wrong place with no error.
   //
-  // THE TAG IS DERIVED FROM `version` IN package.json, not from the ref being
-  // built. That is why release-please-config.json's `extra-files` keeps
-  // desktop/package.json in step with the root manifest: a desktop package still
-  // reading 0.3.0 during a v0.4.2 release would not fail, it would quietly mint a
-  // DRAFT release named v0.3.0 and upload everything into that instead.
-  // .github/workflows/release-desktop.yml checks the two agree before it builds.
+  // The tag is derived from `version` in package.json, not from the ref
+  // being built, which is why release-please-config.json's `extra-files`
+  // keeps desktop/package.json in step with the root manifest: a desktop
+  // package reading a stale version during a release would mint a draft
+  // release under the wrong tag instead of failing outright.
+  // .github/workflows/release-desktop.yml checks the two agree before it
+  // builds.
   //
-  // Inert outside a release. Nothing publishes without `--publish always` or a
-  // tag plus a token, and no lane in test.yml has either.
+  // `releaseType: "release"` documents the published release that receives
+  // these files. The release workflow builds with `--publish never`, stages
+  // the local feeds and blockmaps, and uploads every verified file with
+  // `gh release upload` after the tag exists.
+  //
+  // This config is not inert outside a release, either. With no `--publish`
+  // flag, PublishManager decides a policy itself: `always` when
+  // npm_lifecycle_event is "release", `onTag` when a CI tag is visible, and
+  // on any CI at all, `onTagOrDraft`, which still has to ask GitHub whether
+  // a draft release is waiting. So `npx electron-builder --win nsis` on a
+  // hosted runner constructs a GitHubPublisher, whose constructor throws for
+  // lack of a token before it looks at anything else. Hence `--publish
+  // never` on every invocation outside .github/workflows/release-desktop.yml,
+  // pinned by tests/desktopRelease.test.ts. A `dir`-only lane survives
+  // without the flag only because `dir` announces no artifact to publish,
+  // which stops being true the moment a real target is added to that lane.
   publish: [
     {
       provider: "github",
       owner: "calandria-dev",
       repo: "calandria",
+      releaseType: "release",
     },
   ],
 
-  // Fires once per finished artifact and is awaited BEFORE the artifact is
-  // announced to the publisher, which is the whole reason it is this hook and
-  // not `afterAllArtifactBuild` — see the header of the module it calls. A
-  // no-op for anything that is not a .dmg, and for any build that is not both
-  // signed and notarizing.
+  // Fires once per finished artifact and is awaited before the artifact is
+  // announced to the publisher; see the header of the module it calls for
+  // why that ordering is why this hook is used instead of
+  // `afterAllArtifactBuild`. A no-op for anything that is not a .dmg, and
+  // for any build that is not both signed and notarizing.
   artifactBuildCompleted: (event) => require("./scripts/notarize-dmg").notarizeDmgArtifact(event),
 };

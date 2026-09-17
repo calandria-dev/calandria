@@ -1,51 +1,87 @@
 import { defineConfig } from "@playwright/test";
-import { E2E_BASE_URL, SERVER_ENV } from "./e2e/env";
+import {
+  E2E_BASE_URL,
+  E2E_FEED_PORT,
+  E2E_FEED_URL,
+  SERVER_ENV,
+} from "./e2e/env";
 
-// End-to-end suite: boots the REAL production server (server.js + pty sidecar,
-// same `npm start` a self-hoster runs) against a fresh temp instance (see
-// e2e/env.ts) with the deterministic mock agent registered, then drives the UI
-// with Playwright. Run with `npm run test:e2e` (builds first); see e2e/README.md.
+// End-to-end suite: boots the real production server (server.js + pty
+// sidecar, the same `npm start` a self-hoster runs) against a fresh temp
+// instance (see e2e/env.ts) with the deterministic mock agent registered,
+// then drives the UI with Playwright. Run with `npm run test:e2e` (builds
+// first); see e2e/README.md.
 //
-// Serial on purpose: the specs share one app instance and one SQLite database,
-// and 01-onboarding must observe the untouched first-run state before anything
-// else writes to it. Later specs are self-contained (each creates its own
-// project via e2e/helpers.ts and calls ensureOnboarded), so they can also be
-// run individually with `npx playwright test e2e/03-views.spec.ts`.
+// Serial on purpose: the specs share one app instance and one SQLite
+// database, and 01-onboarding must observe the untouched first-run state
+// before anything else writes to it. Later specs are self-contained (each
+// creates its own project via e2e/helpers.ts and calls ensureOnboarded), so
+// they can also be run individually with
+// `npx playwright test e2e/03-views.spec.ts`.
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,
-  retries: 0,
+  // One retry on CI, none locally. The e2e lanes are the release gate: both
+  // publishers refuse a tag whose push-to-main Test run is red, and one flaky
+  // assertion blocked the 0.6.1 and 0.6.2 publishes until somebody reran the
+  // job by hand (issue #78). The retry is a floor under a release, not a
+  // substitute for fixing the race: the `list` reporter below prints every
+  // retried test under "Flaky tests" with its attempt count, so a retry is
+  // visible in the log and stays a thing to fix. Locally a failure should
+  // fail at once, with its trace kept.
+  retries: process.env.CI ? 1 : 0,
+  // Measured, not guessed, and deliberately not raised for the Windows lane
+  // (issue #161, which asks whether one should be). On the push-to-main run
+  // 35051995615 the Windows lane's 140 tests have a median of 1.9s and a
+  // slowest of 11.6s, against Linux's 1.3s and 10.4s on the same commit: 1.31x
+  // at the median, and 5.2x of headroom under this budget at the worst. A spec
+  // that burns the whole 60s is therefore stuck rather than slow, and a longer
+  // budget would only make the lane take longer to say so. The suite is
+  // already serial (`workers: 1` above), so the other lever that issue names,
+  // fewer workers, is the state it is in.
   timeout: 60_000,
   expect: { timeout: 10_000 },
-  // The second reporter deletes the temp run root — but only when the run
-  // passed, so a failure keeps its DB and worktrees to be read. It's a reporter
-  // rather than a `globalTeardown` because global teardown runs BEFORE
-  // Playwright stops the webServer above (it would delete the tree under a live
-  // server) and isn't told whether the run passed. See e2e/cleanup-reporter.ts.
+  // The second reporter deletes the temp run root, but only when the run
+  // passed, so a failure keeps its DB and worktrees to be read. It's a
+  // reporter rather than a `globalTeardown` because global teardown runs
+  // before Playwright stops the webServer above, which would delete the tree
+  // under a live server, and isn't told whether the run passed. See
+  // e2e/cleanup-reporter.ts.
   reporter: [["list"], ["./e2e/cleanup-reporter.ts"]],
   use: {
     baseURL: E2E_BASE_URL,
     // Pinned, not Playwright's 1280x720 default: 1280 is below
     // AUTO_COLLAPSE_BELOW.proj (app/shell/types.ts), so the whole suite would
-    // silently run against the auto-collapsed shell — every spec that clicks a
-    // project in the sidebar would be clicking a 30px spine instead. 1440x900
-    // is above all three shed thresholds, so the default is the full
-    // three-column layout; the narrow cases opt in with their own `test.use`.
+    // run against the auto-collapsed shell, with every spec that clicks a
+    // project in the sidebar clicking a 30px spine instead. 1440x900 is above
+    // all three shed thresholds, so the default is the full three-column
+    // layout; the narrow cases opt in with their own `test.use`.
     viewport: { width: 1440, height: 900 },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
-  webServer: {
-    command: "npm start",
-    url: E2E_BASE_URL,
-    env: SERVER_ENV,
-    // A leftover dev server on this port would have the wrong DB (and a
-    // completed onboarding) — always demand our own fresh instance.
-    reuseExistingServer: false,
-    timeout: 120_000,
-    stdout: "pipe",
-    stderr: "pipe",
-  },
+  webServer: [
+    // The GitHub releases stand-in, started before the app so the app's first
+    // update check has something to ask. See e2e/releases-server.mjs.
+    {
+      command: "node e2e/releases-server.mjs",
+      url: E2E_FEED_URL,
+      env: { CALANDRIA_E2E_FEED_PORT: String(E2E_FEED_PORT) },
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
+    {
+      command: "npm start",
+      url: E2E_BASE_URL,
+      env: SERVER_ENV,
+      // A leftover dev server on this port would have the wrong DB and a
+      // completed onboarding, so always demand a fresh instance.
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  ],
 });

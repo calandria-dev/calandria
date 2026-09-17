@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { EFFORT } from "@/lib/agents/codex/driver";
-import { CODEX_CAPABILITIES } from "@/lib/agents/codex/capabilities";
+import { codexCapabilities } from "@/lib/agents/codex/capabilities";
 
-// Pins the reasoning-preset → model_reasoning_effort mapping. Every current
+// Pins the reasoning-preset to model_reasoning_effort mapping. Every current
 // codex model supports exactly low|medium|high|xhigh; "minimal" still exists
-// in the SDK's ModelReasoningEffort type but the API rejects the whole turn
-// with a 400 (verified live on codex-cli 0.142.5), so it must never be sent.
+// in the SDK's ModelReasoningEffort type, but the API rejects the whole turn
+// with a 400, so it must never be sent.
 describe("codex reasoning-effort mapping", () => {
   it("only sends levels every codex model supports (never 'minimal')", () => {
     const supported = new Set(["low", "medium", "high", "xhigh"]);
@@ -19,16 +19,16 @@ describe("codex reasoning-effort mapping", () => {
   });
 
   it("declares a mapping for every reasoning option the picker offers", () => {
-    for (const opt of CODEX_CAPABILITIES.reasoningOptions) {
+    for (const opt of codexCapabilities().reasoningOptions) {
       expect(EFFORT[opt.value], opt.value).toBeDefined();
     }
   });
 
-  it("labels each option with the effort it actually sends — OpenAI's own scale, not Claude's think vocabulary", () => {
+  it("labels each option with the effort it actually sends, OpenAI's own scale, not Claude's think vocabulary", () => {
     // Provider-native labels: a Codex task's picker reads low/medium/high/xhigh,
     // exactly the model_reasoning_effort the preset resolves to, so the picker
     // can never claim an effort the turn doesn't run.
-    for (const opt of CODEX_CAPABILITIES.reasoningOptions) {
+    for (const opt of codexCapabilities().reasoningOptions) {
       expect(opt.label, opt.value).toBe(EFFORT[opt.value]);
     }
   });

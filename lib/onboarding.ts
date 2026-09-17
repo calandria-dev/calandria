@@ -3,15 +3,15 @@ import { isAgentConnected, firstConnectedAgent } from "./agents/connections";
 import { DEFAULT_AGENT } from "./agents/registry";
 
 // First-run wizard state, persisted in the settings table so an abandoned setup
-// resumes at the right step after a reload or restart. Distinct from the
-// client-only UI prefs in localStorage — this must be readable server-side and
-// shared across every browser that opens the instance.
+// resumes at the right step after a reload or restart. It is separate from the
+// client-only UI prefs in localStorage: this state must be readable server-side
+// and shared across every browser that opens the instance.
 //
 // Keys:
 //   onboarding_complete      "1" once finished or skipped
 //   onboarding_step          the step to resume on: connect | verify
 //   onboarding_method        how Claude was connected: subscription | api_key
-//   onboarding_account       "email|plan" snapshot for the "Connected as …" line
+//   onboarding_account       "email|plan" snapshot for the "Connected as ..." line
 
 export type OnbStep = "connect" | "verify";
 const STEPS: OnbStep[] = ["connect", "verify"];
@@ -51,10 +51,10 @@ export function setOnboardingAccount(email: string | null, plan: string | null):
 
 export function completeOnboarding(): void {
   setSetting("onboarding_complete", "1");
-  // The wizard requires "an agent", not Claude specifically. If the effective
-  // default agent never got connected but another one did (a Codex-only first
-  // run), adopt the connected agent as the app default and retarget the seeded
-  // Welcome tutorial so its tasks run on an agent that actually works.
+  // The wizard succeeds with any connected agent. If the default agent never
+  // connected but another one did (for example a Codex-only setup), adopt the
+  // connected agent as the app default and retarget the seeded Welcome
+  // tutorial so its tasks run on it.
   const current = getSetting("default_agent") || DEFAULT_AGENT;
   if (isAgentConnected(current)) return;
   const alt = firstConnectedAgent();

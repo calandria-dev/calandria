@@ -2,11 +2,12 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { init, migrate } from "../lib/db";
 
-// Build a legacy-shaped database. The schema still carries the legacy
-// building/conventions columns, so init() alone gives us the shape we need to
-// exercise the one-shot fold that folds them into the unified `context` field.
-// init() runs migrate once, but with no legacy data present it neither folds nor
-// sets the marker, so each test starts from a genuinely un-migrated state.
+// Builds a legacy-shaped database. The schema still carries the legacy
+// building/conventions columns, so init() alone produces the shape needed to
+// exercise the one-shot fold that merges them into the unified `context`
+// field. init() runs migrate once, but with no legacy data present it
+// neither folds nor sets the marker, so each test starts from a genuinely
+// un-migrated state.
 function legacyDb() {
   const db = new Database(":memory:");
   init(db);
@@ -49,10 +50,10 @@ describe("legacy building/conventions → context fold", () => {
     expect(ctx(db, "p1")).toBe("Ships a widget\nUse tabs");
 
     // User clears the project's context via the UI (updateProject writes context
-    // only; building/conventions stay frozen — the exact resurrection setup).
+    // only; building/conventions stay frozen, producing the resurrection setup).
     db.prepare("UPDATE projects SET context = '' WHERE id = ?").run("p1");
 
-    migrate(db); // restart: must be a no-op, not a re-fold
+    migrate(db); // restart: must stay a no-op
     expect(ctx(db, "p1")).toBe("");
   });
 });

@@ -1,11 +1,7 @@
 // The composer's "/" menu, in the real UI against the mock agent's fixed
-// command set (MOCK_COMMANDS in lib/agents/mock/driver.ts).
-//
-// The bug this covers: the menu was a hardcoded one-element array, so the only
-// discoverable command was /clear even though the agent expanded dozens. These
-// assert the menu now shows what the DRIVER reports, that the filtering policy
-// holds at the UI boundary, and that the keyboard path works — a list this long
-// is unusable mouse-only.
+// command set (MOCK_COMMANDS in lib/agents/mock/driver.ts). Covers that the
+// menu shows what the driver reports, that the filtering policy holds at the
+// UI boundary, and that the keyboard path works for a long command list.
 
 import { expect, test } from "@playwright/test";
 import {
@@ -34,15 +30,24 @@ test.beforeAll(async ({ request }) => {
   await waitForIdle(request, task.id);
 });
 
-// Open the task's session and return its composer textarea.
+// Open the task's session and return its composer.
 async function composer(page: import("@playwright/test").Page) {
   await gotoApp(page);
   await page.getByText(PROJECT).first().click();
   await page.getByText(TASK).first().click();
-  const box = page.getByPlaceholder(/Reply to/);
-  await expect(box).toBeVisible({ timeout: 20_000 });
+  const box = page.getByRole("textbox", { name: "Message" });
+  // The composer is a contenteditable div (see Composer.tsx), so its
+  // placeholder is a data attribute. Waiting for the repliable one is what says
+  // the session has loaded: the field is on screen before that, disabled and
+  // offering to start the session.
+  await expect(box).toHaveAttribute("data-placeholder", /Reply to/, { timeout: 20_000 });
   return box;
 }
+
+// The typed text, which is the field's textContent. Read directly because
+// toHaveText trims, and the trailing space a completed command leaves is
+// exactly what these tests are pinning.
+const textOf = (box: import("@playwright/test").Locator) => box.evaluate((el) => el.textContent ?? "");
 
 test("typing / lists the agent's own commands, not just /clear", async ({ page }) => {
   const box = await composer(page);
@@ -50,7 +55,7 @@ test("typing / lists the agent's own commands, not just /clear", async ({ page }
 
   const menu = page.locator(".slash");
   await expect(menu).toBeVisible();
-  // Calandria's own command AND the driver's — the whole point.
+  // Calandria's own command and the driver's both appear.
   await expect(menu.getByText("/clear", { exact: true })).toBeVisible();
   await expect(menu.getByText("/mock-echo", { exact: true })).toBeVisible();
   await expect(menu.getByText("/mock-status", { exact: true })).toBeVisible();
@@ -64,24 +69,24 @@ test("the agent's own /clear and internal commands are filtered out", async ({ p
   await box.fill("/");
   const menu = page.locator(".slash");
   await expect(menu).toBeVisible();
-  // Exactly one /clear row — Calandria's, not the agent's duplicate.
+  // Exactly one /clear row: Calandria's, not the agent's duplicate.
   await expect(menu.getByText("/clear", { exact: true })).toHaveCount(1);
   await expect(menu.getByText("/__mock-internal", { exact: true })).toHaveCount(0);
 });
 
 test("filtering matches aliases and completes with the keyboard", async ({ page }) => {
   const box = await composer(page);
-  // "mock-deploy" is only an ALIAS of mock-plugin:mock-deploy — matching on it
-  // is what stops a namespaced command from being unfindable.
+  // "mock-deploy" is only an alias of mock-plugin:mock-deploy; matching on it
+  // keeps a namespaced command findable.
   await box.fill("/mock-deploy");
   const menu = page.locator(".slash");
   await expect(menu).toBeVisible();
   await expect(menu.locator(".slash-item")).toHaveCount(1);
 
   // Enter completes the highlighted row into the box (canonical name, trailing
-  // space for arguments) rather than sending.
+  // space for arguments) instead of sending.
   await box.press("Enter");
-  await expect(box).toHaveValue("/mock-plugin:mock-deploy ");
+  await expect.poll(() => textOf(box)).toBe("/mock-plugin:mock-deploy ");
   await expect(menu).toBeHidden();
 });
 
@@ -95,17 +100,40 @@ test("arrow keys move the highlight and Tab commits it", async ({ page }) => {
   await expect(items.nth(1)).toHaveClass(/act/);
   await box.press("Tab");
   // Second row of the /mock- matches, completed into the box.
-  await expect(box).toHaveValue(/^\/mock-\S+ $/);
+  await expect.poll(() => textOf(box)).toMatch(/^\/mock-\S+ $/);
 });
 
 test("a fully typed command still sends as a message", async ({ page }) => {
   const box = await composer(page);
-  // /mock-status takes no arguments and is typed in full, so Enter acts rather
-  // than re-completing — the behavior /clear has always had.
+  // /mock-status takes no arguments and is typed in full, so Enter sends it
+  // instead of re-completing, the same behavior /clear has.
   await box.fill("/mock-status");
   await box.press("Enter");
-  await expect(box).toHaveValue("");
-  // It leaves as an ordinary user message, which is exactly how a slash command
-  // reaches the agent — the CLI expands it on the far side.
+  await expect.poll(() => textOf(box)).toBe("");
+  // It leaves as an ordinary user message: a slash command reaches the agent
+  // by having the CLI expand it on the far side.
   await expect(page.locator(".msg.user", { hasText: "/mock-status" })).toBeVisible({ timeout: 20_000 });
+});
+
+// Geometry, here because this file already has a repliable composer on screen.
+// Pins that an empty composer's height matches its typed height. The
+// placeholder is a ::before on the empty field, so it has to lay out as one
+// line, and deleting the last character has to leave the field with no child
+// nodes at all: a stray <br> would hide the placeholder and stand a second line
+// tall.
+test("the empty composer is one line tall and doesn't snap on the first keystroke", async ({ page }) => {
+  const box = await composer(page);
+  const height = async () => (await box.boundingBox())!.height;
+
+  const empty = await height();
+  await box.fill("h");
+  const typed = await height();
+  expect(empty).toBe(typed);
+
+  // Growth still works: a message long enough to wrap makes the box taller, and
+  // clearing it returns to the same one-line height.
+  await box.fill("wrap ".repeat(60));
+  expect(await height()).toBeGreaterThan(typed);
+  await box.fill("");
+  expect(await height()).toBe(empty);
 });

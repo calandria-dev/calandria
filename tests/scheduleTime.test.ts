@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { formatWallClock, nextFireAt } from "@/lib/schedule/time";
+import { describeSpec, formatWallClock, nextFireAt as rawNextFireAt, type ScheduleSpec } from "@/lib/schedule/time";
 
 const LA = "America/Los_Angeles";
 const WEEKDAYS = 62; // Mon–Fri
 const DAILY = 127;
 const at = (iso: string) => Date.parse(iso);
 const weekdays830 = { daysMask: WEEKDAYS, timeOfDay: "08:30", timezone: LA };
+
+// A recurring spec always resolves or throws. The nullable return exists only
+// for a one-time date that is already behind us, which the `once` block below
+// exercises against the raw export.
+const nextFireAt = (spec: ScheduleSpec, afterMs: number) => rawNextFireAt(spec, afterMs)!;
 
 describe("nextFireAt", () => {
   it("fires at local 08:30 when the host clock is UTC", () => {
@@ -81,11 +86,9 @@ describe("nextFireAt", () => {
 
 describe("formatWallClock", () => {
   it("renders an instant on the SCHEDULE's clock, not the server's", () => {
-    // The minted task's title. This is the case that was wrong: the run fired
-    // at 08:30 Pacific and the task was called "…— 2026-08-14 15:30", which is
-    // the one thing this whole feature is supposed to get right. Tests run on a
-    // UTC host (tests/setup.ts) precisely like the container does, so the bug
-    // reproduces here.
+    // The minted task's title renders in the schedule's own timezone, not UTC:
+    // an 08:30 Pacific firing must produce a title reading 08:30, not 15:30.
+    // Tests run on a UTC host (tests/setup.ts), matching the container.
     expect(formatWallClock(at("2026-08-14T15:30:00Z"), LA)).toBe("2026-08-14 08:30");
     expect(formatWallClock(at("2026-08-14T15:30:00Z"), "UTC")).toBe("2026-08-14 15:30");
     expect(formatWallClock(at("2026-08-14T15:30:00Z"), "Asia/Kathmandu")).toBe("2026-08-14 21:15");
@@ -93,7 +96,7 @@ describe("formatWallClock", () => {
 
   it("keeps the wall time across a DST boundary, and pads midnight", () => {
     // Same nominal 08:30 either side of the spring-forward, eight hours apart
-    // in UTC on one side and seven on the other — the title must read 08:30 in
+    // in UTC on one side and seven on the other. The title must read 08:30 in
     // both, or it contradicts the schedule it came from.
     expect(formatWallClock(at("2026-01-14T16:30:00Z"), LA)).toBe("2026-01-14 08:30");
     expect(formatWallClock(at("2026-07-14T15:30:00Z"), LA)).toBe("2026-07-14 08:30");
@@ -103,5 +106,53 @@ describe("formatWallClock", () => {
   it("falls back to UTC rather than throwing on a zone that no longer resolves", () => {
     // A title is never worth losing the whole firing over.
     expect(formatWallClock(at("2026-08-14T15:30:00Z"), "Mars/Olympus")).toBe("2026-08-14 15:30");
+  });
+});
+
+describe("nextFireAt, one-time", () => {
+  const once = (onceDate: string, timeOfDay = "04:00"): ScheduleSpec =>
+    ({ daysMask: WEEKDAYS, timeOfDay, timezone: LA, onceDate });
+
+  it("fires on its date at its wall time, once", () => {
+    // Thu 2026-09-03 04:00 PDT is 11:00Z.
+    const spec = once("2026-09-03");
+    expect(nextFireAt(spec, at("2026-09-01T00:00:00Z")).ms).toBe(at("2026-09-03T11:00:00Z"));
+  });
+
+  it("has nothing after that occurrence, since a one-off runs only once", () => {
+    const spec = once("2026-09-03");
+    const fired = nextFireAt(spec, at("2026-09-01T00:00:00Z"));
+    // Strictly after, same as the recurring path: the slot just fired is gone.
+    expect(rawNextFireAt(spec, fired.ms)).toBeNull();
+    expect(rawNextFireAt(spec, at("2026-09-04T00:00:00Z"))).toBeNull();
+  });
+
+  it("is null from the start when its date has already passed", () => {
+    expect(rawNextFireAt(once("2020-01-01"), at("2026-09-01T00:00:00Z"))).toBeNull();
+  });
+
+  it("ignores days_mask, since the date is the whole schedule", () => {
+    // 2026-09-06 is a SUNDAY and the mask is Mon–Fri. It fires anyway.
+    expect(nextFireAt(once("2026-09-06"), at("2026-09-01T00:00:00Z")).ms).toBe(at("2026-09-06T11:00:00Z"));
+    // And an unusable mask can't stop it, so switching a weekly schedule to
+    // Once never has to launder the mask it leaves behind.
+    expect(nextFireAt({ ...once("2026-09-06"), daysMask: 0 }, at("2026-09-01T00:00:00Z")).ms)
+      .toBe(at("2026-09-06T11:00:00Z"));
+  });
+
+  it("keeps the wall-clock promise across a DST gap", () => {
+    // 02:30 doesn't exist on 2026-03-08 in LA; it runs when the gap closes.
+    const r = nextFireAt(once("2026-03-08", "02:30"), at("2026-03-01T00:00:00Z"));
+    expect(r.dstAdjusted).toBe("gap_forward");
+    expect(r.ms).toBe(at("2026-03-08T10:00:00Z"));
+  });
+
+  it("rejects a malformed or non-existent date rather than rolling it forward", () => {
+    expect(() => rawNextFireAt(once("2026-9-3"), Date.now())).toThrow(/once_date/);
+    expect(() => rawNextFireAt(once("2026-02-30"), Date.now())).toThrow(/no such calendar date/);
+  });
+
+  it("describes itself as a one-off", () => {
+    expect(describeSpec(once("2026-09-03"))).toBe("Once on 2026-09-03 at 04:00 (America/Los_Angeles)");
   });
 });

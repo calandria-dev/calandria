@@ -12,6 +12,7 @@ import { createProject, listTasks } from "@/lib/store";
 import { getDb } from "@/lib/db";
 import { createSchedule, getSchedule, lastRun } from "@/lib/schedule/store";
 import { createRunbook, deleteRunbook } from "@/lib/runbooks/store";
+import { createProvider } from "@/lib/providers/store";
 import { tickSchedules } from "@/lib/scheduler";
 import { setAgentConnection } from "@/lib/agents/connections";
 import { makeRepo } from "./helpers";
@@ -34,7 +35,9 @@ describe("a schedule that fires a runbook", () => {
 
   it("fires the RUNBOOK's prompt and config, not the schedule's own columns", async () => {
     const p = await projectWithRepo();
+    const provider = createProvider({ type: "ollama", config: { base_url: "http://localhost:11434" } });
     const rb = createRunbook({ project_id: p.id, name: "Sweep", prompt: "/from-runbook", priority: "hi", permission_mode: "plan" });
+    getDb().prepare("UPDATE runbooks SET provider_id = ?, model = ? WHERE id = ?").run(provider.id, "qwen3-coder", rb.id);
     const s = createSchedule({
       project_id: p.id, name: "Morning", prompt: "/stale-fallback", priority: "lo",
       days_mask: 127, time_of_day: "08:30", timezone: "America/Los_Angeles",
@@ -48,8 +51,10 @@ describe("a schedule that fires a runbook", () => {
     const task = listTasks(p.id).find((t) => t.schedule_id === s.id)!;
     expect(task.priority).toBe("hi");
     expect(task.permission_mode).toBe("plan");
+    expect(task.provider_id).toBe(provider.id);
+    expect(task.model).toBe("qwen3-coder");
     expect(task.runbook_id).toBe(rb.id);
-    // The title still comes from the SCHEDULE — that's what the user named the
+    // The title still comes from the schedule: that's what the user named the
     // occurrence, and it's what the run ledger reads by.
     expect(task.title).toContain("Morning");
   });
@@ -67,9 +72,9 @@ describe("a schedule that fires a runbook", () => {
     due(s.id);
     await tickSchedules(Date.now());
 
-    // Not "/stale-fallback": deleteRunbook copied the live recipe back, so the
-    // schedule keeps firing what it fired yesterday rather than something stale
-    // from before the link was made.
+    // deleteRunbook copies the live recipe back, so the schedule keeps firing
+    // what it fired yesterday instead of something stale from before the link
+    // was made.
     expect(started[0].text).toBe("/from-runbook");
     expect(getSchedule(s.id)!.runbook_id).toBeNull();
   });
@@ -95,15 +100,21 @@ describe("a schedule that fires a runbook", () => {
 
   it("an unlinked schedule is completely unaffected", async () => {
     const p = await projectWithRepo();
+    const provider = createProvider({ type: "lmstudio", config: { base_url: "http://localhost:1234" } });
     const s = createSchedule({
       project_id: p.id, name: "Morning", prompt: "/own",
       days_mask: 127, time_of_day: "08:30", timezone: "America/Los_Angeles",
     });
+    getDb().prepare("UPDATE schedules SET provider_id = ?, model = ? WHERE id = ?").run(provider.id, "local-model", s.id);
     due(s.id);
 
     await tickSchedules(Date.now());
 
     expect(started[0].text).toBe("/own");
-    expect(listTasks(p.id).find((t) => t.schedule_id === s.id)!.runbook_id).toBeNull();
+    expect(listTasks(p.id).find((t) => t.schedule_id === s.id)).toMatchObject({
+      runbook_id: null,
+      provider_id: provider.id,
+      model: "local-model",
+    });
   });
 });

@@ -8,10 +8,10 @@ import { docEntryId } from "./plugins/docs-links.mjs";
 // copied or generated into `website/` — the Markdown stays the source of truth,
 // stays GitHub-renderable, and this site is a rendered mirror of it.
 //
-// `pattern` is deliberately top level only: `docs/design/` (decision records)
-// and `docs/superpowers/` (agent tooling) are internal and must not publish.
-// `CLAUDE.md` is excluded for the same reason — it is instructions to agents
-// working in that directory, not a page.
+// `pattern` is deliberately top level only: `docs/design/` (the design
+// handoff kit) is internal and must not publish. `CLAUDE.md` is excluded for
+// the same reason — it is instructions to agents working in that directory,
+// not a page.
 //
 // `generateId` is what mounts the collection under `/docs` — Starlight routes
 // an entry at its id, so `SELF_HOSTING.md` -> `docs/self-hosting` ->

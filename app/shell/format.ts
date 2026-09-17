@@ -1,6 +1,8 @@
 // Pure formatting + derivation helpers shared across the shell modules.
-import type { AskQuestion, AskAnswers } from "@/lib/types";
+import { splitAttachmentText, type AttachmentRef } from "@/lib/uploadTypes";
+import type { AskQuestion, AskAnswers, ToolPeek } from "@/lib/types";
 import { contextWindowFor } from "@/lib/contextWindow";
+import type { AgentProvider } from "@/lib/agentEnv";
 import type { Msg, TaskRow, AgentCapabilities, AgentInfo } from "./types";
 import type { InternalUsageEstimate } from "./types";
 
@@ -25,6 +27,19 @@ export function fmtCost(n: number): string {
   return `$${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
 }
 
+/**
+ * The dollar figure the usage chip prints, which is not always a dollar figure.
+ * A task whose turns all ran against an unpriced endpoint has nothing to show,
+ * so this returns an em dash instead of a misleading "$0.00". A task with a mix of
+ * priced and unpriced turns shows what the priced turns cost, with a trailing
+ * "+" indicating more is uncounted. `usageTooltip` explains the split in detail.
+ */
+export function fmtCostTotal(costUsd: number, unpricedTurns: number): string {
+  if (unpricedTurns <= 0) return fmtCost(costUsd);
+  if (costUsd <= 0) return "–";
+  return `${fmtCost(costUsd)}+`;
+}
+
 export function fmtJobCost(e: InternalUsageEstimate): string {
   const cost = e.cost_usd <= 0 ? "$0.00" : e.cost_usd < 0.01 ? "<$0.01" : `$${e.cost_usd.toFixed(2)}`;
   return `~${fmtTokens(e.tokens)} tokens (~${cost})`;
@@ -33,25 +48,39 @@ export function fmtJobCost(e: InternalUsageEstimate): string {
 // ---------- the usage chip (tokens + cost, honestly) ----------
 
 // A task's cumulative tokens split by what they actually represent. The raw
-// `total_tokens` sums all four buckets, and in real sessions ~90%+ of it is
-// prompt-cache READS — the same context re-sent on every turn and billed at ~10%
-// of the input rate. Leading with that reads as "this task burned 3.8M tokens"
-// when the model only ever processed ~250k of new material, which is what scares
-// people off. So the chip leads with `fresh` (tokens seen for the first time:
-// in/out plus cache WRITES, which are billed above input rate) and carries cache
-// reads as secondary detail. Defensive ?? 0s: a task row can predate the fields.
+// `total_tokens` sums all four buckets, but most of it is typically prompt-cache
+// reads: the same context re-sent on every turn, billed below the input rate.
+// The chip leads with `fresh` (tokens seen for the first time: in/out plus
+// cache writes, billed above the input rate) and shows cache reads as secondary
+// detail. Defensive ?? 0s: a task row can predate the fields.
 export interface UsageSplit {
-  total: number;      // every bucket summed — what task.total_tokens holds
-  fresh: number;      // in/out + cache writes: material the model processed anew
+  total: number;      // every bucket summed, subagent sidechains included
+  fresh: number;      // main-session in/out + cache writes: material processed anew
   inOut: number;      // prompt + completion tokens, uncached
   cacheWrite: number; // context written into the cache (billed ~1.25× input)
   cacheRead: number;  // context re-read from the cache (billed ~0.1× input)
+  subagent: number;   // of `total`, tokens burned inside Task-tool sidechains
 }
-export function usageSplit(t: Pick<TaskRow, "total_tokens" | "cache_read_tokens" | "cache_creation_tokens">): UsageSplit {
-  const total = t.total_tokens ?? 0;
+export function usageSplit(
+  t: Pick<TaskRow, "total_tokens" | "cache_read_tokens" | "cache_creation_tokens"> & Partial<Pick<TaskRow, "subagent_tokens">>
+): UsageSplit {
+  // The four stored buckets cover the main session only. The Claude result
+  // message excludes sidechains from its token counts while folding them into
+  // its cost, so `subagent_tokens` counts tokens `total_tokens` does not
+  // include. Adding it here makes the tooltip's grand total describe the same
+  // turn the dollar figure beside it does.
+  const main = t.total_tokens ?? 0;
+  const subagent = t.subagent_tokens ?? 0;
   const cacheRead = t.cache_read_tokens ?? 0;
   const cacheWrite = t.cache_creation_tokens ?? 0;
-  return { total, cacheRead, cacheWrite, inOut: Math.max(0, total - cacheRead - cacheWrite), fresh: Math.max(0, total - cacheRead) };
+  return {
+    total: main + subagent,
+    subagent,
+    cacheRead,
+    cacheWrite,
+    inOut: Math.max(0, main - cacheRead - cacheWrite),
+    fresh: Math.max(0, main - cacheRead),
+  };
 }
 
 /**
@@ -60,22 +89,33 @@ export function usageSplit(t: Pick<TaskRow, "total_tokens" | "cache_read_tokens"
  * - Is the number a MEASUREMENT or an estimate? `costIsEstimated` answers that
  *   (Codex reports tokens only, so its figure is tokens × published prices).
  * - Is the number MONEY THE USER SPENDS? Only under api-key auth. On a Max/Pro
- *   (or ChatGPT) subscription the marginal cost of a turn is $0 — the SDK's
+ *   (or ChatGPT) subscription the marginal cost of a turn is $0: the SDK's
  *   `total_cost_usd` is what the same tokens would have cost through the API,
- *   and what's actually consumed is plan quota. Showing a bare "$4.20" there
+ *   while what's actually consumed is plan quota. Showing a bare "$4.20" there
  *   reads as a bill for something that was included.
  *
  * Either one makes the figure approximate-in-meaning, so both get an `~` plus a
  * tooltip clause saying which it is. An unknown account (bundle still loading,
- * agent not connected) keeps the plain billed presentation — we won't claim a
- * turn was covered by a plan we can't see.
+ * agent not connected) keeps the plain billed presentation, since a turn's
+ * plan coverage can't be claimed for an account this code can't see.
  */
 export interface CostDisplay {
   show: boolean;   // render a dollar figure at all
   approx: boolean; // prefix it with ~
   note: string;    // tooltip clause explaining what the figure means ("" = a plain billed charge)
 }
-export function costDisplay(agent: AgentInfo | undefined): CostDisplay {
+export function costDisplay(agent: AgentInfo | undefined, provider?: AgentProvider): CostDisplay {
+  // A turn against a provider override (a local model server, or any other
+  // endpoint, see lib/agentEnv.ts) has no price the vendor charged. The runner
+  // records cost_usd as 0 for a local server and NULL for a custom base URL
+  // (lib/runner.ts, off providerPricing), and neither reads honestly here:
+  // "$0.00" on screen reads as a measured price, not an inapplicable one. The
+  // API-price equivalent the catalog would quote is worse still: it is the
+  // list price of a model that didn't run. So there is no figure, and the
+  // tooltip says why.
+  if (provider && provider.kind !== "cloud") {
+    return { show: false, approx: false, note: `ran on ${provider.host}, not the vendor's API, so there is no cost to report` };
+  }
   const caps = agent?.capabilities;
   const estimated = caps?.costIsEstimated === true;
   const show = caps?.reportsCostUsd !== false || estimated;
@@ -93,44 +133,72 @@ export function costDisplay(agent: AgentInfo | undefined): CostDisplay {
 }
 
 // The usage chip's tooltip: the full breakdown the compact chip can't fit, one
-// fact per line. Exact counts here (the chip rounds) — this is the view someone
-// opens precisely because the rounded number surprised them.
-export function usageTooltip(split: UsageSplit, costUsd: number, cost: CostDisplay): string {
+// fact per line. Exact counts here, since the chip rounds and this is the view
+// someone opens precisely because the rounded number surprised them.
+export function usageTooltip(split: UsageSplit, costUsd: number, cost: CostDisplay, unpricedTurns = 0): string {
   const n = (v: number) => v.toLocaleString();
   const lines = [
     `${n(split.fresh)} new tokens this task: ${n(split.inOut)} in/out · ${n(split.cacheWrite)} written to cache`,
   ];
   if (split.cacheRead > 0) {
-    lines.push(`${n(split.cacheRead)} cache reads (context re-read on every model request: each tool call is one, by the main session and any subagents; billed at ~10% of the input rate)`);
+    lines.push(`${n(split.cacheRead)} cache reads (context re-read on every model request: each tool call is one; billed at ~10% of the input rate)`);
+  }
+  // The grand total is worth stating whenever it exceeds the headline `fresh`
+  // figure, either because context was re-read or because work happened in a
+  // sidechain. It has to precede the subagent line for "of those" to refer to
+  // anything.
+  if (split.cacheRead > 0 || split.subagent > 0) {
     lines.push(`${n(split.total)} tokens total`);
+  }
+  // Absent for Codex and the mock driver, which don't report the split, since
+  // a "0 in subagents" line would read as a measured claim.
+  if (split.subagent > 0) {
+    lines.push(`${n(split.subagent)} of those in subagents (their own windows, not this session's context)`);
   }
   if (cost.show && costUsd > 0) {
     lines.push(`${cost.approx ? "~" : ""}${fmtCost(costUsd)}${cost.note ? ` ${cost.note}` : " billed"}`);
+  } else if (!cost.show && cost.note) {
+    // No figure to caveat, so the caveat is the line: otherwise a task on a
+    // local endpoint shows tokens with no explanation of the missing price.
+    lines.push(cost.note);
+  }
+  // Said whether or not `cost.show` is on: the reason a figure is missing is
+  // more useful than the figure would have been.
+  if (unpricedTurns > 0) {
+    const turns = `${n(unpricedTurns)} turn${unpricedTurns === 1 ? "" : "s"}`;
+    lines.push(costUsd > 0
+      ? `${turns} ran against a custom endpoint with no price set. The figure above covers only the rest`
+      : `${turns} ran against a custom endpoint with no price set, so there is no cost to show: unknown, not $0.00`);
   }
   return lines.join("\n");
 }
 
-// Context window: the input-side tokens of the latest turn ≈ how full that
-// window currently is. The size comes from the agent's capability descriptor
-// (capabilities.models[].contextWindow) — Codex windows differ from Claude's, so
-// it can't be a static Claude-only table. The miss policy (widest for
-// Default/null, narrowest for an id the catalog doesn't know) is
+// Context window: the input-side tokens of the latest turn approximate how
+// full that window currently is. The size comes from the agent's capability
+// descriptor (capabilities.models[].contextWindow), since Codex windows differ
+// from Claude's and this can't be a static Claude-only table. The miss policy
+// (widest for Default/null, narrowest for an id the catalog doesn't know) is
 // lib/contextWindow.ts, shared with the server's modelContextWindow().
 export { DEFAULT_CONTEXT_WINDOW } from "@/lib/contextWindow";
 export function contextWindowOf(model: string | null | undefined, caps?: AgentCapabilities): number {
   return contextWindowFor(caps?.models ?? [], model);
 }
-export function contextPct(tokens: number, model: string | null | undefined, caps?: AgentCapabilities): number {
-  return Math.round((tokens / contextWindowOf(model, caps)) * 1000) / 10;
+// Percent of a KNOWN window. The window is passed in instead of looked up here
+// because the server already resolved it onto the row (TaskRow.context_window),
+// and it is the only one that can: a local-model override makes the catalog
+// inapplicable, which the catalog itself has no way to notice. 0 = unknown,
+// and an unknown window has no percentage; see lib/store.ts taskContextWindow.
+export function contextPct(tokens: number, window: number): number {
+  return window > 0 ? Math.round((tokens / window) * 1000) / 10 : 0;
 }
 
-// Friendly name for a resolved model id — the badge that answers "which model
-// did this turn actually run on?". The VERSION is the point: family aliases move
-// (today "opus" resolves to claude-opus-5, last month claude-opus-4-8), so a bare
+// Friendly name for a resolved model id: the badge that answers "which model
+// did this turn actually run on?". The version matters because family aliases
+// move (an "opus" alias can resolve to a different id over time), so a bare
 // "Opus" badge tells you nothing. Parse family + version out of the id first
 // ("claude-opus-5" -> "Opus 5", "claude-opus-4-8-20251101" -> "Opus 4.8") and
 // keep the `[1m]` marker, since the 1M variant is a distinct run mode.
-// Non-Claude ids (Codex's "gpt-5.1-codex-max") carry no such version shape —
+// Non-Claude ids (Codex's "gpt-5.1-codex-max") carry no such version shape, so
 // those fall through to the agent's capability labels, matched longest-first so
 // a shorter value can't shadow a more specific one. Raw id is the last resort.
 export function modelLabel(id: string | null, caps?: AgentCapabilities): string {
@@ -141,8 +209,8 @@ export function modelLabel(id: string | null, caps?: AgentCapabilities): string 
   if (fam) {
     const cap = fam[0].toUpperCase() + fam.slice(1);
     const v = s.match(new RegExp(`${fam}-(\\d+)(?:-(\\d+))?`));
-    // Deliberately NOT the capability label here: an id we can't read a version
-    // out of shouldn't be badged with a version we're only guessing at.
+    // Not the capability label here: an id with no readable version shouldn't
+    // be badged with a version that's only a guess.
     return v ? `${cap} ${v[1]}${v[2] ? `.${v[2]}` : ""}${long}` : `${cap}${long}`;
   }
   const hit = (caps?.models ?? [])
@@ -181,22 +249,21 @@ export function relTime(ts: number): string {
 }
 // ---------- scheduler health ----------
 //
-// A schedule promises work at 08:30 with nobody logged in, so the ONE thing the
-// card must never do is show a confident "next run tomorrow 08:30" when nothing
-// is actually watching for it. Three ways that happens, in order of how much
-// they lie:
+// A schedule promises work at 08:30 with nobody logged in, so the card must
+// never show a confident "next run tomorrow 08:30" when nothing is actually
+// watching for it. Three ways that happens, in order of how much they lie:
 //
-//   1. the ticker was never started (CALANDRIA_SCHEDULER=off, a boot ping that never
-//      landed) — nothing will ever fire;
-//   2. the ticker is started but its sweeps have STOPPED COMING BACK. This is
-//      the quiet one: tickSchedules() is single-flight, so one call that never
-//      returns (a stalled agent CLI in the fire-time probe, a hung git op)
-//      leaves `ticking` true forever and every schedule on the instance stops,
-//      with no error anywhere because nothing threw. A stale lastTickAt is the
-//      only symptom it has, which is exactly why it's served;
+//   1. the ticker was never started (CALANDRIA_SCHEDULER=off, a boot ping that
+//      never landed), so nothing will ever fire;
+//   2. the ticker is started but its sweeps have stopped coming back.
+//      tickSchedules() is single-flight, so one call that never returns (a
+//      stalled agent CLI in the fire-time probe, a hung git op) leaves
+//      `ticking` true forever and every schedule on the instance stops, with
+//      no error anywhere because nothing threw. A stale lastTickAt is the only
+//      symptom it has, which is why it's served here;
 //   3. a sweep completed but one schedule inside it threw.
 //
-// Aged against the server's real tick interval rather than a guessed one. The
+// Aged against the server's real tick interval instead of a guessed one. The
 // multiplier is generous (a sweep that fires several schedules serially can
 // legitimately outlast one interval) with a floor, so a fast dev tick can't
 // produce a banner that flickers on and off.
@@ -216,7 +283,7 @@ export function schedulerAlert(h: SchedulerHealthLike, now = Date.now()): string
   if (!h.started) return "The scheduler is not running on this instance. Nothing will fire.";
   const staleAfter = Math.max(STALE_TICKS * (h.tickMs || 0), STALE_FLOOR_MS);
   // Before the first sweep returns there is no lastTickAt to age, so fall back
-  // to when the ticker started — that covers the worst case of all, a very
+  // to when the ticker started. That covers the worst case of all: a very
   // first sweep that hung on boot.
   const since = h.lastTickAt || h.startedAt;
   if (since && now - since > staleAfter) {
@@ -229,8 +296,9 @@ export function schedulerAlert(h: SchedulerHealthLike, now = Date.now()): string
 }
 
 // How long a task has been waiting on the user, spelled out for the "need you"
-// dropdown ("waiting for 3 hours"). Coarser and more verbose than relTime — this
-// is the only subline a row gets, so it reads as prose rather than a chip.
+// dropdown ("waiting for 3 hours"). Coarser and more verbose than relTime,
+// since this is the only subline a row gets and reads as prose instead of a
+// chip.
 export function waitedFor(since: number): string {
   const s = Math.max(0, Math.round((Date.now() - since) / 1000));
   if (s < 45) return "a few seconds";
@@ -251,30 +319,31 @@ export function duration(start: number, end: number | null): string {
   return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-// A task is "waiting on you" when its awaiting_input flag is set — Claude either
-// ended its turn mid-task or is parked on an AskUserQuestion. The flag is the
-// single source of truth (cleared the instant the next turn starts / a question
-// is answered), so this holds even while the turn is technically still live and
-// parked on the question — that's exactly the case the task list must surface.
+// A task is "waiting on you" when its awaiting_input flag is set: the agent
+// either ended its turn mid-task or is parked on an AskUserQuestion. The flag
+// is the single source of truth (cleared the instant the next turn starts or a
+// question is answered), so this holds even while the turn is technically
+// still live and parked on the question, which is exactly the case the task
+// list must surface.
 export const isAwaiting = (t: TaskRow) =>
   t.status === "in_progress" && !!t.awaiting_input;
 
-// A task whose open PR is red. The OTHER way a task needs a human, and the one
-// nothing was parked for: the turn ended, the agent verified locally, and CI
-// disagreed. `pr_state === "open"` matters — a merged or closed PR is never
-// re-polled, so its last-seen "failing" could never clear itself — and the
-// status screen keeps a held or cancelled task quiet, since somebody has
-// already decided not to pursue it.
+// A task whose open PR is red: the turn ended, the agent verified locally, and
+// CI disagreed. This is the other way a task needs a human, and the one
+// nothing was parked for. `pr_state === "open"` matters, since a merged or
+// closed PR is never re-polled and its last-seen "failing" could never clear
+// itself; the status screen keeps a held or cancelled task quiet, since
+// somebody has already decided not to pursue it.
 //
 // Mirrors the server's PR_RED_ARM in lib/store.ts, which is what the pill
-// counts for every OTHER project; the two must agree or the selected project's
-// count would jump as you switch to it.
+// counts for every other project. The two must agree or the selected
+// project's count would jump as you switch to it.
 export const isPrRed = (t: TaskRow) =>
   t.pr_state === "open" && t.pr_checks === "failing" && (t.status === "in_progress" || t.status === "done");
 
 // The union: what "N need you" means. Every attention surface (the pill count,
 // the list's Needs-you group, the board's Needs-input column) partitions on
-// THIS, not on isAwaiting — and every status group excludes it, or a done task
+// this, not on isAwaiting, and every status group excludes it, or a done task
 // with a red PR would be drawn twice.
 export const needsYou = (t: TaskRow) => isAwaiting(t) || isPrRed(t);
 
@@ -291,57 +360,130 @@ export function prFailingChecks(t: Pick<TaskRow, "pr_failing">): { name: string;
   }
 }
 
-// A task whose last UNATTENDED run finished cleanly and which nobody has looked
-// at yet — the resting state of a scheduled success (lib/runner.ts). It is
-// deliberately not "needs you": nothing is waiting on an answer, so it stays
-// out of the pill. But it isn't working either, and it isn't done — the output
-// hasn't been read — so it gets a category of its own instead of resting in
-// "In progress", where it was indistinguishable from live work and where
-// nothing ever moved it (issue #28).
+// A task whose last unattended run finished cleanly and which nobody has
+// looked at yet: the resting state of a scheduled success (lib/runner.ts). It
+// is not "needs you", since nothing is waiting on an answer, so it stays out
+// of the pill. It isn't working either, and it isn't done, since the output
+// hasn't been read, so it gets a category of its own instead of resting in
+// "In progress", where it would be indistinguishable from live work and never
+// move on its own (issue #28).
 //
 // `running` is part of the predicate, not a nicety: the coarse /api/events
 // payload settles running before a client would ever refetch the row, so a
-// task the mark still sits on because its NEXT turn is already streaming must
+// task the mark still sits on because its next turn is already streaming must
 // read as working, not as finished.
 export const isUnreadRun = (t: TaskRow) =>
   t.status === "in_progress" && t.unread_run_at > 0 && !t.running && !t.awaiting_input;
 
-// A tray suggestion an agent has retracted (the withdraw_suggestion tool): still
-// `suggested`, so it stays in the tray for the user to revive or dismiss, but
-// cancelled — and therefore no longer proposing anything. Without this the tray
-// draws it identically to a live suggestion, which is the whole reason the tool
-// would be useless: a retraction nobody can see isn't one.
+// A task whose base branch was rewritten under it by the task that landed that
+// branch (lib/baseRewrite.ts), and which nobody has caught up yet. It is not
+// "needs you": nothing is waiting on an answer, and the remedy is the rebase
+// button in the task's own sync banner. It earns a chip because that banner
+// only mounts for the selected task, so without it the fact is invisible until
+// somebody opens the task.
 //
-// Keyed on the STATE, not on withdrawn_reason: a suggestion cancelled any other
-// way (the edit dialog) is just as dead and should read the same. The reason is
-// what gets shown when there is one, not what qualifies a row.
+// The flag clears itself on the next sync read once the cut point is reachable
+// from the base again, so a terminal task is screened here only to keep a chip
+// off a card nobody will act on.
+export const isBaseRewritten = (t: TaskRow) =>
+  t.base_rewritten_at > 0 && t.status !== "done" && t.status !== "cancelled";
+
+// A tray suggestion an agent has retracted (the withdraw_suggestion tool):
+// still `suggested`, so it stays in the tray for the user to revive or
+// dismiss, but cancelled, so it no longer proposes anything. Without this the
+// tray draws it identically to a live suggestion, and a retraction nobody can
+// see isn't one.
+//
+// Keyed on the state, not on withdrawn_reason: a suggestion cancelled any
+// other way (the edit dialog) is just as dead and should read the same. The
+// reason is shown when there is one, not what qualifies a row.
 export const isWithdrawn = (t: TaskRow) => !!t.suggested && t.status === "cancelled";
 
-// Live suggestions first, withdrawn ones after — a stable partition, so within
-// each half the tray keeps its manual order. Retractions are the tail of the
-// tray rather than hidden: the user still has to decide whether to agree.
+// Live suggestions first, withdrawn ones after: a stable partition, so within
+// each half the tray keeps its manual order. Retractions sit at the tail of
+// the tray instead of being hidden, since the user still has to decide
+// whether to agree.
 export const withdrawnLast = (a: TaskRow, b: TaskRow) => Number(isWithdrawn(a)) - Number(isWithdrawn(b));
 
-// The titles of a task's unfinished blockers (dependencies not yet 'done'). A
-// task with any of these is "blocked" and can't be started until they complete.
-// A cancelled dependency doesn't block — it's terminal and will never finish,
-// so waiting on it would deadlock the dependent task forever.
+// A terminal task will never finish anything again: it is done, or it was
+// cancelled and won't be resumed. Mirrors `blocks()` in lib/autoStart.ts, which
+// is what actually decides whether a dependent may start.
+export const isTerminal = (t: { status: TaskRow["status"] }) => t.status === "done" || t.status === "cancelled";
+
+// Case-insensitive, locale-aware A→Z. Picker lists are scanned by eye for a
+// name the user already has in mind, so alphabetical beats any recency or
+// filing order there: "Auth" shouldn't sort after "auth migration".
+export const alphabetical = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: "base" });
+
+// The tasks a "Blocked by" picker may offer. Two kinds are left out, because
+// offering them is offering an edge that means nothing yet: a terminal task
+// can't block anything by definition, and an unreviewed suggestion isn't on
+// the board, so picking one would wait on work nobody has agreed to do.
+//
+// Both have the same exception: one already selected stays listed. An edge
+// drawn while the blocker was live must survive it finishing, and an edge an
+// agent drew onto a suggestion (`update_task`'s `blocked_by`, which never
+// checks `suggested`) has to be visible somewhere. The picker is the only
+// screen that can untick it, and a suggestion does block server-side
+// (issue #46).
+export const blockerCandidates = (candidates: TaskRow[], selected: string[]): TaskRow[] =>
+  candidates
+    .filter((c) => (!isTerminal(c) && !c.suggested) || selected.includes(c.id))
+    .sort((a, b) => alphabetical(a.title, b.title));
+
+// One rule for "does this dependency still gate a start", shared by the chip
+// and by the two dialogs' Start gates. It mirrors `blocks()` in
+// lib/autoStart.ts, the predicate that actually decides, on both of its edges:
+//
+//   - a terminal blocker doesn't block. It will never finish, so waiting on it
+//     would deadlock the dependent forever.
+//   - a ref that resolves to nothing doesn't block either. `blocks()` returns
+//     false for a missing task, and the client disagreeing meant a deleted or
+//     not-yet-loaded blocker disabled a Start the server would have allowed.
+//
+// A suggested blocker does block, agreeing with the server. It is drawn as one
+// (`blockerCandidates` above lists it, `blockerTitles` names it as suggested)
+// instead of being ignored.
+//
+// Generic over the row shape because not every screen holds a `TaskRow`: the
+// transcript's suggestion card gets its blockers from
+// `GET /api/tasks/[id]/suggestion` as `{ id, title, status }`, and a second
+// copy of this rule for that shape is the drift the predicate exists to stop.
+export const isBlocking = <T extends { status: TaskRow["status"] }>(b: T | undefined): b is T => !!b && !isTerminal(b);
+
+// The tooltip a Start button carries while it is refusing to start. One string
+// for every such button (the session header's, and the three suggestion Starts
+// in the tray, the board and the transcript), so the reason a click is
+// unavailable reads the same wherever the click was going to happen, close to
+// the 409 `POST /api/tasks/[id]/messages` answers a stale tab with, which is
+// the authority all four are agreeing with.
+//
+// Returning undefined for "not blocked" makes it the disabled test too:
+// `disabled={!!note}` can't disagree with the tooltip it renders beside.
+export const blockedNote = (titles: string[] | undefined): string | undefined =>
+  titles?.length ? `Blocked until done: ${titles.join(", ")}` : undefined;
+
+// The titles of a task's unfinished blockers. A task with any of these is
+// "blocked" and can't be started until they clear. A blocker still sitting in
+// the Suggested tray is named as such: it blocks like any other, but it clears
+// by being accepted, dismissed or unticked instead of by being worked, and the
+// chip is where a user finds out that's what they're waiting on.
 export const blockerTitles = (t: TaskRow, byId: Map<string, TaskRow>): string[] =>
   (t.depends_on ?? [])
     .map((id) => byId.get(id))
-    .filter((b): b is TaskRow => !!b && b.status !== "done" && b.status !== "cancelled")
-    .map((b) => b.title);
+    .filter(isBlocking)
+    .map((b) => (b.suggested ? `${b.title} (suggested)` : b.title));
 
-// add/del/ctx class for a diff line's sign — shared by the peek and full views.
+// add/del/ctx class for a diff line's sign, shared by the peek and full views.
 export const diffCls = (sign: "+" | "-" | " ") => (sign === "+" ? "add" : sign === "-" ? "del" : "ctx");
 
 // group flat messages into per-generation sessions, pulling out the /clear summaries
 export function buildSessions(messages: Msg[]) {
   const summaryByGen: Record<number, string> = {};
   for (const m of messages) if (m.role === "session_break") summaryByGen[m.generation] = m.content;
-  // Queued follow-ups are excluded here — they haven't run yet, so SessionView
-  // renders them in a pinned block below the live "thinking" indicator instead
-  // of interleaved with the committed transcript.
+  // Queued follow-ups are excluded here, since they haven't run yet, so
+  // SessionView renders them in a pinned block below the live "thinking"
+  // indicator instead of interleaved with the committed transcript.
   const committed = messages.filter((m) => m.role !== "queued");
   const gens = Array.from(new Set(committed.filter((m) => m.role !== "session_break").map((m) => m.generation))).sort((a, b) => a - b);
   return gens.map((n) => ({
@@ -352,47 +494,31 @@ export function buildSessions(messages: Msg[]) {
 }
 
 // ---------- chat attachments (images + large text pastes) ----------
-// An upload travels inside the message text as one marker line per file:
-// "[Attached image: /abs/path.png]" for images, "[Attached file: /abs/path.txt]"
-// for a big text paste diverted to a file (see PASTE_ATTACH_THRESHOLD). The
-// same string serves both sides — Claude Code opens the absolute path with its
-// Read tool (rendering images natively, reading text files as text), and the
-// transcript strips the marker back out to render an inline thumbnail (image)
-// or a file chip (text). The serving URL is derived from the path's
+// An upload travels inside the message text (or a task's description) as one
+// marker line per file; lib/uploadTypes.ts owns the format and the parser, so
+// the composer, the task dialogs, the server and the agent tools all read the
+// same line. This half adds the serving URL, derived from the path's
 // uploads/<task>/<file> tail, so no extra columns or event fields are needed.
-export const attachmentMarker = (absPath: string) => `[Attached image: ${absPath}]`;
-export const fileAttachmentMarker = (absPath: string) => `[Attached file: ${absPath}]`;
-const ATTACHMENT_RE = /^\[Attached (image|file): (.+)\]$/;
+export { attachmentMarker, fileAttachmentMarker } from "@/lib/uploadTypes";
 
 export interface MsgAttachment { path: string; url: string; kind: "image" | "file"; name: string }
 
-// Split a user message into displayable text + attachment chips. Marker lines
-// whose path doesn't end in uploads/<task>/<file> (hand-typed lookalikes) stay
-// in the text untouched.
+/** The serving URL for a recognized marker. */
+export const attachmentUrl = (a: Pick<AttachmentRef, "taskId" | "file">) => `/api/tasks/${a.taskId}/uploads/${a.file}`;
+
+// Split a user message (or a task description) into displayable text +
+// attachment chips. Marker lines whose path doesn't end in
+// uploads/<task>/<file> (hand-typed lookalikes) stay in the text untouched.
 export function splitAttachments(content: string): { text: string; attachments: MsgAttachment[] } {
-  if (!content.includes("[Attached image: ") && !content.includes("[Attached file: ")) {
-    return { text: content, attachments: [] };
-  }
-  const attachments: MsgAttachment[] = [];
-  const kept: string[] = [];
-  for (const line of content.split("\n")) {
-    const m = ATTACHMENT_RE.exec(line.trim());
-    const parts = m ? m[2].split(/[\\/]/).filter(Boolean) : [];
-    if (m && parts.length >= 3 && parts[parts.length - 3] === "uploads") {
-      const [taskId, file] = parts.slice(-2);
-      attachments.push({ path: m[2], url: `/api/tasks/${taskId}/uploads/${file}`, kind: m[1] === "image" ? "image" : "file", name: file });
-    } else {
-      kept.push(line);
-    }
-  }
-  return { text: kept.join("\n").trim(), attachments };
+  const { text, attachments } = splitAttachmentText(content);
+  return { text, attachments: attachments.map((a) => ({ path: a.path, url: attachmentUrl(a), kind: a.kind, name: a.file })) };
 }
 
 // ---------- pull-request state ----------
-// The wording for tasks.pr_state / pr_checks / pr_review, kept here rather than
+// The wording for tasks.pr_state / pr_checks / pr_review, kept here instead of
 // in the chip because the "needs you" surfaces and the merge button want the
 // same words, and two copies would drift. Every helper takes the raw column
-// value, so "" (never refreshed yet) is a case each one answers deliberately.
+// value, so "" (never refreshed yet) is a case each one answers explicitly.
 
 /** How a PR's state reads, and the tone it's drawn in. "" = not refreshed yet. */
 export function prStateLabel(state: string): { label: string; tone: "open" | "merged" | "closed" | "unknown" } {
@@ -405,8 +531,8 @@ export function prStateLabel(state: string): { label: string; tone: "open" | "me
 }
 
 /**
- * How the check rollup reads. "none" is deliberately NOT green: a repo with no
- * CI at all has proved nothing, so it gets no verdict rather than a tick.
+ * How the check rollup reads. "none" is not green: a repo with no CI at all
+ * has proved nothing, so it gets no verdict instead of a tick.
  */
 export function prChecksLabel(checks: string): { label: string; tone: "pass" | "fail" | "pending" } | null {
   switch (checks) {
@@ -444,4 +570,36 @@ export function prTooltip(
   const red = prFailingChecks(task);
   const named = red.length ? `\nfailing: ${red.map((c) => c.name).join(", ")}` : "";
   return `${task.pr_url}\n${bits.join(" · ")} · ${synced}${named}`;
+}
+
+// How much of a still-running command's output a live tool row keeps. Tail-only
+// on purpose: a build that has been going for four minutes is interesting at its
+// end, and `summarizeFailure` already reads a failure tail-first for the same
+// reason. Six matches the settled `summarizeResult("output")` peek, so the row
+// does not visibly resize when the command finishes and the real peek lands.
+export const LIVE_OUTPUT_LINES = 6;
+// And a bound on any ONE of them. A progress bar that never breaks its line, or
+// a minified bundle printed to stdout, would otherwise grow a single string in
+// React state without limit; the tail is the live end of it either way.
+export const LIVE_OUTPUT_LINE_CHARS = 500;
+
+// Grow a live output peek by one fragment. The last kept line is the partial
+// one, since a fragment rarely ends on a line boundary, so a new fragment
+// continues it instead of starting a line of its own. `\r` counts as a break
+// alongside `\n`: a spinner rewrites its line with a bare carriage return, and
+// keeping the last few states of it avoids one line that grows forever. A
+// trailing empty line stays: the next fragment continues it, and
+// `summarizeResult` leaves the same one on a settled peek.
+export function growOutputPeek(peek: ToolPeek | undefined, delta: string): ToolPeek {
+  // Only ever grows a lines peek. Any other kind belongs to a different tool
+  // (a diff, a checklist) and must not be overwritten by a stray fragment.
+  const base = peek?.kind === "lines" ? peek.lines : [];
+  const parts = delta.split(/\r\n|[\r\n]/);
+  const lines = base.length ? base.slice() : [""];
+  lines[lines.length - 1] += parts[0];
+  for (let i = 1; i < parts.length; i++) lines.push(parts[i]);
+  return {
+    kind: "lines",
+    lines: lines.slice(-LIVE_OUTPUT_LINES).map((l) => (l.length > LIVE_OUTPUT_LINE_CHARS ? l.slice(-LIVE_OUTPUT_LINE_CHARS) : l)),
+  };
 }

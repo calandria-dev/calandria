@@ -1,66 +1,81 @@
 #!/usr/bin/env node
-/* Portable stdio MCP bridge — gives non-Claude agent CLIs (Codex today, any
- * future one) Calandria's task tools (suggest_task / list_tasks /
- * get_task / update_task / withdraw_suggestion / set_base_branch / update_tag /
- * create_pr),
- * its runbook tools
- * (create_runbook / list_runbooks / update_runbook), list_projects,
- * expose_service and ask_user.
+/* Portable stdio MCP bridge, giving non-Claude agent CLIs (Codex today, any
+ * future one) Calandria's task tools (suggest_task / list_tasks / get_task /
+ * update_task / move_task / withdraw_suggestion / set_base_branch /
+ * update_tag / create_pr), its runbook tools (create_runbook / list_runbooks
+ * / update_runbook), list_projects, expose_service and ask_user.
  *
- * The Claude driver mounts these as an in-process SDK MCP server, a construct
- * that only exists inside the Claude Agent SDK. This is the portable equivalent:
- * a plain-Node stdio MCP server (@modelcontextprotocol/sdk) the CLI spawns and
- * talks to over stdio. It's a thin proxy — every tool call POSTs to the app's
- * internal endpoints (app/api/internal/agent-tools/*), which run the SAME shared
- * logic (lib/agentTools.ts) the in-process server calls.
+ * The Claude driver mounts these tools as an in-process SDK MCP server, a
+ * construct that only exists inside the Claude Agent SDK. This is the
+ * portable equivalent: a plain-Node stdio MCP server
+ * (@modelcontextprotocol/sdk) the CLI spawns and talks to over stdio. It is
+ * a thin proxy: every tool call POSTs to the app's internal endpoints
+ * (app/api/internal/agent-tools/*), which run the same shared logic
+ * (lib/agentTools.ts) the in-process server calls.
  *
- * Per-turn wiring comes from env, injected by the driver when it registers this
- * server (lib/agents/codex/driver.ts):
+ * The Claude driver can mount it too, under
+ * CALANDRIA_CLAUDE_TOOL_TRANSPORT=stdio (lib/agents/claude/mcp.ts), as an
+ * escape hatch from the resumed-session cut-off the in-process transport is
+ * subject to. So "non-Claude" above describes who needs this, not who may
+ * use it.
+ *
+ * Per-turn wiring comes from env, injected by the driver when it registers
+ * this server (lib/agents/codex/driver.ts, lib/agents/gemini/mcp.ts,
+ * lib/agents/claude/mcp.ts):
  *   CALANDRIA_TASK_ID     the task this turn belongs to
  *   CALANDRIA_PROJECT_ID  the owning project (tasks/services are created under it)
- *   CALANDRIA_LANDING_MODE  "merge" | "pr" — whether create_pr is offered at all
- *   CALANDRIA_ISSUE_REPO  owner/name reports go to; absent/empty = report_issue is not offered
+ *   CALANDRIA_LANDING_MODE  "merge" | "pr": whether create_pr is offered at all
+ *   CALANDRIA_ISSUE_REPO  owner/name reports go to; absent/empty means report_issue is not offered
  *   CALANDRIA_BASE_URL    the app's loopback origin (e.g. http://127.0.0.1:3000)
  *   SERVICE_TOKEN         the per-instance secret the internal endpoints require
+ *   CALANDRIA_MCP_ASK_USER  "0" to withhold ask_user from an agent that has its own
  *
- * Tool names / descriptions / param docs come from lib/agentToolDefs.mjs so this
- * bridge and the in-process server never drift. Plain .mjs: this file AND
- * agentToolDefs.mjs must be COPY'd into the runtime image (see Dockerfile).
+ * Tool names, descriptions and param docs come from lib/agentToolDefs.mjs so
+ * this bridge and the in-process server can't drift. Plain .mjs: this file
+ * and agentToolDefs.mjs must be COPY'd into the runtime image (Dockerfile).
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, UPDATE_TAG, SET_BASE_BRANCH, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK, REPORT_ISSUE } from "../lib/agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_PROVIDERS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, REPORT_BASE_REWRITE, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK, REPORT_ISSUE } from "../lib/agentToolDefs.mjs";
+import { guardToolHandler, watchToolCancellation, DEFAULT_AGENT_TOOL_TIMEOUT_MS } from "../lib/agentToolGuard.mjs";
 
 const TASK_ID = process.env.CALANDRIA_TASK_ID || "";
 const PROJECT_ID = process.env.CALANDRIA_PROJECT_ID || "";
 const BASE_URL = (process.env.CALANDRIA_BASE_URL || "http://127.0.0.1:3000").replace(/\/+$/, "");
 const SERVICE_TOKEN = process.env.SERVICE_TOKEN || "";
-// How this project lands work — "merge" or "pr" (lib/types.ts LandingMode).
-// The ONLY thing it decides here is whether create_pr is registered at all; the
-// endpoint re-checks it against the project row, so a stale value cannot grant
-// anything.
+// How this project lands work: "merge" or "pr" (lib/types.ts LandingMode).
+// Decides only whether create_pr is registered at all; the endpoint
+// re-checks it against the project row, so a stale value grants nothing.
 const LANDING_MODE = process.env.CALANDRIA_LANDING_MODE || "merge";
+// Whether ask_user is registered at all. On by default, since the agents this
+// bridge serves have no native way to ask. The Claude driver turns it off
+// when it mounts this bridge (CALANDRIA_CLAUDE_TOOL_TRANSPORT=stdio): the CLI
+// has AskUserQuestion, already routed to the same card through the same
+// registry, and a second asking tool would be redundant.
+const ASK_USER_ENABLED = !["0", "off", "false", "no"].includes(String(process.env.CALANDRIA_MCP_ASK_USER || "").toLowerCase());
 // Absent means NOT OFFERED, not "use the default". The driver always passes the
 // resolved value, so the only way to get here empty is an instance that turned
 // the tool off — or a bridge started outside a turn, which has no business
 // offering to file on the user's GitHub account either.
 const ISSUE_REPO = (process.env.CALANDRIA_ISSUE_REPO || "").trim();
 
-// Titles created this turn → their task ids, so `blocked_by` can reference an
-// earlier suggestion by title (mirrors the in-process server's per-turn map).
-// This process lives exactly one turn, so the map is naturally turn-scoped.
+// Titles created this turn map to their task ids, so `blocked_by` can
+// reference an earlier suggestion by title (mirrors the in-process server's
+// per-turn map). This process lives exactly one turn, so the map is
+// naturally turn-scoped.
 //
-// Keyed by (project, title), because a suggestion can be filed into ANY project
-// and dependencies never cross one — the same title in two projects is two
-// unrelated tasks. Unlike the in-process server this bridge only knows the
-// project REF the model typed (an id, a name, or nothing for "here"), not the
-// row it resolves to, so each title is recorded under every alias of its target
-// (the ref as typed, the resolved id, the resolved name, and "" when the target
-// is the session's own project). A ref that still misses simply passes through
-// as a literal and the server reports it as unusable — never a silent bad dep.
-// Two suggestions sharing a title in one project store AMBIGUOUS instead of an
-// id, so the ref resolves to nothing rather than to a coin flip.
+// Keyed by (project, title): a suggestion can be filed into any project and
+// dependencies never cross one, so the same title in two projects is two
+// unrelated tasks. Unlike the in-process server, this bridge only knows the
+// project ref the model typed (an id, a name, or nothing for "here"), not
+// the row it resolves to, so each title is recorded under every alias of
+// its target (the ref as typed, the resolved id, the resolved name, and ""
+// when the target is the session's own project). A ref that still misses
+// passes through as a literal, and the server reports it as unusable
+// instead of resolving to a silent bad dependency. Two suggestions sharing
+// a title in one project store AMBIGUOUS instead of an id, so the ref
+// resolves to nothing instead of to a coin flip.
 const createdByTitle = new Map();
 const AMBIGUOUS = "\u0000ambiguous";
 const norm = (s) => (s ?? "").trim().toLowerCase();
@@ -82,13 +97,64 @@ async function callInternal(path, payload) {
   try {
     data = await res.json();
   } catch {
-    /* non-JSON error body (e.g. a 403 text) — handled below */
+    /* non-JSON error body (e.g. a 403 text), handled below */
   }
   if (!res.ok) throw new Error((data && data.error) || `Calandria returned ${res.status}`);
   return data;
 }
 
 const server = new McpServer({ name: "calandria", version: "1.0.0" });
+
+// Every tool below answers through lib/agentToolGuard.mjs, so a throw, a hang
+// or an empty result reaches the model as a sentence it can read instead of
+// silence that would read as success. The wrap goes on registerTool itself,
+// not on each handler, matching how the Claude driver wraps its whole tools
+// array: a tool added later cannot forget it.
+//
+// ask_user is exempt from the deadline: it is parked on a human, who may
+// take all day, and its own 24h poll is the deadline that belongs there.
+// Plain Node, so the knob is read straight from the environment instead of
+// from lib/config.ts; CALANDRIA_AGENT_TOOL_TIMEOUT_MS is the same name that
+// file uses.
+const TOOL_TIMEOUT_MS = (() => {
+  const n = Number(process.env.CALANDRIA_AGENT_TOOL_TIMEOUT_MS);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_AGENT_TOOL_TIMEOUT_MS;
+})();
+/**
+ * Report a call the CLI cut off after dispatching it. Best effort in both
+ * directions: the stderr line lands even when the app is unreachable or this
+ * process is about to be killed, and a failed POST is swallowed, because the
+ * tool call it belongs to is already lost and there is nothing to retry for.
+ */
+async function reportCutoff({ tool, reason, ms }) {
+  process.stderr.write(
+    `[calandria-mcp] ${tool} was cancelled by the agent CLI after ${ms}ms, so its answer was discarded` +
+      `${reason ? `: ${reason}` : ""}\n`
+  );
+  try {
+    await callInternal("tool-cutoff", { tool, reason, ms });
+  } catch {
+    /* the answer is already lost; a failed report must not add noise on stdout */
+  }
+}
+
+const registerToolUnguarded = server.registerTool.bind(server);
+// Two wraps, outermost first. watchToolCancellation sees the whole in-flight
+// window, including the guard's own deadline, and reports the one failure the
+// guard cannot answer: a cancellation after dispatch, which makes the MCP SDK
+// drop whatever the guard returns (lib/agentToolGuard.mjs). This is where the
+// bridge closes the gap the Claude driver's stream pump closes in-process
+// (issue #364).
+server.registerTool = (name, config, handler) =>
+  registerToolUnguarded(
+    name,
+    config,
+    watchToolCancellation(name, guardToolHandler(name, handler, { timeoutMs: name === ASK_USER.name ? 0 : TOOL_TIMEOUT_MS }), {
+      onCutoff: (cut) => {
+        void reportCutoff(cut);
+      },
+    })
+  );
 
 server.registerTool(
   EXPOSE_SERVICE.name,
@@ -115,6 +181,15 @@ server.registerTool(
 );
 
 server.registerTool(
+  LIST_PROVIDERS.name,
+  { description: LIST_PROVIDERS.description, inputSchema: {} },
+  async () => {
+    const data = await callInternal("list-providers", {});
+    return { content: [{ type: "text", text: JSON.stringify(data.providers ?? [], null, 2) }] };
+  }
+);
+
+server.registerTool(
   SUGGEST_TASK.name,
   {
     description: SUGGEST_TASK.description,
@@ -125,28 +200,35 @@ server.registerTool(
       project: z.string().optional().describe(SUGGEST_TASK.params.project),
       blocked_by: z.array(z.string()).optional().describe(SUGGEST_TASK.params.blocked_by),
       tags: z.array(z.string()).optional().describe(SUGGEST_TASK.params.tags),
+      provider: z.string().optional().describe(SUGGEST_TASK.params.provider),
+      model: z.string().optional().describe(SUGGEST_TASK.params.model),
+      attachments: z.array(z.string()).optional().describe(SUGGEST_TASK.params.attachments),
     },
   },
-  async ({ title, description, priority, project, blocked_by, tags }) => {
-    // Resolve refs (id passes through; a title from earlier this turn, filed
-    // into the same project → its id) before handing off — the endpoint just
-    // forwards ids to setTaskDeps, which only keeps same-project ones.
+  async ({ title, description, priority, project, blocked_by, tags, provider, model, attachments }) => {
+    // Resolve refs before handing off (an id passes through; a title filed
+    // earlier this turn into the same project resolves to its id). The
+    // endpoint just forwards ids to setTaskDeps, which only keeps
+    // same-project ones.
     const deps = (blocked_by ?? []).map((ref) => {
       const hit = createdByTitle.get(titleKey(project, ref));
       return hit && hit !== AMBIGUOUS ? hit : ref;
     });
-    // `tags` are forwarded as the model typed them: the endpoint resolves them in
-    // the project the task actually lands in (creating it on a miss), which is
-    // the only place that knows what `project` resolved to.
-    const data = await callInternal("suggest-task", { title, description, priority, project, blocked_by: deps, tags });
+    // `tags` are forwarded as the model typed them: the endpoint resolves
+    // them in the project the task actually lands in (creating it on a
+    // miss), which is where `project` resolves to a real row.
+    // `attachments` are forwarded as typed: the endpoint resolves them
+    // against the caller's worktree (CALANDRIA_TASK_ID's), never this
+    // process's cwd.
+    const data = await callInternal("suggest-task", { title, description, priority, project, blocked_by: deps, tags, provider, model, attachments });
     if (data.id) {
-      // The ref as typed is the alias that always exists ("" when omitted); the
-      // resolved id/name (echoed by the endpoint) additionally let a later call
-      // name the same project a different way, and "" lets it drop `project`
-      // entirely when the target was this session's own project.
-      // Deduped: the aliases overlap (filing into this session's own project
-      // without naming it yields "" twice), and a repeat would look like two
-      // tasks sharing a title and poison the entry.
+      // The ref as typed is the alias that always exists ("" when omitted).
+      // The resolved id/name (echoed by the endpoint) additionally let a
+      // later call name the same project a different way, and "" lets it
+      // drop `project` entirely when the target was this session's own
+      // project. Deduped: the aliases overlap (filing into this session's
+      // own project without naming it yields "" twice), and a repeat would
+      // look like two tasks sharing a title and poison the entry.
       const aliases = [project ?? "", data.projectId, data.projectName, data.projectId === PROJECT_ID ? "" : null];
       for (const key of new Set(aliases.filter((a) => a != null).map((a) => titleKey(a, title)))) {
         createdByTitle.set(key, createdByTitle.has(key) ? AMBIGUOUS : data.id);
@@ -188,11 +270,12 @@ server.registerTool(
     inputSchema: {
       project: z.string().optional().describe(LIST_TASKS.params.project),
       include_done: z.boolean().optional().describe(LIST_TASKS.params.include_done),
-      tag: z.string().optional().describe(LIST_TASKS.params.tag),
+      tags: z.array(z.string()).optional().describe(LIST_TASKS.params.tags),
+      match: z.enum(["any", "all"]).optional().describe(LIST_TASKS.params.match),
     },
   },
-  async ({ project, include_done, tag }) => {
-    const data = await callInternal("list-tasks", { project, include_done, tag });
+  async ({ project, include_done, tags, match }) => {
+    const data = await callInternal("list-tasks", { project, include_done, tags, match });
     return { content: [{ type: "text", text: JSON.stringify({ project: data.project, tasks: data.tasks ?? [] }, null, 2) }] };
   }
 );
@@ -213,7 +296,7 @@ server.registerTool(
   GET_TASK.name,
   { description: GET_TASK.description, inputSchema: { task: z.string().optional().describe(GET_TASK.params.task) } },
   async ({ task }) => {
-    // Omitted `task` means "my own", which only the server can resolve — the
+    // Omitted `task` means "my own", which only the server can resolve: the
     // endpoint falls back to CALANDRIA_TASK_ID, sent on every call by callInternal.
     const data = await callInternal("get-task", { task });
     return { content: [{ type: "text", text: JSON.stringify(data.task, null, 2) }] };
@@ -230,21 +313,22 @@ server.registerTool(
       description: z.string().optional().describe(UPDATE_TASK.params.description),
       priority: z.enum(UPDATE_TASK.priorities).optional().describe(UPDATE_TASK.params.priority),
       status: z.enum(UPDATE_TASK.statuses).optional().describe(UPDATE_TASK.params.status),
-      // Ids only — no title lookup against `createdByTitle` the way suggest_task
-      // does. That map dies with this process (one turn), so the same string
-      // would resolve in one turn and be refused in the next; the two-phase
-      // recipe hands the model real ids anyway.
+      // Ids only, no title lookup against `createdByTitle` the way
+      // suggest_task does. That map dies with this process (one turn), so
+      // the same string would resolve in one turn and be refused in the
+      // next; the two-phase recipe hands the model real ids anyway.
       blocked_by: z.array(z.string()).optional().describe(UPDATE_TASK.params.blocked_by),
       tags: z.array(z.string()).optional().describe(UPDATE_TASK.params.tags),
+      attachments: z.array(z.string()).optional().describe(UPDATE_TASK.params.attachments),
     },
   },
-  async ({ task, title, description, priority, status, blocked_by, tags }) => {
-    // `task` is the target the MODEL chose, and it is forwarded unvalidated —
-    // this bridge deliberately holds no policy. The endpoint decides what may
-    // be written (any task in any project, refused only while it has a turn
-    // running right now), against CALANDRIA_TASK_ID (sent by callInternal as
-    // the trusted caller identity, which nothing here can override).
-    const data = await callInternal("update-task", { task, title, description, priority, status, blocked_by, tags });
+  async ({ task, title, description, priority, status, blocked_by, tags, attachments }) => {
+    // `task` is the target the model chose and is forwarded unvalidated;
+    // this bridge holds no policy. The endpoint decides what may be written
+    // (any task in any project, refused only while it has a turn running
+    // right now), against CALANDRIA_TASK_ID (sent by callInternal as the
+    // trusted caller identity, which nothing here can override).
+    const data = await callInternal("update-task", { task, title, description, priority, status, blocked_by, tags, attachments });
     return { content: [{ type: "text", text: data.text }] };
   }
 );
@@ -259,10 +343,30 @@ server.registerTool(
     },
   },
   async ({ task, reason }) => {
-    // Both values are the MODEL's, forwarded unvalidated — the bridge holds no
-    // policy here either. The endpoint decides whether that target is an inert
-    // tray suggestion, against CALANDRIA_TASK_ID as the trusted caller identity.
+    // Both values are the model's, forwarded unvalidated; the bridge holds
+    // no policy here either. The endpoint decides whether that target is an
+    // inert tray suggestion, against CALANDRIA_TASK_ID as the trusted caller identity.
     const data = await callInternal("withdraw-suggestion", { task, reason });
+    return { content: [{ type: "text", text: data.text }] };
+  }
+);
+
+server.registerTool(
+  MOVE_TASK.name,
+  {
+    description: MOVE_TASK.description,
+    inputSchema: {
+      tasks: z.array(z.string()).describe(MOVE_TASK.params.tasks),
+      project: z.string().describe(MOVE_TASK.params.project),
+    },
+  },
+  async ({ tasks, project }) => {
+    // `tasks` and `project` are the model's and are forwarded unvalidated;
+    // the bridge holds no policy. The endpoint decides which rows may move,
+    // against CALANDRIA_TASK_ID as the trusted caller identity, and refuses
+    // a started task instead of offering the discard acknowledgement, which
+    // is the user's call.
+    const data = await callInternal("move-task", { tasks, project });
     return { content: [{ type: "text", text: data.text }] };
   }
 );
@@ -277,19 +381,36 @@ server.registerTool(
     },
   },
   async ({ branch, task }) => {
-    // `task` is the MODEL's target and is forwarded unvalidated — the bridge
+    // `task` is the model's target and is forwarded unvalidated; the bridge
     // holds no policy. The endpoint decides which rows may be retargeted
-    // (any task in the SAME project; never one with a live turn that isn't the
-    // caller's own), against CALANDRIA_TASK_ID as the trusted caller identity.
+    // (any task in the same project, never one with a live turn that isn't
+    // the caller's own), against CALANDRIA_TASK_ID as the trusted caller identity.
     const data = await callInternal("set-base-branch", { branch, task });
     return { content: [{ type: "text", text: data.text }] };
   }
 );
 
-// Only on a project that lands by pull request, exactly as the Claude driver
-// gates it (lib/agents/claude/driver.ts). On a merge project there is nothing to
-// open, so the tool is absent rather than present-and-refusing — an offered tool
-// reads as a sanctioned move.
+server.registerTool(
+  REPORT_BASE_REWRITE.name,
+  {
+    description: REPORT_BASE_REWRITE.description,
+    inputSchema: {
+      branch: z.string().optional().describe(REPORT_BASE_REWRITE.params.branch),
+    },
+  },
+  async ({ branch }) => {
+    // `branch` is the model's word for what it rewrote and is forwarded
+    // unvalidated; the endpoint re-derives which tasks were actually
+    // orphaned from git, against CALANDRIA_TASK_ID as the trusted caller.
+    const data = await callInternal("report-base-rewrite", { branch });
+    return { content: [{ type: "text", text: data.text }] };
+  }
+);
+
+// Only on a project that lands by pull request, matching how the Claude
+// driver gates it (lib/agents/claude/driver.ts). On a merge project there is
+// nothing to open, so the tool is absent instead of present-and-refusing: an
+// offered tool reads as a sanctioned move.
 if (LANDING_MODE === "pr") {
   server.registerTool(
     CREATE_PR.name,
@@ -301,9 +422,9 @@ if (LANDING_MODE === "pr") {
       },
     },
     async ({ title, body }) => {
-      // No task ref: this tool acts on CALANDRIA_TASK_ID's own row, which
-      // callInternal sends, and there is no parameter that could point it
-      // elsewhere. The endpoint re-checks the landing mode and the worktree.
+      // No task ref: this tool acts on CALANDRIA_TASK_ID's own row, sent by
+      // callInternal, and no parameter can point it elsewhere. The endpoint
+      // re-checks the landing mode and the worktree.
       const data = await callInternal("create-pr", { title, body });
       return { content: [{ type: "text", text: data.text }] };
     }
@@ -323,58 +444,64 @@ server.registerTool(
     },
   },
   async (args) => {
-    // No `project`: a tag never spans repositories, so the endpoint resolves the
-    // ref inside CALANDRIA_PROJECT_ID and nothing here can point it elsewhere.
+    // No `project`: a tag never spans repositories, so the endpoint resolves
+    // the ref inside CALANDRIA_PROJECT_ID and nothing here can point it elsewhere.
     const data = await callInternal("update-tag", args);
     return { content: [{ type: "text", text: data.text }] };
   }
 );
 
-server.registerTool(
-  ASK_USER.name,
-  {
-    description: ASK_USER.description,
-    inputSchema: {
-      questions: z
-        .array(
-          z.object({
-            question: z.string().describe("The full question to ask the user."),
-            header: z.string().max(24).optional().describe("Short chip label for the question (≤12 chars ideal)."),
-            multiSelect: z.boolean().optional().describe("Allow choosing more than one option."),
-            options: z
-              .array(z.object({ label: z.string(), description: z.string().optional() }))
-              .min(1)
-              .max(8)
-              .describe("2–4 choices work best. The user can always type a free-text answer too."),
-          })
-        )
-        .min(1)
-        .max(4)
-        .describe(ASK_USER.params.questions),
+// ask_user is the only tool here gated by transport instead of by project:
+// an agent with a native ask of its own should not be handed a second one
+// (CALANDRIA_MCP_ASK_USER, set by lib/agents/claude/mcp.ts).
+if (ASK_USER_ENABLED) {
+  server.registerTool(
+    ASK_USER.name,
+    {
+      description: ASK_USER.description,
+      inputSchema: {
+        questions: z
+          .array(
+            z.object({
+              question: z.string().describe("The full question to ask the user."),
+              header: z.string().max(24).optional().describe("Short chip label for the question (≤12 chars ideal)."),
+              multiSelect: z.boolean().optional().describe("Allow choosing more than one option."),
+              options: z
+                .array(z.object({ label: z.string(), description: z.string().optional() }))
+                .min(1)
+                .max(8)
+                .describe("2–4 choices work best. The user can always type a free-text answer too."),
+            })
+          )
+          .min(1)
+          .max(4)
+          .describe(ASK_USER.params.questions),
+      },
     },
-  },
-  async ({ questions }) => {
-    // Start the ask (persists + publishes the interactive card), then poll for
-    // the outcome. Polling instead of one held request: the user may take hours,
-    // far beyond any HTTP timeout, and the ask survives page reloads server-side.
-    const { askId } = await callInternal("ask-user", { questions });
-    const deadline = Date.now() + 24 * 60 * 60 * 1000; // mirror the Claude hook's ~1-day cap
-    for (;;) {
-      await new Promise((r) => setTimeout(r, 1500));
-      const r = await callInternal("ask-user/wait", { askId });
-      if (r.status === "done") return { content: [{ type: "text", text: r.text }] };
-      if (Date.now() > deadline) {
-        return { content: [{ type: "text", text: "The user did not answer the question. Proceed with your best judgment." }] };
+    async ({ questions }) => {
+      // Start the ask (persists + publishes the interactive card), then poll
+      // for the outcome. Polling instead of one held request: the user may
+      // take hours, far beyond any HTTP timeout, and the ask survives page
+      // reloads server-side.
+      const { askId } = await callInternal("ask-user", { questions });
+      const deadline = Date.now() + 24 * 60 * 60 * 1000; // mirror the Claude hook's ~1-day cap
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const r = await callInternal("ask-user/wait", { askId });
+        if (r.status === "done") return { content: [{ type: "text", text: r.text }] };
+        if (Date.now() > deadline) {
+          return { content: [{ type: "text", text: "The user did not answer the question. Proceed with your best judgment." }] };
+        }
       }
     }
-  }
-);
+  );
+}
 
-// ---- runbooks: a saved recipe the user can dispatch later. Inert until they
-// do, which is why create needs no review gate — but also why there is no
-// delete verb, and why update is refused for any runbook a schedule fires. The
-// bridge holds none of that policy; lib/runbookTools.ts does, shared with the
-// in-process Claude server so the two cannot drift.
+// ---- runbooks: a saved recipe the user can dispatch later. Inert until
+// they do, so create needs no review gate; the same reason there is no
+// delete verb, and why update is refused for any runbook a schedule fires.
+// The bridge holds none of that policy; lib/runbookTools.ts does, shared
+// with the in-process Claude server so the two cannot drift.
 server.registerTool(
   CREATE_RUNBOOK.name,
   {
@@ -386,10 +513,12 @@ server.registerTool(
       priority: z.enum(["hi", "med", "lo"]).optional().describe(CREATE_RUNBOOK.params.priority),
       permission_mode: z.string().optional().describe(CREATE_RUNBOOK.params.permission_mode),
       project: z.string().optional().describe(CREATE_RUNBOOK.params.project),
+      provider: z.string().optional().describe(CREATE_RUNBOOK.params.provider),
+      model: z.string().optional().describe(CREATE_RUNBOOK.params.model),
     },
   },
   async (args) => {
-    // No agent id is sent: the endpoint reads it off the CALLER'S row, so a
+    // No agent id is sent: the endpoint reads it off the caller's row, so a
     // model cannot file a recipe under another agent's name.
     const data = await callInternal("create-runbook", args);
     return { content: [{ type: "text", text: data.text }] };
@@ -419,6 +548,8 @@ server.registerTool(
       prompt: z.string().optional().describe(UPDATE_RUNBOOK.params.prompt),
       priority: z.enum(["hi", "med", "lo"]).optional().describe(UPDATE_RUNBOOK.params.priority),
       permission_mode: z.string().optional().describe(UPDATE_RUNBOOK.params.permission_mode),
+      provider: z.string().optional().describe(UPDATE_RUNBOOK.params.provider),
+      model: z.string().optional().describe(UPDATE_RUNBOOK.params.model),
     },
   },
   async (args) => {

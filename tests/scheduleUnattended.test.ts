@@ -1,19 +1,16 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// What a turn that DECLARED itself unattended does when something asks for a
-// human. lib/runContext.ts promises `interactionPolicy: "deny"` settles "any
-// permission/ask request at once"; lib/permissions.ts honored the permission
-// half from the start, and this file covers the half that was missing.
+// What a turn declared unattended does when something asks for a human.
+// lib/runContext.ts's `interactionPolicy: "deny"` settles any permission or
+// ask request at once; lib/permissions.ts covers the permission half, and
+// this file covers the ask half.
 //
-// An ask is the more dangerous of the two, for a reason that isn't obvious:
-// canUseTool is short-circuited under bypassPermissions (which is what a
-// schedule uses by default and what the docs recommend), but the driver's
-// AskUserQuestion hook fires in EVERY mode. So the one interactive path an
-// bypassPermissions schedule cannot dodge was also the one with no deadline — it parked
-// on lib/asks.ts forever, holding the turn slot, the CLI child and the
-// schedule's overlap lock, which turns every future occurrence of that schedule
-// into `skipped_overlap`. The schedule goes quiet, permanently, and the only
-// trace is a run stuck at "running".
+// canUseTool is short-circuited under bypassPermissions (a schedule's
+// default, and what the docs recommend), but the driver's AskUserQuestion
+// hook fires in every mode. Without a deadline of its own, that hook would
+// park on lib/asks.ts forever, holding the turn slot, the CLI child and the
+// schedule's overlap lock, so every future occurrence of that schedule would
+// record `skipped_overlap` with no trace beyond a run stuck at "running".
 //
 // The real driver runs; only the SDK is swapped (same shape as
 // tests/claudePermissionMode.test.ts).
@@ -92,10 +89,9 @@ describe("an AskUserQuestion inside a scheduled turn", () => {
   it("is declined at once instead of parking the turn forever", async () => {
     const { project, task } = fixture();
     setRunContext(task.id, { ...SCHEDULED_RUN_CONTEXT, scheduleRunId: "run-1" });
-    // The bug was unbounded: no deadline, no signal, no watcher heuristic. The
-    // fix decides at once, with no timer at all involved — proven here by
-    // resolving under fake timers without ever needing to advance the clock,
-    // rather than checking a loose real wall-clock bound.
+    // Decided at once, with no timer involved: resolving under fake timers
+    // without ever needing to advance the clock proves that, instead of
+    // checking a loose real wall-clock bound.
     vi.useFakeTimers();
     try {
       const { result } = await askDuringTurn(task, project);
@@ -117,10 +113,10 @@ describe("an AskUserQuestion inside a scheduled turn", () => {
     try {
       const { events } = await askDuringTurn(task, project);
 
-      // NOT an ask card: an ask card promises an answer is coming, and this one
-      // never was. A decided permission card is what this actually is — a
-      // request that was refused, with the question preserved so the user can
-      // see what the run wanted.
+      // Not an ask card: an ask card promises an answer is coming, and this one
+      // never was. It is a decided permission card instead, a request that was
+      // refused, with the question preserved so the user can see what was
+      // asked.
       expect(events.some((e) => e.type === "ask")).toBe(false);
       const card = events.find((e) => e.type === "permission") as Extract<StreamEvent, { type: "permission" }>;
       expect(card).toBeDefined();
@@ -131,7 +127,7 @@ describe("an AskUserQuestion inside a scheduled turn", () => {
       const decided = events.find((e) => e.type === "permission_decided") as Extract<StreamEvent, { type: "permission_decided" }>;
       expect(decided.id).toBe(card.request.id);
       // `unattended` is the reason the runner acts on: it parks the pending
-      // queue and settles the schedule run as failed rather than green.
+      // queue and settles the schedule run as failed instead of green.
       expect(decided.outcome).toMatchObject({ decision: "deny", auto: true, reason: "unattended" });
       expect(decided.outcome.note).toMatch(/nobody is watching/i);
       // The hook's refusal comes back as the tool's result, and it is text
@@ -144,8 +140,8 @@ describe("an AskUserQuestion inside a scheduled turn", () => {
   });
 
   it("still parks and waits for a real answer on an ordinary turn", async () => {
-    // The counter-pin. Nothing about the ordinary interactive path may change:
-    // a question the USER's turn asks has no deadline on purpose.
+    // The counter-pin: nothing about the ordinary interactive path may change.
+    // A question the user's own turn asks still has no deadline.
     const { project, task } = fixture();
     expect(getRunContext(task.id)).toBeUndefined();
     const { result, events } = await askDuringTurn(task, project, [["Yes"]]);
@@ -177,7 +173,7 @@ describe("ask_user through the MCP bridge inside a scheduled turn", () => {
       // And nothing is asked of the user: no "Needs your input" for a question
       // that was already refused.
       expect(getTask(task.id)!.awaiting_input).toBe(0);
-      // Recorded so lib/runner.ts settles the schedule run as failed — this
+      // Recorded so lib/runner.ts settles the schedule run as failed: this
       // path emits no permission event of its own for the runner to see.
       expect(ctx.deniedInteractions).toBe(1);
     } finally {

@@ -1,23 +1,48 @@
-/* Calandria desktop shell — Electron main process.
+/* Calandria desktop shell: Electron main process.
  *
  * SPIKE CODE. See ./README.md and docs/DESKTOP_APP.md.
  *
- * Intentionally thin. Everything that can be tested without a display lives in
- * supervisor.js; this file is window + menu + lifecycle, and it holds exactly
- * one piece of policy: the renderer is a hardened browser tab pointed at
- * 127.0.0.1, not a privileged page. No preload, no nodeIntegration, no IPC —
- * the app already talks to its server over HTTP/SSE/WS and gains nothing from
- * a bridge, while a bridge would hand any XSS in the transcript renderer the
- * whole Node API.
+ * Window, menu and lifecycle only; testable logic lives in supervisor.js and
+ * instances.js. The renderer is a hardened browser tab pointed at a
+ * Calandria server (no preload, no nodeIntegration, no IPC), talking to it
+ * only over HTTP/SSE/WS, so XSS in the transcript renderer can't reach
+ * Node. loading.html and instances.html are static documents whose CSP
+ * forbids their own scripts; this file injects their behavior instead.
+ *
+ * A window's server isn't necessarily this machine's: instances.js holds
+ * the saved list. `local` is the sidecar pair supervisor.js spawns; anything
+ * else is a network origin with its own session partition. `attach()` is
+ * the entry point for all three, and `attachOrigin()` is where they
+ * converge, since an `ssh` instance is a `url` instance whose origin
+ * ssh-tunnel.js forwarded first.
  */
 "use strict";
 
-const { app, BrowserWindow, Menu, Notification, Tray, nativeImage, shell, dialog, session } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  Menu,
+  Notification,
+  Tray,
+  nativeImage,
+  shell,
+  dialog,
+  safeStorage,
+  screen,
+  session,
+  clipboard,
+} = require("electron");
+const fs = require("node:fs");
 const path = require("node:path");
+const util = require("node:util");
+const { execFile } = require("node:child_process");
+const log = require("electron-log/main");
 const { Supervisor, preferredPorts } = require("./supervisor");
 const {
   AppEvents,
   NeedsYou,
+  gotoUrl,
+  notificationText,
   overlayIconName,
   selectedTaskFromUrl,
   shouldNotify,
@@ -25,93 +50,260 @@ const {
 } = require("./notifier");
 const { confirmTrayResidency } = require("./tray-residency");
 const {
+  MIN_SERVER_VERSION,
+  activeInstance,
+  addInstance,
+  adoptServerName,
+  findInstance,
+  instanceAddress,
+  instanceMenuItems,
+  loadInstances,
+  parseInstanceAddress,
+  partitionFor,
+  removeInstance,
+  saveInstances,
+  serverTooOld,
+  setActive,
+  setInstanceAuth,
+  versionBannerText,
+  windowTitle,
+} = require("./instances");
+const {
+  authHeaders,
+  credentialExpired,
+  describeAuth,
+  describeCredential,
+  formatHeaderLines,
+  loadCredentials,
+  parseHeaderLines,
+  refreshDelay,
+  saveCredentials,
+} = require("./instance-auth");
+const {
+  LoopbackReceiver,
+  authorizeUrl,
+  createPkce,
+  createState,
+  discover,
+  exchangeCode,
+  parseCallback,
+  refreshCredential,
+} = require("./oauth");
+const { SshTunnel } = require("./ssh-tunnel");
+const {
   CHECK_INTERVAL_MS,
   FIRST_CHECK_DELAY_MS,
-  INSTALL_FALLBACK_MS,
+  RELEASES_URL,
   classifyUpdaterError,
+  installFailureNotice,
+  installStageOf,
+  installStageTimeout,
+  macBundlePath,
+  pageUpdateState,
   parseActiveTurns,
+  parseCodesign,
+  parseDesktopCommand,
   quitAction,
   restartNotice,
   updateMenuItem,
   updaterDisposition,
 } = require("./updater");
+const {
+  MIN_SIZE,
+  fitToWorkAreas,
+  loadWindowState,
+  normalizeWindowState,
+  sameWindowState,
+  saveWindowState,
+} = require("./window-state");
 
-// Where the server payload lives — the thing supervisor.js runs `node server.js`
-// out of. Packaged, it is extraResources sitting NEXT TO the asar, not inside
-// it: it holds native addons that dlopen from a real path and it is spawned as
-// a child process, neither of which can see into an archive (staged by
+// Persistent logging, set up before anything else writes a line. Everything
+// logged through `console.log`, including sidecar lines the Supervisor
+// relays through it, lands in electron-log's file as well as on stdout (path
+// differs per platform, see desktop/README.md, "Updates"), which captures
+// failures after the drain with no terminal attached. The console transport
+// stays plain text so stdout is byte-identical: desktop/e2e reads `[shell]`
+// lines off it with `startsWith`.
+log.transports.console.format = "{text}";
+log.transports.file.maxSize = 5 * 1024 * 1024;
+Object.assign(console, log.functions);
+
+// A second, synchronous copy of the same log lines, written to a file the
+// caller names. Electron-log's file transport buffers writes through the
+// event loop, so it records nothing if the main process hangs before its
+// first window exists; Playwright only captures stdout from
+// `_electron.launch()` resolving onward, so a hang that early leaves no
+// output to read. `appendFileSync` per line survives a blocked main thread.
+//
+// Off unless CALANDRIA_DESKTOP_LOG_FILE is set: a diagnostic channel for the
+// test suite, not a third transport for users.
+if (process.env.CALANDRIA_DESKTOP_LOG_FILE) {
+  const traceFile = process.env.CALANDRIA_DESKTOP_LOG_FILE;
+  for (const level of ["log", "info", "warn", "error"]) {
+    const inner = console[level].bind(console);
+    console[level] = (...args) => {
+      try {
+        fs.appendFileSync(traceFile, `${util.format(...args)}\n`);
+      } catch {
+        // A diagnostic that can refuse to launch the app is worse than none.
+      }
+      inner(...args);
+    };
+  }
+}
+
+// Where the server payload lives: what supervisor.js runs `node server.js`
+// out of. Packaged, it is extraResources next to the asar, not inside it,
+// since its native addons dlopen from a real path and it's spawned as a
+// child process, neither of which can see into an archive (staged by
 // scripts/build-payload.js, mapped to resources/app-payload by the
-// electron-builder config in package.json). Unpackaged, it is the checkout this
-// file sits in, so `cd desktop && npm start` against a repo stays the developer
-// flow. CALANDRIA_REPO_ROOT overrides both, which is how a packaged binary gets
-// pointed at a working tree.
+// electron-builder config in package.json). Unpackaged, it is the checkout
+// this file sits in, so `cd desktop && npm start` against a repo is the
+// developer flow. CALANDRIA_REPO_ROOT overrides both, for pointing a
+// packaged binary at a working tree.
 const REPO_ROOT =
   process.env.CALANDRIA_REPO_ROOT ||
   (app.isPackaged ? path.join(process.resourcesPath, "app-payload") : path.resolve(__dirname, ".."));
 const LOADING_PAGE = `file://${path.join(__dirname, "loading.html")}`;
+const INSTANCES_PAGE = `file://${path.join(__dirname, "instances.html")}`;
+const SIGNIN_PAGE = `file://${path.join(__dirname, "signin.html")}`;
 // Committed PNGs, regenerated by scripts/make-assets.py. Inside the asar when
-// packaged, which is fine for both consumers: Tray and nativeImage read through
-// Electron's own fs shim.
+// packaged; Tray and nativeImage both read through Electron's own fs shim, so
+// that is fine.
 const ASSETS = path.join(__dirname, "assets");
 
 let win = null;
 let supervisor = null;
+// The ready URL the supervisor bound, kept past the first attach. Switching
+// away from `local` leaves its server running (hide-to-tray does the same),
+// so switching back has to find it again without starting it a second time.
+let localUrl = null;
 let appUrl = null;
 let quitting = false;
+// The saved instance list, and the one this window is currently attached to.
+// `instance` is a snapshot, not a lookup, so an attach in flight keeps
+// describing the instance it started for even if the list is edited
+// underneath it. See instances.js for the file and its invariants.
+let instancesState = null;
+let instance = null;
+// What each instance's last sign-in produced, keyed by instance id: the
+// SECRET half of `instancesState`, which is why it is a second map and a second
+// file rather than a field on the row (see instance-auth.js). Kept in memory
+// for the process's life so `onBeforeSendHeaders` can answer synchronously:
+// that callback stamps the credential on every request the instance's session
+// makes, and it cannot go to disk or await a renewal per request.
+const credentials = new Map();
+// One pending renewal timer per instance. Cleared and re-armed on every write
+// to `credentials`, so a token that was just replaced never has two timers.
+const refreshTimers = new Map();
+// Single-flight per instance: an expiring token trips the timer, the attach and
+// a 401 at roughly the same moment, and three concurrent refreshes against a
+// provider that ROTATES refresh tokens invalidate each other's.
+const refreshInFlight = new Map();
+// The loopback receiver of a sign-in currently waiting on the user's browser,
+// or null. At most one: it is a port open on this machine holding an
+// authorization code, and a second one would be a second window in which that
+// is true for a flow nobody is looking at any more.
+let signInFlow = null;
+// Sessions that already have the header-stamping listener attached, by
+// partition name. `onBeforeSendHeaders` replaces rather than appends, so
+// re-arming is harmless; this only keeps the log honest about when it happened.
+const armedSessions = new Set();
+// The live `ssh -L` child for an `ssh` instance, or null. At most one: one
+// window shows one instance, and the forward belongs to the attach rather
+// than to the saved list. Created by `attachSsh`, killed by every path that
+// leaves the instance behind (see `stopTunnel`).
+let tunnel = null;
+// Bumped on every attach; each async step of an attach checks it before
+// writing anything. Switching instances can be asked for while a previous
+// answer is still on the way (e.g. a probe waiting out its 8s timeout on an
+// unreachable box), and a stale probe resolving afterward must not load the
+// instance the user already left.
+let attachSeq = 0;
+// The partition the current window was built with. Electron fixes a
+// BrowserWindow's session at construction, so switching to an instance with a
+// different partition means a new window; this is how that decision is made
+// without recreating one when nothing changed.
+let winPartition = null;
+// The size and position the window should open at, in memory so a rebuild
+// mid-session never has to wait on a disk read. Kept current by the handlers
+// `trackWindowGeometry()` wires onto every window, written to
+// `window-state.json` a moment after it settles, and read back at boot. See
+// window-state.js for why it exists at all.
+let windowGeometry = normalizeWindowState({});
+// The last state written, so an idle app rewrites nothing.
+let savedGeometry = null;
+let geometryFlushTimer = null;
+// The modal instance dialog, at most one. Held so a second "Add instance…"
+// focuses it instead of stacking a second copy on the same list.
+let instanceDialog = null;
 // A fatal failure is reported once, by whichever path notices it first. A
-// sidecar that dies DURING boot trips both of them: the Supervisor's `onExit`
-// fires, and `supervisor.start()` then rejects with that same child's reason —
-// so the user gets the specific dialog and a second, vaguer one stacked on it.
-// In production the first `app.exit(1)` usually tears the process down before
-// the second is drawn, which is what makes this a race rather than a constant;
-// the interlock makes the outcome the same on a loaded machine as on an idle
-// one. Same shape as `quitting` above, and checked alongside it.
+// sidecar that dies during boot trips both: the Supervisor's `onExit` fires,
+// and `supervisor.start()` then rejects with that same child's reason, which
+// would otherwise show the specific dialog and a second, vaguer one stacked
+// on it. Same shape as `quitting` above, and checked alongside it.
 let failed = false;
 let tray = null;
-// Whether that icon is actually IN a status area — which is a different fact
-// from `tray` being an object, and the one the close handler needs. See
-// tray-residency.js, and `refreshTrayResidency()` below for the rule that moves
-// it. False until the session says otherwise, so nothing promises a tray it has
-// not seen.
+// Whether that icon is actually in a status area, a different fact from
+// `tray` being an object and the one the close handler needs. See
+// tray-residency.js and `refreshTrayResidency()` below for what moves it.
+// False until the session says otherwise.
 let trayHosted = false;
-// Has the session ever answered? Only so the first answer is logged even when
-// it agrees with the pessimistic default — a launch that found no status area
-// has to say so.
+// Whether the session has ever answered, so the first answer is logged even
+// when it agrees with the pessimistic default.
 let trayResidencyKnown = false;
-// One close decision at a time: the handler now answers asynchronously, and a
-// second X while the first is still asking would ask again rather than wait.
+// One close decision at a time: the handler answers asynchronously, and a
+// second X while the first is still asking must wait, not ask again.
 let closePending = false;
-let events = null;
-let needsYou = null;
+// One live `/api/events` subscription per instance this shell can currently
+// reach, keyed by instance id, not only the one on screen. The dock badge is
+// the sum of their counts, so a task waiting on another machine is visible
+// from this window, and a toast names the instance that raised it. The sum
+// stays client-side; no server learns about another server (see
+// docs/DESKTOP_APP.md).
+//
+// Entries are `{ id, name, origin, needsYou, events }`, reconciled by
+// `syncSubscribers()`; see `subscriberOrigin` for which instances are
+// reachable without building a transport nobody asked for.
+const subscribers = new Map();
 let needsYouCount = 0;
-// Live toasts by payload id, so a second notification about the same task
-// replaces the first instead of stacking. The browser channel gets this from
-// `Notification.tag`; Electron's main-process Notification has no tag, so the
-// collapse is done by hand against the same id the server minted.
+// Live toasts by instance id and payload id, so a second notification about
+// the same task replaces the first instead of stacking. The browser channel
+// gets this from `Notification.tag`; Electron's main-process Notification has
+// no tag, so the collapse is done by hand against the id the server minted,
+// scoped by instance so two servers' ids can't collide.
 const liveToasts = new Map();
+// A notification click that has to change instances first, consumed by the
+// attach it triggered. See `openFromNotification`.
+let pendingGoto = null;
 // The `electron-updater` singleton, or null when this install cannot update
-// itself. Deliberately not required at the top of the file: on Linux that
-// module's `autoUpdater` export picks its implementation on first property
-// access, and inside a .deb it picks one that installs with `sudo dpkg -i`. See
-// updater.js's linux-package case. Nothing here touches it before
+// itself. Not required at the top of the file: on Linux that module's
+// `autoUpdater` export picks its implementation on first property access, and
+// inside a .deb it picks one that installs with `sudo dpkg -i` (see
+// updater.js's linux-package case). Nothing here touches it before
 // `updateDisposition.enabled` says so.
 let updater = null;
 let updateDisposition = null;
 // phase: idle | checking | downloading | ready | none | error.
 let updateState = { phase: "idle", version: null, error: null };
-// Set only by the user answering the restart prompt. The drain reads it at the
-// very end (see finishQuit) — an install is never something a quit does by
+// Set only by the user answering the restart prompt. The drain reads it at
+// the very end (see finishQuit); an install is never something a quit does by
 // itself.
 let installOnQuit = false;
 // A check the user started, so its outcome gets an answer instead of a silent
 // log line. Cleared by whichever updater event answers it.
 let manualCheck = false;
 let updateTimer = null;
+// The drain-tail watchdog (see finishQuit): one timer, re-armed per install
+// stage, so a stage that is legitimately slow doesn't get the clock a stage
+// that should be instant gets.
+let installWatchdog = null;
+let installStage = null;
 
-// One shell per machine. This mirrors, at the UI layer, the single-process rule
-// lib/db-lock.mjs enforces at the database layer: a second launch would spawn a
-// second server, lose the lock race, and exit(1) with an error the user reads as
-// a crash. Focusing the existing window is what they meant anyway.
+// One shell per machine, mirroring at the UI layer the single-process rule
+// lib/db-lock.mjs enforces at the database layer: a second launch would spawn
+// a second server, lose the lock race, and exit(1) with an error that reads
+// as a crash. Focus the existing window instead.
 if (!app.requestSingleInstanceLock()) {
   app.exit(0);
 } else {
@@ -121,15 +313,18 @@ if (!app.requestSingleInstanceLock()) {
 
 function main() {
   app.on("window-all-closed", () => {
-    // Normally unreachable: the close handler below hides the window rather
-    // than destroying it, on every platform (see "Close vs quit" in
-    // docs/DESKTOP_APP.md §5.1). The one way here is a close that arrives
-    // BEFORE boot() finished — that handler lets those through, since there is
-    // no server to keep alive and no confirmed tray to be present in yet — and
-    // there, quitting is exactly what the user asked for. Gated on the same
-    // confirmed tray the close handler uses, rather than on the platform, so a
-    // hide can never be mistaken for a quit.
-    if (!trayHosted) app.quit();
+    // Normally unreachable: the close handler hides the window instead of
+    // destroying it, on every platform (see "Notifications, tray, and close vs
+    // quit" in docs/DESKTOP_APP.md). Reached when a close arrives before boot()
+    // finished (no server to keep alive, no confirmed tray yet) or when an
+    // instance switch destroys the old window and builds a new one in the
+    // same tick, which also fires this event. Checking for a live window
+    // covers the switch case without a flag to clear on every path out of it.
+    if (win && !win.isDestroyed()) return;
+    if (!trayHosted) {
+      console.log("[shell] last window closed with no tray to hide into, quitting");
+      app.quit();
+    }
   });
 
   app.on("activate", () => showWindow());
@@ -138,63 +333,700 @@ function main() {
   // POSTs /api/instance/drain and waits for the turns to settle before it
   // stops the sidecars. Hold the quit open for exactly as long as that takes.
   app.on("before-quit", async (event) => {
-    if (quitting || !supervisor) return;
+    // Not gated on `supervisor`: a session whose active instance is a `url`
+    // one never started a local server, and it still has a tray icon to
+    // remove, an event stream to stop and possibly an update to install.
+    if (quitting) return;
     quitting = true;
+    console.log("[shell] quitting");
     event.preventDefault();
-    // Nothing that arrives from here on has anywhere to go: the badge is about
-    // to disappear with the process, and a toast raised during a shutdown is
-    // one the user cannot act on.
-    events?.stop();
-    // Same reasoning for the update clock: a check that lands mid-drain has
-    // nowhere to put its answer, and a download starting now would be thrown
-    // away with the process.
+    // Read off the live window and written synchronously, before the drain
+    // gets a chance to fail or the update installer replaces the process. A
+    // debounced flush from the last resize may still be pending, and its
+    // timer is unref'd, so this is the only guaranteed write.
+    captureWindowGeometry(win);
+    flushWindowGeometry();
+    // Nothing that arrives from here on has anywhere to go: the badge is
+    // about to disappear with the process, and a toast raised during a
+    // shutdown is one the user cannot act on. Stops every instance's stream,
+    // not just the active one's.
+    stopSubscribers();
+    // A sign-in waiting on the browser is a listening socket with nowhere to
+    // deliver, and the quit would wait on it. The user's browser tab is left
+    // showing the provider, since the app that asked for the sign-in is
+    // going away.
+    cancelSignIn();
+    // Same reasoning for the update clock: a check landing mid-drain has
+    // nowhere to put its answer, and a download starting now is thrown away
+    // with the process.
     if (updateTimer) clearInterval(updateTimer);
     updateTimer = null;
-    showDraining();
+    // Only a local server has in-flight turns this process is responsible
+    // for. A remote instance's turns are the remote server's to drain.
+    if (supervisor) showDraining();
     try {
-      await supervisor.stop();
+      // The ssh child is this process's to reap, whatever it was forwarding:
+      // an orphaned `ssh -N` holds the local port and outlives the app.
+      await stopTunnel();
+      if (supervisor) await supervisor.stop();
     } finally {
-      // Explicitly, before exit: a tray icon whose process is gone is left
+      // Explicit, before exit: a tray icon whose process is gone is left
       // behind as a dead slot by several Linux status-bar implementations.
       tray?.destroy();
       tray = null;
       trayHosted = false;
       trayResidencyKnown = false;
-      // The update install, if there is one, happens HERE and only here —
-      // after the drain, as the last thing the process does.
+      // The update install, if there is one, happens here, after the drain,
+      // as the last thing the process does.
       finishQuit();
     }
   });
 
   app.whenReady().then(async () => {
+    // Before the menu, because the menu draws the instance radio list, and
+    // before the window, because the window's session partition is the
+    // active instance's and cannot be changed after construction.
+    loadInstanceList();
     Menu.setApplicationMenu(buildMenu());
     announceShell();
-    hardenSession();
+    // Before the window, for the same reason as the instance list: the size
+    // and position are constructor options Electron will not revisit.
+    loadWindowGeometry();
     createWindow();
-    await boot();
+    // AFTER the window, and before the first attach.
+    //
+    // Before the attach because an instance whose token is still good should go
+    // straight to its app instead of bouncing off its proxy and asking again.
+    // After the window because this is the first thing in the chain that can
+    // reach the platform keyring, and a keyring is a dependency the shell
+    // cannot assume will answer. See `credentialCipher`.
+    loadCredentialStore();
+    for (const inst of instancesState.instances) {
+      if (credentials.has(inst.id)) scheduleRefresh(inst);
+    }
+    // The end of the boot chain, named so it can be asserted on. Distinct
+    // wording from the supervisor's `[shell] ready on http://…`, which is a
+    // claim about the SERVER and which several specs already match on. Everything
+    // above is synchronous-or-local; `attach` below is the first step that
+    // waits on a server. A boot trace that stops before this line stopped
+    // inside the shell's own startup, and says on its last line where
+    // (desktop/e2e/fixtures.ts, `launchFailure`).
+    console.log("[shell] boot complete");
+    await attach(activeInstance(instancesState));
   });
 }
 
+/**
+ * Read the saved instance list, or start a fresh one.
+ *
+ * A file that could not be parsed is worth a log line, since the user's saved
+ * instances are missing, but never worth refusing to launch over:
+ * `loadInstances` has already repaired it into something usable by the time
+ * this sees it.
+ */
+function loadInstanceList() {
+  const loaded = loadInstances();
+  instancesState = loaded.state;
+  if (loaded.error) console.log(`[shell] could not read ${loaded.path}: ${loaded.error.message || loaded.error}`);
+  const names = instancesState.instances.map((i) => i.name).join(", ");
+  console.log(`[shell] instances: ${names} (active: ${activeInstance(instancesState).name})`);
+}
+
+/** Persist the list, best-effort: a read-only config dir must not lose a session. */
+function saveInstanceList() {
+  try {
+    saveInstances(instancesState);
+  } catch (err) {
+    console.log(`[shell] could not save the instance list: ${err?.message || err}`);
+  }
+}
+
+/**
+ * The Electron session an instance's window, notifier and probes all share.
+ *
+ * `local` stays on the default session, so nothing about the single-instance
+ * shell changes. Everything else gets its own persistent partition; see
+ * `partitionFor` in instances.js for why that is a correctness property, not
+ * tidiness.
+ */
+function sessionFor(inst) {
+  const partition = partitionFor(inst);
+  return partition ? session.fromPartition(partition) : session.defaultSession;
+}
+
+/**
+ * SERVICE_TOKEN, and only for the instance it belongs to.
+ *
+ * The token is minted for the server the supervisor spawned on this machine
+ * (docker/entrypoint.sh mints one under Access mode; supervisor.js passes it
+ * to the sidecars). It is a bearer credential for that database, so reading
+ * it out of the supervisor env unconditionally would hand a stranger's server
+ * a token that opens this one, once the window can point somewhere else.
+ */
+function serviceTokenFor(inst) {
+  if (inst?.kind !== "local") return null;
+  return (supervisor?.effectiveEnv || process.env).SERVICE_TOKEN || null;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Instance sign-in: the Electron half. instance-auth.js and oauth.js hold
+ * everything that can be decided without a display; this is the part that
+ * needs a session, a browser and a window. See "Signing in to an instance" in
+ * docs/DESKTOP_APP.md.
+ * ------------------------------------------------------------------------- */
+
+/** The keyring's answer, once it has given one. See `credentialCipher`. */
+let encryptionAvailable = null;
+
+/**
+ * Ask the platform keyring whether safeStorage can encrypt.
+ *
+ * Logged on BOTH sides, every time, because the outcome worth naming is
+ * neither a value nor a throw. This is a synchronous call into the platform
+ * keyring and nothing bounds how long one may take to answer, so the
+ * interesting case leaves no trace at all except a first line with no second
+ * one. The try/catch cannot see it either: a call that never returns never
+ * throws.
+ */
+function probeEncryption() {
+  console.log("[shell] keyring: asking safeStorage whether encryption is available");
+  try {
+    const answer = safeStorage.isEncryptionAvailable();
+    console.log(`[shell] keyring: safeStorage encryption is ${answer ? "available" : "NOT available"}`);
+    return answer;
+  } catch (err) {
+    console.log(`[shell] keyring: safeStorage refused the question: ${err?.message || err}`);
+    return false;
+  }
+}
+
+/**
+ * safeStorage, in the shape instance-auth.js takes it.
+ *
+ * `available` is a GETTER, and both halves of that carry weight.
+ *
+ * LAZY, because asking can cost the app. On macOS the keyring is the login
+ * keychain, and reading the app's own generic-password item out of it is
+ * subject to that item's ACL: a binary the ACL does not list gets an
+ * authorization dialog instead of an answer. A signature that changed since
+ * the item was written is enough (an ad-hoc-signed build gets a new identity
+ * on every build), and with nobody there to click the dialog, the main
+ * thread never returns.
+ *
+ * Moving the call later does not help: a blocked main thread blocks the app
+ * wherever the call happens to sit. Not making the call at all is what avoids
+ * it, and the consumers in instance-auth.js are already shaped for that:
+ * `loadCredentials` returns before touching a cipher when the file is absent,
+ * `decodeEntry` reads `available` only for an entry that is actually
+ * encrypted, and `saveCredentials` reads it only when there is a credential
+ * to write. So an install with nothing signed in (a first launch, and every
+ * hermetic instance desktop/e2e mints) never asks the keyring anything. Once
+ * something is stored, the question is asked at the moment its answer
+ * matters, which is also the moment a user is in a position to answer a
+ * dialog.
+ *
+ * The plaintext reporting is untouched by this. `loaded.plain` is derived from
+ * the `enc` marker each entry carries, not from the cipher, so
+ * `loadCredentialStore` can still say that secrets are on disk in the clear
+ * without a keyring having been consulted at all.
+ *
+ * CACHED, because the answer describes the process, not the call. Reading it
+ * at require time would give false: the app is not ready yet, and on Linux
+ * the keyring backend Chromium settles on is not chosen yet either. By the
+ * time anything reads this the app is ready and the backend is chosen, so
+ * asking twice buys nothing and risks the hang above a second time.
+ */
+function credentialCipher() {
+  return {
+    get available() {
+      if (encryptionAvailable === null) encryptionAvailable = probeEncryption();
+      return encryptionAvailable;
+    },
+    encrypt: (s) => safeStorage.encryptString(s),
+    decrypt: (b) => safeStorage.decryptString(b),
+  };
+}
+
+/**
+ * Read the saved credentials into memory, and say out loud if any of them are
+ * on disk in the clear.
+ *
+ * The line is not noise. safeStorage falling back is invisible otherwise, and
+ * the fact it reports, that a refresh token for a remote server is readable
+ * by anything running as this user, is one somebody should be able to
+ * discover from the log without opening the file.
+ */
+function loadCredentialStore() {
+  const loaded = loadCredentials({ cipher: credentialCipher() });
+  credentials.clear();
+  for (const [id, cred] of loaded.credentials) credentials.set(id, cred);
+  if (loaded.error) console.log(`[shell] could not read ${loaded.path}: ${loaded.error.message || loaded.error}`);
+  if (loaded.plain.length) {
+    console.log(
+      `[shell] ${loaded.plain.length} stored credential(s) are NOT encrypted: this system has no keyring safeStorage can use (${loaded.path})`,
+    );
+  }
+  if (credentials.size) console.log(`[shell] loaded ${credentials.size} stored instance credential(s)`);
+}
+
+/** Write the credentials back, best-effort: a read-only config dir loses a sign-in, not the app. */
+function persistCredentials() {
+  try {
+    const { plain } = saveCredentials(credentials, { cipher: credentialCipher() });
+    if (plain.length) console.log(`[shell] stored credential(s) unencrypted: no keyring available`);
+  } catch (err) {
+    console.log(`[shell] could not save credentials: ${err?.message || err}`);
+  }
+}
+
+/** Adopt a fresh credential: remember it, persist it, and arm what depends on it. */
+function setCredential(inst, cred) {
+  credentials.set(inst.id, cred);
+  persistCredentials();
+  armAuthHeaders(inst);
+  scheduleRefresh(inst);
+}
+
+function clearCredential(id) {
+  const timer = refreshTimers.get(id);
+  if (timer) clearTimeout(timer);
+  refreshTimers.delete(id);
+  refreshInFlight.delete(id);
+  if (!credentials.delete(id)) return;
+  persistCredentials();
+}
+
+/**
+ * The one origin an instance's credential may be sent to.
+ *
+ * Scoping by origin is the whole of why this function exists, and it is not
+ * tidiness. A partition is one instance's, but the PAGE in it fetches third
+ * parties (an avatar, a font, a link preview), and a listener that stamped the
+ * bearer token on every request out of that session would hand it to each of
+ * them. Reuses `subscriberOrigin` so an `ssh` instance is covered by the same
+ * rule: its origin is whatever local port the forward bound, not its address.
+ */
+function authOriginFor(inst) {
+  return subscriberOrigin(inst);
+}
+
+/** The headers this instance's requests carry right now, or `null` for none. */
+function authHeadersFor(inst) {
+  if (!inst || inst.kind === "local") return null;
+  return authHeaders(credentials.get(inst.id));
+}
+
+/**
+ * Stamp the instance's credential on every request its session makes to it.
+ *
+ * THIS IS HOW THE SIGN-IN REACHES THE APP. A native flow ends holding a token,
+ * and a reverse proxy doing forward-auth needs a credential on the request,
+ * so the shell puts it there, on the page load, on the SSE stream, and on the
+ * `/pty` WebSocket upgrade, all of which are ordinary HTTP as far as this
+ * listener is concerned. Nothing in the renderer knows it happened: the web
+ * app is unchanged, exactly as it is when a cookie jar is doing the same job.
+ *
+ * Synchronous on purpose. `onBeforeSendHeaders` can wait on an async
+ * callback, but making every request wait on a possible token renewal turns one
+ * expiring credential into a stalled page load. An expired token contributes
+ * nothing (instance-auth.js's `authHeaders`), the request 401s, and
+ * `attachOrigin` puts the user on the sign-in screen, a slower recovery than
+ * an inline refresh and a much smaller thing to get wrong.
+ */
+function armAuthHeaders(inst) {
+  const partition = partitionFor(inst);
+  if (!partition) return; // the default session is `local`'s, and `local` has no sign-in
+  const sess = sessionFor(inst);
+  sess.webRequest.onBeforeSendHeaders({ urls: ["<all_urls>"] }, (details, callback) => {
+    const headers = authHeadersFor(inst);
+    if (!headers) {
+      callback({ requestHeaders: details.requestHeaders });
+      return;
+    }
+    const origin = authOriginFor(inst);
+    let same = false;
+    try {
+      same = !!origin && new URL(details.url).origin === new URL(origin).origin;
+    } catch {
+      same = false;
+    }
+    callback({ requestHeaders: same ? { ...details.requestHeaders, ...headers } : details.requestHeaders });
+  });
+  if (!armedSessions.has(partition)) {
+    armedSessions.add(partition);
+    console.log(`[shell] ${inst.name}: sending its credential on requests to ${authOriginFor(inst) || "its origin"}`);
+  }
+}
+
+/**
+ * Renew this instance's token, once, however many callers ask at the same time.
+ *
+ * Single-flight because the three things that notice an expiring credential
+ * (the timer, an attach, a failed probe) can all fire within a second of each
+ * other, and a provider that rotates refresh tokens treats the second request
+ * as a replay of a token the first already spent. That produces no error: it
+ * revokes the whole grant, and the user is signed out with no explanation.
+ */
+async function refreshNow(inst) {
+  const existing = refreshInFlight.get(inst.id);
+  if (existing) return existing;
+  const cred = credentials.get(inst.id);
+  if (inst.auth?.kind !== "oauth" || !cred?.refreshToken) return null;
+  const run = (async () => {
+    const meta = await discover(inst.auth.issuer, { fetchImpl: instanceFetch(inst) });
+    const next = await refreshCredential(
+      { tokenEndpoint: meta.tokenEndpoint, clientId: inst.auth.clientId, credential: cred, scope: inst.auth.scope },
+      { fetchImpl: instanceFetch(inst) },
+    );
+    setCredential(inst, next);
+    console.log(`[shell] renewed the sign-in for ${inst.name}`);
+    return next;
+  })().catch((err) => {
+    console.log(`[shell] could not renew the sign-in for ${inst.name}: ${err?.message || err}`);
+    return null;
+  });
+  refreshInFlight.set(inst.id, run);
+  try {
+    return await run;
+  } finally {
+    refreshInFlight.delete(inst.id);
+  }
+}
+
+/** Arm the next renewal, replacing any pending one. */
+function scheduleRefresh(inst) {
+  const existing = refreshTimers.get(inst.id);
+  if (existing) clearTimeout(existing);
+  refreshTimers.delete(inst.id);
+  const delay = refreshDelay(credentials.get(inst.id));
+  if (delay === null) return;
+  const timer = setTimeout(() => {
+    refreshTimers.delete(inst.id);
+    // Off the saved list, not the closed-over row: this fires minutes or hours
+    // later, and the instance may have been renamed or re-pointed since.
+    const current = findInstance(instancesState, inst.id);
+    if (current) void refreshNow(current).then(() => scheduleRefresh(current));
+  }, delay);
+  // A renewal timer is not a reason to hold the process open on quit.
+  timer.unref?.();
+  refreshTimers.set(inst.id, timer);
+}
+
+/**
+ * A usable credential for this instance, renewing first if the stored one is
+ * inside its skew. `null` when there is nothing to use and nothing to renew,
+ * which is the caller's cue to put the user on the sign-in screen.
+ */
+async function ensureCredential(inst) {
+  if (!inst?.auth) return null;
+  const cred = credentials.get(inst.id);
+  if (cred && !credentialExpired(cred)) return cred;
+  if (inst.auth.kind !== "oauth" || !cred?.refreshToken) return cred && !credentialExpired(cred, Date.now(), 0) ? cred : null;
+  return await refreshNow(inst);
+}
+
+/**
+ * `fetch` for talking to an instance's identity provider.
+ *
+ * Uses the INSTANCE'S session instead of `globalThis.fetch`, for the same
+ * reason `probeVersion` does: it gets the proxy settings and the TLS trust store
+ * the window has, which on a corporate network is the difference between a
+ * working discovery read and an unexplained certificate error. Does not pass
+ * `credentials: "include"`: the token endpoint is a public-client exchange and
+ * has no business seeing this jar's cookies.
+ */
+function instanceFetch(inst) {
+  const sess = sessionFor(inst);
+  return (url, init) => sess.fetch(url, init);
+}
+
+/**
+ * Run the whole sign-in in the user's real browser and keep what comes back.
+ *
+ * Every step runs in the browser, in one cookie jar, so a passkey, a security
+ * key, a phone with a QR code and a TOTP code all behave the way they do on
+ * the web, and the session the `state` was minted against is the session that
+ * presents the callback. See oauth.js's header for the reasoning.
+ *
+ * Resolves `{ ok: true }`, or `{ ok: false, error }` with a sentence for the
+ * sign-in screen. Never throws: every failure here is one the user has to be
+ * shown and offered a retry on.
+ */
+async function signInToInstance(inst) {
+  if (!inst?.auth) return { ok: false, error: "This instance has no sign-in configured." };
+  if (inst.auth.kind === "header") {
+    // Nothing to run: the credential IS what the user typed into the dialog,
+    // and it was stored there. Reaching here means they have not filled it in.
+    return credentials.get(inst.id)
+      ? { ok: true }
+      : { ok: false, error: "No credential is stored for this instance yet. Use “Set up sign-in…” to add one." };
+  }
+  cancelSignIn();
+  const receiver = new LoopbackReceiver({ port: inst.auth.redirectPort || 0 });
+  signInFlow = receiver;
+  try {
+    const meta = await discover(inst.auth.issuer, { fetchImpl: instanceFetch(inst) });
+    const redirectUri = await receiver.start();
+    const pkce = createPkce();
+    const state = createState();
+    const url = authorizeUrl({
+      authorizationEndpoint: meta.authorizationEndpoint,
+      clientId: inst.auth.clientId,
+      redirectUri,
+      scope: inst.auth.scope,
+      audience: inst.auth.audience,
+      state,
+      challenge: pkce.challenge,
+    });
+    console.log(`[shell] signing in to ${inst.name} in the browser (redirect ${redirectUri})`);
+    // The URL goes on screen BEFORE the browser is asked to open it, so a
+    // machine with no default handler leaves the user something to copy rather
+    // than a spinner and a lie. Not awaited: what that page resolves with is
+    // the Cancel button, which reaches the receiver below on its own.
+    void showSignInWaiting(inst, url);
+    await shell.openExternal(url);
+    const query = await receiver.wait();
+    const { code } = parseCallback(query, state);
+    const cred = await exchangeCode(
+      { tokenEndpoint: meta.tokenEndpoint, clientId: inst.auth.clientId, code, verifier: pkce.verifier, redirectUri },
+      { fetchImpl: instanceFetch(inst) },
+    );
+    setCredential(inst, cred);
+    console.log(`[shell] signed in to ${inst.name} (${describeCredential(cred)})`);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  } finally {
+    receiver.close();
+    if (signInFlow === receiver) signInFlow = null;
+  }
+}
+
+/** Abandon a sign-in waiting on the browser. Safe with none in flight. */
+function cancelSignIn() {
+  const flow = signInFlow;
+  signInFlow = null;
+  flow?.cancel();
+}
+
+/**
+ * The right-click menu. Electron ships none, so without this the shell would
+ * have only the keyboard half of copy/paste (the Edit roles in
+ * `buildMenu()`), not the mouse half.
+ *
+ * Built per click from what Chromium says is under the cursor: an editable
+ * field gets the full edit set plus spellchecker suggestions, a selection
+ * gets Copy, and a link gets Copy link and Open in browser through the same
+ * `shell.openExternal` the navigation policy uses. The roles act on the
+ * focused webContents, so one template serves both windows. xterm needs no
+ * special-casing: a right-click stages its selection in a hidden textarea
+ * and the native menu's Copy/Paste act on that.
+ *
+ * `desktop/e2e/01-shell.spec.ts` drives a real right-click through it.
+ */
+function contextMenuTemplate(params, contents) {
+  const flags = params.editFlags || {};
+  const items = [];
+  if (params.linkURL) {
+    items.push(
+      { label: "Open link in browser", click: () => shell.openExternal(params.linkURL) },
+      { label: "Copy link", click: () => clipboard.writeText(params.linkURL) },
+      { type: "separator" },
+    );
+  }
+  if (params.isEditable) {
+    const suggestions = params.dictionarySuggestions || [];
+    for (const word of suggestions) {
+      items.push({ label: word, click: () => contents?.replaceMisspelling(word) });
+    }
+    if (params.misspelledWord) {
+      items.push(
+        {
+          label: "Add to dictionary",
+          click: () => contents?.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+        },
+        { type: "separator" },
+      );
+    }
+    items.push(
+      { role: "undo", enabled: !!flags.canUndo },
+      { role: "redo", enabled: !!flags.canRedo },
+      { type: "separator" },
+      { role: "cut", enabled: !!flags.canCut },
+      { role: "copy", enabled: !!flags.canCopy },
+      { role: "paste", enabled: !!flags.canPaste },
+      { type: "separator" },
+      { role: "selectAll", enabled: flags.canSelectAll !== false },
+    );
+  } else {
+    // Not editable: Copy for a selection, Select all for a page, and a Copy
+    // that shows visibly disabled instead of no menu at all when there is
+    // nothing under the cursor.
+    items.push(
+      { role: "copy", enabled: !!(params.selectionText || "").trim() && flags.canCopy !== false },
+      { role: "selectAll", enabled: flags.canSelectAll !== false },
+    );
+  }
+  return items;
+}
+
+function wireContextMenu(window) {
+  window.webContents.on("context-menu", (_event, params) => {
+    const template = contextMenuTemplate(params, window.webContents);
+    Menu.buildFromTemplate(template).popup({ window, x: params.x, y: params.y });
+  });
+}
+
+/* ------------------------------------------------------------------------- *
+ * Window geometry.
+ *
+ * A window this shell builds is not the window the user left: an instance
+ * switch across partitions destroys and rebuilds it (`applyActiveInstance`),
+ * an update installs by restarting the process, and macOS destroys it
+ * outright when the last window closes. All three used to open at the
+ * constructor's literals. These four functions keep one geometry alive across
+ * every one of them.
+ * ------------------------------------------------------------------------- */
+
+/** Read the saved geometry, once, before the first window is built. */
+function loadWindowGeometry() {
+  const loaded = loadWindowState();
+  windowGeometry = loaded.state;
+  savedGeometry = loaded.found ? loaded.state : null;
+  if (loaded.error) console.log(`[shell] could not read ${loaded.path}: ${loaded.error.message || loaded.error}`);
+}
+
+/** Write it, best-effort: a read-only config dir must not break the window. */
+function flushWindowGeometry() {
+  if (geometryFlushTimer) {
+    clearTimeout(geometryFlushTimer);
+    geometryFlushTimer = null;
+  }
+  if (sameWindowState(windowGeometry, savedGeometry)) return;
+  try {
+    savedGeometry = saveWindowState(windowGeometry).state;
+  } catch (err) {
+    console.log(`[shell] could not save the window geometry: ${err?.message || err}`);
+  }
+}
+
+/**
+ * Write it a moment after the window stops moving.
+ *
+ * A drag emits `resize` per frame, and each one would otherwise be a
+ * synchronous write plus a rename. The timer is unref'd so a pending flush
+ * cannot hold the process open; the quit path calls `flushWindowGeometry()`
+ * directly for the same reason.
+ */
+function scheduleGeometryFlush() {
+  if (geometryFlushTimer) clearTimeout(geometryFlushTimer);
+  geometryFlushTimer = setTimeout(flushWindowGeometry, 500);
+  geometryFlushTimer.unref?.();
+}
+
+/**
+ * Copy a live window's geometry into `windowGeometry`.
+ *
+ * `getNormalBounds()`, not `getBounds()`: while a window is maximized or
+ * full-screen, `getBounds()` reports the screen, and restoring that would
+ * leave a window with nothing left to un-maximize into.
+ */
+function captureWindowGeometry(window) {
+  if (!window || window.isDestroyed() || window.isMinimized()) return;
+  try {
+    windowGeometry = normalizeWindowState({
+      ...window.getNormalBounds(),
+      maximized: window.isMaximized(),
+      fullScreen: window.isFullScreen(),
+    });
+  } catch {
+    // A window torn down between the check and the read: keep what we had.
+  }
+}
+
+/** Follow a window for as long as it lives. */
+function trackWindowGeometry(window) {
+  const record = () => {
+    captureWindowGeometry(window);
+    scheduleGeometryFlush();
+  };
+  for (const event of ["resize", "move", "maximize", "unmaximize", "enter-full-screen", "leave-full-screen"]) {
+    window.on(event, record);
+  }
+  // Hiding to the tray is where a session usually ends, and the process can
+  // then be killed without another chance to write.
+  window.on("hide", () => flushWindowGeometry());
+}
+
+/**
+ * The geometry to build the next window with, fitted to the displays that are
+ * attached right now. Asked per window, not cached: a monitor can be unplugged
+ * between two of them.
+ */
+function openingGeometry() {
+  let workAreas = [];
+  try {
+    workAreas = screen.getAllDisplays().map((d) => d.workArea);
+  } catch {
+    // Before `app.whenReady()`, or a platform with no display server: the
+    // saved state is used unchecked, which is what an empty list means.
+  }
+  return fitToWorkAreas(windowGeometry, workAreas, MIN_SIZE);
+}
+
 function createWindow() {
+  winPartition = partitionFor(instance || activeInstance(instancesState));
+  const geometry = openingGeometry();
   win = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 720,
-    minHeight: 480,
+    width: geometry.width,
+    height: geometry.height,
+    // Absent on a first launch and whenever the saved position no longer
+    // lands on a screen, which is Electron's cue to place the window itself.
+    ...(geometry.x !== undefined ? { x: geometry.x, y: geometry.y } : {}),
+    minWidth: MIN_SIZE.width,
+    minHeight: MIN_SIZE.height,
     backgroundColor: "#0b0d10",
     show: true,
-    title: "Calandria",
-    // A dark, borderless-ish title bar on macOS matches the app's own titlebar;
-    // on Windows/Linux the native frame stays, since the app has no custom
-    // window controls of its own to replace it with.
+    title: windowTitle(instance || activeInstance(instancesState)),
+    // A dark, borderless-ish title bar on macOS matches the app's own
+    // titlebar; on Windows/Linux the native frame stays, since the app has no
+    // custom window controls to replace it with.
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+    // With no native bar the traffic lights sit on top of the page, so their
+    // position is a layout constant the web side has to know: the app's
+    // titlebar reserves a matching left inset for them (`.app.mac-chrome
+    // .titlebar` in app/globals.css), or the logo sits under the buttons.
+    // Pinning it here, instead of taking hiddenInset's default, makes that
+    // inset a number both sides agree on; y centers the ~16px cluster in the
+    // 50px titlebar instead of the 28px bar Electron assumes.
+    // tests/desktopWindowChrome.test.ts holds the two in step.
+    ...(process.platform === "darwin" ? { trafficLightPosition: { x: 18, y: 17 } } : {}),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
       spellcheck: true,
+      // Null for `local`, so the default session stays untouched; a
+      // per-instance persistent partition for anything else, so a Cloudflare
+      // Access cookie can never be sent to the wrong server.
+      ...(winPartition ? { partition: winPartition } : {}),
     },
   });
+
+  // After construction, since neither is a constructor option that also
+  // remembers what to restore into: the bounds above are the shape the window
+  // takes when the user leaves either state. Maximize first, so leaving
+  // full-screen lands back on a maximized window when it was saved as both.
+  if (geometry.maximized) win.maximize();
+  if (geometry.fullScreen) win.setFullScreen(true);
+  trackWindowGeometry(win);
+
+  // Per session, not once per process: a partition is its own cookie jar and
+  // permission store, so an instance added after launch would otherwise get
+  // Electron's defaults, including the notification check answering
+  // "granted", the half that silences the renderer's duplicate toasts.
+  // Idempotent, so re-running it on the default session costs nothing.
+  hardenSession(win.webContents.session);
 
   // The boot screen only while there is nothing better: a window recreated
   // after its predecessor was destroyed (macOS, dock click) must land on the
@@ -203,58 +1035,73 @@ function createWindow() {
 
   // Anything that isn't our own loopback origin opens in the user's real
   // browser: GitHub PR links, docs, a task's exposed service. A new
-  // BrowserWindow for those would be a browser we then have to maintain.
+  // BrowserWindow for those would be a browser this app then has to maintain.
   win.webContents.setWindowOpenHandler(({ url }) => {
+    // The page asking the shell to act, over a scheme never registered with
+    // the OS: the request never becomes a real navigation, only a call.
+    const cmd = parseDesktopCommand(url);
+    if (cmd) {
+      if (cmd.command === "install") void requestInstall();
+      else void checkForUpdates(true);
+      return { action: "deny" };
+    }
     if (isAppUrl(url)) return { action: "allow" };
     shell.openExternal(url);
     return { action: "deny" };
   });
   win.webContents.on("will-navigate", (event, url) => {
+    // Same recognition as setWindowOpenHandler above, for the case where the
+    // page's request arrives as a top-level navigation instead of a new
+    // window; always denied, since it is a call, not a page to load.
+    const cmd = parseDesktopCommand(url);
+    if (cmd) {
+      if (cmd.command === "install") void requestInstall();
+      else void checkForUpdates(true);
+      event.preventDefault();
+      return;
+    }
     if (isAppUrl(url) || url.startsWith("file://")) return;
     event.preventDefault();
     shell.openExternal(url);
   });
+  // A REDIRECT is not a navigation, which is why the handler above never sees
+  // an identity provider: the origin answers the page load with a 302 and
+  // Chromium follows it without asking. `did-navigate` is where that arrives,
+  // and it is the only moment the shell can tell that the window is looking at
+  // somebody else's login form.
+  win.webContents.on("did-navigate", (_event, url) => maybeOfferNativeSignIn(url));
+  // A reload or a first paint starts with no state of its own; the shell
+  // re-announces what it already knows instead of leaving the pill blank
+  // until the next update event happens to fire.
+  win.webContents.on("did-finish-load", () => pushUpdateState());
+  wireContextMenu(win);
 
-  // CLOSE VS QUIT — one rule on all three platforms: the X button (and Cmd+W)
-  // HIDES the window, and quitting is something you ask for by name. The
-  // reasoning, and what changed to allow it, is in docs/DESKTOP_APP.md §5.1.
+  // Close vs quit, one rule on all three platforms: the X button (and Cmd+W)
+  // hides the window, and quitting is something you ask for by name (see
+  // "Notifications, tray, and close vs quit" in docs/DESKTOP_APP.md). A hidden
+  // window keeps working, the tray icon still shows the "N need you" count,
+  // and Show is
+  // one click away, so this avoids an absent-minded X killing an in-flight
+  // agent turn (desktop/e2e/03-quit-drain.spec.ts pins the drain). Hiding
+  // instead of destroying also preserves renderer state (open transcript,
+  // scroll position, SSE streams) for an instant reopen; macOS hides for the
+  // same reason, and `activate` shows the same window again.
   //
-  // The short version: closing used to quit on Windows and Linux because
-  // "leaving turns running invisibly with no window is worse than stopping
-  // them" — and that was right while the shell had no way to be present
-  // without a window. It now has one. The tray icon is on screen, it carries
-  // the "N need you" count, and Show is one click away; a hidden Calandria is
-  // no more invisible than a minimised one. Against that, close-to-quit on a
-  // window whose whole job is supervising long agent turns means every
-  // absent-minded X kills work in flight — and the drain that protects it
-  // (which is real, and which desktop/e2e/03-quit-drain.spec.ts pins) only
-  // makes the shutdown slower, not less unwanted.
-  //
-  // Hiding rather than destroying is also what keeps the renderer's state: the
-  // SPA's open transcript, scroll position and SSE streams survive, so
-  // reopening is instant instead of a cold reload. That is why macOS hides too
-  // even though its convention would permit a real close — `activate` then
-  // shows the same window instead of building a new one.
-  //
-  // Three escapes, all deliberate, and the first is the load-bearing one: this
-  // hides only while a status area is ACTUALLY DRAWING the tray icon. The gate
-  // used to be `new Tray()` not throwing, which is a much weaker thing and is
-  // not true of the case it was written for: on Linux the constructor succeeds
-  // on a session with no status-notifier host, so the window hid into nowhere
-  // and the "open it again from the tray icon" toast named an icon that did not
-  // exist (tray-residency.js carries the measurement). Refusing to hide
-  // somewhere the user cannot get the app back from is the old rationale, still
-  // correct — it just needs the session's answer rather than Electron's. A
-  // close BEFORE boot() finished is let through for the same reason (no server
-  // to keep alive, no tray yet), and `window-all-closed` turns it into a quit.
-  // And a close DURING the drain is let through as well — by then the user has seen
-  // the drain state and asked twice, and `supervisor.stop()` is bounded anyway,
-  // so the wait cannot outlive the grace.
+  // Three exceptions let the close through: hiding only happens while a
+  // status area is actually drawing the tray icon (`new Tray()` not throwing
+  // isn't enough on Linux with no status-notifier host, see
+  // tray-residency.js, so this checks the session's answer instead); a close
+  // before boot() finished has no server or tray yet (`window-all-closed`
+  // turns it into a quit); and a close during the drain is let through since
+  // the user has already asked twice and `supervisor.stop()` is bounded.
   win.on("close", (event) => {
-    if (quitting || !supervisor) return;
-    // Always prevented here and resolved in `decideClose()`: the answer is a
-    // question for the session bus, which cannot be asked synchronously, and a
-    // close that is allowed through cannot be taken back.
+    // `appUrl`, not `supervisor`: this escape is for a close arriving before
+    // an attach finished (no server on screen, no tray confirmed), which a
+    // `url` instance reaches without ever building a supervisor.
+    if (quitting || !appUrl) return;
+    // Always prevented here and resolved in `decideClose()`, since the
+    // answer is asked of the session bus asynchronously and an allowed close
+    // can't be taken back.
     event.preventDefault();
     if (closePending) return;
     closePending = true;
@@ -263,8 +1110,28 @@ function createWindow() {
     });
   });
 
+  // The window title stays the instance's name, not the page's. A
+  // BrowserWindow follows its document's `<title>` by default, and the app
+  // writes one on every project change (`app/Shell.tsx`), which would
+  // overwrite it; Electron has no "don't follow the page" option, so
+  // preventing the default is the only way to hold it. The project name is
+  // shown on screen anyway; the title's job is saying which window is on
+  // which server.
+  win.on("page-title-updated", (event) => {
+    event.preventDefault();
+    // Except during the drain, whose title is a status message that a
+    // page re-titling itself must not overwrite.
+    if (quitting) return;
+    win?.setTitle(windowTitle(instance));
+  });
+
+  // Only if it is still the current window. An instance switch builds the
+  // replacement before destroying the one it replaces (see
+  // applyActiveInstance), so this handler can fire with `win` already
+  // pointing at the new one; clearing it there would drop the live window.
+  const self = win;
   win.on("closed", () => {
-    win = null;
+    if (win === self) win = null;
   });
 }
 
@@ -279,82 +1146,374 @@ function isAppUrl(url) {
 }
 
 function announceShell() {
-  // The one thing the page is told about its container, and it is told in the
-  // user agent because that is the only channel that is already per-CLIENT: the
-  // same server can be open in this window and in an ordinary browser tab at
-  // the same moment, so an env var on the sidecars or a flag in the per-instance
-  // `window.__FEATURES` bundle would answer one of them with the other's truth.
+  // Told to the page through the user agent, the only channel that's
+  // per-client: the same server can be open here and in an ordinary browser
+  // tab at once, so an env var on the sidecars or a `window.__FEATURES` flag
+  // would answer both windows with the same truth.
   //
-  // What it buys, today, is one sentence: Settings → Notifications reads
-  // `Notification.permission`, which hardenSession() below makes "denied", and
-  // saying "you've blocked notifications for this site" to somebody who is
-  // getting OS toasts from us the whole time sends them looking for a browser
-  // setting this window does not have. app/shell/useNotifications.ts matches
-  // this token (isDesktopShell) and reports "handled by the desktop app".
+  // app/shell/useNotifications.ts matches this token (isDesktopShell) so
+  // Settings → Notifications can report "handled by the desktop app" instead
+  // of showing `Notification.permission` as "denied" (hardenSession() below
+  // sets that) and sending the user looking for a browser setting this
+  // window doesn't have.
   //
-  // Appended rather than replacing, so the Chrome/Electron versions the app may
-  // reasonably branch on survive; must be set before the first load.
+  // Appended, not replaced, so the Chrome/Electron versions the app may
+  // branch on survive; must be set before the first load.
   app.userAgentFallback = `${app.userAgentFallback} Calandria-Desktop/${app.getVersion()}`;
 }
 
-function hardenSession() {
-  // Default-deny, so a future dependency can't quietly acquire the camera.
+function hardenSession(sess) {
+  // Default-deny, so a future dependency can't acquire the camera unchecked.
   //
-  // `notifications` is denied HERE and raised from the main process instead —
-  // the one permission this handler used to grant. Both channels read the same
-  // server-composed payload off /api/events, so granting it would give the user
-  // two toasts for every event: Chromium's, from app/shell/useNotifications.ts,
-  // and the shell's. The main process wins because it is the half that can
-  // still fire with the window hidden to the tray or destroyed, can raise the
-  // window and select the task on click, and owns the dock/taskbar badge that
-  // has to agree with what it just said. The renderer's channel stands down
-  // cleanly on its own: `notificationPermission()` returns something that isn't
-  // `granted` and the hook returns before constructing anything. It returns
-  // `desktop_shell`, not the raw `denied`, off the token announceShell() sets
-  // above — so Settings can say the desktop app owns this rather than telling
-  // the user they blocked a site setting this window cannot open.
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+  // `notifications` is denied here and raised from the main process instead:
+  // both channels read the same server-composed payload off /api/events, so
+  // granting it would show two toasts per event, Chromium's (from
+  // app/shell/useNotifications.ts) and the shell's. The main process fires
+  // even with the window hidden or destroyed, can raise the window and
+  // select the task on click, and owns the dock/taskbar badge. The
+  // renderer's channel stands down on its own: `notificationPermission()`
+  // returns `desktop_shell`, not the raw `denied`, off the token
+  // announceShell() sets, so Settings reports the desktop app owns this
+  // instead of a blocked site setting.
+  sess.setPermissionRequestHandler((_wc, permission, callback) => {
     callback(permission === "clipboard-sanitized-write");
   });
-  // The request handler is NOT enough to switch the page's channel off, and
-  // this is the half that actually does it. `useNotifications.ts` reads
-  // `Notification.permission` — a permission CHECK, which Electron answers with
-  // a hardcoded "granted" when no check handler is set, whatever the request
-  // handler would have said. So the hook would have sailed past its own guard
-  // and shown the duplicate toast without ever asking. Only notifications are
-  // named here: every other check keeps Electron's default answer, so this
-  // adds one denial rather than quietly tightening a surface the request
-  // handler above is the policy for.
-  session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission !== "notifications");
+  // The request handler alone doesn't switch off the page's channel: Electron
+  // answers a `Notification.permission` check with a hardcoded "granted" when
+  // no check handler is set, regardless of the request handler, which would
+  // let `useNotifications.ts` sail past its own guard and show a duplicate
+  // toast. Only notifications are named here; every other check keeps
+  // Electron's default answer.
+  sess.setPermissionCheckHandler((_wc, permission) => permission !== "notifications");
 }
 
-async function boot() {
+/**
+ * Point the window at an instance.
+ *
+ * The entry point for all instance kinds, and the only place `instance`,
+ * `appUrl` and the window title move together. Every step past the first
+ * `await` re-checks `attachSeq`, since a switch can be asked for mid-attach.
+ */
+async function attach(inst) {
+  const seq = ++attachSeq;
+  instance = inst;
+  appUrl = null;
+  win?.setTitle(windowTitle(inst));
+  refreshInstanceMenus();
+  // Before the first request of the attach, including the version probe: a
+  // credential that is armed after the page has loaded is one the page loaded
+  // without.
+  armAuthHeaders(inst);
+  // A sign-in still waiting on the browser belongs to the instance being left.
+  // Its loopback port would otherwise stay open, holding a callback nobody is
+  // going to read, until its five-minute timeout.
+  cancelSignIn();
+  // Before anything else, on every attach including a retry of the same
+  // instance: a forward whose window has moved on is a port nobody is
+  // reading and an ssh child nobody will ever kill.
+  await stopTunnel();
+  // The forward above was the only way to an `ssh` instance, so its
+  // subscriber now points at a closed local port. Reconciling here, before
+  // the rest of the attach, stops it reconnect-looping while the next
+  // server comes up.
+  syncSubscribers();
+  if (inst.kind === "local") await bootLocal(seq);
+  else if (inst.kind === "ssh") await attachSsh(inst, seq);
+  else await attachUrl(inst, seq);
+}
+
+/** Close the current forward, if there is one. Safe to call with none. */
+async function stopTunnel() {
+  const t = tunnel;
+  tunnel = null;
+  if (t) await t.stop();
+}
+
+/**
+ * Everything an attach turns on once a server has answered: the tray, the
+ * event stream, and, the first time only, the updater.
+ *
+ * Shared by every instance kind so a `url` instance gets the full native
+ * surface too. The updater is once-per-process, since it updates the shell
+ * itself regardless of which server is on screen; re-arming its timer on
+ * every switch would turn a busy afternoon into a download loop.
+ */
+async function afterAttach(seq) {
+  createTray();
+  // Reconciles all subscribers, not just the active instance's stream: this
+  // attach may be the moment an origin became readable (the local server
+  // bound its port, an ssh forward came up), and other instances have been
+  // streaming the whole time.
+  syncSubscribers();
+  // Once per process, not once per attach: see above.
+  if (updateDisposition) return;
+  // Its own try, since a bad require or malformed feed config must not turn
+  // a working session into "Calandria could not start"; an app that can't
+  // check for updates still works.
+  try {
+    await startUpdater();
+    // An install that failed on the way out of the last session couldn't be
+    // shown then (see finishQuit); this is the first chance to show it.
+    await reportLastInstallFailure();
+  } catch (err) {
+    console.log(`[shell] auto-update unavailable: ${err?.message || err}`);
+  }
+}
+
+/**
+ * Attach to a server this app did not start.
+ *
+ * The handshake is `GET /api/version` through the instance's own session, so
+ * it rehearses the page load that follows with the same cookie jar, proxy
+ * settings and TLS trust store; a plain `globalThis.fetch` would answer for
+ * a different client.
+ *
+ * An unreachable server lands on the boot screen's failure state with the
+ * error and Retry / Switch buttons, since a dialog can only offer OK. There
+ * is no automatic retry loop: this kind has no transport to reconnect (`ssh`
+ * does), so a background retry would just be a spinner with no explanation.
+ */
+async function attachUrl(inst, seq) {
+  await showLoading(`Connecting to ${inst.name}`, inst.url);
+  await attachOrigin(inst, inst.url, seq);
+}
+
+/**
+ * Attach to a remote Calandria over an `ssh -L` forward.
+ *
+ * The forward is the only difference from `attachUrl`: once the local port
+ * accepts, this hands the origin it produced to the same `attachOrigin`
+ * below, so an `ssh` instance gets the identical handshake, banner, cookie
+ * jar and event stream a `url` one does. See ssh-tunnel.js for the transport.
+ *
+ * Two failure shapes. A forward that never came up (usually ssh asking for
+ * something BatchMode can't answer) lands on the boot screen's failure state
+ * with Retry and Switch, same as an unreachable `url` instance. A forward
+ * that was up and dropped reconnects on its own, with the boot screen
+ * showing ssh's last words until it does.
+ */
+async function attachSsh(inst, seq) {
+  const target = instanceAddress(inst);
+  await showLoading(`Connecting to ${inst.name}`, `Opening an SSH forward to ${inst.ssh.host}…`);
+  const t = new SshTunnel({
+    ...inst.ssh,
+    onLog: (line) => console.log(line),
+    // Both callbacks re-check `seq`, for `attach`'s reason: a reconnect can
+    // land minutes after the user switched away, and the tunnel it belongs to
+    // may already have been replaced.
+    onDown: ({ error, delayMs }) => {
+      if (seq !== attachSeq || tunnel !== t) return;
+      appUrl = null;
+      void showLoading(
+        `Reconnecting to ${inst.name}`,
+        `${error}\n\nRetrying in ${Math.round(delayMs / 1000)}s.`,
+      );
+    },
+    onUp: () => {
+      if (seq !== attachSeq || tunnel !== t) return;
+      void attachOrigin(inst, t.url, seq);
+    },
+  });
+  tunnel = t;
+  const started = await t.start();
+  if (seq !== attachSeq) {
+    // Switched away while ssh was connecting. Whoever switched has already
+    // called stopTunnel on whatever `tunnel` pointed at then; this one is
+    // ours.
+    await t.stop();
+    return;
+  }
+  if (!started.ok) {
+    console.log(`[shell] ${inst.name} (${target}) could not be forwarded: ${started.error}`);
+    tunnel = null;
+    const answer = await showAttachFailure(inst, target, started.error);
+    if (seq !== attachSeq) return;
+    if (answer === "switch") void manageInstances();
+    else void attach(inst);
+    return;
+  }
+  console.log(`[shell] ssh forward for ${inst.name}: ${t.url} -> ${inst.ssh.host}:${inst.ssh.remotePort}`);
+  await attachOrigin(inst, t.url, seq);
+}
+
+/**
+ * Everything an attach does once it has an origin: handshake, load, banner,
+ * native surface.
+ *
+ * Split out of `attachUrl` since the forward is the only thing `ssh` adds;
+ * past this point both kinds are the same client talking to the same
+ * server, with one handshake to get right. Also the reconnect path: a
+ * dropped forward that comes back re-enters here to reload a page whose
+ * fetches all died.
+ */
+async function attachOrigin(inst, origin, seq) {
+  let probe = await probeVersion(inst, origin);
+  if (seq !== attachSeq) return;
+  // An instance with a configured sign-in answers a demand for one by RENEWING
+  // its token or running the flow in the browser, never by rendering somebody
+  // else's login page in this window. See `resolveSignIn`.
+  if (probe.signIn && inst.auth) {
+    const resolved = await resolveSignIn(inst, origin, seq);
+    if (seq !== attachSeq) return;
+    if (resolved === "abandoned") return;
+    if (resolved === "reattach") {
+      const fresh = findInstance(instancesState, inst.id);
+      if (fresh) void attach(fresh);
+      return;
+    }
+    probe = resolved;
+  }
+  if (!probe.ok && !probe.signIn) {
+    console.log(`[shell] ${inst.name} (${origin}) is unreachable: ${probe.error}`);
+    const answer = await showAttachFailure(inst, origin, probe.error);
+    if (seq !== attachSeq) return;
+    if (answer === "switch") void manageInstances();
+    else void attach(inst);
+    return;
+  }
+  // An identity provider in front of an instance with no configured sign-in
+  // still loads inline: the window shows the page and the user completes it
+  // there, which is how a Cloudflare Access one-time PIN, a password form or
+  // an OTP finishes today. What it cannot finish is anything that hands off
+  // to the system browser; `did-navigate` covers that by offering the native
+  // flow on top of the page (`maybeOfferNativeSignIn`).
+  const serverVersion = probe.signIn ? null : probe.version?.version || "unknown";
+  if (probe.signIn) console.log(`[shell] ${inst.name} needs a sign-in (${probe.error}), loading it`);
+  // The handshake is where an instance added by URL with no name learns the
+  // one its server calls itself, before the title and menus draw from it.
+  inst = adoptInstanceName(inst, probe.signIn ? null : probe.version?.instanceName);
+  console.log(`[shell] attached to ${inst.name} at ${origin} (server ${serverVersion || "not yet known"})`);
+  appUrl = origin;
+  await win?.loadURL(takePendingGoto(inst, origin));
+  if (seq !== attachSeq) return;
+  win?.setTitle(windowTitle(inst));
+  // The one compatibility check, and it only ever warns: the server still
+  // loads, since refusing to open a working Calandria over a version number
+  // is worse than whatever the mismatch breaks. See MIN_SERVER_VERSION.
+  if (serverVersion && serverTooOld(serverVersion)) {
+    showVersionBanner(versionBannerText({ instanceName: inst.name, serverVersion }));
+  }
+  await afterAttach(seq);
+}
+
+/**
+ * The handshake, and the only request made before the window is pointed at a
+ * remote origin.
+ *
+ * Uses `session.fetch`, not `globalThis.fetch` (see `sessionFor`), so an
+ * Access-protected instance answers with the cookie the user logged in with
+ * instead of a 302 to the login page. `credentials: "include"` is explicit
+ * since that's the reason for routing through the session at all.
+ */
+async function probeVersion(inst, origin) {
+  let res;
+  try {
+    res = await sessionFor(inst).fetch(`${origin}/api/version`, {
+      credentials: "include",
+      // Set explicitly instead of leaving it to the session listener
+      // `armAuthHeaders` installed. The probe is the request that DECIDES
+      // whether the user is signed in, so it must not depend on whether
+      // Electron routes a main-process `session.fetch` through webRequest,
+      // which is an implementation detail and would fail with no error by
+      // answering "you need to sign in" for a session that was fine.
+      headers: { ...(authHeadersFor(inst) || {}) },
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch (err) {
+    // No answer at all: wrong host, wrong port, no route, a TLS name that
+    // doesn't match. The only case that is really a failure.
+    return { ok: false, error: err?.message || String(err) };
+  }
+  // A login has two spellings, and neither is a failure. Cloudflare Access
+  // refuses an uncredentialed call outright; most other identity providers
+  // redirect, and `net.fetch` follows it, so their login page arrives as a
+  // 200 that isn't this route's JSON. Both get the same answer: load the
+  // page, let the user sign in, and skip the version handshake.
+  if (res.status === 401 || res.status === 403) {
+    return { ok: false, signIn: true, error: `HTTP ${res.status}` };
+  }
+  if (!res.ok) return { ok: false, error: `The server answered HTTP ${res.status}.` };
+  let version;
+  try {
+    version = await res.json();
+  } catch {
+    return { ok: false, signIn: true, error: "the address answered with a page rather than Calandria's API" };
+  }
+  if (typeof version?.version !== "string") {
+    return { ok: false, signIn: true, error: "the address answered with a page rather than Calandria's API" };
+  }
+  return { ok: true, version };
+}
+
+/**
+ * Name an instance from its server, when nobody has named it yet.
+ *
+ * `CALANDRIA_INSTANCE_NAME` comes back on the same `/api/version` handshake
+ * the version check reads, so an instance added by URL defaults to the
+ * server's own name instead of its hostname, with no second request and no
+ * name for the user to invent.
+ *
+ * The policy is `adoptServerName` in instances.js: a typed name is never
+ * overwritten. Returns the instance to describe this attach with, a new
+ * object when the rename landed.
+ */
+function adoptInstanceName(inst, serverName) {
+  const next = adoptServerName(instancesState, inst.id, serverName);
+  if (next === instancesState) return inst;
+  instancesState = next;
+  const renamed = findInstance(instancesState, inst.id) || inst;
+  console.log(`[shell] ${instanceAddress(renamed)} calls itself "${renamed.name}"`);
+  saveInstanceList();
+  if (instance?.id === renamed.id) instance = renamed;
+  refreshInstanceMenus();
+  // Toasts quote the name, so the subscriber holds its own copy.
+  const sub = subscribers.get(renamed.id);
+  if (sub) sub.name = renamed.name;
+  return renamed;
+}
+
+async function bootLocal(seq) {
+  if (localUrl) {
+    // The local server is already running: this is a switch back to it. Its
+    // sidecars were left alone when the window switched away (the same
+    // thing hide-to-tray does), so there is nothing to start.
+    appUrl = localUrl;
+    await win?.loadURL(takePendingGoto(instance, appUrl));
+    if (seq !== attachSeq) return;
+    win?.setTitle(windowTitle(instance));
+    await afterAttach(seq);
+    return;
+  }
   supervisor = new Supervisor({
     repoRoot: REPO_ROOT,
-    // PORT/PTY_PORT are documented as env the shell understands, so read them
-    // here — the Supervisor's own 3000/3001 are the fallback, not the policy.
-    // Still preferences: a busy one is stepped past (see pickPorts).
+    // PORT/PTY_PORT are documented as env the shell understands, so read
+    // them here; the Supervisor's own 3000/3001 are only the fallback.
+    // Preferences, not requirements: a busy one is stepped past (see
+    // pickPorts).
     ...preferredPorts(process.env),
     resourcesPath: app.isPackaged ? process.resourcesPath : null,
     onLog: (line) => {
-      // Two consumers: the terminal a developer launched us from, and the
-      // loading screen (so a slow first boot shows progress instead of a spinner).
+      // Two consumers: the terminal a developer launched this from, and the
+      // loading screen's off-screen `#log`. The boot screen shows a spinner
+      // instead of these lines, but pushes them across anyway because that
+      // element is the only place the supervisor's first lines survive:
+      // Electron's stdout capture starts after launch resolves, so
+      // desktop/e2e reads them back off the page instead.
       console.log(line);
-      // executeJavaScript rather than IPC: the boot screen is the only consumer
-      // and adding a preload for it would mean shipping a bridge into every
-      // page the window later loads, including the app itself.
+      // executeJavaScript, not IPC: the boot screen is the only consumer,
+      // and a preload for it would ship a bridge into every page the window
+      // later loads, including the app itself.
       //
-      // The write is done HERE rather than by calling a helper the boot screen
-      // defines, because loading.html's CSP is `default-src 'none'` and that
-      // blocks its own inline <script> — so a `window.__log` defined in the page
-      // never exists, and the `&&` guard this used to have made that failure
-      // completely silent (the boot screen simply stayed blank for every launch
-      // there has ever been; found by desktop/e2e/01-shell.spec.ts). A
-      // main-process evaluation is not subject to the page's CSP, so pushing the
-      // DOM write across keeps the strict policy AND makes the log show up.
-      // Only while the boot screen is the page: once appUrl is set the window is
-      // on the app, which has no #log and no interest in being evaluated into on
-      // every line the sidecars print for the rest of the session.
+      // Written here instead of through a helper the boot screen defines,
+      // because loading.html's CSP is `default-src 'none'` and blocks its
+      // own inline <script>, so a page-defined `window.__log` never exists
+      // (desktop/e2e/01-shell.spec.ts caught the boot screen staying blank
+      // for exactly that reason). A main-process evaluation isn't subject
+      // to the page's CSP, so this keeps the strict policy and still shows
+      // the log.
+      //
+      // Only while the boot screen is the page: once appUrl is set the
+      // window is on the app, which has no #log to evaluate into.
       if (appUrl) return;
       const write = `(() => { const el = document.getElementById("log"); if (!el) return; el.textContent += ${JSON.stringify(line + "\n")}; el.scrollTop = el.scrollHeight; })()`;
       win?.webContents.executeJavaScript(write).catch(() => {});
@@ -362,8 +1521,8 @@ async function boot() {
     onExit: ({ name, code, dbLockHeld }) => {
       if (quitting || failed) return;
       failed = true;
-      // A sidecar dying while the app is up is not recoverable in place: the
-      // renderer's SSE streams are already broken and the db lock may be gone.
+      // Not recoverable in place: the renderer's SSE streams are already
+      // broken and the db lock may be gone.
       const detail = dbLockHeld
         ? "Another Calandria instance is already running against this database.\n\nQuit that one first, or open it in your browser."
         : `The ${name} process exited unexpectedly (code ${code}).\n\n${supervisor.recentLog(15)}`;
@@ -374,30 +1533,20 @@ async function boot() {
 
   try {
     const { url } = await supervisor.start();
+    localUrl = url;
     appUrl = url;
-    await win?.loadURL(url);
-    win?.setTitle("Calandria");
-    // After the app is up, not before: the tray's "Open in browser" needs a
-    // URL, and the event stream needs a server to subscribe to.
-    createTray();
-    startEvents();
-    // After the tray, because the tray menu is where an available update is
-    // advertised, and the first check is on a timer anyway.
-    //
-    // Its own try, INSIDE this one: everything from here down is a running app,
-    // and the catch below reports a failure to start. A bad require or a
-    // malformed feed config must not turn a working session into "Calandria
-    // could not start" — an app that cannot check for updates still works.
-    try {
-      startUpdater();
-    } catch (err) {
-      console.log(`[shell] auto-update unavailable: ${err?.message || err}`);
-    }
+    await win?.loadURL(takePendingGoto(instance, url));
+    if (seq !== attachSeq) return;
+    win?.setTitle(windowTitle(instance));
+    // After the app is up: the tray's "Open in browser" needs a URL, and the
+    // event stream needs a server to subscribe to. The updater comes after
+    // the tray too, since the tray menu is where an available update shows.
+    await afterAttach(seq);
   } catch (err) {
-    // `onExit` gets first claim when the failure was a sidecar dying, because
-    // it knows WHICH one and whether the database was already held; this path
-    // only has the rejection `start()` re-raised from it. Nothing left to do —
-    // that path has already shown its dialog and asked for the exit.
+    // `onExit` gets first claim when a sidecar died, since it names which
+    // one and whether the database was already held; this path only sees
+    // the rejection `start()` re-raised from it, and that path has already
+    // shown its dialog and asked for the exit.
     if (failed) return;
     failed = true;
     dialog.showErrorBox("Calandria could not start", `${err?.message || err}\n\n${supervisor?.recentLog(20) || ""}`);
@@ -405,34 +1554,867 @@ async function boot() {
   }
 }
 
+/* ------------------------------------------------------------------------- *
+ * Instances: switching, adding, managing.
+ *
+ * The remote-instances client lives in this section plus instances.js. See
+ * docs/DESKTOP_APP.md. Two rules shape it:
+ *
+ *   1. Switching tears down nothing it doesn't have to. The local server
+ *      keeps running when the window leaves it, same as on hide-to-tray,
+ *      since turns are detached and server-owned.
+ *   2. The window is rebuilt only when the session partition changes,
+ *      because that's the one BrowserWindow property Electron fixes at
+ *      construction. Local-to-local reuses the window; every hop between
+ *      different instances gets a fresh one, which also guarantees no state
+ *      from the previous origin is left in the renderer.
+ * ------------------------------------------------------------------------- */
+
+/** Make `id` the active instance and put the window on it. */
+async function switchTo(id) {
+  const next = findInstance(instancesState, id);
+  if (!next || next.id === instancesState.active) {
+    refreshInstanceMenus();
+    return;
+  }
+  console.log(`[shell] switching to ${next.name}`);
+  instancesState = setActive(instancesState, id);
+  saveInstanceList();
+  await applyActiveInstance();
+}
+
+/**
+ * Re-point the window at whatever is active now.
+ *
+ * Also the path back from "sign out", where the instance hasn't changed but
+ * its cookie jar has been emptied and the page has to be loaded again to
+ * find that out.
+ */
+async function applyActiveInstance() {
+  const next = activeInstance(instancesState);
+  // Nothing is stopped here. A subscriber is bound to an instance's session,
+  // not the window, so destroying the window below leaves it reading and
+  // the instance being left behind keeps contributing to the badge.
+  // `attach` below reconciles the set once the new transport is up.
+  if (partitionFor(next) !== winPartition || !win || win.isDestroyed()) {
+    instance = next;
+    // Cleared before `createWindow()`, which opens on `appUrl` when there is
+    // one: the replacement window belongs to the new instance's partition,
+    // and loading the old origin into it, even briefly, would put one
+    // server's page in another's cookie jar. Clearing it opens the boot
+    // screen instead, which the attach is about to show anyway.
+    appUrl = null;
+    const old = win;
+    // Before `createWindow()` reads it, and before the destroy below takes the
+    // window it has to be read off. The replacement opens on the size and
+    // position the user left, so switching servers is not a resize.
+    captureWindowGeometry(old);
+    // Build the replacement first. Electron emits `window-all-closed`
+    // synchronously from the destroy below, and this shell quits on that
+    // event when no status area hosts its tray icon; building first means
+    // the event either doesn't fire or finds the new window and stands
+    // down.
+    createWindow();
+    // `destroy()`, not `close()`: the close handler hides instead of
+    // closing, and this window is being replaced, not put away.
+    old?.destroy();
+    console.log(`[shell] window rebuilt for ${next.name} (${partitionFor(next) || "default session"})`);
+  }
+  await attach(next);
+}
+
+/**
+ * The boot screen, reused for a remote attach.
+ *
+ * The same page the local boot uses, with its heading rewritten, so there is
+ * one "working on it" surface instead of two that could drift apart. Written
+ * by evaluating in the page, since loading.html's CSP blocks its own
+ * scripts and a main-process evaluation isn't subject to it.
+ */
+async function showLoading(heading, sub) {
+  if (!win || win.isDestroyed()) return;
+  if (!onLoadingPage()) await win.loadURL(LOADING_PAGE).catch(() => {});
+  const script = `(() => {
+    document.getElementById("booting").hidden = false;
+    document.getElementById("fail").hidden = true;
+    document.getElementById("heading").textContent = ${JSON.stringify(heading)};
+    // A reconnecting ssh forward puts its last stderr lines here, so the
+    // subheading keeps the newlines it was given.
+    document.getElementById("subheading").style.whiteSpace = "pre-wrap";
+    document.getElementById("subheading").textContent = ${JSON.stringify(sub || "")};
+  })()`;
+  await win.webContents.executeJavaScript(script).catch(() => {});
+}
+
+/**
+ * The unreachable-instance state, and the answer to it.
+ *
+ * Resolves with `"retry"` or `"switch"`, or `"switch"` if the page goes away
+ * underneath, since a destroyed window means a switch or a quit is already
+ * happening and the caller's seq check will catch it either way.
+ */
+async function showAttachFailure(inst, address, detail) {
+  if (!win || win.isDestroyed()) return "switch";
+  if (!onLoadingPage()) await win.loadURL(LOADING_PAGE).catch(() => {});
+  const script = `(() => new Promise((resolve) => {
+    document.getElementById("booting").hidden = true;
+    const fail = document.getElementById("fail");
+    fail.hidden = false;
+    document.getElementById("fail-title").textContent = ${JSON.stringify(`Cannot reach ${inst.name}`)};
+    // pre-wrap because an ssh failure is several lines: what it said, and
+    // what to do about a host that wanted a password.
+    document.getElementById("detail").style.whiteSpace = "pre-wrap";
+    document.getElementById("detail").textContent = ${JSON.stringify(`${address}: ${detail}`)};
+    document.getElementById("retry").onclick = () => resolve("retry");
+    document.getElementById("switch").onclick = () => resolve("switch");
+  }))()`;
+  return win.webContents.executeJavaScript(script).catch(() => "switch");
+}
+
+/**
+ * Get an instance with a configured sign-in past the thing in front of it.
+ *
+ * Resolves with a successful probe, or `"abandoned"` when the user went
+ * somewhere else, or `"reattach"` when they changed the sign-in settings and
+ * the whole attach should start again off the edited row.
+ *
+ * Tries a stored credential first, with no screen shown: a stored refresh
+ * token is the common case on every launch after the first, and renewing it
+ * is a round trip to the token endpoint the user never sees. The screen
+ * appears only when that is not possible: no credential, a refresh token the
+ * provider has revoked, or a first run.
+ *
+ * The loop exists because each answer leads back to the same question. A
+ * sign-in that failed at the provider, a credential that turned out not to
+ * be enough for whatever is out front, or a config that needed fixing all
+ * land the user back on this screen, with the reason on it, instead of a
+ * modal that would take the context away.
+ */
+async function resolveSignIn(inst, origin, seq) {
+  if (await ensureCredential(inst)) {
+    const again = await probeVersion(inst, origin);
+    if (seq !== attachSeq) return "abandoned";
+    if (!again.signIn) return again;
+  }
+  let error = "";
+  for (;;) {
+    const answer = await showSignInPrompt(inst, { error });
+    if (seq !== attachSeq) return "abandoned";
+    if (answer === "switch") {
+      void manageInstances();
+      return "abandoned";
+    }
+    if (answer === "configure") {
+      const changed = await configureAuthDialog(inst.id);
+      if (seq !== attachSeq) return "abandoned";
+      // Re-attaches instead of continuing with the row this call closed over:
+      // the edit may have changed the issuer, the client id, or turned the
+      // sign-in off entirely, and every later step here reads from `inst`.
+      if (changed) return "reattach";
+      error = "";
+      continue;
+    }
+    if (answer === "signin") {
+      const result = await signInToInstance(inst);
+      if (seq !== attachSeq) return "abandoned";
+      if (!result.ok) {
+        error = result.error;
+        continue;
+      }
+    }
+    const again = await probeVersion(inst, origin);
+    if (seq !== attachSeq) return "abandoned";
+    if (!again.signIn) return again;
+    // Signed in, and still not let through. Almost always a provider-side
+    // mismatch: the token is for an application the proxy does not accept, or
+    // the proxy expects a header this one is not sending. Saying which of
+    // those it is needs the proxy's log, so this reports only what is known.
+    error =
+      `${inst.name} still asked for a sign-in after that one succeeded. ` +
+      "The token may be for a different application than the one guarding this instance.";
+  }
+}
+
+/**
+ * The sign-in screen, and the answer to it.
+ *
+ * Resolves with `"signin"`, `"configure"`, `"switch"`, or `"switch"` if the
+ * page goes away underneath, for the same reason as `showAttachFailure`: a
+ * destroyed window means a switch or a quit is already happening, and the
+ * caller's seq check catches it either way.
+ */
+async function showSignInPrompt(inst, { error = "" } = {}) {
+  if (!win || win.isDestroyed()) return "switch";
+  const configured = !!inst.auth;
+  const header = configured && inst.auth.kind === "header";
+  const buttons = [];
+  // A `header` instance with nothing stored has no flow to run, so the
+  // primary action is the dialog that takes the credential: a browser would
+  // open on nothing.
+  if (configured && !(header && !credentials.get(inst.id))) {
+    buttons.push({ id: "signin", label: header ? "Use the stored credential" : "Sign in with your browser" });
+  }
+  buttons.push({ id: "configure", label: configured ? "Change sign-in settings…" : "Set up sign-in…" });
+  buttons.push({ id: "switch", label: "Switch instance" });
+  return await renderSignInPage({
+    heading: `Sign in to ${inst.name}`,
+    sub: configured
+      ? describeAuth(inst.auth)
+      : "This instance is behind an identity provider. Signing in through your own browser is the only way a " +
+        "passkey, a security key or a code from your phone can be used: this window cannot reach them.",
+    error,
+    buttons,
+  });
+}
+
+/**
+ * The waiting state, while the browser has the flow.
+ *
+ * Fire-and-forget by design: what this call is waiting on is the loopback
+ * receiver in `signInToInstance`, not the page, so the page's only job is to
+ * offer a Cancel that reaches it. Nothing awaits the returned promise.
+ */
+function showSignInWaiting(inst, url) {
+  return renderSignInPage({
+    heading: "Waiting for your browser",
+    sub: `Finish signing in to ${inst.name} in the browser window that just opened, then come back here.`,
+    url,
+    spinner: true,
+    buttons: [{ id: "cancel", label: "Cancel" }],
+  }).then((action) => {
+    if (action === "cancel") cancelSignIn();
+  });
+}
+
+/**
+ * Draw signin.html and resolve with the id of the button that was pressed.
+ *
+ * Written by evaluating in the page for the reason the boot screen's states
+ * are: signin.html's CSP blocks its own scripts, and a main-process evaluation
+ * is not subject to it. Every value crosses as JSON and is written with
+ * `textContent`, never as markup: an instance name is user text.
+ */
+async function renderSignInPage({ heading, sub, error = "", url = "", spinner = false, buttons }) {
+  if (!win || win.isDestroyed()) return "switch";
+  if (!win.webContents.getURL().endsWith("/signin.html")) await win.loadURL(SIGNIN_PAGE).catch(() => {});
+  const script = `(() => new Promise((resolve) => {
+    document.getElementById("spinner").hidden = ${JSON.stringify(!spinner)};
+    document.getElementById("heading").textContent = ${JSON.stringify(heading)};
+    document.getElementById("subheading").textContent = ${JSON.stringify(sub || "")};
+    document.getElementById("error").textContent = ${JSON.stringify(error || "")};
+    const urlEl = document.getElementById("url");
+    urlEl.textContent = ${JSON.stringify(url || "")};
+    urlEl.hidden = !${JSON.stringify(!!url)};
+    const WANTED = ${JSON.stringify(buttons)};
+    for (const id of ["signin", "configure", "cancel", "switch"]) {
+      const el = document.getElementById(id);
+      const wanted = WANTED.find((b) => b.id === id);
+      el.hidden = !wanted;
+      el.onclick = wanted ? () => resolve(id) : null;
+      if (wanted) el.textContent = wanted.label;
+    }
+  }))()`;
+  return await win.webContents.executeJavaScript(script).catch(() => "switch");
+}
+
+/**
+ * Offer the native flow on top of an identity provider's own page.
+ *
+ * Only reached by an instance with no configured sign-in, which is the case
+ * where a third-party login page still renders in this window. It usually
+ * works; when it does not, there is no error to see: the page hands off to
+ * the system browser for a passkey, the ceremony succeeds there, and this
+ * window is left on the same screen with a cookie jar that was never
+ * updated. There is no event that reports this, so the offer runs up front,
+ * whenever the window ends up somewhere that is not the instance.
+ *
+ * Dismissible, and never shown on the app's own pages, since it is advice
+ * tied to a login screen.
+ */
+function maybeOfferNativeSignIn(url) {
+  const inst = instance;
+  if (!inst || inst.kind === "local" || inst.auth) return;
+  if (!/^https?:/.test(url)) return;
+  const home = authOriginFor(inst);
+  try {
+    if (home && new URL(url).origin === new URL(home).origin) return;
+  } catch {
+    return;
+  }
+  const text =
+    `This is ${new URL(url).host}, not ${inst.name}. If this sign-in needs a passkey, a security key or a code ` +
+    "from your phone, it cannot be finished in this window. Set up a browser sign-in instead.";
+  const script = `(() => {
+    if (document.getElementById("calandria-signin-offer")) return;
+    const el = document.createElement("div");
+    el.id = "calandria-signin-offer";
+    el.setAttribute("role", "status");
+    el.style.cssText = [
+      "position:fixed", "top:0", "left:0", "right:0", "z-index:2147483646",
+      "display:flex", "align-items:center", "gap:12px", "padding:8px 14px",
+      "background:#12304a", "color:#d8e8f6", "border-bottom:1px solid #1d4a72",
+      'font:12.5px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
+    ].join(";");
+    const msg = document.createElement("span");
+    msg.style.cssText = "flex:1";
+    msg.textContent = ${JSON.stringify(text)};
+    const close = document.createElement("button");
+    close.type = "button";
+    close.textContent = "Dismiss";
+    close.style.cssText = "background:transparent;color:inherit;border:1px solid currentColor;border-radius:5px;padding:3px 9px;font:inherit;cursor:pointer";
+    close.onclick = () => el.remove();
+    el.append(msg, close);
+    document.body.appendChild(el);
+  })()`;
+  win?.webContents.executeJavaScript(script).catch(() => {});
+}
+
+/**
+ * Say that this server is older than the shell expects, on the app's own
+ * page, once per attach.
+ *
+ * An overlay written from the main process, not by the server, since the
+ * server that would have to render it is the one that doesn't know about
+ * this. Dismissible: it's advice, and a banner that can't be dismissed on a
+ * working app is a worse bug than the mismatch.
+ */
+function showVersionBanner(text) {
+  if (!win || win.isDestroyed()) return;
+  const script = `(() => {
+    document.getElementById("calandria-version-banner")?.remove();
+    const el = document.createElement("div");
+    el.id = "calandria-version-banner";
+    el.setAttribute("role", "status");
+    el.style.cssText = [
+      "position:fixed", "top:0", "left:0", "right:0", "z-index:2147483646",
+      "display:flex", "align-items:center", "gap:12px", "padding:8px 14px",
+      "background:#4a3a12", "color:#f6e7c1", "border-bottom:1px solid #6b5420",
+      'font:12.5px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
+    ].join(";");
+    const msg = document.createElement("span");
+    msg.style.cssText = "flex:1";
+    msg.textContent = ${JSON.stringify(text)};
+    const close = document.createElement("button");
+    close.type = "button";
+    close.textContent = "Dismiss";
+    close.style.cssText = "background:transparent;color:inherit;border:1px solid currentColor;border-radius:5px;padding:3px 9px;font:inherit;cursor:pointer";
+    close.onclick = () => el.remove();
+    el.append(msg, close);
+    document.body.appendChild(el);
+  })()`;
+  win.webContents.executeJavaScript(script).catch(() => {});
+}
+
+/**
+ * Is the window already on the boot screen? Checked by filename, not string
+ * equality with LOADING_PAGE, which spells a Windows path differently from
+ * the one `getURL()` hands back.
+ */
+function onLoadingPage() {
+  return !!win && !win.isDestroyed() && win.webContents.getURL().endsWith("/loading.html");
+}
+
+/** "Add instance…": the dialog with only the form. */
+async function addInstanceDialog() {
+  await instanceDialogLoop({ mode: "add" });
+}
+
+/** "Manage instances…": the same dialog with the list above the form. */
+async function manageInstances() {
+  await instanceDialogLoop({ mode: "manage" });
+}
+
+/**
+ * Run the instance dialog until it produces an action that closes it.
+ *
+ * A loop, not a single call, because a rejected URL re-opens the dialog with
+ * the error and the typed values still in it. Every other action ends the
+ * dialog, since it changes the list the dialog is showing and re-rendering a
+ * modal isn't worth a second code path.
+ */
+async function instanceDialogLoop(opts) {
+  if (instanceDialog && !instanceDialog.isDestroyed()) {
+    instanceDialog.focus();
+    return;
+  }
+  let draft = { name: "", address: "", error: "" };
+  for (;;) {
+    const result = await openInstanceDialog({ ...opts, ...draft });
+    if (result.action === "cancel") return;
+    if (result.action === "add") {
+      try {
+        parseInstanceAddress(result.address);
+      } catch (err) {
+        // Straight back into the dialog with what they typed and why it was
+        // refused. A message box would take the typed text away to say so.
+        draft = { name: result.name, address: result.address, error: err?.message || String(err) };
+        continue;
+      }
+      const { state, instance: added } = addInstance(instancesState, result);
+      instancesState = setActive(state, added.id);
+      saveInstanceList();
+      console.log(`[shell] added instance ${added.name} (${instanceAddress(added)})`);
+      await applyActiveInstance();
+      return;
+    }
+    if (result.action === "switch") {
+      await switchTo(result.id);
+      return;
+    }
+    if (result.action === "signout") {
+      await signOutOfInstance(result.id);
+      return;
+    }
+    if (result.action === "auth") {
+      // Chained rather than nested: the manage dialog is closed by resolving,
+      // so this opens the sign-in one over the same parent instead of stacking
+      // a modal on a modal that is already going away.
+      await configureAuthDialog(result.id);
+      return;
+    }
+    if (result.action === "remove") {
+      const target = findInstance(instancesState, result.id);
+      if (!target) return;
+      const wasActive = instancesState.active === target.id;
+      await clearInstanceSession(target);
+      // Its stored token goes with it. A credential file that kept entries for
+      // instances the user deleted would be a list of live secrets for servers
+      // this app no longer admits to knowing about.
+      clearCredential(target.id);
+      instancesState = removeInstance(instancesState, target.id);
+      saveInstanceList();
+      console.log(`[shell] removed instance ${target.name}`);
+      if (wasActive) await applyActiveInstance();
+      else {
+        refreshInstanceMenus();
+        // A removed instance must stop badging; `applyActiveInstance`
+        // reaches this reconcile through its own attach, this path doesn't.
+        syncSubscribers();
+      }
+      return;
+    }
+    return;
+  }
+}
+
+/**
+ * Edit how one instance signs in. Resolves true if anything actually changed.
+ *
+ * A loop for `instanceDialogLoop`'s reason: a config the validators refuse goes
+ * straight back into the dialog with the sentence and the typed values still in
+ * it, rather than into a message box that takes the form away to say so.
+ *
+ * TWO WRITES, ONE FORM. The kind, issuer and client id go to instances.json
+ * through `setInstanceAuth`; the `header` kind's actual credential goes to the
+ * encrypted credential store, never to the instance list (instance-auth.js's
+ * header explains why). The form does not make the user care which is which.
+ */
+async function configureAuthDialog(id) {
+  const target = findInstance(instancesState, id);
+  if (!target || target.kind === "local") return false;
+  const cred = credentials.get(id);
+  let draft = {
+    kind: target.auth?.kind || "none",
+    issuer: target.auth?.issuer || "",
+    clientId: target.auth?.clientId || "",
+    scope: target.auth?.scope || "",
+    redirectPort: target.auth?.redirectPort ? String(target.auth.redirectPort) : "",
+    headers: cred?.kind === "header" ? formatHeaderLines(cred.headers) : "",
+  };
+  let error = "";
+  for (;;) {
+    const result = await openInstanceDialog({
+      mode: "auth",
+      error,
+      target: { id: target.id, name: target.name },
+      auth: draft,
+    });
+    if (result.action !== "saveauth") return false;
+    draft = {
+      kind: result.kind,
+      issuer: result.issuer,
+      clientId: result.clientId,
+      scope: result.scope,
+      redirectPort: result.redirectPort,
+      headers: result.headers,
+    };
+    let nextState;
+    let nextCred = null;
+    try {
+      nextState = setInstanceAuth(instancesState, id, draft.kind === "none" ? null : draft);
+      // AFTER the config validates, so a form that is wrong in both places
+      // reports the first problem rather than storing half of itself.
+      if (draft.kind === "header") nextCred = { kind: "header", headers: parseHeaderLines(draft.headers) };
+    } catch (err) {
+      error = err?.message || String(err);
+      continue;
+    }
+    instancesState = nextState;
+    saveInstanceList();
+    const updated = findInstance(instancesState, id);
+    // Changing the kind invalidates whatever the old one produced: an OAuth
+    // token is not a header credential, and neither is any use to a provider
+    // the user has just re-pointed the instance at.
+    if (!nextCred && cred?.kind !== updated?.auth?.kind) clearCredential(id);
+    if (nextCred) setCredential(updated, nextCred);
+    else if (updated) armAuthHeaders(updated);
+    console.log(`[shell] sign-in for ${target.name}: ${describeAuth(updated?.auth)}`);
+    refreshInstanceMenus();
+    return true;
+  }
+}
+
+/**
+ * Sign out of an instance: empty its partition.
+ *
+ * That is the sign-out, and why each instance has a partition of its own.
+ * Calandria has no logout to call: under Access the credential is a cookie
+ * the edge set, and local mode has no login at all, so forgetting the cookie
+ * client-side is the whole operation. The auth cache goes with it, or an
+ * HTTP-auth proxy in front would re-authenticate on the next request.
+ */
+async function signOutOfInstance(id) {
+  const target = findInstance(instancesState, id);
+  if (!target || target.kind === "local") return;
+  await clearInstanceSession(target);
+  // The partition is only half of it now. A stored token is a credential this
+  // process holds outside the cookie jar, and a sign-out that emptied the jar
+  // and left the token would re-authenticate on the very next request, making
+  // the sign-out button visibly do nothing.
+  clearCredential(target.id);
+  console.log(`[shell] signed out of ${target.name}`);
+  // Its stream is about to start failing auth, and its counts are from a
+  // session that no longer exists. Dropped now so the badge stops including
+  // it immediately instead of waiting for it to decay.
+  dropSubscriber(target.id);
+  if (instancesState.active === target.id) await applyActiveInstance();
+  else syncSubscribers();
+}
+
+async function clearInstanceSession(inst) {
+  if (!partitionFor(inst)) return; // the default session is not one instance's to wipe
+  const sess = sessionFor(inst);
+  await sess.clearStorageData().catch((err) => console.log(`[shell] sign-out failed: ${err?.message || err}`));
+  await sess.clearAuthCache().catch(() => {});
+}
+
+/**
+ * Open the modal, and resolve with what the user did.
+ *
+ * The page is a static document with no script of its own (its CSP forbids
+ * one); its behavior is injected, like the boot screen's log writes, so the
+ * dialog needs no preload and no IPC. `executeJavaScript` resolves with the
+ * value of the expression, so a Promise in the page becomes a Promise here,
+ * and a window closed with the X rejects it, which reads as a cancel.
+ */
+function openInstanceDialog({ mode, name = "", address = "", error = "", target = null, auth = null }) {
+  return new Promise((resolve) => {
+    const parent = win && !win.isDestroyed() ? win : null;
+    const dlg = new BrowserWindow({
+      width: 520,
+      height: mode === "manage" ? 620 : mode === "auth" ? 520 : 360,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      parent: parent || undefined,
+      modal: !!parent,
+      show: false,
+      backgroundColor: "#0b0d10",
+      title: mode === "manage" ? "Manage instances" : mode === "auth" ? "Sign-in settings" : "Add instance",
+      webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+    });
+    instanceDialog = dlg;
+    wireContextMenu(dlg);
+    let settled = false;
+    let answer = { action: "cancel" };
+    // Answers only once the window is really gone: this closes the dialog
+    // and resolves from `closed`, not the other order. The caller's next
+    // move is usually to rebuild the main window, and `BrowserWindow.close()`
+    // is asynchronous, so resolving first would leave the modal alive as a
+    // child of a parent about to be destroyed, which can take the whole
+    // process down with no crash output and no quit path taken.
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      answer = value;
+      if (dlg.isDestroyed()) resolve(answer);
+      else dlg.close();
+    };
+    dlg.on("closed", () => {
+      if (instanceDialog === dlg) instanceDialog = null;
+      settled = true;
+      resolve(answer);
+    });
+    dlg.once("ready-to-show", () => dlg.show());
+    dlg.loadURL(INSTANCES_PAGE).then(
+      () =>
+        dlg.webContents
+          .executeJavaScript(instanceDialogScript({ mode, name, address, error, target, auth }))
+          .then(done)
+          .catch(() => done({ action: "cancel" })),
+      () => done({ action: "cancel" }),
+    );
+  });
+}
+
+/**
+ * The dialog's behavior, as a source string evaluated in the page.
+ *
+ * Every value it renders comes across as JSON and is written with
+ * `textContent` / `value`, never as markup: an instance name is user text,
+ * and this page's CSP wouldn't stop a DOM-built injection.
+ */
+function instanceDialogScript({ mode, name, address, error, target = null, auth = null }) {
+  const rows = instancesState.instances.map((i) => ({
+    id: i.id,
+    name: i.name,
+    addr: instanceAddress(i),
+    local: i.kind === "local",
+    active: i.id === instancesState.active,
+    // The sign-in row's second line: how this instance signs in, and whether it
+    // currently holds a credential. Two facts rather than one, because "set up"
+    // and "signed in" fail separately and the fix for each is a different button.
+    auth: describeAuth(i.auth),
+    signedIn: i.kind === "local" ? null : describeCredential(credentials.get(i.id)),
+  }));
+  return `(() => new Promise((resolve) => {
+    const MODE = ${JSON.stringify(mode)};
+    const ROWS = ${JSON.stringify(rows)};
+    const TARGET = ${JSON.stringify(target)};
+    const AUTH = ${JSON.stringify(auth)};
+    const TITLES = { manage: "Manage instances", add: "Add instance", auth: "Sign-in settings" };
+    document.title = TITLES[MODE] || TITLES.add;
+    document.getElementById("title").textContent =
+      MODE === "manage" ? "Instances" : MODE === "auth" ? "How " + TARGET.name + " signs in" : "Add an instance";
+    const manage = document.getElementById("manage");
+    manage.hidden = MODE !== "manage";
+    if (MODE === "manage") {
+      const list = document.getElementById("rows");
+      for (const row of ROWS) {
+        const el = document.createElement("div");
+        el.className = "row";
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        const nm = document.createElement("div");
+        nm.className = "name";
+        nm.textContent = row.name;
+        if (row.active) {
+          const badge = document.createElement("span");
+          badge.className = "badge";
+          badge.textContent = "attached";
+          nm.appendChild(badge);
+        }
+        const addr = document.createElement("div");
+        addr.className = "addr";
+        addr.textContent = row.local ? row.addr : row.addr + " · " + row.signedIn;
+        meta.append(nm, addr);
+        el.appendChild(meta);
+        if (!row.local) {
+          const cfg = document.createElement("button");
+          cfg.type = "button";
+          cfg.textContent = "Sign-in…";
+          cfg.onclick = () => resolve({ action: "auth", id: row.id });
+          el.appendChild(cfg);
+        }
+        if (!row.active) {
+          const go = document.createElement("button");
+          go.type = "button";
+          go.textContent = "Switch";
+          go.onclick = () => resolve({ action: "switch", id: row.id });
+          el.appendChild(go);
+        }
+        if (!row.local) {
+          const out = document.createElement("button");
+          out.type = "button";
+          out.textContent = "Sign out";
+          out.onclick = () => resolve({ action: "signout", id: row.id });
+          const rm = document.createElement("button");
+          rm.type = "button";
+          rm.className = "danger";
+          rm.textContent = "Remove";
+          rm.onclick = () => resolve({ action: "remove", id: row.id });
+          el.append(out, rm);
+        }
+        list.appendChild(el);
+      }
+    }
+    document.getElementById("error").textContent = ${JSON.stringify(error)};
+    document.getElementById("cancel").onclick = () => resolve({ action: "cancel" });
+    const save = document.getElementById("save");
+
+    if (MODE === "auth") {
+      document.getElementById("form").hidden = true;
+      document.getElementById("authform").hidden = false;
+      save.textContent = "Save";
+      const kind = document.getElementById("auth-kind");
+      const issuer = document.getElementById("auth-issuer");
+      const client = document.getElementById("auth-client");
+      const scope = document.getElementById("auth-scope");
+      const port = document.getElementById("auth-port");
+      const headers = document.getElementById("auth-headers");
+      kind.value = AUTH.kind;
+      issuer.value = AUTH.issuer;
+      client.value = AUTH.clientId;
+      scope.value = AUTH.scope;
+      port.value = AUTH.redirectPort;
+      headers.value = AUTH.headers;
+      const sync = () => {
+        document.getElementById("auth-none-hint").hidden = kind.value !== "none";
+        document.getElementById("auth-oauth").hidden = kind.value !== "oauth";
+        document.getElementById("auth-header").hidden = kind.value !== "header";
+      };
+      kind.onchange = sync;
+      sync();
+      save.onclick = () => resolve({
+        action: "saveauth",
+        id: TARGET.id,
+        kind: kind.value,
+        issuer: issuer.value,
+        clientId: client.value,
+        scope: scope.value,
+        redirectPort: port.value,
+        headers: headers.value,
+      });
+      // The one field a mistyped sign-in is usually about, and the first one to
+      // fill in on a fresh one.
+      (kind.value === "header" ? headers : issuer).focus();
+      return;
+    }
+
+    const nameEl = document.getElementById("name");
+    const urlEl = document.getElementById("url");
+    nameEl.value = ${JSON.stringify(name)};
+    urlEl.value = ${JSON.stringify(address)};
+    const submit = () => resolve({ action: "add", name: nameEl.value, address: urlEl.value });
+    save.onclick = submit;
+    for (const el of [nameEl, urlEl]) {
+      el.onkeydown = (e) => { if (e.key === "Enter") submit(); };
+    }
+    // The address is what a rejected submission is about, and it is the
+    // field the manage dialog is opened to fill in; the name is optional
+    // either way.
+    (${JSON.stringify(!!error)} ? urlEl : nameEl).focus();
+  }))()`;
+}
+
+/**
+ * The instance picker both menus draw: a radio list, then the two verbs.
+ *
+ * Radio, not checkbox: one window shows one instance, the same rule VS Code
+ * uses for one remote per window, simpler here since switching is a page
+ * load, not a second backend.
+ */
+function instanceMenuTemplate() {
+  return [
+    ...instanceMenuItems(instancesState).map((item) => ({
+      // Addressable, so the desktop e2e can switch instances through the
+      // menu the way a user does, instead of reaching into module state it
+      // has no handle on.
+      id: `instance-${item.id}`,
+      label: item.label,
+      type: "radio",
+      checked: item.checked,
+      // Off the menu callback: switching destroys a window and replaces the
+      // application menu, and doing either from inside the activation
+      // handler of an item in that same menu asks the toolkit to unmake what
+      // it's currently running. `setImmediate` lets the click return first.
+      click: () => setImmediate(() => void switchTo(item.id)),
+    })),
+    { type: "separator" },
+    ...instanceSignInMenuItems(),
+    { id: "instance-add", label: "Add instance…", click: () => void addInstanceDialog() },
+    { id: "instance-manage", label: "Manage instances…", click: () => void manageInstances() },
+  ];
+}
+
+/**
+ * The two sign-in verbs for the instance on screen, or nothing for `local`.
+ *
+ * Here as well as on the sign-in screen because the screen is only reached
+ * when the instance turned the app away, and the two moments somebody reaches
+ * for this are the one where they want to sign in BEFORE it does (a token
+ * they know is about to lapse) and the one where they are already looking at
+ * a working app and want to change how it authenticates.
+ */
+function instanceSignInMenuItems() {
+  const inst = instance;
+  if (!inst || inst.kind === "local") return [];
+  const items = [];
+  if (inst.auth) {
+    items.push({
+      id: "instance-signin",
+      label: `Sign in to ${inst.name}…`,
+      // Same reason as the radio items above: this replaces the menu it is
+      // being clicked in, and possibly the window under it.
+      click: () => setImmediate(() => void signInFromMenu(inst.id)),
+    });
+  }
+  items.push({
+    id: "instance-auth",
+    label: inst.auth ? "Sign-in settings…" : "Set up browser sign-in…",
+    click: () => setImmediate(() => void configureAuthDialog(inst.id)),
+  });
+  items.push({ type: "separator" });
+  return items;
+}
+
+/**
+ * Sign in from the menu, then reload the instance with what it produced.
+ *
+ * The reload is the point. A sign-in that stored a token and left the page
+ * showing whatever it was showing (an error, a login form, a stale app) would
+ * look like it had not worked, and every request the page then made would be
+ * the first one to carry the new credential with no visible reason why.
+ */
+async function signInFromMenu(id) {
+  const inst = findInstance(instancesState, id);
+  if (!inst?.auth) return;
+  const result = await signInToInstance(inst);
+  if (!result.ok) {
+    console.log(`[shell] sign-in to ${inst.name} failed: ${result.error}`);
+    await showSignInPrompt(inst, { error: result.error }).then((answer) => {
+      if (answer === "signin") return signInFromMenu(id);
+      if (answer === "configure") return configureAuthDialog(id).then(() => void attach(findInstance(instancesState, id) || inst));
+      if (answer === "switch") void manageInstances();
+      return undefined;
+    });
+    return;
+  }
+  const fresh = findInstance(instancesState, id);
+  if (fresh && instancesState.active === id) await attach(fresh);
+}
+
+/** Redraw both menus after the list or the active instance moves. */
+function refreshInstanceMenus() {
+  Menu.setApplicationMenu(buildMenu());
+  rebuildTrayMenu();
+}
+
 /**
  * What quitting looks like while `supervisor.stop()` waits for the turns.
  *
- * Two signals because they answer to two places. The TITLE is what a window
- * manager shows, and on macOS it is the only one that matters — the window
- * stays and the user is looking at the dock. The OVERLAY is on the page, which
- * is where the eyes are on every platform, and it is also the only cue on a
- * desktop that draws no title bar at all. The page underneath is a live app
- * whose server is being shut down out from under it, so leaving it alone would
- * mean the last thing the user sees is a UI going wrong rather than one being
- * put away.
+ * Two signals for two places: the title, which is what a window manager
+ * shows and the only thing that matters on macOS since the window stays and
+ * the dock is what's visible; and a page overlay, the only cue on a desktop
+ * with no title bar. Without either, the last thing the user sees is the
+ * live app's UI going wrong as its server shuts down, instead of an app
+ * being put away.
  *
- * Written from the main process, like the boot log and for the same reason:
- * the app serves its own CSP and a main-process evaluation is not subject to
- * it, so nothing here depends on the page cooperating. Best-effort throughout —
- * a window mid-navigation, or already gone, must not hold up the quit.
+ * Written from the main process, like the boot log, since the app's own CSP
+ * doesn't apply to a main-process evaluation. Best-effort throughout: a
+ * window mid-navigation, or already gone, must not hold up the quit.
  */
 function showDraining() {
-  // Quit can now be asked for from the tray with the window hidden, so put it
-  // back on screen first — otherwise the two signals below are written to
-  // something nobody can see and the shutdown looks like a hang. Deliberately
-  // NOT showWindow(): that builds a window when there isn't one, and a shell
-  // that opens a fresh window on its way out is worse than a quiet exit.
+  // Quit can be asked for from the tray with the window hidden, so show it
+  // first, or the signals below are written to something nobody can see and
+  // the shutdown looks like a hang. Not showWindow(): that builds a window
+  // when there isn't one, and opening a fresh window on the way out is worse
+  // than a quiet exit.
   if (win && !win.isDestroyed()) {
     if (win.isMinimized()) win.restore();
     win.show();
   }
-  win?.setTitle("Calandria — finishing in-flight turns…");
+  win?.setTitle("Calandria: finishing in-flight turns…");
   win?.webContents.executeJavaScript(DRAIN_OVERLAY).catch(() => {});
 }
 
@@ -458,10 +2440,10 @@ const DRAIN_OVERLAY = `(() => {
 })()`;
 
 /**
- * Put the window in front, from wherever it currently is — hidden to the tray,
- * minimised, behind the editor, or (macOS, after a real destroy) not there at
- * all. Every "come back" path goes through here: the tray's Show, a tray click,
- * `activate`, a second launch, and a notification click.
+ * Put the window in front, from wherever it currently is: hidden to the
+ * tray, minimized, behind the editor, or (macOS, after a real destroy) not
+ * there at all. Every "come back" path goes through here: the tray's Show, a
+ * tray click, `activate`, a second launch, and a notification click.
  */
 function showWindow() {
   if (!win || win.isDestroyed()) {
@@ -474,29 +2456,27 @@ function showWindow() {
 }
 
 /**
- * Hide, or quit — decided by asking the session whether the tray icon is really
- * there, not by trusting that it was there at boot.
+ * Hide, or quit: decided by asking the session whether the tray icon is
+ * really there, not by trusting that it was there at boot.
  *
- * Re-asked on every close ON PURPOSE, because the way this shell loses a window
- * is a status-notifier host that goes away MID-SESSION: Electron offers no
- * callback for it, so the only cheap moment to notice is the moment the answer
- * decides something. That is also why there is no `NameOwnerChanged`
- * subscription here — it would mean a long-lived `gdbus monitor` child for a
- * fact nothing consults in between.
+ * Re-asked on every close, since a status-notifier host can go away
+ * mid-session with no Electron callback to catch it; there's also no
+ * `NameOwnerChanged` subscription, which would mean a long-lived `gdbus
+ * monitor` child for a fact nothing else consults.
  *
- * Budgeted at 1.5 s and retried inside that, so a panel that is restarting is
- * waited through rather than read as gone. A probe that cannot ANSWER leaves
- * the last answer standing (see `refreshTrayResidency`), so a machine with no
- * D-Bus CLI keeps whatever boot established rather than flipping on a timeout.
+ * Budgeted at 1.5s and retried inside that, so a restarting panel is waited
+ * through instead of read as gone. A probe that can't answer leaves the last
+ * answer standing (see `refreshTrayResidency`), so a machine with no D-Bus
+ * CLI keeps whatever boot established instead of flipping on a timeout.
  */
 async function decideClose() {
   const hosted = await refreshTrayResidency(1500);
-  // The quit path may have started while we were asking — `before-quit` shows
-  // the window again for the drain, so hiding it now would undo that.
+  // The quit path may have started while this was asking: `before-quit`
+  // shows the window again for the drain, so hiding it now would undo that.
   if (quitting) return;
   if (!hosted) {
-    // Nowhere to hide into, so closing means quitting, and `app.quit()` is what
-    // keeps the drain (and the on-screen wait for it) in the chain.
+    // Nowhere to hide into, so closing means quitting, and `app.quit()` is
+    // what keeps the drain (and the on-screen wait for it) in the chain.
     app.quit();
     return;
   }
@@ -509,31 +2489,31 @@ async function decideClose() {
  * Re-read whether the tray icon is in a status area, and report the current
  * belief.
  *
- * ONE RULE, and it is the whole reason this is not a boolean assignment:
- * `trayHosted` moves only when the session gives an ANSWER. A probe that could
- * not run — no `gdbus`, no `dbus-send`, a timed-out call — is not evidence that
- * a working tray disappeared, and treating it as one would turn every X on a
- * healthy desktop into a quit.
+ * `trayHosted` moves only when the session gives an answer, not a plain
+ * boolean assignment: a probe that couldn't run (no `gdbus`, no `dbus-send`,
+ * a timed-out call) isn't evidence a working tray disappeared, and treating
+ * it as one would turn every X on a healthy desktop into a quit.
  */
 async function refreshTrayResidency(timeoutMs) {
   if (!tray) return false;
   const verdict = await confirmTrayResidency({ pid: process.pid, timeoutMs });
   if (verdict.hosted === null) {
     console.log(
-      `[shell] could not confirm the tray icon (${verdict.reason}) — keeping the last answer: ` +
+      `[shell] could not confirm the tray icon (${verdict.reason}), keeping the last answer: ` +
         `${trayHosted ? "hosted" : "not hosted"}`,
     );
     return trayHosted;
   }
-  // Logged on the first answer and on every change after it, never on a repeat:
-  // the first is what a launch needs to state (and what the e2e suite branches
-  // on, since the two close behaviours are both correct and only the session
-  // says which), the rest are the mid-session flips this exists to catch.
+  // Logged on the first answer and on every change after it, never on a
+  // repeat: the first is what a launch needs to state (and what the e2e
+  // suite branches on, since the two close behaviors are both correct and
+  // only the session says which), the rest are the mid-session flips this
+  // exists to catch.
   if (!trayResidencyKnown || verdict.hosted !== trayHosted) {
     console.log(
       verdict.hosted
         ? `[shell] tray icon confirmed in the status area (${verdict.reason})`
-        : `[shell] tray icon is not in any status area (${verdict.reason}) — closing the window will quit`,
+        : `[shell] tray icon is not in any status area (${verdict.reason}), closing the window will quit`,
     );
   }
   trayResidencyKnown = true;
@@ -541,17 +2521,15 @@ async function refreshTrayResidency(timeoutMs) {
   return trayHosted;
 }
 
-// Hiding a window is the one action here with no visible result, and on
-// Windows and Linux it is also a CHANGE from what this shell used to do (the X
-// used to quit). Say so once per launch, through the same channel everything
-// else here uses, so the first close doesn't read as a crash. Once only: a
-// reminder every time would be the nag that makes people avoid the button.
+// Hiding a window has no other visible result, so say so once per launch
+// through the same notification channel, or the first close reads as a
+// crash. Once only, so the reminder doesn't become a nag.
 let trayResidencyAnnounced = false;
 
 function announceTrayResidency() {
-  // `trayHosted`, never `tray`: this is the one message that tells the user
-  // where the window went, so raising it on a session with no icon is worse
-  // than saying nothing at all. `decideClose()` has already re-confirmed by the
+  // `trayHosted`, never `tray`: this is the message that tells the user
+  // where the window went, so showing it with no icon confirmed is worse
+  // than saying nothing. `decideClose()` has already re-confirmed by the
   // time this runs, and only calls it on the hide branch.
   if (trayResidencyAnnounced || !trayHosted || !Notification.isSupported()) return;
   trayResidencyAnnounced = true;
@@ -562,34 +2540,34 @@ function announceTrayResidency() {
 }
 
 /**
- * The tray icon: the shell's presence when there is no window, and the reason
- * closing one is now allowed to mean "put it away" (see the close handler).
+ * The tray icon: the shell's presence when there is no window, and the
+ * reason closing one is allowed to mean "put it away" (see the close
+ * handler).
  *
- * Three items, which is the whole set that has an answer here. Show is the way
- * back. Open in browser is the escape hatch for everything the embedded window
- * is worse at than a real browser — a second view, devtools you already have
- * open, a profile with your extensions. Quit is the only way out, so it has to
- * be here.
+ * Three items: Show is the way back; Open in browser is the escape hatch
+ * for whatever the embedded window is worse at than a real one (a second
+ * view, devtools already open, a profile with your extensions); Quit is the
+ * only way out, so it has to be here.
  */
 function createTray() {
   if (tray) return;
-  // macOS wants a monochrome template image it can invert for the dark menu
-  // bar and the selected state; the "Template" suffix is what tells Electron
-  // (and AppKit) that it is one. Windows and Linux draw the icon as given.
+  // macOS needs a monochrome template image it can invert for the dark menu
+  // bar and the selected state; the "Template" suffix tells Electron (and
+  // AppKit) that it is one. Windows and Linux draw the icon as given.
   const icon = process.platform === "darwin" ? "trayTemplate.png" : "tray.png";
   try {
     tray = new Tray(nativeImage.createFromPath(path.join(ASSETS, icon)));
   } catch (err) {
-    // The constructor itself failed, which on Windows and macOS is the only way
-    // to have no tray at all. The window and the badge still work; only the
-    // close-to-tray promise is off.
+    // The constructor failed, the only way Windows and macOS end up with no
+    // tray at all. The window and the badge still work; only the
+    // close-to-tray behavior is off.
     console.log(`[shell] no tray available: ${err?.message || err}`);
     return;
   }
-  // Constructing it is not the same as it appearing, so find out — the flag the
-  // close handler reads stays false until the session confirms. Not awaited:
-  // registration is a round trip on the session bus and nothing else here waits
-  // on it, and a close arriving before it lands asks again for itself.
+  // Constructing it isn't the same as it appearing, so confirm separately:
+  // the flag the close handler reads stays false until the session answers.
+  // Not awaited, since registration is a round trip on the session bus and a
+  // close arriving before it lands re-asks for itself.
   void refreshTrayResidency(5000);
   tray.setToolTip(trayTooltip(needsYouCount));
   // A left click opens the menu on macOS by convention, so leave it alone
@@ -604,7 +2582,7 @@ function rebuildTrayMenu() {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       // The count again, in words. The tooltip carries it too, but several
-      // Linux status-bar implementations never show one.
+      // Linux status-bar implementations never show a tooltip.
       {
         label: needsYouCount
           ? `${needsYouCount} task${needsYouCount === 1 ? "" : "s"} waiting on you`
@@ -615,12 +2593,17 @@ function rebuildTrayMenu() {
       { label: "Show Calandria", click: () => showWindow() },
       { label: "Open in browser", enabled: !!appUrl, click: () => appUrl && shell.openExternal(appUrl) },
       { type: "separator" },
+      // The whole instance switcher, on the surface that survives a hidden
+      // window, which is this app's usual state, so the tray gets the same
+      // list the app menu does instead of a link to it.
+      { label: "Instance", submenu: instanceMenuTemplate() },
+      { type: "separator" },
       // The update affordance that survives a hidden window, which is this
-      // app's usual state. Its label carries the whole status — "Check for
+      // app's usual state. Its label carries the whole status: "Check for
       // updates…", "Downloading 0.5.0…", "Restart to update to 0.5.0", or the
-      // reason this install cannot update itself. This menu is already rebuilt
-      // on every badge change, and setUpdateState() rebuilds it whenever that
-      // label moves.
+      // reason this install can't update itself. This menu is already
+      // rebuilt on every badge change, and setUpdateState() rebuilds it
+      // whenever that label moves.
       { ...trayUpdateItem(), click: () => void checkForUpdates(true) },
       { type: "separator" },
       // `app.quit()`, never `app.exit()`: quitting has to go through
@@ -631,22 +2614,36 @@ function rebuildTrayMenu() {
 }
 
 /**
- * The dock/taskbar badge — the instance-wide "N need you" count, the same
- * number the app's own titlebar pill shows.
+ * "N need you" across every subscribed instance.
  *
- * Three platforms, two APIs. macOS and Linux take a number
- * (`app.setBadgeCount`, which is `dock.setBadge` underneath on macOS and a
- * Unity launcher entry on Linux — a no-op on desktops that have none, which is
- * why it is called unconditionally rather than probed). Windows has no numeric
- * badge at all: its taskbar overlay is a 16x16 image, so the digits are
- * pre-rendered PNGs and this picks one (see notifier.js's overlayIconName).
+ * The one number in this app that no single server can produce. Each
+ * instance's own titlebar pill shows its own total; the dock badge shows the
+ * sum, since the dock icon isn't per instance and a badge that only counted
+ * the window on screen would go quiet the moment you switched away from the
+ * instance that needed attention.
  */
-function applyBadge(count) {
-  needsYouCount = Number.isFinite(count) ? Math.max(0, count) : 0;
+function totalNeedsYou() {
+  let n = 0;
+  for (const sub of subscribers.values()) n += sub.needsYou.total;
+  return n;
+}
+
+/**
+ * The dock/taskbar badge: `totalNeedsYou()`, painted.
+ *
+ * Three platforms, two APIs. macOS and Linux take a number via
+ * `app.setBadgeCount` (`dock.setBadge` on macOS, a Unity launcher entry on
+ * Linux, a no-op elsewhere, so it's called unconditionally instead of
+ * probed). Windows has no numeric badge: its taskbar overlay is a 16x16
+ * image, so the digits are pre-rendered PNGs and this picks one (see
+ * notifier.js's overlayIconName).
+ */
+function applyBadge() {
+  needsYouCount = totalNeedsYou();
   if (process.platform === "win32") {
     const name = overlayIconName(needsYouCount);
-    // The description is not decoration on Windows — it is what a screen reader
-    // announces for the overlay, which is otherwise an unlabelled dot.
+    // Not decoration: this is what a screen reader announces for the
+    // overlay, which would otherwise be an unlabeled dot.
     win?.setOverlayIcon(
       name ? nativeImage.createFromPath(path.join(ASSETS, name)) : null,
       name ? `${needsYouCount} tasks waiting on you` : "",
@@ -659,69 +2656,220 @@ function applyBadge(count) {
 }
 
 /**
- * Subscribe the main process to the app's own global event stream, over
- * loopback, and turn it into the two things a window cannot provide: an OS
- * notification and a badge.
+ * Where this shell can read `/api/events` for `inst` right now, or null.
  *
- * Same stream every browser tab reads (GET /api/events), and deliberately the
- * same division of labour — the server composed the notification, this renders
- * it. See notifier.js's header for why none of that policy is repeated here.
+ * A `url` instance is always reachable, since its origin is in the saved
+ * list and can be watched from launch regardless of which window is on it.
+ * `local` is reachable once its server is up and stays reachable after the
+ * window moves away, since switching doesn't stop it.
+ *
+ * An `ssh` instance is reachable only while it's the active one: its
+ * transport is a spawned `ssh -N` child holding a local port, and a
+ * background subscriber for every saved ssh host would mean opening an SSH
+ * connection per host, to machines the user isn't looking at, on every
+ * launch. So it contributes to the badge while attached and drops out on
+ * leaving; see docs/DESKTOP_APP.md, "Instances".
  */
-function startEvents() {
-  needsYou = new NeedsYou();
-  events = new AppEvents({
-    origin: appUrl,
-    // The sidecars' env, not ours: supervisor.js may have repaired PATH and is
-    // the authority on what the server was actually started with.
-    serviceToken: (supervisor?.effectiveEnv || process.env).SERVICE_TOKEN || null,
+function subscriberOrigin(inst) {
+  if (!inst) return null;
+  if (inst.kind === "url") return inst.url;
+  if (inst.kind === "local") return localUrl;
+  return inst.id === instance?.id && tunnel?.url ? tunnel.url : null;
+}
+
+/**
+ * Reconcile the live subscribers against the saved list. Idempotent, and the
+ * only place one is started or stopped.
+ *
+ * Called after every attach (an origin can appear: the local server bound
+ * its port, an ssh forward came up) and after every edit to the list. A
+ * subscriber survives a switch untouched as long as its origin hasn't
+ * moved, which keeps the badge counting for the instance you just left and
+ * means switching back doesn't re-seed a stream that was never interrupted.
+ */
+function syncSubscribers() {
+  const wanted = new Map();
+  for (const inst of instancesState?.instances || []) {
+    const origin = subscriberOrigin(inst);
+    if (origin) wanted.set(inst.id, { inst, origin });
+  }
+  for (const [id, sub] of [...subscribers]) {
+    const next = wanted.get(id);
+    if (next && next.origin === sub.origin) {
+      // A rename has to reach the toasts too, since they quote it.
+      sub.name = next.inst.name;
+      continue;
+    }
+    sub.events.stop();
+    subscribers.delete(id);
+    console.log(`[shell] stopped watching ${sub.name} (${sub.origin})`);
+  }
+  for (const [id, { inst, origin }] of wanted) {
+    if (!subscribers.has(id)) subscribers.set(id, startSubscriber(inst, origin));
+  }
+  applyBadge();
+}
+
+/**
+ * Subscribe the main process to one instance's global event stream, and turn
+ * it into the two things a window can't provide: an OS notification and a
+ * badge.
+ *
+ * Reads the same stream every browser tab does (GET /api/events); the
+ * server composes the notification, this renders it. See notifier.js's
+ * header for why that policy isn't repeated here.
+ */
+function startSubscriber(inst, origin) {
+  const sess = sessionFor(inst);
+  // This stream outlives every attach and runs for instances the window is not
+  // showing, so it arms its own headers rather than relying on the active
+  // instance's attach having done it.
+  armAuthHeaders(inst);
+  const sub = { id: inst.id, name: inst.name, origin, needsYou: new NeedsYou(), events: null };
+  sub.events = new AppEvents({
+    origin,
+    // The local server's token, and only for the local instance (see
+    // `serviceTokenFor`). A `url` instance's credential is whatever is in
+    // its cookie jar instead, which is why the fetch below goes through its
+    // session.
+    serviceToken: serviceTokenFor(inst),
+    // Electron's session fetch, not `globalThis.fetch`, reaches an
+    // Access-protected instance: the notifier's /api/events and
+    // /api/projects reads happen from the main process, so without the
+    // window's cookie jar they arrive unauthenticated and the badge stays at
+    // zero while the page beside it works. `credentials: "include"` attaches
+    // CF_Authorization; the headers beside it do the same job for an
+    // instance whose credential is a token instead of a cookie, merged
+    // under the caller's own headers so the notifier's headers still win.
+    // Explicit here for the same reason as `probeVersion`: a badge that
+    // stays at zero because the stream authenticated differently from the
+    // window is the exact bug the per-instance session exists to fix.
+    fetchImpl: (url, init) =>
+      sess.fetch(url, {
+        credentials: "include",
+        ...init,
+        headers: { ...(authHeadersFor(inst) || {}), ...(init?.headers || {}) },
+      }),
     onLog: (line) => console.log(line),
-    onProjects: (projects) => applyBadge(needsYou.seed(projects)),
+    onProjects: (projects) => {
+      sub.needsYou.seed(projects);
+      applyBadge();
+    },
     onEvent: (ev) => {
       if (ev.type === "notification") {
-        notify(ev.payload);
+        notify(ev.payload, sub);
         return;
       }
-      const outcome = needsYou.apply(ev);
-      if (outcome === "reseed") void events.refreshProjects();
-      else if (outcome === "ok") applyBadge(needsYou.total);
+      const outcome = sub.needsYou.apply(ev);
+      if (outcome === "reseed") void sub.events.refreshProjects();
+      else if (outcome === "ok") applyBadge();
     },
   });
   // Seed before subscribing: the badge should be right on the first frame,
-  // not on the first event, and a fresh launch usually has tasks already
+  // not on the first event, since a fresh launch usually has tasks already
   // waiting from the last session.
-  void events.refreshProjects();
-  events.start();
+  void sub.events.refreshProjects();
+  sub.events.start();
+  console.log(`[shell] watching ${inst.name} at ${origin}`);
+  return sub;
 }
 
-/** Raise one server-composed notification. */
-function notify(payload) {
+/** Stop every subscriber. Quit only: a switch keeps them running. */
+function stopSubscribers() {
+  for (const sub of subscribers.values()) sub.events.stop();
+  subscribers.clear();
+}
+
+/** Forget one instance's subscriber, so the next sync starts it clean. */
+function dropSubscriber(id) {
+  const sub = subscribers.get(id);
+  if (!sub) return;
+  sub.events.stop();
+  subscribers.delete(id);
+}
+
+/** Does this shell hold more than one instance? The toasts read differently if it does. */
+function multiInstance() {
+  return (instancesState?.instances.length || 0) > 1;
+}
+
+/**
+ * Raise one server-composed notification, from a named instance.
+ *
+ * A background instance can raise a notification too, so two things follow:
+ * the suppression rule ("don't interrupt someone about the task they're
+ * looking at") only applies to the instance the window is showing, since a
+ * toast from another instance is never about the task on screen; and the
+ * title carries the instance name (notifier.js `notificationText`), so the
+ * toast says which machine's task needs you.
+ */
+function notify(payload, sub) {
   if (!payload || !Notification.isSupported()) return;
-  const focused = !!win && !win.isDestroyed() && win.isVisible() && !win.isMinimized() && win.isFocused();
-  const url = win && !win.isDestroyed() ? win.webContents.getURL() : "";
+  const onScreen = sub.id === instance?.id && !!win && !win.isDestroyed();
+  const focused = onScreen && win.isVisible() && !win.isMinimized() && win.isFocused();
+  const url = onScreen ? win.webContents.getURL() : "";
   if (!shouldNotify(payload, { focused, selectedTaskId: selectedTaskFromUrl(url) })) return;
-  liveToasts.get(payload.id)?.close();
-  const toast = new Notification({ title: payload.title, body: payload.body });
-  liveToasts.set(payload.id, toast);
+  const key = `${sub.id}:${payload.id}`;
+  liveToasts.get(key)?.close();
+  const { title, body } = notificationText(payload, { instanceName: multiInstance() ? sub.name : null });
+  const toast = new Notification({ title, body });
+  liveToasts.set(key, toast);
   toast.on("close", () => {
-    if (liveToasts.get(payload.id) === toast) liveToasts.delete(payload.id);
+    if (liveToasts.get(key) === toast) liveToasts.delete(key);
   });
   toast.on("click", () => {
     showWindow();
-    gotoTask(payload);
+    void openFromNotification(sub.id, payload);
   });
   toast.show();
 }
 
 /**
+ * Answer a notification click: show the task it was about, switching
+ * instances first if it came from one the window isn't on.
+ *
+ * Same-instance uses the live SPA (`gotoTask`). Cross-instance can't: the
+ * switch loads a page in another session partition, with no app running yet
+ * to dispatch an event into. The selection instead travels in the URL that
+ * switch was going to load anyway; see `takePendingGoto` and notifier.js's
+ * `gotoUrl`.
+ */
+async function openFromNotification(instanceId, payload) {
+  if (instanceId === instancesState?.active) {
+    gotoTask(payload);
+    return;
+  }
+  if (!findInstance(instancesState, instanceId)) return; // removed while the toast was up
+  pendingGoto = { instanceId, projectId: payload.projectId || "", taskId: payload.taskId || "" };
+  await switchTo(instanceId);
+}
+
+/**
+ * The URL an attach should load: the instance's origin, plus the task a
+ * notification click asked for.
+ *
+ * Consumed by whichever attach runs next and cleared unconditionally, so a
+ * pending selection can never outlive the switch that created it and reopen
+ * a task on some later, unrelated attach.
+ */
+function takePendingGoto(inst, origin) {
+  const pending = pendingGoto;
+  pendingGoto = null;
+  if (!pending || pending.instanceId !== inst.id) return origin;
+  return gotoUrl(origin, pending);
+}
+
+/**
  * Select the task a notification was about.
  *
- * Through the app's own `calandria:goto-task` window event — the same one the
+ * Fires the app's own `calandria:goto-task` window event, the same one the
  * browser channel and the service worker dispatch (app/shell/useShell.ts
  * listens for it), so the shell inherits whatever "go to this task" already
- * means, including switching projects. Written by evaluating in the page
- * rather than over IPC, for the reason the whole file has no preload: a bridge
- * would exist on every page the window ever loads, to serve one call.
- * Navigating to `?task=` would do the same job by throwing away the running SPA.
+ * means, including switching projects. Written by evaluating in the page,
+ * not over IPC, for the same reason the whole file has no preload: a
+ * bridge would exist on every page the window ever loads, to serve one
+ * call. Navigating to `?task=` would do the same job but discard the
+ * running SPA.
  */
 function gotoTask(payload) {
   if (!payload?.taskId || !appUrl || !win || win.isDestroyed()) return;
@@ -731,17 +2879,36 @@ function gotoTask(payload) {
     .catch(() => {});
 }
 
+/**
+ * Mirror the tray's update item into the page, the same way gotoTask() above
+ * mirrors a notification click: by evaluating in the page, since this file
+ * has no preload and no IPC. The page renders an update pill from this event
+ * instead of polling anything.
+ *
+ * Skipped when there is nothing to draw it on: no window, a destroyed one, no
+ * app URL yet, or a window currently showing something other than the app
+ * (the loading screen, a sign-in page), where the event would fire into a
+ * document with no listener for it.
+ */
+function pushUpdateState() {
+  if (!win || win.isDestroyed() || !appUrl) return;
+  if (!isAppUrl(win.webContents.getURL())) return;
+  const detail = JSON.stringify(pageUpdateState(updateState, updateDisposition, app.getVersion()));
+  win.webContents
+    .executeJavaScript(`window.dispatchEvent(new CustomEvent("calandria:desktop-update", { detail: ${detail} }))`)
+    .catch(() => {});
+}
+
 /* ------------------------------------------------------------------------- *
  * Auto-update.
  *
- * Two entry points, both explicit about which one is running: a check on a
- * timer after launch (and every six hours a long-lived shell stays up), and a
- * "Check for updates" item the user can press. Downloading is automatic;
- * INSTALLING NEVER IS. See updater.js's header for why, and finishQuit() below
- * for the mechanism.
+ * Two entry points: a check on a timer after launch and every six hours a
+ * long-lived shell stays up, and a "Check for updates" item the user can
+ * press. Downloading is automatic; installing never is. See updater.js's
+ * header for why, and finishQuit() below for the mechanism.
  * ------------------------------------------------------------------------- */
 
-function startUpdater() {
+async function startUpdater() {
   updateDisposition = updaterDisposition({
     env: process.env,
     platform: process.platform,
@@ -749,24 +2916,28 @@ function startUpdater() {
     // Set by the AppImage runtime to the path of the running image. The only
     // artifact on Linux that can replace itself in place.
     appImage: process.env.APPIMAGE || null,
+    mac: await macBundleFacts(),
   });
-  // Paint the reason into both menus even when the answer is no — a greyed
-  // "Updates come from your package manager" is information; a missing item
-  // reads as an app that has no updates at all.
+  // Paint the reason into both menus even when the answer is no: a greyed
+  // "Updates come from your package manager" is information, while a
+  // missing item reads as an app with no update mechanism at all.
   refreshUpdateMenus();
   if (!updateDisposition.enabled) {
-    console.log(`[shell] auto-update off: ${updateDisposition.reason}`);
+    console.log(`[shell] auto-update off (${updateDisposition.code}): ${updateDisposition.reason}`);
     return;
   }
 
   updater = require("electron-updater").autoUpdater;
-  updater.logger = { info: logUpdate, warn: logUpdate, error: logUpdate, debug: () => {} };
+  // electron-log directly, debug level included: MacUpdater's account of its
+  // proxy server and the Squirrel handoff is at debug, which is the account
+  // a failed install needs.
+  updater.logger = log.scope("updater");
   updater.autoDownload = true;
-  // THE setting. electron-updater's default is true, which installs from an
-  // `app.on("quit")` handler — and `quit` fires after our `before-quit` has
-  // already drained and called app.exit(). That would either skip the install
-  // silently or run it over turns that were still settling. We own the moment
-  // instead: finishQuit() calls quitAndInstall() as the last act of the drain.
+  // electron-updater's default is true, which installs from an
+  // `app.on("quit")` handler; `quit` fires after `before-quit` has already
+  // drained and called app.exit(), which would either skip the install with
+  // no trace or run it over turns still settling. finishQuit() calls
+  // quitAndInstall() as the last act of the drain instead.
   updater.autoInstallOnAppQuit = false;
 
   updater.on("checking-for-update", () => setUpdateState({ phase: "checking" }));
@@ -781,15 +2952,28 @@ function startUpdater() {
     announceUpdate();
   });
   updater.on("error", (err) => {
+    // Past the drain this error is the install failing, and finishQuit()
+    // owns that: it records the failure for the next launch and exits. A
+    // menu refresh or a dialog here would be raised against a tray that is
+    // already destroyed and a window on its way out.
+    if (quitting) return;
     const { message, fatal } = classifyUpdaterError(err);
     console.log(`[shell] update check failed: ${message}`);
     setUpdateState({ phase: "error", error: message });
+    const wasManual = manualCheck;
     answerManualCheck("Could not check for updates", message);
     if (!fatal) return;
-    // Squirrel.Mac cannot update an app whose signature it cannot read. That is
-    // a property of the build, not a transient, so stop asking.
+    // Squirrel.Mac can't update an app whose signature it can't read. That
+    // is a property of the build, not a transient, so stop asking, and say
+    // so once even when nobody pressed anything, since an automatic check
+    // finding this has no terminal to log to in a packaged app.
     if (updateTimer) clearInterval(updateTimer);
     updateTimer = null;
+    if (!wasManual && Notification.isSupported()) {
+      const toast = new Notification({ title: "Calandria cannot update itself", body: message });
+      toast.on("click", () => void shell.openExternal(RELEASES_URL));
+      toast.show();
+    }
   });
 
   setTimeout(() => void checkForUpdates(false), FIRST_CHECK_DELAY_MS).unref();
@@ -797,14 +2981,41 @@ function startUpdater() {
   updateTimer.unref();
 }
 
-// One shape, two menus: label and enabled come from updater.js so the tray and
-// the application menu can never disagree about what the update state is.
-function trayUpdateItem() {
-  return updateMenuItem({ ...updateState, disposition: updateDisposition });
+/**
+ * What is known about a packaged macOS build before the first check: where
+ * the bundle is, and what `codesign` says about it. updater.js's
+ * `macDisposition()` turns that into the three "this install cannot update"
+ * answers, discovered up front instead of at install time on the way out of
+ * the process, where nothing could show them.
+ *
+ * Best-effort: a probe that fails (killed by the 5s timeout, missing, odd
+ * output) reports `signature: "unknown"`, which the policy leaves alone, so
+ * a failed probe doesn't disable a working updater. Null off macOS and in
+ * development, where the policy has already answered.
+ */
+async function macBundleFacts() {
+  if (process.platform !== "darwin" || !app.isPackaged) return null;
+  const bundlePath = macBundlePath(process.execPath);
+  if (!bundlePath) return null;
+  const result = await new Promise((resolve) => {
+    execFile(
+      "/usr/bin/codesign",
+      ["-dv", "--verbose=4", bundlePath],
+      { timeout: 5000, maxBuffer: 1024 * 1024 },
+      (err, stdout, stderr) => resolve({ code: err ? (typeof err.code === "number" ? err.code : 1) : 0, stdout, stderr }),
+    );
+  });
+  const verdict = parseCodesign(result);
+  console.log(
+    `[shell] bundle ${bundlePath}: signature ${verdict.signature}${verdict.authority ? ` (${verdict.authority})` : ""}`,
+  );
+  return { bundlePath, signature: verdict.signature };
 }
 
-function logUpdate(message) {
-  if (message) console.log(`[updater] ${message}`);
+// One shape, two menus: label and enabled come from updater.js so the tray
+// and the application menu can never disagree about the update state.
+function trayUpdateItem() {
+  return updateMenuItem({ ...updateState, disposition: updateDisposition });
 }
 
 function setUpdateState(patch) {
@@ -812,21 +3023,25 @@ function setUpdateState(patch) {
   updateState = {
     ...updateState,
     ...patch,
-    // Only an error phase carries an error, so a later success clears the old
-    // one rather than leaving a stale sentence attached to a fine state.
+    // Only an error phase carries an error, so a later success clears the
+    // old one instead of leaving a stale sentence attached to a fine state.
     error: patch.phase === "error" ? patch.error || null : null,
   };
   const after = updateMenuItem({ ...updateState, disposition: updateDisposition });
-  if (after.label === before.label && after.enabled === before.enabled) return;
-  refreshUpdateMenus();
+  // The menus only redraw when the label or enabled flag actually moved, but
+  // the page push always runs: download progress moves `percent` on every
+  // event without ever moving the menu label, and the page needs each of
+  // those to animate the pill.
+  if (after.label !== before.label || after.enabled !== before.enabled) refreshUpdateMenus();
+  pushUpdateState();
 }
 
-// Both menus, because they cover different situations. The tray is the one that
-// works when the window is hidden — which is the normal resting state of this
-// app, so an update prompt that only exists inside the window is one nobody
-// sees. The application menu is the one that exists when there is no tray at
-// all (no status area, or the Tray constructor failed), where the window is by
-// definition still on screen.
+// Both menus, since they cover different situations. The tray is what works
+// when the window is hidden, the normal resting state of this app, so an
+// update prompt that only exists inside the window is one nobody sees. The
+// application menu is what exists when there is no tray at all (no status
+// area, or the Tray constructor failed), where the window is by definition
+// still on screen.
 function refreshUpdateMenus() {
   rebuildTrayMenu();
   Menu.setApplicationMenu(buildMenu());
@@ -835,17 +3050,24 @@ function refreshUpdateMenus() {
 async function checkForUpdates(manual) {
   if (!updater) {
     if (manual) {
-      await messageBox({
+      // A macOS install that can't update itself needs the user to go get
+      // the release, so the dialog offers the trip. The other codes (off,
+      // dev build, package manager) have somewhere else to go.
+      const needsDownload = /^mac-/.test(updateDisposition?.code || "");
+      const { response } = await messageBox({
         type: "info",
-        message: "Automatic updates are off",
+        message: needsDownload ? "This install cannot update itself" : "Automatic updates are off",
         detail: updateDisposition?.reason || "This build does not update itself.",
-        buttons: ["OK"],
+        buttons: needsDownload ? ["Download latest release", "OK"] : ["OK"],
+        defaultId: 0,
+        cancelId: needsDownload ? 1 : 0,
       });
+      if (needsDownload && response === 0) void shell.openExternal(RELEASES_URL);
     }
     return;
   }
-  // Already downloaded: the button the user just pressed means "get on with
-  // it", not "check again".
+  // Already downloaded: the button the user just pressed means "get on
+  // with it", not "check again".
   if (updateState.phase === "ready") {
     if (manual) await requestInstall();
     return;
@@ -856,7 +3078,7 @@ async function checkForUpdates(manual) {
     await updater.checkForUpdates();
   } catch (err) {
     // Rejections and the "error" event overlap; whichever arrives first
-    // answers, and the classifier makes the two say the same thing.
+    // answers, and the classifier makes both say the same thing.
     const { message } = classifyUpdaterError(err);
     console.log(`[shell] update check failed: ${message}`);
     setUpdateState({ phase: "error", error: message });
@@ -871,13 +3093,14 @@ function answerManualCheck(message, detail) {
 }
 
 /**
- * The update-is-ready announcement, for an app whose window is usually hidden.
+ * The update-is-ready announcement, for an app whose window is usually
+ * hidden.
  *
  * Three surfaces, in order of how likely they are to be seen: an OS
- * notification (which survives a hidden window and carries a click), the tray
- * item's label, and the application menu. Deliberately NOT a dialog — a modal
- * raised against a window in the tray is a modal nobody sees, and on some
- * platforms it is a modal nobody can dismiss either.
+ * notification (survives a hidden window, carries a click), the tray
+ * item's label, and the application menu. Not a dialog, since a modal
+ * raised against a window in the tray is one nobody sees, and on some
+ * platforms one nobody can dismiss either.
  */
 function announceUpdate() {
   console.log(`[shell] update ${updateState.version} downloaded and ready`);
@@ -894,14 +3117,13 @@ function announceUpdate() {
 }
 
 /**
- * The one path from "an update exists" to "the app restarts", and the only
+ * The path from "an update exists" to "the app restarts", and the only
  * writer of `installOnQuit`.
  *
- * It ends in `app.quit()` — never `app.exit()`, and never
- * `updater.quitAndInstall()` directly — so the restart goes through
- * `before-quit` and gets the same drain a tray Quit gets. Routing an update
- * around that drain is the specific failure this whole feature is written to
- * avoid.
+ * Ends in `app.quit()`, never `app.exit()` or `updater.quitAndInstall()`
+ * directly, so the restart goes through `before-quit` and gets the same
+ * drain a tray Quit gets. An update that skipped that drain is the failure
+ * this whole feature exists to avoid.
  */
 async function requestInstall() {
   if (!updater || updateState.phase !== "ready") return;
@@ -922,15 +3144,19 @@ async function requestInstall() {
 /**
  * How many turns are running, read-only.
  *
- * GET /api/instance/metrics rather than the drain endpoint, which is the other
- * thing that knows and answers by aborting them. Best-effort by contract: a
- * null just makes the restart prompt say less.
+ * GET /api/instance/metrics, not the drain endpoint, which has the same
+ * count but answers by aborting the turns. Best-effort: a null just makes
+ * the restart prompt say less.
  */
 async function activeTurnCount() {
   if (!appUrl) return null;
-  const token = (supervisor?.effectiveEnv || process.env).SERVICE_TOKEN;
+  // Scoped to the instance, both halves: the token only exists for `local`
+  // (see serviceTokenFor), and the session is the one whose cookies
+  // authorize this origin.
+  const token = serviceTokenFor(instance);
   try {
-    const res = await fetch(`${appUrl}/api/instance/metrics`, {
+    const res = await sessionFor(instance).fetch(`${appUrl}/api/instance/metrics`, {
+      credentials: "include",
       headers: token ? { "x-service-token": token } : {},
       signal: AbortSignal.timeout(2000),
     });
@@ -942,13 +3168,26 @@ async function activeTurnCount() {
 }
 
 /**
- * The end of the drain, and the only place an update is ever installed.
+ * The end of the drain, where an update is installed.
  *
- * `quitAndInstall` calls `app.quit()` itself, which re-enters `before-quit` —
- * harmless, because `quitting` is already true there and the handler returns
- * without preventing it. If the handoff does not take the process down, the
- * fallback does: a drained shell with no sidecars left is not something to
- * leave on screen.
+ * `quitAndInstall` calls `app.quit()` itself, which re-enters `before-quit`
+ * harmlessly since `quitting` is already true there. If the handoff doesn't
+ * take the process down, the watchdog does, since a drained shell with no
+ * sidecars left shouldn't stay on screen.
+ *
+ * The watchdog is staged because macOS needs it to be. With
+ * `autoInstallOnAppQuit` off, MacUpdater's `quitAndInstall()` hands the zip
+ * to Squirrel.Mac, which fetches it from electron-updater's local proxy,
+ * extracts the bundle, verifies its signature, stages it, and only then
+ * quits the app; that can take tens of seconds to minutes, past a short
+ * fixed exit timer. Squirrel reports its stages on Electron's native
+ * `autoUpdater` (MacUpdater drives it but doesn't re-emit), which re-arms
+ * the clock here: long while Squirrel is working, short once it has staged
+ * the bundle or before it has said anything.
+ *
+ * A failure here can't be shown, since the tray is destroyed and the window
+ * is on its way out, so it's written down (`recordInstallFailure`) and the
+ * next launch reports it, with the log file named.
  */
 function finishQuit() {
   if (quitAction({ installRequested: installOnQuit, phase: updateState.phase }) !== "install") {
@@ -956,17 +3195,91 @@ function finishQuit() {
     return;
   }
   console.log(`[shell] drained; installing ${updateState.version || "update"}`);
-  setTimeout(() => {
-    console.log("[shell] installer did not take the app down; exiting");
-    app.exit(0);
-  }, INSTALL_FALLBACK_MS).unref();
+  armInstallWatchdog("handoff");
+  if (process.platform === "darwin") {
+    const native = require("electron").autoUpdater;
+    for (const event of ["checking-for-update", "update-available", "update-downloaded", "before-quit-for-update"]) {
+      native.on(event, () => {
+        const stage = installStageOf(event);
+        console.log(`[shell] squirrel: ${event}${stage ? ` → ${stage}` : ""}`);
+        if (stage) armInstallWatchdog(stage);
+      });
+    }
+    native.on("update-not-available", () => console.log("[shell] squirrel: update-not-available (nothing staged)"));
+    native.on("error", (err) => {
+      const { message } = classifyUpdaterError(err);
+      console.log(`[shell] install failed (${installStage}): ${message}`);
+      recordInstallFailure({ stage: "error", message });
+      app.exit(0);
+    });
+  }
   try {
-    // isSilent false so a Windows user sees the installer they are agreeing to;
-    // isForceRunAfter true so "restart and update" actually restarts.
+    // isSilent false so a Windows user sees the installer they are agreeing
+    // to; isForceRunAfter true so "restart and update" actually restarts.
     updater.quitAndInstall(false, true);
   } catch (err) {
-    console.log(`[shell] install failed: ${err?.message || err}`);
+    const { message } = classifyUpdaterError(err);
+    console.log(`[shell] install failed: ${message}`);
+    recordInstallFailure({ stage: "error", message });
     app.exit(0);
+  }
+}
+
+function armInstallWatchdog(stage) {
+  installStage = stage;
+  if (installWatchdog) clearTimeout(installWatchdog);
+  const ms = installStageTimeout(stage);
+  installWatchdog = setTimeout(() => {
+    console.log(`[shell] installer did not take the app down after ${Math.round(ms / 1000)}s (${stage}); exiting`);
+    recordInstallFailure({ stage, message: "" });
+    app.exit(0);
+  }, ms);
+  installWatchdog.unref();
+}
+
+// Where a failed install leaves its note for the next launch. In userData,
+// not the log: the log is for reading, this is a flag, consumed on sight.
+function installFailureFile() {
+  return path.join(app.getPath("userData"), "update-install-failed.json");
+}
+
+function recordInstallFailure({ stage, message }) {
+  try {
+    const record = { version: updateState.version, stage, message, at: new Date().toISOString() };
+    fs.writeFileSync(installFailureFile(), JSON.stringify(record));
+  } catch (err) {
+    console.log(`[shell] could not record the install failure: ${err?.message || err}`);
+  }
+}
+
+async function reportLastInstallFailure() {
+  const file = installFailureFile();
+  let record = null;
+  try {
+    record = JSON.parse(fs.readFileSync(file, "utf8"));
+    fs.unlinkSync(file);
+  } catch {
+    return;
+  }
+  const logPath = safeLogPath();
+  console.log(`[shell] the last update did not install (${record?.stage}): ${record?.message || "watchdog"}`);
+  const { message, detail } = installFailureNotice({ ...record, logPath });
+  const { response } = await messageBox({
+    type: "warning",
+    message,
+    detail,
+    buttons: ["Download latest release", "OK"],
+    defaultId: 1,
+    cancelId: 1,
+  });
+  if (response === 0) void shell.openExternal(RELEASES_URL);
+}
+
+function safeLogPath() {
+  try {
+    return log.transports.file.getFile().path;
+  } catch {
+    return "";
   }
 }
 
@@ -976,8 +3289,8 @@ function messageBox(options) {
 }
 
 function buildMenu() {
-  // Without an application menu, macOS loses Cmd+C/V/A entirely — the roles
-  // below are what wire the system shortcuts, not decoration.
+  // Without an application menu, macOS loses Cmd+C/V/A entirely: the roles
+  // below wire the system shortcuts, they aren't decoration.
   const isMac = process.platform === "darwin";
   return Menu.buildFromTemplate([
     ...(isMac ? [{ role: "appMenu" }] : []),
@@ -999,12 +3312,16 @@ function buildMenu() {
           click: () => appUrl && shell.openExternal(appUrl),
         },
         { type: "separator" },
-        // Same item as the tray's, same function behind it. Here for the case
-        // the tray cannot cover: no status area at all, where the window is by
-        // definition the only surface there is.
+        // Same item as the tray's, same function behind it. Here for the
+        // case the tray can't cover: no status area at all, where the
+        // window is by definition the only surface there is.
         { ...trayUpdateItem(), click: () => void checkForUpdates(true) },
       ],
     },
+    // Same list as the tray's, same functions behind it. Here for the case
+    // the tray can't cover: no status area at all, where the window is by
+    // definition the only surface there is.
+    { label: "Instance", submenu: instanceMenuTemplate() },
     { role: "windowMenu" },
   ]);
 }

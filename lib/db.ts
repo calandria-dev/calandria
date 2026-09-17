@@ -7,11 +7,16 @@ import { consumeDbRecoveryAuthorization, dbLockMode } from "./db-lock.mjs";
 import { SCHEMA_VERSION, schemaTooNew, schemaTooNewMessage } from "./schema-version.mjs";
 import { loadPersistedApiKey } from "./anthropic-key";
 import { loadPersistedOpenAiKey } from "./openai-key";
+import { loadPersistedGatewayKey, setProviderSecret } from "./providerSecrets";
+import { seedProvidersFromEnv } from "./providers/seed";
+import { firstProviderRowOfType, getProviderRow, insertProviderRow } from "./providers/rows";
+import { bundledTypeFor, localTypeForPort, type ProviderType } from "./providers/types";
 
-// Single shared connection. Stored outside the repo (CALANDRIA_DB_DIR, default
-// ~/.calandria) so `git clean`/re-clone can't wipe it. The file is calandria.db
-// on a fresh install and a pre-rename orchestrator.db wherever one already
-// exists — resolved once in lib/storage.mjs, never moved. See lib/config.ts.
+// Single shared connection, stored outside the repo (CALANDRIA_DB_DIR, default
+// ~/.calandria) so a git clean or re-clone cannot wipe it. The file is
+// calandria.db on a fresh install, or a pre-rename orchestrator.db when one
+// already exists; resolved once in lib/storage.mjs and never moved. See
+// lib/config.ts.
 
 declare global {
   // eslint-disable-next-line no-var
@@ -19,18 +24,18 @@ declare global {
 }
 
 export function init(db: Database.Database) {
-  // Before anything writes: a database stamped NEWER than this build understands
-  // belongs to a version we can't reason about, and touching it is how a rolled-
-  // back image tag silently eats data. server.js runs the same gate against the
-  // file at boot (lib/schema-version.mjs) so the refusal is a boot failure with a
-  // message; this one covers every other way a connection gets opened.
+  // Refuse to write to a database stamped with a newer schema version than
+  // this build understands; a rolled-back image tag would otherwise
+  // overwrite data from a version it cannot reason about. server.js runs the
+  // same gate at boot (lib/schema-version.mjs); this covers every other way
+  // a connection is opened.
   assertSchemaVersionSupported(db);
 
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
-  // Default is 0ms: a write racing the concurrent read-only `sqlite3` inspection
-  // this design explicitly supports (lib/db-lock.mjs) throws SQLITE_BUSY
-  // immediately as a 500 instead of briefly stalling. See issue #14 item 3.
+  // Default busy_timeout is 0ms, which would throw SQLITE_BUSY as a 500 on
+  // any write that races the concurrent read-only sqlite3 inspection this
+  // design supports (lib/db-lock.mjs), instead of letting it stall briefly.
   db.pragma("busy_timeout = 5000");
   db.exec(`
     CREATE TABLE IF NOT EXISTS projects (
@@ -94,6 +99,8 @@ export function init(db: Database.Database) {
       resolved_model TEXT,
       reasoning   TEXT,
       permission_mode TEXT,
+      -- Codex filesystem sandbox override. NULL inherits default_sandbox_mode:codex.
+      sandbox_mode TEXT,
       session_id  TEXT,
       worktree_path TEXT NOT NULL DEFAULT '',
       work_branch   TEXT NOT NULL DEFAULT '',
@@ -118,7 +125,7 @@ export function init(db: Database.Database) {
       --   pr_merged_at  when GitHub says it merged (0 = it hasn't). Distinct
       --              from merged_at, which is OUR local merge into the base
       --              branch: a PR merged on github.com never touched this box.
-      --   pr_synced_at  when we last heard from GitHub — the staleness clock
+      --   pr_synced_at  when we last heard from GitHub: the staleness clock
       --              every refresh trigger reads before spawning gh.
       --   pr_draft   1 while the PR is a draft. Separate from pr_state, which
       --              only says open/merged/closed: a draft is open and cannot
@@ -170,13 +177,13 @@ export function init(db: Database.Database) {
       -- left alone: ahead of now the task is drawn in the Snoozed category,
       -- behind it the task is back in its own status group wearing a "was
       -- snoozed" chip, and the user opening it clears the value to 0. Nothing
-      -- sweeps this — a past deadline simply stops matching — so a wake can't
+      -- sweeps this: a past deadline simply stops matching, so a wake can't
       -- be missed by an app that was shut down when it came due.
       snoozed_until INTEGER NOT NULL DEFAULT 0,
       -- When an UNATTENDED run finished cleanly and nobody has acknowledged it
       -- yet (ms epoch; 0 = nothing outstanding). A scheduled turn that succeeds
-      -- deliberately leaves awaiting_input at 0 — it is not asking anybody
-      -- anything — so without this column the task rested at 'in_progress'
+      -- leaves awaiting_input at 0, since it is not asking anybody
+      -- anything, so without this column the task rested at 'in_progress'
       -- with nothing running and no path out of it, and every firing added a
       -- permanent "In progress" row (issue #28). Written by lib/runner.ts on
       -- the scheduled-success path, cleared by the next turn that starts here
@@ -185,6 +192,19 @@ export function init(db: Database.Database) {
       -- "ran, unread", not a status of its own, so acknowledging it is an
       -- ordinary status write rather than a restore.
       unread_run_at INTEGER NOT NULL DEFAULT 0,
+      -- ms epoch when a landing task reported that the branch this task is
+      -- based on had its history rewritten (rebased and force-pushed) under it,
+      -- and nobody has caught this task up yet; 0 = nothing outstanding.
+      -- Written by lib/baseRewrite.ts on the report_base_rewrite tool, cleared
+      -- by GET /api/tasks/[id]/sync the moment the cut point is reachable from
+      -- the base again (a rebase, or a retarget onto another branch).
+      --
+      -- The sync banner already detects a rewrite, but it only mounts for the
+      -- SELECTED task, so a sibling left pinned to replaced history said
+      -- nothing until somebody happened to open it. This column is what puts
+      -- the same fact on the board, where the user can see which tasks a
+      -- landing left behind without opening each one.
+      base_rewritten_at INTEGER NOT NULL DEFAULT 0,
       -- Queued to start on its own at this instant (ms epoch; 0 = not queued).
       -- The one stored fact behind "start at the usage-window reset": a server
       -- sweep (lib/deferredStart.ts) launches an unstarted task's first turn or
@@ -220,7 +240,7 @@ export function init(db: Database.Database) {
 
     -- Follow-up messages the user typed while a turn was still running, parked
     -- FIFO per task. The runner pops the oldest one as the next turn when the
-    -- current turn ends (see lib/runner.ts). Cleared on startup — a turn that
+    -- current turn ends (see lib/runner.ts). Cleared on startup: a turn that
     -- was mid-flight when the process died can't be resumed, so its queue is moot.
     CREATE TABLE IF NOT EXISTS pending_messages (
       id          TEXT PRIMARY KEY,
@@ -233,7 +253,7 @@ export function init(db: Database.Database) {
     -- One row per agent session (one generation of a task). Lets us show every
     -- session that ran under a project. claude_session_id is the agent's own
     -- opaque session/thread id (named for the first driver; a Codex thread id
-    -- lands in the same column) — the app only stores and resumes it, never
+    -- lands in the same column); the app only stores and resumes it, never
     -- interprets it.
     CREATE TABLE IF NOT EXISTS sessions (
       id                TEXT PRIMARY KEY,
@@ -253,7 +273,12 @@ export function init(db: Database.Database) {
       project_id            TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
       task_id               TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       generation            INTEGER NOT NULL,
-      cost_usd              REAL NOT NULL DEFAULT 0,
+      -- NULLable, and the NULL is load-bearing: it means "this endpoint's price
+      -- is unknown", which is a different fact from a measured zero. See the
+      -- provider column below and ProviderPricing in lib/agentEnv.ts. Every
+      -- aggregate sums this column, so an unpriced turn contributes nothing to
+      -- a total instead of dragging it down with an invented $0.00.
+      cost_usd              REAL,
       input_tokens          INTEGER NOT NULL DEFAULT 0,
       output_tokens         INTEGER NOT NULL DEFAULT 0,
       cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
@@ -270,6 +295,11 @@ export function init(db: Database.Database) {
       agent                 TEXT NOT NULL,
       requested_agent       TEXT NOT NULL,
       fallback              INTEGER NOT NULL DEFAULT 0,
+      -- The model the job ACTUALLY ran on, read back off the run rather than
+      -- copied from the tier setting: the interesting case is the tier being
+      -- unset, where the job inherits the driver's own default and the setting
+      -- can't say what that was. NULL means the driver reported nothing.
+      model                 TEXT,
       project_id            TEXT,
       task_id               TEXT,
       ok                    INTEGER NOT NULL DEFAULT 1,
@@ -284,7 +314,7 @@ export function init(db: Database.Database) {
 
     -- One row per successful merge that actually landed commits (re-merges of an
     -- already-merged branch don't record). additions/deletions are the line
-    -- stats of what that merge introduced on the base branch — captured at merge
+    -- stats of what that merge introduced on the base branch, captured at merge
     -- time because worktrees (the only other source of diff stats) are deleted
     -- with their task. Feeds the Insights "code merged per day" charts.
     CREATE TABLE IF NOT EXISTS task_merges (
@@ -300,7 +330,7 @@ export function init(db: Database.Database) {
     -- Task ordering: a task "depends on" (is blocked by) another. While any
     -- depends_on_id task isn't 'done', the dependent task is shown as blocked and
     -- can't be started. Both sides cascade-delete with their task. CREATE IF NOT
-    -- EXISTS means older DBs pick this up automatically — no migrate() entry needed.
+    -- EXISTS means older DBs pick this up automatically, no migrate() entry needed.
     CREATE TABLE IF NOT EXISTS task_dependencies (
       task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       depends_on_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -314,7 +344,7 @@ export function init(db: Database.Database) {
     -- already accepted. actor_* denormalizes the calling session rather than
     -- foreign-keying tasks(id), because the calling task can be deleted long
     -- after this edit happened and the diff panel must still say who made it.
-    -- changes is JSON (AgentEditChange[] — see lib/types.ts). reverted_at is
+    -- changes is JSON (AgentEditChange[], see lib/types.ts). reverted_at is
     -- 0 until the user presses Revert on this specific edit.
     CREATE TABLE IF NOT EXISTS task_agent_edits (
       id            TEXT PRIMARY KEY,
@@ -332,14 +362,14 @@ export function init(db: Database.Database) {
     -- What a task's agent-configuration files looked like the last time a turn
     -- was allowed to run under them (issue #43). One row per (task, file), where
     -- 'file' is worktree-relative and comes from the driver's own
-    -- watchedSettingsFiles — today '.claude/settings.json', which the Claude CLI
+    -- watchedSettingsFiles: today '.claude/settings.json', which the Claude CLI
     -- re-reads on every turn and whose 'hooks' run shell commands outside the
     -- permission gate entirely. The runner hashes the file before each turn and
     -- holds the turn on a card when the hash moved (lib/settingsDrift.ts).
     --
     -- Its own table rather than a column on tasks: 'content' is the acknowledged
     -- copy, kept so the card can show a real diff rather than "something
-    -- changed", and listTasks selects t.* straight onto the wire — a settings
+    -- changed", and listTasks selects t.* straight onto the wire: a settings
     -- file per task card is not something the board should be shipping. hash is
     -- over the FULL file even when content was too big to keep, so an oversize
     -- file still compares correctly; content is '' in that case.
@@ -382,10 +412,10 @@ export function init(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_issue_reports_task ON issue_reports(task_id);
 
     -- Remembered "always allow" answers to a tool-permission prompt (the
-    -- canUseTool gate under acceptEdits / plan — see lib/permissions.ts).
+    -- canUseTool gate under acceptEdits / plan, see lib/permissions.ts).
     -- Project-scoped on purpose: approving "npm test" for one repo must not
     -- approve it everywhere. match_kind is 'bash_prefix' (leading command
-    -- tokens) or 'bash_exact' (one literal command line) — Bash-only, because a
+    -- tokens) or 'bash_exact' (one literal command line), Bash-only because a
     -- command is the one tool input a user can read in full and generalize.
     -- CREATE IF NOT EXISTS means older DBs pick it up with no migrate() entry.
     CREATE TABLE IF NOT EXISTS permission_rules (
@@ -402,7 +432,7 @@ export function init(db: Database.Database) {
     -- and deliberately its OWN table rather than a column on a task row, so a
     -- schedule outlives the tasks it mints (each firing creates a fresh one).
     -- time_of_day is wall clock in 'timezone', which is an IANA zone name and
-    -- never an offset — the offset changes twice a year and the wall time must
+    -- never an offset: the offset changes twice a year and the wall time must
     -- not. next_fire_at is a CACHE of lib/schedule/time.ts, recomputed on edit,
     -- after each firing, and revalidated on boot (tzdata moves).
     CREATE TABLE IF NOT EXISTS schedules (
@@ -419,6 +449,7 @@ export function init(db: Database.Database) {
       send_context    INTEGER NOT NULL DEFAULT 1,
       priority        TEXT NOT NULL DEFAULT 'med',
       catch_up_ms     INTEGER NOT NULL DEFAULT -1, -- -1 = use the instance default
+      once_date       TEXT NOT NULL DEFAULT '',    -- 'YYYY-MM-DD' = fire once then spend; '' = weekly
       next_fire_at    INTEGER NOT NULL DEFAULT 0,
       created_at      INTEGER NOT NULL,
       updated_at      INTEGER NOT NULL
@@ -451,7 +482,7 @@ export function init(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_schedule_runs_schedule ON schedule_runs(schedule_id, scheduled_for DESC);
 
     -- A saved task-launch preset: "push everything unpushed and babysit CI".
-    -- Project-keyed and its OWN table for the same reason schedules are one —
+    -- Project-keyed and its OWN table for the same reason schedules are one:
     -- it outlives every task it dispatches, and each Run MINTS A FRESH TASK.
     --
     -- This is a schedules row with the clock taken off, which is why the two
@@ -472,7 +503,7 @@ export function init(db: Database.Database) {
       priority        TEXT NOT NULL DEFAULT 'med',
       position        INTEGER NOT NULL DEFAULT 0,
       -- '' = the user wrote it; otherwise the agent id that filed it via
-      -- create_runbook. Provenance only — a runbook is inert until someone
+      -- create_runbook. Provenance only: a runbook is inert until someone
       -- presses Run, so an agent-created one needs no review tray.
       created_by      TEXT NOT NULL DEFAULT '',
       created_at      INTEGER NOT NULL,
@@ -481,15 +512,15 @@ export function init(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_runbooks_project ON runbooks(project_id);
 
-    -- A named, project-scoped label a task can carry — the noun a multi-task
-    -- feature was missing (docs/superpowers/specs/2026-08-27-tags-design.md;
+    -- A named, project-scoped label a task can carry: the noun a multi-task
+    -- feature was missing (docs/FEATURES.md;
     -- its one-per-task ancestor is the task-grouping spike from 2026-08-24).
     -- Deliberately NOT a task: no session, no worktree, no status of its own.
     -- Status is derived per read from the members (done when every member is
     -- terminal), never stored, so a deleted task can't leave it stale.
     -- UNIQUE(project_id, name) is what makes exact-name resolution from an
     -- agent unambiguous; a rename collision is a 409. origin_task_id is
-    -- provenance — the planning session that filed the tag — and SET NULL
+    -- provenance (the planning session that filed the tag) and SET NULL
     -- because deleting the plan must not delete the set it named. Membership
     -- lives in task_tags below, not in a column on tasks: a task carries as
     -- many tags as it has reasons to.
@@ -503,13 +534,21 @@ export function init(db: Database.Database) {
       position       INTEGER NOT NULL DEFAULT 0, -- chip order; created_at order for now
       created_at     INTEGER NOT NULL,
       updated_at     INTEGER NOT NULL,
+      -- "Refresh tag with AI" job state (lib/tagRefresh.ts), on the row for the
+      -- same reason projects.refresh_* is: the job outlives the click, so the
+      -- bar has to survive lighting another chip, a reload, or a restart.
+      refresh_status     TEXT NOT NULL DEFAULT 'idle',
+      refresh_stage      TEXT NOT NULL DEFAULT '',
+      refresh_summary    TEXT NOT NULL DEFAULT '',
+      refresh_error      TEXT NOT NULL DEFAULT '',
+      refresh_started_at INTEGER NOT NULL DEFAULT 0,
       UNIQUE(project_id, name)
     );
 
     CREATE INDEX IF NOT EXISTS idx_tags_project ON tags(project_id);
 
     -- Which tasks carry which tags. CASCADE on both ends: deleting a tag
-    -- untags its members (it never deletes them — a tag is a label over work,
+    -- untags its members (it never deletes them; a tag is a label over work,
     -- not the work), and deleting a task takes its rows with it. "position" is
     -- the order this task's tags render and inject their context in, so a task
     -- whose primary tag is the auth migration says so first.
@@ -555,11 +594,11 @@ export function init(db: Database.Database) {
     );
 
     -- Persisted service registry (lib/services.ts writes through to this).
-    -- Processes never survive a restart; these rows do — so a managed dev server
+    -- Processes never survive a restart; these rows do, so a managed dev server
     -- (desired_state='running') is auto-restarted on boot and its public URL
     -- (slug--<host>) stays stable. slug is the public hostname label, globally
     -- UNIQUE because the hostname carries no project. An expose_service entry
-    -- (managed=0 — we don't own the command) persists for URL/visibility
+    -- (managed=0, we don't own the command) persists for URL/visibility
     -- continuity only and is never auto-started.
     CREATE TABLE IF NOT EXISTS services (
       id            TEXT PRIMARY KEY,
@@ -583,12 +622,12 @@ export function init(db: Database.Database) {
     );
 
     -- Review comments on a task's diff (Changes tab). CREATE IF NOT EXISTS means
-    -- older DBs pick this up automatically — no migrate() entry needed.
+    -- older DBs pick this up automatically, no migrate() entry needed.
     CREATE TABLE IF NOT EXISTS task_comments (
       id            TEXT PRIMARY KEY,
       task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       file          TEXT NOT NULL,
-      -- 'old' or 'new' — which diff column's line numbering this anchors to
+      -- 'old' or 'new': which diff column's line numbering this anchors to
       -- (old/new are independent counters, so a bare line number collides).
       side          TEXT NOT NULL DEFAULT 'new',
       line_start    INTEGER NOT NULL,
@@ -621,6 +660,44 @@ export function init(db: Database.Database) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_task_doc_comments_task ON task_doc_comments(task_id);
+
+    -- The modal-local halves of a document review, one row per (task, file):
+    -- the Edit tab's text (NULL when the file hasn't been edited) and the
+    -- General comments note. Autosaved by the modal so a rail collapse or a
+    -- reload doesn't lose them, cleared on Send. anchor_sha is the file's
+    -- blob sha the edit was made against; a draft whose anchor no longer
+    -- matches the file is shown as stale rather than restored silently.
+    CREATE TABLE IF NOT EXISTS task_doc_drafts (
+      task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      file        TEXT NOT NULL,
+      text        TEXT,
+      general     TEXT NOT NULL DEFAULT '',
+      anchor_sha  TEXT,
+      updated_at  INTEGER NOT NULL,
+      PRIMARY KEY (task_id, file)
+    );
+
+    -- A configured source of models: an endpoint, a credential and a model
+    -- policy (lib/providers/). Two groups, told apart by the type column: a
+    -- bundled row is created when a CLI signs in and removed when it signs out,
+    -- and a user-added row is created from Settings. config and model_policy are
+    -- type-specific JSON; config NEVER holds a secret, since GET /api/providers
+    -- serves the row to the browser. Credentials live in the 0600 file
+    -- lib/providerSecrets.ts owns, keyed by this id.
+    CREATE TABLE IF NOT EXISTS model_providers (
+      id            TEXT PRIMARY KEY,
+      type          TEXT NOT NULL,
+      label         TEXT NOT NULL,
+      config        TEXT NOT NULL DEFAULT '{}',
+      model_policy  TEXT NOT NULL DEFAULT '{}',
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL,
+      -- The last probe of this provider and when it ran (POST /api/providers/[id]/test).
+      last_test_at  INTEGER,
+      last_test     TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_model_providers_type ON model_providers(type);
     CREATE INDEX IF NOT EXISTS idx_services_project ON services(project_id);
     CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
     CREATE INDEX IF NOT EXISTS idx_task_deps_task ON task_dependencies(task_id);
@@ -639,10 +716,13 @@ export function init(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_task_agent_edits_task ON task_agent_edits(task_id, created_at);
   `);
 
-  migrate(db);
+  // Load the legacy key before migration so the environment seed can create
+  // the LiteLLM row that legacy gateway selections must reference.
+  loadPersistedGatewayKey();
+  migrate(db, { seedProviders: true });
 
-  // Crash recovery runs only for the process that OWNS this database, and only
-  // on the boot that claimed it — see recoverFromCrash().
+  // Crash recovery runs only for the process that owns this database, and
+  // only on the boot that claimed it. See recoverFromCrash().
   if (consumeDbRecoveryAuthorization(DB_DIR)) recoverFromCrash(db);
 
   seedIfEmpty(db);
@@ -657,38 +737,55 @@ export function init(db: Database.Database) {
 }
 
 /**
- * Clear the wreckage a dead process left behind: turns that will never finish,
- * follow-ups queued behind them, permission cards nobody can answer, and
- * schedule runs stuck mid-flight.
+ * Clears the wreckage a dead process left behind: turns that will never
+ * finish, follow-ups queued behind them, permission cards nobody can answer,
+ * and schedule runs stuck mid-flight.
  *
- * Every statement here is destructive, and every one of them is destructive
- * against a LIVE instance too — which is why this is gated on owning the
- * database rather than run unconditionally at boot. Before the boot lock
- * existed, starting a second process while the first was mid-turn wiped the
- * first's running flags, dropped its queued follow-ups and settled cards a
- * human was still looking at, all silently. See lib/db-lock.mjs.
+ * Every statement here is destructive against a live instance too, which is
+ * why this only runs for the process that owns the database rather than
+ * unconditionally at boot. See lib/db-lock.mjs.
  *
- * One transaction: these four facts describe a single moment (the state the
- * predecessor died in), and a crash halfway through recovery would leave a
- * database that is neither the old truth nor the new one.
+ * Runs as one transaction: these four facts describe a single moment (the
+ * state the predecessor died in), and a crash partway through recovery would
+ * leave a database that matches neither the old state nor the new one.
  */
 function recoverFromCrash(db: Database.Database) {
   db.transaction(() => {
-    // Reset any stale "running" flags left over from a crash/restart. A linger
-    // (background_pending) is in-memory state of the dead process's CLI child
-    // exactly like running is, so it resets in the same breath — the work it
-    // described died with that process.
+    // Reset any stale "running" flags left over from a crash or restart. A
+    // linger (background_pending) is in-memory state of the dead process's
+    // CLI child just like running is, so it resets in the same statement:
+    // the work it described died with that process.
     db.prepare("UPDATE tasks SET running = 0, background_pending = 0, background_note = '' WHERE running = 1 OR background_pending = 1").run();
-    // Drop any queued follow-ups: the turns they were lined up behind died with
-    // the previous process, so there's nothing left to dequeue them.
+    // Drop any queued follow-ups: the turns they were lined up behind died
+    // with the previous process, so there is nothing left to dequeue them into.
     db.prepare("DELETE FROM pending_messages").run();
-    // Settle any tool-permission card still open. The turn parked on it died with
-    // the previous process and the pending-ask registry it was waiting on is
-    // in-memory, so the card can never be answered — left alone it would render
-    // as live buttons that resolve nothing. Same reasoning as the running reset
-    // above. (json_valid guards the handful of tool rows that predate JSON
-    // content; json_extract would raise on those.)
-    db.prepare(
+    settleOpenCards(db);
+
+    reapInFlightScheduleRuns(db);
+  })();
+}
+
+/**
+ * Settles every interactive card the previous process left parked on the
+ * user: a permission card with no `outcome`, and a question card with
+ * neither `answers` nor `dismissed`. The turn that opened them died with that
+ * process, and the in-memory registry that would answer them (lib/asks.ts)
+ * is gone, so left alone they render live buttons that resolve nothing.
+ *
+ * The question card is marked DISMISSED rather than given answers, since a
+ * transcript must never claim the user said something they did not; that is
+ * the same distinction `PermissionOutcome.auto` draws on the permission card.
+ *
+ * `json_valid` guards the handful of tool rows that predate JSON content,
+ * since `json_extract` would raise on those. `dismissed IS NULL` also
+ * backfills rows written before that field existed.
+ *
+ * Exported so tests can drive it directly; recoverFromCrash is the only
+ * production caller.
+ */
+export function settleOpenCards(db: Database.Database): { permissions: number; asks: number } {
+  const permissions = db
+    .prepare(
       `UPDATE messages
           SET content = json_set(content, '$.permission.outcome',
                 json('{"decision":"deny","auto":true,"reason":"interrupted","note":"The app restarted before this was answered."}'))
@@ -697,33 +794,40 @@ function recoverFromCrash(db: Database.Database) {
           AND json_valid(content)
           AND json_extract(content, '$.permission.request.id') IS NOT NULL
           AND json_extract(content, '$.permission.outcome') IS NULL`
-    ).run();
-
-    reapInFlightScheduleRuns(db);
-  })();
+    )
+    .run().changes;
+  const asks = db
+    .prepare(
+      `UPDATE messages
+          SET content = json_set(content, '$.ask.dismissed',
+                json('{"reason":"restarted","note":"Not answered: the app restarted before an answer arrived."}'))
+        WHERE role = 'tool'
+          AND content LIKE '%"ask"%'
+          AND json_valid(content)
+          AND json_extract(content, '$.ask.id') IS NOT NULL
+          AND json_extract(content, '$.ask.answers') IS NULL
+          AND json_extract(content, '$.ask.dismissed') IS NULL`
+    )
+    .run().changes;
+  return { permissions, asks };
 }
 
 /**
- * Settle any schedule run left mid-flight by the previous process.
+ * Settles any schedule run left mid-flight by the previous process.
  *
- * The same class of reason as the `tasks.running` reset above, and it lives
- * beside it for the same reason: the turn that owned the row died with that
- * process, and nothing else will ever come back for it. Here the consequence is
- * worse than a stuck spinner, because a `claimed`/`running` row is what
- * isScheduleBusy() reads for overlap detection: a row orphaned in the launch
- * window (a crash between claimRun and startRun — the whole preflight, CLI
- * probe included) makes the schedule look permanently busy, so every later
- * occurrence records `skipped_overlap`, and the card's Stop control is gated on
- * the blocking run having a task_id, which this one never got. The schedule
- * goes quiet until retention prunes the row ~50 occurrences later.
+ * A `claimed`/`running` row is what isScheduleBusy() reads for overlap
+ * detection, so a row orphaned in the launch window (a crash between
+ * claimRun and startRun) makes the schedule look permanently busy: every
+ * later occurrence records `skipped_overlap`, and the card's Stop control,
+ * gated on the blocking run having a task_id, never applies. Without this,
+ * the schedule stays wedged until retention prunes the row.
  *
- * Deliberately here rather than in startScheduler(): this runs once per process
- * before anything can read the ledger, whereas startScheduler() is skipped
- * entirely when CALANDRIA_SCHEDULER is off — the one configuration where nothing
- * else would ever clear the wedge, while the API still serves it.
+ * Runs here rather than in startScheduler(), which is skipped entirely when
+ * CALANDRIA_SCHEDULER is off and would otherwise leave the wedge uncleared
+ * while the API still serves it.
  *
  * Exported so tests/scheduleStore.test.ts can drive it directly;
- * recoverFromCrash above is the only production caller.
+ * recoverFromCrash is the only production caller.
  */
 export function reapInFlightScheduleRuns(db: Database.Database): number {
   const info = db
@@ -739,16 +843,17 @@ export function reapInFlightScheduleRuns(db: Database.Database): number {
 }
 
 // The first-run wizard shows when `onboarding_complete` is unset. A brand-new DB
-// leaves it unset (just the single seed project) so the wizard runs; an existing
-// in-use instance — one with real history — is marked complete so an upgrade
-// never drops a returning user back into onboarding.
+// leaves it unset (just the single seed project) so the wizard runs; an
+// existing in-use instance, one with real history, is marked complete so an
+// upgrade never drops a returning user back into onboarding.
 function ensureOnboardingFlag(db: Database.Database) {
   const row = db.prepare("SELECT value FROM settings WHERE key = 'onboarding_complete'").get();
   if (row) return;
   const n = (q: string) => (db.prepare(q).get() as { n: number }).n;
-  // "In use" ignores the built-in Welcome project (seeded = 1): a fresh instance
-  // has only that, and must still see the wizard. Any real project, or any run
-  // history, means this is an upgrade of a live instance — skip onboarding.
+  // "In use" ignores the built-in Welcome project (seeded = 1): a fresh
+  // instance has only that, and must still see the wizard. Any real project,
+  // or any run history, means this is an upgrade of a live instance, so
+  // onboarding is skipped.
   const inUse =
     n("SELECT COUNT(*) AS n FROM sessions") > 0 ||
     n("SELECT COUNT(*) AS n FROM task_usage") > 0 ||
@@ -757,13 +862,13 @@ function ensureOnboardingFlag(db: Database.Database) {
 }
 
 /**
- * Refuse a database stamped by a build that knew more about the schema than
- * this one does. See lib/schema-version.mjs for why this is a refusal and not a
- * warning; the message is shared with the boot-time gate in server.js so an
- * operator reads the same words wherever the refusal surfaces.
+ * Refuses a database stamped by a build that knew more about the schema than
+ * this one does. See lib/schema-version.mjs for why this is a refusal rather
+ * than a warning; the message is shared with the boot-time gate in server.js
+ * so an operator reads the same words wherever the refusal surfaces.
  *
- * Older-or-equal proceeds untouched — that's every ordinary upgrade, and the
- * additive migrations below are what make it safe.
+ * Older-or-equal proceeds untouched: that covers every ordinary upgrade, and
+ * the additive migrations below are what make it safe.
  */
 export function assertSchemaVersionSupported(db: Database.Database) {
   const found = db.pragma("user_version", { simple: true }) as number;
@@ -771,7 +876,7 @@ export function assertSchemaVersionSupported(db: Database.Database) {
 }
 
 // Add columns introduced after a DB was first created (older database files).
-export function migrate(db: Database.Database) {
+export function migrate(db: Database.Database, options: { seedProviders?: boolean } = {}) {
   const cols = (db.prepare("PRAGMA table_info(projects)").all() as { name: string }[]).map((c) => c.name);
   const add = (name: string, def: string) => {
     if (!cols.includes(name)) db.exec(`ALTER TABLE projects ADD COLUMN ${name} ${def}`);
@@ -780,10 +885,10 @@ export function migrate(db: Database.Database) {
   add("color", "TEXT NOT NULL DEFAULT '#C2603C'");
   add("context", "TEXT NOT NULL DEFAULT ''");
   add("branch", "TEXT NOT NULL DEFAULT 'main'");
-  // How work lands on that branch (lib/types.ts LandingMode). 'merge' is right
-  // for every pre-existing project: it is exactly what they were already doing,
-  // and the ruleset probe (lib/github.ts detectLandingMode) only ever PRESELECTS
-  // a different answer in the settings form for a human to save.
+  // How work lands on that branch (lib/types.ts LandingMode). 'merge' is
+  // correct for every pre-existing project, since it matches what they were
+  // already doing; the ruleset probe (lib/github.ts detectLandingMode) only
+  // preselects a different answer in the settings form for a human to save.
   add("landing_mode", "TEXT NOT NULL DEFAULT 'merge'");
   // Reclaim the checkout automatically once work lands (lib/reclaim.ts). 0 for
   // every pre-existing project: an unattended reclaim deletes a local branch,
@@ -792,6 +897,11 @@ export function migrate(db: Database.Database) {
   add("recap", "TEXT NOT NULL DEFAULT ''");
   add("recap_at", "INTEGER NOT NULL DEFAULT 0");
   add("recap_covers_at", "INTEGER NOT NULL DEFAULT 0");
+  // The provider every task in this project runs against unless the task names
+  // its own (lib/providers/). NULL = the environment's own bundled row. SET
+  // NULL rather than cascade: removing a provider must not delete the project,
+  // it must drop the project back to its environment's login.
+  add("default_provider_id", "TEXT REFERENCES model_providers(id) ON DELETE SET NULL");
   add("deprecated", "INTEGER NOT NULL DEFAULT 0");
   add("seeded", "INTEGER NOT NULL DEFAULT 0");
   // Per-project managed-services config + the project's deterministic port.
@@ -809,8 +919,8 @@ export function migrate(db: Database.Database) {
     const setPort = db.prepare("UPDATE projects SET port = ? WHERE id = ?");
     db.transaction(() => { for (const p of unported) setPort.run(next++, p.id); })();
   }
-  // Detached "Refresh with AI" job state (drafting now runs in the background,
-  // not inside the HTTP request — see lib/contextRefresh.ts).
+  // Detached "Refresh with AI" job state: drafting runs in the background
+  // rather than inside the HTTP request. See lib/contextRefresh.ts.
   add("refresh_status", "TEXT NOT NULL DEFAULT 'idle'");  // idle | running | done | error
   add("refresh_draft", "TEXT NOT NULL DEFAULT ''");       // drafted context awaiting review
   add("refresh_error", "TEXT NOT NULL DEFAULT ''");
@@ -821,6 +931,18 @@ export function migrate(db: Database.Database) {
   // Whether new sessions get the saved project context. Default 1 preserves the
   // always-included behavior for existing projects.
   add("send_context", "INTEGER NOT NULL DEFAULT 1");
+  // Per-task LiteLLM virtual keys (docs/AGENTS.md, LiteLLM section): what
+  // /key/generate is told to cap a minted key at. NULL = no max_budget sent
+  // (LiteLLM leaves the key unlimited); '' duration = no `duration` sent
+  // either, so the key never auto-expires on LiteLLM's own clock. Calandria
+  // deletes it itself on terminal status or prune.
+  add("gateway_max_budget", "REAL");
+  add("gateway_key_duration", "TEXT NOT NULL DEFAULT ''");
+  // Hosted MCP servers this project mounts on every task's turns
+  // (docs/AGENTS.md, LiteLLM section): a JSON array of gateway aliases. '[]'
+  // for every pre-existing project, since nothing was mounted before this
+  // column existed.
+  add("gateway_mcp", "TEXT NOT NULL DEFAULT '[]'");
   // Manual sidebar ordering. Backfill in creation order so existing projects
   // keep the order they had when this column was the implicit sort.
   if (!cols.includes("position")) {
@@ -833,11 +955,12 @@ export function migrate(db: Database.Database) {
       )
     `);
   }
-  // Fold legacy building+conventions into the unified context field where empty.
-  // One-shot: gated on a persisted settings marker so it runs at most once, ever.
-  // Without the guard this re-ran on EVERY boot, and because updateProject never
-  // clears building/conventions, a user who intentionally emptied a project's
-  // context would silently have it refilled from stale legacy text each restart.
+  // Fold legacy building+conventions into the unified context field where
+  // empty. One-shot: gated on a persisted settings marker so it runs at most
+  // once. Without the guard this would re-run on every boot, and because
+  // updateProject never clears building/conventions, a user who intentionally
+  // emptied a project's context would have it refilled from stale legacy text
+  // on each restart.
   if (cols.includes("building") && !db.prepare("SELECT 1 FROM settings WHERE key = 'migrated_building_fold'").get()) {
     db.prepare(
       `UPDATE projects SET context = TRIM(building || CASE WHEN conventions != '' THEN char(10) || conventions ELSE '' END)
@@ -868,6 +991,9 @@ export function migrate(db: Database.Database) {
   // Per-task run controls (added after model selection): thinking preset + permission mode.
   if (!taskCols.includes("reasoning")) db.exec("ALTER TABLE tasks ADD COLUMN reasoning TEXT");
   if (!taskCols.includes("permission_mode")) db.exec("ALTER TABLE tasks ADD COLUMN permission_mode TEXT");
+  // Per-task Codex filesystem sandbox. NULL keeps the current driver behavior
+  // until a Codex default is configured in settings.
+  if (!taskCols.includes("sandbox_mode")) db.exec("ALTER TABLE tasks ADD COLUMN sandbox_mode TEXT");
   // Agent-driver seam: which driver runs this task's sessions. Every pre-seam
   // task ran Claude, so the column default backfills existing rows correctly.
   if (!taskCols.includes("agent")) db.exec("ALTER TABLE tasks ADD COLUMN agent TEXT NOT NULL DEFAULT 'claude'");
@@ -887,11 +1013,12 @@ export function migrate(db: Database.Database) {
   // is honest for the same reason the others' defaults are: the rollup we
   // stored a verdict from was never kept, so the next refresh fills it in.
   if (!taskCols.includes("pr_failing")) db.exec("ALTER TABLE tasks ADD COLUMN pr_failing TEXT NOT NULL DEFAULT ''");
-  // pr_number IS derivable from the URL we already stored, so backfill it here
-  // rather than leaving old rows at 0 until someone re-clicks Create PR. Runs
-  // over the handful of rows that have a URL and no number, so it is a no-op on
-  // every boot after the first. The other columns can't be backfilled — only
-  // GitHub knows them — and the refresh triggers fill them on first sight.
+  // pr_number is derivable from the URL already stored, so backfill it here
+  // instead of leaving old rows at 0 until someone re-clicks Create PR. Runs
+  // over the handful of rows that have a URL and no number, so it is a no-op
+  // on every boot after the first. The other columns cannot be backfilled,
+  // since only GitHub knows them, and the refresh triggers fill them on
+  // first sight.
   db.exec(
     `UPDATE tasks SET pr_number = CAST(substr(pr_url, instr(pr_url, '/pull/') + 6) AS INTEGER)
      WHERE pr_url LIKE '%/pull/%' AND pr_number = 0`
@@ -914,45 +1041,69 @@ export function migrate(db: Database.Database) {
   // outstanding again, which costs one extra ack and loses nothing.
   const editCols = (db.prepare("PRAGMA table_info(task_agent_edits)").all() as { name: string }[]).map((c) => c.name);
   if (!editCols.includes("acknowledged_at")) db.exec("ALTER TABLE task_agent_edits ADD COLUMN acknowledged_at INTEGER NOT NULL DEFAULT 0");
-  // Measured context-window occupancy (see the schema comment). No backfill:
+  // Context-window occupancy column (see the schema comment). No backfill:
   // NULL is the honest value for every pre-existing row, and is exactly what
   // routes the gauge to the usage-derived estimate it showed before.
   if (!taskCols.includes("context_measured")) db.exec("ALTER TABLE tasks ADD COLUMN context_measured INTEGER");
-  // Which schedule minted this task (lib/scheduler.ts). SET NULL rather than
-  // cascade — deleting a schedule must not delete the work it produced.
+  // Which schedule minted this task (lib/scheduler.ts). SET NULL rather
+  // than cascade, since deleting a schedule must not delete the work it
+  // produced.
   if (!taskCols.includes("schedule_id")) db.exec("ALTER TABLE tasks ADD COLUMN schedule_id TEXT REFERENCES schedules(id) ON DELETE SET NULL");
   // When a snoozed task comes back (see the CREATE TABLE note). 0 on every
-  // pre-existing row is exactly right — nothing was ever snoozed before — and
+  // pre-existing row is correct, since nothing was ever snoozed before, and
   // because the state is derived from the value rather than stored beside it,
-  // there is no companion column to backfill consistently.
+  // there is no companion column to backfill.
   if (!taskCols.includes("snoozed_until")) db.exec("ALTER TABLE tasks ADD COLUMN snoozed_until INTEGER NOT NULL DEFAULT 0");
-  // Unacknowledged clean unattended run (see the CREATE TABLE note). 0 on every
-  // pre-existing row deliberately: backfilling the scheduled tasks already
-  // stranded in "In progress" would resurface months of finished runs as an
-  // unread pile, and the state is about the run that just happened.
+  // Unacknowledged clean unattended run (see the CREATE TABLE note). 0 on
+  // every pre-existing row: backfilling scheduled tasks already stranded in
+  // "In progress" would resurface months of finished runs as an unread pile,
+  // and this state is about the run that just happened.
   if (!taskCols.includes("unread_run_at")) db.exec("ALTER TABLE tasks ADD COLUMN unread_run_at INTEGER NOT NULL DEFAULT 0");
+  if (!taskCols.includes("base_rewritten_at")) db.exec("ALTER TABLE tasks ADD COLUMN base_rewritten_at INTEGER NOT NULL DEFAULT 0");
   // Queued-to-start deadline (see the CREATE TABLE note). 0 on every existing
   // row is right for the same reason as snoozed_until: nothing was queued.
   if (!taskCols.includes("start_at")) db.exec("ALTER TABLE tasks ADD COLUMN start_at INTEGER NOT NULL DEFAULT 0");
-  // Which runbook dispatched this task (lib/dispatch.ts). Same SET NULL for the
-  // same reason — and it is also what "last run" is read from, since runbooks
-  // deliberately keep no ledger of their own.
+  // The task's own LiteLLM virtual key (docs/AGENTS.md, LiteLLM section),
+  // minted on its first gateway turn when CALANDRIA_LITELLM_ADMIN_KEY is set;
+  // '' means "use the instance key". Never surfaced by getTask()/listTasks():
+  // lib/store.ts strips it before returning, and only the narrow accessors in
+  // this file (used by lib/runner.ts and lib/gatewayKeys.ts) read the real
+  // value. Never add this to a SELECT column list a route spreads into JSON.
+  if (!taskCols.includes("gateway_key")) db.exec("ALTER TABLE tasks ADD COLUMN gateway_key TEXT NOT NULL DEFAULT ''");
+  // The key's cumulative spend as of the last GET /key/info reconciliation
+  // (lib/gatewayKeys.ts): the baseline the next reconciliation diffs against
+  // to record only the delta. Reset to 0 whenever a key is (re)minted.
+  if (!taskCols.includes("gateway_key_spend")) db.exec("ALTER TABLE tasks ADD COLUMN gateway_key_spend REAL NOT NULL DEFAULT 0");
+  // The provider this task's turns run against (lib/providers/). NULL = the
+  // project's default_provider_id, else the environment's own bundled row.
+  // SET NULL keeps the task and drops it back to that chain.
+  if (!taskCols.includes("provider_id")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN provider_id TEXT REFERENCES model_providers(id) ON DELETE SET NULL");
+  }
+  // Per-task override of the project's hosted-MCP selection (docs/AGENTS.md,
+  // LiteLLM section). NULL (the column's default with no DEFAULT clause) =
+  // inherit the project's gateway_mcp; a JSON array, including '[]', replaces
+  // it outright. See lib/gatewayMcp.ts.
+  if (!taskCols.includes("gateway_mcp")) db.exec("ALTER TABLE tasks ADD COLUMN gateway_mcp TEXT");
+  // Which runbook dispatched this task (lib/dispatch.ts). Same SET NULL for
+  // the same reason, and it is also what "last run" is read from, since
+  // runbooks keep no ledger of their own.
   if (!taskCols.includes("runbook_id")) {
     db.exec("ALTER TABLE tasks ADD COLUMN runbook_id TEXT REFERENCES runbooks(id) ON DELETE SET NULL");
   }
-  // Created here rather than in the schema block above: on an older DB that
-  // block runs BEFORE this ALTER, so indexing the column there fails with
-  // "no such column: runbook_id".
+  // Created here rather than in the schema block above, since on an older DB
+  // that block runs before this ALTER, so indexing the column there fails
+  // with "no such column: runbook_id".
   db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_runbook ON tasks(runbook_id)");
-  // Groups became TAGS: the container a task could be in ONE of is now a label
-  // it can carry several of (docs/superpowers/specs/2026-08-27-tags-design.md).
-  // The schema block above has already created the empty `tags` + `task_tags`
-  // tables, so this is a copy-then-drop rather than a rename: every group
-  // becomes a tag with its id intact (so origin_task_id, and any id a user
-  // bookmarked, still resolve), and every `tasks.group_id` becomes the one row
-  // that task has in task_tags. The column goes with the old table — leaving it
-  // behind would give two answers to "which tags does this task carry", and the
-  // stale one would be the one SQLite kept updating on nothing.
+  // Groups became tags: the container a task could be in one of is now a
+  // label it can carry several of (docs/FEATURES.md). The schema block above
+  // has already created the empty `tags` and `task_tags` tables, so this
+  // copies rows across and drops the old table instead of renaming it: every
+  // group becomes a tag with its id intact (so origin_task_id, and any id a
+  // user bookmarked, still resolves), and every `tasks.group_id` becomes one
+  // row in task_tags. The old column is dropped with the old table, since
+  // leaving it behind would give two answers to "which tags does this task
+  // carry", with the stale one kept updating on nothing.
   const tables = new Set(
     (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((t) => t.name)
   );
@@ -976,10 +1127,10 @@ export function migrate(db: Database.Database) {
     db.exec("DROP INDEX IF EXISTS idx_task_groups_project");
     db.exec("DROP TABLE task_groups");
   }
-  // The recorded agent edits that named the old field. `update_task`'s revert
-  // path switches on `field`, so a row left saying "group" would render a
-  // field that no longer exists and revert to nothing at all — silently. The
-  // scalar becomes the one-element list `tags` now carries.
+  // The recorded agent edits that named the old field. `update_task`'s
+  // revert path switches on `field`, so a row left saying "group" would
+  // render a field that no longer exists and revert to nothing. The scalar
+  // becomes the one-element list `tags` now carries.
   const legacyEdits = db
     .prepare("SELECT id, changes FROM task_agent_edits WHERE changes LIKE '%\"field\":\"group\"%'")
     .all() as { id: string; changes: string }[];
@@ -1010,19 +1161,47 @@ export function migrate(db: Database.Database) {
   if (!schedCols.includes("runbook_id")) {
     db.exec("ALTER TABLE schedules ADD COLUMN runbook_id TEXT REFERENCES runbooks(id) ON DELETE SET NULL");
   }
-  // A tag's DEFAULT base branch: where a whole plan's tasks are cut from, set
-  // once instead of N times (phase 2 of the per-task base branch design). Same
-  // '' = inherit convention as tasks.base_branch, so every existing row keeps
-  // behaving exactly as it does today. Read AFTER the task_groups → tags
-  // migration above, so a database arriving on the old table gets the column
-  // too. A task carrying several tags takes the base from the first one that
-  // sets it, in task_tags.position order — see lib/baseBranch.ts.
+  // One-time schedules (lib/schedule/time.ts). '' on every pre-existing row is
+  // exactly right: they are all weekly, and '' is already what the recurring
+  // path means by "no date pinned".
+  if (!schedCols.includes("once_date")) db.exec("ALTER TABLE schedules ADD COLUMN once_date TEXT NOT NULL DEFAULT ''");
+  // Which provider and model a firing carries into the task it mints
+  // (lib/providers/, lib/dispatch.ts). Both NULL on every pre-existing row,
+  // which is the "inherit the project's default" the schedules have always had.
+  if (!schedCols.includes("provider_id")) {
+    db.exec("ALTER TABLE schedules ADD COLUMN provider_id TEXT REFERENCES model_providers(id) ON DELETE SET NULL");
+  }
+  if (!schedCols.includes("model")) db.exec("ALTER TABLE schedules ADD COLUMN model TEXT");
+  // The same pair on a runbook, for the same reason: pressing Run mints a task
+  // and has to know what to run it on.
+  const runbookCols = (db.prepare("PRAGMA table_info(runbooks)").all() as { name: string }[]).map((c) => c.name);
+  if (!runbookCols.includes("provider_id")) {
+    db.exec("ALTER TABLE runbooks ADD COLUMN provider_id TEXT REFERENCES model_providers(id) ON DELETE SET NULL");
+  }
+  if (!runbookCols.includes("model")) db.exec("ALTER TABLE runbooks ADD COLUMN model TEXT");
+  // A tag's default base branch: where a whole plan's tasks are cut from,
+  // set once instead of N times (docs/FEATURES.md). Same '' = inherit
+  // convention as tasks.base_branch, so every existing row keeps behaving as
+  // it does today. Read after the task_groups-to-tags migration above, so a
+  // database arriving on the old table gets the column too. A task carrying
+  // several tags takes the base from the first one that sets it, in
+  // task_tags.position order. See lib/baseBranch.ts.
   const tagCols = (db.prepare("PRAGMA table_info(tags)").all() as { name: string }[]).map((c) => c.name);
   if (!tagCols.includes("base_branch")) db.exec("ALTER TABLE tags ADD COLUMN base_branch TEXT NOT NULL DEFAULT ''");
-  // Manual task ordering (list groups + board columns both render in position
-  // order). Backfill matches the sort that was implicit before the column
-  // existed — priority then created_at, per project — so an upgrade doesn't
-  // visibly reshuffle anyone's list.
+  // "Refresh tag with AI" job state. Defaults spell "no job has ever run here",
+  // which is what every existing row means, so an upgrade shows an idle button
+  // rather than a stuck bar.
+  if (!tagCols.includes("refresh_status")) {
+    db.exec("ALTER TABLE tags ADD COLUMN refresh_status TEXT NOT NULL DEFAULT 'idle'");
+    db.exec("ALTER TABLE tags ADD COLUMN refresh_stage TEXT NOT NULL DEFAULT ''");
+    db.exec("ALTER TABLE tags ADD COLUMN refresh_summary TEXT NOT NULL DEFAULT ''");
+    db.exec("ALTER TABLE tags ADD COLUMN refresh_error TEXT NOT NULL DEFAULT ''");
+    db.exec("ALTER TABLE tags ADD COLUMN refresh_started_at INTEGER NOT NULL DEFAULT 0");
+  }
+  // Manual task ordering (list groups and board columns both render in
+  // position order). Backfill matches the sort that was implicit before the
+  // column existed, priority then created_at per project, so an upgrade does
+  // not visibly reshuffle anyone's list.
   if (!taskCols.includes("position")) {
     db.exec("ALTER TABLE tasks ADD COLUMN position INTEGER NOT NULL DEFAULT 0");
     db.exec(`
@@ -1054,30 +1233,119 @@ export function migrate(db: Database.Database) {
   if (!commentCols.includes("side")) db.exec("ALTER TABLE task_comments ADD COLUMN side TEXT NOT NULL DEFAULT 'new'");
   if (!commentCols.includes("anchor_sha")) db.exec("ALTER TABLE task_comments ADD COLUMN anchor_sha TEXT");
 
-  // Which driver produced each usage row, stamped at write time (Insights breaks
-  // spend down by provider). Backfilled from the task's current agent — exact
-  // for every pre-existing row since tasks couldn't switch agents until now.
+  // Which driver produced each usage row, stamped at write time (Insights
+  // breaks spend down by provider). Backfilled from the task's current agent,
+  // exact for every pre-existing row since tasks could not switch agents
+  // until now.
   const usageCols = (db.prepare("PRAGMA table_info(task_usage)").all() as { name: string }[]).map((c) => c.name);
   if (!usageCols.includes("agent")) {
     db.exec("ALTER TABLE task_usage ADD COLUMN agent TEXT NOT NULL DEFAULT ''");
     db.exec("UPDATE task_usage SET agent = COALESCE((SELECT t.agent FROM tasks t WHERE t.id = task_usage.task_id), 'claude') WHERE agent = ''");
   }
+  // Subagent (Task-tool sidechain) tokens, which the other four columns
+  // never counted. NULLable with no backfill: old rows were written before
+  // the figure was measured, and defaulting them to 0 would claim every
+  // historical fan-out spent nothing instead of marking it unrecorded.
+  if (!usageCols.includes("subagent_tokens")) {
+    db.exec("ALTER TABLE task_usage ADD COLUMN subagent_tokens INTEGER");
+  }
+  // Which endpoint the turn ran against: '' for the agent's own cloud
+  // (every row before this shipped, and every row since with no override),
+  // else the override's host[:port] ("localhost:11434"). This host decides
+  // what the row is worth: a local model server bills nothing (cost_usd = 0,
+  // a measurement), while a custom base URL bills something nobody has told
+  // us (cost_usd IS NULL). This column is what lets Insights tell the three
+  // cases apart. See ProviderPricing in lib/agentEnv.ts.
+  if (!usageCols.includes("provider")) {
+    db.exec("ALTER TABLE task_usage ADD COLUMN provider TEXT NOT NULL DEFAULT ''");
+  }
 
-  // The agent thread's last reported CUMULATIVE token counters, as JSON. Only
-  // drivers whose usage reporting is cumulative-per-thread need it (Codex
-  // re-reports the whole thread's totals on every turn.completed), so a turn's
-  // own usage is the delta against this baseline — see lib/agents/codex/events.ts.
+  // The model each internal one-shot ran on (see the CREATE TABLE note).
+  // NULLable with no backfill: the job-tier setting only says what was asked
+  // for, and every row written before this shipped may well have inherited the
+  // driver's default, so there is nothing to reconstruct them from.
+  const internalCols = (db.prepare("PRAGMA table_info(internal_usage)").all() as { name: string }[]).map((c) => c.name);
+  if (!internalCols.includes("model")) db.exec("ALTER TABLE internal_usage ADD COLUMN model TEXT");
+
+  // cost_usd shipped NOT NULL DEFAULT 0, which left no way to record
+  // "unknown". Any turn against a provider override was written as 0, so an
+  // instance pointing a custom-base-URL preset at a paid third party
+  // (OpenRouter, Together, a Bedrock or Vertex proxy, a hosted vLLM) had
+  // those turns billed at nothing. Widening the column to NULLable fixes it:
+  // SUM() skips NULLs, so an unpriced turn stops contributing a fake zero to
+  // a total once the runner writes one.
+  //
+  // SQLite cannot drop NOT NULL in place, so this is the standard table
+  // rebuild, narrowed to what applies here: foreign keys off (they cannot be
+  // toggled inside a transaction, and the rename would otherwise be seen by
+  // the enforcement machinery mid-flight), rebuild in one transaction, keys
+  // back on. Existing rows keep their recorded 0 instead of being
+  // reinterpreted as unknown, since we know what those turns were written as
+  // but not what they would have cost. Only turns from here on carry the new
+  // fact.
+  const costCol = (db.prepare("PRAGMA table_info(task_usage)").all() as { name: string; notnull: number }[])
+    .find((c) => c.name === "cost_usd");
+  if (costCol && costCol.notnull) {
+    db.pragma("foreign_keys = OFF");
+    try {
+      db.transaction(() => {
+        db.exec("ALTER TABLE task_usage RENAME TO task_usage_old");
+        db.exec(`
+          CREATE TABLE task_usage (
+            id                    TEXT PRIMARY KEY,
+            project_id            TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            task_id               TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            generation            INTEGER NOT NULL,
+            cost_usd              REAL,
+            input_tokens          INTEGER NOT NULL DEFAULT 0,
+            output_tokens         INTEGER NOT NULL DEFAULT 0,
+            cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
+            cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            created_at            INTEGER NOT NULL,
+            agent                 TEXT NOT NULL DEFAULT '',
+            subagent_tokens       INTEGER,
+            provider              TEXT NOT NULL DEFAULT ''
+          );
+        `);
+        // Column-named on both sides: the old table's column order depends
+        // on which of the three ALTERs above a given database has already
+        // run.
+        db.exec(`
+          INSERT INTO task_usage
+            (id, project_id, task_id, generation, cost_usd, input_tokens, output_tokens,
+             cache_read_tokens, cache_creation_tokens, created_at, agent, subagent_tokens, provider)
+          SELECT id, project_id, task_id, generation, cost_usd, input_tokens, output_tokens,
+                 cache_read_tokens, cache_creation_tokens, created_at, agent, subagent_tokens, provider
+            FROM task_usage_old ORDER BY rowid;
+        `);
+        db.exec("DROP TABLE task_usage_old");
+        // The rename took the indexes with it; the CREATE INDEX IF NOT EXISTS
+        // pass above already ran this boot, so recreate them here.
+        db.exec("CREATE INDEX IF NOT EXISTS idx_task_usage_task ON task_usage(task_id)");
+        db.exec("CREATE INDEX IF NOT EXISTS idx_task_usage_project ON task_usage(project_id)");
+      })();
+    } finally {
+      db.pragma("foreign_keys = ON");
+    }
+  }
+
+  // The agent thread's last reported cumulative token counters, as JSON.
+  // Only drivers whose usage reporting is cumulative-per-thread need it
+  // (Codex re-reports the whole thread's totals on every turn.completed), so
+  // a turn's own usage is the delta against this baseline. See
+  // lib/agents/codex/events.ts.
   const sessCols = (db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]).map((c) => c.name);
   if (!sessCols.includes("usage_cum")) {
     db.exec("ALTER TABLE sessions ADD COLUMN usage_cum TEXT");
-    // Seed the baseline for codex threads that already ran: every usage row they
-    // recorded WAS a cumulative report, so the newest one is the thread's total
-    // so far. Without this, the first turn after upgrading would re-bill the
-    // whole thread one last time. (Rows written before the agent column exists
-    // are covered by the backfill above, which runs first.) The output side of a
-    // codex report can't be split back into plain vs reasoning tokens, so it
-    // seeds as a single output figure — worst case that costs one turn its
-    // output tokens, never a double charge on the much larger input side.
+    // Seed the baseline for codex threads that already ran: every usage row
+    // they recorded was a cumulative report, so the newest one is the
+    // thread's total so far. Without this, the first turn after upgrading
+    // would re-bill the whole thread one last time. (Rows written before the
+    // agent column exists are covered by the backfill above, which runs
+    // first.) The output side of a codex report cannot be split back into
+    // plain versus reasoning tokens, so it seeds as a single output figure;
+    // worst case that costs one turn its output tokens, never a double
+    // charge on the much larger input side.
     db.exec(`
       UPDATE sessions SET usage_cum = (
         SELECT json_object(
@@ -1106,21 +1374,45 @@ export function migrate(db: Database.Database) {
     GROUP BY m.task_id, m.generation;
   `);
 
-  // Last, and only once everything above has actually run: stamp what this
-  // build made of the file, so a LATER build that is OLDER than this one
-  // refuses to open it instead of writing to a schema it doesn't know
+  // Codex permission modes: "bypassPermissions" now means danger-full-access,
+  // no sandbox. The old meaning, a workspace-write sandbox that never asks,
+  // moved to "acceptEdits" (lib/agents/codex/policy.ts). Every Codex row set
+  // to the old entry is migrated to the key that carries its old meaning,
+  // recorded in settings so a later instance does not re-run this over a row
+  // that has since chosen full access on its own.
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'codex_modes_migrated'").get()) {
+    db.exec(`
+      UPDATE tasks     SET permission_mode = 'acceptEdits' WHERE agent = 'codex' AND permission_mode = 'bypassPermissions';
+      UPDATE runbooks  SET permission_mode = 'acceptEdits' WHERE agent = 'codex' AND permission_mode = 'bypassPermissions';
+      UPDATE schedules SET permission_mode = 'acceptEdits' WHERE agent = 'codex' AND permission_mode = 'bypassPermissions';
+      UPDATE settings  SET value = 'acceptEdits' WHERE key = 'default_permission_mode:codex' AND value = 'bypassPermissions';
+      INSERT INTO settings (key, value) VALUES ('codex_modes_migrated', '1');
+    `);
+  }
+
+  // Seed before converting legacy selections. A legacy gateway preset points
+  // at the row described by CALANDRIA_LITELLM_* when those first-boot values
+  // are present. Both operations take this connection because getDb() is not
+  // available until init() returns.
+  if (options.seedProviders) seedProvidersFromEnv(db);
+  migrateLegacyAgentEnv(db);
+  dropLegacyAgentEnv(db);
+
+  // Last, once everything above has actually run: stamp what this build
+  // made of the file, so a later build older than this one refuses to open
+  // it instead of writing to a schema it does not know
   // (assertSchemaVersionSupported above, and the boot gate in server.js).
-  // Stamping unconditionally rather than only when it differs — it's a header
-  // write, and a pre-stamp database reads back 0 and has to be moved forward.
+  // Stamped unconditionally, since it is a header write and a pre-stamp
+  // database reads back 0 and needs to be moved forward regardless.
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
 
-// The built-in tutorial. A brand-new instance gets a "Welcome" project backed by
-// a real (tiny) repo plus two tasks that teach the whole loop — start a session,
-// answer a question, review a diff, merge — before the user touches their own
-// code. It's an ordinary project: deletable, and it never comes back (the
-// persistent `seed_done` flag guards against a re-seed after it's removed, even
-// if the projects table is momentarily empty again).
+// The built-in tutorial. A brand-new instance gets a "Welcome" project
+// backed by a real (tiny) repo plus two tasks that teach the whole loop:
+// start a session, answer a question, review a diff, merge, before the user
+// touches their own code. It is an ordinary project, deletable, and it never
+// comes back (the persistent `seed_done` flag guards against a re-seed after
+// it is removed, even if the projects table is momentarily empty again).
 function seedIfEmpty(db: Database.Database) {
   const count = db.prepare("SELECT COUNT(*) AS n FROM projects").get() as { n: number };
   if (count.n > 0) return;
@@ -1130,10 +1422,10 @@ function seedIfEmpty(db: Database.Database) {
   const now = Date.now();
   const pid = nanoid();
 
-  // Scaffold the tiny site into PROJECTS_DIR so diffs/merges are real. If it
-  // fails (permissions, read-only home), the project is still created but with a
-  // blank repo_path, so the app never crashes on first boot — the user just sets
-  // a working directory themselves.
+  // Scaffold the tiny site into PROJECTS_DIR so diffs and merges are real.
+  // If it fails (permissions, read-only home), the project is still created
+  // but with a blank repo_path, so the app never crashes on first boot; the
+  // user can set a working directory themselves.
   const repoPath = scaffoldWelcomeRepo();
 
   db.prepare(
@@ -1160,13 +1452,13 @@ function seedIfEmpty(db: Database.Database) {
       )
       .run(nanoid(), pid, title, description, priority, suggested, now, now);
 
-  // The hands-on task: it drives the full loop in one turn — a question, a
-  // one-file edit, a diff to review, a one-click merge. Its title + description
-  // become the injected task context, so the steps are written as instructions
-  // to the agent.
+  // The hands-on task: it drives the full loop in one turn: a question, a
+  // one-file edit, a diff to review, a one-click merge. Its title and
+  // description become the injected task context, so the steps are written
+  // as instructions to the agent.
   seedTask("Try me: add a tagline", TUTORIAL_TASK_DESC, "hi", 0);
-  // A pre-loaded "suggested" task so the tray isn't empty — this is exactly what
-  // a Claude session drops there when it proposes follow-up work.
+  // A pre-loaded "suggested" task so the tray is not empty; this is what a
+  // Claude session drops there when it proposes follow-up work.
   seedTask(
     "Add a dark-mode toggle",
     "Give Aurora a light/dark theme toggle: a small button that flips the page between a light and a dark palette and remembers the choice. Touch index.html and styles.css (and a little JS if you need it).",
@@ -1182,7 +1474,7 @@ function seedIfEmpty(db: Database.Database) {
 
 // Claude-facing project context for the Welcome tutorial. Describes the actual
 // scaffolded repo (so the session behaves), with one line of framing. The
-// heavier "how Calandria works" teaching lives in the UI coach marks, not here.
+// heavier "how Calandria works" teaching lives in the UI coach marks instead.
 const WELCOME_CONTEXT =
   "Aurora is a tiny one-page website, a placeholder landing page. The repo has just three files: " +
   "index.html (the page), styles.css (its styling), and README.md. It's intentionally minimal so " +
@@ -1202,13 +1494,14 @@ const TUTORIAL_TASK_DESC =
   "3. Tell me in one sentence what you changed, and that it's ready to review in the Changes tab and merge.\n\n" +
   "Keep it small. One line of copy is perfect.";
 
-// Write the Aurora demo site into PROJECTS_DIR/welcome. Returns the path, or ""
-// if anything goes wrong (best-effort; must never throw — runs during DB init).
+// Write the Aurora demo site into PROJECTS_DIR/welcome. Returns the path,
+// or "" if anything goes wrong (best-effort; must never throw, since this
+// runs during DB init).
 function scaffoldWelcomeRepo(): string {
   try {
     const dir = path.join(PROJECTS_DIR, "welcome");
-    // Don't clobber an existing folder — a prior boot may have created it, and it
-    // could already be a git repo with the user's tutorial edits.
+    // Do not clobber an existing folder: a prior boot may have created it,
+    // and it could already be a git repo with the user's tutorial edits.
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
       for (const [name, body] of Object.entries(WELCOME_FILES)) {
@@ -1219,11 +1512,159 @@ function scaffoldWelcomeRepo(): string {
   } catch {
     return "";
   }
+
 }
 
-// The scaffolded site. Deliberately plain HTML/CSS (no build step) so a task's
-// edit produces a clean, readable one-file diff. index.html has no tagline yet —
-// that's what "Try me: add a tagline" fills in, right under the <h1>.
+function hasColumn(db: Database.Database, table: string, column: string): boolean {
+  return (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((c) => c.name === column);
+}
+
+/**
+ * Remove the legacy provider blobs, after migrateLegacyAgentEnv has read them
+ * for the last time. Runs on every migrate and does nothing once the columns
+ * are gone, like every other step here.
+ *
+ * SCHEMA_VERSION carries the other half: a build older than this one re-adds
+ * both columns empty and resolves turns from them, so the boot gate refuses
+ * that database (lib/schema-version.mjs).
+ */
+function dropLegacyAgentEnv(db: Database.Database): void {
+  if (hasColumn(db, "projects", "agent_env")) db.exec("ALTER TABLE projects DROP COLUMN agent_env");
+  if (hasColumn(db, "tasks", "agent_env")) db.exec("ALTER TABLE tasks DROP COLUMN agent_env");
+}
+
+/**
+ * Convert the endpoint presets stored by pre-provider releases into provider
+ * rows, then drop the columns they were stored in (dropLegacyAgentEnv above).
+ *
+ * This still runs one release after the columns stopped being read, because
+ * an upgrade can skip the release that introduced provider rows: a database
+ * last migrated by 0.13.x arrives here with every blob still unconverted, and
+ * dropping the columns without reading them would lose each project's and
+ * task's endpoint. A database already past the drop has no columns to read
+ * and returns before preparing a statement naming them.
+ *
+ * The environment seed runs first, so a legacy gateway selection points at
+ * the seeded row. Without a seed, the legacy gateway shape creates the row.
+ * All conversion writes share one transaction so a failed conversion cannot
+ * leave half of a project tree pointing at providers.
+ */
+function migrateLegacyAgentEnv(db: Database.Database): void {
+  if (!hasColumn(db, "projects", "agent_env") || !hasColumn(db, "tasks", "agent_env")) return;
+  const projects = db
+    .prepare("SELECT id, default_agent, agent_env, default_provider_id FROM projects WHERE agent_env != '' AND default_provider_id IS NULL ORDER BY rowid ASC")
+    .all() as { id: string; default_agent: string; agent_env: string; default_provider_id: string | null }[];
+  const tasks = db
+    .prepare("SELECT id, agent, agent_env, provider_id FROM tasks WHERE agent_env != '' AND provider_id IS NULL ORDER BY rowid ASC")
+    .all() as { id: string; agent: string; agent_env: string; provider_id: string | null }[];
+  if (!projects.length && !tasks.length) return;
+
+  const rowFor = new Map<string, string>();
+  const parseLegacy = (raw: string): Record<string, string> => {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+      return Object.fromEntries(Object.entries(parsed as Record<string, unknown>).filter(([, value]) => typeof value === "string")) as Record<string, string>;
+    } catch {
+      return {};
+    }
+  };
+  const normalize = (url: string): string => url.trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
+  const hostLabel = (type: ProviderType, baseUrl: string): string => {
+    let host = "";
+    try { host = new URL(baseUrl).hostname; } catch { /* label remains useful without a URL */ }
+    const labels: Record<ProviderType, string> = {
+      anthropic: "Anthropic", openai: "OpenAI", google: "Google", openai_key: "OpenAI API key",
+      gemini_key: "Gemini API key", litellm: "LiteLLM gateway", ollama: "Ollama",
+      lmstudio: "LM Studio", custom: "Custom endpoint",
+    };
+    return host ? `${labels[type]} (${host})` : labels[type];
+  };
+  const existingByBase = (baseUrl: string): string | null => {
+    const wanted = normalize(baseUrl);
+    const rows = db.prepare("SELECT id, type, config FROM model_providers WHERE type IN ('ollama', 'lmstudio', 'custom') ORDER BY created_at ASC, rowid ASC").all() as { id: string; type: string; config: string }[];
+    for (const row of rows) {
+      try {
+        const config = JSON.parse(row.config) as { base_url?: string };
+        if (config.base_url && normalize(config.base_url) === wanted) return row.id;
+      } catch { /* a malformed row is ignored and left for the normal store */ }
+    }
+    return null;
+  };
+  const bundled = (agent: string): string | null => {
+    const type = bundledTypeFor(agent);
+    if (!type) return null;
+    const existing = firstProviderRowOfType(db, type);
+    if (existing) return existing.id;
+    return insertProviderRow(db, { type }).id;
+  };
+  const providerFor = (raw: string, agent: string): string | null => {
+    const env = parseLegacy(raw);
+    const values = Object.values(env);
+    if (!values.length) return null;
+    // cloudOverrideEnv() explicitly blanks every allowlisted key.
+    if (values.every((value) => value === "")) return bundled(agent);
+
+    const anthropicUrl = env.ANTHROPIC_BASE_URL?.trim() || "";
+    const openaiUrl = env.OPENAI_BASE_URL?.trim() || "";
+    const firstUrl = anthropicUrl || openaiUrl || env.GOOGLE_GEMINI_BASE_URL?.trim() || "";
+    if (!firstUrl) return null;
+    const baseUrl = normalize(firstUrl);
+    const gatewayMarker = env.CALANDRIA_GATEWAY_BILLING === "key" || env.CALANDRIA_GATEWAY_BILLING === "subscription";
+    if (gatewayMarker) {
+      const existing = firstProviderRowOfType(db, "litellm");
+      if (existing) return existing.id;
+      const config: Record<string, unknown> = {
+        base_url: baseUrl,
+        billing: env.CALANDRIA_GATEWAY_BILLING === "subscription" ? "subscription" : "key",
+      };
+      const model = env.ANTHROPIC_MODEL || env.CODEX_MODEL || env.GEMINI_MODEL;
+      if (model) config.default_model = model;
+      return insertProviderRow(db, { type: "litellm", config }).id;
+    }
+
+    const localType = localTypeForPort(baseUrl);
+    const api = openaiUrl && !anthropicUrl ? "openai" : "anthropic";
+    const type: ProviderType = localType === "custom" ? "custom" : localType;
+    const key = `${type}:${normalize(baseUrl)}:${api}`;
+    const persistCustomSecret = (providerId: string): string => {
+      const token = env.ANTHROPIC_AUTH_TOKEN?.trim() || "";
+      const row = getProviderRow(db, providerId);
+      if (row?.type === "custom" && token && !row.has_key) {
+        setProviderSecret(providerId, "key", token);
+      }
+      return providerId;
+    };
+    const cached = rowFor.get(key);
+    if (cached) return persistCustomSecret(cached);
+    const existing = existingByBase(baseUrl);
+    if (existing) { rowFor.set(key, existing); return persistCustomSecret(existing); }
+    const config: Record<string, unknown> = { base_url: baseUrl };
+    if (type === "custom") config.api = api;
+    const model = env.ANTHROPIC_MODEL || env.CODEX_MODEL || env.GEMINI_MODEL;
+    if (model) config.default_model = model;
+    const row = insertProviderRow(db, { type, label: hostLabel(type, baseUrl), config });
+    rowFor.set(key, row.id);
+    return persistCustomSecret(row.id);
+  };
+
+  db.transaction(() => {
+    const projectUpdate = db.prepare("UPDATE projects SET default_provider_id = ? WHERE id = ? AND default_provider_id IS NULL");
+    const taskUpdate = db.prepare("UPDATE tasks SET provider_id = ? WHERE id = ? AND provider_id IS NULL");
+    for (const project of projects) {
+      const id = providerFor(project.agent_env, project.default_agent || "claude");
+      if (id) projectUpdate.run(id, project.id);
+    }
+    for (const task of tasks) {
+      const id = providerFor(task.agent_env, task.agent || "claude");
+      if (id) taskUpdate.run(id, task.id);
+    }
+  })();
+}
+
+// The scaffolded site: plain HTML/CSS with no build step, so a task's edit
+// produces a clean, readable one-file diff. index.html has no tagline yet;
+// "Try me: add a tagline" fills that in, right under the <h1>.
 const WELCOME_FILES: Record<string, string> = {
   "index.html": `<!doctype html>
 <html lang="en">
@@ -1321,14 +1762,13 @@ export function getDb(): Database.Database {
 }
 
 /**
- * server.js claims the database before it serves anything (lib/db-lock.mjs), so
- * a production process opening it read/write WITHOUT that claim reached the DB
- * some other way — a bare `next start`, a stray script — and is exactly the
- * second writer the lock exists to stop. It gets a warning rather than a throw:
- * the same code path is how `next build` and the test suite legitimately open a
- * database they should never claim, and failing those closed would cost more
- * than this catches. Skipped entirely under the CALANDRIA_DB_LOCK=off escape hatch,
- * which is a deliberate choice to run unguarded.
+ * server.js claims the database before it serves anything (lib/db-lock.mjs),
+ * so a production process opening it read/write without that claim reached
+ * the DB some other way (a bare `next start`, a stray script), which is the
+ * second writer the lock exists to stop. Logs a warning rather than throwing,
+ * since this same code path is how `next build` and the test suite
+ * legitimately open a database they should never claim. Skipped entirely
+ * under the CALANDRIA_DB_LOCK=off escape hatch.
  */
 function warnIfUnowned() {
   if (process.env.NODE_ENV !== "production") return;

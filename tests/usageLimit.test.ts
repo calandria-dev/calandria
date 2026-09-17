@@ -16,10 +16,12 @@ vi.mock("@/lib/agents/claude/driver", () => ({
   },
 }));
 
-import { createProject, createTask, getTask, listMessages, listPendingMessages, addPendingMessage } from "@/lib/store";
+import { createProject, createTask, getTask, listMessages, listPendingMessages, addPendingMessage, setSetting } from "@/lib/store";
 import { startTurn } from "@/lib/runner";
-import { subscribe } from "@/lib/events";
+import { subscribe, subscribeGlobal } from "@/lib/events";
 import { USAGE_LIMIT_NOTICE, isUsageLimit } from "@/lib/usageLimit";
+import { autoResumeOnLimitKey, deferredStartFor } from "@/lib/usageReset";
+import { claudeLimitResetAt, recordClaudeRateLimit, resetPlanUsageStateForTests } from "@/lib/agents/claude/planUsage";
 import { AUTH_EXPIRED_NOTICE, isAuthFailure } from "@/lib/authFailure";
 import { isPromptTooLong } from "@/lib/promptLimits";
 import { getAgentAuthBroken, clearAgentAuthBroken } from "@/lib/agents/connections";
@@ -47,7 +49,13 @@ function watch(taskId: string, until: TaskStreamEvent["type"]): { events: TaskSt
 beforeEach(() => {
   runTurnMock.mockReset();
   clearAgentAuthBroken("claude");
+  // Off is the default, and every test that wants it on says so.
+  setSetting(autoResumeOnLimitKey("claude"), null);
+  resetPlanUsageStateForTests();
 });
+
+/** An hour out, so the deadline is unambiguously ahead of the sweep. */
+const resetAhead = () => Date.now() + 60 * 60_000;
 
 describe("usage-limit recovery", () => {
   it("appends the notice and parks the queue instead of draining it into the dead quota", async () => {
@@ -58,7 +66,7 @@ describe("usage-limit recovery", () => {
     addPendingMessage(task.id, task.generation, "and then deploy it");
     addPendingMessage(task.id, task.generation, "and write a test");
 
-    // The session opens, then the quota turns out to be spent — the real shape
+    // The session opens, then the quota turns out to be spent: the real shape
     // of a mid-run limit hit (it fails at the API, not at spawn).
     runTurnMock.mockImplementation(async function* () {
       yield { type: "session", sessionId: "sess-1" };
@@ -70,12 +78,12 @@ describe("usage-limit recovery", () => {
     await w.done;
 
     // The transcript carries the provider's own words AND the durable notice
-    // the UI renders as the informational recovery hint (no button — the
-    // recovery is waiting for the reset).
+    // the UI renders as the informational recovery hint (no button, since
+    // recovery means waiting for the reset).
     const errMsg = listMessages(task.id).find((m) => m.role === "system" && m.content.includes(USAGE_LIMIT_NOTICE));
     expect(errMsg).toBeTruthy();
     expect(errMsg!.content).toContain("usage limit reached");
-    // One ⚠ — the runner prefixes it, so the renderer must not add a second.
+    // One ⚠: the runner prefixes it, so the renderer must not add a second.
     expect(errMsg!.content.startsWith("⚠ ")).toBe(true);
     expect(errMsg!.content).not.toContain("⚠ ⚠");
 
@@ -84,7 +92,7 @@ describe("usage-limit recovery", () => {
     expect(w.events.some((e) => e.type === "agent_auth")).toBe(false);
     expect(listMessages(task.id).some((m) => m.content.includes(AUTH_EXPIRED_NOTICE))).toBe(false);
 
-    // The queue is untouched — no dequeue, no second (identically failing) turn.
+    // The queue is untouched: no dequeue, no second (identically failing) turn.
     expect(listPendingMessages(task.id)).toHaveLength(2);
     expect(w.events.some((e) => e.type === "dequeued")).toBe(false);
     expect(runTurnMock).toHaveBeenCalledTimes(1);
@@ -103,10 +111,10 @@ describe("usage-limit recovery", () => {
     addPendingMessage(task.id, task.generation, "follow-up");
 
     // The driver's pump reports the limit as a soft error event (with the reset
-    // time it folded in from rate_limit_event) rather than a throw.
+    // time it folded in from rate_limit_event), not a throw.
     runTurnMock.mockImplementation(async function* () {
       yield { type: "session", sessionId: "sess-2" };
-      yield { type: "error", content: `${LIMIT_HIT} — resets at 7/30/2026, 3:00:00 PM` };
+      yield { type: "error", content: `${LIMIT_HIT}, resets at 7/30/2026, 3:00:00 PM` };
       yield { type: "done", sessionId: "sess-2" };
     });
 
@@ -121,11 +129,121 @@ describe("usage-limit recovery", () => {
   });
 });
 
-describe("isUsageLimit — spent-quota detection", () => {
+describe("auto-queued resume at the usage-window reset", () => {
+  // The stream a Claude turn produces when the quota dies mid-run: the soft
+  // error event, carrying the reset the SDK's rate_limit_event reported
+  // (StreamEvent.resetAt in lib/types.ts).
+  const limitStream = (resetAt: number | null) =>
+    async function* () {
+      yield { type: "session", sessionId: "sess" };
+      yield resetAt == null ? { type: "error", content: LIMIT_HIT } : { type: "error", content: LIMIT_HIT, resetAt };
+      yield { type: "done", sessionId: "sess" };
+    };
+
+  it("is off by default: the notice still asks for the click", async () => {
+    const project = createProject({ name: "AR-off", repo_path: "" });
+    const task = createTask({ project_id: project.id, title: "T", description: "d" });
+    addPendingMessage(task.id, task.generation, "follow-up");
+    runTurnMock.mockImplementation(limitStream(resetAhead()));
+
+    const w = watch(task.id, "turn_end");
+    startTurn(task, project, "hi", "");
+    await w.done;
+
+    // An unattended resume spends quota the user may have wanted elsewhere, so
+    // nothing is queued until they say so.
+    expect(getTask(task.id)!.start_at).toBe(0);
+    const kept = listMessages(task.id).find((m) => m.content.includes("kept in the queue"));
+    expect(kept!.content).toContain("once the limit resets");
+  });
+
+  it("queues the resume for the driver's reported reset when the setting is on", async () => {
+    setSetting(autoResumeOnLimitKey("claude"), "on");
+    const project = createProject({ name: "AR-on", repo_path: "" });
+    const task = createTask({ project_id: project.id, title: "T", description: "d" });
+    addPendingMessage(task.id, task.generation, "follow-up");
+    const resetAt = resetAhead();
+    runTurnMock.mockImplementation(limitStream(resetAt));
+
+    // start_at doesn't ride the coarse turn events, so the chips that render it
+    // need the edit announced on the global feed.
+    const edits: string[] = [];
+    const unsub = subscribeGlobal((id, ev) => { if (ev.type === "task_edited") edits.push(id); });
+    const w = watch(task.id, "turn_end");
+    startTurn(task, project, "hi", "");
+    await w.done;
+    unsub();
+
+    // Exactly the deadline the transcript's own button would have stored: the
+    // provider's reset plus lib/usageReset.ts's head-room.
+    expect(getTask(task.id)!.start_at).toBe(deferredStartFor(resetAt));
+    // The queue is still parked, not drained, and the notice says it resumes
+    // on its own rather than asking the user to wait for the reset.
+    expect(listPendingMessages(task.id)).toHaveLength(1);
+    const kept = listMessages(task.id).find((m) => m.content.includes("kept in the queue"));
+    expect(kept!.content).toContain("automatically at");
+    expect(kept!.content).not.toContain("once the limit resets");
+    expect(edits).toContain(task.id);
+  });
+
+  it("queues nothing when no reset time was reported, or when the one reported is stale", async () => {
+    setSetting(autoResumeOnLimitKey("claude"), "on");
+    const project = createProject({ name: "AR-none", repo_path: "" });
+
+    // A driver that never learns a reset (Codex on exec, a CLI that only
+    // threw): there is no instant to queue against, so the button stands.
+    const noReset = createTask({ project_id: project.id, title: "T1", description: "d" });
+    runTurnMock.mockImplementation(limitStream(null));
+    let w = watch(noReset.id, "turn_end");
+    startTurn(noReset, project, "hi", "");
+    await w.done;
+    expect(getTask(noReset.id)!.start_at).toBe(0);
+
+    // A reset already behind us is a window that has since rolled over, so
+    // queueing against it would fire on the next tick into the same wall.
+    const stale = createTask({ project_id: project.id, title: "T2", description: "d" });
+    runTurnMock.mockImplementation(limitStream(Date.now() - 60_000));
+    w = watch(stale.id, "turn_end");
+    startTurn(stale, project, "hi", "");
+    await w.done;
+    expect(getTask(stale.id)!.start_at).toBe(0);
+  });
+
+  it("leaves an ordinary failure alone, however the setting is set", async () => {
+    setSetting(autoResumeOnLimitKey("claude"), "on");
+    const project = createProject({ name: "AR-other", repo_path: "" });
+    const task = createTask({ project_id: project.id, title: "T", description: "d" });
+    runTurnMock.mockImplementation(async function* () {
+      yield { type: "session", sessionId: "sess" };
+      throw new Error("Run ended: error_during_execution");
+    });
+
+    const w = watch(task.id, "turn_end");
+    startTurn(task, project, "hi", "");
+    await w.done;
+
+    expect(getTask(task.id)!.start_at).toBe(0);
+  });
+
+  it("falls back to the plan meter's passive signal for the reset instant", () => {
+    // The same rate_limit_event the titlebar meter is fed by. The driver reads
+    // it when a rejection arrives with no event beside it, so a turn that
+    // learns nothing itself still knows when the window heals.
+    expect(claudeLimitResetAt()).toBeNull();
+    const resetAt = resetAhead();
+    recordClaudeRateLimit({ status: "rejected", rateLimitType: "five_hour", resetsAt: resetAt });
+    expect(claudeLimitResetAt()).toBe(resetAt);
+    // A signal whose own window has rolled over is stale, not an answer.
+    recordClaudeRateLimit({ status: "rejected", rateLimitType: "five_hour", resetsAt: Date.now() - 60_000 });
+    expect(claudeLimitResetAt()).toBeNull();
+  });
+});
+
+describe("isUsageLimit: spent-quota detection", () => {
   it("matches the Claude subscription signatures", () => {
     expect(isUsageLimit(LIMIT_HIT)).toBe(true);
     expect(isUsageLimit("5-hour limit reached ∙ resets 3pm")).toBe(true);
-    expect(isUsageLimit("Weekly limit reached — resets Thursday")).toBe(true);
+    expect(isUsageLimit("Weekly limit reached, resets Thursday")).toBe(true);
     expect(isUsageLimit("You've hit your usage limit. Upgrade to continue.")).toBe(true);
   });
 
@@ -138,8 +256,8 @@ describe("isUsageLimit — spent-quota detection", () => {
   });
 
   it("does not fire on unrelated failures (or on the other two recoverable ones)", () => {
-    // The other two classifiers own these — checked before us in the runner,
-    // but they must not double-match here either.
+    // The other two classifiers own these, checked earlier in the runner, but
+    // they must not double-match here either.
     expect(isUsageLimit("Failed to authenticate: OAuth session expired and could not be refreshed")).toBe(false);
     expect(isUsageLimit("API Error: 400 prompt is too long: 250000 tokens > 204698 maximum")).toBe(false);
     // Generic failures with limit-adjacent words but no quota meaning.
@@ -155,7 +273,7 @@ describe("isUsageLimit — spent-quota detection", () => {
   it("stays disjoint from the classifiers checked before it", () => {
     // The runner checks isPromptTooLong → isAuthFailure → isUsageLimit; a
     // usage-limit message claimed by an earlier classifier would render the
-    // wrong recovery, so the raw limit string must belong to us alone.
+    // wrong recovery, so the raw limit string must not match either one.
     expect(isPromptTooLong(LIMIT_HIT)).toBe(false);
     expect(isAuthFailure(LIMIT_HIT)).toBe(false);
   });

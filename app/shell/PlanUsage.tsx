@@ -3,29 +3,39 @@
 import { useState, useSyncExternalStore } from "react";
 import { Popover } from "./shared";
 import { jget } from "./api";
-import type { PlanUsageSnapshot, PlanUsageWindow } from "@/lib/types";
+import { AgentMark } from "../icons";
+import { agentLabel } from "./agents";
+import type { AgentsBundle } from "./types";
+import { GATEWAY_PLAN_ID, type PlanUsageSnapshot, type PlanUsageWindow } from "@/lib/types";
 
-// The titlebar subscription-usage meter — "how much of my Claude plan have my
-// parallel sessions burned" at a glance, which matters here more than in a
-// single terminal because this app's whole point is running many of them.
+// The titlebar subscription-usage meter: "how much of my plan have my
+// parallel sessions burned" at a glance, which matters more here than in a
+// single terminal since this app runs many sessions at once.
 // Compact pill: session % · week %, tinted by the worst window. Click for the
 // full per-window breakdown (all the windows the provider reports, including
 // per-model weeks) with reset times and data freshness.
 //
+// One pill per agent that reports usage, driven entirely by the keys in the
+// response: a driver that implements planUsage() appears here with no client
+// edit. Drivers identify the two headline windows by semantic kind, with id
+// lists below for older snapshots. Everything else, labels included, comes
+// from the driver.
+//
 // Polls GET /api/plan-usage once a minute while the tab is visible. Cheap on
-// purpose: the server answers from an instance-wide cache and only touches the
-// (aggressively rate-limited) provider usage API when its own fetch floor
-// allows — see lib/agents/claude/planUsage.ts. Hidden entirely when no agent
-// reports plan usage (API-key auth, feature off, nothing fetched yet).
+// purpose: the server answers from an instance-wide cache and only reads a
+// provider's usage when its own fetch floor allows; see
+// lib/agents/claude/planUsage.ts and lib/agents/codex/planUsage.ts. Hidden
+// entirely when no agent reports plan usage (API-key auth, feature off,
+// nothing fetched yet).
 
 const POLL_MS = 60_000;
 
-// One poll per tab, shared: the pill was the only reader, but the queued-start
+// One poll per tab, shared: the pill is one reader, but the queued-start
 // button (SessionView's hero, the transcript's usage-limit notice) needs the
-// same snapshot to know WHEN the reset is, and a second poller per surface
-// would multiply the provider fetches the server so carefully floors. A
-// module-level store with ref-counted polling — the interval runs while any
-// subscriber is mounted and stops when the last one leaves.
+// same snapshot to know when the reset is, and a second poller per surface
+// would multiply the provider fetches the server floors. A module-level
+// store with ref-counted polling: the interval runs while any subscriber is
+// mounted and stops when the last one leaves.
 type PlanUsageMap = Record<string, PlanUsageSnapshot>;
 const EMPTY: PlanUsageMap = {};
 let current: PlanUsageMap = EMPTY;
@@ -36,7 +46,7 @@ function load() {
   if (document.hidden) return; // a hidden tab shouldn't keep the server polling the provider
   jget<{ agents: PlanUsageMap }>("/api/plan-usage")
     .then((d) => { current = d.agents; listeners.forEach((l) => l()); })
-    .catch(() => { /* transient — keep showing the last snapshot */ });
+    .catch(() => { /* transient: keep showing the last snapshot */ });
 }
 const onVis = () => { if (!document.hidden) load(); };
 function subscribe(l: () => void): () => void {
@@ -78,7 +88,7 @@ function fmtReset(ms: number): string {
 
 // Time left in a window, compact ("18m", "3h05m"). Null once the reset is
 // past or unreported. Recomputed on every poll re-render, so it's at worst a
-// minute stale — the same granularity it displays.
+// minute stale, the same granularity it displays.
 function fmtRemaining(resetsAt: number | null): string | null {
   if (resetsAt == null) return null;
   const mins = Math.ceil((resetsAt - Date.now()) / 60_000);
@@ -112,31 +122,86 @@ function Meter({ w, rejected }: { w: PlanUsageWindow; rejected: boolean }) {
   );
 }
 
-export function PlanUsagePill() {
-  const snap: PlanUsageSnapshot | null = usePlanUsage().claude ?? null;
+// Which window is "the session" and which is "the week", across providers.
+// The popover renders every window the agent reports and takes its labels from
+// the driver, but the pill has room for two numbers and has to know which two.
+// Drivers tag known windows with `kind`. These id lists keep older snapshots
+// and providers without a kind compatible. A typed window never falls back to
+// an id with a conflicting meaning. A provider whose keys match neither still
+// gets a pill: the single worst-window percentage below, instead of being
+// dropped.
+const SESSION_IDS = ["five_hour", "primary"];
+const WEEK_IDS = ["seven_day", "secondary"];
+
+export function headlineWindows(windows: PlanUsageWindow[]): { session?: PlanUsageWindow; week?: PlanUsageWindow } {
+  const session = windows.find((w) => w.kind === "session") ?? windows.find((w) => w.kind == null && SESSION_IDS.includes(w.id));
+  const week = windows.find((w) => w.kind === "week") ?? windows.find((w) => w.kind == null && WEEK_IDS.includes(w.id));
+  return { session, week };
+}
+
+/**
+ * Whether an agent's titlebar usage tracker is shown. Settings → Models writes
+ * `plan_usage:<agent>` = "off" to hide one; unset means shown, so an instance
+ * that never opens the setting keeps every tracker it had.
+ */
+export function planUsageShown(appDefaults: Record<string, string>, agentId: string): boolean {
+  return appDefaults[`plan_usage:${agentId}`] !== "off";
+}
+
+// One pill per agent that reports plan usage, in the order GET /api/plan-usage
+// lists them (driver registration order). Usually that is one (nobody runs two
+// metered subscriptions in the same instance by accident), but an Antigravity
+// + Claude workspace, or a Claude + ChatGPT one, meters two independent
+// quotas, and hiding either would misreport how much room the next batch of
+// turns has. Which of them earn titlebar space is the user's call
+// (`plan_usage:<agent>`, Settings → Models): a second login you only use for
+// utility jobs is worth metering on the server and not worth a pill.
+//
+// Each pill wears its agent's brand mark and no name; the marks are what tell
+// two pills apart, and the button's tooltip and popover both spell out whose
+// plan it is.
+export function PlanUsagePill({ agents, appDefaults }: { agents: AgentsBundle; appDefaults: Record<string, string> }) {
+  const map = usePlanUsage();
+  const metered = Object.entries(map).filter(
+    ([id, s]) => s.available && s.windows.length > 0 && planUsageShown(appDefaults, id),
+  );
+  if (metered.length === 0) return null;
+  return (
+    <>
+      {metered.map(([id, snap]) => (
+        <AgentPlanPill key={id} agentId={id} label={id === GATEWAY_PLAN_ID ? "Gateway" : agentLabel(agents, id)} snap={snap} />
+      ))}
+    </>
+  );
+}
+
+function AgentPlanPill({ agentId, label, snap }: { agentId: string; label: string; snap: PlanUsageSnapshot }) {
   const [open, setOpen] = useState(false);
 
-  if (!snap?.available || snap.windows.length === 0) return null;
-
-  const session = snap.windows.find((w) => w.id === "five_hour");
-  const week = snap.windows.find((w) => w.id === "seven_day");
+  // By kind where the driver says so. The id lists above cover older snapshots
+  // and providers that have not declared a kind.
+  const { session, week } = headlineWindows(snap.windows);
   // Session reset countdown, on the pill itself: the 5-hour window is the one
   // you pace work against ("can I dispatch another batch before it rolls?"),
-  // so its time-to-reset earns pill space where the week's doesn't — the
+  // so its time-to-reset earns pill space where the week's doesn't. The
   // popover still shows every window's reset in full.
   const sessionLeft = session ? fmtRemaining(session.resetsAt) : null;
   const rejected = snap.status === "rejected";
   const worst = Math.max(...snap.windows.map((w) => w.utilization));
   const t = tone(worst, rejected);
   const planName = snap.plan ? snap.plan[0].toUpperCase() + snap.plan.slice(1) : null;
+  const who = `${label}${planName ? ` ${planName}` : ""}`;
+  const mark = AgentMark[agentId];
 
   return (
     <div style={{ position: "relative" }}>
       <button
         className={`plan-pill${t ? ` ${t}` : ""}`}
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
-        title={`Claude ${planName ? `${planName} ` : ""}plan usage: click for the breakdown`}
+        title={`${who} plan usage: click for the breakdown`}
       >
+        {/* The gateway plan has no brand mark, so its pill wears its name instead. */}
+        {mark ? <span className="pp-mark" aria-hidden>{mark()}</span> : <span className="pp-seg">{label}</span>}
         {session && (
           <span className="pp-seg">
             5h {Math.floor(session.utilization)}%
@@ -150,10 +215,16 @@ export function PlanUsagePill() {
       {open && (
         <Popover onClose={() => setOpen(false)}>
           <div className="pu-menu">
-            <div className="pop-sec">Claude {planName ? `${planName} ` : ""}plan usage</div>
+            <div className="pop-sec">{who} plan usage</div>
             {rejected && (
               <div className="pu-note limit">
                 Usage limit reached. Turns resume{snap.statusResetsAt != null ? ` at ${fmtReset(snap.statusResetsAt)}` : " when the limit resets"}.
+              </div>
+            )}
+            {snap.scope?.kind === "some" && (
+              <div className="pu-note scoped">
+                {snap.scope.redirected} of {snap.scope.redirected + snap.scope.onPlan} projects point{snap.scope.redirected === 1 ? "s" : ""} {who} at
+                another endpoint. Those turns do not draw on this plan.
               </div>
             )}
             {snap.windows.map((w) => (

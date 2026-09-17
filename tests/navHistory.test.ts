@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { reconcileHistory, closeOneLevel, selectionUrl, type HistoryLike, type NavSel } from "../app/shell/navHistory";
+import { reconcileHistory, closeOneLevel, backOneLevel, selectionUrl, type HistoryLike, type NavSel } from "../app/shell/navHistory";
 
 // A stand-in for window.history: a stack of entries plus a cursor. pushState
 // truncates any forward entries (as real browsers do); back() moves the cursor.
@@ -56,7 +56,7 @@ const sel = (proj: string | null, task: string | null, view: NavSel["view"] = "w
 /** The project-home pane: a project open, no task, the home intent held. */
 const home = (proj: string): NavSel => ({ proj, task: null, home: true, view: "workspace" });
 
-describe("navHistory — mobile Back via single trap entry", () => {
+describe("navHistory: mobile Back via single trap entry", () => {
   it("deep-link to a task: Back steps session → tasks → projects → exit", () => {
     const h = new FakeHistory("/app?project=NB&task=O02");
     const ref = { sel: sel("NB", "O02") };
@@ -120,7 +120,7 @@ describe("navHistory — mobile Back via single trap entry", () => {
     expect(pressBack(h, ref)).toBe("tasks");  // settings → workspace (project still open)
   });
 
-  it("desktop (armTrap=false) never pushes a trap — Back is not hijacked", () => {
+  it("desktop (armTrap=false) never pushes a trap, so Back is not hijacked", () => {
     const h = new FakeHistory("/app");
     reconcileHistory(h, PATH, sel(null, null), false);
     reconcileHistory(h, PATH, sel("P", null), false);
@@ -130,8 +130,8 @@ describe("navHistory — mobile Back via single trap entry", () => {
   });
 
   // The project home is the only mount point for Runbooks and Schedules, and on
-  // a phone it is a pane of its own rather than "no task selected" — so it has
-  // to be a Back level, or the one press that should return to the task list
+  // a phone it is a pane of its own, not just "no task selected". So it has to
+  // be a Back level, or the one press that should return to the task list
   // would drop the whole project instead.
   it("project home: Back steps project → tasks → projects → exit", () => {
     const h = new FakeHistory("/app");
@@ -147,8 +147,8 @@ describe("navHistory — mobile Back via single trap entry", () => {
   });
 
   it("opening a task from the project home leaves no home level behind", () => {
-    // A runbook dispatch selects the task it minted, which drops the intent —
-    // one Back must then land on the task list, not back on the cards.
+    // A runbook dispatch selects the task it minted, which drops the intent,
+    // so one Back must then land on the task list, not back on the cards.
     const h = new FakeHistory("/app");
     const ref = { sel: sel(null, null) };
     settle(h, ref.sel);
@@ -186,8 +186,60 @@ describe("navHistory — mobile Back via single trap entry", () => {
     expect(selectionUrl(sel("P", null, "settings"), "/app")).toBe("?project=P&view=settings");
     expect(selectionUrl(home("P"), "/app")).toBe("?project=P&home=1");
     // home never travels without a project, and a selected task supersedes it
-    // (selecting one drops the intent) — so neither combination is mirrored.
+    // (selecting one drops the intent), so neither combination is mirrored.
     expect(selectionUrl({ proj: null, task: null, home: true, view: "workspace" }, "/app")).toBe("/app");
     expect(selectionUrl({ proj: "P", task: "T", home: true, view: "workspace" }, "/app")).toBe("?project=P&task=T");
+  });
+});
+
+// The on-screen Back buttons ("Back to projects", "Back to tasks") go through
+// backOneLevel. Pressing one is the same as the device button when the trap is
+// armed, and must still close the pane when it isn't. The trap is armed by a
+// passive effect one paint after the button is tappable.
+describe("navHistory: the in-app Back button acts on the history it finds", () => {
+  // The button's press: what the shell's goBack does, minus React.
+  function pressButton(h: FakeHistory, ref: { sel: NavSel }): { via: "history" | "state"; pane: string } {
+    const via = backOneLevel(h, ref.sel, (next) => { ref.sel = next; });
+    // "history": the browser pops, then the popstate handler closes the level
+    // off the live selection, exactly as pressBack models it.
+    if (via === "history") ref.sel = closeOneLevel(ref.sel);
+    settle(h, ref.sel);
+    return { via, pane: paneOf(ref.sel) };
+  }
+
+  it("with the trap armed, pops it, so the device button and the on-screen one leave the same history", () => {
+    const h = new FakeHistory("/app");
+    const ref = { sel: sel("P", "T") };
+    settle(h, ref.sel);
+    expect(h.stack.length).toBe(2);
+    expect(pressButton(h, ref)).toEqual({ via: "history", pane: "tasks" });
+    expect(h.stack.length).toBe(2); // the trap re-armed for the task list
+    expect(pressButton(h, ref)).toEqual({ via: "history", pane: "projects" });
+    expect(h.idx).toBe(0); // back on the root entry, nothing armed there
+    expect(h.url).toBe("/app");
+    expect(pressBack(h, ref)).toBe("exit");
+  });
+
+  it("pressed before the arming effect has run, closes the level itself instead of leaving the app", () => {
+    // Boot landed on P's task list and painted its Back button; the persist
+    // effect that would push the trap hasn't had its turn.
+    const h = new FakeHistory("/app");
+    const ref = { sel: sel("P", null) };
+    expect(h.stack.length).toBe(1);
+    expect(pressButton(h, ref)).toEqual({ via: "state", pane: "projects" });
+    // Still in the app, on the projects list, with the URL mirrored and no
+    // trap: the next device Back leaves, as it should at the root.
+    expect(h.idx).toBe(0);
+    expect(h.url).toBe("/app");
+    expect(pressBack(h, ref)).toBe("exit");
+  });
+
+  it("pressed before the trap is armed on a deeper pane, closes one level and the effect then arms for the rest", () => {
+    const h = new FakeHistory("/app");
+    const ref = { sel: sel("P", "T") };
+    expect(pressButton(h, ref)).toEqual({ via: "state", pane: "tasks" });
+    expect(h.stack.length).toBe(2); // the settle armed the trap for the task list
+    expect(pressBack(h, ref)).toBe("projects");
+    expect(pressBack(h, ref)).toBe("exit");
   });
 });

@@ -1,28 +1,22 @@
 // Slash-command validation for schedule prompts.
 //
 // A scheduled prompt is typically a skill invocation like "/jira-tasks", and
-// the slash form matters: the CLI EXPANDS it textually before the model sees it
-// (verified — zero tool calls, the skill body becomes the prompt), whereas the
-// bare name makes the model notice a name and choose to call the Skill tool.
-// Only the first belongs in unattended work.
+// the slash form matters: the CLI expands it textually before the model sees
+// it (zero tool calls, the skill body becomes the prompt), whereas the bare
+// name makes the model notice a name and choose to call the Skill tool. Only
+// the first belongs in unattended work.
 //
-// The hazard is that an unregistered command is NOT an error. The CLI answers
+// The hazard is that an unregistered command is not an error. The CLI answers
 // "Unknown command: /x. Did you mean …?" with subtype "success", is_error
-// false, and no tool calls — so a typo'd schedule would record `succeeded` with
-// an empty tray, and the user would conclude Jira had nothing for them. A
-// silent skip wearing a green check.
+// false, and no tool calls, so a typo'd schedule would record `succeeded` with
+// an empty tray, and the user would conclude Jira had nothing for them: a
+// skipped run wearing a green check.
 //
-// The guard is free: enumerating a session's commands costs no model request at
-// all. This file does not do that enumeration — lib/agents/claude/commands.ts
-// does, for the composer's "/" menu too, and asking it is the entire point.
-// There used to be a second implementation here (send "noop", read
-// `slash_commands` off the init message) which answered the same question with
-// none of that one's isolation: it ran the user's SessionStart hooks on every
-// save and every fire, unattended, inside the ticker's single-flight sweep; it
-// left an unresumable session in ~/.claude/projects each time; and it had no
-// cache, so a validate-per-blur editor paid a cold spawn per keystroke. What
-// remains here is the SCHEDULE'S half — which token is a command, what to do
-// when it isn't in the list, and the hard time bound the sweep needs.
+// The guard is free: enumerating a session's commands costs no model request
+// at all. This file does not do that enumeration; lib/agents/claude/commands.ts
+// does, for the composer's "/" menu too. What remains here is the schedule's
+// half: which token is a command, what to do when it isn't in the list, and
+// the hard time bound the sweep needs.
 
 import { SCHEDULE_PROBE_MS } from "@/lib/config";
 import { SETTING_SOURCES } from "@/lib/agents/claude/driver";
@@ -32,16 +26,17 @@ import type { Project } from "@/lib/types";
 /**
  * The command a prompt invokes, or null when it isn't a slash prompt.
  *
- * A token followed by `/` is a PATH, not a command: "/etc/passwd, tell me
+ * A token followed by `/` is a path, not a command: "/etc/passwd, tell me
  * what's in it" is an ordinary prompt about a file, and reading it as the
- * command "etc" is a false positive with teeth — the same validator runs again
+ * command "etc" is a false positive with teeth. The same validator runs again
  * at fire time (lib/scheduler.ts), where an unknown command settles the run
- * `failed` and mints nothing. So the prompt would save fine and then fail every
- * morning. Slash commands never contain a path separator, so excluding the
- * followed-by-`/` case costs nothing and closes the whole class.
+ * `failed` and mints nothing, so the prompt would save fine and then fail
+ * every morning. Slash commands never contain a path separator, so excluding
+ * the followed-by-`/` case costs nothing and closes the whole class.
  *
- * (Spelled as a trailing capture rather than a negative lookahead: `[A-Za-z0-9_:-]+(?!\/)`
- * backtracks the token one character shorter and matches "et" instead of failing.)
+ * (Spelled as a trailing capture instead of a negative lookahead:
+ * `[A-Za-z0-9_:-]+(?!\/)` backtracks the token one character shorter and
+ * matches "et" instead of failing.)
  */
 export function slashCommandOf(prompt: string): string | null {
   const m = /^\s*\/([A-Za-z0-9_:-]+)(\/?)/.exec(prompt);
@@ -49,7 +44,7 @@ export function slashCommandOf(prompt: string): string | null {
   return m[1];
 }
 
-/** Exact match only — a near miss is what this exists to catch. */
+/** Exact match only: a near miss is what this exists to catch. */
 export const isRegistered = (command: string, registry: string[]): boolean => registry.includes(command);
 
 /**
@@ -85,42 +80,42 @@ function editDistance(a: string, b: string): number {
  * A command the shared probe structurally cannot see, so its absence from the
  * registry proves nothing.
  *
- * MCP servers publish prompts as `/mcp__<server>__<prompt>`, and the probe runs
- * with no MCP config at all, so it never reports one — deliberately, since the
- * alternative spawns the user's whole server fleet on a menu keystroke and
- * still answers with whatever raced to connect first (the measurements are in
- * lib/agents/claude/commands.ts). A scheduled turn DOES inherit those servers
- * and would expand the prompt, so rejecting one here would fail a working job
- * every morning: they come back `unchecked`.
+ * MCP servers publish prompts as `/mcp__<server>__<prompt>`, and the probe
+ * runs with no MCP config at all, so it never reports one: the alternative
+ * spawns the user's whole server fleet on a menu keystroke and still answers
+ * with whatever raced to connect first (see lib/agents/claude/commands.ts). A
+ * scheduled turn does inherit those servers and would expand the prompt, so
+ * rejecting one here would fail a working job every morning: they come back
+ * `unchecked`.
  *
  * The composer's menu does get these names, from the `init` message of real
- * turns — but those are recorded against the TASK WORKTREE they ran in, and
- * this probe asks about the project's repo, where no turn runs. If one is ever
- * recorded for a path this validator asks about, it is a real observation and
- * the check below simply passes before reaching here.
+ * turns, but those are recorded against the task worktree they ran in, and
+ * this probe asks about the project's repo, where no turn runs. If one is
+ * ever recorded for a path this validator asks about, it is a real
+ * observation and the check below simply passes before reaching here.
  */
 const isMcpPrompt = (command: string) => command.startsWith("mcp__");
 
 /**
  * The slash commands a session in this project would have. Costs no tokens.
- * Best-effort — on any failure the caller degrades to "can't check" rather than
+ * Best-effort: on any failure the caller degrades to "can't check" instead of
  * blocking the user.
  *
- * BOUNDED, and that is not a nicety. This runs inside fireSchedule(), which runs
- * inside tickSchedules()'s single-flight sweep: an unbounded read on a stalled
- * CLI (a hung transport, a binary waiting on something that never arrives)
- * leaves `ticking` true forever and every schedule on the instance silently
- * stops firing — with no error, because nothing ever threw.
+ * Bounded, and that is not a nicety. This runs inside fireSchedule(), which
+ * runs inside tickSchedules()'s single-flight sweep: an unbounded read on a
+ * stalled CLI (a hung transport, a binary waiting on something that never
+ * arrives) leaves `ticking` true forever and every schedule on the instance
+ * stops firing with no error, because nothing ever threw.
  *
- * Two bounds, and they COMPOSE rather than one replacing the other. The probe
- * owns an abort on its own 15s deadline, which kills the child; the race below
- * owns this caller's deadline, which does not depend on the SDK honoring
- * anything. The inner one is the shorter of the two by default (15s against
- * SCHEDULE_PROBE_MS's 20s), so the ordinary stall is cleaned up properly and
- * this race is the backstop for an SDK that ignores its own signal. Aborting
- * from here is deliberately NOT done: several schedules on one project share
- * one in-flight probe, and one caller's deadline must not kill it out from
- * under the others.
+ * Two bounds, and they compose instead of one replacing the other. The probe
+ * owns an abort on its own 15s deadline, which kills the child; the race
+ * below owns this caller's deadline, which does not depend on the SDK
+ * honoring anything. The inner one is the shorter of the two by default (15s
+ * against SCHEDULE_PROBE_MS's 20s), so the ordinary stall is cleaned up
+ * properly and this race is the backstop for an SDK that ignores its own
+ * signal. Aborting from here is not done: several schedules on one project
+ * share one in-flight probe, and one caller's deadline must not kill it out
+ * from under the others.
  */
 export async function listSlashCommands(
   project: Project,
@@ -144,8 +139,8 @@ export async function listSlashCommands(
       giveUp,
     ]);
     if (!commands) return null;
-    // Aliases are registrations too — the CLI resolves /writing-plans to
-    // superpowers:writing-plans — and a false rejection here is the expensive
+    // Aliases are registrations too: the CLI resolves /writing-plans to
+    // superpowers:writing-plans, and a false rejection here is the expensive
     // kind, so they count.
     return [...new Set(commands.flatMap((c) => [c.name, ...(c.aliases ?? [])]))];
   } catch {
@@ -160,7 +155,7 @@ export interface PromptValidation {
   /** Set when the prompt names a command that isn't registered. */
   error?: string;
   suggestions?: string[];
-  /** True when we could not reach the registry — save is allowed, with a note. */
+  /** True when we could not reach the registry; save is allowed, with a note. */
   unchecked?: boolean;
   /** Why it went unchecked, when the reason isn't "the probe failed". */
   note?: string;
@@ -169,16 +164,16 @@ export interface PromptValidation {
 /**
  * Validate a schedule's prompt. Non-slash prompts are always fine.
  *
- * The two verdicts are not symmetric, and the asymmetry is the design. "It's in
- * the list" is cheap and safe to answer from a cached read. "It isn't in the
- * list" is a refusal that, at fire time, settles the run `failed` and mints
- * nothing — so it's re-read fresh before it's said, since the registry is
- * cached for a minute and a command installed inside that minute would
- * otherwise be refused for existing too recently.
+ * The two verdicts are not symmetric. "It's in the list" is cheap and safe to
+ * answer from a cached read. "It isn't in the list" is a refusal that, at fire
+ * time, settles the run `failed` and mints nothing, so it's re-read fresh
+ * before it's said, since the registry is cached for a minute and a command
+ * installed inside that minute would otherwise be refused for existing too
+ * recently.
  *
- * Both reads share ONE deadline. Two sequential probes each bounded by
- * SCHEDULE_PROBE_MS would bound this at twice it, and the bound is what keeps a
- * stalled CLI from wedging the sweep.
+ * Both reads share one deadline. Two sequential probes each bounded by
+ * SCHEDULE_PROBE_MS would bound this at twice it, and the bound is what keeps
+ * a stalled CLI from wedging the sweep.
  */
 export async function validatePrompt(
   prompt: string,

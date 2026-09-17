@@ -1,13 +1,17 @@
 // Client-side shapes + UI constants shared across the shell modules.
 // Pure data only (no React / no Icon) so any module can import freely.
 import { PRIORITIES, TAG_COLORS, tagIsDone } from "@/lib/types";
-import type { LandingMode, Priority, Status, Tag } from "@/lib/types";
+import type { LandingMode, PlanScope as PlanScopeT, Priority, Status, Tag } from "@/lib/types";
+import type { AgentProvider } from "@/lib/agentEnv";
+import type { CodexSandboxMode } from "@/lib/codexSandbox";
+export type { CodexSandboxMode } from "@/lib/codexSandbox";
 export { PRIORITIES, TAG_COLORS, tagIsDone };
-export type { LandingMode };
-/** A tag as the project GET embeds it — lib/types' row plus its derived counts. */
+export type { LandingMode, PlanScopeT };
+/** A tag as the project GET embeds it: lib/types' row plus its derived counts. */
 export type TagRow = Tag;
 import type { InternalUsageEstimate } from "@/lib/internalUsage";
-export type { InternalUsageEstimate };
+import type { ProviderType } from "@/lib/providers/types";
+export type { InternalUsageEstimate, ProviderType };
 
 // ---------- client shapes ----------
 export interface ProjectRow {
@@ -19,13 +23,18 @@ export interface ProjectRow {
   context: string;
   repo_path: string;
   branch: string;
-  landing_mode: LandingMode; // how work lands on `branch`: "merge" (local merge) or "pr" (protected — finish by opening a PR)
-  auto_reclaim: number; // 1 = once a task's work lands, reclaim its checkout and delete its local branch without being asked (lib/reclaim.ts)
+  landing_mode: LandingMode; // how work lands on `branch`: "merge" (local merge) or "pr" (protected, finish by opening a PR)
+  auto_reclaim: number; // 1 = once a task's work lands and no turn executes, close it and reclaim its checkout (lib/reclaim.ts)
   dev_command: string;
   setup_command: string;
   test_command: string;
   default_agent: string; // agent driver new tasks in this project default to (lib/agents/registry.ts)
   send_context: number; // 1 = new tasks default to sending the saved project context to the agent
+  default_provider_id: string | null;
+  provider: AgentProvider;
+  gateway_max_budget: number | null; // dollars; null = no max_budget sent to LiteLLM's /key/generate for this project's per-task keys
+  gateway_key_duration: string; // a LiteLLM duration string like "30d"; "" = the key never auto-expires on LiteLLM's own clock
+  gateway_mcp: string; // hosted MCP server aliases this project mounts, JSON array (lib/gatewayMcp.ts); "[]" = none
   port: number;
   deprecated: number;
   seeded: number; // 1 = built-in "Welcome" tutorial project (coach marks + post-merge nudge)
@@ -33,6 +42,10 @@ export interface ProjectRow {
   last_activity: number;
   awaiting_count: number; // in-progress tasks waiting on the user (across this project)
   cost_usd: number; // cumulative dollar spend across all this project's tasks
+  // Turns that ran against an endpoint with no price set (a custom base URL),
+  // so `cost_usd` above is a floor, not the whole figure. See
+  // ProviderPricing in lib/agentEnv.ts.
+  unpriced_turns: number;
 }
 export interface TaskRow {
   id: string;
@@ -44,63 +57,77 @@ export interface TaskRow {
   suggested: number;
   agent: string; // agent driver this task's sessions run under (lib/agents/); fixed for the task's life
   send_context: number; // 1 = sessions get the saved project context (seeded from the project setting)
+  provider_id: string | null;
+  provider: AgentProvider;
   model: string | null;
   resolved_model: string | null;
   reasoning: string | null; // thinking preset; null = inherit default
   permission_mode: string | null; // run permission; null = bypassPermissions (default)
+  sandbox_mode: CodexSandboxMode | null; // Codex sandbox; null = inherit permission/default
   session_id: string | null;
-  worktree_path: string; // isolated git worktree this task runs in ("" = not created yet — appears on the first turn)
+  worktree_path: string; // isolated git worktree this task runs in ("" = not created yet, appears on the first turn)
   merged_at: number; // when this task's branch was merged into the base branch LOCALLY (0 = never); pairs with pr_state for "has this landed?"
   pr_url: string; // GitHub PR opened from this task's branch ("" = none yet)
   // Live PR state, refreshed from GitHub in the background (lib/prState.ts) and
   // arriving here on task_edited. All five are "" / 0 until the first refresh
-  // answers, which is what the chip draws as "checking…" rather than guessing.
-  pr_number: number; // parsed from pr_url when the PR was created — never re-derived per render
+  // answers, which is what the chip draws as "checking…" instead of guessing.
+  pr_number: number; // parsed from pr_url when the PR was created, never re-derived per render
   pr_state: string; // "open" | "merged" | "closed"
   pr_checks: string; // "pending" | "passing" | "failing" | "none" (no CI configured)
   pr_review: string; // APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED ("" = review not required)
   pr_merged_at: number; // when GITHUB merged it (0 = not merged there); not merged_at, which is our local merge
-  pr_draft: number; // 1 while the PR is a draft — open, but unmergeable by anyone
+  pr_draft: number; // 1 while the PR is a draft: open, but unmergeable by anyone
   pr_merge_state: string; // gh's mergeStateStatus (CLEAN / BLOCKED / DIRTY / BEHIND / UNSTABLE; "" = unknown)
   pr_synced_at: number; // when the server last heard from GitHub (0 = never)
-  pr_failing: string; // JSON PrFailingCheck[] naming the red checks ("" when nothing is red) — read via prFailingChecks()
+  pr_failing: string; // JSON PrFailingCheck[] naming the red checks ("" when nothing is red), read via prFailingChecks()
   generation: number;
   started: number;
   running: number;
   awaiting_input: number;
-  background_pending: number; // 1 while a live turn lingers on run_in_background work — "working in background", never "needs you"
+  background_pending: number; // 1 while a live turn lingers on run_in_background work: "working in background", never "needs you"
   background_note: string; // what the linger is waiting on ("waiting to wake at 12:00"); '' when not lingering
-  idle_since?: number; // a live turn that has produced nothing since this instant (ms epoch; absent/0 = fine) — see ./idleTurn.ts
-  position: number; // the project's filing sequence (MAX+1 on create) — not a render order; the tag strip numbers its steps by it
+  idle_since?: number; // a live turn that has produced nothing since this instant (ms epoch; absent/0 = fine), see ./idleTurn.ts
+  position: number; // the project's filing sequence (MAX+1 on create), not a render order; the tag strip numbers its steps by it
   updated_at: number;
   cost_usd: number; // cumulative dollar spend across all turns of this task
+  // Turns that ran against an endpoint with no price set (a custom base URL),
+  // so `cost_usd` above is a floor, not the whole figure. See
+  // ProviderPricing in lib/agentEnv.ts.
+  unpriced_turns: number;
   total_tokens: number; // cumulative tokens (input+output+cache) across all turns
   cache_read_tokens: number; // of that total, context re-read from the prompt cache (~10% of input price)
   cache_creation_tokens: number; // of that total, context written INTO the cache (fresh work)
+  // NOT part of total_tokens: Task-tool sidechains run in their own context
+  // windows and the Claude result message excludes them from its token counts
+  // (while including them in its cost). 0 when the driver never measured it.
+  subagent_tokens: number;
   depends_on: string[]; // task ids this task is blocked by until they're done
   tag_ids: string[]; // the tags this task carries, in tag order (see TagChips.tsx); [] = untagged
   auto_start: number; // 1 = start automatically when the last unfinished blocker is marked done
   withdrawn_reason: string; // an agent retracted this suggestion and said why ("" = live); pairs with status "cancelled" + suggested 1
-  agent_edited_at: number; // ms epoch of the most recent agent edit the user hasn't reviewed yet (0 = nothing outstanding) — see AgentEdits.tsx
+  agent_edited_at: number; // ms epoch of the most recent agent edit the user hasn't reviewed yet (0 = nothing outstanding), see AgentEdits.tsx
+  base_rewritten_at: number; // ms epoch of an unaddressed base-branch rewrite reported by the task that rewrote it (0 = nothing outstanding), see format.ts isBaseRewritten
   context_tokens: number; // current context-window occupancy: the latest main-session request's input-side tokens
-  context_pct: number; // context_tokens as a percent (0–100) of the model's window
+  context_window: number; // the window those tokens sit in; 0 = unknown, which a local-model override always is (see lib/store.ts taskContextWindow)
+  context_pct: number; // context_tokens as a percent (0–100) of the model's window; 0 when the window is unknown
   context_estimated: boolean; // true when context_tokens is derived from a usage report, not reported by the agent (see lib/store.ts getTaskContext)
-  snoozed_until: number; // when a snooze ends (ms epoch; 0 = never snoozed / indicator cleared) — see ./snooze.ts
-  unread_run_at: number; // an unattended run finished cleanly and nobody has acknowledged it (ms epoch; 0 = nothing outstanding) — see isUnreadRun in ./format.ts
-  start_at: number; // queued to start/resume on its own at this instant (ms epoch; 0 = not queued) — see ./queuedStart.ts
-  base_branch: string; // the branch this task is based on ("" = inherit the project's default) — see lib/baseBranch.ts
-  work_branch?: string; // the worktree's branch — board footer only; present once a worktree exists
+  snoozed_until: number; // when a snooze ends (ms epoch; 0 = never snoozed / indicator cleared), see ./snooze.ts
+  unread_run_at: number; // an unattended run finished cleanly and nobody has acknowledged it (ms epoch; 0 = nothing outstanding), see isUnreadRun in ./format.ts
+  start_at: number; // queued to start/resume on its own at this instant (ms epoch; 0 = not queued), see ./queuedStart.ts
+  base_branch: string; // the branch this task is based on ("" = inherit the project's default), see lib/baseBranch.ts
+  work_branch?: string; // the worktree's branch, board footer only; present once a worktree exists
   diff_add?: number; // uncommitted+committed additions vs. base, running tasks only (see /api/projects/[id])
   diff_del?: number; // same, deletions
 }
 // ---------- agent edits on an already-accepted task (AgentEdits.tsx) ----------
 // Mirrors lib/types.ts's server-side shapes for GET/POST /api/tasks/[id]/agent-edits.
 
-/** The task field an agent tool changed — `update_task`'s, plus the base branch
- *  `set_base_branch` retargets (whose Revert re-runs the retarget, not a write). */
-export type AgentEditField = "title" | "description" | "priority" | "status" | "tags" | "blocked_by" | "base_branch";
+/** The task field an agent tool changed: `update_task`'s, plus the base branch
+ *  `set_base_branch` retargets and the project `move_task` re-parents into
+ *  (whose Reverts re-run the operation, not a column write). */
+export type AgentEditField = "title" | "description" | "priority" | "status" | "tags" | "blocked_by" | "base_branch" | "project";
 
-/** One field's before/after within an edit — `before`/`after` are already the
+/** One field's before/after within an edit: `before`/`after` are already the
  *  readable rendering ("(none)", "3 tasks", a title, a priority); `before_value`
  *  is what a revert writes back and is never sent by the client. */
 export interface AgentEditChange {
@@ -139,7 +166,7 @@ export interface NeedsYouRow {
   waiting_since: number;
   // Which arm of the server's NEEDS_YOU predicate put this row in the list:
   // "input" = a turn parked on a question, "ci" = an open PR whose checks are
-  // failing. They get different sublines — a red PR has no "waiting for" age,
+  // failing. They get different sublines: a red PR has no "waiting for" age,
   // only a PR to name (lib/store.ts listNeedsYou).
   reason: "input" | "ci";
   pr_number: number;
@@ -159,7 +186,7 @@ export interface PaletteTaskRow {
   project_name: string;
   project_color: string;
   project_icon: string;
-  /** The tags it carries — the palette's badges; [] when untagged. */
+  /** The tags it carries, the palette's badges; [] when untagged. */
   tags: { name: string; color: string | null }[];
 }
 // A tag in the ⌘K palette: a jump target of its own ("Tag · Auth migration
@@ -174,12 +201,19 @@ export interface Msg {
   id: string;
   // "queued" is a client-only role: a follow-up the user typed mid-turn that's
   // parked (in pending_messages) until the current turn ends. Not a persisted
-  // message role — it never lands in the `messages` table.
+  // message role: it never lands in the `messages` table.
   role: "user" | "assistant" | "tool" | "system" | "session_break" | "queued";
   content: string;
   generation: number;
   toolId?: string; // tool_use id, for merging the tool_result that arrives later
   ts?: number; // created_at of the persisted row (ms epoch); absent on synthetic ids
+  // Set only on the one client-only row that renders live typing: the bubble
+  // fed by `assistant_delta` while the agent writes. It carries no DB id (the
+  // server never persisted it), it is dropped the moment any real row lands
+  // under it, and a reconnect's snapshot rebuilds the list without it. The
+  // value says whether the text is the reply or the reasoning summary, which
+  // read differently. See useTaskStream's LIVE_MSG_ID.
+  streaming?: "assistant" | "reasoning";
 }
 export interface ProjectSession {
   id: string;
@@ -201,15 +235,15 @@ export interface RecapInfo {
   generating: boolean;
   lastActivity: number;
   // Client-side only: set when the fetch/generate failed, so the landing pane
-  // can offer a retry instead of silently showing nothing.
+  // can offer a retry instead of showing nothing with no explanation.
   error?: string;
 }
 
-// What POST /api/tasks/move did with a selection. Ids rather than rows: the
+// What POST /api/tasks/move did with a selection. Ids, not rows: the
 // trays get refetched either way (the move changes both projects' counts and
 // the moved tasks' neighbours), so what the client needs back is the account.
-// `skipped` is the whole reason the endpoint reports instead of refusing —
-// a started task in the selection is named, not silently left behind.
+// `skipped` is the reason the endpoint reports instead of refusing: a started
+// task in the selection is named, not left behind with no explanation.
 export interface BulkMoveResult {
   moved: string[];
   unchanged: string[];
@@ -218,23 +252,23 @@ export interface BulkMoveResult {
   dropped: { task_id: string; depends_on_id: string }[];
   /** Edges that survived because both ends moved together. */
   kept: { task_id: string; depends_on_id: string }[];
-  /** One per worktree torn down to let a started task move — the part of the
+  /** One per worktree torn down to let a started task move: the part of the
    *  account nobody can get back, so the report names it. */
-  discarded: { id: string; branch: string; dirty: boolean; ahead: number }[];
+  discarded: { id: string; branch: string; dirty: boolean; ahead: number | null }[];
   /** Moved rows that left a tag behind, because the rest of its members stayed. */
   untagged: { id: string; tag_id: string; tag_name: string }[];
-  /** Tags that came along whole — `renamed_from` when the destination had that name. */
+  /** Tags that came along whole; `renamed_from` when the destination had that name. */
   carried: { id: string; name: string; renamed_from: string | null }[];
 }
 
-// What discarding a task's checkout would cost — GET /api/tasks/[id]/move for
+// What discarding a task's checkout would cost. GET /api/tasks/[id]/move for
 // one, GET /api/tasks/move?ids=… for a selection. Mirrors lib/taskMove.ts
 // DiscardPreview.
 export interface DiscardPreview {
   has_worktree: boolean;
   safe: boolean;
   dirty: boolean;
-  ahead: number;
+  ahead: number | null; // null = the base branch has no ref, so nothing was compared
   reason: string | null;
   branch: string;
 }
@@ -251,11 +285,22 @@ export interface SyncStatusResp {
   conflicts?: string[];
   mergeInProgress?: boolean; // a base→work merge is paused in the worktree, awaiting accept/discard in Changes
   unresolved?: string[]; // while paused: files still conflicted (markers or unstaged binaries)
+  baseMissing?: boolean; // the base branch has no ref in the repo; the zeros above mean "couldn't compare"
+  baseRewritten?: boolean; // the base branch's history was rewritten since this task was cut, so a merge here reconciles two copies of the same work
+  rebaseInProgress?: boolean; // a `rebase --onto` the new base tip stopped on a conflict in the worktree, awaiting resolution then accept/discard
+  prState?: string; // tasks.pr_state, so the rebase offer can warn before it makes an open PR's branch non-fast-forward
+  prNumber?: number;
+  projectBranch?: string; // the project default, so the banner can tell whether BaseBranchBanner already covers this base
+  workBranch?: string;
+  baseSha?: string; // the commit the task was cut from or last synced to, and the rebase --onto cut point
+  // The task's own base branch against its remote. Undefined when the repo has
+  // no remote for it or ancestry couldn't be established.
+  baseRemote?: { label?: string; behind?: number; ahead?: number; diverged?: boolean };
 }
 
-// How the project's LOCAL base branch stands against its remote — the thing
-// nothing in the app used to look at, so a PR merged on GitHub left every new
-// task branching off a dead tip while the sync panel said "up to date".
+// How the project's LOCAL base branch stands against its remote: what keeps a
+// new task from branching off a dead tip after a PR merges on GitHub while
+// the sync panel still reads "up to date".
 export interface BaseBranchResp {
   hasRemote: boolean;
   label?: string; // "origin/main"
@@ -265,6 +310,7 @@ export interface BaseBranchResp {
   ahead?: number;
   diverged?: boolean;
   unknown?: boolean; // ancestry couldn't be established (shallow clone)
+  baseMissing?: boolean; // no local ref for the base branch; the counts mean "couldn't compare"
   canFastForward?: boolean;
   remoteTip?: string;
   fetchedAt?: number;
@@ -309,24 +355,61 @@ export type ClaudeVerifyT = {
 export type AgentCapabilitiesT = {
   apiKeyHint: string | null;
   loginStyle: "paste_code" | "device_code";
+  // This agent's login can land without the user pasting anything back, so the
+  // connect card watches authStatus as well as the login session (Antigravity's
+  // OAuth callback page completes the sign-in for the waiting CLI).
+  loginCompletesOutOfBand: boolean;
+  // The one per-agent caveat the card's generic prose can't carry, straight
+  // from the driver's descriptor: Antigravity's container/keyring note.
+  connectHint: string | null;
   // Whether a task on this agent also gets the MCP servers the user configured
   // for its CLI, plus the driver's one-line why. A real difference between the
   // agents when picking one for a task, so the Agents section states it.
   inheritsUserMcpServers: boolean;
   userMcpServersNote: string | null;
+  // The per-driver caveat for mounting the project's hosted LiteLLM-gateway
+  // MCP selection, a separate mount from the two fields above. null = mounts
+  // with no special behavior for this driver.
+  gatewayMcpNote: string | null;
+  providerTypes: ProviderType[];
+  bundledProvider: ProviderType;
+  endpointTransport: string;
+};
+export type AgentEnvironmentStatusT = "connected" | "installed" | "absent";
+export type AgentProviderSummaryT = {
+  id: string;
+  label: string;
+  type: ProviderType;
+  status: "connected" | "reachable" | "unreachable" | "untested";
 };
 export type AgentInfoT = {
   id: string;
   label: string;
   capabilities: AgentCapabilitiesT;
   connected: boolean;
+  status: AgentEnvironmentStatusT;
+  installedVersion: string | null;
+  bundledProvider: ProviderType;
+  providerTypes: ProviderType[];
+  endpointTransport: string;
+  providers: AgentProviderSummaryT[];
   account: { email: string | null; plan: string | null; method: "subscription" | "api_key" } | null;
   authBroken?: AgentAuthBrokenT | null;
+  sandboxBroken?: AgentSandboxBrokenT | null;
+  /** How much of this instance's work for the agent runs on its own login.
+   *  A project's model provider can point the agent at a local, custom or
+   *  gateway endpoint; the login stays valid and its plan stops describing
+   *  this instance's turns. See lib/planScope.ts. */
+  planScope?: PlanScopeT | null;
 };
 // Connected, but its login stopped working mid-flight (see lib/authFailure.ts).
 // `reason` is the provider's own error text; `at` is when it was first seen.
 export type AgentAuthBrokenT = { at: number; reason: string };
-export type AgentsResponseT = { default: string; agents: AgentInfoT[]; utility?: UtilityAgentT };
+// The agent's own sandbox can't be created on this host, so its sandboxed
+// permission modes would fail every command (lib/agents/codex/sandbox.ts).
+// Separate from authBroken because the fix is a host change, not a sign-in.
+export type AgentSandboxBrokenT = { at: number; reason: string };
+export type AgentsResponseT = { default: string; agents: AgentInfoT[]; utility?: UtilityAgentT; local_base_url?: string; local_endpoint?: EndpointStatusT; gateway_base_url?: string | null; gateway_keys_enabled?: boolean; gateway_mcp_enabled?: boolean; gateway?: GatewayHealthT | null };
 // Which agent actually runs the app's project-scoped internal jobs (recaps,
 // context drafts), resolved connected-first on the server (lib/agents/oneshots).
 // `id: null` = nothing connected; `fallback` = the configured agent isn't
@@ -339,73 +422,196 @@ export const SCLS: Record<Status, "r" | "a" | "g" | "h" | "x"> = { not_started: 
 export const SLABEL: Record<Status, string> = { not_started: "Not started", in_progress: "In progress", on_hold: "On hold", done: "Done", cancelled: "Cancelled" };
 export const AWAIT_LABEL = "Needs your input";
 // The other reason a task lands in the needs-you group: its open pull request's
-// checks are failing (./format.ts isPrRed). Deliberately NOT "Needs your input"
-// — nothing asked the user anything; CI did, and the row should say so.
+// checks are failing (./format.ts isPrRed). Not "Needs your input": nothing
+// asked the user anything, CI did, and the row should say so.
 export const CI_LABEL = "CI failing";
-// The derived category a snoozed task is drawn in — one constant so the list
+// The derived category a snoozed task is drawn in: one constant so the list
 // group, the board column and any copy referring to it can't drift apart. NOT
 // a Status: a snooze leaves the status alone, which is what the task goes back
 // to when it wakes (see ./snooze.ts).
 export const SNOOZE_LABEL = "Snoozed";
 // The ran-clean group/column: a scheduled run that finished on its own with
-// nothing to answer. Named for what HAPPENED rather than for a status, because
-// it isn't one — the task is still `in_progress` underneath (see ./format.ts).
+// nothing to answer. Named for what happened, not for a status, because it
+// isn't one: the task is still `in_progress` underneath (see ./format.ts).
 export const RAN_LABEL = "Ran clean";
 export const SSUB: Record<Status, string> = { not_started: "no session yet", in_progress: "session active or paused", on_hold: "paused, pick up later", done: "work complete / merged", cancelled: "abandoned, won't be finished" };
 export const STATUSES: Status[] = ["not_started", "in_progress", "on_hold", "done", "cancelled"];
 export const PLABEL: Record<Priority, string> = { hi: "High", med: "Medium", lo: "Low" };
 
 // ---------- agent capability descriptors (mirrors lib/agents/types.ts) ----------
-// The run controls are no longer hardcoded per agent: each driver ships a
-// capability descriptor (models / reasoning / permission modes it supports, plus
-// feature flags) served by GET /api/agents. The client renders every picker from
+// Run controls are not hardcoded per agent: each driver ships a capability
+// descriptor (models / reasoning / permission modes it supports, plus feature
+// flags) served by GET /api/agents. The client renders every picker from
 // this data, so a task's controls always match the agent it runs under.
 export interface AgentModelOption { value: string; label: string; sub: string; contextWindow: number; group?: string }
-export interface AgentPickerOption { value: string; label: string; sub: string }
+export interface AgentPickerOption { value: string; label: string; sub: string; unattended?: boolean }
 export interface AgentCapabilities {
   models: AgentModelOption[];
   reasoningOptions: AgentPickerOption[];
   permissionModes: AgentPickerOption[];
+  providerTypes: ProviderType[];
+  bundledProvider: ProviderType;
+  endpointTransport: string;
   supportsAsks: boolean;      // can surface interactive ask cards mid-turn
   supportsMcpTools: boolean;  // can mount the Calandria MCP tools
   reportsCostUsd: boolean;    // usage carries a real dollar cost (not just tokens)
-  costIsEstimated: boolean;   // cost is estimated from tokens × API prices — show with ~
+  costIsEstimated: boolean;   // cost is estimated from tokens × API prices, show with ~
   reportsContext?: boolean;   // the stream reports real context occupancy; false = the gauge is a usage-derived estimate (absent on a stale bundle = assume true)
   supportsResume: boolean;    // turns can resume a prior session/thread id
 }
 // How this agent is signed in. "subscription" (a Max/Pro or ChatGPT login) means
 // turns draw on plan quota and cost no marginal money, so a dollar figure is an
-// API-PRICE EQUIVALENT rather than a charge; "api_key" means it really is billed.
+// API-PRICE EQUIVALENT, not a charge; "api_key" means it really is billed.
 // Mirrors lib/agents/connections.ts AgentConnection; null when not connected.
 export interface AgentAccount { email: string | null; plan: string | null; method: "subscription" | "api_key" }
-export interface AgentInfo { id: string; label: string; capabilities: AgentCapabilities; authenticated: boolean; account?: AgentAccount | null; authBroken?: AgentAuthBrokenT | null }
-export interface AgentsBundle { default: string; agents: AgentInfo[]; utility?: UtilityAgentT }
+export interface AgentInfo {
+  id: string;
+  label: string;
+  capabilities: AgentCapabilities;
+  connected: boolean;
+  authenticated: boolean;
+  status: AgentEnvironmentStatusT;
+  installedVersion: string | null;
+  bundledProvider: ProviderType;
+  providerTypes: ProviderType[];
+  endpointTransport: string;
+  providers: AgentProviderSummaryT[];
+  account?: AgentAccount | null;
+  authBroken?: AgentAuthBrokenT | null;
+  sandboxBroken?: AgentSandboxBrokenT | null;
+}
+// `local_base_url` is where the project settings' "Local model" preset points
+// by default: the instance's CALANDRIA_LOCAL_MODEL_BASE_URL, served here so
+// the form writes the instance's answer instead of a guess.
+// `gateway_base_url` is the LiteLLM address (CALANDRIA_LITELLM_BASE_URL), null
+// when none is configured, which is what hides the Gateway preset from the
+// project settings form. `gateway` is what that address answered just now. The
+// KEY is never on this wire; `gateway.has_key` says only whether one is set.
+// `gateway_keys_enabled` is whether CALANDRIA_LITELLM_ADMIN_KEY is set, again
+// not the key, just whether per-task keys (docs/AGENTS.md) are possible
+// at all, which is what shows the max_budget/duration fields in that preset.
+export interface AgentsBundle { default: string; agents: AgentInfo[]; utility?: UtilityAgentT; local_base_url?: string; local_endpoint?: EndpointStatusT; gateway_base_url?: string | null; gateway_keys_enabled?: boolean; gateway_mcp_enabled?: boolean; gateway?: GatewayHealthT | null }
+
+// ---------- local model endpoints ----------
+
+// Mirrors lib/modelEndpoint.ts. An agent's `authenticated` above is its CLI
+// LOGIN and says nothing about a local server: a project on Ollama runs on a
+// login it never uses, and fails with a perfectly good one when Ollama is down.
+// So reachability is its own fact, reported separately.
+export type EndpointApiT = "ollama" | "openai" | "gateway";
+/** The instance-wide default endpoint on GET /api/agents: a count, since
+ *  nothing there needs the ids. */
+export interface EndpointStatusT { base_url: string; reachable: boolean; api: EndpointApiT | null; model_count: number; error: string | null }
+/** One project's endpoint, with the ids: GET /api/projects/[id]/models.
+ *  `model_options` is only present for the gateway branch: the richer
+ *  AgentModelOption[] the picker can grow into (group, price, contextWindow)
+ *  instead of the plain suggestion strings `models` already carries. */
+export interface EndpointModelsT { base_url: string; reachable: boolean; api: EndpointApiT | null; models: string[]; model_options?: AgentModelOption[]; error: string | null }
+
+// Mirrors lib/gatewayHealth.ts. `model_count` and `database` are null when the
+// gateway didn't say. A proxy with no Postgres reports `database: false` and
+// has no keys, budgets or spend to show, which the card states instead of
+// leaving those rows blank. `spend`/`max_budget`/`budget_reset_at`/`key_models`
+// are the budget readout, all null together whenever `database` isn't `true`.
+export interface GatewayHealthT {
+  base_url: string; reachable: boolean; version: string | null; model_count: number | null; database: boolean | null;
+  has_key: boolean; error: string | null;
+  spend: number | null; max_budget: number | null; budget_reset_at: string | null; key_models: string[] | null;
+  gemini_missing_models?: string[] | null;
+}
 export const EMPTY_AGENTS: AgentsBundle = { default: "claude", agents: [] };
 
-// A picker option list. `value: null` is the synthetic inherit head — it
+// ---------- model providers (mirrors lib/providers/*) ----------
+// Settings → Models reads these off GET/POST /api/providers and its per-id
+// routes. Mirrored here rather than imported from lib/providers/* because
+// those modules pull in better-sqlite3 and the agent SDKs; the client only
+// ever needs their shapes.
+export type ProviderStatusT = "connected" | "reachable" | "unreachable" | "untested";
+export interface ProviderConfigT {
+  base_url?: string;
+  billing?: "key" | "subscription";
+  mcp?: boolean;
+  key_timeout_ms?: number;
+  api?: "anthropic" | "openai";
+  default_model?: string;
+}
+export interface ModelPolicyT { mode: "allow" | "deny"; ids: string[]; known: string[]; unavailable: string[] }
+export interface ProviderTestResultT {
+  reachable?: boolean; api?: string | null; version?: string | null; latency_ms?: number; error?: string | null;
+  [key: string]: unknown;
+}
+export interface ModelProviderT {
+  id: string;
+  type: ProviderType;
+  label: string;
+  config: ProviderConfigT;
+  model_policy: ModelPolicyT;
+  created_at: number;
+  updated_at: number;
+  last_test_at: number | null;
+  last_test: ProviderTestResultT | null;
+  /** The environment whose login owns this row, or null for a user-added one. */
+  bundled: string | null;
+  /** The environments this row serves, decided by its type. */
+  environments: string[];
+  has_key?: boolean;
+  has_admin_key?: boolean;
+}
+export interface PresentedProviderT extends ModelProviderT { status: ProviderStatusT; model_count: number }
+export interface ProviderProbeModelT {
+  id: string; context_window: number | null; family: string | null; version: string | null;
+  duplicate_of: string | null; chat: boolean;
+}
+export interface ProviderProbeResultT extends ProviderTestResultT {
+  reachable: boolean; api: string | null; version: string | null; latency_ms: number; error: string | null;
+  key: { spend: number | null; max_budget: number | null };
+  models: ProviderProbeModelT[];
+}
+export interface FlatProviderModelT {
+  id: string; ctx: number; family: string; version: string; on: boolean; duplicate_of: string | null; chat: boolean;
+}
+export interface ProviderModelsResponseT { mode: "allow" | "deny"; refreshed_at: number; models: FlatProviderModelT[] }
+export interface ProviderUsageT {
+  projects: { id: string; name: string }[];
+  tasks: { id: string; project_id: string; title: string }[];
+  schedules: { id: string; project_id: string; name: string }[];
+  runbooks: { id: string; project_id: string; name: string }[];
+}
+/** A local server GET /api/providers/detect found with no row yet. */
+export interface DetectedProviderT { type: ProviderType; base_url: string; model_count: number }
+
+// A picker option list. `value: null` is the synthetic inherit head: it
 // persists as null in tasks.model/reasoning/permission_mode, inheriting the
 // app-level (agent-scoped) default, then the driver's built-in.
 export type PickerOption = { value: string | null; label: string; sub: string; group?: string };
-// The head is deliberately NOT called "Default": the labels below it are
-// provider-native (Anthropic's own `--permission-mode` strings), and one of
-// those modes is literally spelled "default", so a capital-D head read as a
-// duplicate of it and made picking the wrong one easy. "Inherit" is the one
-// word every picker built from withInherit() uses for "no choice of my own",
-// and anywhere the resolved value is rendered as a label (the session rail's
+
+export const codexSandboxOptions = (sub = "Use the app-level default", inheritLabel = "Inherit default"): PickerOption[] => [
+  { value: null, label: inheritLabel, sub },
+  { value: "read-only", label: "Read-only", sub: "File reads; no sandboxed writes or network access" },
+  { value: "workspace-write", label: "Workspace write", sub: "Worktree, commit paths, and temporary files; network allowed" },
+  { value: "danger-full-access", label: "Full access", sub: "No Codex filesystem or network isolation" },
+];
+// The head is NOT called "Default": the labels below it are provider-native
+// (Anthropic's own `--permission-mode` strings), and one of those modes is
+// literally spelled "default", so a capital-D head would read as a duplicate
+// of it and make picking the wrong one easy. "Inherit" is the one word every
+// picker built from withInherit() uses for "no choice of my own", and
+// anywhere the resolved value is rendered as a label (the session rail's
 // model/reasoning chips) must show the same word.
 export const INHERIT_LABEL = "Inherit";
 const INHERIT_HEAD: PickerOption = { value: null, label: INHERIT_LABEL, sub: "use the app-level default" };
-// `sub` overrides what the head claims to inherit — Settings → Run defaults IS
+// `sub` overrides what the head claims to inherit: Settings → Run defaults IS
 // the app-level default, so there the head hands the choice to the driver.
 const withInherit = (opts: PickerOption[], sub?: string): PickerOption[] =>
   [sub ? { ...INHERIT_HEAD, sub } : INHERIT_HEAD, ...opts];
 // Build each picker's option list from a driver's capabilities. Undefined caps
-// (agent metadata not loaded yet) yields just the inherit head.
-export const modelOptions = (caps?: AgentCapabilities, sub?: string): PickerOption[] => withInherit(caps?.models ?? [], sub);
+// (agent metadata not loaded yet) yields just the inherit head. Model
+// selection moved to the provider tree (ModelPicker.tsx, GET /api/models);
+// `caps.models` itself survives only as modelLabel()'s display fallback.
 export const reasoningOptions = (caps?: AgentCapabilities, sub?: string): PickerOption[] => withInherit(caps?.reasoningOptions ?? [], sub);
 export const permissionOptions = (caps?: AgentCapabilities, sub?: string): PickerOption[] => withInherit(caps?.permissionModes ?? [], sub);
 
-// Lightweight filter box for the project & task lists — only worth showing once a
+// Lightweight filter box for the project & task lists, only worth showing once a
 // list grows past SEARCH_MIN, so small workspaces stay clutter-free.
 export const SEARCH_MIN = 6;
 
@@ -416,7 +622,7 @@ export type TaskView = "list" | "board";
 // What a save from the Edit-task dialog does BEYOND writing the fields:
 // "add" also accepts a suggestion out of the tray, "start" does that and
 // launches the first session. Both ride along on the one PATCH the save
-// already sends — see saveTask in useShell.ts.
+// already sends. See saveTask in useShell.ts.
 export type SaveAction = "add" | "start";
 
 // Which surface fills the work area (the right two columns). "workspace" is the
@@ -426,7 +632,7 @@ export type SaveAction = "add" | "start";
 // consistent with how project/task selection is persisted.
 export type View = "workspace" | "settings" | "insights";
 // Purely cosmetic, client-only look-and-feel prefs (the "Appearance" panel).
-// `wide` is a string ("0"/"1") rather than a boolean so every field goes through
+// `wide` is a string ("0"/"1"), not a boolean, so every field goes through
 // the same `setAppearance(key, value: string)` setter that palette/mode/density use.
 //
 // `palette` picks one of the four design-system themes (docs/design/handoff/styles.css);
@@ -438,7 +644,7 @@ export type Palette = "cherenkov" | "heavywater" | "denoche" | "basic";
 export type ThemeMode = "system" | "light" | "dark";
 
 // User-selectable code/terminal font (Settings → Appearance, full picker lands in
-// a later wave — see AppearancePanel.tsx). Default: JetBrains Mono.
+// a later wave, see AppearancePanel.tsx). Default: JetBrains Mono.
 export type MonoFontId = "jetbrains-mono" | "fira-code" | "cascadia-code" | "red-hat-mono" | "atkinson-mono";
 // User-selectable prompt-input font. Default: Source Sans 3.
 export type PromptFontId = "source-sans" | "literata" | "spectral" | "atkinson-next";
@@ -464,7 +670,7 @@ export const DEFAULT_APPEARANCE: Appearance = {
 // points at the next/font CSS variable (app/fonts.ts) plus a generic fallback,
 // so it's usable directly in globals.css tokens; xterm needs a literal family
 // name instead of a var(), so Terminal.tsx resolves these via getComputedStyle
-// at mount rather than reading cssFamily verbatim.
+// at mount instead of reading cssFamily verbatim.
 export const MONO_FONTS: Record<MonoFontId, { label: string; cssFamily: string }> = {
   "jetbrains-mono": { label: "JetBrains Mono", cssFamily: "var(--nf-jetbrains-mono), ui-monospace, monospace" },
   "fira-code": { label: "Fira Code", cssFamily: "var(--nf-fira-code), ui-monospace, monospace" },
@@ -490,14 +696,18 @@ export const TEXT_WIDTH = { reading: "760px", full: "none" };
 // settings are a one-line addition here + a field in SettingsView.
 export interface Settings {
   // The app nudges you to /clear when a session's context window crosses EITHER
-  // of these — a percentage of the window, or an absolute token count. The paired
+  // of these: a percentage of the window, or an absolute token count. The paired
   // "Recommend /clear when context is high" feature reads these.
   clearThresholdPct: number;    // 0–100, % of the context window
   clearThresholdTokens: number; // absolute token count
+  // Settings -> Diagnostics: reload the installed iOS app when it comes back
+  // after at least this many minutes in the background. 0 is off (the
+  // default); lifecycle.ts has the decision and why it is per device.
+  resumeReloadMinutes: number;
 }
-export const DEFAULT_SETTINGS: Settings = { clearThresholdPct: 75, clearThresholdTokens: 150_000 };
+export const DEFAULT_SETTINGS: Settings = { clearThresholdPct: 75, clearThresholdTokens: 150_000, resumeReloadMinutes: 0 };
 
-// Persisted sidebar layout — column widths and collapsed (hidden) state, so the
+// Persisted sidebar layout: column widths and collapsed (hidden) state, so the
 // user can carve out more room for the chat and have it stick across reloads.
 export interface Layout { projW: number; taskW: number; railW: number; projCollapsed: boolean; taskCollapsed: boolean; railCollapsed: boolean; }
 export const DEFAULT_LAYOUT: Layout = { projW: 236, taskW: 352, railW: 430, projCollapsed: false, taskCollapsed: false, railCollapsed: false };
@@ -506,26 +716,23 @@ export const TASK_W = { min: 240, max: 620 };
 export const RAIL_W = { min: 320, max: 760 };
 // The floor under the transcript column when the rail is open. `railW` is a
 // FIXED grid track and the three columns beside it are fixed too, so on a pane
-// narrower than 236 + 352 + railW the transcript is what absorbs the shortfall —
-// all the way to zero. At a 1024px-wide window and the default rail that left it
-// ~4px: every message still in the DOM and in the accessibility tree, laid out
-// at width 0, which is *invisible* to a user and to Playwright alike (a zero-area
-// box fails `toBeVisible`). Hence a render-time clamp, not a state clamp: the
-// user's chosen `railW` is kept and re-applied the moment the window has room
-// for it again. Half the pane is the second half of the rule, for panes too
-// narrow for even this floor — the shell can be resized down to 720px wide.
+// narrower than 236 + 352 + railW the transcript absorbs the shortfall, all
+// the way to zero. A message laid out at width 0 is invisible to a user and to
+// Playwright alike (a zero-area box fails `toBeVisible`). Hence a render-time
+// clamp, not a state clamp: the user's chosen `railW` is kept and re-applied
+// the moment the window has room for it again. Half the pane is the second
+// half of the rule, for panes too narrow for even this floor: the shell can be
+// resized down to 720px wide.
 export const SESS_MAIN_MIN = 360;
 
-// The widths at which the shell sheds a SIDE column rather than the transcript.
+// The widths at which the shell sheds a SIDE column instead of the transcript.
 //
-// The three tracks beside the transcript are all fixed — projects 236 + tasks
-// 352 + rail 430 = 1018 at the defaults — and only the transcript flexes, so
+// The three tracks beside the transcript are all fixed: projects 236 + tasks
+// 352 + rail 430 = 1018 at the defaults, and only the transcript flexes, so
 // every pixel a window is short of that comes out of the one pane the user is
-// actually reading: 262px of transcript at a 1280px window, 6px at 1024. Below
-// 760px the phone layout takes over and the question disappears; between those
-// two there was no adaptation at all.
+// actually reading. Below 760px the phone layout takes over.
 //
-// So below each width here the shell hands that column its 30px spine instead,
+// Below each width here the shell hands that column its 30px spine instead,
 // cheapest loss first: projects (a short list, and the spine restores it in one
 // click), then tasks, then the diff rail. Each threshold is the point where the
 // transcript would otherwise drop under SESS_MAIN_TARGET on the tier above it,
@@ -535,8 +742,8 @@ export const SESS_MAIN_MIN = 360;
 //   1200 ≈  30 + 352 + 430 + 400   → below it, tasks    → spine
 //    880 ≈  30 +  30 + 430 + 400   → below it, the rail → spine
 //
-// which leaves the transcript 382px at 1400, 388px at 1200, 390px at 880 and
-// 534px at 1024 — a flat floor across the range instead of a cliff.
+// which keeps the transcript at least 382px wide across the range instead of a
+// cliff.
 //
 // Applied at RENDER, never written into Layout (same reason the rail's own
 // clamp is): a window the user narrows and re-widens gives their own columns
@@ -573,13 +780,19 @@ export interface ScheduleRow {
   enabled: number;
   agent: string;
   permission_mode: string | null;
+  /** '' = weekly (days_mask + time_of_day); 'YYYY-MM-DD' = fires once then spends itself. */
+  once_date: string;
   next_fire_at: number;
-  /** The runbook this schedule fires, if any — it supplies the prompt and config. */
+  /** The runbook this schedule fires, if any: it supplies the prompt and config. */
   runbook_id: string | null;
+  /** The model provider a firing carries into the task it mints; null = the project's default. */
+  provider_id: string | null;
+  /** The model that task starts on; null = the project's default. */
+  model: string | null;
   last_run: ScheduleRunRow | null;
   runs: ScheduleRunRow[];
-  // The row still `claimed`/`running` for this schedule, if any — served
-  // explicitly rather than left for the client to find inside `runs`, which is
+  // The row still `claimed`/`running` for this schedule, if any, served
+  // explicitly instead of left for the client to find inside `runs`, which is
   // a 5-row history window a long-wedged run can fall out of entirely.
   active_run: ScheduleRunRow | null;
 }
@@ -615,11 +828,15 @@ export interface RunbookRow {
   priority: Priority;
   /** '' = the user wrote it; otherwise the agent id that filed it. */
   created_by: string;
-  /** The most recent task this dispatched — null until it has run once. */
+  /** The model provider a dispatch carries into the task it mints; null = the project's default. */
+  provider_id: string | null;
+  /** The model that task starts on; null = the project's default. */
+  model: string | null;
+  /** The most recent task this dispatched; null until it has run once. */
   last_run: { id: string; title: string; status: string; created_at: number } | null;
   /**
    * The schedules that fire this runbook, by name. Editing it changes what they
-   * run, unattended, so the card says so rather than leaving it implicit.
+   * run, unattended, so the card says so instead of leaving it implicit.
    */
   used_by: { id: string; name: string }[];
 }

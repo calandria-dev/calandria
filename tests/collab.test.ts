@@ -6,6 +6,7 @@ import { blobSha, resolveWorktreeFile } from "../lib/worktreeFile";
 import { describeToolUse } from "../lib/agents/shared";
 import { createProject, createTask, updateTask } from "../lib/store";
 import { GET as fileRoute } from "../app/api/tasks/[id]/file/route";
+import { GET as rawRoute } from "../app/api/tasks/[id]/file/raw/route";
 import { git, makeRepo, tmpDir, writeFile } from "./helpers";
 
 const DOC = [
@@ -114,7 +115,7 @@ describe("buildCollabPacket", () => {
     // The file on disk IS the edited text, so comments locate against the current file.
     expect(p).toContain("Line numbers refer to the current file.");
     expect(p).not.toContain("Apply this patch");
-    // Omitted mode is the patch contract — nothing that previously called the builder changes behavior.
+    // Omitted mode is the patch contract, so existing callers of the builder see no behavior change.
     expect(buildCollabPacket({ file: "a.md", original: DOC, edited, comments: [], general: "" })).toContain("Apply this patch");
   });
 
@@ -135,7 +136,7 @@ describe("resolveWorktreeFile", () => {
     fs.writeFileSync(path.join(outside, "secret.md"), "nope\n");
     // A FILE symlink needs Developer Mode or elevation on Windows (a junction
     // only stands in for a directory one), so its absence there is a fixture
-    // limitation, not a result — the link assertion below is conditioned on it.
+    // limitation, not a result. The link assertion below is conditioned on it.
     let linked = true;
     try {
       fs.symlinkSync(path.join(outside, "secret.md"), path.join(wt, "docs", "link.md"));
@@ -153,8 +154,8 @@ describe("resolveWorktreeFile", () => {
   });
 });
 
-// The transcript's Collaborate button is keyed on the path the agent WROTE,
-// not on git status — that's what lets a gitignored doc open. The tool
+// The transcript's Collaborate button is keyed on the path the agent wrote,
+// not on git status, which is what lets a gitignored doc open. The tool
 // normalizer names the file, the runner stores it worktree-relative (or not
 // at all), and the file route serves anything inside the worktree, ignored
 // or not, while still refusing everything outside it.
@@ -173,14 +174,12 @@ describe("worktreeRelative", () => {
     expect(worktreeRelative("/wt/a", "")).toBeNull();
   });
 
-  // Regression, found by the windows-latest CI lane: "absolute" was `/...` and
-  // nothing else, so a drive-letter path fell into the relative branch. Both
-  // halves were wrong — a file plainly inside the worktree 404'd because
-  // `C:/wt/a/docs/x.md` was looked up as directories named `C:`, `wt`, ...
-  // BELOW the worktree, and a path outside it was never refused, it just missed.
-  // Asserted on every platform, not skipped off win32: the function is pure
-  // string work and takes its dialect from the shape of the paths, so a Windows
-  // spelling means the same thing wherever the test runs.
+  // A drive-letter path must be read as absolute, not fall into the relative
+  // branch: a file plainly inside the worktree must not 404, and a path
+  // outside it must be refused, not merely missed. Asserted on every
+  // platform, not skipped off win32: the function is pure string work and
+  // takes its dialect from the shape of the paths, so a Windows spelling
+  // means the same thing wherever the test runs.
   it("reads a Windows absolute path as absolute", () => {
     expect(worktreeRelative("C:\\wt\\a", "C:\\wt\\a\\docs\\x.md")).toBe("docs/x.md");
     expect(worktreeRelative("C:\\wt\\a", "C:/wt/a/docs/x.md")).toBe("docs/x.md"); // git's spelling
@@ -245,15 +244,15 @@ describe("GET /api/tasks/[id]/file", () => {
 });
 
 describe("blobSha", () => {
-  // The document comment anchor is this value, computed in-process rather
-  // than shelling out to `git hash-object` on every file read — pinned here
-  // against the real thing so it can never quietly drift from what git itself
-  // would compute for the same bytes.
+  // The document comment anchor is this value, computed in-process instead of
+  // shelling out to `git hash-object` on every file read. Pinned here against
+  // the real thing so it can never drift from what git itself would compute
+  // for the same bytes.
   it("matches `git hash-object` for a UTF-8 file with a non-ASCII character", async () => {
     const dir = tmpDir("blobsha-");
     await git(dir, "init", "-b", "main");
     const abs = path.join(dir, "notes.md");
-    fs.writeFileSync(abs, "café — naïve\n", "utf8");
+    fs.writeFileSync(abs, "café, naïve\n", "utf8");
     const expected = (await git(dir, "hash-object", abs)).trim();
     expect(blobSha(fs.readFileSync(abs))).toBe(expected);
   });
@@ -266,5 +265,55 @@ describe("blobSha", () => {
     const expected = (await git(dir, "hash-object", abs)).trim();
     expect(expected).toBe("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391");
     expect(blobSha(fs.readFileSync(abs))).toBe(expected);
+  });
+});
+
+describe("GET /api/tasks/[id]/file/raw", () => {
+  const params = (id: string) => ({ params: Promise.resolve({ id }) });
+  const get = (id: string, p: string) => rawRoute(new Request(`http://x/api/tasks/${id}/file/raw?path=${encodeURIComponent(p)}`), params(id));
+
+  it("serves worktree bytes with a browser-safe type and the same path guard as the file route", async () => {
+    const wt = await makeRepo();
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 1, 2, 3]);
+    fs.mkdirSync(path.join(wt, "shots"), { recursive: true });
+    fs.writeFileSync(path.join(wt, "shots", "a.png"), png);
+    writeFile(wt, "docs/page.html", "<script>alert(1)</script>\n");
+    fs.writeFileSync(path.join(wt, "blob.bin"), Buffer.from([0, 1, 2]));
+
+    const outside = tmpDir("outside-");
+    fs.writeFileSync(path.join(outside, "secret.png"), "nope\n");
+
+    const project = createProject({ name: "RawRoute" });
+    const task = createTask({ project_id: project.id, title: "T" });
+
+    // No worktree yet: nothing to serve.
+    expect((await get(task.id, "shots/a.png")).status).toBe(409);
+    updateTask(task.id, { worktree_path: wt });
+
+    const image = await get(task.id, "shots/a.png");
+    expect(image.status).toBe(200);
+    expect(image.headers.get("content-type")).toBe("image/png");
+    expect(image.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(image.headers.get("cache-control")).toBe("private, no-store");
+    expect(image.headers.get("content-disposition")).toBeNull();
+    expect(Buffer.from(await image.arrayBuffer()).equals(png)).toBe(true);
+
+    // Markup in the checkout is previewed as text, never run on this origin.
+    const html = await get(task.id, "docs/page.html");
+    expect(html.status).toBe(200);
+    expect(html.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(await html.text()).toContain("<script>");
+
+    // An unknown type is an opaque download.
+    const bin = await get(task.id, "blob.bin");
+    expect(bin.status).toBe(200);
+    expect(bin.headers.get("content-type")).toBe("application/octet-stream");
+    expect(bin.headers.get("content-disposition")).toBe('attachment; filename="blob.bin"');
+
+    expect((await get(task.id, path.join(outside, "secret.png"))).status).toBe(400);
+    expect((await get(task.id, "../" + path.basename(outside) + "/secret.png")).status).toBe(400);
+    expect((await get(task.id, "shots/missing.png")).status).toBe(404);
+    expect((await get(task.id, "shots")).status).toBe(400);
+    expect((await get("nope", "shots/a.png")).status).toBe(404);
   });
 });

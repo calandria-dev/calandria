@@ -7,12 +7,13 @@ import { fmtTokens } from "./format";
 import { clientFeatures } from "@/lib/features";
 import type { ServiceInfo } from "@/lib/types";
 import type { ProjectRow, TaskRow } from "./types";
+import { apiFetch } from "./api";
 
 type Tab = "diff" | "preview" | "context";
 type Session = { n: number; summaryBefore: string | null };
 
 // The live URL a project's dev server is reachable at when no registered
-// service reports one — local dev hits the project's stable port directly.
+// service reports one: local dev hits the project's stable port directly.
 function fallbackUrl(project: ProjectRow): string | null {
   return project.port ? `http://localhost:${project.port}` : null;
 }
@@ -24,7 +25,7 @@ function useLiveUrl(project: ProjectRow): string | null {
   useEffect(() => {
     let dead = false;
     setUrl(null);
-    fetch(`/api/projects/${project.id}/services`)
+    apiFetch(`/api/projects/${project.id}/services`)
       .then((r) => (r.ok ? r.json() : null))
       .then((j: { services?: ServiceInfo[] } | null) => {
         if (dead || !j?.services) return;
@@ -65,31 +66,41 @@ function PreviewPane({ project }: { project: ProjectRow }) {
         {url ? <a className="btn btn-line" href={url} target="_blank" rel="noopener noreferrer">{Icon.external()} Open live</a> : <button className="btn btn-line" disabled>{Icon.external()} Open live</button>}
         <button className="btn btn-line" onClick={copy} disabled={!url}>{copied ? Icon.check() : Icon.copy()} {copied ? "Copied" : "Copy link"}</button>
       </div>
-      <div className="prev-note">Every project gets a real URL the moment it runs. Open it on your phone, send it to a teammate, no deploy step.</div>
+      <div className="prev-note">Every running project gets a real URL you can open on your phone or share with a teammate. No deploy step.</div>
     </div>
   );
 }
 
 function ContextPane({ task, sessions, running, onClear, reportsContext }: { task: TaskRow; sessions: Session[]; running: boolean; onClear: () => void; reportsContext: boolean }) {
   const pct = Math.min(100, Math.max(0, Math.round(task.context_pct)));
-  // An estimated figure is the last usage report's input side — which sums
-  // every request of a tool-heavy turn, so it over-reads. Say so rather than
-  // present spend as occupancy; the reason depends on whether this agent CAN
-  // measure (a Claude task from before measurement existed heals on its next
-  // turn; a Codex task never will).
+  // An estimated figure is the last usage report's input side, which sums every
+  // request of a tool-heavy turn, so it over-reads. The label says so instead of
+  // presenting spend as occupancy. A Claude task from before measurement existed
+  // heals on its next turn; a Codex task never will.
   const estimated = task.context_estimated && task.context_tokens > 0;
-  const note = estimated
-    ? reportsContext
-      ? "Estimated from the last turn's usage report. Measured occupancy arrives with the next turn."
-      : "Estimated from the last turn's usage report: this agent reports the turn's totals, not the window's contents, so a tool-heavy turn over-reads."
-    : "Tokens in the window as of the latest model request, as reported by the agent.";
+  // A provider override (lib/store.ts taskContextWindow) means there is no window
+  // to be a percentage of: the catalog sizes the vendor's models, and this task is
+  // running someone else's, so the count is reported bare instead of as a
+  // fraction of an invented number.
+  const unknownWindow = !(task.context_window > 0);
+  const note = unknownWindow
+    ? "Calandria can't size this model: a local or custom endpoint doesn't publish its context window. The token count shown is real; a percentage wouldn't be."
+    : estimated
+      ? reportsContext
+        ? "Estimated from the last turn's usage report. Measured occupancy arrives with the next turn."
+        : "Estimated from the last turn's usage report: this agent reports the turn's totals, not the window's contents, so a tool-heavy turn over-reads."
+      : "Tokens in the window as of the latest model request, as reported by the agent.";
   return (
     <div className="rail-pad">
       <div className="ctxw-head">
         <span className="rail-eyebrow">CONTEXT WINDOW</span>
-        <span className="ctxw-pct" title={note}>{estimated ? "≈ " : ""}{pct}% used{task.context_tokens > 0 ? ` · ${fmtTokens(task.context_tokens)} tok` : ""}</span>
+        <span className="ctxw-pct" title={note}>
+          {unknownWindow
+            ? `window unknown${task.context_tokens > 0 ? ` · ${fmtTokens(task.context_tokens)} tok used` : ""}`
+            : `${estimated ? "≈ " : ""}${pct}% used${task.context_tokens > 0 ? ` · ${fmtTokens(task.context_tokens)} tok` : ""}`}
+        </span>
       </div>
-      <div className="ctxw-meter"><div className="ctxw-fill" style={{ width: `${pct}%` }} /></div>
+      <div className="ctxw-meter"><div className="ctxw-fill" style={{ width: `${unknownWindow ? 0 : pct}%` }} /></div>
 
       <div className="ctxw-timeline">
         {sessions.map((s, i) => {
@@ -100,8 +111,8 @@ function ContextPane({ task, sessions, running, onClear, reportsContext }: { tas
               <div className="ctxw-name">Window {s.n} · {current ? "current" : "summarized"}</div>
               <div className="ctxw-desc">
                 {current
-                  ? "Carried the summary forward and resumed. The mission recorder hands off the thread."
-                  : "Condensed to a summary. Task lineage is preserved across the clear."}
+                  ? "Carried the prior summary forward and resumed here."
+                  : "Condensed to a summary when this window closed."}
               </div>
             </div>
           );
@@ -120,18 +131,18 @@ export function SessionRail({ project, task, sessions, running, reportsContext =
   onResolveWithAI: (taskId: string) => Promise<ResolveResult>;
   onMerged?: () => void;
   onPrCreated?: (url: string) => void;
-  onSyncChanged?: () => void; // Changes mutated the merge state — see TaskChanges
+  onSyncChanged?: () => void; // Changes mutated the merge state, see TaskChanges
   // Bumped by the parent to bring the DIFF tab forward (the sync banner's
   // "Review" for a resolved merge): the tab is this rail's own state, so a
   // counter is the only way in from outside without lifting it.
   focusDiff?: number;
   refreshChanges?: number; // bumped when something outside this rail (the sync banner) changed the merge state
   onClear: () => void; onCollapse: () => void; onSwitchToChat: () => void;
-  onSend: (t: string) => void; // review comments' "Send to agent" — same path chat uses
+  onSend: (t: string) => void; // review comments' "Send to agent", same path chat uses
 }) {
   // PREVIEW (project live-URL view) rides on the remote-execution backend, which
-  // isn't real yet — keep it behind a flag (default off) so it ships only once
-  // the live URL actually works. See lib/features.ts.
+  // isn't real yet, so it stays behind a flag (default off) until the live URL
+  // works. See lib/features.ts.
   const showPreview = clientFeatures().livePreview;
   const [tab, setTab] = useState<Tab>("diff");
   useEffect(() => { if (focusDiff) setTab("diff"); }, [focusDiff]);
@@ -149,7 +160,7 @@ export function SessionRail({ project, task, sessions, running, reportsContext =
       </div>
       <div className="rail-scroll">
         {tab === "diff" && (
-          <TaskChanges taskId={task.id} projectId={project.id} running={running} pr={task} landingMode={project.landing_mode} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} refresh={refreshChanges} onSend={onSend} onResolveWithAI={async (id) => {
+          <TaskChanges taskId={task.id} taskTitle={task.title} projectId={project.id} running={running} pr={task} landingMode={project.landing_mode} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} refresh={refreshChanges} onSend={onSend} onResolveWithAI={async (id) => {
             const res = await onResolveWithAI(id);
             if (res.resolving) onSwitchToChat();
             return res;

@@ -1,19 +1,36 @@
 "use client";
 
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
-import type { TaskStreamEvent, ToolData, AskAnswers, PermissionOutcome } from "@/lib/types";
+import type { TaskStreamEvent, ToolData, AskAnswers, AskDismissal, PermissionOutcome } from "@/lib/types";
 import { jget } from "./api";
-import { contextPct } from "./format";
-import { capsFor } from "./agents";
-import type { AgentsBundle, Msg, ProjectRow, TaskRow } from "./types";
+import { contextPct, growOutputPeek } from "./format";
+import { evictTranscripts, touchRecent } from "./transcriptCache";
+import type { Msg, ProjectRow, TaskRow } from "./types";
+
+// The id of the one client-only row that renders live typing. A single reserved
+// id, not one per fragment: only ever one thing is being written at a time, and
+// a fixed id makes the row trivial to find and drop. It can never collide with a
+// persisted message id, which the server mints.
+const LIVE_MSG_ID = "__live__";
+
+// Events that put a new row IN the transcript, and therefore supersede the
+// live bubble: most often the completed `assistant` message carrying the very
+// text that was just typed out. Everything else is left alone: the meters
+// (usage, context) would blink the reply out a beat before its final form
+// arrives, since the Claude driver reports them off the same message the text
+// came in, and the settling events (tool_result, ask_answered,
+// permission_decided) only finish rows that are already on screen.
+const ROW_EVENTS = new Set([
+  "user", "assistant", "tool", "ask", "permission", "permission_denied",
+  "notice", "suggested", "background_resumed", "turn_end",
+]);
 
 // Owns the per-task transcript state (msgsByTask) plus the live SSE consumption:
 // the snapshot-then-tail EventSource and the message mutators that apply each
 // server event. The turn itself runs server-side, detached from any connection.
-export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, setTasks, setProjects, loadTasks }: {
+export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, setProjects, loadTasks }: {
   selTask: string | null;
   selProjRef: MutableRefObject<string | null>;
-  agentsRef: MutableRefObject<AgentsBundle>;
   setTaskRunning: (id: string, on: boolean) => void;
   setTasks: React.Dispatch<React.SetStateAction<TaskRow[]>>;
   setProjects: React.Dispatch<React.SetStateAction<ProjectRow[]>>;
@@ -21,14 +38,39 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
 }) {
   const [msgsByTask, setMsgsByTask] = useState<Record<string, Msg[]>>({});
 
-  // Everything still parked on the user, per task — AskUserQuestion cards and
+  // Everything still parked on the user, per task: AskUserQuestion cards and
   // tool-permission prompts alike. One assistant message can park several at
   // once, and the "Needs your input" flag must stay up until the last one is
-  // settled — mirrors openAsks in lib/runner.ts.
+  // settled. Mirrors openAsks in lib/runner.ts.
   const openAsksRef = useRef<Record<string, Set<string>>>({});
 
   const appendMsg = (taskId: string, m: Msg) =>
     setMsgsByTask((prev) => ({ ...prev, [taskId]: [...(prev[taskId] ?? []), m] }));
+
+  // Grow the live-typing bubble, or start a new one when the agent moves to a
+  // different item (reasoning → reply, one message → the next). `toolId` holds
+  // the driver's id for what is being typed; the row itself always sits last,
+  // which is where the text is being written.
+  const growLive = (taskId: string, id: string, kind: "assistant" | "reasoning", delta: string, generation: number) =>
+    setMsgsByTask((prev) => {
+      const arr = prev[taskId] ?? [];
+      const last = arr[arr.length - 1];
+      if (last && last.id === LIVE_MSG_ID && last.toolId === id) {
+        return { ...prev, [taskId]: [...arr.slice(0, -1), { ...last, content: last.content + delta }] };
+      }
+      const rest = arr.filter((m) => m.id !== LIVE_MSG_ID);
+      return { ...prev, [taskId]: [...rest, { id: LIVE_MSG_ID, role: "assistant" as const, content: delta, generation, toolId: id, streaming: kind }] };
+    });
+
+  // Retire the live bubble. Returning `prev` unchanged when there is nothing to
+  // drop matters: this runs on every event, and an unchanged state object is
+  // one React bails out of re-rendering.
+  const dropLive = (taskId: string) =>
+    setMsgsByTask((prev) => {
+      const arr = prev[taskId];
+      if (!arr?.some((m) => m.id === LIVE_MSG_ID)) return prev;
+      return { ...prev, [taskId]: arr.filter((m) => m.id !== LIVE_MSG_ID) };
+    });
 
   // Mark an AskUserQuestion message (matched by tool id) as answered. Matches on
   // the id embedded in the content too, so it works for reloaded messages whose
@@ -52,8 +94,32 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
       };
     });
 
+  // Mark an AskUserQuestion message dismissed: the question was torn down
+  // before an answer arrived. Same matching as setAnswerOnMsg, and it writes
+  // `dismissed`, not `answers`, so the card reads "not answered" instead of
+  // attributing a choice to the user.
+  const setDismissedOnMsg = (taskId: string, askId: string, dismissal: AskDismissal) =>
+    setMsgsByTask((prev) => {
+      const arr = prev[taskId] ?? [];
+      return {
+        ...prev,
+        [taskId]: arr.map((m) => {
+          if (m.role !== "tool") return m;
+          try {
+            const d = JSON.parse(m.content) as ToolData;
+            if (m.toolId !== askId && d.ask?.id !== askId) return m;
+            if (d.ask?.answers) return m; // an answer already landed; it wins
+            d.ask = { id: d.ask?.id ?? askId, questions: d.ask?.questions ?? [], dismissed: dismissal };
+            return { ...m, content: JSON.stringify(d) };
+          } catch {
+            return m;
+          }
+        }),
+      };
+    });
+
   // Settle a permission card (matched by tool id, or the id embedded in the
-  // content for reloaded messages) — the same shape of update as an answered
+  // content for reloaded messages), the same shape of update as an answered
   // ask, one card at a time.
   const setOutcomeOnMsg = (taskId: string, permId: string, outcome: PermissionOutcome) =>
     setMsgsByTask((prev) => {
@@ -84,7 +150,7 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
         : { ...prev, [taskId]: [...arr, m] };
     });
 
-  // Drop a message by id — used when a queued follow-up is dequeued (about to
+  // Drop a message by id, used when a queued follow-up is dequeued (about to
   // run, or cancelled). If it's about to run, the matching `user` event re-adds
   // it as a committed message.
   const removeMsg = (taskId: string, msgId: string) =>
@@ -116,6 +182,11 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
       return;
     }
     const gen = ("generation" in ev ? ev.generation : undefined) ?? 1;
+    if (ev.type === "assistant_delta") {
+      growLive(taskId, ev.id, ev.kind, ev.delta, gen);
+      return;
+    }
+    if (ROW_EVENTS.has(ev.type)) dropLive(taskId);
     if (ev.type === "user") upsertMsg(taskId, { id: ev.msgId, role: "user", content: ev.content, generation: gen, ts: ev.ts });
     else if (ev.type === "queued") upsertMsg(taskId, { id: ev.msgId, role: "queued", content: ev.content, generation: gen, ts: ev.ts });
     else if (ev.type === "dequeued") removeMsg(taskId, ev.msgId);
@@ -137,6 +208,32 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
           }),
         };
       });
+    } else if (ev.type === "tool_output_delta") {
+      // A running command's output, growing the peek of the row already on
+      // screen. Same lookup as tool_result: DB message id first so a row that
+      // arrived in the snapshot still matches, in-memory tool_use id second.
+      // This reaches INTO a row instead of appending one, and there is
+      // nothing to create if the lookup misses.
+      setMsgsByTask((prev) => {
+        const arr = prev[taskId] ?? [];
+        let hit = false;
+        const next = arr.map((m) => {
+          if (m.role !== "tool" || (m.id !== ev.msgId && m.toolId !== ev.id)) return m;
+          try {
+            const d = JSON.parse(m.content) as ToolData;
+            // The settled result wins: once tool_result has written the whole
+            // output, a straggling fragment must not shrink the peek back to a
+            // six-line tail.
+            if (d.result !== undefined) return m;
+            d.peek = growOutputPeek(d.peek, ev.delta);
+            hit = true;
+            return { ...m, content: JSON.stringify(d) };
+          } catch { return m; }
+        });
+        // Nothing matched: leave the state object alone so React can bail out
+        // of the re-render, the way dropLive does.
+        return hit ? { ...prev, [taskId]: next } : prev;
+      });
     } else if (ev.type === "ask") {
       const data: ToolData = { title: "Question for you", ask: { id: ev.id, questions: ev.questions } };
       upsertMsg(taskId, { id: ev.msgId ?? `ask-${ev.id}`, role: "tool", content: JSON.stringify(data), generation: gen, toolId: ev.id });
@@ -148,6 +245,16 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
     } else if (ev.type === "ask_answered") {
       setAnswerOnMsg(taskId, ev.id, ev.answers);
       // Only drop the flag once every parked ask on this task is answered.
+      const open = openAsksRef.current[taskId];
+      open?.delete(ev.id);
+      if (!open || open.size === 0) {
+        setTasks((prev) => prev.map((x) => (x.id === taskId ? { ...x, awaiting_input: 0 } : x)));
+      }
+    } else if (ev.type === "ask_dismissed") {
+      // The question died unanswered. Same un-parking as an answer, since
+      // nobody is waiting on it any more, but the card must say so instead of
+      // offering options that resolve nothing.
+      setDismissedOnMsg(taskId, ev.id, ev.dismissal);
       const open = openAsksRef.current[taskId];
       open?.delete(ev.id);
       if (!open || open.size === 0) {
@@ -166,9 +273,9 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
         setTasks((prev) => prev.map((x) => (x.id === taskId ? { ...x, awaiting_input: 0 } : x)));
       }
     } else if (ev.type === "permission_denied") {
-      // The CLI refused the call itself — nothing was parked on the user, so
-      // awaiting_input and openAsks stay untouched. Mirrors lib/runner.ts: the
-      // already-settled card goes ONTO the tool message the call created,
+      // The CLI refused the call itself, so nothing was parked on the user,
+      // and awaiting_input and openAsks stay untouched. Mirrors lib/runner.ts:
+      // the already-settled card goes ONTO the tool message the call created,
       // falling back to a card of its own when there is none (a subagent's
       // tool_use blocks never reach this stream).
       const outcome: PermissionOutcome = { decision: "deny", auto: true, reason: "blocked", blockedBy: ev.reasonType, note: ev.reason };
@@ -194,12 +301,12 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
         };
       });
     } else if (ev.type === "context") {
-      // The agent's own report of how full the window is right now — moves
+      // The agent's own report of how full the window is right now. It moves
       // mid-turn, one event per model request whose figure changed. Once a
       // task has one of these it is MEASURED, and the usage-derived estimate
       // below stops touching the gauge.
       setTasks((prev) => prev.map((x) => (x.id === taskId
-        ? { ...x, context_tokens: ev.tokens, context_pct: contextPct(ev.tokens, x.model, capsFor(agentsRef.current, x.agent)), context_estimated: false }
+        ? { ...x, context_tokens: ev.tokens, context_pct: contextPct(ev.tokens, x.context_window), context_estimated: false }
         : x)));
     } else if (ev.type === "usage") {
       // Live cumulative spend: add this turn's totals to the task's figure.
@@ -212,27 +319,31 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
             // fresh-vs-cached split stays right mid-turn, not just after a reload.
             cache_read_tokens: (x.cache_read_tokens ?? 0) + u.cache_read_tokens,
             cache_creation_tokens: (x.cache_creation_tokens ?? 0) + u.cache_creation_tokens,
+            // An unpriced turn adds 0 to the running total (that is what the
+            // wire carries), which is what keeps the chip from reading that 0
+            // as "free" while the turn is still streaming.
+            unpriced_turns: (x.unpriced_turns ?? 0) + (ev.unpriced ? 1 : 0),
             // Only an UNMEASURED task (no `context` event this turn or before:
-            // Codex, or a pre-measurement row — a measured figure is never 0)
-            // derives its gauge from spend — the turn's input side, which
-            // over-reads on tool-heavy turns and is labelled an estimate.
-            // Mirrors the COALESCE in lib/store.ts.
+            // Codex, or a pre-measurement row, since a measured figure is
+            // never 0) derives its gauge from spend: the turn's input side,
+            // which over-reads on tool-heavy turns and is labelled an
+            // estimate. Mirrors the COALESCE in lib/store.ts.
             ...(x.context_estimated || !(x.context_tokens > 0)
-              ? { context_tokens: ctxTokens, context_pct: contextPct(ctxTokens, x.model, capsFor(agentsRef.current, x.agent)), context_estimated: true }
+              ? { context_tokens: ctxTokens, context_pct: contextPct(ctxTokens, x.context_window), context_estimated: true }
               : {}) }
         : x)));
     } else if (ev.type === "notice") upsertMsg(taskId, { id: ev.msgId ?? `n-${Date.now()}`, role: "system", content: ev.content, generation: gen });
     else if (ev.type === "error") upsertMsg(taskId, { id: ev.msgId ?? `e-${Date.now()}`, role: "system", content: ev.content, generation: gen });
     else if (ev.type === "suggested") {
-      // Two things move on one event. The tray gets its refresh, as it always
-      // has — and the transcript settles a suggestion card onto the
-      // suggest_task tool row the server matched this to (`msgId`), so the
-      // proposal is visible where it was made. Only the pair of ids travels:
-      // the card re-reads the task itself, which is what keeps a reloaded
-      // transcript honest about a suggestion that has since been started,
-      // accepted or dismissed. No msgId means there was no call to settle onto
-      // (a driver that reports no tool name, a suggestion filed out of band) —
-      // the tray refresh is then the whole of the behaviour, exactly as before.
+      // Two things move on one event: the tray gets its refresh, and the
+      // transcript settles a suggestion card onto the suggest_task tool row
+      // the server matched this to (`msgId`), so the proposal is visible
+      // where it was made. Only the pair of ids travels: the card re-reads
+      // the task itself, which is what keeps a reloaded transcript honest
+      // about a suggestion that has since been started, accepted or
+      // dismissed. No msgId means there was no call to settle onto (a driver
+      // that reports no tool name, a suggestion filed out of band), so the
+      // tray refresh is the whole of the behaviour.
       if (selProjRef.current) loadTasks(selProjRef.current, false);
       const msgId = ev.msgId;
       if (msgId && ev.taskId) {
@@ -266,10 +377,35 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
   const handleStreamEventRef = useRef(handleStreamEvent);
   useEffect(() => { handleStreamEventRef.current = handleStreamEvent; });
 
+  // msgsByTask is a cache, not a record: only the selected task's array is
+  // ever rendered, and reselecting a task replays its snapshot. Without a
+  // bound, a long-lived phone session held every transcript it had ever
+  // opened, tool results included. Keep the selected task plus the few most
+  // recently left (transcriptCache.ts), and drop everything but the selected
+  // task when the page goes to the background, where the memory matters most.
+  const recentRef = useRef<string[]>([]);
+  const selTaskRef = useRef(selTask);
+  selTaskRef.current = selTask;
+  const evictTo = (keep: string[]) => {
+    recentRef.current = keep;
+    setMsgsByTask((prev) => evictTranscripts(prev, keep));
+    for (const k of Object.keys(openAsksRef.current)) if (!keep.includes(k)) delete openAsksRef.current[k];
+  };
+  useEffect(() => { evictTo(touchRecent(recentRef.current, selTask)); }, [selTask]);
+  useEffect(() => {
+    const onBackground = () => { if (document.visibilityState === "hidden") evictTo(selTaskRef.current ? [selTaskRef.current] : []); };
+    document.addEventListener("visibilitychange", onBackground);
+    window.addEventListener("pagehide", onBackground);
+    return () => {
+      document.removeEventListener("visibilitychange", onBackground);
+      window.removeEventListener("pagehide", onBackground);
+    };
+  }, []);
+
   // One live stream per selected task: the server replays a snapshot of the
   // persisted transcript, then tails live turn events. Opening a task,
   // reloading mid-turn, and waking from laptop sleep all converge on the same
-  // catch-up-then-tail path — EventSource reconnects re-snapshot automatically.
+  // catch-up-then-tail path: EventSource reconnects re-snapshot automatically.
   useEffect(() => {
     if (!selTask) return;
     const id = selTask;
@@ -280,5 +416,5 @@ export function useTaskStream({ selTask, selProjRef, agentsRef, setTaskRunning, 
     return () => es.close();
   }, [selTask]);
 
-  return { msgsByTask, appendMsg, setAnswerOnMsg, setOutcomeOnMsg };
+  return { msgsByTask, appendMsg, setAnswerOnMsg, setDismissedOnMsg, setOutcomeOnMsg };
 }

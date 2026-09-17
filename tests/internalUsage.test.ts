@@ -58,6 +58,48 @@ describe("internal agent usage", () => {
     });
   });
 
+  it("records the model the driver says it RAN, not the one the setting asked for", async () => {
+    // A tier setting can only report what was requested. When it's unset,
+    // the job inherits the driver's own default, and only the driver can
+    // name it.
+    oneShot.mockResolvedValue({ text: "draft", usage: USAGE, model: "claude-opus-5" });
+    setSetting("job_model_heavy:claude", "sonnet");
+    const project = createProject({ name: "Reported" });
+
+    await draftProjectContext(project, "digest");
+
+    expect(getDb().prepare("SELECT * FROM internal_usage").get()).toMatchObject({ model: "claude-opus-5" });
+    setSetting("job_model_heavy:claude", null);
+  });
+
+  it("falls back to the requested model, then to null, when the driver can't report one", async () => {
+    oneShot.mockResolvedValue({ text: "draft" });
+    setSetting("job_model_heavy:claude", "sonnet");
+    const asked = createProject({ name: "Asked" });
+    await draftProjectContext(asked, "digest");
+    expect(getDb().prepare("SELECT model FROM internal_usage WHERE project_id = ?").get(asked.id))
+      .toMatchObject({ model: "sonnet" });
+
+    // When nothing is set and nothing is reported, the row records null
+    // instead of a guessed default.
+    setSetting("job_model_heavy:claude", null);
+    const inherited = createProject({ name: "Inherited" });
+    await draftProjectContext(inherited, "digest");
+    expect(getDb().prepare("SELECT model FROM internal_usage WHERE project_id = ?").get(inherited.id))
+      .toMatchObject({ model: null });
+  });
+
+  it("records the requested model on a failed job, which is all that is known", async () => {
+    oneShot.mockRejectedValue(new Error("boom"));
+    setSetting("job_model_heavy:claude", "sonnet");
+    const project = createProject({ name: "Failed model" });
+
+    await expect(draftProjectContext(project, "digest")).rejects.toThrow("boom");
+
+    expect(getDb().prepare("SELECT * FROM internal_usage").get()).toMatchObject({ ok: 0, model: "sonnet" });
+    setSetting("job_model_heavy:claude", null);
+  });
+
   it("records zero counters when a driver omits usage", async () => {
     oneShot.mockResolvedValue({ text: "draft" });
     const project = createProject({ name: "Unmetered" });
@@ -101,10 +143,26 @@ describe("internal agent usage", () => {
       cost_usd: 0.25,
       total_tokens: 100,
       turns: 1,
+      subagent_tokens: 0,
       internal_cost_usd: 1.5,
       internal_tokens: 10,
       internal_jobs: 1,
     });
+  });
+
+  // InstanceUsage extends UsageTotals, so the rollup must populate this
+  // field. Its query is hand-written instead of sharing sumUsage(), so a new
+  // column can be declared in the type and never selected, returning
+  // undefined at runtime under a signature that says number.
+  it("carries sidechain tokens in the instance rollup, not just the per-task one", () => {
+    const project = createProject({ name: "Sidechains" });
+    const task = createTask({ project_id: project.id, title: "Task", description: "" });
+    addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "claude", usage: { ...USAGE, subagent_tokens: 4_000 } });
+    addUsage({ project_id: project.id, task_id: task.id, generation: 1, agent: "claude", usage: USAGE });
+
+    const rollup = getInstanceUsage();
+    expect(typeof rollup.subagent_tokens).toBe("number");
+    expect(rollup.subagent_tokens).toBe(4_000);
   });
 
   it("groups the settings readout by job and excludes usage older than 30 days", () => {
@@ -120,7 +178,24 @@ describe("internal agent usage", () => {
       job: "summarizeProjectRecap",
       runs: 2,
       cost_usd: 0.2,
+      models: [],
     });
+  });
+
+  it("names the models behind a job's runs, busiest first, without dropping unnamed ones", () => {
+    const insert = getDb().prepare(
+      `INSERT INTO internal_usage (id, job, agent, requested_agent, model, cost_usd, created_at)
+       VALUES (?, 'summarizeProjectRecap', 'claude', 'claude', ?, 0.01, ?)`
+    );
+    insert.run("haiku-1", "claude-haiku-4-5", Date.now());
+    insert.run("haiku-2", "claude-haiku-4-5", Date.now());
+    insert.run("opus-1", "claude-opus-5", Date.now());
+    // A run whose driver couldn't say still counts; it just isn't named.
+    insert.run("unknown-1", null, Date.now());
+
+    const [row] = internalUsageLast30Days();
+    expect(row.runs).toBe(4);
+    expect(row.models).toEqual(["claude-haiku-4-5", "claude-opus-5"]);
   });
 
   it("uses a project's latest context draft, then the instance median", () => {

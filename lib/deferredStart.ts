@@ -1,36 +1,36 @@
-// "Start at the usage-window reset" — the sweep behind tasks.start_at.
+// "Start at the usage-window reset": the sweep behind tasks.start_at.
 //
 // A spent subscription limit (Claude's 5-hour window, the weekly cap) stops
-// every turn on the instance until it resets, and the reset lands at an hour
-// nobody wants to babysit. The user can already see WHEN (the titlebar plan
-// meter, lib/agents/claude/planUsage.ts) and the runner already parks a dead
-// task's queue rather than burning it (lib/usageLimit.ts) — what was missing
-// is the hand-off: "when that passes, go". So a task carries ONE stored
-// deadline, `start_at`, and this module is the ticker that honours it:
+// every turn on the instance until it resets. The user can see when that is
+// (the titlebar plan meter, lib/agents/claude/planUsage.ts) and the runner
+// already parks a dead task's queue instead of burning it
+// (lib/usageLimit.ts); this module is the hand-off that fires the task once
+// the limit clears. A task carries one stored deadline, `start_at`, and this
+// module is the ticker that honors it:
 //
-//   never started  → its first turn launches, exactly as "Start session" or a
+//   never started  -> its first turn launches, exactly as "Start session" or a
 //                    dependency auto-start would (lib/autoStart.ts);
-//   started        → the session resumes with the oldest queued follow-up if
-//                    one is parked, else a generic "continue" — the message
+//   started        -> the session resumes with the oldest queued follow-up if
+//                    one is parked, else a generic "continue" message, the one
 //                    the user would have typed at the reset themselves.
 //
-// The deadline is a plain epoch rather than "the reset" because the reset the
+// The deadline is a plain epoch instead of "the reset" because the reset the
 // user queued against is a fact at click time (the client reads it off the
 // meter, lib/usageReset.ts, and adds a minute of head-room); re-deriving it at
 // fire time from a snapshot that has since healed would find no reset at all.
-// It is consumed by ANY turn launch (lib/runner.ts startTurn), not only this
+// It is consumed by any turn launch (lib/runner.ts startTurn), not only this
 // sweep, so a task the user started by hand in the meantime never fires twice.
 //
-// Unlike snoozing (app/shell/snooze.ts), which is pure derivation and
-// needs no ticker, a launch is a side effect — so this is server-owned periodic
-// work like lib/scheduler.ts, started from the same boot ping and idempotent
-// on globalThis. It is deliberately NOT folded into that ticker: it is not a
-// schedule, and `CALANDRIA_SCHEDULER=off` must not silently disable a button the
-// task hero offers. Boot catch-up is free: a deadline that passed while the
-// server was down is simply due on the first sweep.
+// Unlike snoozing (app/shell/snooze.ts), which is pure derivation and needs no
+// ticker, a launch is a side effect, so this is server-owned periodic work
+// like lib/scheduler.ts, started from the same boot ping and idempotent on
+// globalThis. It stays out of that ticker because it is not a schedule, and
+// `CALANDRIA_SCHEDULER=off` must not disable a button the task hero
+// offers. Boot catch-up is free: a deadline that passed while the server was
+// down is simply due on the first sweep.
 //
 // lib/runner.ts is reached through `await import()` for the reason spelled out
-// in lib/autoStart.ts — this module shares that file's position beside the
+// in lib/autoStart.ts: this module shares that file's position beside the
 // driver's cycle, and is pinned DYNAMIC_ONLY in tests/importGraph.test.ts.
 
 import { SCHEDULE_TICK_MS } from "@/lib/config";
@@ -46,6 +46,7 @@ import {
 import { claimTurn, unregisterTurn, hasTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { publish, publishGlobal } from "@/lib/events";
+import { emitQueuedStart, emitQueuedStartSkipped } from "@/lib/notifications/notify";
 import { AUTO_START_HOOKS, blocks, launchInitialTurn } from "@/lib/autoStart";
 import type { Project, Task } from "@/lib/types";
 
@@ -56,9 +57,12 @@ export const DEFERRED_RESUME_NOTE = "▶ Resumed automatically: queued for the u
 /** What a queued resume sends when nothing was parked in the follow-up queue. */
 export const DEFERRED_RESUME_PROMPT = "The usage limit has reset. Continue where you left off.";
 
-const SKIPPED_LIVE = "ℹ Queued start skipped: a turn was already running.";
-const SKIPPED_BLOCKED = "ℹ Queued start skipped: this task is still blocked by another task.";
-const SKIPPED_NO_REPO = "ℹ Queued start skipped: set this project's working directory first.";
+// Why a due deadline launched nothing, as a bare reason. skipQueued() wraps it
+// into the transcript notice and hands the same sentence to the notification,
+// so the two never drift.
+const SKIPPED_LIVE = "a turn was already running";
+const SKIPPED_BLOCKED = "this task is still blocked by another task";
+const SKIPPED_NO_REPO = "set this project's working directory first";
 
 interface TickerState {
   timer: NodeJS.Timeout | null;
@@ -75,7 +79,7 @@ const state = (): TickerState => (global.__calandriaDeferredStart ??= { timer: n
 
 const isTerminal = (t: Task) => t.status === "done" || t.status === "cancelled";
 
-/** Start the ticker. Idempotent — the boot ping and a lazy call from the task route both reach it. */
+/** Start the ticker. Idempotent: the boot ping and a lazy call from the task route both reach it. */
 export function startDeferredStartTicker(): void {
   const s = state();
   if (s.timer) return;
@@ -107,7 +111,7 @@ export async function sweepDeferredStarts(now: number = Date.now()): Promise<num
       try {
         if (await fire(task)) launched++;
       } catch (err) {
-        // One task's failed launch must never abort the sweep — and must never
+        // One task's failed launch must never abort the sweep, and must never
         // leave the deadline set, or the same failure repeats every tick. The
         // launch paths have already put the failure on the task's transcript.
         console.error(`[deferredStart] could not start task ${task.id}:`, err);
@@ -139,21 +143,31 @@ function clearQueued(taskId: string, notice: string | null): void {
   }
 }
 
+// A skip: the deadline is consumed, the transcript says why, and so does the
+// user's phone. Every outcome of a due deadline is notified, because the whole
+// point of the queue is that nobody is at the screen when it comes due: a task
+// that silently launched nothing is otherwise discovered hours later, still
+// queued for a reset that has passed.
+function skipQueued(taskId: string, why: string): void {
+  clearQueued(taskId, `ℹ Queued start skipped: ${why}.`);
+  emitQueuedStartSkipped(taskId, why);
+}
+
 async function fire(task: Task): Promise<boolean> {
   // A live turn supersedes the queued one: the user acted in the meantime, and
   // that turn's own finally drains the follow-up queue when it ends.
   if (hasTurn(task.id)) {
-    clearQueued(task.id, SKIPPED_LIVE);
+    skipQueued(task.id, SKIPPED_LIVE);
     return false;
   }
   const project = getProject(task.project_id);
   if (!project || !project.repo_path.trim()) {
-    clearQueued(task.id, SKIPPED_NO_REPO);
+    skipQueued(task.id, SKIPPED_NO_REPO);
     return false;
   }
   if (!task.started) {
     if (getTaskDeps(task.id).some(blocks)) {
-      clearQueued(task.id, SKIPPED_BLOCKED);
+      skipQueued(task.id, SKIPPED_BLOCKED);
       return false;
     }
     // The re-check under the lock: still queued (the user can cancel between
@@ -162,6 +176,10 @@ async function fire(task: Task): Promise<boolean> {
     // leave it set for the next tick to find.
     const launched = await launchInitialTurn(task.id, DEFERRED_START_NOTE, (fresh) => fresh.start_at > 0 && !isTerminal(fresh));
     clearQueued(task.id, null);
+    // Only a launch is announced. A re-check that refused (the user cancelled
+    // the deadline, or finished the task) is the user's own decision playing
+    // out, and a launch that threw reports itself as a failed turn.
+    if (launched) emitQueuedStart(task.id, false);
     return launched;
   }
   return resumeQueued(task, project);
@@ -175,7 +193,7 @@ async function fire(task: Task): Promise<boolean> {
 async function resumeQueued(task: Task, project: Project): Promise<boolean> {
   const controller = claimTurn(task.id);
   if (!controller) {
-    clearQueued(task.id, SKIPPED_LIVE);
+    skipQueued(task.id, SKIPPED_LIVE);
     return false;
   }
   let launched = false;
@@ -214,6 +232,10 @@ async function resumeQueued(task: Task, project: Project): Promise<boolean> {
   } finally {
     if (!launched) unregisterTurn(task.id, controller);
   }
+  // A resume that the under-lock re-check refused leaves no notice and no
+  // notification, matching the first-turn path above: the deadline was
+  // withdrawn or the task finished, both of which the user did themselves.
   if (!launched) clearQueued(task.id, null);
+  else emitQueuedStart(task.id, true);
   return launched;
 }

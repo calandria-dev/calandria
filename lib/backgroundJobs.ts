@@ -2,8 +2,8 @@ import { getSetting } from "./store";
 
 export type RecapMode = "automatic" | "on_open" | "off";
 
-// Missing keys deliberately preserve the long-standing behavior: background
-// work and both recap triggers are on until the user changes them.
+// A missing key means background work and both recap triggers are on until
+// the user changes them.
 export function backgroundJobsEnabled(): boolean {
   return getSetting("background_jobs") !== "off";
 }

@@ -10,12 +10,10 @@ describe("slashCommandOf", () => {
   });
 
   it("reads a leading filesystem path as a path, not as a command", () => {
-    // This used to return "etc", and the whole editor was designed around
-    // apologising for it (never block Save). It isn't survivable there: the
-    // SAME validator runs again at fire time in lib/scheduler.ts, where an
-    // unknown command settles the run `failed` and mints nothing — so the
-    // prompt saved fine and then failed every single morning. Two halves of
-    // one decision, split across two files, contradicting each other.
+    // A leading filesystem path has to parse as a path: the same validator
+    // runs again at fire time in lib/scheduler.ts, where an unknown command
+    // settles the run `failed` and mints nothing, so misparsing it here would
+    // fail a saved prompt every morning.
     //
     // A slash command never contains a path separator, so "followed by /" is a
     // clean discriminator.
@@ -25,7 +23,7 @@ describe("slashCommandOf", () => {
   });
 
   it("still matches the real command forms, including the one-char-shorter trap", () => {
-    // Spelled with a trailing capture rather than a negative lookahead:
+    // With a trailing capture instead of a negative lookahead,
     // /\/([A-Za-z0-9_:-]+)(?!\/)/ backtracks the token by one character and
     // matches "et" out of "/etc/passwd" instead of failing. Pin the boundary
     // cases either side of that.
@@ -50,8 +48,8 @@ describe("isRegistered", () => {
   });
 
   it("rejects a near miss rather than guessing", () => {
-    // This is the whole point: the CLI answers "Unknown command" with
-    // subtype "success", so a typo would otherwise record a green check.
+    // The CLI answers "Unknown command" with subtype "success", so a typo
+    // would otherwise record a green check.
     expect(isRegistered("jira-taks", registry)).toBe(false);
     expect(isRegistered("jira-tasks-daily", registry)).toBe(false);
   });

@@ -2,12 +2,12 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Keeping a task's GitHub PR state fresh (lib/prState.ts).
 //
-// The whole point of the feature is that the app can ANSWER "is this PR open,
-// red, approved or landed?" without a human going to github.com, so what's
-// pinned here is: the answer is persisted, it reaches clients as an event, and
-// asking costs a bounded number of `gh pr view` calls. gh itself is mocked —
-// the real one needs a network, a login and a PR — but everything around it,
-// including the store writes and the bus, is real.
+// The app can ANSWER "is this PR open, red, approved or landed?" without a
+// human going to github.com, so what's pinned here is: the answer is
+// persisted, it reaches clients as an event, and asking costs a bounded
+// number of `gh pr view` calls. gh itself is mocked (the real one needs a
+// network, a login and a PR), but everything around it, including the store
+// writes and the bus, is real.
 const { fetchPrStateMock } = vi.hoisted(() => ({ fetchPrStateMock: vi.fn() }));
 
 vi.mock("@/lib/github", async (importOriginal) => ({
@@ -16,7 +16,7 @@ vi.mock("@/lib/github", async (importOriginal) => ({
 }));
 
 import { getDb } from "@/lib/db";
-import { createProject, createTask, getTask, updateTask, stalePrTasks, openPrTaskCount } from "@/lib/store";
+import { createProject, createTask, getTask, updateTask, stalePrTasks, openPrTaskCount, openAutoReclaimPrTaskCount, updateProject } from "@/lib/store";
 import { subscribeGlobal, type BusEvent } from "@/lib/events";
 import { parsePrNumber, rollupChecks, type PrSnapshot } from "@/lib/github";
 import { refreshPrState, sweepPrs, prView } from "@/lib/prState";
@@ -35,17 +35,18 @@ const snapshot = (over: Partial<PrSnapshot> = {}): PrSnapshot => ({
 
 // A task that already has a PR, exactly as POST /api/tasks/[id]/pr leaves it:
 // url + number stored, and nothing yet heard back from GitHub.
-function taskWithPr(over: { number?: number; url?: string } = {}) {
+function taskWithPr(over: { number?: number; url?: string; autoReclaim?: boolean } = {}) {
   const project = createProject({ name: `pr-${Math.random()}`, repo_path: process.cwd(), branch: "main" });
+  if (over.autoReclaim) updateProject(project.id, { auto_reclaim: 1 });
   const task = createTask({ project_id: project.id, title: "work with a PR" });
   const number = over.number ?? 42;
   updateTask(task.id, { pr_url: over.url ?? `https://github.com/o/r/pull/${number}`, pr_number: number });
   return { projectId: project.id, taskId: task.id };
 }
 
-// Collect bus events for a task. Deliberately NOT internal: the sweep skips a
-// pass when watcherCount() is zero, and a listener here is the "somebody is
-// looking at this" the real sweep waits for.
+// Collect bus events for a task. Not internal: the sweep skips a pass when
+// watcherCount() is zero, and a listener here is the "somebody is looking at
+// this" the real sweep waits for.
 function watch(taskId: string) {
   const seen: BusEvent[] = [];
   const off = subscribeGlobal((id, ev) => { if (id === taskId) seen.push(ev); });
@@ -105,6 +106,54 @@ describe("rollupChecks", () => {
   it("refuses to call a verdict it doesn't recognize a pass", () => {
     expect(rollupChecks([{ __typename: "CheckRun", status: "COMPLETED", conclusion: "SOMETHING_NEW" }])).toBe("pending");
   });
+
+  it("reads the rerun, not the failure it replaced", () => {
+    // statusCheckRollup is every check run on the head commit, so a
+    // `gh run rerun --failed` leaves the dead FAILURE beside its green
+    // successor on a SHA that never changes. Without deduping, that PR is red
+    // forever and refreshing cannot help: there is nothing newer to read.
+    expect(
+      rollupChecks([
+        { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS", name: "Unit", workflowName: "test", startedAt: "2026-08-30T22:10:34Z" },
+        { __typename: "CheckRun", status: "COMPLETED", conclusion: "FAILURE", name: "e2e", workflowName: "test", startedAt: "2026-08-30T22:10:34Z" },
+        { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS", name: "e2e", workflowName: "test", startedAt: "2026-08-30T22:36:29Z" },
+      ])
+    ).toBe("passing");
+  });
+
+  it("drops the entries a concurrency-cancelled run left behind", () => {
+    // The other half of the same shape: a superseded run's jobs stay in the
+    // rollup as CANCELLED, which is a red verdict.
+    expect(
+      rollupChecks([
+        { __typename: "CheckRun", status: "COMPLETED", conclusion: "CANCELLED", name: "Unit", workflowName: "test", startedAt: "2026-08-30T22:10:02Z" },
+        { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS", name: "Unit", workflowName: "test", startedAt: "2026-08-30T22:10:34Z" },
+      ])
+    ).toBe("passing");
+  });
+
+  it("keeps a repeated name apart when a second workflow reports it", () => {
+    // A reusable workflow re-reports the caller's job names under its own name,
+    // so "Unit" under `test` and under `publish-image` are two real checks.
+    // Collapsing them would hide a genuine failure behind the other's pass.
+    expect(
+      rollupChecks([
+        { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS", name: "Unit", workflowName: "test", startedAt: "2026-08-30T22:10:34Z" },
+        { __typename: "CheckRun", status: "COMPLETED", conclusion: "FAILURE", name: "Unit", workflowName: "publish-image", startedAt: "2026-08-30T22:10:07Z" },
+      ])
+    ).toBe("failing");
+  });
+
+  it("never collapses entries that carry no name at all", () => {
+    // A nameless entry cannot be shown to duplicate anything, so it passes
+    // through; deduping it away would turn a red rollup green.
+    expect(
+      rollupChecks([
+        { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS" },
+        { __typename: "CheckRun", status: "COMPLETED", conclusion: "FAILURE" },
+      ])
+    ).toBe("failing");
+  });
 });
 
 describe("refreshPrState", () => {
@@ -129,16 +178,14 @@ describe("refreshPrState", () => {
 
   it("persists draft and mergeability, and announces a change in either", async () => {
     // The two facts the Squash & merge button is enabled off (lib/prMerge.ts).
-    // Both used to be dropped on the floor: mergeStateStatus was fetched and
-    // never stored, isDraft was never asked for.
     const { taskId } = taskWithPr();
     fetchPrStateMock.mockResolvedValue({ ok: true, snapshot: snapshot({ draft: true, mergeState: "DRAFT" }) });
     await refreshPrState(taskId);
     expect(getTask(taskId)!.pr_draft).toBe(1);
     expect(getTask(taskId)!.pr_merge_state).toBe("DRAFT");
 
-    // Marking it ready for review changes nothing else — state is still open,
-    // checks still passing — so unless changed() counts these two, the rail
+    // Marking it ready for review changes nothing else (state is still open,
+    // checks still passing), so unless changed() counts these two, the rail
     // would keep the button disabled until something unrelated moved.
     const w = watch(taskId);
     fetchPrStateMock.mockResolvedValue({ ok: true, snapshot: snapshot({ draft: false, mergeState: "CLEAN" }) });
@@ -202,7 +249,7 @@ describe("refreshPrState", () => {
     await refreshPrState(taskId); // opening the task again, immediately
     expect(fetchPrStateMock).toHaveBeenCalledTimes(1);
 
-    // The explicit Refresh click beats the window — that is what it is for.
+    // The explicit Refresh click beats the window: that is what it is for.
     await refreshPrState(taskId, { force: true });
     expect(fetchPrStateMock).toHaveBeenCalledTimes(2);
   });
@@ -238,7 +285,7 @@ describe("refreshPrState", () => {
 describe("the sweep's candidate set", () => {
   it("never asks about a PR that already landed or was closed", async () => {
     // The count is database-wide and earlier cases leave open PRs behind, so
-    // this case measures its own delta rather than an absolute.
+    // this case measures its own delta, not an absolute.
     const before = openPrTaskCount();
     const open = taskWithPr({ number: 1 });
     const merged = taskWithPr({ number: 2 });
@@ -254,7 +301,7 @@ describe("the sweep's candidate set", () => {
     expect(ids).not.toContain(merged.taskId);
     expect(ids).not.toContain(closed.taskId);
     // A terminal PR can't change back, so the recurring cost is bounded by open
-    // work rather than by how many PRs this instance has ever opened.
+    // work, not by how many PRs this instance has ever opened.
     expect(openPrTaskCount()).toBe(before + 1);
   });
 
@@ -268,7 +315,7 @@ describe("the sweep's candidate set", () => {
     w.off();
 
     // CALANDRIA_PR_POLL_BATCH, default 5. The rest are picked up by later
-    // passes, oldest sync first, rather than forking eight gh processes at once.
+    // passes, oldest sync first, instead of forking eight gh processes at once.
     expect(n).toBe(5);
     expect(fetchPrStateMock).toHaveBeenCalledTimes(5);
   });
@@ -279,5 +326,21 @@ describe("the sweep's candidate set", () => {
 
     expect(await sweepPrs()).toBe(0);
     expect(fetchPrStateMock).not.toHaveBeenCalled();
+  });
+
+  it("polls only opted-in PRs when no tab is watching", async () => {
+    const automatic = taskWithPr({ number: 901, autoReclaim: true });
+    const ordinary = taskWithPr({ number: 902 });
+    // Older cases in this file may leave open PR fixtures behind. Make only
+    // these two rows due so the assertion is independent of test order.
+    getDb().prepare("UPDATE tasks SET pr_synced_at = ? WHERE id NOT IN (?, ?)").run(Date.now(), automatic.taskId, ordinary.taskId);
+    fetchPrStateMock.mockResolvedValue({ ok: true, snapshot: snapshot() });
+
+    expect(openAutoReclaimPrTaskCount()).toBeGreaterThan(0);
+    expect(await sweepPrs()).toBe(1);
+    expect(fetchPrStateMock).toHaveBeenCalledTimes(1);
+    expect(fetchPrStateMock.mock.calls[0][1]).toBe(901);
+    expect(getTask(ordinary.taskId)!.pr_synced_at).toBe(0);
+    expect(getTask(automatic.taskId)!.pr_synced_at).toBeGreaterThan(0);
   });
 });

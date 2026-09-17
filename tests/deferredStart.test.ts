@@ -1,8 +1,8 @@
-// "Start at the usage-window reset": tasks.start_at + the sweep that honours it
-// (lib/deferredStart.ts). Pinned at the runner boundary, like tests/autoStart —
-// the module's job is deciding WHAT to launch when a deadline passes and
-// handing the runner a correctly prepared launch; the turn itself is the
-// driver-contract test's problem.
+// Pins "start at the usage-window reset": tasks.start_at and the sweep that
+// honors it (lib/deferredStart.ts). Pinned at the runner boundary, like
+// tests/autoStart: this module's job is deciding what to launch when a
+// deadline passes and handing the runner a correctly prepared launch; the turn
+// itself is the driver-contract test's problem.
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/runner", () => ({ startTurn: vi.fn(), startResumeTurn: vi.fn(), publishTurnError: vi.fn() }));
@@ -15,10 +15,13 @@ import {
   listMessages,
   listPendingMessages,
   addPendingMessage,
+  setSetting,
   setTaskDeps,
   updateTask,
   listDueDeferredStarts,
 } from "@/lib/store";
+import { resetNotificationDedupe } from "@/lib/notifications/notify";
+import type { NotificationPayload } from "@/lib/notifications/types";
 import {
   sweepDeferredStarts,
   stopDeferredStartTicker,
@@ -57,10 +60,14 @@ async function busEventsFor(taskId: string, fn: () => Promise<unknown>): Promise
   return seen;
 }
 
+const notificationsIn = (events: BusEvent[]): NotificationPayload[] =>
+  events.flatMap((e) => (e.type === "notification" ? [e.payload] : []));
+
 beforeEach(() => {
   startTurnMock.mockReset();
   startResumeTurnMock.mockReset();
   publishTurnErrorMock.mockReset();
+  resetNotificationDedupe();
 });
 
 // The PATCH route lazily starts the real ticker when a deadline is set; don't
@@ -106,7 +113,7 @@ describe("listDueDeferredStarts (selection rules)", () => {
   });
 });
 
-describe("sweepDeferredStarts — a never-started task", () => {
+describe("sweepDeferredStarts, a never-started task", () => {
   it("launches its first turn like Start session would, then consumes the deadline", async () => {
     const { task } = queued();
     const events = await busEventsFor(task.id, () => sweepDeferredStarts());
@@ -116,7 +123,7 @@ describe("sweepDeferredStarts — a never-started task", () => {
     const [launched, project, userText, note, controller] = calls[0];
     expect(launched.id).toBe(task.id);
     expect(project.id).toBe(task.project_id);
-    // Same generic opener the POST route sends — the brief travels in the
+    // Same generic opener the POST route sends: the brief travels in the
     // injected project context, never in the prompt.
     expect(userText).toBe(INITIAL_TASK_PROMPT);
     expect(note).toBe(DEFERRED_START_NOTE);
@@ -140,7 +147,7 @@ describe("sweepDeferredStarts — a never-started task", () => {
     expect(getTask(task.id)!.start_at).toBeGreaterThan(0);
   });
 
-  it("won't start a task another task still blocks — it drops the deadline and says why", async () => {
+  it("won't start a task another task still blocks, dropping the deadline and saying why", async () => {
     const { project, task } = queued();
     const blocker = createTask({ project_id: project.id, title: "first" });
     setTaskDeps(task.id, [blocker.id]);
@@ -151,7 +158,7 @@ describe("sweepDeferredStarts — a never-started task", () => {
     expect(systemLines(task.id)).toEqual([expect.stringContaining("still blocked")]);
   });
 
-  it("won't start into a project with no working directory — same drop, different reason", async () => {
+  it("won't start into a project with no working directory, the same drop for a different reason", async () => {
     const project = makeProject("");
     const task = createTask({ project_id: project.id, title: "nowhere" });
     updateTask(task.id, { start_at: Date.now() - 1 });
@@ -162,7 +169,7 @@ describe("sweepDeferredStarts — a never-started task", () => {
   });
 });
 
-describe("sweepDeferredStarts — a started task", () => {
+describe("sweepDeferredStarts, a started task", () => {
   it("resumes with the oldest parked follow-up, popping it from the queue", async () => {
     const { task } = queued({ started: 1, status: "in_progress" });
     addPendingMessage(task.id, task.generation, "first queued");
@@ -213,6 +220,90 @@ describe("sweepDeferredStarts — a started task", () => {
     // A second sweep finds nothing to do.
     expect(await sweepDeferredStarts()).toBe(0);
     expect(startResumeTurnMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The sweep fires at whatever hour the usage window happens to expire, so
+// every outcome of a due deadline has to reach the user's phone: what ran, and
+// what was queued and then ran nothing. Pinned on the bus, the single exit
+// every channel (browser toast, Web Push) hangs off; tests/webpush.test.ts
+// owns what the channels then do with a payload.
+describe("sweepDeferredStarts notifications", () => {
+  it("announces a first turn that fired at the reset", async () => {
+    const { task } = queued();
+    const sent = notificationsIn(await busEventsFor(task.id, () => sweepDeferredStarts()));
+    expect(sent).toEqual([expect.objectContaining({
+      id: `queued_start:${task.id}`,
+      kind: "queued_start",
+      taskId: task.id,
+      projectId: task.project_id,
+      title: "Started at the usage-window reset",
+      body: "Q · Deferred",
+    })]);
+  });
+
+  it("says resumed, not started, when the session was already open", async () => {
+    const { task } = queued({ started: 1, status: "in_progress" });
+    const sent = notificationsIn(await busEventsFor(task.id, () => sweepDeferredStarts()));
+    expect(sent.map((p) => [p.kind, p.title])).toEqual([["queued_start", "Resumed at the usage-window reset"]]);
+  });
+
+  it("reports a skip with the same sentence the transcript got, so nobody finds it hours later", async () => {
+    const { project, task } = queued();
+    setTaskDeps(task.id, [createTask({ project_id: project.id, title: "first" }).id]);
+    const sent = notificationsIn(await busEventsFor(task.id, () => sweepDeferredStarts()));
+    expect(sent).toEqual([expect.objectContaining({
+      id: `queued_start_skipped:${task.id}`,
+      kind: "queued_start_skipped",
+      title: "Queued start skipped",
+      body: "Q · Deferred\nthis task is still blocked by another task",
+    })]);
+    expect(systemLines(task.id)).toEqual(["ℹ Queued start skipped: this task is still blocked by another task."]);
+  });
+
+  it("reports the other two skips the same way", async () => {
+    const live = queued({ started: 1, status: "in_progress" });
+    const claim = claimTurn(live.task.id)!;
+    let sent: NotificationPayload[];
+    try {
+      sent = notificationsIn(await busEventsFor(live.task.id, () => sweepDeferredStarts()));
+    } finally {
+      unregisterTurn(live.task.id, claim);
+    }
+    expect(sent.map((p) => p.body)).toEqual(["Q · Deferred\na turn was already running"]);
+
+    const project = makeProject("");
+    const homeless = createTask({ project_id: project.id, title: "nowhere" });
+    updateTask(homeless.id, { start_at: Date.now() - 1 });
+    const second = notificationsIn(await busEventsFor(homeless.id, () => sweepDeferredStarts()));
+    expect(second.map((p) => p.body)).toEqual(["nowhere · Deferred\nset this project's working directory first"]);
+  });
+
+  it("stays quiet when the user turned that kind off, and the other kind still speaks", async () => {
+    setSetting("notify_queued_start", "off");
+    try {
+      const fired = queued();
+      expect(notificationsIn(await busEventsFor(fired.task.id, () => sweepDeferredStarts()))).toEqual([]);
+      // The launch itself is unaffected: a switch silences the toast, never the work.
+      expect(startTurnMock.mock.calls.filter((c) => c[0].id === fired.task.id)).toHaveLength(1);
+
+      const skipped = queued();
+      setTaskDeps(skipped.task.id, [createTask({ project_id: skipped.project.id, title: "first" }).id]);
+      const sent = notificationsIn(await busEventsFor(skipped.task.id, () => sweepDeferredStarts()));
+      expect(sent.map((p) => p.kind)).toEqual(["queued_start_skipped"]);
+    } finally {
+      setSetting("notify_queued_start", null);
+    }
+  });
+
+  it("obeys the master switch", async () => {
+    setSetting("notifications", "off");
+    try {
+      const { task } = queued();
+      expect(notificationsIn(await busEventsFor(task.id, () => sweepDeferredStarts()))).toEqual([]);
+    } finally {
+      setSetting("notifications", null);
+    }
   });
 });
 

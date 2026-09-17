@@ -7,7 +7,7 @@ function subprocessError(stderr: string): unknown {
   return Object.assign(new Error("Command failed"), { stderr });
 }
 
-describe("gitErrorLine / gitErrorDetail — push rejections", () => {
+describe("gitErrorLine / gitErrorDetail: push rejections", () => {
   it("distinguishes a pre-push hook rejection: headline names the hook, detail keeps its output", () => {
     const stderr = [
       "gate: running pre-push checks...",

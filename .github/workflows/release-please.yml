@@ -37,6 +37,34 @@ name: release-please
 on:
   push:
     branches: [main]
+  # The recovery path, and the only one this workflow had no way to offer.
+  #
+  # Every other trigger in this repo can be re-run: a failed run has a Re-run
+  # button, and the lanes that skip by default can be started by labelling the
+  # PR. A push that GitHub never dispatched has neither — there is no run to
+  # re-run.
+  #
+  # Observed 2026-08-31, when the 0.6.1 release PR never appeared after #96
+  # merged: `actions/runs?head_sha=<merge sha>` returned zero, and stayed there.
+  # Not this workflow's doing and not diagnosable from here — the squash title
+  # was a clean `fix(desktop): …`, this file has no paths filter, Actions was
+  # enabled with all eleven workflows active, the repo is public so no spending
+  # limit applies, and githubstatus.com reported everything operational. The
+  # other three workflows that fire on a main push were missing too. Whatever
+  # dropped it was upstream of the repo.
+  #
+  # Without this the only way back is another push to main, i.e. an empty
+  # commit on the release branch purely to nudge CI, which is a worse thing to
+  # have to reach for than a button. Nothing is lost by waiting either way —
+  # release-please reads the whole commit range since the last release, so the
+  # next real merge would have picked the missed commits up — but "wait for
+  # someone to merge something" is not a recovery procedure.
+  #
+  # Safe to press at any time: the action is idempotent. It re-derives the
+  # pending release from the commit range and updates the existing release PR
+  # rather than opening a second one, so a dispatch against an already-correct
+  # main is a no-op.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -51,6 +79,11 @@ concurrency:
 
 jobs:
   release-please:
+    # The push trigger can only ever be main; the dispatch above can be pointed
+    # at any ref from the Actions UI, and this workflow holds `contents: write`
+    # and cuts tags. Rather than reason about what the action does with a
+    # manifest read off some other branch, it doesn't run there.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

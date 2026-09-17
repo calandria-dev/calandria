@@ -1,4 +1,4 @@
-// POST /api/tasks/[id]/file — the document collaboration modal's "write my
+// POST /api/tasks/[id]/file: the document collaboration modal's "write my
 // edits straight into the worktree" path, GET's twin. What it must hold:
 // the same path confinement as the read, no writes under a live turn (the
 // agent owns the worktree until it ends), and no write over a file that
@@ -53,7 +53,7 @@ describe("POST /api/tasks/[id]/file", () => {
     expect(status).toBe(200);
     expect(body).toEqual({ path: "docs/setup.md", size: Buffer.byteLength(edited) });
     expect(fs.readFileSync(path.join(worktree, "docs", "setup.md"), "utf8")).toBe(edited);
-    // The read half sees the write — the modal reopens on the new text.
+    // The read half sees the write; the modal reopens on the new text.
     expect((await get(taskId, "docs/setup.md")).body.content).toBe(edited);
   });
 
@@ -85,7 +85,7 @@ describe("POST /api/tasks/[id]/file", () => {
     fs.writeFileSync(path.join(outside, "secret.md"), "nope\n");
     // A FILE symlink needs Developer Mode or elevation on Windows (a junction
     // stands in only for a directory one), so its absence there is a fixture
-    // limitation, not a result — the link case below is conditioned on it.
+    // limitation, not a result. The link case below is conditioned on it.
     let linked = true;
     try {
       fs.symlinkSync(path.join(outside, "secret.md"), path.join(worktree, "docs", "link.md"));

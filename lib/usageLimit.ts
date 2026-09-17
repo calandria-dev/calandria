@@ -3,18 +3,18 @@
 //
 // A subscription limit (Claude's 5-hour window, the weekly cap, an API 429)
 // hits mid-run and looks like a code problem: the raw provider string ("Claude
-// AI usage limit reached|1735689600") lands in ONE task's transcript with no
-// hint that nothing is broken — the quota is simply spent and refills on its
-// own. Worse, without classification the runner would treat it as an ordinary
+// AI usage limit reached|1735689600") lands in one task's transcript with no
+// hint that nothing is broken; the quota is simply spent and refills on its
+// own. Without classification the runner would also treat it as an ordinary
 // work failure and drain the pending queue: each queued follow-up would
 // dequeue, run straight into the same dead quota, and fail identically,
 // emptying the queue for nothing.
 //
-// So a usage-limit failure is classified here (agent-agnostically — a Codex
-// quota phrases it differently and fails identically), which lets
+// So a usage-limit failure is classified here, agent-agnostically since a
+// Codex quota phrases it differently and fails identically, which lets
 // lib/runner.ts append USAGE_LIMIT_NOTICE and park the queue instead of
 // burning it. Unlike the auth twin (lib/authFailure.ts) there is no button to
-// click — the recovery is waiting for the reset — so the notice is purely
+// click, since the recovery is waiting for the reset, so the notice is purely
 // informational, and the Claude driver enriches the error line with the
 // machine-reported reset time when the SDK provided one. Kept dependency-free
 // so both server and client bundles can import it (same rule as
@@ -50,19 +50,19 @@ const USAGE_LIMIT_RES = [
 ];
 
 /** True when a turn's error text is a spent-quota rejection (Claude's 5-hour /
- *  weekly subscription limit, an API 429 rate limit) rather than a work
- *  failure. Checked AFTER isPromptTooLong and isAuthFailure in lib/runner.ts,
+ *  weekly subscription limit, an API 429 rate limit) instead of a work
+ *  failure. Checked after isPromptTooLong and isAuthFailure in lib/runner.ts,
  *  so those classifiers keep first claim on their own signatures. */
 export function isUsageLimit(msg: string | null | undefined): boolean {
   return !!msg && USAGE_LIMIT_RES.some((re) => re.test(msg));
 }
 
 /** Appended to the persisted error line when a turn dies on a spent usage
- *  limit. The UI (app/shell/Transcript.tsx) matches this exact string
- *  to render the informational recovery hint — keep it stable. No action
+ *  limit. The UI (app/shell/Transcript.tsx) matches this exact string to
+ *  render the informational recovery hint, so keep it stable. No action
  *  button: the quota refills on its own, so the recovery is waiting (the raw
  *  provider text above the notice carries the reset time when the SDK reported
- *  one). Persisted message content is the durable channel — it survives SSE
+ *  one). Persisted message content is the durable channel: it survives SSE
  *  reconnects because the snapshot replays from SQLite. */
 export const USAGE_LIMIT_NOTICE =
   "This agent's usage limit has been reached, so no turn can run until the limit resets. " +

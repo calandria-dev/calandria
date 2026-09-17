@@ -1,19 +1,14 @@
-// Regression for the security finding: ensureWorktree THROWING (a stale
-// index.lock from a crashed process, a disk-full git op, a detached HEAD) used
-// to be caught by an empty `catch {}` at every launch site and silently
-// treated the same as ensureWorktree returning null — the legitimate
-// non-git/empty-repo case. That merged "can't isolate, fine to skip" with
-// "can't isolate, something is actually wrong" into one fallback: an
-// unattended launch (a schedule firing, an auto-start) would run straight in
-// the user's real project checkout instead of an isolated worktree, with no
-// event, no transcript line, no banner.
+// Pins that ensureWorktree throwing (a stale index.lock from a crashed
+// process, a disk-full git op, a detached HEAD) must not be treated the same
+// as ensureWorktree returning null, the legitimate non-git/empty-repo case.
+// Conflating them would let an unattended launch (a schedule firing, an
+// auto-start) run in the user's real project checkout instead of an isolated
+// worktree, with no event, no transcript line, no banner.
 //
-// The fix removes the swallow at each site and lets the throw reach whatever
-// failure-recording mechanism that site already has: dispatchPromptTask's own
-// DispatchResult (which fireSchedule turns into a "failed" run, and the
-// runbook route turns into a visible 400), and autoStart's existing
-// publishTurnError path (already proven by the "throws unwinds the row"
-// TypeError test below it). This file covers dispatchPromptTask and
+// Each launch site must let the throw reach its own failure-recording
+// mechanism: dispatchPromptTask's DispatchResult (which fireSchedule turns
+// into a "failed" run, and the runbook route turns into a 400), and
+// autoStart's publishTurnError path. This file covers dispatchPromptTask and
 // lib/autoStart.ts; tests/runnerWorktreeFailClosed.test.ts covers the queue
 // drain in lib/runner.ts's startResumeTurn.
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -24,17 +19,17 @@ const { ensureWorktreeMock, startTurnMock, publishTurnErrorMock } = vi.hoisted((
   publishTurnErrorMock: vi.fn(),
 }));
 
-// Real ensureWorktree by default (so fixtures and the "returns null" cases
-// still exercise actual git); a test arms a throw with mockImplementationOnce.
+// Uses the real ensureWorktree by default, so fixtures and the "returns
+// null" cases still exercise actual git; a test arms a throw with
+// mockImplementationOnce.
 vi.mock("@/lib/git", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/git")>();
   ensureWorktreeMock.mockImplementation(actual.ensureWorktree);
   return { ...actual, ensureWorktree: ensureWorktreeMock };
 });
 
-// Same seam tests/dispatch.test.ts and tests/autoStart.test.ts already use:
-// pin the launch at the runner boundary so no real SDK/driver is anywhere
-// near these tests.
+// Same seam tests/dispatch.test.ts and tests/autoStart.test.ts use: pins the
+// launch at the runner boundary so no real SDK or driver is involved.
 vi.mock("@/lib/runner", () => ({
   startTurn: startTurnMock,
   publishTurnError: publishTurnErrorMock,
@@ -89,18 +84,18 @@ describe("dispatchPromptTask fails closed on a throwing ensureWorktree", () => {
 
     expect(res.ok).toBe(false);
     expect((res as { error: string }).error).toContain(LOCK_ERROR);
-    // The row was minted (the launch, not the creation, fell over) so it's a
-    // real, retryable task rather than a leak — same contract as every other
-    // post-mint dispatch failure.
+    // The row was minted before the launch failed, so it is a real,
+    // retryable task instead of a leak, the same contract every other
+    // post-mint dispatch failure follows.
     expect(res.task).toBeDefined();
     const task = getTask(res.task!.id)!;
     expect(task.running).toBe(0);
     expect(task.worktree_path).toBe("");
     // The turn never launched into any cwd, isolated or not.
     expect(startTurnMock).not.toHaveBeenCalled();
-    // …and the minted task says so on its own transcript, classified (issue
-    // #44). A schedule's failure otherwise lives only in the run ledger, so
-    // the task the user opens the next morning would be blank.
+    // The minted task also carries the classified failure on its own
+    // transcript (issue #44); otherwise a schedule's failure lives only in
+    // the run ledger and the task itself shows nothing.
     expect(publishTurnErrorMock).toHaveBeenCalledWith(task.id, task.generation, expect.stringContaining(LOCK_ERROR));
   });
 
@@ -133,25 +128,26 @@ describe("lib/autoStart.ts fails closed on a throwing ensureWorktree", () => {
     updateTask(a.id, { status: "done" });
     maybeAutoStartDependents(a.id);
 
-    // Unlike a launch that throws AFTER marking the row running (the existing
-    // TypeError regression test), a throw during THIS self-heal happens before
-    // running ever flips to 1 — so waiting on running===0 would resolve
-    // trivially against its untouched default. Wait on the actual signal that
-    // the async unwind finished instead.
+    // A throw during this self-heal happens before running ever flips to 1,
+    // unlike a launch that throws after marking the row running (the
+    // TypeError regression test), so waiting on running===0 would resolve
+    // trivially against its untouched default. Wait on the signal that the
+    // async unwind finished instead.
     await vi.waitFor(() => expect(publishTurnErrorMock).toHaveBeenCalledTimes(1), { timeout: 10_000 });
     const fresh = getTask(b.id)!;
-    // Cleanly retryable — same guarantee the existing broken-runner-import
+    // Cleanly retryable, the same guarantee the broken-runner-import
     // regression test makes.
     expect(fresh.started).toBe(0);
     expect(fresh.status).toBe("not_started");
     expect(hasTurn(b.id)).toBe(false);
-    // The failure is recorded where the user will see it, not only swallowed.
+    // The failure is recorded where the user will see it instead of being
+    // swallowed.
     expect(publishTurnErrorMock).toHaveBeenCalledTimes(1);
     const [id, gen, text] = publishTurnErrorMock.mock.calls[0];
     expect(id).toBe(b.id);
     expect(gen).toBe(fresh.generation);
     expect(text).toContain(LOCK_ERROR);
-    // The turn was never handed a cwd at all — isolated or not.
+    // The turn was never handed a cwd at all, isolated or not.
     expect(startTurnMock).not.toHaveBeenCalled();
   });
 

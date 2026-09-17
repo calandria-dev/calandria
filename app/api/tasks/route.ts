@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server";
+import { nanoid } from "nanoid";
 import { createTask, getProject, listAllTasksLite, listAllTagsLite, getTag } from "@/lib/store";
+import { adoptDraftUploads, removeTaskUploads } from "@/lib/uploads";
+import { attachmentKindOf, joinAttachmentText } from "@/lib/uploadTypes";
+import { getProvider } from "@/lib/providers/store";
+import { isCodexSandboxMode } from "@/lib/codexSandbox";
 
 export const dynamic = "force-dynamic";
 
 // Powers the ⌘K palette's search: every real task across all active projects,
 // labeled with its project and (since tags) the features it's part of, plus
-// the tags themselves — which are jumpable targets in their own right, not
+// the tags themselves, which are jumpable targets in their own right, not
 // just badges. Both fetched fresh each time the palette opens.
 export async function GET() {
   return NextResponse.json({ tasks: listAllTasksLite(), tags: listAllTagsLite() });
@@ -16,6 +21,10 @@ export async function POST(req: Request) {
   if (!body?.project_id || !getProject(body.project_id))
     return NextResponse.json({ error: "valid project_id required" }, { status: 400 });
   if (!body?.title?.trim()) return NextResponse.json({ error: "title required" }, { status: 400 });
+  if (body.provider_id !== undefined && body.provider_id !== null && (typeof body.provider_id !== "string" || !getProvider(body.provider_id)))
+    return NextResponse.json({ error: "valid provider_id required" }, { status: 400 });
+  if (body.sandbox_mode !== undefined && body.sandbox_mode !== null && !isCodexSandboxMode(body.sandbox_mode))
+    return NextResponse.json({ error: "sandbox_mode must be read-only, workspace-write, danger-full-access, or null" }, { status: 400 });
   // Same screen the PATCH route applies: every tag must exist and belong to
   // this task's project, since a tag can't span repositories.
   let tagIds: string[] = [];
@@ -30,10 +39,32 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "tag belongs to another project. A tag can't span projects" }, { status: 400 });
     }
   }
-  const task = createTask({
+  // Files the dialog staged through POST /api/uploads before the task had
+  // an id. They move into the new task's own dir and land in the description
+  // as marker lines after the brief (lib/uploadTypes.ts), the same lines a
+  // chat attachment uses, so the session's context and the task header both
+  // read them the way the transcript does. A path that isn't a staged draft
+  // file is a 400 and nothing is created.
+  if (body.attachments !== undefined && (!Array.isArray(body.attachments) || body.attachments.some((a: unknown) => typeof a !== "string")))
+    return NextResponse.json({ error: "attachments must be an array of staged paths" }, { status: 400 });
+  const id = nanoid();
+  let description: string = typeof body.description === "string" ? body.description : "";
+  if (Array.isArray(body.attachments) && body.attachments.length) {
+    let staged: string[];
+    try {
+      staged = adoptDraftUploads(id, body.attachments);
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 400 });
+    }
+    description = joinAttachmentText(description, staged.map((p) => ({ kind: attachmentKindOf(p), path: p })));
+  }
+  let task;
+  try {
+    task = createTask({
+    id,
     project_id: body.project_id,
     title: body.title.trim(),
-    description: body.description ?? "",
+    description,
     priority: body.priority ?? "med",
     suggested: !!body.suggested,
     // Agent is chosen at creation and fixed for the task's life (sessions can't
@@ -47,6 +78,7 @@ export async function POST(req: Request) {
     // driver resolves anything it doesn't recognize (permissionModeFor), so a
     // stale or cross-agent value degrades to the default instead of 400ing.
     permission_mode: typeof body.permission_mode === "string" ? body.permission_mode : undefined,
+    sandbox_mode: body.sandbox_mode ?? null,
     // Settable up front for the same reason `startNow` exists: the New-task
     // dialog can launch the first turn in the same gesture, and a follow-up
     // PATCH would land after that turn already picked a model. Shape-checked
@@ -56,7 +88,14 @@ export async function POST(req: Request) {
     model: typeof body.model === "string" && body.model.trim() && body.model.length <= 2048 && !/[\0-\x1f\x7f]/.test(body.model)
       ? body.model.trim()
       : undefined,
+    provider_id: body.provider_id ?? null,
     tag_ids: tagIds,
-  });
+    });
+  } catch (e) {
+    // The files moved under the id that now has no row: reclaim them, since
+    // nothing else will ever name that dir.
+    removeTaskUploads(id);
+    throw e;
+  }
   return NextResponse.json(task, { status: 201 });
 }

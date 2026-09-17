@@ -20,7 +20,7 @@ happen](#what-does-not-happen) · [Ports and services](#ports-and-services) ·
 
 ## What does not happen
 
-This is the load-bearing part, and it's a short list because the answer is
+This is the important part, and it's a short list because the answer is
 "nothing":
 
 - **No files are copied in.** Not `.env`, not `node_modules`, not local certs,
@@ -60,7 +60,7 @@ Consequences to state in a report:
   URL. Registration is keyed by project and name, so two tasks exposing the
   same name overwrite each other. Have the agent use a name that includes the
   task.
-- A dev server behind that URL sees a proxied hostname, so host checks need to
+- A dev server behind that URL receives a proxied hostname, so host checks need to
   allow it: `CALANDRIA_PUBLIC_HOST` is injected for services, and Vite
   (`server.allowedHosts`) or Next (`allowedDevOrigins`) should read it.
 
@@ -86,5 +86,5 @@ and per-worktree dependency installs land on top of that.
 That's what makes install size a real finding rather than a nitpick: on a repo
 where `npm install` is 500MB, twenty finished tasks are 10GB nobody has looked
 at. It's also the argument for pnpm's global store in a repo that will see
-heavy parallel use, since the saving is multiplied by every task ever run, not
-just the ones running now.
+heavy parallel use, since the saving is multiplied across every task ever run,
+including ones already finished.

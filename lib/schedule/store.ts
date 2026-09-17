@@ -1,4 +1,4 @@
-// Typed queries for schedules and their run ledger. DB only — no runner, no
+// Typed queries for schedules and their run ledger. DB only, no runner and no
 // SDK (pinned by tests/importGraph.test.ts), so the ticker's adjudication can
 // be tested without launching anything.
 
@@ -8,14 +8,28 @@ import { emitScheduleFailed } from "@/lib/notifications/notify";
 import { nextFireAt, type ScheduleSpec } from "@/lib/schedule/time";
 import type { Priority, Schedule, ScheduleRun, ScheduleRunStatus, ScheduleTrigger } from "@/lib/types";
 
-/** How many run rows to keep per schedule. Audit records, not user work. */
+/** How many run rows to keep per schedule (audit records, pruned on a cap). */
 export const RUN_RETENTION = 50;
 
 export const specOf = (s: Schedule): ScheduleSpec => ({
   daysMask: s.days_mask,
   timeOfDay: s.time_of_day,
   timezone: s.timezone,
+  onceDate: s.once_date,
 });
+
+/**
+ * Marks a one-time schedule as fired: disabled, pointed at nothing.
+ *
+ * The row is not deleted. The run ledger hangs off it via ON DELETE CASCADE,
+ * and its outcome is read after the fact, so deleting is left to the user.
+ */
+export function spendSchedule(id: string): void {
+  getDb().prepare("UPDATE schedules SET next_fire_at = 0, enabled = 0 WHERE id = ?").run(id);
+}
+
+/** What a caller is told when a one-time date is behind the clock. */
+const PAST_ONCE = "that one-time date and time has already passed";
 
 export function getSchedule(id: string): Schedule | null {
   return (getDb().prepare("SELECT * FROM schedules WHERE id = ?").get(id) as Schedule) ?? null;
@@ -47,35 +61,50 @@ export function createSchedule(input: {
   catch_up_ms?: number;
   /** Fire this runbook's recipe instead of `prompt` and the config above. */
   runbook_id?: string | null;
+  /** 'YYYY-MM-DD' for a one-time schedule; '' (the default) for a weekly one. */
+  once_date?: string;
+  /** The model provider a firing carries into the task it mints; null/undefined = the project's default. */
+  provider_id?: string | null;
+  /** The model that task starts on; null/undefined = the project's default. */
+  model?: string | null;
 }): Schedule {
   const now = Date.now();
   const id = nanoid();
-  // Throws on an unusable spec — better a 400 at creation than a schedule that
-  // silently never fires.
-  const next = nextFireAt(
-    { daysMask: input.days_mask, timeOfDay: input.time_of_day, timezone: input.timezone },
-    now
-  ).ms;
+  const onceDate = input.once_date ?? "";
+  // A one-time schedule's mask is never read, but the column is NOT NULL and
+  // the row must stay convertible back to weekly. An absent mask lands as
+  // "every day" so it won't make nextFireAt throw later.
+  const daysMask = Number.isInteger(input.days_mask) && input.days_mask > 0 && input.days_mask <= 127
+    ? input.days_mask
+    : (onceDate ? 127 : input.days_mask);
+  // Throws on an unusable spec, so creation fails with a 400 instead of
+  // producing a schedule that never fires. Null means a one-time date already
+  // behind us, treated the same way.
+  const next = nextFireAt({ daysMask, timeOfDay: input.time_of_day, timezone: input.timezone, onceDate }, now);
+  if (!next) throw new Error(PAST_ONCE);
   getDb()
     .prepare(
       `INSERT INTO schedules (id, project_id, name, prompt, days_mask, time_of_day, timezone, enabled,
-                              agent, permission_mode, send_context, priority, catch_up_ms, runbook_id, next_fire_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                              agent, permission_mode, send_context, priority, catch_up_ms, runbook_id, once_date,
+                              provider_id, model, next_fire_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
-      id, input.project_id, input.name, input.prompt, input.days_mask, input.time_of_day, input.timezone,
+      id, input.project_id, input.name, input.prompt, daysMask, input.time_of_day, input.timezone,
       input.agent || "claude", input.permission_mode ?? null, input.send_context === false ? 0 : 1,
-      input.priority ?? "med", input.catch_up_ms ?? -1, input.runbook_id ?? null, next, now, now
+      input.priority ?? "med", input.catch_up_ms ?? -1, input.runbook_id ?? null, onceDate,
+      input.provider_id ?? null, input.model ?? null, next.ms, now, now
     );
   return getSchedule(id)!;
 }
 
-const SPEC_FIELDS = ["days_mask", "time_of_day", "timezone"] as const;
+const SPEC_FIELDS = ["days_mask", "time_of_day", "timezone", "once_date"] as const;
 
 export function updateSchedule(
   id: string,
   fields: Partial<Pick<Schedule, "name" | "prompt" | "days_mask" | "time_of_day" | "timezone" | "enabled"
-    | "agent" | "permission_mode" | "send_context" | "priority" | "catch_up_ms" | "runbook_id">>
+    | "agent" | "permission_mode" | "send_context" | "priority" | "catch_up_ms" | "runbook_id" | "once_date"
+    | "provider_id" | "model">>
 ): Schedule | null {
   const before = getSchedule(id);
   if (!before) return null;
@@ -83,13 +112,11 @@ export function updateSchedule(
   if (!entries.length) return before;
 
   // Recompute when the spec moves, and whenever a paused schedule resumes: on
-  // resume the next occurrence is strictly after NOW, so unpausing something
-  // parked for a month doesn't greet the user with a month of missed rows.
-  // Decided from the INCOMING fields against the CURRENT row, not from a
-  // before/after diff — the previous shape wrote first and validated after,
-  // so a bad timezone or day_mask landed in the row (with next_fire_at frozen
-  // stale) even though the route reported 400. Validating the merged spec
-  // before any write means a bad edit can never be partially committed.
+  // resume the next occurrence must be strictly after now, so unpausing
+  // something parked for a month doesn't produce a month of missed rows.
+  // Decided from the incoming fields against the current row so validating
+  // the merged spec happens before any write, and a bad edit can't be
+  // partially committed.
   const specChanged = SPEC_FIELDS.some((f) => f in fields && fields[f] !== before[f]);
   const resumed = "enabled" in fields && !before.enabled && !!fields.enabled;
   const setEntries: [string, unknown][] = [...entries];
@@ -98,9 +125,25 @@ export function updateSchedule(
       daysMask: fields.days_mask ?? before.days_mask,
       timeOfDay: fields.time_of_day ?? before.time_of_day,
       timezone: fields.timezone ?? before.timezone,
+      onceDate: fields.once_date ?? before.once_date,
     };
-    // Throws on an unusable spec — this must happen BEFORE the UPDATE below.
-    setEntries.push(["next_fire_at", nextFireAt(mergedSpec, Date.now()).ms]);
+    // Throws on an unusable spec; this must happen before the UPDATE below.
+    const next = nextFireAt(mergedSpec, Date.now());
+    // A one-time date in the past is refused. Both ways of reaching here ask
+    // for something impossible: moving a job to a moment that has passed, or
+    // unpausing one that already fired. Spending it again would report
+    // success and do nothing.
+    if (!next) throw new Error(PAST_ONCE);
+    setEntries.push(["next_fire_at", next.ms]);
+    // Re-arm a spent one-time whose date has just been moved forward.
+    // Without this, editing "check on it at 04:00" (already fired) to
+    // tomorrow would report success and show the new time but never run,
+    // since spendSchedule left enabled at 0 and an ordinary date edit
+    // doesn't restore it. A paused-but-unfired one-time is a different row
+    // (next_fire_at > 0) and stays paused; an explicit `enabled` in the same
+    // call always wins.
+    const spent = !!before.once_date && !before.enabled && before.next_fire_at === 0;
+    if (spent && !("enabled" in fields)) setEntries.push(["enabled", 1]);
   }
 
   getDb()
@@ -111,8 +154,12 @@ export function updateSchedule(
 
 /** Recompute and persist next_fire_at from the spec. Also the boot revalidation. */
 export function refreshNextFire(schedule: Schedule, afterMs = Date.now()): Schedule {
-  const next = nextFireAt(specOf(schedule), afterMs).ms;
-  getDb().prepare("UPDATE schedules SET next_fire_at = ?, updated_at = ? WHERE id = ?").run(next, Date.now(), schedule.id);
+  const next = nextFireAt(specOf(schedule), afterMs);
+  if (!next) {
+    spendSchedule(schedule.id);
+    return getSchedule(schedule.id)!;
+  }
+  getDb().prepare("UPDATE schedules SET next_fire_at = ?, updated_at = ? WHERE id = ?").run(next.ms, Date.now(), schedule.id);
   return getSchedule(schedule.id)!;
 }
 
@@ -120,8 +167,13 @@ export function refreshNextFire(schedule: Schedule, afterMs = Date.now()): Sched
 export function advanceNextFire(scheduleId: string, pastMs: number): void {
   const s = getSchedule(scheduleId);
   if (!s) return;
-  const next = nextFireAt(specOf(s), pastMs).ms;
-  getDb().prepare("UPDATE schedules SET next_fire_at = ? WHERE id = ?").run(next, scheduleId);
+  const next = nextFireAt(specOf(s), pastMs);
+  // No next occurrence means a one-time schedule whose slot was just
+  // adjudicated. This is where a one-time is spent on the happy path, in the
+  // same step the recurring case advances, before the launch, so a crash
+  // between here and the turn can't leave it re-firing every tick forever.
+  if (!next) return spendSchedule(scheduleId);
+  getDb().prepare("UPDATE schedules SET next_fire_at = ? WHERE id = ?").run(next.ms, scheduleId);
 }
 
 export function deleteSchedule(id: string): void {
@@ -132,8 +184,8 @@ export function deleteSchedule(id: string): void {
 
 /**
  * Claim an occurrence. Returns the new run, or null when this slot was already
- * claimed — the UNIQUE(schedule_id, scheduled_for) index is the adjudicator, so
- * two concurrent ticks (or a tick racing Run now) cannot both win.
+ * claimed: the UNIQUE(schedule_id, scheduled_for) index adjudicates, so two
+ * concurrent ticks (or a tick racing Run now) cannot both win.
  */
 export function claimRun(scheduleId: string, scheduledFor: number, trigger: ScheduleTrigger, dstAdjusted = ""): ScheduleRun | null {
   const id = nanoid();
@@ -146,15 +198,13 @@ export function claimRun(scheduleId: string, scheduledFor: number, trigger: Sche
       )
       .run(id, scheduleId, scheduledFor, now, trigger, dstAdjusted);
   } catch (err) {
-    // ONLY the unique index means "somebody else owns this slot". A bare
-    // `catch { return null }` read every other failure — SQLITE_BUSY, a full
-    // disk, a foreign key pointing at a schedule that was just deleted — as a
-    // lost race too, and a lost race is silent by design: no row, no log, no
-    // trace. That is the one place in this feature where a skip leaves nothing
-    // behind at all, which is precisely what the whole design forbids. So
-    // narrow it, and let anything else out: every caller runs inside a guard
-    // that records and reports (the sweep's per-schedule catch, the route's
-    // 500) rather than swallowing.
+    // Only the unique index means "somebody else owns this slot". A bare
+    // catch { return null } would also read SQLITE_BUSY, a full disk, or a
+    // foreign key pointing at a schedule that was just deleted as a lost
+    // race, leaving no row, no log, no trace behind. So this narrows the
+    // catch and lets anything else propagate: every caller runs inside a
+    // guard that records and reports it (the sweep's per-schedule catch, the
+    // route's 500).
     if (!isUniqueViolation(err)) {
       console.error(`[schedule] could not claim ${scheduleId} @ ${scheduledFor}:`, err);
       throw err;
@@ -185,19 +235,18 @@ export function startRun(runId: string, taskId: string): void {
     .run(taskId, Date.now(), runId);
 }
 
-/** Terminal outcome. Idempotent — a settled run is never re-settled. */
+/** Terminal outcome. Idempotent: a settled run is never re-settled. */
 export function settleRun(runId: string, status: ScheduleRunStatus, detail = ""): void {
   const res = getDb()
     .prepare("UPDATE schedule_runs SET status = ?, detail = ?, finished_at = ? WHERE id = ? AND finished_at = 0")
     .run(status, detail, Date.now(), runId);
-  // A failed run is the one failure in this app with no witness: nobody is
-  // watching at 08:30, and a run that fell over in preflight never minted a
-  // task to notice. This is the only notification source that isn't on the bus,
-  // so it is hooked at the single function all four `failed` settle sites go
-  // through rather than at each of them.
+  // A failed run is a failure nobody may be watching for: a run that fell
+  // over in preflight never minted a task to notice, and nothing else on
+  // the bus covers it. This hooks the single function all four `failed`
+  // settle sites go through, instead of each one separately.
   //
-  // Gated on `changes` so the idempotent re-settle above can't notify twice,
-  // and wrapped because this runs inside the runner's `finally`: a notification
+  // Gated on `changes` so the idempotent re-settle above can't notify twice.
+  // Wrapped because this runs inside the runner's `finally`: a notification
   // failure must never leave a run unsettled.
   if (status !== "failed" || res.changes === 0) return;
   try {
@@ -236,10 +285,10 @@ export function listRuns(scheduleId: string, limit = 20): ScheduleRun[] {
 export const lastRun = (scheduleId: string): ScheduleRun | null => listRuns(scheduleId, 1)[0] ?? null;
 
 /**
- * Every status a run row can hold, as data — the /metrics exposition zero-fills
- * from this so a status nothing has hit yet is still a series (an absent one
- * silently answers no alert). The line below fails to compile if a new member
- * is added to ScheduleRunStatus without being listed here.
+ * Every status a run row can hold, as data. The /metrics exposition
+ * zero-fills from this so a status nothing has hit yet still appears as a
+ * series (an absent one reports no alert). The line below fails to compile
+ * if a new member is added to ScheduleRunStatus without being listed here.
  */
 export const SCHEDULE_RUN_STATUSES = [
   "claimed", "running", "succeeded", "failed", "stopped", "interrupted", "missed", "skipped_overlap",
@@ -250,10 +299,10 @@ void _statusesAreExhaustive;
 /**
  * How many run rows sit at each status right now, across every schedule.
  *
- * A SNAPSHOT of the ledger, not a tally of everything that ever ran: pruneRuns()
- * caps each schedule at RUN_RETENTION rows, so these numbers fall as history
- * ages out. That's why /metrics exports them as a gauge — read as a counter,
- * a prune would look like a negative rate.
+ * A snapshot of the ledger: pruneRuns() caps each schedule at RUN_RETENTION
+ * rows, so these numbers fall as history ages out. /metrics exports them as
+ * a gauge for that reason; read as a counter, a prune would look like a
+ * negative rate.
  */
 export function runCountsByStatus(): Record<ScheduleRunStatus, number> {
   const counts = Object.fromEntries(SCHEDULE_RUN_STATUSES.map((s) => [s, 0])) as Record<ScheduleRunStatus, number>;
@@ -262,15 +311,15 @@ export function runCountsByStatus(): Record<ScheduleRunStatus, number> {
     .all() as { status: ScheduleRunStatus; n: number }[];
   for (const row of rows) {
     // A status the app no longer mints (an older build's row surviving an
-    // upgrade) is dropped rather than added: the exposition's label set is
-    // fixed by the array above, and inventing a series from database content
-    // would let a stale row define a metric's shape.
+    // upgrade) is dropped: the exposition's label set is fixed by the array
+    // above, and inventing a series from database content would let a stale
+    // row define a metric's shape.
     if (row.status in counts) counts[row.status] = row.n;
   }
   return counts;
 }
 
-/** Statuses that mean "somebody is still watching this row" — never prunable. */
+/** Statuses that mean somebody is still watching this row: never prunable. */
 const ACTIVE_STATUSES = "'claimed','running'";
 
 /** The run still in flight for this schedule, if any (overlap detection). */
@@ -282,13 +331,14 @@ export function activeRun(scheduleId: string): ScheduleRun | null {
   );
 }
 
-// Retention is a hard cap by scheduled_for DESC, with no idea what's still
-// live. A burst of manual "Run now" firings while one run is wedged pushes
-// that claimed/running row out of the top RUN_RETENTION and it gets deleted
-// out from under activeRun() — the overlap check then sees nothing busy and
-// lets a second run start on top of it. Active rows are excluded from the
-// candidate set entirely, so they survive no matter how far retention pushes
-// past them; they only go once they've settled into a terminal status.
+// Retention is a hard cap by scheduled_for DESC and doesn't track what's
+// still live. A burst of manual "Run now" firings while one run is wedged
+// could push that claimed/running row out of the top RUN_RETENTION and
+// delete it out from under activeRun(), so the overlap check would see
+// nothing busy and let a second run start on top of it. Active rows are
+// excluded from the candidate set entirely, so they survive no matter how
+// far retention pushes past them; they only go once they've settled into a
+// terminal status.
 function pruneRuns(scheduleId: string): void {
   getDb()
     .prepare(

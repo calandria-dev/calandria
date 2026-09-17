@@ -1,16 +1,18 @@
 import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { getDb } from "@/lib/db";
 import { createProject, createTask, getTask, updateTask } from "@/lib/store";
 import { ensureWorktree } from "@/lib/git";
 import { registerTurn, unregisterTurn } from "@/lib/abort";
 import { sweepWorktrees } from "@/lib/worktreeSweep";
+import { taskUploadsDir } from "@/lib/uploads";
 import { commitFile, git, makeRepo, writeFile } from "./helpers";
 
 const DAY = 24 * 60 * 60 * 1000;
 
-// updateTask() stamps updated_at = Date.now(), which is the column the
-// predicate reads — so "cold" has to be written underneath it.
+// updateTask() stamps updated_at = Date.now(), the column the predicate
+// reads, so "cold" has to be written underneath it directly.
 const age = (id: string, ms: number) =>
   getDb().prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").run(Date.now() - ms, id);
 
@@ -36,11 +38,11 @@ async function coldTask(opts: { status?: "done" | "cancelled" | "in_progress"; d
 }
 
 /**
- * Run a pass and narrow it to one task. The sweep's candidate list is every
- * prunable task in the database, and a case that deliberately leaves an unsafe
- * checkout behind (there are two below) is reported again by every later pass —
- * correctly, since it is still there. Narrowing keeps each case asserting about
- * its own fixture instead of about test order.
+ * Runs a pass and narrows it to one task. The sweep's candidate list is
+ * every prunable task in the database, and a case that leaves an unsafe
+ * checkout behind (two do, below) is reported again by every later pass,
+ * correctly, since it is still there. Narrowing keeps each case asserting
+ * about its own fixture instead of test order.
  */
 async function sweep(taskId: string, retentionDays = 14) {
   const r = await sweepWorktrees(Date.now(), { retentionMs: retentionDays * DAY });
@@ -50,7 +52,41 @@ async function sweep(taskId: string, retentionDays = 14) {
   };
 }
 
+/** Stage a chat attachment for a task, the way POST /uploads does. */
+function attach(taskId: string, name = "q3-report.pdf") {
+  const dir = taskUploadsDir(taskId);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, name), "x".repeat(4096));
+  return dir;
+}
+
 describe("scheduled worktree sweep", () => {
+  it("reclaims the task's staged attachments along with its checkout", async () => {
+    // Any file type can be attached, so an instance can accumulate
+    // gigabytes of PDFs and log bundles outliving the worktrees they were
+    // staged for. This sweep is licensed to remove them because the task is
+    // terminal and untouched for weeks.
+    const { taskId } = await coldTask();
+    const dir = attach(taskId);
+
+    const result = await sweep(taskId);
+
+    expect(result.reclaimed.map((r) => r.taskId)).toEqual([taskId]);
+    expect(fs.existsSync(dir)).toBe(false);
+  });
+
+  it("keeps the attachments of a checkout it refused to reclaim", async () => {
+    const { taskId, wt } = await coldTask();
+    writeFile(wt.path, "scratch.txt", "unsaved work");
+    const dir = attach(taskId);
+
+    const result = await sweep(taskId);
+
+    expect(result.reclaimed).toEqual([]);
+    expect(result.skipped).toHaveLength(1);
+    expect(fs.existsSync(dir)).toBe(true);
+  });
+
   it("reclaims a cold finished task's checkout and keeps its branch", async () => {
     const { repo, taskId, wt } = await coldTask();
 
@@ -60,15 +96,15 @@ describe("scheduled worktree sweep", () => {
     expect(result.reclaimed[0].bytes).toBeGreaterThan(0);
     expect(fs.existsSync(wt.path)).toBe(false);
     expect(getTask(taskId)?.worktree_path).toBe("");
-    // The branch is the diff base a reopened task is read against — never the
-    // sweep's to delete, only the user's.
+    // The branch is the diff base a reopened task is read against; the
+    // sweep never deletes it, only the checkout.
     expect(getTask(taskId)?.work_branch).toBe(wt.branch);
     await expect(git(repo, "rev-parse", "--verify", `refs/heads/${wt.branch}`)).resolves.toBeTruthy();
   });
 
   it("clearing the worktree does not restamp updated_at", async () => {
-    // The board sorts on updated_at and the table prune ages against it, so a
-    // reclaim nobody asked for must not float a six-month-old task to the top
+    // The board sorts on updated_at and the table prune ages against it, so
+    // an unrequested reclaim must not float a six-month-old task to the top
     // of Done or push its transcript prune out by the worktree window.
     const { taskId } = await coldTask();
     const before = getTask(taskId)!.updated_at;

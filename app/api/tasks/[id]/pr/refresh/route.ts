@@ -4,14 +4,14 @@ import { prView, schedulePrRefresh, startPrPolling } from "@/lib/prState";
 
 export const dynamic = "force-dynamic";
 
-// The explicit "Refresh" click on the PR chip. It KICKS a re-read and returns
-// the state we already have — the gh call is a network round trip, and holding
-// a request open across it is exactly what CLAUDE.md rules out. The button's
-// payoff arrives over /api/events (task_edited) a moment later, so a refresh
-// started in one tab lands in all of them.
+// The explicit "Refresh" click on the PR chip. It kicks off a re-read and
+// returns the state already on hand, since the gh call is a network round
+// trip and holding a request open across it is exactly what CLAUDE.md rules
+// out. The button's payoff arrives over /api/events (task_edited) a moment
+// later, so a refresh started in one tab lands in all of them.
 //
-// `force` on purpose: the user asking again beats the freshness window that
-// makes opening a task cheap.
+// `force` is set because the user asking again beats the freshness window
+// that makes opening a task cheap.
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const task = getTask(id);

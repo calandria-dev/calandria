@@ -2,23 +2,26 @@
  *
  * Two halves, and only one of them can be run for real from this suite:
  *
- *   - POSIX is exercised against actual processes — a `sh -c` wrapper with a
+ *   - POSIX is exercised against actual processes: a `sh -c` wrapper with a
  *     real grandchild under it, which is the shape every managed service has
  *     (lib/services.ts spawns with shell:true). What's pinned is that the
- *     GRANDCHILD dies too: killing the pid we hold would leave the dev server
- *     holding the port, which is the whole reason this module exists.
+ *     GRANDCHILD dies too, since killing the pid we hold would leave the dev
+ *     server holding the port.
  *   - win32 has no process groups and no `ps`, so its branches are driven
- *     through the injected `exec` hook with `platform: "win32"` — the argv
- *     handed to taskkill/tasklist/PowerShell is the contract, and it's the part
- *     a Windows CI lane will later confirm end to end.
+ *     through the injected `exec` hook with `platform: "win32"`. The argv
+ *     handed to taskkill/tasklist/PowerShell is the contract, and it's the
+ *     part a Windows CI lane will later confirm end to end.
  *
- * See docs/WINDOWS.md §2.
+ * See docs/WINDOWS.md, "Platform behavior".
  */
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  confirmTreeCommand,
   hasProcessGroups,
   killTree,
+  killTreeAndWait,
+  probeTreeCommand,
   treeAlive,
   treeMatchesCommand,
 } from "@/lib/processTree";
@@ -47,8 +50,15 @@ const thrower = (calls: { file: string; args: string[] }[]) => (file: string, ar
   throw new Error("not found");
 };
 
+// `probeTreeCommand` short-circuits on liveness before it shells out, and
+// liveness is now a real signal-0 check even under `platform: "win32"`. So a
+// case that wants the command lookup to run has to name a pid that really is
+// alive; an invented one would be a coin flip on whether the host happens to
+// have it. This process qualifies, and outlives the suite.
+const LIVE = process.pid;
+
 describe("processTree: win32 rules (mocked platform)", () => {
-  it("has no process groups — so no detached spawn, and no SIGKILL escalation", () => {
+  it("has no process groups, so no detached spawn and no SIGKILL escalation", () => {
     expect(hasProcessGroups("win32")).toBe(false);
     expect(hasProcessGroups("linux")).toBe(true);
     expect(hasProcessGroups("darwin")).toBe(true);
@@ -78,49 +88,143 @@ describe("processTree: win32 rules (mocked platform)", () => {
     }
   });
 
-  it("reads liveness out of tasklist's output, not its exit code", () => {
-    // tasklist exits 0 either way; a miss prints an INFO line instead of a row.
-    const hit = recorder('"cmd.exe","4242","Console","1","4,100 K"\r\n');
-    expect(treeAlive(4242, { platform: "win32", exec: hit.exec })).toBe(true);
-    expect(hit.calls).toEqual([
-      { file: "tasklist", args: ["/fi", "PID eq 4242", "/nh", "/fo", "csv"] },
-    ]);
+  // Liveness is signal 0 on both platforms, so this branch runs for real from
+  // here: with `platform: "win32"` the only difference is that the pid is NOT
+  // negated, which is what a host without process groups needs. Measured on a
+  // real Windows desktop at 0ms against `tasklist`'s 9.5-10.5s, which is why
+  // a bounded wait can poll it at all.
+  onPosix("asks about the pid itself, with no subprocess and no negation", async () => {
+    const { pid } = spawnService();
+    await settle();
+    const r = recorder();
+    expect(treeAlive(pid, { platform: "win32", exec: r.exec })).toBe(true);
+    expect(r.calls).toEqual([]); // nothing was shelled out to
 
-    const miss = recorder("INFO: No tasks are running which match the specified criteria.\r\n");
-    expect(treeAlive(4242, { platform: "win32", exec: miss.exec })).toBe(false);
+    killTree(pid, "SIGKILL");
+    await settle();
+    expect(treeAlive(pid, { platform: "win32", exec: r.exec })).toBe(false);
+    // A pid that never existed is not alive, and neither is a non-pid.
+    expect(treeAlive(0x7fffffff, { platform: "win32" })).toBe(false);
   });
 
   it("guards against pid reuse with a command-line lookup", () => {
     const cmd = "npm run dev";
-    const ours = recorder(`C:\\WINDOWS\\system32\\cmd.exe /d /s /c "${cmd}"\r\n`);
-    expect(treeMatchesCommand(4242, cmd, { platform: "win32", exec: ours.exec })).toBe(true);
-    expect(ours.calls).toEqual([
-      {
-        file: "powershell.exe",
-        args: [
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          "(Get-CimInstance Win32_Process -Filter 'ProcessId = 4242').CommandLine",
-        ],
-      },
-    ]);
-    // No double quote reaches the argument — Node's win32 escaping and
+    const ours = recorder(`CALANDRIA_CMDLINE:C:\\WINDOWS\\system32\\cmd.exe /d /s /c "${cmd}"\r\n`);
+    expect(treeMatchesCommand(LIVE, cmd, { platform: "win32", exec: ours.exec })).toBe(true);
+    expect(ours.calls).toHaveLength(1);
+    expect(ours.calls[0].file).toBe("powershell.exe");
+    expect(ours.calls[0].args.slice(0, 3)).toEqual(["-NoProfile", "-NonInteractive", "-Command"]);
+    // The pid is interpolated into the filter, and every marker the reply is
+    // parsed for is asked for by name.
+    expect(ours.calls[0].args[3]).toContain(`ProcessId = ${LIVE}`);
+    for (const marker of ["CALANDRIA_CMDLINE:", "CALANDRIA_NOPROC", "CALANDRIA_PROBEFAIL"]) {
+      expect(ours.calls[0].args[3]).toContain(marker);
+    }
+    // No double quote reaches the argument: Node's win32 escaping and
     // PowerShell's re-parsing disagree about those.
     expect(ours.calls[0].args.join(" ")).not.toContain('"');
 
     // The pid was recycled by something else: same pid, different command line.
-    const stranger = recorder("C:\\WINDOWS\\system32\\svchost.exe -k netsvcs\r\n");
-    expect(treeMatchesCommand(4242, cmd, { platform: "win32", exec: stranger.exec })).toBe(false);
-    // Dead pid → empty output → no match (and never a kill).
-    expect(treeMatchesCommand(4242, cmd, { platform: "win32", exec: recorder("\r\n").exec })).toBe(false);
+    const stranger = recorder("CALANDRIA_CMDLINE:C:\\WINDOWS\\system32\\svchost.exe -k netsvcs\r\n");
+    expect(probeTreeCommand(LIVE, cmd, { platform: "win32", exec: stranger.exec })).toBe("mismatch");
+    // Dead pid: a definite no, and never a kill.
+    expect(probeTreeCommand(LIVE, cmd, { platform: "win32", exec: recorder("CALANDRIA_NOPROC\r\n").exec }))
+      .toBe("mismatch");
   });
 
-  it("answers 'no' when it cannot find out — leaving an orphan beats killing a stranger", () => {
+  // Issue #324: on a loaded Windows runner the CommandLine lookup came back
+  // empty, which the old boolean probe could only report as "not ours". The
+  // reap declined and a live orphan kept the port, 13 seconds after the kill
+  // that was never issued.
+  it("separates 'could not find out' from 'not ours', so a stumbling probe is not an answer", () => {
+    const cmd = "npm run dev";
+    const win = { platform: "win32" as const };
+    // PowerShell ran but the CIM query threw.
+    expect(probeTreeCommand(LIVE, cmd, { ...win, exec: recorder("CALANDRIA_PROBEFAIL\r\n").exec }))
+      .toBe("unknown");
+    // PowerShell produced nothing at all, or died on the exec timeout.
+    expect(probeTreeCommand(LIVE, cmd, { ...win, exec: recorder("").exec })).toBe("unknown");
+    expect(probeTreeCommand(LIVE, cmd, { ...win, exec: thrower([]) })).toBe("unknown");
+    // The process exists but would not show its command line.
+    expect(probeTreeCommand(LIVE, cmd, { ...win, exec: recorder("CALANDRIA_CMDLINE:\r\n").exec }))
+      .toBe("unknown");
+    // A reply wrapped by PowerShell's formatter is still the command line.
+    const wrapped = recorder(`CALANDRIA_CMDLINE:cmd.exe /d /s /c "npm run\r\n dev"\r\n`);
+    expect(probeTreeCommand(LIVE, cmd, { ...win, exec: wrapped.exec })).toBe("match");
+  });
+
+  it("retries an unanswered probe and settles on the first definite answer", async () => {
+    const cmd = "npm run dev";
+    const win = { platform: "win32" as const };
+    const fast = { ...win, retryDelayMs: 0 };
+
+    // Two stumbles, then the truth: the orphan is reaped rather than abandoned.
+    let n = 0;
+    const flaky = recorder(() => (++n < 3 ? "" : `CALANDRIA_CMDLINE:cmd.exe /d /s /c "${cmd}"`));
+    expect(await confirmTreeCommand(LIVE, cmd, { ...fast, exec: flaky.exec })).toBe("match");
+    expect(flaky.calls).toHaveLength(3);
+
+    // A recycled pid does not become ours by asking again.
+    const stranger = recorder("CALANDRIA_CMDLINE:svchost.exe -k netsvcs");
+    expect(await confirmTreeCommand(LIVE, cmd, { ...fast, exec: stranger.exec })).toBe("mismatch");
+    expect(stranger.calls).toHaveLength(1);
+
+    // An exhausted budget still refuses to kill: the bias is unchanged.
+    // A spent budget stops the retries: three attempts at the slow exec
+    // timeout would hold boot restore for a minute and a half.
+    const slow = recorder("");
+    expect(await confirmTreeCommand(LIVE, cmd, { ...win, exec: slow.exec, budgetMs: 0 })).toBe("unknown");
+    expect(slow.calls).toHaveLength(1);
+
+    const mute = recorder("");
+    expect(await confirmTreeCommand(LIVE, cmd, { ...fast, exec: mute.exec })).toBe("unknown");
+    expect(treeMatchesCommand(LIVE, cmd, { ...win, exec: mute.exec })).toBe(false);
+    expect(mute.calls).toHaveLength(4); // 3 attempts, plus the boolean check
+  });
+
+  // The win32 kill is `taskkill /T /F`, which returns once it has asked. Only
+  // the liveness poll can say the tree is actually gone, and a caller about to
+  // respawn onto the same port needs that stronger claim.
+  onPosix("waits for the tree to be gone, not for taskkill to return", async () => {
+    // A mocked taskkill that reports success and kills nothing: the wait must
+    // not take its word for it.
+    const { pid } = spawnService();
+    await settle();
+    const liar = recorder("SUCCESS: sent termination signal");
+    expect(
+      await killTreeAndWait(pid, "SIGKILL", {
+        platform: "win32",
+        exec: liar.exec,
+        timeoutMs: 300,
+        intervalMs: 10,
+      })
+    ).toBe(false);
+    expect(liar.calls[0].file).toBe("taskkill");
+    expect(treeAlive(pid)).toBe(true); // still there, and reported as such
+
+    // A taskkill that really does kill: the wait observes it and says so.
+    const real = recorder(() => {
+      process.kill(-pid, "SIGKILL");
+      return "SUCCESS";
+    });
+    expect(
+      await killTreeAndWait(pid, "SIGKILL", {
+        platform: "win32",
+        exec: real.exec,
+        timeoutMs: 5000,
+        intervalMs: 10,
+      })
+    ).toBe(true);
+
+    // Nothing to kill is nothing to wait for.
+    expect(await killTreeAndWait(0, "SIGKILL", { platform: "win32", exec: liar.exec })).toBe(true);
+  });
+
+  it("answers 'no' when it cannot find out, since leaving an orphan beats killing a stranger", () => {
     const calls: { file: string; args: string[] }[] = [];
-    expect(treeMatchesCommand(4242, "npm run dev", { platform: "win32", exec: thrower(calls) })).toBe(false);
-    expect(treeAlive(4242, { platform: "win32", exec: thrower(calls) })).toBe(false);
-    expect(treeMatchesCommand(4242, "   ", { platform: "win32", exec: recorder("anything").exec })).toBe(false);
+    expect(treeMatchesCommand(LIVE, "npm run dev", { platform: "win32", exec: thrower(calls) })).toBe(false);
+    expect(treeMatchesCommand(LIVE, "   ", { platform: "win32", exec: recorder("anything").exec })).toBe(false);
+    expect(calls.length).toBeLessThanOrEqual(1);
   });
 });
 
@@ -167,7 +271,7 @@ describe("processTree: POSIX", () => {
     expect(treeAlive(pid)).toBe(false);
   });
 
-  onPosix("SIGTERM is a real signal here — the tree gets a chance to exit cleanly", async () => {
+  onPosix("SIGTERM is a real signal here, so the tree gets a chance to exit cleanly", async () => {
     const { proc, pid } = spawnService();
     await settle();
     const exited = new Promise<void>((r) => proc.once("exit", () => r()));

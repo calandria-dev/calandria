@@ -1,17 +1,23 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Priority } from "@/lib/types";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
-import { SLABEL, type FsListing, type PickerOption, type TaskRow } from "./types";
+import { SLABEL, type FsListing, type TaskRow } from "./types";
 import { StatusDot, Skel, ErrNote } from "./shared";
+import { blockerCandidates } from "./format";
 
 // Tracks open modals so Escape only dismisses the topmost one when modals stack
 // (e.g. the folder picker opened over the project-context editor).
 const modalStack: symbol[] = [];
 
-export function Modal({ title, sub, onClose, children, footer, width }: { title: string; sub?: React.ReactNode; onClose: () => void; children: React.ReactNode; footer?: React.ReactNode; width?: number }) {
+export function Modal({ title, sub, header, onClose, children, footer, width }: {
+  title?: string; sub?: React.ReactNode;
+  /** Replaces the title/sub pair with a custom header row (the close button still renders after it). */
+  header?: React.ReactNode;
+  onClose: () => void; children: React.ReactNode; footer?: React.ReactNode; width?: number;
+}) {
   useEffect(() => {
     const token = Symbol();
     modalStack.push(token);
@@ -27,10 +33,12 @@ export function Modal({ title, sub, onClose, children, footer, width }: { title:
     <div className="scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal" style={width ? { width } : undefined}>
         <div className="modal-h">
-          <div style={{ flex: 1 }}>
-            <div className="m-title">{title}</div>
-            {sub && <div className="m-sub" style={{ marginTop: 3 }}>{sub}</div>}
-          </div>
+          {header ?? (
+            <div style={{ flex: 1 }}>
+              <div className="m-title">{title}</div>
+              {sub && <div className="m-sub" style={{ marginTop: 3 }}>{sub}</div>}
+            </div>
+          )}
           <button className="modal-close" onClick={onClose}>{Icon.x()}</button>
         </div>
         <div className="modal-b">{children}</div>
@@ -44,8 +52,8 @@ export function FolderPicker({ initial, onClose, onPick }: { initial?: string; o
   const [data, setData] = useState<FsListing | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  // Last path requested — so Retry after a failed listing re-asks for the same
-  // folder rather than resetting the whole picker to its initial directory.
+  // Last path requested, so Retry after a failed listing re-asks for the same
+  // folder instead of resetting the whole picker to its initial directory.
   const lastReq = useRef<string | undefined>(undefined);
   const load = useCallback((p?: string) => {
     lastReq.current = p;
@@ -93,9 +101,9 @@ export function FolderPicker({ initial, onClose, onPick }: { initial?: string; o
 }
 
 // "Browse" control for a working-dir field. Tries the OS-native folder chooser
-// first (search, new-folder, Finder favorites); silently falls back to the
-// in-app FolderPicker when no native dialog is available (non-macOS / headless)
-// or the call errors. Cancelling the native dialog is a no-op.
+// first (search, new-folder, Finder favorites); falls back to the in-app
+// FolderPicker with no message when no native dialog is available (non-macOS
+// / headless) or the call errors. Cancelling the native dialog is a no-op.
 export function BrowseDirButton({ initial, onPick }: { initial?: string; onPick: (p: string) => void }) {
   const [browsing, setBrowsing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -120,57 +128,6 @@ export function BrowseDirButton({ initial, onPick }: { initial?: string; onPick:
   );
 }
 
-/**
- * The Model field, shared by both task dialogs and Settings → Run defaults.
- * The list is the driver's own catalog (modelOptions over the capability
- * descriptor — the same one the session rail's picker reads), so a Vertex
- * instance's corrected windows and a new driver's models arrive here with no
- * edit. A <select> rather than the `seg wrap` its neighbours use because Claude
- * Code offers a dozen-plus entries across three groups; consecutive options
- * sharing a `group` render under one <optgroup>, matching the rail's headers.
- *
- * Renders nothing when the agent contributes no models — that's the
- * capabilities bundle not having loaded, and the synthetic "Inherit" head alone
- * is not a choice.
- */
-export function ModelField({ options, value, onChange, help, label = "Model", note }: {
-  options: PickerOption[]; value: string | null; onChange: (v: string | null) => void;
-  help?: string; label?: string; note?: React.ReactNode;
-}) {
-  // Consecutive same-group runs, in catalog order. Built before the early
-  // return would skip it, so the hook order is stable across a bundle arriving.
-  const sections = useMemo(() => {
-    const out: { group?: string; items: PickerOption[] }[] = [];
-    for (const o of options) {
-      const last = out[out.length - 1];
-      if (last && last.group === o.group) last.items.push(o);
-      else out.push({ group: o.group, items: [o] });
-    }
-    return out;
-  }, [options]);
-  if (options.length <= 1) return null;
-  // A model the catalog no longer lists — an id pinned before the instance was
-  // pointed at Vertex, or carried in from another agent. Kept as an entry of its
-  // own so the select shows what the task will actually run instead of reading
-  // as blank, and so touching an unrelated field can't silently drop it.
-  const known = options.some((o) => o.value === value);
-  const sel = options.find((o) => o.value === value);
-  return (
-    <div className="field model-field">
-      <div className="lab">{Icon.spark()} {label}</div>
-      {note}
-      <select value={value ?? ""} aria-label={label} onChange={(e) => onChange(e.target.value || null)}>
-        {sections.map((s, i) => {
-          const opts = s.items.map((o) => <option key={o.label} value={o.value ?? ""}>{o.label}</option>);
-          return s.group ? <optgroup key={s.group} label={s.group}>{opts}</optgroup> : <Fragment key={i}>{opts}</Fragment>;
-        })}
-        {value && !known && <option value={value}>{value} (not in this agent’s list)</option>}
-      </select>
-      <div className="hlp">{known ? sel?.sub : "This id isn’t one this agent offers. It may not run."}{help}</div>
-    </div>
-  );
-}
-
 export function PrioritySeg({ value, onChange }: { value: Priority; onChange: (p: Priority) => void }) {
   const opts: { key: Priority; label: string; color: string }[] = [
     { key: "lo", label: "Low", color: "var(--ink-4)" },
@@ -188,30 +145,45 @@ export function PrioritySeg({ value, onChange }: { value: Priority; onChange: (p
   );
 }
 
-// "Blocked by" picker — choose the tasks that must reach Done before this one can
-// start. Candidates are the other tasks in the project (self excluded by caller).
+// "Blocked by" picker: choose the tasks that must reach Done before this one can
+// start. Candidates are the other tasks in the project (self excluded by caller),
+// minus the terminal ones, which can't block anything and so aren't offered, and
+// listed alphabetically instead of in the caller's recency order.
 // With any blockers selected, offers the per-task "Start when unblocked" opt-in:
-// the last blocker flipping to Done launches this task's first turn by itself.
+// the last blocker flipping to Done launches this task's first turn on its own.
 export function DepPicker({ candidates, value, onChange, autoStart, onAutoStart }: {
   candidates: TaskRow[]; value: string[]; onChange: (ids: string[]) => void;
   autoStart: boolean; onAutoStart: (on: boolean) => void;
 }) {
+  const rows = useMemo(() => blockerCandidates(candidates, value), [candidates, value]);
+  // blockerCandidates only lists a suggestion that's already an edge, so in
+  // practice every suggested row here is ticked. The `value` check is what
+  // keeps the notice honest if that ever stops being true.
+  const pendingSuggestions = useMemo(() => rows.filter((c) => c.suggested && value.includes(c.id)).length, [rows, value]);
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
   return (
     <div className="field">
       <div className="lab">Blocked by <span className="opt">(must finish first)</span></div>
-      {candidates.length === 0 ? (
-        <div className="hlp">No other tasks in this project yet.</div>
+      {rows.length === 0 ? (
+        <div className="hlp">No unfinished tasks in this project to wait on.</div>
       ) : (
         <div className="dep-list">
-          {candidates.map((c) => (
+          {rows.map((c) => (
             <label key={c.id} className={`dep-row ${value.includes(c.id) ? "on" : ""}`}>
               <input type="checkbox" checked={value.includes(c.id)} onChange={() => toggle(c.id)} />
               <StatusDot status={c.status} />
               <span className="dep-title">{c.title}</span>
+              {c.suggested ? <span className="dep-sugg" title="Still in the Suggested tray. It blocks until it's accepted and finished, dismissed, or unticked here">Suggested</span> : null}
               <span className="dep-status">{SLABEL[c.status]}</span>
             </label>
           ))}
+        </div>
+      )}
+      {pendingSuggestions > 0 && (
+        <div className="hlp">
+          {pendingSuggestions === 1 ? "One blocker is" : `${pendingSuggestions} blockers are`} still an unreviewed suggestion. Accept
+          {pendingSuggestions === 1 ? " it" : " them"} from the Suggested tray to work through the plan in order, or untick
+          {pendingSuggestions === 1 ? " it" : " them"} here to start now.
         </div>
       )}
       {value.length > 0 ? (

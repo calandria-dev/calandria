@@ -90,7 +90,7 @@ describe("detached refresh job", () => {
     // unsticks instead of showing "Reading the repo…" forever.
     expect(getRefreshState(project.id)).toMatchObject({ status: "error" });
     // Stale + not in-flight → bypasses the running short-circuit and re-evaluates;
-    // with no repo_path that surfaces as an error rather than a stuck "running".
+    // with no repo_path that surfaces as an error, not a stuck "running".
     expect(startRefreshJob(project.id).status).toBe("error");
   });
 

@@ -38,7 +38,7 @@ describe("mermaidSourceOf", () => {
     expect(mermaidSourceOf(node)).toBe("graph LR\n  A --> B");
   });
 
-  it("refuses a pre with more than one real child — that's not a fence", () => {
+  it("refuses a pre with more than one real child, since that's not a fence", () => {
     const node = pre([
       code(["language-mermaid"], [{ type: "text", value: "graph LR\n" }]),
       code(["language-mermaid"], [{ type: "text", value: "graph TD\n" }]),

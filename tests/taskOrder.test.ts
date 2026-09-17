@@ -1,15 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createProject, createTask, listTasks, updateTask } from "../lib/store";
 
-// Task order is RECENCY, most recently active first — `updated_at DESC` with
-// `created_at` then `rowid` breaking same-millisecond ties. It replaced the
-// manual board order (`tasks.position`), which the board's drag used to
-// persist: the two can't both lead the sort, and a task you just worked on has
-// to come back to the top on its own rather than being dragged there.
+// Task order is recency: `updated_at DESC`, then `created_at`, then `rowid`
+// breaking same-millisecond ties. Replaces the manual board order
+// (`tasks.position`), so a task that was just worked on returns to the top
+// automatically instead of needing to be dragged there.
 //
-// The clock is faked throughout — every column this sorts by is a Date.now()
-// stamp, and two writes in the same real millisecond would make the assertions
-// below depend on how fast the machine is.
+// The clock is faked throughout, since every column this sorts by is a
+// Date.now() stamp, and two writes in the same real millisecond would make
+// the assertions depend on the machine's speed.
 describe("task ordering", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
@@ -23,8 +22,8 @@ describe("task ordering", () => {
     createTask({ project_id: project.id, title: "C" });
 
     expect(listTasks(project.id).map((t) => t.title)).toEqual(["C", "B", "A"]);
-    // Positions still count up in creation order — they're just not what the
-    // list reads any more.
+    // Positions still count up in creation order; they are not what the list
+    // reads.
     expect([a.position, b.position]).toEqual([0, 1]);
   });
 
@@ -40,9 +39,9 @@ describe("task ordering", () => {
   });
 
   it("floats a task back to the top when it is worked on", () => {
-    // The whole point of the sort: activity, not filing date. `updated_at` is
-    // bumped by every write the runner makes (running, awaiting_input, status),
-    // so a live task climbs on its own.
+    // The sort orders by activity. `updated_at` is bumped by every write the
+    // runner makes (running, awaiting_input, status), so a live task rises to
+    // the top automatically.
     const project = createProject({ name: "Activity" });
     const a = createTask({ project_id: project.id, title: "A" });
     vi.advanceTimersByTime(1000);

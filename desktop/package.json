@@ -1,12 +1,13 @@
 {
   "name": "calandria-desktop",
-  "version": "0.4.1",
+  "version": "0.16.0",
   "private": true,
-  "description": "Spike: Electron shell around the local Calandria server. Deliberately its own package so Electron (~280 MB unpacked) never lands in the app's node_modules, the Docker build, or CI.",
+  "description": "Calandria: run many coding-agent sessions in parallel from one screen.",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "test": "node test-supervisor.js",
+    "postinstall": "node scripts/patch-electron-builder-keychain.js",
     "payload": "node scripts/build-payload.js",
     "dist:dir": "npm run payload && electron-builder --linux dir",
     "dist:linux": "npm run payload && electron-builder --linux dir deb AppImage",
@@ -14,6 +15,7 @@
     "dist:win": "npm run payload && electron-builder --win nsis zip"
   },
   "dependencies": {
+    "electron-log": "^5.4.4",
     "electron-updater": "^6.8.9"
   },
   "devDependencies": {

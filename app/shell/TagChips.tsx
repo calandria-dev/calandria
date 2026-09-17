@@ -1,30 +1,34 @@
 "use client";
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { tagIsDone, type TagRow, type TaskRow } from "./types";
+import { inTags, type TagFilter } from "@/lib/tagFilter";
+import { tagIsDone, type TagRow } from "./types";
+import { Popover } from "./shared";
+
+export { inTags } from "@/lib/tagFilter";
+export type { TagFilter, TagMatch } from "@/lib/tagFilter";
 
 // Tags on the list and the board. A tag is a FILTER over the status buckets
-// both views are built on, plus a badge on every row and card — it never
-// changes what a bucket is. (Design: docs/superpowers/specs/
-// 2026-08-27-tags-design.md.)
+// both views are built on, plus a badge on every row and card; it never
+// changes what a bucket is. (Design: docs/FEATURES.md.)
 //
 // SEVERAL chips can be lit at once, because a task carries several tags. The
 // default is ANY (union): ticking "auth migration" and "mobile PWA" shows both
-// plans, which is what a chip bar reads like — a set of things to look at, not
+// plans, which is what a chip bar reads like: a set of things to look at, not
 // a query being narrowed. The `ALL` toggle beside them switches to the
 // intersection, which is the other question worth asking ("what is in the auth
 // migration AND touches mobile") and is meaningless with one chip lit, so it
 // only appears once two are.
 
 // The chip/badge tint rides a CSS custom property so one rule set serves every
-// palette entry (and the neutral no-color case) — see .gchip/.gbadge.
+// palette entry, including the neutral no-color case; see .gchip/.gbadge.
 export function tagTint(color: string | null): CSSProperties | undefined {
   return color ? ({ "--gc": color } as CSSProperties) : undefined;
 }
 
 // "4/7": members done over members still counted. Cancelled and withdrawn are
-// taken OUT of the denominator rather than shown as unfinished — a tag on five
-// tasks with two withdrawn is 3/3 when the three land — and the tooltip says
+// taken out of the denominator instead of shown as unfinished, so a tag on
+// five tasks with two withdrawn is 3/3 when the three land. The tooltip says
 // how many were withdrawn so the fraction doesn't read as a lie.
 export function tagProgress(t: Pick<TagRow, "counts">): { done: number; of: number; label: string; detail: string } {
   const { total, done, cancelled, running, awaiting } = t.counts;
@@ -36,23 +40,14 @@ export function tagProgress(t: Pick<TagRow, "counts">): { done: number; of: numb
   return { done, of, label: total === 0 ? "no tasks yet" : `${done}/${of}`, detail: total === 0 ? "No tasks yet" : parts.join(" · ") };
 }
 
-/** How several lit chips combine. "any" = union (the default), "all" = intersection. */
-export type TagMatch = "any" | "all";
-
-/** What the bar and the views share: which tags are lit, and how they combine. */
-export interface TagFilter {
-  ids: string[];
-  match: TagMatch;
-}
-
 const EMPTY: TagFilter = { ids: [], match: "any" };
 
 const KEY = (projectId: string) => `calandria_tag_filter_${projectId}`;
 // The single-group selection this replaced, so an upgrade doesn't drop the chip
 // the user had lit. Read once, then written back in the new shape.
 const LEGACY_KEYS = (projectId: string) => [`calandria_group_filter_${projectId}`, `orch_group_filter_${projectId}`];
-// Fired when something OTHER than the chip bar changes the filter — a badge on
-// a card, a landing card, the palette — so every mounted bar follows.
+// Fired when something other than the chip bar changes the filter (a badge on
+// a card, a landing card, the palette), so every mounted bar follows.
 const EVENT = "calandria:tag-filter";
 
 function read(projectId: string): TagFilter {
@@ -83,16 +78,16 @@ export function selectTagFilter(projectId: string, filter: TagFilter) {
   window.dispatchEvent(new CustomEvent(EVENT, { detail: { projectId, filter } }));
 }
 
-/** Light exactly one tag — what a badge click means, from any surface. */
+/** Light exactly one tag: what a badge click means, from any surface. */
 export function selectOneTag(projectId: string, tagId: string | null) {
   selectTagFilter(projectId, tagId ? { ids: [tagId], match: "any" } : EMPTY);
 }
 
 /**
  * Which tags the list/board is narrowed to, per project, persisted the way the
- * collapsed Done/Cancelled sections are (localStorage, not the URL — it's a
+ * collapsed Done/Cancelled sections are (localStorage, not the URL: it's a
  * working preference, not a location). Remembered ids that no longer name a tag
- * in `tags` (deleted, or another project's) are dropped rather than filtering
+ * in `tags` (deleted, or another project's) are dropped instead of filtering
  * everything out; when none survives, the bar reads as All.
  */
 export function useTagFilter(projectId: string, tags: TagRow[]) {
@@ -111,21 +106,10 @@ export function useTagFilter(projectId: string, tags: TagRow[]) {
     return ids.length === raw.ids.length ? raw : { ids, match: raw.match };
   }, [raw, tags]);
   const set = (next: TagFilter) => selectTagFilter(projectId, next);
-  // Ticking a chip on and off, keeping the rest — the bar's own verb.
+  // Ticking a chip on and off, keeping the rest: the bar's own verb.
   const toggle = (id: string) =>
     set({ ids: filter.ids.includes(id) ? filter.ids.filter((x) => x !== id) : [...filter.ids, id], match: filter.match });
   return { filter, set, toggle };
-}
-
-/**
- * The filter itself: no lit chips keeps everything; `any` keeps a task carrying
- * at least one of them, `all` only a task carrying every one.
- */
-export function inTags<T extends Pick<TaskRow, "tag_ids">>(tasks: T[], filter: TagFilter): T[] {
-  if (!filter.ids.length) return tasks;
-  return tasks.filter((t) =>
-    filter.match === "all" ? filter.ids.every((id) => t.tag_ids.includes(id)) : filter.ids.some((id) => t.tag_ids.includes(id))
-  );
 }
 
 /**
@@ -189,9 +173,9 @@ export function TagChips({ tags, filter, onToggle, onSet }: {
 }
 
 /**
- * The tinted pill a task's row, card or session header carries — one per tag.
- * With `onSelect` it's a button that lights that tag's chip alone — the way
- * into the filter from any surface showing a task — otherwise a plain label.
+ * The tinted pill a task's row, card or session header carries: one per tag.
+ * With `onSelect` it's a button that lights that tag's chip alone, the way
+ * into the filter from any surface showing a task; otherwise a plain label.
  */
 export function TagBadge({ tag, onSelect, className }: {
   // Name and tint are all a badge needs to RENDER; the counts are only for its
@@ -216,8 +200,18 @@ export function TagBadge({ tag, onSelect, className }: {
  * Every badge a row shows, in tag order. Its own component because three
  * surfaces (list row, board card, session header) render the same list from the
  * same two inputs, and a task with five tags must not push its title off the
- * card — `max` caps what's drawn and the rest becomes a "+2" pill that still
- * names them on hover.
+ * card. `max` caps what's drawn and the rest becomes a "+2" pill.
+ *
+ * That pill is a BUTTON, not a label. Its tooltip used to be the only way to
+ * read the hidden names, which on a phone means no way at all, and the phone is
+ * a primary surface here. Pressing it opens the rest in the shared `Popover`,
+ * which portals to the body and positions itself `fixed`: the three surfaces
+ * that render badges all clip (`.crumb` and `.ttitle` set `overflow:hidden`)
+ * and `.task-top` is a nowrap flex row where anything added squeezes the title,
+ * so expanding the names in place would hide them a second way.
+ *
+ * The pill stays neutral-tinted even as a button: no single tag's colour
+ * applies to a pill naming several.
  */
 export function TagBadges({ tagIds, tagsById, onSelect, max = 3, className }: {
   tagIds: string[];
@@ -226,6 +220,7 @@ export function TagBadges({ tagIds, tagsById, onSelect, max = 3, className }: {
   max?: number;
   className?: string;
 }) {
+  const [open, setOpen] = useState(false);
   const tags = tagIds.map((id) => tagsById.get(id)).filter((t): t is TagRow => !!t);
   if (!tags.length) return null;
   const shown = tags.slice(0, max);
@@ -236,8 +231,26 @@ export function TagBadges({ tagIds, tagsById, onSelect, max = 3, className }: {
         <TagBadge key={t.id} tag={t} className={className} onSelect={onSelect ? () => onSelect(t.id) : undefined} />
       ))}
       {rest.length > 0 && (
-        <span className={`gbadge more ${className ?? ""}`} title={rest.map((t) => t.name).join("\n")}>
-          +{rest.length}
+        <span className="gmore">
+          <button type="button" className={`gbadge more ${className ?? ""}`} data-testid="tag-more"
+            aria-expanded={open} aria-label={`Show ${rest.length} more tag${rest.length === 1 ? "" : "s"}`}
+            title={`${rest.map((t) => t.name).join("\n")}\nClick to show them`}
+            // The row, card and breadcrumb underneath are all clickable, and
+            // the Popover dismisses on any window click that isn't stopped.
+            onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+            onKeyDown={(e) => e.stopPropagation()}>
+            +{rest.length}
+          </button>
+          {open && (
+            <Popover onClose={() => setOpen(false)}>
+              <div className="gmore-list" data-testid="tag-more-list">
+                {rest.map((t) => (
+                  <TagBadge key={t.id} tag={t}
+                    onSelect={onSelect ? () => { setOpen(false); onSelect(t.id); } : undefined} />
+                ))}
+              </div>
+            </Popover>
+          )}
         </span>
       )}
     </>

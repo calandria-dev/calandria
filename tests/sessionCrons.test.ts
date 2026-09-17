@@ -7,16 +7,17 @@ import {
   lingerNote,
   cancelledCronsNotice,
   describeCron,
+  wakeTimeLabel,
 } from "@/lib/agents/claude/sessionCrons";
 
-// The Stop hook's session_crons payload as measured on claude CLI 2.1.240: a
-// one-shot ScheduleWakeup encodes ONLY its wall-clock minute ("58 11 * * *"
-// for 11:58, local time, day/month wildcards); a recurring CronCreate carries
-// the expression it was given. These pin the local-time math the driver uses
-// to decide whether a wakeup fits a bounded linger window and to label it.
+// The Stop hook's session_crons payload: a one-shot ScheduleWakeup encodes
+// ONLY its wall-clock minute ("58 11 * * *" for 11:58, local time, day/month
+// wildcards); a recurring CronCreate carries the expression it was given.
+// These pin the local-time math the driver uses to decide whether a wakeup
+// fits a bounded linger window and to label it.
 
-// A fixed local "now": Mon 2026-08-24 11:56:40 (local time — the CLI's cron
-// clock IS the server's local clock, since the CLI is our child process).
+// A fixed local "now": Mon 2026-08-24 11:56:40, local time. The CLI's cron
+// clock is the server's local clock, since the CLI runs as a child process.
 const NOW = new Date(2026, 7, 24, 11, 56, 40).getTime();
 const local = (h: number, m: number, dayOffset = 0) => new Date(2026, 7, 24 + dayOffset, h, m).getTime();
 
@@ -93,6 +94,17 @@ describe("labels", () => {
   });
   it("shows a recurring cron's expression and its next fire", () => {
     expect(lingerNote(0, [planned[2]], NOW)).toBe("wakes on `* * * * *`, next 11:57");
+  });
+  it("labels a wake by how far off it is: bare time today, weekday within a week, date beyond", () => {
+    // The untested branch that sank the v0.9.0 tag build. A wake five minutes
+    // out is still on ANOTHER calendar day when the turn runs near midnight,
+    // so the label grows a weekday, and every suite that hardcoded HH:MM in a
+    // notice failed for the ~5 minutes a day that was true. Pinned here, on a
+    // frozen clock, so the driver suites can stay tolerant of the prefix.
+    expect(wakeTimeLabel(local(11, 58), NOW)).toBe("11:58");
+    expect(wakeTimeLabel(new Date(2026, 7, 25, 0, 3).getTime(), NOW)).toBe("Tue 00:03");
+    expect(wakeTimeLabel(new Date(2026, 8, 3, 9, 0).getTime(), NOW)).toBe("Sep 3 09:00");
+    expect(wakeTimeLabel(null, NOW)).toBe("an unparsed schedule");
   });
   it("picks the cron a wake init came from: the latest one already due, else the earliest", () => {
     expect(cronThatWoke(planned, local(11, 58))?.id).toBe("a"); // 11:57 (loop) and 11:58 (a) both due → the latest due

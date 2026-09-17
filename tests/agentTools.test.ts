@@ -4,6 +4,7 @@ import { createTag, createProject, createTask, deleteTask, getTask, getTaskDeps,
 import {
   createSuggestedTask,
   getTaskForAgent,
+  listProvidersForAgent,
   listTagsForAgent,
   listTasksForAgent,
   registerExposedService,
@@ -12,6 +13,8 @@ import {
   updateTaskForAgent,
   withdrawSuggestionForAgent,
 } from "@/lib/agentTools";
+import { createProvider, bundledProviderFor } from "@/lib/providers/store";
+import { setAgentConnection } from "@/lib/agents/connections";
 import { subscribeGlobal, type BusEvent } from "@/lib/events";
 import { POST as suggestTask } from "@/app/api/internal/agent-tools/suggest-task/route";
 import { POST as exposeService } from "@/app/api/internal/agent-tools/expose-service/route";
@@ -49,7 +52,7 @@ describe("agentTools shared logic", () => {
     expect(getTaskDeps(b.task!.id)).toEqual([a.id]);
     expect(b.text).toContain("Blocked by 1 task(s).");
 
-    // An unknown id is silently dropped by setTaskDeps — no throw, real dep kept.
+    // An unknown id is dropped by setTaskDeps without throwing; the real dep is kept.
     const other = createProject({ name: "Deps2" });
     const foreign = createSuggestedTask(other, { title: "Foreign", description: "" }).task!;
     const c = createSuggestedTask(project, { title: "C", description: "", blocked_by: [a.id, "ghost", foreign.id] });
@@ -57,8 +60,8 @@ describe("agentTools shared logic", () => {
   });
 
   it("resolveTitleRefs maps session titles to ids and passes ids through", () => {
-    // Entries are keyed by (project, title) — see crossProjectSuggest.test.ts
-    // for why, and for the cross-project scoping this keying buys.
+    // Entries are keyed by (project, title); see crossProjectSuggest.test.ts
+    // for the cross-project scoping this keying buys.
     const map = new Map<string, string>([[titleKey("proj-1", "First task"), "id-1"]]);
     expect(resolveTitleRefs(["First task", "id-2"], map, "proj-1")).toEqual(["id-1", "id-2"]);
     expect(resolveTitleRefs(undefined, map, "proj-1")).toEqual([]);
@@ -96,8 +99,8 @@ describe("list_tasks / get_task (reads)", () => {
     const project = createProject({ name: "SelfDone" });
     const mine = createTask({ project_id: project.id, title: "Mine", description: "" });
     updateTask(mine.id, { status: "done" });
-    // An agent that has just marked itself done must still see itself — the
-    // terminal-status filter is about board noise, not about hiding the caller.
+    // An agent that has just marked itself done must still see its own row;
+    // the terminal-status filter only suppresses other finished tasks.
     expect(listTasksForAgent(project, mine.id).map((t) => t.id)).toEqual([mine.id]);
     expect(listTasksForAgent(project, "someone-else")).toEqual([]);
   });
@@ -130,11 +133,11 @@ describe("update_task (writes, scoped to the calling task)", () => {
     expect(text).toContain('title → "Renamed"');
     expect(text).toContain("priority → hi");
     expect(text).toContain("description rewritten");
-    // Untouched fields are left alone, not defaulted.
+    // Untouched fields keep their existing values.
     expect(getTask(task.id)!.status).toBe("not_started");
   });
 
-  it("refuses to cancel — it would abort the very turn making the call", () => {
+  it("refuses to cancel, since that would abort the very turn making the call", () => {
     const task = own("NoCancel");
     const { task: updated, text } = updateTaskForAgent(task, undefined,{ status: "cancelled" });
     expect(updated).toBeNull();
@@ -152,8 +155,8 @@ describe("update_task (writes, scoped to the calling task)", () => {
   });
 
   it("re-reads the row before writing, so a task deleted mid-turn is a refusal", () => {
-    // Turns run detached and the driver's MCP server closes over the task
-    // snapshot taken at turn start — the row can vanish underneath it.
+    // Turns run detached, and the driver's MCP server closes over the task
+    // snapshot taken at turn start, so the row can be deleted before the write lands.
     const stale = own("Vanished");
     deleteTask(stale.id);
     const { task: updated, text } = updateTaskForAgent(stale, undefined, { title: "Too late" });
@@ -177,7 +180,7 @@ describe("update_task (writes, scoped to the calling task)", () => {
     const first = updateTaskForAgent(task, undefined,{ status: "done" });
     expect(first.autoStartDependents).toBe(true);
     expect(getTask(task.id)).toMatchObject({ status: "done", awaiting_input: 0 });
-    // Already done — no second launch of whatever was waiting on it.
+    // Already done: no second launch of whatever was waiting on it.
     expect(updateTaskForAgent(task, undefined,{ status: "done" }).autoStartDependents).toBe(false);
   });
 
@@ -190,8 +193,8 @@ describe("update_task (writes, scoped to the calling task)", () => {
     } finally {
       unsub();
     }
-    // task_edited, not task_updated: title/description/priority aren't on the
-    // coarse wire payload, so listeners have to refetch rather than patch.
+    // This publishes task_edited because title, description and priority are
+    // not on the coarse wire payload, so listeners refetch instead of patching.
     expect(seen).toContainEqual({ taskId: task.id, ev: { type: "task_edited" } });
   });
 
@@ -202,14 +205,12 @@ describe("update_task (writes, scoped to the calling task)", () => {
   });
 });
 
-describe("update_task (writes to another row — any task, minus a live turn)", () => {
-  // The caller and a task it doesn't own. Eligibility used to be `suggested=1`
-  // (an inert tray suggestion, nothing else); now the only refusal left is a
-  // LIVE turn in the target. Writing to a row the old gate would have refused
-  // — anything already accepted or started — is now allowed but RECORDED
-  // (tasks.agent_edited_at / task_agent_edits); the recording rule itself is
-  // covered in depth by tests/agentTaskEdits.test.ts, this file keeps the
-  // coverage for the write's own shape and the one remaining refusal.
+describe("update_task (writes to another row: any task, minus a live turn)", () => {
+  // The caller writes to a task it doesn't own. The only refusal is a LIVE
+  // turn in the target; any other write is allowed and RECORDED
+  // (tasks.agent_edited_at / task_agent_edits), covered in depth by
+  // tests/agentTaskEdits.test.ts. This file covers the write's shape and the
+  // one remaining refusal.
   const board = (name: string) => {
     const project = createProject({ name });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
@@ -228,11 +229,11 @@ describe("update_task (writes to another row — any task, minus a live turn)", 
     expect(updated!.id).toBe(inert.id);
     expect(getTask(inert.id)).toMatchObject({ title: "Sharpened", description: "new brief", priority: "hi", status: "on_hold" });
     expect(text).toContain("Sharpened");
-    // The caller's own row is untouched — the write went where it was aimed.
+    // The caller's own row is untouched; the write landed on the target.
     expect(getTask(caller.id)).toMatchObject({ title: "Caller", status: "not_started" });
   });
 
-  it("edits an inert suggestion in ANOTHER project — writes range as widely as suggest_task files", () => {
+  it("edits an inert suggestion in ANOTHER project, since writes range as widely as suggest_task files", () => {
     const { caller } = board("Foreign-Here");
     const there = createProject({ name: "Foreign-There" });
     const theirs = createSuggestedTask(there, { title: "Theirs", description: "" }).task!;
@@ -242,9 +243,9 @@ describe("update_task (writes to another row — any task, minus a live turn)", 
   });
 
   it("edits a STARTED (but not running) task the user already accepted, and records it", () => {
-    // What starting a suggestion does (POST /api/tasks/[id]/messages). The old
-    // policy refused this outright; now it's writable, but the write is on the
-    // record — this is exactly the class of edit wasAccepted flags.
+    // Starting a suggestion (POST /api/tasks/[id]/messages) sets `started`.
+    // A write to this task is allowed and recorded, the class of edit
+    // wasAccepted flags.
     const { caller, inert } = board("Foreign-Started");
     updateTask(inert.id, { suggested: 0, started: 1 });
     const { task: updated, text } = updateTaskForAgent(caller, inert.id, { title: "Hijacked" });
@@ -261,14 +262,14 @@ describe("update_task (writes to another row — any task, minus a live turn)", 
     const { task: updated } = updateTaskForAgent(caller, inert.id, { title: "Hijacked" });
     expect(updated).toBeNull();
     expect(getTask(inert.id)!.title).toBe("Proposed");
-    // Refused entirely — nothing to record for a write that never happened.
+    // Refused entirely; nothing to record for a write that never happened.
     expect(getTask(inert.id)!.agent_edited_at).toBe(0);
   });
 
   it("edits an accepted (no longer suggested) task that never started, and records it", () => {
     // "Add" in the tray clears `suggested` without starting anything. The row
-    // is still inert on the RUN side, but the user has adopted it as their own
-    // backlog item — an outside write is allowed now, and visible.
+    // stays inert on the RUN side, but the user has adopted it as a backlog
+    // item, so an outside write is allowed and visible.
     const { caller, inert } = board("Foreign-Accepted");
     updateTask(inert.id, { suggested: 0 });
     const { task: updated } = updateTaskForAgent(caller, inert.id, { title: "Hijacked" });
@@ -318,7 +319,7 @@ describe("withdraw_suggestion (retracting a tray suggestion)", () => {
   const board = (name: string) => {
     const project = createProject({ name });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
-    // The caller is a live session — that's what makes its own row ineligible.
+    // The caller is a live session, which makes its own row ineligible.
     updateTask(caller.id, { started: 1, running: 1 });
     const { task: inert } = createSuggestedTask(project, { title: "Proposed", description: "old brief", priority: "med" });
     return { project, caller, inert: inert! };
@@ -329,11 +330,11 @@ describe("withdraw_suggestion (retracting a tray suggestion)", () => {
     const { task: updated, text } = withdrawSuggestionForAgent(caller, inert.id, "  already covered by the parser rewrite  ");
     expect(updated!.id).toBe(inert.id);
     const row = getTask(inert.id)!;
-    // Cancelled, but still `suggested` — that flag is what keeps the card in
-    // the tray for the user to revive or dismiss. Not a delete: the tray's own
-    // Dismiss button is the hard delete, and this app has no undo for that.
+    // Cancelled, but still `suggested`, which keeps the card in the tray for
+    // the user to revive or dismiss. The tray's own Dismiss button performs
+    // the hard delete, with no undo.
     expect(row).toMatchObject({ status: "cancelled", suggested: 1, withdrawn_reason: "already covered by the parser rewrite" });
-    // The brief is untouched — a revived suggestion has to still say what it was for.
+    // The brief is untouched, so a revived suggestion still says what it was for.
     expect(row.description).toBe("old brief");
     expect(text).toContain("Suggested tray");
   });
@@ -348,7 +349,7 @@ describe("withdraw_suggestion (retracting a tray suggestion)", () => {
     }
   });
 
-  it("requires a target — there is no 'my own row' default", () => {
+  it("requires a target: there is no 'my own row' default", () => {
     const { caller } = board("Wd-NoTarget");
     const { task: updated, text } = withdrawSuggestionForAgent(caller, undefined, "redundant");
     expect(updated).toBeNull();
@@ -363,8 +364,8 @@ describe("withdraw_suggestion (retracting a tray suggestion)", () => {
     expect(getTask(caller.id)!.status).toBe("not_started");
   });
 
-  // The eligibility screen is update_task's, shared (isInertSuggestion) so the
-  // two tools can never disagree about which rows an agent may write.
+  // The eligibility screen is shared with update_task (isInertSuggestion), so
+  // the two tools agree on which rows an agent may write.
   it.each([
     ["a STARTED task", { suggested: 0, started: 1 } as const],
     ["a RUNNING task", { running: 1 } as const],
@@ -395,8 +396,8 @@ describe("withdraw_suggestion (retracting a tray suggestion)", () => {
   });
 
   it("announces task_edited against the TARGET, so other tabs refetch the row", () => {
-    // task_edited, not task_updated: withdrawn_reason can't ride the coarse
-    // /api/events payload, so listeners have to refetch to draw the card at all.
+    // This publishes task_edited because withdrawn_reason is not part of the
+    // coarse /api/events payload, so listeners must refetch to draw the card.
     const { caller, inert } = board("Wd-Bus");
     const seen: { taskId: string; ev: BusEvent }[] = [];
     const unsub = subscribeGlobal((taskId, ev) => seen.push({ taskId, ev }));
@@ -410,9 +411,8 @@ describe("withdraw_suggestion (retracting a tray suggestion)", () => {
   });
 
   it("signals auto-start: cancelling a blocker clears it, so dependents must not strand", () => {
-    // The whole hazard the tool has to avoid creating. blocks() treats cancelled
-    // as terminal, so the dependent IS unblocked — if no sweep fires it sits
-    // unblocked-but-never-launched forever.
+    // blocks() treats cancelled as terminal, so cancelling unblocks the
+    // dependent; without this sweep it stays unblocked but never launches.
     const { caller, inert } = board("Wd-AutoStart");
     const { task: updated, autoStartDependents } = withdrawSuggestionForAgent(caller, inert.id, "redundant");
     expect(updated!.id).toBe(inert.id);
@@ -627,14 +627,13 @@ describe("instance service token gate", () => {
   });
 });
 
-// ── Tags on the agent tools ──────────────────────────────────────────────────
-// The half of docs/superpowers/specs/2026-08-27-tags-design.md that lets a
-// PLANNING TURN file a named plan instead of N unrelated rows, many-to-many.
-// The asymmetry between the two writers is the thing under test: suggest_task
-// creates a tag it doesn't recognize (a plan being born names itself once),
-// update_task refuses one (the task exists, so a typo would split a feature the
-// user is already filtering by in two) — and update_task REPLACES the set
-// rather than adding to it, exactly like blocked_by.
+// Tags on the agent tools
+// Tags let a planning turn file a named plan instead of many unrelated rows,
+// many-to-many (docs/FEATURES.md). suggest_task creates a tag it doesn't
+// recognize, so a plan can name itself in one call; update_task refuses an
+// unrecognized tag, since the task already exists and a typo would split a
+// feature in two. update_task also replaces the tag set instead of adding to
+// it, matching blocked_by.
 describe("tags on the agent tools", () => {
   it("suggest_task creates the named tags in the TARGET project, tagged with the caller", () => {
     const project = createProject({ name: "T-Suggest" });
@@ -649,14 +648,15 @@ describe("tags on the agent tools", () => {
     expect(first.text).toContain('Created tag "Auth migration" in T-Suggest.');
     const tag = listTags(project.id)[0];
     expect(tag.name).toBe("Auth migration");
-    // Provenance: the tag links back to the session that planned it, which is
-    // what lib/tagContext.ts turns into "Planned in task …" for every member.
+    // Provenance: the tag links back to the session that planned it, which
+    // lib/tagContext.ts turns into "Planned in task …" for every member.
     expect(tag.origin_task_id).toBe(planner.id);
     expect(getTaskTagIds(first.task!.id)).toEqual([tag.id]);
 
-    // The rest of the batch REUSES it rather than minting a near-duplicate, and
-    // says so — an exact-match-or-create verb is only safe if the result
-    // distinguishes the two outcomes while the agent can still fix its spelling.
+    // The rest of the batch reuses the existing tag instead of minting a
+    // near-duplicate, and the result names which happened: an exact-match-or-
+    // create verb has to distinguish the two outcomes so the agent can still
+    // fix its spelling.
     const second = createSuggestedTask(project, { title: "Step two", description: "", tags: ["Auth migration"], origin_task_id: planner.id });
     expect(second.text).toContain('Tagged "Auth migration".');
     expect(second.text).not.toContain("Created tag");
@@ -676,9 +676,9 @@ describe("tags on the agent tools", () => {
   });
 
   it("suggest_task tags a cross-project suggestion in the project it LANDS in", () => {
-    // Tags are resolved after the target project, so a session planning into
-    // another repo names a tag there — never one in its own, which the task
-    // could not legally belong to.
+    // Tags are resolved in the target project, so a session planning into
+    // another repo names a tag there instead of in its own project, since
+    // the task cannot belong to its own project's tags.
     const here = createProject({ name: "T-Here" });
     const there = createProject({ name: "T-There" });
     createTag({ project_id: here.id, name: "Shared name" });
@@ -703,13 +703,13 @@ describe("tags on the agent tools", () => {
     expect(named.text).toContain('tags → "Auth migration"');
     expect(getTaskTagIds(task.id)).toEqual([a.id]);
 
-    // A second tags call REPLACES rather than adds — "Auth migration" is gone.
+    // A second tags call replaces the set instead of adding to it; "Auth migration" is gone.
     expect(updateTaskForAgent(task, undefined, { tags: [b.id] }).task).toBeTruthy();
     expect(getTaskTagIds(task.id)).toEqual([b.id]);
 
-    // Re-stating the same set is a no-op, not a spurious write — and the
-    // no-change text names it, or it would read as if `tags` had been ignored
-    // (the same rider `blocked_by` gets).
+    // Re-stating the same set is a no-op, not a spurious write. The no-change
+    // text names it, or it would read as if `tags` had been ignored, the same
+    // rider `blocked_by` gets.
     const noop = updateTaskForAgent(task, undefined, { tags: [b.id] });
     expect(noop.text).toContain("No change");
     expect(noop.text).toContain('tagged "Mobile PWA"');
@@ -742,7 +742,7 @@ describe("tags on the agent tools", () => {
     expect(listTags(project.id)).toHaveLength(1);
   });
 
-  it("update_task refuses one unusable ref out of several — the whole call fails, nothing lands", () => {
+  it("update_task refuses one unusable ref out of several: the whole call fails, nothing lands", () => {
     const project = createProject({ name: "T-Strict-Partial" });
     const task = createTask({ project_id: project.id, title: "Mine", description: "" });
     const real = createTag({ project_id: project.id, name: "Real tag" });
@@ -753,7 +753,7 @@ describe("tags on the agent tools", () => {
     expect(getTaskTagIds(task.id)).toEqual([]);
   });
 
-  it("update_task refuses a tag from another project — a tag can't span repos", () => {
+  it("update_task refuses a tag from another project, since a tag can't span repos", () => {
     const here = createProject({ name: "T-Own" });
     const there = createProject({ name: "T-Foreign" });
     const task = createTask({ project_id: here.id, title: "Mine", description: "" });
@@ -779,25 +779,32 @@ describe("tags on the agent tools", () => {
     expect(getTaskTagIds(target.id)).toEqual([tag.id]);
   });
 
-  it("list_tasks carries every row's tags and filters by one", () => {
+  it("list_tasks carries every row's tags and filters by any or all tags", () => {
     const project = createProject({ name: "T-List" });
-    const tag = createTag({ project_id: project.id, name: "Auth migration" });
-    const mine = createTask({ project_id: project.id, title: "Mine", description: "", tag_ids: [tag.id] });
-    createTask({ project_id: project.id, title: "Sibling", description: "", tag_ids: [tag.id] });
+    const auth = createTag({ project_id: project.id, name: "Auth migration" });
+    const mobile = createTag({ project_id: project.id, name: "Mobile PWA" });
+    const mine = createTask({ project_id: project.id, title: "Mine", description: "", tag_ids: [auth.id, mobile.id] });
+    createTask({ project_id: project.id, title: "Auth only", description: "", tag_ids: [auth.id] });
+    createTask({ project_id: project.id, title: "Mobile only", description: "", tag_ids: [mobile.id] });
     createTask({ project_id: project.id, title: "Unrelated", description: "" });
 
     const all = listTasksForAgent(project, mine.id);
-    expect(all.map((t) => t.title).sort()).toEqual(["Mine", "Sibling", "Unrelated"]);
-    // Name as well as id, on every row — an id alone would need a list_tags
+    expect(all.map((t) => t.title).sort()).toEqual(["Auth only", "Mine", "Mobile only", "Unrelated"]);
+    // Name as well as id, on every row: an id alone would need a list_tags
     // call to mean anything.
-    expect(all.find((t) => t.id === mine.id)!.tags).toEqual([{ id: tag.id, name: "Auth migration" }]);
+    expect(all.find((t) => t.id === mine.id)!.tags).toEqual([
+      { id: auth.id, name: "Auth migration" },
+      { id: mobile.id, name: "Mobile PWA" },
+    ]);
     expect(all.find((t) => t.title === "Unrelated")!.tags).toEqual([]);
 
-    const filtered = listTasksForAgent(project, mine.id, false, tag.id);
-    expect(filtered.map((t) => t.title).sort()).toEqual(["Mine", "Sibling"]);
+    const any = listTasksForAgent(project, mine.id, false, { ids: [auth.id, mobile.id], match: "any" });
+    expect(any.map((t) => t.title).sort()).toEqual(["Auth only", "Mine", "Mobile only"]);
+    const allFiltered = listTasksForAgent(project, mine.id, false, { ids: [auth.id, mobile.id], match: "all" });
+    expect(allFiltered.map((t) => t.title)).toEqual(["Mine"]);
     // The caller's own row is exempt from the STATUS filter but not this one: a
     // filtered list that always contained the caller would misreport membership.
-    const other = listTasksForAgent(project, mine.id, false, tag.id).filter((t) => t.title === "Unrelated");
+    const other = listTasksForAgent(project, mine.id, false, { ids: [auth.id], match: "any" }).filter((t) => t.title === "Unrelated");
     expect(other).toEqual([]);
   });
 
@@ -831,7 +838,7 @@ describe("tags on the agent tools", () => {
     const project = createProject({ name: "EP-Tag" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
 
-    // suggest-task: creates the tag and records the CALLER as its origin —
+    // suggest-task: creates the tag and records the CALLER as its origin.
     // taskId is the trusted, env-injected id, never a model-set field.
     const made = await post(suggestTask, "/api/internal/agent-tools/suggest-task", {
       projectId: project.id,
@@ -846,17 +853,18 @@ describe("tags on the agent tools", () => {
     expect(tag.origin_task_id).toBe(caller.id);
     expect(getTaskTagIds(madeJson.id)).toEqual([tag.id]);
 
-    // list-tasks: filters, and refuses an unknown filter rather than quietly
-    // handing back the whole board as if that were the feature's membership.
+    // list-tasks: filters, and refuses an unknown filter instead of returning
+    // the whole board as if that were the feature's membership.
     const filtered = await post(listTasksEp, "/api/internal/agent-tools/list-tasks", {
       projectId: project.id,
       taskId: caller.id,
-      tag: "Auth migration",
+      tags: ["Auth migration"],
+      match: "any",
     });
     const filteredJson = (await filtered.json()) as { tasks: { title: string; tags: { name: string }[] }[] };
     expect(filteredJson.tasks.map((t) => t.title)).toEqual(["Tagged"]);
     expect(filteredJson.tasks[0].tags[0]!.name).toBe("Auth migration");
-    const badFilter = await post(listTasksEp, "/api/internal/agent-tools/list-tasks", { projectId: project.id, tag: "ghost" });
+    const badFilter = await post(listTasksEp, "/api/internal/agent-tools/list-tasks", { projectId: project.id, tags: ["Auth migration", "ghost"], match: "all" });
     expect(badFilter.status).toBe(400);
 
     // update-task: strict, and a refusal writes nothing.
@@ -873,8 +881,8 @@ describe("tags on the agent tools", () => {
     expect(moved.status).toBe(200);
     expect(getTaskTagIds(caller.id)).toEqual([tag.id]);
 
-    // list-tags: the read behind "how is the migration going". This is the
-    // real stdio bridge endpoint (list-tags, not the old list-groups path).
+    // list-tags: the read behind "how is the migration going", served by the
+    // real stdio bridge endpoint.
     const listed = await post(listTagsEp, "/api/internal/agent-tools/list-tags", { projectId: project.id, taskId: caller.id });
     const listedJson = (await listed.json()) as { project: string; tags: { name: string; counts: { total: number } }[] };
     expect(listedJson.project).toBe("EP-Tag");
@@ -882,5 +890,88 @@ describe("tags on the agent tools", () => {
     expect(listedJson.tags[0].counts.total).toBe(2);
     const badProject = await post(listTagsEp, "/api/internal/agent-tools/list-tags", { projectId: project.id, project: "nope" });
     expect(badProject.status).toBe(400);
+  });
+});
+
+describe("suggest_task provider/model", () => {
+  it('"local" resolves to the first ollama/lmstudio/custom row, in that order', () => {
+    const project = createProject({ name: "Prov-Local" });
+    createProvider({ type: "custom", config: { base_url: "http://localhost:9999", api: "openai" } });
+    const lmstudio = createProvider({ type: "lmstudio", config: { base_url: "http://localhost:1234" } });
+    const { task } = createSuggestedTask(project, { title: "T1", description: "", provider: "local", model: "qwen3-coder" });
+    expect(task!.provider_id).toBe(lmstudio.id);
+
+    const ollama = createProvider({ type: "ollama", config: { base_url: "http://localhost:11434" } });
+    const { task: t2 } = createSuggestedTask(project, { title: "T2", description: "", provider: "local", model: "qwen3-coder" });
+    expect(t2!.provider_id).toBe(ollama.id);
+  });
+
+  it('"cloud" resolves to the connected environment\'s bundled provider', () => {
+    const project = createProject({ name: "Prov-Cloud" });
+    setAgentConnection("claude", { method: "subscription", email: null, plan: null });
+    const anthropic = bundledProviderFor("claude")!;
+    const { task } = createSuggestedTask(project, { title: "T", description: "", provider: "cloud" });
+    expect(task!.provider_id).toBe(anthropic.id);
+  });
+
+  it("resolves an explicit provider id or exact label", () => {
+    const project = createProject({ name: "Prov-Explicit" });
+    const provider = createProvider({ type: "ollama", label: "Mac mini", config: { base_url: "http://localhost:11434" } });
+    const byId = createSuggestedTask(project, { title: "ById", description: "", provider: provider.id }).task!;
+    expect(byId.provider_id).toBe(provider.id);
+    const byLabel = createSuggestedTask(project, { title: "ByLabel", description: "", provider: "mac mini" }).task!;
+    expect(byLabel.provider_id).toBe(provider.id);
+  });
+
+  it("refuses an unrecognized provider and creates nothing", () => {
+    const project = createProject({ name: "Prov-Unknown" });
+    const { task, text } = createSuggestedTask(project, { title: "Nope", description: "", provider: "ghost-provider" });
+    expect(task).toBeNull();
+    expect(text).toMatch(/No provider matches/);
+  });
+
+  it("refuses a model the provider doesn't list", () => {
+    const project = createProject({ name: "Prov-UnknownModel" });
+    const provider = createProvider({
+      type: "ollama",
+      config: { base_url: "http://localhost:11434" },
+      model_policy: { mode: "deny", ids: [], known: ["qwen3-coder", "llama3.3"], unavailable: [] },
+    });
+    const { task, text } = createSuggestedTask(project, { title: "Bad model", description: "", provider: provider.id, model: "made-up-model" });
+    expect(task).toBeNull();
+    expect(text).toMatch(/isn't a model/);
+    expect(text).toMatch(/qwen3-coder/);
+  });
+
+  it("refuses a model turned off under the provider's policy", () => {
+    const project = createProject({ name: "Prov-Off" });
+    const provider = createProvider({
+      type: "ollama",
+      config: { base_url: "http://localhost:11434" },
+      model_policy: { mode: "deny", ids: ["qwen3-coder"], known: ["qwen3-coder", "llama3.3"], unavailable: [] },
+    });
+    const { task, text } = createSuggestedTask(project, { title: "Off model", description: "", provider: provider.id, model: "qwen3-coder" });
+    expect(task).toBeNull();
+    expect(text).toMatch(/is off under/);
+  });
+
+  it("does not check the model against a bundled provider's catalog", () => {
+    const project = createProject({ name: "Prov-Bundled" });
+    setAgentConnection("claude", { method: "subscription", email: null, plan: null });
+    const { task } = createSuggestedTask(project, { title: "Any model", description: "", provider: "cloud", model: "anything-goes" });
+    expect(task!.model).toBe("anything-goes");
+  });
+
+  it("list_providers reports id, label, type, bundled, environments and models_on", () => {
+    const ollama = createProvider({
+      type: "ollama",
+      label: "Home box",
+      config: { base_url: "http://localhost:11434" },
+      model_policy: { mode: "deny", ids: [], known: ["qwen3-coder", "llama3.3"], unavailable: [] },
+    });
+    const rows = listProvidersForAgent();
+    const row = rows.find((r) => r.id === ollama.id)!;
+    expect(row).toMatchObject({ label: "Home box", type: "ollama", bundled: null, models_on: 2 });
+    expect(row.status).toBe("untested");
   });
 });

@@ -2,12 +2,12 @@
 
 import { useState } from "react";
 import { Icon } from "../icons";
-import { fmtCost, relTime } from "./format";
+import { fmtCostTotal, relTime } from "./format";
 import { SEARCH_MIN, type AgentInfo, type ProjectRow } from "./types";
 import { SearchBar } from "./shared";
 
 // Footer line under "Your workspace": the real auth state per connected agent,
-// from GET /api/agents (which reports the EFFECTIVE billing credential — an
+// from GET /api/agents (which reports the EFFECTIVE billing credential: an
 // active API key outranks a stored subscription login; see issue #4).
 function agentAuthLine(agents: AgentInfo[]): string {
   const parts = agents
@@ -79,7 +79,11 @@ export function ProjectsColumn({ projects, deprecated, agents, selId, running, w
                 <div className="pname">{p.name}</div>
                 <div className="psub">
                   {p.task_count} task{p.task_count !== 1 ? "s" : ""}{p.sub ? ` · ${p.sub}` : ""}
-                  {p.cost_usd > 0 && <span className="psub-cost" title="Total spend across this project's tasks"> · {fmtCost(p.cost_usd)}</span>}
+                  {(p.cost_usd > 0 || p.unpriced_turns > 0) && (
+                    <span className="psub-cost" title={p.unpriced_turns > 0
+                      ? `Total spend across this project's tasks. ${p.unpriced_turns} turn${p.unpriced_turns === 1 ? "" : "s"} ran against a custom endpoint with no price set and ${p.cost_usd > 0 ? "are left out of this figure" : "there is nothing else to count, so there is no figure"}: unknown, not $0.00.`
+                      : "Total spend across this project's tasks"}> · {fmtCostTotal(p.cost_usd, p.unpriced_turns)}</span>
+                  )}
                 </div>
               </div>
               <div className="pcount" title={p.last_activity ? `Last touched ${relTime(p.last_activity)}` : "Never touched"}>

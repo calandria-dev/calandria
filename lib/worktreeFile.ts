@@ -6,20 +6,58 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-// Files larger than this never open in the modal — a document someone reads
+// Files larger than this never open in the modal: a document someone reads
 // end to end is kilobytes, and the whole text rides in one POST body.
 export const MAX_COLLAB_BYTES = 1024 * 1024;
 
+// Cap for the raw route (GET /api/tasks/[id]/file/raw), which hands a
+// worktree file's bytes to the browser: an image or an archive a transcript
+// link names. Read whole into memory, so bounded.
+export const MAX_RAW_FILE_BYTES = 32 * 1024 * 1024;
+
+export type WorktreeFileHit =
+  | { ok: true; abs: string; size: number }
+  | { ok: false; status: number; error: string };
+
+/**
+ * Locate a request's repo-relative path inside a worktree for a file route:
+ * the resolved absolute path, or the status and message the route answers
+ * with instead. Shared by the collaboration file route (GET and POST) and the
+ * raw route so they can never disagree about which paths are reachable. A
+ * path outside the worktree and a nonexistent one both come back 404: the
+ * guard cannot tell them apart without leaking which paths exist, so only a
+ * request malformed on its face is a 400.
+ */
+export function locateWorktreeFile(worktree: string, rel: string, maxBytes: number): WorktreeFileHit {
+  if (!worktree) return { ok: false, status: 409, error: "task has no worktree" };
+  const abs = resolveWorktreeFile(worktree, rel);
+  if (!abs) {
+    const malformed = malformedWorktreePath(rel);
+    return { ok: false, status: malformed ? 400 : 404, error: malformed ? "bad path" : "file not found" };
+  }
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(abs);
+  } catch {
+    return { ok: false, status: 404, error: "file not found" };
+  }
+  if (!stat.isFile()) return { ok: false, status: 400, error: "not a file" };
+  if (stat.size > maxBytes) {
+    return { ok: false, status: 413, error: `file too large (max ${Math.round(maxBytes / 1024)} KB)` };
+  }
+  return { ok: true, abs, size: stat.size };
+}
+
 // Resolve a repo-relative path inside a worktree, refusing anything that
 // would read outside it. Rejects absolute paths and `..` segments up front,
-// then re-checks the REAL path (symlink targets are what `..` filtering can't
-// see: `docs/link -> /etc` normalizes clean and still escapes). Returns null
-// rather than throwing so the route can answer 400 without parsing errors.
+// then re-checks the real path, since symlink targets are what `..` filtering
+// can't see: `docs/link -> /etc` normalizes clean and still escapes. Returns
+// null instead of throwing so the route can answer 400 without parsing errors.
 export function resolveWorktreeFile(worktree: string, rel: string): string | null {
   if (!rel || path.isAbsolute(rel) || rel.includes("\0")) return null;
   // Raw segments, before normalize() folds `docs/../docs/x` into `docs/x`: a
-  // repo-relative path from the diff never contains `..`, so its presence is
-  // a probe, not a spelling.
+  // repo-relative path from the diff never contains `..`, so its presence
+  // marks a probe, not a legitimate path.
   if (rel.split(/[\\/]/).some((seg) => seg === "..")) return null;
   const normalized = path.normalize(rel);
   const root = path.resolve(worktree);
@@ -29,7 +67,7 @@ export function resolveWorktreeFile(worktree: string, rel: string): string | nul
   try {
     real = fs.realpathSync(abs);
   } catch {
-    return null; // doesn't exist (or unreadable) — the route reports 404 either way
+    return null; // doesn't exist (or unreadable); the route reports 404 either way
   }
   let realRoot: string;
   try {
@@ -42,24 +80,23 @@ export function resolveWorktreeFile(worktree: string, rel: string): string | nul
 }
 
 /**
- * Whether a requested path is malformed ON ITS FACE — absent, absolute, or
- * carrying a `..` segment — as opposed to merely naming something that isn't
+ * Whether a requested path is malformed on its face (absent, absolute, or
+ * carrying a `..` segment), as opposed to merely naming something that isn't
  * there. The route answers 400 for the first and 404 for the second, so that a
  * refusal never leaks which paths exist.
  *
  * Exported so it cannot drift from the rejection rules in
- * `resolveWorktreeFile` above, which is exactly what had happened: the route
- * inlined it as `rel.startsWith("/") || rel.split("/").includes("..")`, and
- * both halves are POSIX-only spellings. On Windows `C:\secret.md` is absolute
- * and `docs\..\..\x` is a traversal, and `resolveWorktreeFile` refused both
- * while the route reported them as an ordinary missing file. Found by the
- * windows-latest CI lane.
+ * `resolveWorktreeFile` above. A route that instead inlines the check as
+ * `rel.startsWith("/") || rel.split("/").includes("..")` uses two POSIX-only
+ * spellings: on Windows `C:\secret.md` is absolute and `docs\..\..\x` is a
+ * traversal, both of which `resolveWorktreeFile` refuses while such a route
+ * would report them as an ordinary missing file.
  */
 export function malformedWorktreePath(rel: string): boolean {
   return !rel || path.isAbsolute(rel) || rel.split(/[\\/]/).some((seg) => seg === "..");
 }
 
-// git's blob id for a file's bytes — what `git hash-object <file>` prints —
+// git's blob id for a file's bytes: what `git hash-object <file>` prints,
 // computed in-process (no subprocess, and it's exact for an uncommitted
 // file, which HEAD is not). The file route stamps it on every read and a
 // document comment records it as its anchor_sha, so "the document has changed

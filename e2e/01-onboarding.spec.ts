@@ -1,8 +1,8 @@
-// First-run onboarding, driven entirely through the UI against the untouched
-// fresh instance (this file must run first — see playwright.config.ts). The
-// wizard's two steps run against the mock agent: "Connect Mock Agent account"
-// resolves instantly (the mock's startLogin succeeds without a browser hop),
-// and Verify runs a real one-shot turn through the driver seam.
+// First-run onboarding, driven through the UI against the untouched fresh
+// instance. This file must run first; see playwright.config.ts. The wizard's
+// two steps run against the mock agent: "Connect Mock Agent account" resolves
+// instantly, since the mock's startLogin succeeds without a browser hop, and
+// Verify runs a real one-shot turn through the driver seam.
 
 import { expect, test } from "@playwright/test";
 

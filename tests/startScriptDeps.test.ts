@@ -1,14 +1,9 @@
-// Issue #32: `npm start` ran through cross-env and concurrently, both
-// devDependencies. (`concurrently` is gone from this script — scripts/start.mjs
-// replaced it so Ctrl+C can reach server.js's drain on Windows, docs/WINDOWS.md
-// §8 — but the rule it motivated outlives it, and `cross-env` still proves it.) Any install that omits dev deps — and NODE_ENV=production
-// makes npm do exactly that, including a `npm install` an agent runs from a
-// shell the app spawned — produced an instance that could not start, and said
-// nothing about it until the next restart. Docker never noticed (its build
-// stage installs everything and the runtime stage copies node_modules
-// wholesale); bare-node deploys did. So: every binary the start script invokes
-// must come from `dependencies`, and this stays true without anyone re-running
-// a production-only install to find out.
+// Issue #32: every binary the start script invokes must come from
+// `dependencies`, never `devDependencies`. NODE_ENV=production skips
+// devDependencies on install, including a `npm install` an agent runs from a
+// shell the app spawned, so a start script depending on one would fail to
+// start and say nothing about it until the next restart. `cross-env` is the
+// case this pins.
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -22,7 +17,7 @@ const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"
 // The commands a script line runs: the first word of each `&&`/`;`/`||`
 // segment, minus env assignments and the `node`/`npm` builtins, plus the
 // commands inside quoted sub-invocations (concurrently takes its jobs as
-// strings). `cross-env` is a wrapper — its own arguments are assignments and
+// strings). `cross-env` is a wrapper: its own arguments are assignments and
 // the command it then execs, which is a binary in its own right.
 const WRAPPERS = new Set(["cross-env"]);
 function binariesOf(script: string): string[] {

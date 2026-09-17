@@ -1,11 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 
-// The linger kill-switch: CALANDRIA_BACKGROUND_LINGER=off restores the
-// pre-feature behavior — the turn closes at result time even with background
-// work pending, and the capability flag flips so buildProjectContext re-warns
-// the model that backgrounded commands die at turn end. Its own file because
-// the env is read at module load (lib/config.ts), so the main linger suite
-// can't flip it.
+// The linger kill-switch: CALANDRIA_BACKGROUND_LINGER=off closes the turn at
+// result time even with background work pending, and flips the capability
+// flag so buildProjectContext warns the model that backgrounded commands die
+// at turn end. This is its own file because the env is read at module load
+// (lib/config.ts), so the main linger suite cannot flip it.
 const { queryMock } = vi.hoisted(() => {
   process.env.CALANDRIA_BACKGROUND_LINGER = "off";
   return { queryMock: vi.fn() };
@@ -20,6 +19,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 import { claudeDriver } from "@/lib/agents/claude/driver";
 import { buildProjectContext } from "@/lib/agents/shared";
 import type { Project, Task, StreamEvent } from "@/lib/types";
+import { oneShotIn } from "./wakeFixture";
 
 const project = { id: "p1", name: "P", repo_path: "/tmp/repo", context: "" } as Project;
 const task = { id: "t1", agent: "claude", title: "T", description: "", session_id: null, worktree_path: "", generation: 1 } as unknown as Task;
@@ -35,7 +35,7 @@ describe("CALANDRIA_BACKGROUND_LINGER=off", () => {
           await h({ background_tasks: [{ id: "bg1", type: "shell", status: "running", description: "sleep 5" }] });
         }
         yield { type: "result", subtype: "success", result: "ok", total_cost_usd: 0.01, usage: { input_tokens: 1, output_tokens: 2 } };
-        // With the switch off the driver must release the input here — this
+        // With the switch off the driver must release the input here; this
         // read hangs the test (and fails it on timeout) if it lingers instead.
         const end = await it2.next();
         expect(end.done).toBe(true);
@@ -56,11 +56,10 @@ describe("CALANDRIA_BACKGROUND_LINGER=off", () => {
   });
 
   it("names a pending wakeup as cancelled when the turn closes under it", async () => {
-    // A session cron only fires while the CLI lives (measured), and with the
-    // switch off the CLI exits at result time — so the wakeup the model was
-    // promised has to be reported dead, not left for the user to wait on.
-    const d = new Date(Date.now() + 5 * 60_000);
-    const cron = { id: "w1", schedule: `${d.getMinutes()} ${d.getHours()} * * *`, recurring: false, prompt: "WAKE: re-check" };
+    // A session cron only fires while the CLI lives, and with the switch off
+    // the CLI exits at result time, so the wakeup the model was promised has
+    // to be reported dead instead of left for the user to wait on.
+    const { cron, when } = oneShotIn(5, { prompt: "WAKE: re-check" });
     queryMock.mockImplementation((args: { prompt: AsyncIterable<unknown>; options: { hooks?: { Stop?: { hooks: ((i: unknown) => Promise<unknown>)[] }[] } } }) => {
       const it2 = args.prompt[Symbol.asyncIterator]();
       return (async function* () {
@@ -76,8 +75,8 @@ describe("CALANDRIA_BACKGROUND_LINGER=off", () => {
     for await (const ev of claudeDriver.runTurn(task, project, "go")) events.push(ev);
     expect(events.some((e) => e.type === "background_pending")).toBe(false);
     const notice = events.find((e) => e.type === "notice");
-    expect(notice && "content" in notice ? notice.content : "").toMatch(
-      /^⏰ Scheduled wakeup cancelled \(lingering is off on this instance \(CALANDRIA_BACKGROUND_LINGER\), so the session closed at the end of the turn\): at \d\d:\d\d, "WAKE: re-check"\. It will not fire/,
+    expect(notice && "content" in notice ? notice.content : "").toContain(
+      `⏰ Scheduled wakeup cancelled (lingering is off on this instance (CALANDRIA_BACKGROUND_LINGER), so the session closed at the end of the turn): at ${when}, "WAKE: re-check". It will not fire`,
     );
   });
 });

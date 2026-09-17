@@ -11,7 +11,8 @@ their state and logs stay available when you reconnect.
 ## Configure a project
 
 Open the project's context editor and set its `dev`, `setup`, or `test` commands. The
-Services drawer can then start, stop, and restart them and display live logs.
+Services drawer can then start, stop, and restart them and display live logs. On a phone the
+same controls and logs are on the Services tab in the bottom tab bar.
 
 Each project receives a stable port derived from `CALANDRIA_SERVICE_PORT_BASE`. Calandria
 injects that value as `PORT` into managed services and the project's terminal. A service
@@ -21,8 +22,12 @@ If Calandria previously stopped unexpectedly, startup checks for and reaps the o
 process tree before relaunching the service: on Linux and macOS by signalling the process
 group, on Windows with `taskkill /T /F`. In both cases the reaper first confirms the
 recorded process still carries that service's command line, so it never kills a recycled
-PID. Port conflicts with unmanaged processes show up as readable errors instead of crash
-loops. Log retention is bounded by `CALANDRIA_SERVICE_LOG_LINES` (1,500 lines by default).
+PID. If that check cannot answer, it is retried before the reaper gives up, and a give-up is
+logged, since a Windows lookup that stumbled once used to read as "not ours" and leave the
+orphan holding the port. The kill is then waited on until the tree is actually gone, since
+`taskkill` returns as soon as it has asked. A port conflict with an unmanaged process is
+reported as a readable error, so a service never crash-loops on a busy port. Log retention is
+bounded by `CALANDRIA_SERVICE_LOG_LINES` (1,500 lines by default).
 
 Managed services are on by default. Set `CALANDRIA_FEATURE_SERVICES=0` to remove the
 feature.

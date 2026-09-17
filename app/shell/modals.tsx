@@ -3,40 +3,120 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LandingMode, Priority } from "@/lib/types";
 import { Icon } from "../icons";
-import { jget, jsend } from "./api";
-import { relTime, duration, fmtJobCost } from "./format";
-import { SLABEL, modelOptions, permissionOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate, type TagRow } from "./types";
+import { apiFetch, jget, jsend } from "./api";
+import { nanoid } from "nanoid";
+import { relTime, duration, fmtJobCost, alphabetical, isBlocking, splitAttachments } from "./format";
+import { AttachmentChips, stagedAttachment, uploadToDraft, uploadToTask, useAttachments } from "./attachments";
+import { joinAttachmentText } from "@/lib/uploadTypes";
+import { SLABEL, permissionOptions, codexSandboxOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate, type TagRow } from "./types";
 import { tagProgress } from "./TagChips";
-import { agentLabel, agentPickerNeeded, defaultAgentFor, findAgent } from "./agents";
+import { agentLabel, agentPickerNeeded, defaultAgentFor, findAgent, pickerAgents } from "./agents";
 import { StatusDot, Skel, ErrNote } from "./shared";
-import { Modal, BrowseDirButton, ModelField, PrioritySeg, DepPicker } from "./Modal";
+import { Modal, BrowseDirButton, PrioritySeg, DepPicker } from "./Modal";
 import { GitHubClonePicker } from "./github";
 import { Markdown } from "../Markdown";
 import { clientFeatures } from "@/lib/features";
+import { gatewayInsecureForGemini, taskProvider } from "@/lib/agentEnv";
+import { ModelPicker, useModelTree, resolveModelLabel, type ModelPickerValue } from "./ModelPicker";
+import type { PresentedProvider } from "@/lib/providers/present";
 
-// Segmented agent picker (Claude Code / Codex …). Hidden when there is nothing
-// to choose: one agent registered, OR one agent CONNECTED and it's the one
-// already selected. Every driver is always registered, so "length <= 1" alone
-// never fired on a real instance — a Claude-only user saw a two-button picker
-// whose other button was a dead "Codex · not connected" every time they made a
-// task. The selected-check keeps the picker (and its Connect CTA) visible when
-// the value is an unconnected agent — an old Codex task in Edit, a project
-// default pointing at an agent that was since signed out — because hiding it
-// there would strand the task on an agent it can't run and hide the way out.
-// Nothing connected keeps the picker too, so the connect CTA still renders.
-// An unauthenticated agent is still selectable (you can create a not-started
-// task and connect later) but flagged, with a Connect CTA that jumps to the
-// setup wizard.
+// The configured provider rows, fetched once per mounted dialog (no module-
+// scoped cache like ModelPicker's own: only one of these dialogs is ever open
+// at a time, so a per-mount fetch costs nothing extra). Feeds ModelPickerField's
+// resolved label and ContextModal's "is the chosen provider a gateway" check,
+// neither of which ModelPicker exposes on its own (it keeps its provider cache
+// private).
+function useProvidersMap(): Map<string, PresentedProvider> {
+  const [map, setMap] = useState<Map<string, PresentedProvider>>(new Map());
+  useEffect(() => {
+    let alive = true;
+    jget<{ providers: PresentedProvider[] }>("/api/providers")
+      .then((r) => { if (alive) setMap(new Map(r.providers.map((p) => [p.id, p] as const))); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  return map;
+}
+
+/**
+ * The field-width "Model" control both task dialogs use: a button styled like
+ * the other fields around it, showing the resolved model (or the inherit
+ * label), that opens ModelPicker in its popover variant. `agentId` is pinned
+ * to a single-entry `env.options`, matching its own value: these dialogs
+ * already have a separate Agent/Environment picker (AgentPicker, above), so
+ * ModelPicker's own environment-switch footer would just be a second, redundant
+ * control for the same choice. Passing one option instead of the picker's
+ * `pinned` flag keeps the footer's "runs in X" line while suppressing "Change".
+ */
+function ModelPickerField({ label = "Model", help, value, onChange, agentId, agents, providers, inherit }: {
+  label?: string;
+  help?: React.ReactNode;
+  value: ModelPickerValue;
+  onChange: (v: ModelPickerValue) => void;
+  agentId: string;
+  agents: AgentsBundle;
+  providers: Map<string, PresentedProvider>;
+  inherit: { label: string; sub?: string };
+}) {
+  const [open, setOpen] = useState(false);
+  const { tree } = useModelTree(agentId);
+  const resolved = resolveModelLabel(tree, providers, value);
+  return (
+    <div className="field model-field">
+      <div className="lab">{Icon.spark()} {label}</div>
+      <div style={{ position: "relative" }}>
+        <button
+          type="button"
+          className="btn btn-line"
+          style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}
+          onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        >
+          <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, overflow: "hidden" }}>
+            {resolved?.mark}
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {resolved ? resolved.name : inherit.label}
+            </span>
+            {resolved?.via && <span className="opt">via {resolved.via}</span>}
+          </span>
+          {Icon.chevDown()}
+        </button>
+        {open && (
+          <ModelPicker
+            value={value}
+            onChange={onChange}
+            inherit={inherit}
+            env={{ current: agentId, options: [{ id: agentId, label: agentLabel(agents, agentId) }] }}
+            variant="popover"
+            onClose={() => setOpen(false)}
+          />
+        )}
+      </div>
+      {help && <div className="hlp">{help}</div>}
+    </div>
+  );
+}
+
+// Segmented agent picker (Claude Code / Codex, etc). Hidden when there is
+// nothing to choose: one agent registered, or one agent connected and it's the
+// one already selected. The selected-check keeps the picker (and its Connect
+// CTA) visible when the value is an unconnected agent, so a task on a signed-out
+// agent still has a way to reconnect it. Nothing connected keeps the picker too,
+// so the connect CTA still renders.
+//
+// The entries come from pickerAgents(), not the whole bundle: an agent nobody
+// is signed in to can't run a session, so it isn't offered, except the selected
+// agent itself, which renders flagged with a Connect CTA to the setup wizard.
 export function AgentPicker({ agents, value, onChange, onConnect, help, label = "Agent" }: {
   agents: AgentsBundle; value: string; onChange: (id: string) => void; onConnect?: () => void; help?: string; label?: string;
 }) {
   if (!agentPickerNeeded(agents, value)) return null;
   const sel = findAgent(agents, value);
+  const offered = pickerAgents(agents, value);
   return (
     <div className="field">
       <div className="lab">{label}</div>
       <div className="seg wrap">
-        {agents.agents.map((a) => (
+        {offered.map((a) => (
           <button key={a.id} className={a.id === value ? "on" : ""} onClick={() => onChange(a.id)}
             title={a.authenticated ? `Run on ${a.label}` : `${a.label} isn't connected yet`}>
             {a.label}{!a.authenticated && <span className="opt"> · not connected</span>}
@@ -55,24 +135,36 @@ export function AgentPicker({ agents, value, onChange, onConnect, help, label = 
   );
 }
 
-// The Tags field — which features this task is a step of, MANY at once (a
-// task can belong to several plans). A checkbox list over the project's tags,
-// styled like DepPicker's Blocked-by list rather than a <select>, since a
-// single-choice control can't express a set — plus an inline "New tag…" (name
-// only; description and color come from the tag strip later). Sits above
-// Blocked by in both task dialogs, since "which feature(s)" is decided before
-// "which step". Without `onCreate` (no project to mint into, or the bulk
-// modal's Remove mode, where minting a tag nobody has yet is meaningless) it
-// only offers the existing tags.
-export function TagsField({ tags, value, onChange, onCreate, label = "Tags", hint = "(which features this is a step of)" }: {
+// The Tags field: which features this task is a step of, several at once since
+// a task can belong to more than one plan. A checkbox list over the project's
+// tags, styled like DepPicker's Blocked-by list since a single-choice control
+// can't express a set, plus an inline "New tag…" (name only; description and
+// color come from the tag strip later). Sits above Blocked by in both task
+// dialogs, since which feature(s) is decided before which step. Without
+// `onCreate` (no project to mint into, or the bulk modal's Remove mode) it only
+// offers the existing tags.
+//
+// `primary` adds the star: the order of `value` is `task_tags.position`, which
+// decides both the badge order and the order lib/tagContext.ts hands the tag
+// blocks to the session, so the first tag is what a member session reads first
+// about which plan it is part of. Starring a tag hoists it to index 0 and
+// leaves the rest in insertion order. There is no separate "primary" column;
+// primary IS first, so unticking the starred tag promotes the next one with no
+// second state to keep in step. Off for the bulk modal, whose `value` is a list
+// of tags to add or remove across a selection, with no one task's order to set.
+export function TagsField({ tags, value, onChange, onCreate, primary = false, label = "Tags", hint = "(which features this is a step of)" }: {
   tags: TagRow[]; value: string[]; onChange: (ids: string[]) => void;
   onCreate?: (name: string) => Promise<TagRow>;
-  label?: string; hint?: string;
+  primary?: boolean; label?: string; hint?: string;
 }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Alphabetical, not the strip's manual order: the user is scanning for a tag
+  // name they already have in mind.
+  const rows = useMemo(() => [...tags].sort((a, b) => alphabetical(a.name, b.name)), [tags]);
+  const showStars = primary && value.length > 1;
   const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
   const cancel = () => { setCreating(false); setName(""); setErr(null); };
   const create = async () => {
@@ -86,7 +178,7 @@ export function TagsField({ tags, value, onChange, onCreate, label = "Tags", hin
       cancel();
     } catch (e) {
       // 409 on a name collision: the tag exists, so say so and leave the
-      // name in place — ticking it in the list below is one click away.
+      // name in place. Ticking it in the list below is one click away.
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
@@ -98,14 +190,30 @@ export function TagsField({ tags, value, onChange, onCreate, label = "Tags", hin
       <div className="lab">{label} {hint && <span className="opt">{hint}</span>}</div>
       {tags.length > 0 ? (
         <div className="dep-list">
-          {tags.map((t) => (
-            <label key={t.id} className={`dep-row ${value.includes(t.id) ? "on" : ""}`}>
-              <input type="checkbox" checked={value.includes(t.id)} onChange={() => toggle(t.id)} />
-              <span aria-hidden style={{ width: 8, height: 8, borderRadius: "50%", background: t.color ?? "var(--ink-4)", flex: "0 0 auto" }} />
-              <span className="dep-title">{t.name}</span>
-              <span className="dep-status">{tagProgress(t).label}</span>
-            </label>
-          ))}
+          {rows.map((t) => {
+            const on = value.includes(t.id);
+            const isFirst = value[0] === t.id;
+            return (
+              <div key={t.id} className={`dep-row tagf-row ${on ? "on" : ""}`}>
+                <label className="tagf-pick">
+                  <input type="checkbox" checked={on} onChange={() => toggle(t.id)} />
+                  <span aria-hidden className="tagf-dot" style={{ background: t.color ?? "var(--ink-4)" }} />
+                  <span className="dep-title">{t.name}</span>
+                </label>
+                <span className="dep-status">{tagProgress(t).label}</span>
+                {/* Only with two or more picked: one tag is trivially first, and
+                    a star that can never be pressed is noise. */}
+                {showStars && on && (
+                  <button type="button" className={`tagf-star ${isFirst ? "on" : ""}`} aria-pressed={isFirst}
+                    aria-label={isFirst ? `${t.name} is read first` : `Read ${t.name} first`}
+                    title={isFirst ? "This task's sessions read about this tag first" : `Read about "${t.name}" first instead`}
+                    onClick={() => onChange([t.id, ...value.filter((x) => x !== t.id)])}>
+                    {Icon.star(isFirst ? { fill: "currentColor" } : undefined)}
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       ) : (
         <div className="hlp">No tags in this project yet.</div>
@@ -122,12 +230,51 @@ export function TagsField({ tags, value, onChange, onCreate, label = "Tags", hin
         <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => setCreating(true)}>{Icon.plus()} New tag…</button>
       )}
       {err && <ErrNote style={{ marginTop: 8 }}>{err}</ErrNote>}
-      <div className="hlp">Tags filter the list and board, and badge every member. A task can carry several; a tag never spans projects.</div>
+      <div className="hlp">
+        A task can carry several tags. A tag never spans projects.
+        {showStars && " The starred tag comes first: its badge leads the row, and its plan is the first one this task's sessions are told about."}
+      </div>
     </div>
   );
 }
 
-export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, onCreateTag, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; tags: TagRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; permission_mode: string | null; tag_ids: string[] }) => void; onCreateTag: (name: string) => Promise<TagRow>; onOpenSetup?: () => void }) {
+/**
+ * The description box of both task dialogs: a textarea that is also a drop
+ * zone, with the attachment chips under it and an attach button, the same
+ * machinery the composer uses (./attachments.tsx). An attachment uploads on
+ * attach and is written into the description as a marker line on save, after
+ * the prose, so the session's context, the task header and get_task all
+ * read the same text.
+ */
+function DescriptionField({ value, onChange, placeholder, files, help }: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  files: ReturnType<typeof useAttachments>;
+  help: React.ReactNode;
+}) {
+  return (
+    <div className="field">
+      <div className="lab">Description <span className="opt">(what to do)</span></div>
+      <div className={`desc-drop${files.dragging ? " dropping" : ""}`} {...files.dropProps}>
+        <textarea value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)}
+          onPaste={(e) => { files.pasteFiles(e); }} />
+        <AttachmentChips atts={files.atts} onRemove={files.remove} />
+      </div>
+      <div className="desc-tools">
+        {files.fileInput}
+        <button type="button" className="btn btn-ghost btn-sm" onClick={files.openPicker}
+          title="Attach a file or image, or drag, drop, or paste one. It's saved to disk for the agent to open, not inlined into the prompt.">
+          {Icon.clip()} Attach files
+        </button>
+        {files.uploading && <span className="hlp" style={{ margin: 0 }}>Uploading…</span>}
+      </div>
+      {help}
+    </div>
+  );
+}
+
+export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, onCreateTag, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; tags: TagRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; provider_id: string | null; permission_mode: string | null; sandbox_mode: string | null; tag_ids: string[]; attachments: string[] }) => void; onCreateTag: (name: string) => Promise<TagRow>; onOpenSetup?: () => void }) {
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
@@ -138,60 +285,87 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   const [deps, setDeps] = useState<string[]>([]);
   const [autoStart, setAutoStart] = useState(false);
   // null = the picker's "Inherit" head: use the app-level default, then the
-  // driver's. Set here (not just in the session rail) because the auto-start
-  // opt-in below decides this task will run with NOBODY WATCHING, and an
-  // unattended permission prompt declines itself — so the one dialog that
-  // schedules unattended work has to be able to say "don't stop to ask".
+  // driver's. Set here, not just in the session rail, because the auto-start
+  // opt-in below can run this task with nobody watching, and an unattended
+  // permission prompt declines itself: this dialog needs to be able to say
+  // "don't stop to ask".
   const [permission, setPermission] = useState<string | null>(null);
+  const [sandbox, setSandbox] = useState<string | null>(null);
   // Same inherit semantics for the model. Chosen here rather than only in the
   // session rail because "Start session immediately" makes the first turn part
   // of this dialog: a rail pick afterwards would land a model behind the turn
   // that already ran on the default one.
   const [model, setModel] = useState<string | null>(null);
+  // Attachments stage under a draft id (POST /api/uploads) since the task has
+  // no id yet; POST /api/tasks adopts them into the new task's dir. Cancel
+  // drops the draft, and a draft this dialog never closes is swept server-side.
+  const draft = useRef(nanoid());
+  const files = useAttachments({ upload: uploadToDraft(draft.current) });
+  const close = () => {
+    if (files.atts.length) void apiFetch(`/api/uploads/${draft.current}`, { method: "DELETE" }).catch(() => {});
+    onClose();
+  };
+  const [providerId, setProviderId] = useState<string | null>(null);
+  const providers = useProvidersMap();
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => { ref.current?.focus(); }, []);
   // The bundle can arrive after mount; adopt the resolved default until the user picks.
   const touched = useRef(false);
   useEffect(() => { if (!touched.current) setAgent(defaultAgentFor(agents, project.default_agent)); }, [agents, project.default_agent]);
   const pickAgent = (id: string) => { touched.current = true; setAgent(id); };
-  const can = title.trim().length > 0;
+  // An upload still in flight has no path to write yet, so Create waits for it.
+  const can = title.trim().length > 0 && !files.uploading;
   // A task with unfinished blockers can't start now, so the two options are exclusive.
-  const blocked = deps.some((id) => tasks.find((t) => t.id === id)?.status !== "done");
-  // Can't launch a session on an agent that isn't signed in — but the task can
+  // One rule, shared with the "Blocked by" chip and with blocks() server-side:
+  // terminal doesn't block, and neither does a ref that resolves to nothing
+  // (see isBlocking). An unreviewed suggestion does block, and `tasks` carries
+  // the suggested rows so the picker above can show and untick it.
+  const blocked = deps.some((id) => isBlocking(tasks.find((t) => t.id === id)));
+  // Can't launch a session on an agent that isn't signed in, but the task can
   // still be created (not started) and started once the agent is connected.
   const selAgent = findAgent(agents, agent);
   const agentReady = selAgent ? selAgent.authenticated : true;
-  const canStart = !blocked && agentReady;
+  // The old per-project http/loopback endpoint override (lib/agentEnv.ts),
+  // kept only for the Gemini-insecure-gateway warning below: unrelated to
+  // which model/provider this task picks, which now goes through ModelPicker
+  // and the model_providers table instead.
+  const provider = useMemo(() => taskProvider(project), [project]);
+  // Gemini CLI source refuses a plain-http endpoint unless it's loopback
+  // (docs/AGENTS.md, "Antigravity CLI"). A gateway is reachable from anywhere
+  // the app is deployed, so this would fail every turn inside `agy` instead of
+  // at launch. Refused here instead.
+  const gatewayInsecure = agent === "gemini" && gatewayInsecureForGemini(provider);
+  const canStart = !blocked && agentReady && !gatewayInsecure;
   const willAutoStart = autoStart && deps.length > 0;
   const permissionOpts = useMemo(() => permissionOptions(selAgent?.capabilities), [selAgent]);
-  const modelOpts = useMemo(() => modelOptions(selAgent?.capabilities), [selAgent]);
-  // Permission modes and models are both provider-specific (each driver labels
-  // its own — Claude speaks Anthropic's mode names and model aliases, Codex its
-  // sandbox modes and GPT ids), so a choice made under one agent may not exist
-  // under the next: switching agents drops it back to Inherit rather than
-  // silently sending a value the new driver would coerce.
+  const sandboxOpts = agent === "codex" ? codexSandboxOptions("Use the Codex Settings default, or follow the permission mode") : [];
+  // Permission modes are provider-specific (each driver labels its own: Claude
+  // speaks Anthropic's mode names, Codex its sandbox modes), so a choice made
+  // under one agent may not exist under the next. Switching agents drops it
+  // back to Inherit instead of sending a value the new driver would coerce.
+  // ModelPicker's own switchEnvironment() does the equivalent check for the
+  // model/provider pair.
   useEffect(() => {
     if (permission && !permissionOpts.some((p) => p.value === permission)) setPermission(null);
-  }, [permissionOpts, permission]);
-  useEffect(() => {
-    if (model && !modelOpts.some((m) => m.value === model)) setModel(null);
-  }, [modelOpts, model]);
+    if (agent !== "codex") setSandbox(null);
+  }, [permissionOpts, permission, agent]);
   // What this agent calls its never-asks mode, for the unattended warning below.
   const bypassLabel = permissionOpts.find((p) => p.value === "bypassPermissions")?.label ?? "bypassPermissions";
   // bypassPermissions is the only mode that never parks on a card. "Inherit"
-  // (null) can resolve to one that does, so it counts as unsafe-for-unattended
-  // too — we deliberately don't guess what it resolves to and claim it's fine.
+  // (null) can resolve to one that does, so it counts as unsafe for unattended
+  // too: what it resolves to isn't guessed at here.
   const unattendedRisk = willAutoStart && permission !== "bypassPermissions";
-  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: willAutoStart, model, permission_mode: permission, tag_ids: tagIds });
+  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: willAutoStart, model, provider_id: providerId, permission_mode: permission, sandbox_mode: sandbox, tag_ids: tagIds, attachments: files.ready.map((a) => a.path) });
   return (
-    <Modal title="New task" sub={`${project.name} · title + description define ${agentLabel(agents, agent)}'s task context`} onClose={onClose}
+    <Modal title="New task" sub={`${project.name} · title + description define ${agentLabel(agents, agent)}'s task context`} onClose={close}
       footer={<>
         <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: !canStart ? "var(--ink-4)" : "var(--ink-2)", cursor: !canStart ? "not-allowed" : "pointer" }}
-          title={blocked ? "Can't start now. This task is blocked by unfinished tasks" : !agentReady ? `Connect ${selAgent?.label} to start a session` : undefined}>
+          title={blocked ? "Can't start now. This task is blocked by unfinished tasks" : !agentReady ? `Connect ${selAgent?.label} to start a session`
+            : gatewayInsecure ? "This gateway is http:// and not loopback. Antigravity needs an https:// address." : undefined}>
           <input type="checkbox" checked={startNow && canStart} disabled={!canStart} onChange={(e) => setStartNow(e.target.checked)} /> Start session immediately
         </label>
         <span className="spacer" />
-        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="btn btn-ghost" onClick={close}>Cancel</button>
         <button className="btn btn-accent" disabled={!can} onClick={create}>{Icon.plus()} Create task</button>
       </>}>
       <div className="field">
@@ -199,19 +373,30 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
         <input ref={ref} type="text" value={title} placeholder="e.g. Add rate-limiting to auth endpoints"
           onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && can) create(); }} />
       </div>
-      <div className="field">
-        <div className="lab">Description <span className="opt">(what to do)</span></div>
-        <textarea value={desc} placeholder="Describe the feature or task. The agent receives this in its injected task context." onChange={(e) => setDesc(e.target.value)} />
-        {sendContext && <div className="hlp">Project context is prepended automatically. No need to restate the stack or conventions.</div>}
-        <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 12.5, color: "var(--ink-2)", cursor: "pointer" }}
-          title="Uncheck to start this task's sessions without the saved project context. Task details and Calandria tools are always included.">
-          <input type="checkbox" checked={sendContext} onChange={(e) => setSendContext(e.target.checked)} />
-          Send saved project context to the agent
-        </label>
-      </div>
+      <DescriptionField value={desc} onChange={setDesc} files={files}
+        placeholder="Describe the feature or task. The agent receives this in its injected task context."
+        help={<>
+          {sendContext && <div className="hlp">Project context is prepended automatically. No need to restate the stack or conventions.</div>}
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 12.5, color: "var(--ink-2)", cursor: "pointer" }}
+            title="Uncheck to start this task's sessions without the saved project context. Task details and Calandria tools are always included.">
+            <input type="checkbox" checked={sendContext} onChange={(e) => setSendContext(e.target.checked)} />
+            Send saved project context to the agent
+          </label>
+        </>} />
       <AgentPicker agents={agents} value={agent} onChange={pickAgent} onConnect={onOpenSetup} />
-      <ModelField options={modelOpts} value={model} onChange={setModel}
-        help=" (changeable later from the session rail)." />
+      {gatewayInsecure && (
+        <div className="hlp" style={{ color: "var(--amber)" }}>
+          This gateway is <code className="ctx-mono">http://</code> and not loopback. Antigravity needs an{" "}
+          <code className="ctx-mono">https://</code> address. Use a different gateway, or pick a different agent.
+        </div>
+      )}
+      <ModelPickerField
+        value={{ agent, provider_id: providerId, model }}
+        onChange={(v) => { setProviderId(v.provider_id); setModel(v.model); }}
+        agentId={agent} agents={agents} providers={providers}
+        inherit={{ label: "Project default" }}
+        help="Changeable later from the session rail."
+      />
       <div className="field">
         <div className="lab">Priority</div>
         <PrioritySeg value={priority} onChange={setPriority} />
@@ -227,7 +412,7 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
                   {p.label}
                 </button>
                 {/* Rule after the inherit head. Everything past it is the
-                    provider's own mode list — Claude's includes one spelled
+                    provider's own mode list. Claude's includes one spelled
                     "default", which the head must not read as a copy of. */}
                 {p.value === null && <span className="seg-sep" aria-hidden />}
               </Fragment>
@@ -239,13 +424,21 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
           </div>
         </div>
       )}
-      <TagsField tags={tags} value={tagIds} onChange={setTagIds} onCreate={onCreateTag} />
+      {sandboxOpts.length > 0 && (
+        <div className="field">
+          <div className="lab">Sandbox</div>
+          <div className="seg wrap" style={{ maxWidth: 520 }}>
+            {sandboxOpts.map((s) => <button key={s.label} className={sandbox === s.value ? "on" : ""} title={s.sub} onClick={() => setSandbox(s.value)}>{s.label}</button>)}
+          </div>
+          <div className="hlp">Controls Codex file and network isolation independently from its permission mode.</div>
+        </div>
+      )}
+      <TagsField tags={tags} value={tagIds} onChange={setTagIds} onCreate={onCreateTag} primary />
       <DepPicker candidates={tasks} value={deps} onChange={setDeps} autoStart={autoStart} onAutoStart={setAutoStart} />
       {unattendedRisk && (
         <div className="hlp" style={{ color: "var(--amber)" }}>
-          This task auto-starts when its blockers clear, which may be while nobody is watching. Any mode but{" "}
-          <strong>{bypassLabel}</strong> parks on a permission card, and an unanswered card declines itself and stops the
-          turn. Pick {bypassLabel} if it needs to run all the way through unattended.
+          This task can auto-start with nobody watching. Any mode but <strong>{bypassLabel}</strong> parks on a
+          permission card that goes unanswered and stops the turn. Pick {bypassLabel} to run it unattended.
         </div>
       )}
     </Modal>
@@ -253,7 +446,7 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
 }
 
 // The destination radio list, shared by the single-task field below, the bulk
-// MoveTasksModal, and the Runbooks card's "Copy to…" — one rendering of "which
+// MoveTasksModal, and the Runbooks card's "Copy to…": one rendering of "which
 // project", so those paths can't drift on what a destination looks like.
 export function ProjectTargetList({ targets, value, onChange, name }: {
   targets: ProjectRow[]; value: string; onChange: (id: string) => void; name: string;
@@ -275,8 +468,8 @@ export function ProjectTargetList({ targets, value, onChange, name }: {
 /**
  * Whether a task moving into `dest` would have its inherited settings
  * re-derived, and what to. Mirrors moveTask's rule server-side (lib/store.ts
- * deriveMoved): a value that still matches the CURRENT project's default reads
- * as inherited, so it re-derives in the destination — an explicit choice
+ * deriveMoved): a value that still matches the current project's default reads
+ * as inherited, so it re-derives in the destination; an explicit choice
  * travels with the task. Previewed rather than sprung on the user, since the
  * guess can only ever be a guess.
  */
@@ -290,16 +483,16 @@ function moveDerivation(task: TaskRow, src: ProjectRow | undefined, dest: Projec
 }
 
 /**
- * The branch this task is based on — what its worktree was cut from, what Sync
+ * The branch this task is based on: what its worktree was cut from, what Sync
  * catches it up to, and what Merge lands it into (lib/baseBranch.ts). Empty
  * means "inherit", and the placeholder says what that inherits to, so the field
  * never has to be filled in to be understood.
  *
- * Deliberately NOT part of the dialog's Save: retargeting a started task can
- * create a local ref and re-cut its worktree, and it reports what it did. That
- * is its own endpoint (POST /api/tasks/[id]/base-branch) and its own button,
- * exactly like the move field below — a field whose blast radius is a git
- * operation shouldn't ride along on "Save changes".
+ * Not part of the dialog's Save: retargeting a started task can create a local
+ * ref and re-cut its worktree, and it reports what it did. That is its own
+ * endpoint (POST /api/tasks/[id]/base-branch) and its own button, like the move
+ * field below, since a field whose blast radius is a git operation shouldn't
+ * ride along on "Save changes".
  */
 function BaseBranchField({ task, project }: { task: TaskRow; project?: ProjectRow }) {
   const [value, setValue] = useState(task.base_branch ?? "");
@@ -338,31 +531,29 @@ function BaseBranchField({ task, project }: { task: TaskRow; project?: ProjectRo
         <div className="hlp" style={{ color: "var(--blue)" }}>{note}</div>
       ) : task.started === 1 ? (
         <div className="hlp">
-          Currently {current}. Changing it never rewrites anything: a task that has already committed keeps every commit
-          and is told how far behind the new base it is. One Sync catches it up.
+          Currently {current}. Changing the base branch keeps every commit already made. Run Sync afterward to catch up.
         </div>
       ) : (
-        <div className="hlp">Leave empty to follow the project&rsquo;s default. The worktree is cut from this branch on the first turn.</div>
+        <div className="hlp">Leave empty to use the project&rsquo;s default branch.</div>
       )}
     </div>
   );
 }
 
-// Re-parent a misfiled task. Acts immediately (like Delete below it) rather
-// than riding along with Save: a move isn't a field set — it renumbers the
-// task's order in the destination, re-derives what it inherited from the old
-// project, re-points the sessions and spend recorded against the old one, and
-// drops the blocked-by links that would otherwise span projects.
+// Re-parent a misfiled task. Acts immediately, like Delete below it, instead of
+// riding along with Save: a move renumbers the task's order in the destination,
+// re-derives what it inherited from the old project, re-points the sessions and
+// spend recorded against the old one, and drops the blocked-by links that would
+// otherwise span projects.
 //
-// A STARTED task can move too, but only by throwing away the git worktree it
-// was working in — that checkout was cut from the current project's repo, and
-// no amount of re-parenting makes it belong to another one. So the field turns
-// into the same two-step confirmation Delete uses, and it names the cost first:
-// what's in that worktree is read from the server (uncommitted edits, commits
-// the base branch never took) rather than guessed at, because "merged and
-// clean" and "an afternoon of unsaved work" are the same button otherwise.
+// A started task can move too, but only by throwing away the git worktree it
+// was working in, since that checkout was cut from the current project's repo
+// and can't belong to another one. So the field turns into the same two-step
+// confirmation Delete uses, and it names the cost first: what's in that
+// worktree is read from the server (uncommitted edits, commits the base branch
+// never took) instead of guessed at.
 //
-// (Re-filing SEVERAL tasks is the task list's multi-select + MoveTasksModal —
+// (Re-filing several tasks is the task list's multi-select + MoveTasksModal,
 // which can keep a link whose both ends are moving, as one task alone can't,
 // and which asks this same question once per started row.)
 function MoveProjectField({ task, tasks, tags, projects, agents, onMove }: {
@@ -379,7 +570,7 @@ function MoveProjectField({ task, tasks, tags, projects, agents, onMove }: {
 
   // What the teardown would cost, read once a destination is picked. Cheap for
   // a task with no worktree (the route answers without touching git), so it's
-  // not worth gating on `started` — which is only half the story anyway: a
+  // not worth gating on `started`, which is only half the story anyway: a
   // failed launch can leave a worktree on a task that never opened a session.
   const loadPreview = useCallback(() => {
     jget<DiscardPreview>(`/api/tasks/${task.id}/move`).then(setPreview).catch(() => setPreview(null));
@@ -388,12 +579,12 @@ function MoveProjectField({ task, tasks, tags, projects, agents, onMove }: {
 
   if (targets.length === 0) return null;
   // A tag follows its whole membership or not at all (the both-ends rule the
-  // dependency links get), so a task moving ALONE takes a tag with it exactly
+  // dependency links get), so a task moving alone takes a tag with it exactly
   // when it is that tag's only member. Read off each tag's own derived count,
-  // not by filtering `tasks` — that list is the REAL tasks, and a sibling still
-  // sitting in the Suggested tray is a member like any other. Unlike the old
-  // single group this can split both ways in one move: some of the task's tags
-  // may be solo, others shared.
+  // not by filtering `tasks`, which is scoped to whatever the caller passed in,
+  // while a sibling sitting in the Suggested tray is a member like any other.
+  // This can split both ways in one move: some of the task's tags may be solo,
+  // others shared.
   const carriedTags: string[] = [];
   const droppedTags: string[] = [];
   for (const id of task.tag_ids) {
@@ -401,7 +592,7 @@ function MoveProjectField({ task, tasks, tags, projects, agents, onMove }: {
     if (!t) continue;
     (t.counts.total === 1 ? carriedTags : droppedTags).push(t.name);
   }
-  // Every edge touching this task goes — the ones it owns and the ones pointing
+  // Every edge touching this task goes: the ones it owns and the ones pointing
   // at it. Counted from the persisted rows, so unsaved picker edits don't lie.
   const dependents = tasks.filter((t) => t.id !== task.id && (t.depends_on ?? []).includes(task.id)).length;
   const links = (task.depends_on?.length ?? 0) + dependents;
@@ -423,7 +614,7 @@ function MoveProjectField({ task, tasks, tags, projects, agents, onMove }: {
       await onMove(task.id, dest.id, needsAck ? { discardWorktree: true, discardUnsafe: unsafe } : undefined);
     } catch (e) {
       // The one refusal the user can answer: the worktree picked up unsaved work
-      // between the preview and the click (their own editor — no turn can run
+      // between the preview and the click (their own editor; no turn can run
       // while this is held). Re-read it so the warning now names what's there,
       // and disarm, so confirming again is a decision about the real state.
       setErr(e instanceof Error ? e.message : String(e));
@@ -453,14 +644,14 @@ function MoveProjectField({ task, tasks, tags, projects, agents, onMove }: {
             <div className="hlp" style={{ color: unsafe ? "var(--red)" : "var(--amber)", marginTop: 8 }}>
               {preview?.has_worktree ? (
                 <>
-                  This task&rsquo;s git worktree{preview.branch && <> and branch <code>{preview.branch}</code></>} belong to{" "}
-                  {src?.name ?? "its current project"}&rsquo;s repo, so moving deletes them.{" "}
+                  This task&rsquo;s git worktree{preview.branch && <> and branch <code>{preview.branch}</code></>} belongs to{" "}
+                  {src?.name ?? "its current project"}&rsquo;s repo, and moving deletes them.{" "}
                   {unsafe
                     ? `That destroys ${preview.reason}, permanently, with no way back.`
                     : "Nothing is lost: it's clean and everything on it is already in the base branch."}
                 </>
               ) : (
-                <>This task has already run, so it moves as a started task: the next turn cuts a fresh worktree from {dest.name}&rsquo;s repo.</>
+                <>This task has already run. Its next turn will cut a fresh worktree from {dest.name}&rsquo;s repo.</>
               )}{" "}
               The transcript, summaries and cost history come with it; the merge and PR it recorded against{" "}
               {src?.name ?? "the old project"} do not.
@@ -479,32 +670,28 @@ function MoveProjectField({ task, tasks, tags, projects, agents, onMove }: {
 }
 
 /**
- * Re-file a whole selection at once — the answer to a handful of tasks landing
- * in the wrong project, which used to be one open-edit-pick-move round trip
- * each. One request, one transaction, one event for the other tabs.
+ * Re-file a whole selection at once, in one request, one transaction, and one
+ * event for the other tabs.
  *
- * Three things it says that the single-task field can't. Dependencies: a link
- * whose BOTH ends are in the selection SURVIVES the move (it stays inside one
- * project, so nothing is violated) — the count of what's kept is previewed
- * beside the count of what drops, because "select the whole chain" is the
- * difference between the two. Refusals are per task: a task that couldn't move
- * is reported by name afterwards rather than quietly left behind, so the modal
- * stays open on a partial result instead of closing on a half-truth.
+ * Two things it says that the single-task field can't. Dependencies: a link
+ * whose both ends are in the selection survives the move, since it stays
+ * inside one project. The count of what's kept is previewed beside the count
+ * of what drops. Refusals are per task: a task that couldn't move is reported
+ * by name afterwards instead of being silently left behind, so the modal stays
+ * open on a partial result instead of closing on a half-truth.
  *
  * And the started ones. A task that has run holds a worktree cut from the old
- * repo and can only move by having it destroyed, which is a different
- * irreversible answer for every row — so every row gets its OWN checkbox, off
+ * repo and can only move by having it destroyed, which is a separate
+ * irreversible answer for every row. So every row gets its own checkbox, off
  * until ticked, carrying what that particular checkout holds (read for the
- * whole selection in one go by GET /api/tasks/move). One switch over eleven of
- * them would be a shrug; eleven answers is the thing itself. Ticking none is
- * the old behaviour exactly, and a row left unticked is reported in `skipped`
- * with its checkout untouched — three dirty worktrees don't refuse the eight
- * clean ones.
+ * whole selection in one go by GET /api/tasks/move). Ticking none matches the
+ * prior behavior, and a row left unticked is reported in `skipped` with its
+ * checkout untouched: dirty worktrees don't block moving the clean ones.
  */
 export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjectId, onClose, onMove, onMoved }: {
   /** The picked rows, in list order. */
   selected: TaskRow[];
-  /** Every task in the source project — needed to see links pointing INTO the selection. */
+  /** Every task in the source project, needed to see links pointing into the selection. */
   tasks: TaskRow[];
   projects: ProjectRow[]; agents: AgentsBundle; sourceProjectId: string;
   onClose: () => void;
@@ -526,29 +713,29 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
   const dest = targets.find((p) => p.id === target) ?? null;
   const src = projects.find((p) => p.id === sourceProjectId);
 
-  // What each row's checkout holds, for the whole selection in one read — a
-  // checkbox that doesn't say what it destroys is the blanket switch again,
-  // just spelled out N times. Fetched on open rather than when a destination is
-  // picked (unlike the single-task field): here it decides which rows can be
-  // ticked at all, so it's part of the list, not part of the confirmation.
+  // What each row's checkout holds, for the whole selection in one read: a
+  // checkbox that doesn't say what it destroys is a blanket switch spelled out
+  // per row. Fetched on open rather than when a destination is picked, unlike
+  // the single-task field: here it decides which rows can be ticked at all, so
+  // it's part of the list, not part of the confirmation.
   const idKey = selected.map((t) => t.id).join(",");
   useEffect(() => {
     let alive = true;
     if (!idKey) return;
     jget<{ previews: Record<string, DiscardPreview> }>(`/api/tasks/move?${new URLSearchParams({ ids: idKey })}`)
       .then((r) => { if (alive) setPreviews(r.previews); })
-      // Not fatal — the unstarted rows still move — but no row can be ticked
-      // without it, so the failure has to be visible rather than looking like
-      // "these worktrees hold nothing".
+      // Not fatal, since the unstarted rows still move, but no row can be
+      // ticked without it, so the failure has to be visible rather than looking
+      // like "these worktrees hold nothing".
       .catch(() => { if (alive) setPreviewErr(true); });
     return () => { alive = false; };
   }, [idKey]);
 
-  // A live turn can't be moved by any answer — nothing may delete a worktree an
+  // A live turn can't be moved by any answer: nothing may delete a worktree an
   // agent is writing into. Everything else that has run needs one: `started`
   // alone is enough (the server refuses it even with the worktree already
-  // reclaimed), and a worktree on a task that never opened a session — a failed
-  // launch — needs it too, which only the preview can see.
+  // reclaimed), and a worktree on a task that never opened a session, a failed
+  // launch, needs it too, which only the preview can see.
   const pv = previews ?? {};
   const isLive = (t: TaskRow) => t.running === 1;
   const needsAck = (t: TaskRow) => !isLive(t) && (t.started === 1 || !!pv[t.id]?.has_worktree);
@@ -573,12 +760,12 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
   // Every blocked-by link with at least one end in the moving set. Both ends
   // moving means it survives; one end means it would span projects, so it goes.
   let kept = 0;
-  // Tags get the links' both-ends rule: a tag whose EVERY member is in the
+  // Tags get the links' both-ends rule: a tag whose every member is in the
   // selection travels with it (re-keyed to the destination, suffixed there if
-  // the name is taken), and one selected only in part stays behind — with the
-  // rows that go losing that badge. Counted per tag over the whole project
-  // (a task can carry several, so it can appear in more than one tally), since
-  // a member left out of the selection is exactly what decides this.
+  // the name is taken), and one selected only in part stays behind, with the
+  // rows that go losing that badge. Counted per tag over the whole project (a
+  // task can carry several, so it can appear in more than one tally), since a
+  // member left out of the selection is what decides this.
   const tagTally = new Map<string, { total: number; going: number }>();
   for (const t of tasks) {
     for (const tagId of t.tag_ids) {
@@ -615,18 +802,18 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
       // what can move is a snapshot that can be stale by now (a task the user
       // started while this was open, or one whose turn is merely in flight,
       // which the client can't see at all). Sending them all means the server
-      // reports what it refused instead of us quietly dropping it.
+      // reports what it refused instead of it being silently dropped.
       //
       // The acknowledgements are the narrow half: only the rows ticked, and
       // `discardUnsafe` only where the user was actually shown unsaved work.
       // A row that picked one up since is refused by the server's own re-read,
-      // which is what keeps "nothing unsaved dies unnamed" true here too.
+      // which keeps "nothing unsaved dies unnamed" true here too.
       const res = await onMove(selected.map((t) => t.id), dest.id, {
         discard: discarding.map((t) => t.id),
         discardUnsafe: unsafeTicked.map((t) => t.id),
       });
       onMoved(res.moved);
-      // A clean sweep needs no report — anything left behind does.
+      // A clean sweep needs no report; anything left behind does.
       if (res.skipped.length === 0) onClose();
       else setResult(res);
     } catch (e) {
@@ -701,7 +888,7 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
                 const unsafe = unsafeOf(t);
                 const can = moving_.has(t.id);
                 return (
-                  // The row IS the question for a started task: the checkbox
+                  // The row is the question for a started task: the checkbox
                   // beside the cost of that one checkout, off until answered.
                   <label key={t.id} className={`dep-row ${on ? "on" : ""}`} style={{ cursor: ack && canAck ? "pointer" : "default", opacity: can || ack ? 1 : 0.55 }}>
                     {ack && <input type="checkbox" checked={on} disabled={!canAck} onChange={(e) => toggle(t.id, e.target.checked)} />}
@@ -721,8 +908,8 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
             </div>
             {previewErr && (
               <div className="hlp" style={{ color: "var(--red)" }}>
-                Couldn&rsquo;t read what these worktrees hold, so none of them can be discarded from here. A checkbox that
-                can&rsquo;t say what it destroys isn&rsquo;t worth ticking. The rest of the selection still moves.
+                Couldn&rsquo;t read what these worktrees hold. None of them can be discarded from here, but the rest of
+                the selection still moves.
               </div>
             )}
             {unsafeTicked.length > 0 && (
@@ -763,18 +950,16 @@ export function MoveTasksModal({ selected, tasks, projects, agents, sourceProjec
 }
 
 /**
- * Add or remove a set of tags across a whole selection — the list's selection
- * bar beside "Move to project…". The cheap path for the case tags were
- * designed around: an agent filed seven suggestions before the tag existed,
- * and tagging them one edit dialog at a time is seven round trips.
+ * Add or remove a set of tags across a whole selection, from the list's
+ * selection bar beside "Move to project…". The cheap path for tagging several
+ * rows at once instead of one edit dialog per task.
  *
- * Add/Remove rather than the old single group's replace-the-set: a mixed
- * selection rarely shares the same tags (many-to-many means each row can
- * already carry a different set), so "these and only these" would silently
- * strip whatever a row had that wasn't picked. Whole-batch, unlike the move
- * beside it: there is nothing per-row to refuse (no worktree, no turn,
- * nothing irreversible), so the route applies all of it or none, and this
- * modal only has to decide which tags and which direction.
+ * Add/Remove rather than replace-the-set: a mixed selection rarely shares the
+ * same tags (many-to-many means each row can already carry a different set),
+ * so "these and only these" would strip whatever a row had that wasn't picked.
+ * Whole-batch, unlike the move beside it: there is nothing per-row to refuse
+ * (no worktree, no turn, nothing irreversible), so the route applies all of it
+ * or none, and this modal only has to decide which tags and which direction.
  */
 export function TagTasksModal({ selected, tags, onClose, onApply, onCreateTag }: {
   /** The picked rows, in list order. */
@@ -847,54 +1032,93 @@ export function TagTasksModal({ selected, tags, onClose, onApply, onCreateTag }:
   );
 }
 
-export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, onSave, onDelete, onMove, onCreateTag, onOpenSetup }: { task: TaskRow; tasks: TaskRow[]; tags: TagRow[]; projects: ProjectRow[]; agents: AgentsBundle; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; model: string | null; depends_on: string[]; auto_start: boolean; tag_ids: string[] }, action?: SaveAction) => void; onCreateTag: (name: string) => Promise<TagRow>; onDelete: (id: string) => void; onMove: (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => Promise<void>; onOpenSetup?: () => void }) {
+export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, onSave, onDelete, onMove, onCreateTag, onOpenSetup }: { task: TaskRow; tasks: TaskRow[]; tags: TagRow[]; projects: ProjectRow[]; agents: AgentsBundle; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; model: string | null; provider_id: string | null; depends_on: string[]; auto_start: boolean; tag_ids: string[] }, action?: SaveAction) => void; onCreateTag: (name: string) => Promise<TagRow>; onDelete: (id: string) => void; onMove: (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => Promise<void>; onOpenSetup?: () => void }) {
   const [title, setTitle] = useState(task.title);
-  const [desc, setDesc] = useState(task.description);
+  // The stored description is prose plus one marker line per attachment
+  // (lib/uploadTypes.ts). The textarea edits the prose; the attachments are
+  // chips, seeded from the markers and written back as markers on save.
+  const seed = useMemo(() => splitAttachments(task.description), [task.description]);
+  const [desc, setDesc] = useState(seed.text);
+  const files = useAttachments({ upload: uploadToTask(task.id), initial: seed.attachments.map((a, i) => stagedAttachment(a, `seed-${i}`)) });
+  const seedPaths = useMemo(() => new Set(seed.attachments.map((a) => a.path)), [seed]);
+  // The bytes of an attachment the dialog drops (a seeded one removed and
+  // saved, or a fresh upload cancelled) are reclaimed right away; the
+  // description is the only thing that names them, and it no longer will.
+  const discard = (paths: string[]) => {
+    for (const p of paths) void apiFetch(`/api/tasks/${task.id}/uploads/${p.split(/[\\/]/).pop()}`, { method: "DELETE" }).catch(() => {});
+  };
+  const close = () => {
+    discard(files.ready.filter((a) => !seedPaths.has(a.path)).map((a) => a.path));
+    onClose();
+  };
   const [priority, setPriority] = useState<Priority>(task.priority);
   const [agent, setAgent] = useState(task.agent);
   // Not gated the way the agent picker below is: a session's model is chosen
   // per turn, so this stays editable for a task's whole life (it's the same
   // value the session rail's picker writes) and takes effect on the next turn.
   const [model, setModel] = useState<string | null>(task.model);
+  const [providerId, setProviderId] = useState<string | null>(task.provider_id);
+  const providers = useProvidersMap();
   const [deps, setDeps] = useState<string[]>(task.depends_on ?? []);
   const [tagIds, setTagIds] = useState<string[]>(task.tag_ids ?? []);
   const [autoStart, setAutoStart] = useState(!!task.auto_start);
   const [confirmDel, setConfirmDel] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => { ref.current?.focus(); }, []);
-  const can = title.trim().length > 0;
+  const can = title.trim().length > 0 && !files.uploading;
   const canChangeAgent = task.started === 0 && task.running === 0;
   const candidates = useMemo(() => tasks.filter((t) => t.id !== task.id), [tasks, task.id]);
-  const save = (action?: SaveAction) => can && onSave(task.id, { title: title.trim(), description: desc.trim(), priority, agent: canChangeAgent ? agent : undefined, model, depends_on: deps, auto_start: autoStart && deps.length > 0, tag_ids: tagIds }, action);
+  const save = (action?: SaveAction) => {
+    if (!can) return;
+    const kept = files.ready;
+    discard([...seedPaths].filter((p) => !kept.some((a) => a.path === p)));
+    onSave(task.id, { title: title.trim(), description: joinAttachmentText(desc, kept), priority, agent: canChangeAgent ? agent : undefined, model, provider_id: providerId, depends_on: deps, auto_start: autoStart && deps.length > 0, tag_ids: tagIds }, action);
+  };
   // Editing a suggestion is usually the last step before deciding on it, so the
   // tray's two verbs live here too: sharpen the brief and accept it in one
-  // gesture, rather than saving, closing, and hunting for the row again.
-  // (`add` is meaningless once it's out of the tray; `start` still isn't — an
-  // added-but-unstarted task can be launched from here the same way.)
+  // gesture, instead of saving, closing, and hunting for the row again.
+  // (`add` is meaningless once it's out of the tray; `start` still isn't, since
+  // an added-but-unstarted task can be launched from here the same way.)
   const isSuggestion = task.suggested === 1;
   const startable = !task.started;
   // Same two gates the New-task dialog puts on "Start session immediately":
   // an unfinished blocker means the task isn't allowed to run yet, and a
   // disconnected agent has no session to launch.
-  const blocked = deps.some((id) => tasks.find((t) => t.id === id)?.status !== "done");
+  // One rule, shared with the "Blocked by" chip and with blocks() server-side:
+  // terminal doesn't block, and neither does a ref that resolves to nothing
+  // (see isBlocking). An unreviewed suggestion does block, and `tasks` carries
+  // the suggested rows so the picker above can show and untick it.
+  const blocked = deps.some((id) => isBlocking(tasks.find((t) => t.id === id)));
   const selAgent = findAgent(agents, canChangeAgent ? agent : task.agent);
-  const modelOpts = useMemo(() => modelOptions(selAgent?.capabilities), [selAgent]);
-  // Switching an unstarted task's agent invalidates a model chosen under the old
-  // one, same as the New-task dialog: drop to Inherit rather than save an id the
-  // new driver would never resolve. Gated on the agent actually having MOVED,
-  // unlike the New dialog's copy — merely being absent from the catalog is also
-  // what a not-yet-loaded bundle and a provider change look like, and rewriting
-  // the row's model just because the dialog was opened is the worse failure.
+  // The old per-project http/loopback endpoint override (lib/agentEnv.ts),
+  // kept only for the Gemini-insecure-gateway warning below: the project's
+  // override with the task's own laid over it, since a task can still be sent
+  // to a local endpoint under that legacy system.
+  const taskProject = projects.find((p) => p.id === task.project_id);
+  const provider = useMemo(() => taskProvider(taskProject, task), [taskProject, task]);
+  // Switching an unstarted task's agent invalidates a model/provider chosen
+  // under the old one, same as the New-task dialog: drop back to Inherit
+  // instead of saving a pair the new driver would never resolve. A simpler
+  // rule than the New-task dialog's ModelPicker gets for free from its own
+  // switchEnvironment(): this dialog's Model field is pinned to a single
+  // environment (the AgentPicker above is the only environment switch), so
+  // there is no "does it still exist under the new one" check to reuse; any
+  // agent change just clears both.
   useEffect(() => {
-    if (!model || agent === task.agent) return;
-    if (!modelOpts.some((m) => m.value === model)) setModel(null);
-  }, [agent, task.agent, modelOpts, model]);
+    if (agent === task.agent) return;
+    setModel(null);
+    setProviderId(null);
+  }, [agent, task.agent]);
   const agentReady = selAgent ? selAgent.authenticated : true;
+  // Same refusal as the New-task dialog (lib/agentEnv.ts): a gateway that's
+  // http:// and not loopback fails every Antigravity turn inside `agy`.
+  const gatewayInsecure = (canChangeAgent ? agent : task.agent) === "gemini" && gatewayInsecureForGemini(provider);
   const startWhy = !can ? "A title is required" : blocked ? "Blocked by unfinished tasks. Clear them or drop the dependency first"
-    : !agentReady ? `Connect ${selAgent?.label} to start a session` : undefined;
-  const canStartNow = can && !blocked && agentReady;
+    : !agentReady ? `Connect ${selAgent?.label} to start a session`
+    : gatewayInsecure ? "This gateway is http:// and not loopback. Antigravity needs an https:// address." : undefined;
+  const canStartNow = can && !blocked && agentReady && !gatewayInsecure;
   return (
-    <Modal title="Edit task" sub="Title + description define the agent's task context" onClose={onClose}
+    <Modal title="Edit task" sub="Title + description define the agent's task context" onClose={close}
       footer={<>
         {confirmDel ? (
           <button className="btn-danger on" onClick={() => onDelete(task.id)} title="Permanently remove this task, its session and worktree">{Icon.x()} Delete task permanently</button>
@@ -902,8 +1126,8 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
           <button className="btn-danger" onClick={() => setConfirmDel(true)}>{Icon.x()} Delete task</button>
         )}
         <span className="spacer" />
-        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        {/* Save stays the primary action only when it's the only one — on an
+        <button className="btn btn-ghost" onClick={close}>Cancel</button>
+        {/* Save stays the primary action only when it's the only one: on an
             unstarted task, launching it is what the dialog is usually open for.
             Its label shortens beside the tray verbs so five buttons still fit
             one row of the footer. */}
@@ -928,31 +1152,40 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
         <input ref={ref} type="text" value={title} placeholder="e.g. Add rate-limiting to auth endpoints"
           onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && can) save(); }} />
       </div>
-      <div className="field">
-        <div className="lab">Description <span className="opt">(what to do)</span></div>
-        <textarea value={desc} placeholder="Describe the feature or task. This is the body of the prompt the agent starts with." onChange={(e) => setDesc(e.target.value)} />
-        {/* The description is injected into each SESSION's system prompt at
-            session start, so once a task has run this field is no longer the
-            thing steering the agent in front of you — it's the brief the NEXT
-            session gets. Said plainly, because the pre-start wording ("the body
-            of the prompt the agent starts with") invites the opposite reading. */}
-        {task.started === 1 ? (
+      {/* The description is injected into each SESSION's system prompt at
+          session start, so once a task has run this field is no longer the
+          thing steering the agent in front of you. It's the brief the NEXT
+          session gets. Said plainly, because the pre-start wording ("the body
+          of the prompt the agent starts with") invites the opposite reading. */}
+      <DescriptionField value={desc} onChange={setDesc} files={files}
+        placeholder="Describe the feature or task. This is the body of the prompt the agent starts with."
+        help={task.started === 1 ? (
           <div className="hlp">Already sent to the agent. Edits here update the task record and any future sessions, not the running one.</div>
         ) : (
           <div className="hlp">Project context is prepended automatically. No need to restate the stack or conventions.</div>
-        )}
-      </div>
+        )} />
       {canChangeAgent && <AgentPicker agents={agents} value={agent} onChange={setAgent} onConnect={onOpenSetup} />}
-      <ModelField options={modelOpts} value={model} onChange={setModel}
-        help={task.started === 1 ? " (takes effect on this task's next turn)." : undefined} />
+      {gatewayInsecure && (
+        <div className="hlp" style={{ color: "var(--amber)" }}>
+          This gateway is <code className="ctx-mono">http://</code> and not loopback. Antigravity needs an{" "}
+          <code className="ctx-mono">https://</code> address. Use a different gateway, or pick a different agent.
+        </div>
+      )}
+      <ModelPickerField
+        value={{ agent: canChangeAgent ? agent : task.agent, provider_id: providerId, model }}
+        onChange={(v) => { setProviderId(v.provider_id); setModel(v.model); }}
+        agentId={canChangeAgent ? agent : task.agent} agents={agents} providers={providers}
+        inherit={{ label: "Project default" }}
+        help={task.started === 1 ? "Takes effect on this task's next turn." : undefined}
+      />
       <div className="field">
         <div className="lab">Priority</div>
         <PrioritySeg value={priority} onChange={setPriority} />
       </div>
-      <TagsField tags={tags} value={tagIds} onChange={setTagIds} onCreate={onCreateTag} />
-      <BaseBranchField task={task} project={projects.find((p) => p.id === task.project_id)} />
+      <TagsField tags={tags} value={tagIds} onChange={setTagIds} onCreate={onCreateTag} primary />
+      <BaseBranchField task={task} project={taskProject} />
       <DepPicker candidates={candidates} value={deps} onChange={setDeps} autoStart={autoStart} onAutoStart={setAutoStart} />
-      {/* Unlike the agent picker above, this is NOT gated on the task being
+      {/* Unlike the agent picker above, this is not gated on the task being
           unstarted: a started one can move by discarding the worktree it cut
           from this project's repo, which the field asks for explicitly. Only a
           live turn is refused outright, and the field surfaces the server's
@@ -967,7 +1200,7 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
   );
 }
 
-// Mirror of the server's RefreshState (lib/contextRefresh.ts) — the detached
+// Mirror of the server's RefreshState (lib/contextRefresh.ts): the detached
 // "Refresh with AI" job state the modal polls.
 type RefreshState = { status: "idle" | "running" | "done" | "error"; draft: string; error: string; started_at: number; estimate?: InternalUsageEstimate | null };
 
@@ -1003,40 +1236,188 @@ function LandingSeg({ value, onChange, branch }: { value: LandingMode; onChange:
       </div>
       <div className="hlp">
         {value === "pr"
-          ? `${b} is protected, so Merge is rejected. Sessions are told to finish by opening a PR against it.`
-          : `Calandria merges a finished task's branch into ${b} itself. Sessions are told so.`}
+          ? `${b} is protected. Merge is disabled here; sessions open a pull request instead.`
+          : `Calandria merges a finished task's branch into ${b} for you.`}
       </div>
     </div>
   );
 }
 
-export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string }) => void; onDelete: () => void; onDeprecate: () => void }) {
+// One row of GET /api/projects/[id]/mcp-servers' catalog: the gateway's
+// hosted MCP servers, with a tool-name preview and whether this project has
+// already minted a "trust this server" rule for it.
+interface GatewayMcpServerT {
+  alias: string;
+  server_name: string;
+  description: string;
+  transport: string;
+  auth_type: string;
+  needs_browser_signin: boolean;
+  tools: string[];
+  trusted: boolean;
+}
+
+// The project settings picker for hosted LiteLLM gateway MCP servers
+// (docs/AGENTS.md, "Hosted MCP servers"): fetched once when the dialog opens
+// (mirroring useEndpointModels' one-probe-per-open shape, but with no
+// per-keystroke re-probe, since there's no URL field driving this one), a
+// checkbox per alias for `value` (the project's projects.gateway_mcp
+// selection), and a "Trust" button that mints a remembered permission rule
+// through POST instead of waiting on a live card, since there is no per-call
+// MCP prompt to approve one from. Trust is one-way here: revoking a rule
+// already minted is Settings → Run defaults' job, not this dialog's,
+// matching the permission card's own "Always allow" being un-doable only
+// from there.
+function GatewayMcpField({ projectId, value, onChange }: { projectId: string; value: string[]; onChange: (aliases: string[]) => void }) {
+  const [servers, setServers] = useState<GatewayMcpServerT[] | null>(null);
+  const [reachable, setReachable] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [trusting, setTrusting] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    jget<{ enabled: boolean; reachable: boolean; servers: GatewayMcpServerT[]; error: string | null }>(`/api/projects/${projectId}/mcp-servers`)
+      .then((d) => {
+        if (cancelled) return;
+        setServers(d.servers);
+        setReachable(d.reachable);
+        setError(d.error);
+      })
+      .catch((e) => { if (!cancelled) { setServers([]); setReachable(false); setError(e instanceof Error ? e.message : String(e)); } });
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  const toggle = (alias: string) => {
+    onChange(value.includes(alias) ? value.filter((a) => a !== alias) : [...value, alias]);
+  };
+  const trust = async (alias: string) => {
+    setTrusting(alias);
+    try {
+      await jsend(`/api/projects/${projectId}/mcp-servers`, "POST", { alias });
+      setServers((prev) => (prev ?? []).map((s) => (s.alias === alias ? { ...s, trusted: true } : s)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTrusting(null);
+    }
+  };
+
+  return (
+    <div className="field" style={{ marginTop: 14 }}>
+      <div className="lab">{Icon.sliders()} Hosted MCP servers</div>
+      <div className="hlp" style={{ marginTop: 0, marginBottom: 8 }}>
+        Tools the gateway hosts on this key. They appear as{" "}
+        <code className="ctx-mono">mcp__&lt;alias&gt;__…</code> in the tool list, gated by the ordinary permission
+        prompt unless you trust the server below. Docs: docs/AGENTS.md.
+      </div>
+      {servers === null ? (
+        <div className="hlp">Loading…</div>
+      ) : !reachable ? (
+        <ErrNote>{error || "The gateway didn't answer."}</ErrNote>
+      ) : servers.length === 0 ? (
+        <div className="hlp">The gateway&apos;s key has no MCP servers to offer.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {servers.map((s) => (
+            <label key={s.alias} className="svc-cfg-row" style={{ alignItems: "flex-start" }}>
+              <input type="checkbox" checked={value.includes(s.alias)} onChange={() => toggle(s.alias)} style={{ marginTop: 3 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <code className="ctx-mono">{s.alias}</code>
+                  <span className="opt">{s.transport}{s.tools.length ? ` · ${s.tools.length} tool${s.tools.length === 1 ? "" : "s"}` : ""}</span>
+                  {s.needs_browser_signin && <span className="opt">sign in at the gateway first</span>}
+                  {value.includes(s.alias) && (
+                    <button
+                      type="button" className="btn btn-line btn-sm" disabled={s.trusted || trusting === s.alias}
+                      onClick={() => void trust(s.alias)}
+                      title={s.trusted ? "Revoke in Settings → Run defaults" : `Always allow mcp__${s.alias}__* without a prompt`}
+                    >
+                      {Icon.check()} {s.trusted ? "Trusted" : trusting === s.alias ? "Trusting…" : "Trust this server"}
+                    </button>
+                  )}
+                </div>
+                {s.description && <div className="opt">{s.description}</div>}
+              </div>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string; default_provider_id: string | null; gateway_max_budget: number | null; gateway_key_duration: string; gateway_mcp: string[] }) => void; onDelete: () => void; onDeprecate: () => void }) {
   const [name, setName] = useState(project.name);
   const [context, setContext] = useState(project.context);
   const [sendContext, setSendContext] = useState(project.send_context !== 0);
   const [repo, setRepo] = useState(project.repo_path);
   const [branch, setBranch] = useState(project.branch);
   // How this project's work lands, plus what GitHub says about it. The probe
-  // runs once when the dialog opens and is REPORTED, never applied: overwriting
+  // runs once when the dialog opens and is reported, never applied: overwriting
   // a saved choice because a repo happens to have a ruleset would take the
-  // decision away from the one person who knows about the exception (a project
+  // decision away from the person who knows about the exception (a project
   // pointed at a staging branch that merges locally under a PR-required repo is
   // a real configuration). Applying it is one click, spelled out below.
   const [landing, setLanding] = useState<LandingMode>(project.landing_mode === "pr" ? "pr" : "merge");
   const [autoReclaim, setAutoReclaim] = useState(project.auto_reclaim === 1);
+  // Which model provider this project's turns run against
+  // (docs/superpowers/specs/2026-09-06-model-providers-design.md).
+  // default_provider_id names a model_providers row, and the row's own
+  // config (base URL, billing,
+  // default_model) is edited from Settings → Providers, not here. This dialog
+  // only picks WHICH provider (and which model on it) this project defaults
+  // to. `providers` is fetched once, shared with the model trigger's resolved
+  // label and with the litellm-only gating below.
+  const providers = useProvidersMap();
+  const [providerId, setProviderId] = useState<string | null>(project.default_provider_id);
+  const [defaultModel, setDefaultModel] = useState<string | null>(null);
+  // Seeds the model once the provider row that owns it has loaded (fetched
+  // async, so it can't be read into useState's initializer above). A ref, not
+  // a `providerId === project.default_provider_id` check, since the user is
+  // free to pick a different provider before the fetch lands, and that pick
+  // must not be clobbered the moment it does.
+  const modelSeededRef = useRef(false);
+  useEffect(() => {
+    if (modelSeededRef.current) return;
+    if (!project.default_provider_id) { modelSeededRef.current = true; return; }
+    const row = providers.get(project.default_provider_id);
+    if (!row) return; // still loading
+    setDefaultModel(row.config.default_model ?? null);
+    modelSeededRef.current = true;
+  }, [providers, project.default_provider_id]);
+  // Per-task LiteLLM virtual keys (docs/AGENTS.md): advanced, opt-in,
+  // and only meaningful when the instance has an admin key configured.
+  const [gatewayMaxBudget, setGatewayMaxBudget] = useState(project.gateway_max_budget != null ? String(project.gateway_max_budget) : "");
+  const [gatewayKeyDuration, setGatewayKeyDuration] = useState(project.gateway_key_duration || "");
+  // Hosted MCP servers (docs/AGENTS.md, "Hosted MCP servers"): shown only
+  // alongside the LiteLLM caps above, since both need the project's turns to
+  // actually be routed through a gateway to mean anything.
+  const [gatewayMcp, setGatewayMcp] = useState<string[]>(() => {
+    try {
+      const parsed = JSON.parse(project.gateway_mcp || "[]");
+      return Array.isArray(parsed) ? parsed.filter((a): a is string => typeof a === "string") : [];
+    } catch {
+      return [];
+    }
+  });
+  // Whether the currently-chosen provider is a LiteLLM gateway: the gate for
+  // the budget/duration fields and GatewayMcpField below, replacing the old
+  // providerKind === "gateway" check now that "gateway" is a provider TYPE
+  // rather than a project-level preset.
+  const chosenProviderType = providerId ? providers.get(providerId)?.type ?? null : null;
   const [probe, setProbe] = useState<LandingProbeResult | null>(null);
   const [probing, setProbing] = useState(false);
-  const [probeAsked, setProbeAsked] = useState(false); // the user pressed Detect — show failures too
+  const [probeAsked, setProbeAsked] = useState(false); // the user pressed Detect: show failures too
   const [devCmd, setDevCmd] = useState(project.dev_command);
   const [setupCmd, setSetupCmd] = useState(project.setup_command);
   const [testCmd, setTestCmd] = useState(project.test_command);
   const [confirmDel, setConfirmDel] = useState(false);
   const showServices = clientFeatures().services;
   // AI context refresh: let Claude read the repo and draft fresh context. The
-  // draft now runs as a DETACHED server-side job (it can take minutes and must
+  // draft runs as a detached server-side job (it can take minutes and must
   // survive sleep/reload), so the client starts it and polls for the result
-  // rather than holding one long request open. The drafted text replaces the
-  // textarea but isn't saved until Save — we stash the prior text for Undo.
+  // instead of holding one long request open. The drafted text replaces the
+  // textarea but isn't saved until Save; the prior text is stashed for Undo.
   const [refreshing, setRefreshing] = useState(false);
   const [refreshErr, setRefreshErr] = useState<string | null>(null);
   const [prevContext, setPrevContext] = useState<string | null>(null);
@@ -1050,7 +1431,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   // depend on `context` (which would churn the polling effect / stale-close it).
   const contextRef = useRef(context);
   contextRef.current = context;
-  // started_at of the job whose result we've already applied — so a draft is
+  // started_at of the job whose result has already been applied, so a draft is
   // consumed exactly once even if a POST reply and a poll tick race.
   const appliedRef = useRef(0);
 
@@ -1110,7 +1491,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   }, [project.id, handleState]);
 
   // While a job runs, poll for its result. Stops when refreshing flips false
-  // (terminal state) or the modal unmounts — the job keeps running server-side.
+  // (terminal state) or the modal unmounts; the job keeps running server-side.
   useEffect(() => {
     if (!refreshing) return;
     const t = setInterval(() => {
@@ -1127,10 +1508,37 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
       handleState(await jsend<RefreshState>(`/api/projects/${project.id}/refresh-context`, "POST"));
     } catch (e) {
       let msg = e instanceof Error ? e.message : String(e);
-      try { const j = JSON.parse(msg); if (j?.error) msg = j.error; } catch { /* not JSON — show raw */ }
+      try { const j = JSON.parse(msg); if (j?.error) msg = j.error; } catch { /* not JSON, show raw */ }
       setRefreshErr(msg);
       setRefreshing(false);
     }
+  };
+
+  // The provider's own config.default_model is the only place a "default
+  // model" lives (there is no per-project model column): picking a model
+  // for this provider in the dialog above is a PATCH to that provider row,
+  // sequenced before the ordinary project save. Best-effort: a failure here
+  // must not block saving the rest of the project's settings, since
+  // default_provider_id alone already lands.
+  const saveProject = async () => {
+    if (providerId) {
+      const row = providers.get(providerId);
+      if (row && (row.config.default_model ?? null) !== (defaultModel ?? null)) {
+        try {
+          await jsend(`/api/providers/${providerId}`, "PATCH", { config: { ...row.config, default_model: defaultModel || undefined } });
+        } catch {
+          // Reported nowhere specific: the project save below still proceeds
+          // with the picked provider, just not (yet) its new default model.
+        }
+      }
+    }
+    onSave({
+      name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing,
+      auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd,
+      default_provider_id: providerId,
+      gateway_max_budget: gatewayMaxBudget.trim() === "" ? null : Number(gatewayMaxBudget) || null,
+      gateway_key_duration: gatewayKeyDuration.trim(), gateway_mcp: gatewayMcp,
+    });
   };
 
   return (
@@ -1146,7 +1554,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
         )}
         <span className="spacer" />
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-accent" onClick={() => onSave({ name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing, auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd })}>{Icon.check()} Save</button>
+        <button className="btn btn-accent" disabled={!branch.trim()} title={branch.trim() ? undefined : "Set a base branch first"} onClick={() => void saveProject()}>{Icon.check()} Save</button>
       </>}>
       <div className="field">
         <div className="lab">Project name</div>
@@ -1206,7 +1614,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
           Include this context in new agent sessions
         </label>
         {!sendContext && (
-          <div className="hlp">New tasks will start without the saved context (task details and Calandria tools are still included). Each task can override this when it starts.</div>
+          <div className="hlp">New tasks start without the saved context (task details and Calandria tools are still included). Any task can turn it back on when it starts.</div>
         )}
       </div>
       <div style={{ display: "flex", gap: 14 }}>
@@ -1218,7 +1626,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
           </div>
         </div>
         <div className="field" style={{ flex: "0 0 170px", marginBottom: 0 }}>
-          <div className="lab">{Icon.git()} Branch</div>
+          <div className="lab">{Icon.git()} Branch <span className="opt">(required to run tasks)</span></div>
           <input type="text" className="ctx-mono" value={branch} onChange={(e) => setBranch(e.target.value)} />
         </div>
       </div>
@@ -1245,18 +1653,17 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
       ) : probe && probeAsked ? (
         <div className="hlp" style={{ marginTop: 6 }}>{probe.reason}</div>
       ) : null}
-      {/* The tail of landing: what happens to the CHECKOUT once work lands. Off
-          by default, and per project, because it deletes a local branch without
-          being asked — see lib/reclaim.ts. The button in the session header
-          does the same thing on demand whether or not this is on. */}
+      {/* The tail of landing: what happens to the checkout once work lands.
+          Off by default and per project. It closes the task after the turn ends,
+          then removes the local branch without being asked. */}
       <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 12, fontSize: 12.5, color: "var(--ink-2)", cursor: "pointer" }}>
         <input type="checkbox" checked={autoReclaim} onChange={(e) => setAutoReclaim(e.target.checked)} />
         <span>
-          Reclaim a task&apos;s worktree when its work lands
+          Close and reclaim a task when its work lands
           <span className="hlp" style={{ display: "block", marginTop: 2 }}>
             {landing === "pr"
-              ? "When its pull request reports merged, catch " + (branch || "the base branch") + " up with origin, remove the task's checkout, delete its local branch and mark it done. Never over unsaved work — that still asks."
-              : "When it merges into " + (branch || "the base branch") + ", remove the task's checkout, delete its local branch and mark it done. Never over unsaved work — that still asks."}
+              ? "When its pull request reports merged, this closes the task, catches " + (branch || "the base branch") + " up with origin, removes the task's checkout, and deletes its local branch once no turn is executing. It never touches dirty or never-pushed work; that still needs your say-so."
+              : "When it merges into " + (branch || "the base branch") + ", this closes the task, removes its checkout, and deletes its local branch once no turn is executing. It never touches dirty or never-pushed work; that still needs your say-so."}
           </span>
         </span>
       </label>
@@ -1267,11 +1674,54 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
           help="New tasks in this project default to this agent. Existing tasks keep the agent they were created with."
         />
       </div>
+      {/* The provider (and its model) new tasks in this project default to.
+          "App default" is the picker's own head row: null provider_id/model
+          means "the environment's own bundled row" (lib/providers/resolve.ts
+          resolveProvider). The environment above and the provider here are
+          independent fields; picking a provider whose type doesn't serve the
+          chosen environment just shows nothing runnable for it, the same as
+          any other picker instance. */}
+      <div className="field" style={{ marginTop: 14 }}>
+        <div className="lab">{Icon.spark()} Default model</div>
+        <ModelPicker
+          value={{ agent: project.default_agent || defaultAgentFor(agents, undefined), provider_id: providerId, model: defaultModel }}
+          onChange={(v) => {
+            if (v.agent && v.agent !== project.default_agent) onSetDefaultAgent(v.agent);
+            setProviderId(v.provider_id);
+            setDefaultModel(v.model);
+          }}
+          inherit={{ label: "App default" }}
+          env={{
+            current: project.default_agent || defaultAgentFor(agents, undefined),
+            // connectedEnvOptions (ModelPicker.tsx) wants the server's
+            // AgentsResponseT, whose AgentInfoT#capabilities isn't the client
+            // AgentsBundle's AgentCapabilities shape; every field this picker
+            // reads (status/id/label) is on both, so the filter is inlined
+            // instead of fighting that mismatch.
+            options: agents.agents.filter((a) => a.status === "connected").map((a) => ({ id: a.id, label: a.label })),
+          }}
+          variant="inline"
+        />
+      </div>
+      {chosenProviderType === "litellm" && agents.gateway_keys_enabled && (
+        <div className="field" style={{ marginTop: 14 }}>
+          <div className="lab">Gateway key caps <span className="opt">(per-task LiteLLM virtual keys)</span></div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input type="number" className="ctx-mono" style={{ flex: 1, minWidth: 0 }} value={gatewayMaxBudget} placeholder="max budget ($, blank = unlimited)"
+              onChange={(e) => setGatewayMaxBudget(e.target.value)} />
+            <input type="text" className="ctx-mono" style={{ flex: "0 0 190px" }} value={gatewayKeyDuration} placeholder="30d"
+              title="Key duration, e.g. 30d. Blank means it never expires."
+              onChange={(e) => setGatewayKeyDuration(e.target.value)} />
+          </div>
+          <div className="hlp">Caps this project&apos;s per-task LiteLLM keys. Leave blank for unlimited budget, or a key that never expires. Docs: docs/AGENTS.md.</div>
+        </div>
+      )}
+      {chosenProviderType === "litellm" && agents.gateway_mcp_enabled && <GatewayMcpField projectId={project.id} value={gatewayMcp} onChange={setGatewayMcp} />}
       {showServices && (
         <div className="field" style={{ marginTop: 14 }}>
           <div className="lab ctx-lab">
             <span>{Icon.sliders()} Services</span>
-            <span className="opt" style={{ fontWeight: 400 }}>port <code className="ctx-mono">{project.port || "—"}</code> injected as <code className="ctx-mono">PORT</code></span>
+            <span className="opt" style={{ fontWeight: 400 }}>port <code className="ctx-mono">{project.port || "–"}</code> injected as <code className="ctx-mono">PORT</code></span>
           </div>
           <div className="hlp" style={{ marginTop: 0, marginBottom: 8 }}>
             Calandria supervises these in {repo ? repo.split("/").pop() : "the working dir"}: start/stop them from the Services panel; they outlive the tab.
@@ -1388,16 +1838,16 @@ export function NewProjectModal({ onClose, onCreate }: { onClose: () => void; on
   const [repo, setRepo] = useState("");
   const colors = ["#C2603C", "#3E7CA8", "#6B6F8C", "#5C8C5A", "#9A6E14", "#9E5BA0"];
   const [color, setColor] = useState(colors[0]);
-  // Where the code comes from: a local folder — existing repo or greenfield —
+  // Where the code comes from: a local folder (existing repo or greenfield)
   // or a clone of one of the user's GitHub repos (the onboarding path).
   const [mode, setMode] = useState<"fresh" | "clone">("fresh");
   const [cloneSpec, setCloneSpec] = useState(""); // owner/repo or pasted URL
   const [cloning, setCloning] = useState(false);
   const [cloneErr, setCloneErr] = useState<string | null>(null);
   // How this project's work will land. Creation is the one moment detection may
-  // PRESELECT outright — there is no choice yet to override — so a repo whose
-  // default branch requires a pull request starts the project honest instead of
-  // telling every session for the next month that Merge lands into main.
+  // preselect outright, since there is no choice yet to override, so a repo
+  // whose default branch requires a pull request starts the project honest
+  // instead of telling every session that Merge lands into main.
   // Touching the control pins it: a later probe result never moves it back.
   const [landing, setLanding] = useState<LandingMode>("merge");
   const [landingProbe, setLandingProbe] = useState<LandingProbeResult | null>(null);

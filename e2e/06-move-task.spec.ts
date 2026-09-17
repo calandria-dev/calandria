@@ -1,8 +1,8 @@
 // Moving a misfiled task to another project, through the UI affordance in the
 // Edit-task modal. The server rules (position renumbering, dropped dependency
 // edges, inherited settings, the started-task refusal) are pinned by
-// tests/taskMove.test.ts; this spec is about the wiring — picking a destination
-// lands the row in that project's tray and takes it out of this one.
+// tests/taskMove.test.ts. This spec checks that picking a destination lands
+// the row in that project's tray and takes it out of this one.
 
 import { expect, test } from "@playwright/test";
 import { createProject, createTask, ensureOnboarded, gotoApp, makeFixtureRepo, uid } from "./helpers";
@@ -26,9 +26,9 @@ test("an unstarted task moves to another project from the Edit modal", async ({ 
   await page.locator(".dep-row").filter({ hasText: TO }).click();
   await page.getByRole("button", { name: `Move to ${TO}` }).click();
 
-  // The row leaves this project's tray…
+  // The row leaves this project's tray.
   await expect(page.locator(".ttitle").filter({ hasText: "Misfiled task" })).toBeHidden();
-  // …and is waiting in the destination, description and all.
+  // It arrives in the destination, description and all.
   await page.getByText(TO).first().click();
   await expect(page.locator(".ttitle").filter({ hasText: "Misfiled task" })).toBeVisible();
 });

@@ -1,4 +1,4 @@
-// Typed queries for runbooks. DB only — no runner, no SDK (pinned by
+// Typed queries for runbooks. DB only, no runner, no SDK (pinned by
 // tests/importGraph.test.ts), so the delete policy below can be tested without
 // launching anything.
 
@@ -27,6 +27,10 @@ export interface CreateRunbookInput {
   priority?: Priority;
   /** The agent id that filed this, or '' when the user wrote it. */
   created_by?: string;
+  /** The model provider a dispatch carries into the task it mints; null/undefined = the project's default. */
+  provider_id?: string | null;
+  /** The model that task starts on; null/undefined = the project's default. */
+  model?: string | null;
 }
 
 export function createRunbook(input: CreateRunbookInput): Runbook {
@@ -38,21 +42,21 @@ export function createRunbook(input: CreateRunbookInput): Runbook {
   getDb()
     .prepare(
       `INSERT INTO runbooks (id, project_id, name, description, prompt, agent, permission_mode,
-                             send_context, priority, position, created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                             send_context, priority, position, created_by, provider_id, model, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id, input.project_id, input.name, input.description ?? "", input.prompt,
       input.agent || "claude", input.permission_mode ?? null,
       input.send_context === false ? 0 : 1, input.priority ?? "med",
-      position, input.created_by ?? "", now, now
+      position, input.created_by ?? "", input.provider_id ?? null, input.model ?? null, now, now
     );
   return getRunbook(id)!;
 }
 
 export function updateRunbook(
   id: string,
-  fields: Partial<Pick<Runbook, "name" | "description" | "prompt" | "agent" | "permission_mode" | "send_context" | "priority" | "position">>
+  fields: Partial<Pick<Runbook, "name" | "description" | "prompt" | "agent" | "permission_mode" | "send_context" | "priority" | "position" | "provider_id" | "model">>
 ): Runbook | null {
   if (!getRunbook(id)) return null;
   const entries = Object.entries(fields).filter(([, v]) => v !== undefined);
@@ -64,18 +68,17 @@ export function updateRunbook(
 }
 
 /**
- * Hard delete, like everything else here — but a linked schedule is DETACHED
- * rather than orphaned.
+ * Hard delete, like everything else here, but a linked schedule is detached
+ * instead of orphaned.
  *
- * `schedules.runbook_id` is ON DELETE SET NULL, and that alone is the bug: a
- * schedule reading its prompt from a runbook that just vanished would fire an
- * empty prompt every morning, reporting green having done nothing. That is the
- * precise failure the schedules design was built to rule out. So the recipe is
- * copied BACK into every linked schedule first, in one transaction with the
- * delete: the schedule keeps firing exactly what it fired yesterday, frozen as
- * of the deletion, and the user can see the whole prompt in its editor again.
+ * `schedules.runbook_id` is ON DELETE SET NULL: alone, a schedule reading its
+ * prompt from a runbook that just vanished would fire an empty prompt every
+ * morning, reporting green having done nothing. So the recipe is copied back
+ * into every linked schedule first, in one transaction with the delete: the
+ * schedule keeps firing exactly what it fired yesterday, frozen as of the
+ * deletion, and the user can see the whole prompt in its editor again.
  *
- * The tasks it dispatched are untouched (tasks.runbook_id is SET NULL too) —
+ * The tasks it dispatched are untouched (tasks.runbook_id is SET NULL too):
  * deleting a recipe must never delete the work it produced.
  */
 export function deleteRunbook(id: string): void {
@@ -86,9 +89,9 @@ export function deleteRunbook(id: string): void {
     db.prepare(
       `UPDATE schedules
           SET prompt = ?, agent = ?, permission_mode = ?, send_context = ?, priority = ?,
-              runbook_id = NULL, updated_at = ?
+              provider_id = ?, model = ?, runbook_id = NULL, updated_at = ?
         WHERE runbook_id = ?`
-    ).run(rb.prompt, rb.agent, rb.permission_mode, rb.send_context, rb.priority, Date.now(), id);
+    ).run(rb.prompt, rb.agent, rb.permission_mode, rb.send_context, rb.priority, rb.provider_id, rb.model, Date.now(), id);
     db.prepare("DELETE FROM runbooks WHERE id = ?").run(id);
   })();
 }
@@ -96,8 +99,8 @@ export function deleteRunbook(id: string): void {
 /**
  * Duplicate into another project. An independent row, not a reference: projects
  * have different repos, different agents connected and different command
- * registries, so a shared recipe would be a link that silently means something
- * else at the other end.
+ * registries, so a shared recipe would be a link that means something else at
+ * the other end.
  */
 export function copyRunbook(id: string, targetProjectId: string): Runbook | null {
   const src = getRunbook(id);
@@ -111,8 +114,10 @@ export function copyRunbook(id: string, targetProjectId: string): Runbook | null
     permission_mode: src.permission_mode,
     send_context: src.send_context !== 0,
     priority: src.priority,
+    provider_id: src.provider_id,
+    model: src.model,
     // created_by is "who wrote this row", and this row was written by whoever
-    // pressed Copy — not by the original's author.
+    // pressed Copy, not by the original's author.
     created_by: "",
   });
 }
@@ -122,10 +127,10 @@ export function copyRunbook(id: string, targetProjectId: string): Runbook | null
  *
  * `rowid` breaks the tie, and it is not decoration: created_at is milliseconds,
  * and dispatching the same runbook twice in quick succession (a double-click, a
- * palette row pressed twice) really does land two rows on the same value —
- * whereupon `ORDER BY created_at DESC` alone returns whichever SQLite feels
- * like, and the card can show the older of the two runs as the latest. rowid is
- * insertion order, which is exactly the question being asked.
+ * palette row pressed twice) really does land two rows on the same value, so
+ * `ORDER BY created_at DESC` alone returns either one arbitrarily, and the card
+ * can show the older of the two runs as the latest. rowid is insertion order,
+ * which is exactly the question being asked.
  */
 export function lastRunOf(runbookId: string): Task | null {
   return (
@@ -136,8 +141,8 @@ export function lastRunOf(runbookId: string): Task | null {
 }
 
 /**
- * The schedules firing this runbook. Two callers, both of which need the NAMES
- * rather than a count: the card ("also fired by Morning sweep"), and
+ * The schedules firing this runbook. Two callers, both of which need the
+ * names instead of a count: the card ("also fired by Morning sweep"), and
  * update_runbook's refusal, which has to tell an agent what it would have
  * changed.
  */
@@ -151,13 +156,13 @@ export function schedulesUsing(runbookId: string): { id: string; name: string }[
  * The prompt actually dispatched: the saved recipe, plus this run's extra
  * instructions when there are any.
  *
- * Deliberately not a `{{template}}` language. A brace syntax pulls in
- * declarations, defaults, escaping, types, optional values and validation — and
- * has no answer at all for a schedule, which cannot prompt anyone for a value.
- * One appended paragraph handles "…and focus on CEAP-1234" and costs nothing.
+ * Not a `{{template}}` language. A brace syntax pulls in declarations,
+ * defaults, escaping, types, optional values and validation, and has no
+ * answer at all for a schedule, which cannot prompt anyone for a value. One
+ * appended paragraph handles "…and focus on CEAP-1234" and costs nothing.
  *
  * When the recipe is a slash command the extras become part of the command's
- * arguments, which is the desired behavior — the same shape the schedules form
+ * arguments, which is the desired behavior: the same shape the schedules form
  * already invites with its "/jira-tasks, or plain instructions" placeholder.
  */
 export function composeRunbookPrompt(prompt: string, extra: string): string {

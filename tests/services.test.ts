@@ -27,9 +27,11 @@ import {
   serviceRoutingEnabled,
 } from "../lib/service-router.mjs";
 import { resolveFeatures } from "../lib/features";
-// Liveness the same way the supervisor asks it: a process-group probe on POSIX,
-// `tasklist` on win32, where a negative pid means nothing (lib/processTree.ts).
-import { treeAlive } from "../lib/processTree";
+// Liveness the same way the supervisor asks it: signal 0, sent to the group on
+// POSIX and to the pid itself on win32, where a negative pid means nothing
+// (lib/processTree.ts).
+import { probeTreeCommand, treeAlive } from "../lib/processTree";
+import { waitForTree } from "./waitForTree";
 
 const APP_HOST = "ishan.calandria.example.com";
 
@@ -154,7 +156,7 @@ describe("service registry persistence", () => {
     await restoreServices();
     const after = listServices(project).find((s) => s.name === "calc");
     expect(after).toBeDefined();
-    expect(after!.status).toBe("stopped"); // we don't own the process — never auto-started
+    expect(after!.status).toBe("stopped"); // the process is not owned, so it is never auto-started
     expect(after!.slug).toBe("calc"); // identity survived: same URL when re-registered
     const again = exposeService(project, "calc", 5173);
     expect(again.slug).toBe("calc");
@@ -205,7 +207,24 @@ describe("service registry persistence", () => {
     wipeRegistry();
     await restoreServices();
 
-    expect(treeAlive(oldPid)).toBe(false); // old orphan is gone
+    // Polled, not sampled once (issue #99): `restoreServices()` awaits its own
+    // work, but on win32 the kill it issued is `taskkill /T /F`, which returns
+    // once the request is made, not once the tree is gone. The claim under
+    // test is that the orphan IS reaped, and a tree that never dies still
+    // fails below.
+    const orphanAlive = await waitForTree(
+      () => treeAlive(oldPid),
+      (alive) => !alive
+    );
+    // The bare "expected true to be false" cost issue #324 a whole
+    // investigation: a survivor could mean the kill was slow, or that the
+    // recycled-pid guard declined to issue one at all. The probe says which.
+    expect(
+      orphanAlive,
+      orphanAlive
+        ? `orphan pid ${oldPid} outlived the reap; the recycled-pid guard now says "${probeTreeCommand(oldPid, SLEEP_COMMAND)}"`
+        : undefined
+    ).toBe(false); // old orphan is gone
     const restored = listServices(project).find((s) => s.name === "dev");
     expect(restored!.status).toBe("running");
     expect(restored!.pid).not.toBe(oldPid);

@@ -12,7 +12,9 @@
 # registry: on `pull_request` (as opposed to `pull_request_target`) GitHub
 # already caps a fork's GITHUB_TOKEN at read-only, and this workflow adds the
 # belt to that brace by never running docker/login-action on the PR path.
-# PRs still build both arches, so a broken Dockerfile fails before merge.
+# PRs with application changes still build both arches, so a broken Dockerfile
+# fails before merge. Website-only PRs are detected in `prepare` and skip the
+# expensive build while still reporting the stable required check below.
 #
 # It is also gated on the unit suite and the typecheck (the `test` job below
 # calls test.yml, and waits on every job in it). A green `docker build` only
@@ -68,6 +70,24 @@
 # already differ. Pinning BuildKit would freeze one input to a build that has
 # several other unfrozen ones.
 #
+# The pull_request trigger takes any base branch, matching test.yml and
+# website.yml. This repo lands batches of work through integration branches
+# (`integration/**`), and a PR into one of those breaks the Dockerfile exactly
+# as a PR into main does. The classic case is a new `lib/*.mjs` that
+# `server.js` or `pty-server.js` loads at runtime with no matching COPY, since
+# Next's build output does not carry those files. Pinning the trigger to main
+# turned the image build off for those PRs, so the break surfaced only when the
+# integration branch reached main, several PRs after the one that caused it.
+#
+# This is the most expensive lane in the repo, so the cost is real: a batch of
+# eight PRs into an integration branch now builds the image eight times. That
+# is the price of the check running on the PR that broke it. The cost is also
+# the same under the narrower filter (`integration/**` plus `main`), which
+# covers the same PRs and only adds a third trigger shape to keep in sync with
+# the other two workflows. The PR lane still publishes nothing: `prepare` gates
+# `publish` on an allowlist of push, workflow_dispatch and schedule, the build's
+# `outputs:` falls to `type=cacheonly`, and merge/attest/verify never run.
+#
 # CADENCE (early-stage): pushes to main do NOT build the image. The pipeline
 # runs from a nightly schedule — skipped up-front in `prepare` when main's
 # HEAD is already published under its sha- tag — plus v* tags and manual
@@ -87,18 +107,39 @@ name: Publish image
 on:
   schedule:
     # 09:23 UTC ≈ 02:23 PT — off-peak, and off the top of the hour.
-    - cron: "23 9 * * *"
+    - cron: "23 9 * * 1-6"
+    # Sunday is the same build with the layer cache turned off, selected on
+    # `github.event.schedule` in the build job below. A cached layer means CI
+    # cannot see a pin rot: `gh` is pinned to an exact apt version and
+    # cli.github.com serves only its newest, so once gh publishes, every cold
+    # build fails while this lane keeps reusing the layer that installed the old
+    # one and stays green (PR #183 found exactly that). `Pin drift`
+    # (pin-drift.yml) catches the two known-rotting pins by name and days
+    # earlier; this leg is the backstop for whatever nobody has thought of, and
+    # the only thing here that actually proves a from-scratch build works.
+    - cron: "23 9 * * 0"
   push:
     tags: ["v*"]
   pull_request:
-    branches: [main]
-    # website/ is the calandria.dev static site, not part of the image (it is
-    # in .dockerignore). A site-only PR has nothing for a multi-arch container
-    # build to validate, and this is the most expensive lane in the repo.
-    # Only skipped when EVERY changed file is under website/.
-    paths-ignore:
-      - website/**
+    branches: ["**"]
+    # No paths-ignore: a required check must report on website-only PRs too.
+    # prepare skips the expensive build after reporting an intentional skip.
   workflow_dispatch:
+    inputs:
+      no_cache:
+        description: "Build without the layer cache (proves a cold build works)"
+        type: boolean
+        default: false
+      publish:
+        # Off is how a branch gets both arch builds as a REVIEW signal without
+        # a sha- tag appearing in the registry for a commit nobody has read.
+        # pin-drift.yml dispatches this way on its bot branch, where the build
+        # is the only thing that proves the checksums it just wrote are the
+        # ones the vendor is serving. Defaults to true so every dispatch that
+        # existed before this input behaves exactly as it did.
+        description: "Push the image (off = build both arches and materialize nothing)"
+        type: boolean
+        default: true
 
 # Workflow-level permissions are the floor; only the jobs that talk to the
 # registry raise them.
@@ -125,10 +166,11 @@ jobs:
   prepare:
     runs-on: ubuntu-24.04
     # Generous only for the release path: the gate below WAITS for this
-    # commit's Test run to conclude (up to 45 minutes), so the job timeout has
-    # to sit above that wait or it would become the thing that fails releases.
-    # Every other event skips that step and this job still finishes in seconds.
-    timeout-minutes: 50
+    # commit's Test run to conclude (up to the action's max-wait-seconds, 120
+    # minutes of queue plus test time), so the job timeout has to sit above that
+    # wait or it would become the thing that fails releases. Every other event
+    # skips that step and this job still finishes in seconds.
+    timeout-minutes: 130
     permissions:
       contents: read
       # The nightly freshness check reads the registry.
@@ -137,9 +179,9 @@ jobs:
       actions: read
     outputs:
       publish: ${{ steps.gate.outputs.publish }}
-      # False only when a scheduled run finds HEAD already published; every
-      # other event always proceeds.
-      proceed: ${{ github.event_name != 'schedule' || steps.fresh.outputs.run == 'true' }}
+      # False when a scheduled run finds HEAD already published or a PR changes
+      # only website/. The workflow still reports the stable Image build check.
+      proceed: ${{ (github.event_name != 'schedule' || steps.fresh.outputs.run == 'true') && (github.event_name != 'pull_request' || steps.changes.outputs.app == 'true') }}
       tags: ${{ steps.meta.outputs.tags }}
       labels: ${{ steps.meta.outputs.labels }}
       annotations: ${{ steps.meta.outputs.annotations }}
@@ -151,12 +193,39 @@ jobs:
       # workflow_dispatch stays on the list so a branch (or an untriggered tag —
       # see release-please.yml's header) can be test-published under its sha-
       # tag; it can only move `latest`/`edge` per the ref-type rules below, not
-      # by virtue of being a dispatch.
+      # by virtue of being a dispatch. A dispatch can also opt OUT with the
+      # `publish` input, which is the only way an event on the allowlist stops
+      # publishing; every other event decides by its name alone.
       # `schedule` publishes too: it only ever runs on the default branch.
       - name: Decide whether this event may publish
         id: gate
         run: |
-          echo "publish=${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}" >> "$GITHUB_OUTPUT"
+          echo "publish=${{ (github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')) }}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+
+      # Replaces a workflow-level path filter so website-only PRs still produce
+      # the required Image build check. Fail open if the diff cannot be read:
+      # skipping an unknown change would falsely satisfy the merge gate.
+      - name: Detect application changes
+        id: changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          files=$(git diff --name-only "$BASE...$HEAD_SHA" 2>/dev/null || echo "")
+          if [ -z "$files" ] || printf '%s\n' "$files" | grep -qv '^website/'; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+            echo "application files changed; running the image build"
+          else
+            echo "app=false" >> "$GITHUB_OUTPUT"
+            echo "website/ only; skipping the image build"
+          fi
 
       # A release is only as trustworthy as the signal it's cut from (issue
       # #12): no image for a SHA whose push-to-main Test run is not green.
@@ -261,6 +330,24 @@ jobs:
   # path has its own end-of-pipeline proof in `verify` (which boots the actual
   # published image on both arches). Paying for a second full build + browser
   # run here would add ~10 minutes to every release for no new signal.
+  #
+  # Audited and KEPT, deliberately, because on a tag this is the suite's second
+  # run against the same commit: `prepare` has already polled the push-to-main
+  # run green through require-green-test-run, so everything here is a repeat.
+  # One release cycle therefore runs the unit suite five times across four SHAs
+  # (squash push, release-please PR, release-commit push, and this), with no
+  # vitest retry anywhere, and each repeat is a fresh chance for a flaky or
+  # clock-dependent test to sink a release that was already proven — which is
+  # exactly how v0.9.0's tag build died (PR #225).
+  #
+  # It stays because the alternative is worse. Dropping it would leave `build`
+  # with no `needs:` edge to any job this workflow controls, resting the whole
+  # publish on an externally polled run: a green poll and a `build` that starts
+  # minutes later are not the same commit's guarantee if the run is re-run,
+  # deleted or superseded in between, and a `needs:` edge is the only thing
+  # GitHub enforces. The redundant exposure is the price of that enforcement.
+  # The right lever on the risk is fewer flaky tests, not fewer runs of them,
+  # which is what test-clock.yml and test-shuffle.yml are for.
   test:
     # needs+if exist only for the nightly no-change skip; when test skips,
     # build and everything after it skip through the needs chain.
@@ -269,6 +356,11 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       e2e: "off"
+      # A called workflow reads the CALLER's `github.event_name`, so a manual
+      # dispatch of this file used to satisfy `macos-desktop`'s own gate and buy
+      # a 70-minute macOS run on top of the multi-arch build. This path asked
+      # for the unit gate.
+      macos: "off"
 
   build:
     needs: [prepare, test]
@@ -283,7 +375,12 @@ jobs:
             platform: linux/arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    # An uncached leg redoes npm ci, next build and every apt/npm install from
+    # nothing, so it needs materially more headroom than a warm one. The
+    # condition is spelled out here rather than shared, because `env` is not a
+    # context job-level keys can read; it is repeated once more on `no-cache`
+    # below and the two must stay in step.
+    timeout-minutes: ${{ (github.event.schedule == '23 9 * * 0' || github.event.inputs.no_cache == 'true') && 60 || 30 }}
     permissions:
       contents: read
       packages: write
@@ -296,7 +393,7 @@ jobs:
       # is version-pinned but not digest-pinned. That trades a binary GitHub
       # ships for one this job pulls over the network, which is the wrong
       # direction, and adds a second unbotted pin. Engine rationale: see header.
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         id: buildx
 
       # The engine is not pinned, so record which one ran. This is the only
@@ -384,6 +481,12 @@ jobs:
           # overwrite each other's manifest every run and never hit. mode=max
           # is what keeps the build stage (npm ci, next build) cached at all —
           # the default only stores layers present in the final image.
+          # The Sunday cron and the `no_cache` dispatch input ignore the cache
+          # on the way IN while still writing it on the way out, so the weekly
+          # cold build both proves a from-scratch build works and leaves the
+          # next six nights a cache made from current upstreams. Keep in step
+          # with `timeout-minutes` above.
+          no-cache: ${{ github.event.schedule == '23 9 * * 0' || github.event.inputs.no_cache == 'true' }}
           cache-from: type=gha,scope=${{ matrix.arch }}
           # PRs read the cache but never write it. Two mode=max arch caches are
           # already most of the repo's 10 GB allowance; letting every PR add its
@@ -418,6 +521,35 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # One stable required context for the two matrix legs. A skipped build is
+  # valid only when prepare deliberately identified a website-only PR (or a
+  # scheduled run whose image is already fresh). Any failed or cancelled leg,
+  # including one skipped behind a failed test job, fails this gate.
+  image-build:
+    name: Image build
+    needs: [prepare, build]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Require both architecture builds
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          PROCEED: ${{ needs.prepare.outputs.proceed }}
+        run: |
+          set -euo pipefail
+          if [ "$BUILD_RESULT" = "success" ]; then
+            exit 0
+          fi
+          if [ "$BUILD_RESULT" = "skipped" ] && [ "$PROCEED" = "false" ]; then
+            echo "Image build intentionally skipped"
+            exit 0
+          fi
+          echo "Image build did not complete successfully (result=$BUILD_RESULT)"
+          exit 1
+
   merge:
     needs: [prepare, build]
     if: needs.prepare.outputs.publish == 'true'
@@ -448,7 +580,7 @@ jobs:
       # `driver-opts` digest nothing in this repo can update. Do not "restore"
       # the default driver: it would add back a privileged container that this
       # job has no use for.
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         with:
           driver: docker
 
@@ -685,14 +817,21 @@ jobs:
   # second schedule is added here.
   notify:
     needs: [prepare, test, build, merge, attest, verify]
-    if: failure() && github.event_name != 'pull_request'
+    # Schedule only. The nightly and the Sunday cold build run with nobody
+    # watching, so a red one needs an issue or it is never seen. A tag push or
+    # a dispatch is a person cutting a release, who is already looking at the
+    # run; filing those too is how issue #78 collected one comment per blocked
+    # publish for a flake the release gate had already named. The action
+    # appends to the open issue with the same title, so the schedule path still
+    # gets one issue per workflow.
+    if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
       issues: write
     steps:
-      - uses: jayqi/failed-build-issue-action@1a893bbf43ef1c2a8705e2b115cd4f0fe3c5649b # v1.2.0
+      - uses: jayqi/failed-build-issue-action@940568ce50eeef3f31a920614cefcc6102d2f930 # v1.3.0
         with:
           # Required, and the action has no default for it: without this it
           # throws "Parameter token or opts.auth is required" before making any

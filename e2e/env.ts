@@ -1,12 +1,12 @@
-// Hermetic run environment for the Playwright suite. One temp root per run —
+// Hermetic run environment for the Playwright suite. One temp root per run,
 // created by the first process that loads this module (Playwright's main
 // process) and shared with worker processes via CALANDRIA_E2E_ROOT, which children
 // inherit. Everything the app persists (SQLite, worktrees, cloned/seeded repos)
 // lands under this root, so an e2e run never touches ~/.calandria or the
-// developer's real projects, and every run starts from a truly fresh instance
-// (which is what makes the onboarding spec deterministic).
+// developer's real projects, and every run starts from a truly fresh instance,
+// which makes the onboarding spec deterministic.
 //
-// Removing it again is e2e/cleanup-reporter.ts's job, and only on a green run —
+// Removing it again is e2e/cleanup-reporter.ts's job, and only on a green run:
 // a failure's DB and worktrees are the post-mortem.
 
 import fs from "node:fs";
@@ -22,7 +22,10 @@ function ensureRoot(): string {
     // report the resolved spelling, so resolving up front keeps the paths the
     // specs compare identical to the ones the server persists.
     root = fs.mkdtempSync(
-      path.join(fs.realpathSync.native(os.tmpdir()).replace(/^\\\\\?\\/, ""), "calandria-e2e-")
+      path.join(
+        fs.realpathSync.native(os.tmpdir()).replace(/^\\\\\?\\/, ""),
+        "calandria-e2e-",
+      ),
     );
     process.env.CALANDRIA_E2E_ROOT = root;
     // Ownership, not just the path: e2e/cleanup-reporter.ts only deletes a root
@@ -34,11 +37,17 @@ function ensureRoot(): string {
     // is never removed.
     process.env.CALANDRIA_E2E_ROOT_OWNED = "1";
   }
-  for (const d of ["db", "worktrees", "projects", "fixtures", "claude-config"]) {
+  for (const d of [
+    "db",
+    "worktrees",
+    "projects",
+    "fixtures",
+    "claude-config",
+  ]) {
     fs.mkdirSync(path.join(root, d), { recursive: true });
   }
-  // Pinned git identity/config for BOTH the server (worktree + merge commits)
-  // and the test helpers (fixture repos) — hermetic like tests/setup.ts, so the
+  // Pinned git identity/config for both the server (worktree + merge commits)
+  // and the test helpers (fixture repos), hermetic like tests/setup.ts, so the
   // suite passes on a machine with no global git config, and no user hooks or
   // signing setup can interfere.
   const gitconfig = path.join(root, "gitconfig");
@@ -61,17 +70,20 @@ function ensureRoot(): string {
         "\tlongpaths = true",
         `\thooksPath = ${os.platform() === "win32" ? "NUL" : "/dev/null"}`,
         "",
-      ].join("\n")
+      ].join("\n"),
     );
   }
   return root;
 }
 
 export const E2E_ROOT = ensureRoot();
-/** True only in the process that minted `E2E_ROOT` — see `ensureRoot`. */
+/** True only in the process that minted `E2E_ROOT`; see `ensureRoot`. */
 export const E2E_ROOT_OWNED = process.env.CALANDRIA_E2E_ROOT_OWNED === "1";
 export const E2E_PORT = Number(process.env.CALANDRIA_E2E_PORT || 4711);
 export const E2E_BASE_URL = `http://127.0.0.1:${E2E_PORT}`;
+/** The releases fixture (e2e/releases-server.mjs), so no run reaches github.com. */
+export const E2E_FEED_PORT = E2E_PORT + 2;
+export const E2E_FEED_URL = `http://127.0.0.1:${E2E_FEED_PORT}/releases`;
 export const FIXTURES_DIR = path.join(E2E_ROOT, "fixtures");
 
 export const GIT_ENV = {
@@ -95,16 +107,26 @@ export const SERVER_ENV: Record<string, string> = {
   // onboarding and turns run without any real agent CLI or login.
   CALANDRIA_E2E_MOCK_AGENT: "1",
   // The idle mark inside a test's patience (lib/turnActivity.ts; 20 minutes in
-  // production). 8s clears the longest INCIDENTAL silence any other spec
-  // creates — 15-collab-doc's `e2e:sleep=4000` — so no spec but 23's grows an
+  // production). 8s clears the longest incidental silence any other spec
+  // creates (15-collab-doc's `e2e:sleep=4000`), so no spec but 23's grows an
   // idle chip it didn't ask for; the two specs that do hold a turn open for 60s
   // (04, 20) assert over the API and on the composer, never on card chips.
   CALANDRIA_TURN_IDLE_MS: "8000",
   CALANDRIA_TURN_IDLE_SWEEP_MS: "1000",
   // Hermetic Claude config, same reasoning as tests/setup.ts: the server reads
   // this dir for the developer's real settings.json (model catalog/provider)
-  // and .credentials.json — which the plan-usage meter would otherwise use to
+  // and .credentials.json, which the plan-usage meter would otherwise use to
   // call Anthropic's real usage API mid-suite, once per titlebar render.
   CLAUDE_CONFIG_DIR: path.join(E2E_ROOT, "claude-config"),
+  // Same reasoning one step further: GET /api/agents kicks off the alias probe
+  // (lib/agents/claude/modelProbe.ts), which would spawn the developer's real
+  // `claude` five times on the first page load of the suite. The mock agent is
+  // what these specs drive; Claude's picker subtitles are not under test here.
+  CALANDRIA_CLAUDE_MODEL_PROBE: "0",
+  // The release check (lib/updates/check.ts) starts on the boot self-ping and
+  // asks its feed a minute later, so without this every spec's server would
+  // call api.github.com mid-suite. e2e/releases-server.mjs answers instead,
+  // with releases derived from the running package.json version.
+  CALANDRIA_UPDATE_FEED_URL: E2E_FEED_URL,
   ...GIT_ENV,
 };

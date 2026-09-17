@@ -1,13 +1,12 @@
-// The context-window gauge used to read the latest usage row's input side —
-// "7.6M tokens" against a 200k window on a tool-heavy turn. A turn is one SDK
-// query spanning MANY API requests (every tool round-trip re-reads the whole
-// context) plus any subagents, and the result message's usage SUMS them all:
-// spend, not occupancy. Occupancy is what each assistant message's own usage
-// says the window held when its request was sent, and the last main-session
-// one is the current figure. Pinned end to end here — mocked SDK → real Claude
-// driver → real runner → tasks.context_measured → getTaskContext/listTasks —
-// plus the usage-derived fallback that rows without a measurement still get,
-// labelled as the estimate it is.
+// The context-window gauge must read occupancy, not spend. A turn is one SDK
+// query spanning many API requests, since every tool round-trip re-reads the
+// whole context, and the result message's usage sums all of them: that is
+// spend. Occupancy is what each assistant message's own usage says the window
+// held when its request was sent, and the last main-session one is the
+// current figure. Pinned end to end: mocked SDK, real Claude driver, real
+// runner, tasks.context_measured, getTaskContext/listTasks, plus the
+// usage-derived fallback a row without a measurement still gets, labelled as
+// the estimate it is.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }));
@@ -22,7 +21,7 @@ import { claudeDriver } from "@/lib/agents/claude/driver";
 import { addUsage, createProject, createTask, getTask, getTaskContext, getTaskUsage, listTasks, updateTask } from "@/lib/store";
 import { startResumeTurn } from "@/lib/runner";
 import { subscribe } from "@/lib/events";
-import type { Project, Task, StreamEvent, TaskStreamEvent } from "@/lib/types";
+import type { Project, Task, StreamEvent, TaskStreamEvent, TurnUsage } from "@/lib/types";
 
 type QueryArgs = { prompt: AsyncIterable<unknown> };
 function mockCli(run: (nextInput: () => Promise<IteratorResult<unknown>>) => AsyncGenerator<unknown>): void {
@@ -33,38 +32,64 @@ function mockCli(run: (nextInput: () => Promise<IteratorResult<unknown>>) => Asy
 }
 
 const init = { type: "system", subtype: "init", session_id: "sess-ctx" };
-// One API response as the SDK forwards it. `usage` is THIS request's — its
-// input side is how full the window was when it went out.
-const assistant = (text: string, usage: Record<string, number>, parent: string | null = null) => ({
+// One API response as the SDK forwards it. `usage` is this request's own;
+// its input side is how full the window was when it went out.
+const assistant = (text: string, usage: Record<string, number>, parent: string | null = null, id?: string) => ({
   type: "assistant",
   parent_tool_use_id: parent,
-  message: { id: `msg-${text}`, content: [{ type: "text", text }], usage },
+  // `id` is the API RESPONSE's id, which every message split out of that one
+  // response shares. Spend is deduped on it (the gauge is deduped on the value
+  // instead), so a fixture modelling a second content block must repeat it.
+  message: { id: id ?? `msg-${text}`, content: [{ type: "text", text }], usage },
 });
-const result = (usage: Record<string, number>) => ({ type: "result", subtype: "success", result: "ok", total_cost_usd: 0.4, usage });
+const result = (usage: Record<string, number>, modelUsage?: Record<string, Record<string, number>>) =>
+  ({ type: "result", subtype: "success", result: "ok", total_cost_usd: 0.4, usage, ...(modelUsage ? { modelUsage } : {}) });
 
-// A tool-heavy turn with a subagent: the main session grows 50k → 120k, the
-// subagent runs its own 400k window, and the result sums everything (570k).
+// A tool-heavy turn with a subagent: the main session grows 50k → 120k while
+// the subagent runs its own 400k window.
 const MAIN_1 = { input_tokens: 1_000, cache_read_input_tokens: 49_000, cache_creation_input_tokens: 0, output_tokens: 20 };
 const MAIN_2 = { input_tokens: 2_000, cache_read_input_tokens: 110_000, cache_creation_input_tokens: 8_000, output_tokens: 30 };
 const SUB = { input_tokens: 400_000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 10 };
-const SUM = { input_tokens: 403_000, cache_read_input_tokens: 159_000, cache_creation_input_tokens: 8_000, output_tokens: 60 };
+
+// The result message's `usage` covers the main session's requests only:
+// MAIN_1 + MAIN_2 exactly, with the sidechain absent.
+const RESULT_USAGE = { input_tokens: 3_000, cache_read_input_tokens: 159_000, cache_creation_input_tokens: 8_000, output_tokens: 50 };
+
+// `modelUsage` covers the whole turn: per-model costs sum to `total_cost_usd`
+// exactly, sidechains included. The difference between it and the figure
+// above is subagent spend, and that subtraction is what the driver reports.
+// The sidechain here is bigger than its one visible assistant message
+// (625,010 against SUB's 400,010) because only a subagent's last message per
+// tool call reaches the stream, so summing what is visible undercounts; the
+// driver subtracts rollups instead of adding up messages.
+const MAIN_MODEL = { inputTokens: 3_000, outputTokens: 50, cacheReadInputTokens: 159_000, cacheCreationInputTokens: 8_000 };
+const SUB_MODEL = { inputTokens: 400_000, outputTokens: 10, cacheReadInputTokens: 220_000, cacheCreationInputTokens: 5_000 };
+const MODEL_USAGE = { "claude-sonnet-4-5": MAIN_MODEL, "claude-haiku-4-5": SUB_MODEL };
+const MAIN_TOKENS = 170_050;  // 3,000 + 50 + 159,000 + 8,000
+const SUB_TOKENS = 625_010;   // 400,000 + 10 + 220,000 + 5,000
 
 function scriptTurn() {
   mockCli(async function* (nextInput) {
     await nextInput();
     yield init;
     yield assistant("first", MAIN_1);
-    yield assistant("first-again", MAIN_1); // same response, second content block: same usage, no new event
-    yield assistant("sub", SUB, "toolu_agent_1"); // subagent sidechain — its own window
+    yield assistant("first-again", MAIN_1, null, "msg-first"); // same response, second content block: same usage, no new event
+    yield assistant("sub", SUB, "toolu_agent_1"); // subagent sidechain, its own window
     yield assistant("second", MAIN_2);
     yield assistant("errored", { input_tokens: 0, output_tokens: 0 }); // synthesized error message: no usage
-    yield result(SUM);
+    yield result(RESULT_USAGE, MODEL_USAGE);
     await nextInput();
   });
 }
 
 const fakeProject = { id: "p1", name: "P", repo_path: "/tmp/repo", context: "" } as Project;
 const fakeTask = { id: "t1", agent: "claude", title: "T", description: "", session_id: null, worktree_path: "", generation: 1 } as unknown as Task;
+
+/** The turn's own totals: the report the result message produced, not one of
+ *  the per-request partial reports the driver emits as the turn goes. Those
+ *  are provisional; this one supersedes them (see tests/usageFlush.test.ts). */
+const fullUsage = (events: StreamEvent[]): TurnUsage =>
+  (events.find((e) => e.type === "usage" && !e.partial) as { usage: TurnUsage }).usage;
 
 beforeEach(() => { queryMock.mockReset(); });
 
@@ -79,10 +104,84 @@ describe("claude driver: context events", () => {
     // 0 (the synthesized error), and NOT 570k (the result's sum).
     expect(ctx).toEqual([50_000, 120_000]);
 
-    // Spend accounting is untouched: the usage event is still the result's
-    // total — that IS what the turn cost.
-    const usage = events.find((e) => e.type === "usage") as { usage: { input_tokens: number; cache_read_tokens: number; cache_creation_tokens: number } };
-    expect(usage.usage).toMatchObject({ input_tokens: 403_000, cache_read_tokens: 159_000, cache_creation_tokens: 8_000 });
+    // Spend accounting is untouched: the usage event still carries the
+    // result's own token counts verbatim, which is what the main session cost.
+    expect(fullUsage(events)).toMatchObject({ input_tokens: 3_000, cache_read_tokens: 159_000, cache_creation_tokens: 8_000 });
+  });
+
+  it("also reports each main-session request's tokens as they happen, so a Stopped turn has a record", async () => {
+    scriptTurn();
+    const events: StreamEvent[] = [];
+    for await (const ev of claudeDriver.runTurn(fakeTask, fakeProject, "go")) events.push(ev);
+
+    const partials = events.filter((e) => e.type === "usage" && e.partial) as { usage: TurnUsage }[];
+    // One per main-session API response. The CLI splits a response into a
+    // message per content block, all carrying that response's usage, so the
+    // "first-again" copy must contribute nothing; summing per message would
+    // bill a two-block answer twice.
+    expect(partials.map((p) => p.usage)).toEqual([
+      { cost_usd: 0, input_tokens: 1_000, output_tokens: 20, cache_read_tokens: 49_000, cache_creation_tokens: 0 },
+      { cost_usd: 0, input_tokens: 2_000, output_tokens: 30, cache_read_tokens: 110_000, cache_creation_tokens: 8_000 },
+    ]);
+
+    // The 400k sidechain is NOT among them: the result's usage covers the main
+    // session alone, so a partial from a subagent would have nothing to be
+    // superseded by and would double-count against modelUsage. The synthesized
+    // error message, carrying no usage at all, is skipped as well.
+    const summed = partials.reduce((n, p) => n + p.usage.input_tokens + p.usage.cache_read_tokens + p.usage.cache_creation_tokens, 0);
+    expect(summed).toBeLessThan(SUB.input_tokens);
+
+    // No partial ever carries a price: the assistant message has none, and
+    // the runner writes the flushed row unpriced instead of as a free turn.
+    expect(partials.every((p) => p.usage.cost_usd === 0)).toBe(true);
+  });
+
+  it("reports sidechain spend separately, as the gap between modelUsage and the result's own usage", async () => {
+    scriptTurn();
+    const events: StreamEvent[] = [];
+    for await (const ev of claudeDriver.runTurn(fakeTask, fakeProject, "go")) events.push(ev);
+    const usage = fullUsage(events);
+
+    // The two halves add up to the rollup: main is what the result reported,
+    // subagent is what it left out, and together they cover every token
+    // modelUsage accounted for.
+    const main = usage.input_tokens + usage.output_tokens + usage.cache_read_tokens + usage.cache_creation_tokens;
+    expect(main).toBe(MAIN_TOKENS);
+    expect(usage.subagent_tokens).toBe(SUB_TOKENS);
+    expect(main + usage.subagent_tokens!).toBe(MAIN_TOKENS + SUB_TOKENS);
+  });
+
+  it("omits the field entirely on a turn that never fanned out", async () => {
+    mockCli(async function* (nextInput) {
+      await nextInput();
+      yield init;
+      yield assistant("only", MAIN_1);
+      // No sidechain, so modelUsage holds the main session alone and nets to 0.
+      yield result(RESULT_USAGE, { "claude-sonnet-4-5": MAIN_MODEL });
+      await nextInput();
+    });
+    const events: StreamEvent[] = [];
+    for await (const ev of claudeDriver.runTurn(fakeTask, fakeProject, "go")) events.push(ev);
+    const usage = fullUsage(events);
+    // Undefined, not 0: the column stores NULL so a turn with no fan-out is
+    // never confused with a driver that doesn't report the split at all.
+    expect(usage.subagent_tokens).toBeUndefined();
+  });
+
+  it("reports nothing when the CLI sends no modelUsage rollup at all", async () => {
+    mockCli(async function* (nextInput) {
+      await nextInput();
+      yield init;
+      yield assistant("only", MAIN_1);
+      yield result(RESULT_USAGE);
+      await nextInput();
+    });
+    const events: StreamEvent[] = [];
+    for await (const ev of claudeDriver.runTurn(fakeTask, fakeProject, "go")) events.push(ev);
+    const usage = fullUsage(events);
+    expect(usage.subagent_tokens).toBeUndefined();
+    // The main-session figures are unaffected by the rollup being absent.
+    expect(usage).toMatchObject({ input_tokens: 3_000, cache_read_tokens: 159_000 });
   });
 });
 
@@ -107,10 +206,11 @@ describe("runner + store: measured occupancy", () => {
     expect(midTurn).toEqual([50_000, 120_000]);
     expect(getTask(row.id)!.context_measured).toBe(120_000);
 
-    // The gauge: measured, and the sum is nowhere near it.
+    // This is the measured figure (context_measured), not the naive sum.
     const ctx = getTaskContext(row.id);
     expect(ctx).toMatchObject({ context_tokens: 120_000, context_estimated: false });
-    expect(getTaskUsage(row.id).total_tokens).toBe(570_060);
+    expect(getTaskUsage(row.id).total_tokens).toBe(MAIN_TOKENS);
+    expect(getTaskUsage(row.id).subagent_tokens).toBe(SUB_TOKENS);
     const listed = listTasks(project.id).find((t) => t.id === row.id)!;
     expect(listed).toMatchObject({ context_tokens: 120_000, context_estimated: false });
     expect(listed.context_pct).toBeGreaterThan(0);

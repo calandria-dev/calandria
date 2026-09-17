@@ -1,11 +1,11 @@
-// Message Encryption for Web Push (RFC 8291) over the aes128gcm content
-// encoding (RFC 8188), on node:crypto only. One record, no extra padding: our
-// payloads are a few hundred bytes of server-composed text, and a single
-// 4096-byte record is what every push service accepts.
+// Encrypts a push message body per RFC 8291 (Web Push) using the aes128gcm
+// content encoding from RFC 8188, on node:crypto only. Always emits a single
+// record with no padding: payloads are a few hundred bytes of server-composed
+// text, well under the 4096-byte record size every push service accepts.
 //
-// Pinned byte-for-byte against RFC 8291 Appendix A by tests/webpush.test.ts,
-// which is why the salt and the application-server keypair are injectable —
-// production callers leave both to the CSPRNG.
+// tests/webpush.test.ts checks this against RFC 8291 Appendix A byte-for-byte,
+// so the salt and the application-server keypair are injectable; production
+// callers leave both to the CSPRNG.
 
 import { createCipheriv, createECDH, hkdfSync, randomBytes } from "node:crypto";
 import { b64url } from "./vapid";

@@ -20,7 +20,7 @@ export async function GET() {
       rows.map(async (r) => {
         const sizeBytes = await worktreeDiskUsage(r.worktree_path);
         // worktree_path set but gone from disk (pruned out-of-band, or removed
-        // manually) — nothing to reclaim, so drop it from the list.
+        // manually): nothing to reclaim, so drop it from the list.
         if (sizeBytes <= 0) return null;
         const safety = await worktreePruneSafety({
           repoPath: r.repo_path,
@@ -48,11 +48,11 @@ export async function GET() {
   ).filter((c): c is NonNullable<typeof c> => c !== null);
 
   const totalBytes = candidates.reduce((sum, c) => sum + c.sizeBytes, 0);
-  // The WHOLE directory, not just the reclaimable share of it: the same reading
-  // the scheduled sweep warns on (lib/worktreeSweep.ts), reported here because
-  // this panel is where a human acts on it. It counts the checkouts of tasks
-  // still in flight too, which is the point — "you have 40 GB of worktrees" is
-  // the fact, and "6 GB of it is reclaimable right now" is the offer below.
+  // The whole worktrees directory, the same reading the scheduled sweep warns
+  // on (lib/worktreeSweep.ts), reported here because this panel is where a
+  // human acts on it. It counts the checkouts of tasks still in flight too:
+  // "you have 40 GB of worktrees" is the fact, and "6 GB of it is reclaimable
+  // right now" is the offer below.
   const dirBytes = await worktreesDiskUsage();
   return NextResponse.json({
     candidates,

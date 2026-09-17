@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import type { PushDevice } from "@/lib/push/types";
 import { jget, jsend } from "./api";
+import { isDesktopShell } from "./useNotifications";
 
 // The Web Push channel's browser half: whether THIS browser can subscribe, the
 // subscribe/unsubscribe calls Settings → Notifications makes, the re-sync every
@@ -10,23 +11,39 @@ import { jget, jsend } from "./api";
 // turns a notification click in the service worker into the app's own
 // calandria:goto-task jump. The worker itself is public/sw.js.
 
-export type PushSupportState = "insecure" | "unsupported" | "needs_install" | "ready";
+export type PushSupportState = "desktop_shell" | "insecure" | "unsupported" | "needs_install" | "ready";
 
 /**
- * Pure classifier, pinned by a test. `insecure` first for the same reason
- * classifyNotificationSupport puts it first: outside a secure context the
- * browser hides the whole API, and "unsupported" would send the user to a
- * different browser when the fix is https. `needs_install` is iOS's rule —
- * Safari exposes PushManager only to an app on the Home Screen, so a phone
- * that is "unsupported" in the browser is one Add-to-Home-Screen away.
+ * Pure classifier, pinned by a test.
+ *
+ * `desktop_shell` first, and it is a verdict about the RENDERER rather than a
+ * capability: inside the Electron shell the toasts are already raised natively
+ * from the main process off the same server-composed payload a push would
+ * carry (desktop/main.js, hardenSession()), so subscribing this window would
+ * deliver every event twice. The shell also denies the `notifications`
+ * permission, so the subscribe path could not succeed anyway: a setting for
+ * unblocking notifications doesn't even exist in the shell. Push to this
+ * desktop is not wanted: the native channel is the desktop's, and the phone
+ * stays the push channel's reason to exist. Read before the capability checks
+ * so Chromium's PushManager being wired or not can't turn the same window
+ * into "ready" on one Electron version and "unsupported" on the next.
+ *
+ * `insecure` next, for the same reason classifyNotificationSupport puts it
+ * first: outside a secure context the browser hides the whole API, and
+ * "unsupported" would send the user to a different browser when the fix is
+ * https. `needs_install` is iOS's rule: Safari exposes PushManager only to an
+ * app on the Home Screen, so a phone that is "unsupported" in the browser is
+ * one Add-to-Home-Screen away.
  */
 export function classifyPushSupport(env: {
+  desktopShell: boolean;
   secureContext: boolean;
   hasServiceWorker: boolean;
   hasPushManager: boolean;
   ios: boolean;
   standalone: boolean;
 }): PushSupportState {
+  if (env.desktopShell) return "desktop_shell";
   if (!env.secureContext) return "insecure";
   if (env.hasServiceWorker && env.hasPushManager) return "ready";
   if (env.ios && !env.standalone) return "needs_install";
@@ -49,6 +66,7 @@ function isStandalone(): boolean {
 export function pushSupport(): PushSupportState {
   if (typeof window === "undefined") return "unsupported";
   return classifyPushSupport({
+    desktopShell: isDesktopShell(navigator.userAgent),
     secureContext: window.isSecureContext,
     hasServiceWorker: "serviceWorker" in navigator,
     hasPushManager: "PushManager" in window,
@@ -57,7 +75,7 @@ export function pushSupport(): PushSupportState {
   });
 }
 
-/** "iPhone · Safari (app)" — what the device list shows for this browser. */
+/** "iPhone · Safari (app)": what the device list shows for this browser. */
 export function deviceLabel(ua: string = navigator.userAgent, standalone: boolean = isStandalone()): string {
   const os = /iPhone/.test(ua) ? "iPhone"
     : /iPad/.test(ua) || (/Macintosh/.test(ua) && typeof navigator !== "undefined" && navigator.maxTouchPoints > 1) ? "iPad"
@@ -105,7 +123,7 @@ async function subscribeUnder(publicKey: string): Promise<PushSubscription> {
   const reg = await navigator.serviceWorker.ready;
   let sub = await reg.pushManager.getSubscription();
   // A subscription under a different server key can never be pushed to by this
-  // server (the push service rejects the signature) — replace it.
+  // server (the push service rejects the signature), so replace it.
   if (sub && keyOf(sub) !== publicKey) { await sub.unsubscribe(); sub = null; }
   return sub ?? reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(publicKey) });
 }
@@ -121,8 +139,16 @@ async function register(sub: PushSubscription): Promise<PushDevice> {
  * Subscribe this browser. Called from a click: on iOS the permission prompt
  * only opens inside a user gesture, so the prompt comes FIRST, before any
  * await that could spend the activation window.
+ *
+ * Never inside the desktop shell. Settings hides the button there, but this
+ * is the function that would otherwise call `Notification.requestPermission()`
+ * against a handler that denies it, so the refusal lives with the call: the
+ * shell's own channel is the one the user already has.
  */
 export async function enablePush(): Promise<PushDevice> {
+  if (pushSupport() === "desktop_shell") {
+    throw new Error("The desktop app already delivers notifications natively; push is for phones and other browsers.");
+  }
   const perm = await Notification.requestPermission();
   if (perm !== "granted") {
     throw new Error(perm === "denied"
@@ -147,7 +173,7 @@ export async function disablePush(): Promise<void> {
 }
 
 /**
- * Re-register an existing subscription with the server — once per page load,
+ * Re-register an existing subscription with the server, once per page load,
  * and only for a browser that subscribed at some point (no subscription, no
  * request). This is what keeps a device alive across the cases the worker's
  * pushsubscriptionchange can't reach: its re-post failed (an expired Access

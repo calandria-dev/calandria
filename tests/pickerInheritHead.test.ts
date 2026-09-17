@@ -1,18 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { INHERIT_LABEL, modelOptions, permissionOptions, reasoningOptions } from "@/app/shell/types";
+import { INHERIT_LABEL, permissionOptions, reasoningOptions } from "@/app/shell/types";
 import { getCapabilities, listAgentIds } from "@/lib/agents/capabilities";
 
 // The synthetic head every run-control picker is built from (withInherit() in
-// app/shell/types.ts) versus the provider's own option labels, which are
-// deliberately the driver's native spellings — Anthropic's `--permission-mode`
-// strings among them, one of which is literally "default".
-//
-// That collision is the bug this pins: a head labelled "Default" sat one row
-// above Claude's own "default" mode, differing only in case, and reading as a
-// duplicate. The head owns a word no provider uses, and it must be the SAME
-// word in all three pickers (model / reasoning / permission) — a per-picker
-// synonym is how the vocabulary drifts back apart.
-const PICKERS = { model: modelOptions, reasoning: reasoningOptions, permission: permissionOptions } as const;
+// app/shell/types.ts) versus the provider's own option labels, which are the
+// driver's native spellings, Anthropic's `--permission-mode` strings among
+// them, one of which is literally "default". The head owns a word no
+// provider uses, and it must be the SAME word in every picker (reasoning /
+// permission here; ModelPicker.tsx's head row is covered separately, since
+// model selection moved to the provider tree), since a per-picker synonym is
+// how the vocabulary drifts back apart.
+const PICKERS = { reasoning: reasoningOptions, permission: permissionOptions } as const;
 
 describe("the pickers' inherit head", () => {
   it("leads every picker, carries the null value, and is spelled the same in all of them", () => {
@@ -45,8 +43,8 @@ describe("the pickers' inherit head", () => {
 
   it("takes a per-surface sub, since what the head inherits differs by surface", () => {
     // Settings → Run defaults IS the app-level default, so there the head hands
-    // the choice to the driver rather than to a setting above it. Only the sub
-    // changes — the label is fixed so the two surfaces read as one control.
+    // the choice to the driver, not to a setting above it. Only the sub
+    // changes; the label is fixed so the two surfaces read as one control.
     const caps = getCapabilities("claude");
     const head = permissionOptions(caps, "hand the choice to Claude Code's own default")[0];
     expect(head.label).toBe(INHERIT_LABEL);

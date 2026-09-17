@@ -8,6 +8,340 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.16.0](https://github.com/calandria-dev/calandria/compare/v0.15.0...v0.16.0) (2026-09-17)
+
+
+### Features
+
+* **codex:** expose hook inventory, per-hook review and run lifecycle ([#377](https://github.com/calandria-dev/calandria/issues/377)) ([6c62b01](https://github.com/calandria-dev/calandria/commit/6c62b01f4b01bd7ee656b1d19ca9159db8d28029))
+
+
+### Bug Fixes
+
+* harden the Windows process reap, the desktop Node probe and the CI lanes ([#383](https://github.com/calandria-dev/calandria/issues/383)) ([a31979b](https://github.com/calandria-dev/calandria/commit/a31979bff7f2319d4f9cb3ba076835cb7acf34ec))
+
+## [0.15.0](https://github.com/calandria-dev/calandria/compare/v0.14.2...v0.15.0) (2026-09-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* **db:** drop the legacy agent_env columns ([#368](https://github.com/calandria-dev/calandria/issues/368))
+
+### Features
+
+* **agents:** detect a cut-off tool call on the stdio MCP bridge ([#367](https://github.com/calandria-dev/calandria/issues/367)) ([39c0cb7](https://github.com/calandria-dev/calandria/commit/39c0cb7b72716f6c7226e9e993f66e38c7e94280))
+* **codex:** add independent sandbox settings ([#360](https://github.com/calandria-dev/calandria/issues/360)) ([e00547c](https://github.com/calandria-dev/calandria/commit/e00547ca046f675ec8dd6e71d0b77ed5c6c1e823))
+* **db:** drop the legacy agent_env columns ([#368](https://github.com/calandria-dev/calandria/issues/368)) ([e2825b8](https://github.com/calandria-dev/calandria/commit/e2825b8f0f2d929ed8d4b6c9efd13e2486c1b67b))
+
+
+### Bug Fixes
+
+* **ci:** upgrade base packages so the weekly image scan can pass ([#366](https://github.com/calandria-dev/calandria/issues/366)) ([2d6f309](https://github.com/calandria-dev/calandria/commit/2d6f3095d11c77ffb480edc4a42a53700432da0e)), closes [#363](https://github.com/calandria-dev/calandria/issues/363)
+* **codex:** detect pre-dispatch MCP tool cutoffs ([#371](https://github.com/calandria-dev/calandria/issues/371)) ([3401cb5](https://github.com/calandria-dev/calandria/commit/3401cb510c7fd7f341e22a369d0391e9b8efd185))
+* **mobile:** remove keyboard gap below composer ([#362](https://github.com/calandria-dev/calandria/issues/362)) ([0c4003b](https://github.com/calandria-dev/calandria/commit/0c4003bbe628863d6a18d2283fef4e38e5554855))
+* recover expired forward-auth sessions ([#369](https://github.com/calandria-dev/calandria/issues/369)) ([d523c42](https://github.com/calandria-dev/calandria/commit/d523c424de70f85d89dbfd3deff8b7f81d0056d3))
+* **ui:** stabilize model picker live refreshes ([#358](https://github.com/calandria-dev/calandria/issues/358)) ([aa977ba](https://github.com/calandria-dev/calandria/commit/aa977ba396611f78e6870fe32609e9e6e1506c95))
+
+## [0.14.2](https://github.com/calandria-dev/calandria/compare/v0.14.1...v0.14.2) (2026-09-15)
+
+
+### Bug Fixes
+
+* **desktop:** restore Windows auto-updates ([#356](https://github.com/calandria-dev/calandria/issues/356)) ([8f66911](https://github.com/calandria-dev/calandria/commit/8f669116b34f5971fa9f2ab984cf15de5f501124))
+
+## [0.14.1](https://github.com/calandria-dev/calandria/compare/v0.14.0...v0.14.1) (2026-09-14)
+
+
+### Bug Fixes
+
+* **ci:** allow release-neutral prebuild drift ([#354](https://github.com/calandria-dev/calandria/issues/354)) ([cf8d2e6](https://github.com/calandria-dev/calandria/commit/cf8d2e6f70df9907e3903aea8762bade6a51685c))
+* **ci:** avoid release asset name collisions ([#355](https://github.com/calandria-dev/calandria/issues/355)) ([4dba359](https://github.com/calandria-dev/calandria/commit/4dba3598cf20ea82b6f31db36d8dc8f05c7218df))
+* **ci:** recover prebuilt release promotion ([#352](https://github.com/calandria-dev/calandria/issues/352)) ([e499df8](https://github.com/calandria-dev/calandria/commit/e499df800cf4a8a49e0fe4c81c448cd79df0a9a7))
+
+## [0.14.0](https://github.com/calandria-dev/calandria/compare/v0.13.0...v0.14.0) (2026-09-14)
+
+
+### Features
+
+* **mobile:** give managed services a phone surface ([#338](https://github.com/calandria-dev/calandria/issues/338)) ([6597a6d](https://github.com/calandria-dev/calandria/commit/6597a6d461af28a4350f918d3d8c41226f030b48))
+* **providers:** configure model providers in Settings and pick models through one picker ([#345](https://github.com/calandria-dev/calandria/issues/345)) ([42a43cc](https://github.com/calandria-dev/calandria/commit/42a43cc4456655bb1cc7ca06e18d11f6fdb72685))
+
+
+### Bug Fixes
+
+* keep diff text size consistent on mobile ([#347](https://github.com/calandria-dev/calandria/issues/347)) ([2504bf6](https://github.com/calandria-dev/calandria/commit/2504bf6614d479baddabc4a186e1202b8d8db3dc))
+* **mobile:** keep phone inputs above the keyboard ([#350](https://github.com/calandria-dev/calandria/issues/350)) ([e05d846](https://github.com/calandria-dev/calandria/commit/e05d846c516ec4c810184d70cb40ff70a38392f0))
+* **mobile:** size the phone shell to the visible viewport under the keyboard ([#349](https://github.com/calandria-dev/calandria/issues/349)) ([868b6e4](https://github.com/calandria-dev/calandria/commit/868b6e42461aa2ae4edce4654f895bffa552b6e6))
+* **reclaim:** close tasks when pull requests merge ([#330](https://github.com/calandria-dev/calandria/issues/330)) ([44c5e7a](https://github.com/calandria-dev/calandria/commit/44c5e7acd23c05f9c0602439626a7be523ac941b))
+* **settings:** re-resolve the utility agent when its setting changes ([#346](https://github.com/calandria-dev/calandria/issues/346)) ([ca38a1c](https://github.com/calandria-dev/calandria/commit/ca38a1c31b33222cf18f2171e3138b8ded444c5c))
+
+## [0.13.0](https://github.com/calandria-dev/calandria/compare/v0.12.0...v0.13.0) (2026-09-11)
+
+
+### Features
+
+* Add files and images in the new/edit task modal (calandria task c0nTUFRrFwCrpBS6Vxo_4) ([080d00d](https://github.com/calandria-dev/calandria/commit/080d00d899f1f10264e2c8928a700ab325b55258))
+* prompt for pull request title ([#310](https://github.com/calandria-dev/calandria/issues/310)) ([d7f490c](https://github.com/calandria-dev/calandria/commit/d7f490cc4ddbc540d361ca3d797475dd24144bef))
+* support multi-tag task filters ([#312](https://github.com/calandria-dev/calandria/issues/312)) ([99b7c63](https://github.com/calandria-dev/calandria/commit/99b7c6320493c1d53ce95bf50eb17dc30471ffde))
+* **tags:** let a task's primary tag be starred, deciding what its session reads first ([#313](https://github.com/calandria-dev/calandria/issues/313)) ([6da4477](https://github.com/calandria-dev/calandria/commit/6da44775818ac6fdb02cafa03cc89db14c1619a7))
+* **tasks:** attach files and images in the task dialogs and agent tools ([#306](https://github.com/calandria-dev/calandria/issues/306)) ([080d00d](https://github.com/calandria-dev/calandria/commit/080d00d899f1f10264e2c8928a700ab325b55258))
+
+
+### Bug Fixes
+
+* **agents:** explain chat attachments to Codex and Gemini turns ([#309](https://github.com/calandria-dev/calandria/issues/309)) ([ebd1b47](https://github.com/calandria-dev/calandria/commit/ebd1b479c6d1d26c680514f1e1e9f8d1be52195c))
+* classify Codex plan windows by duration ([#304](https://github.com/calandria-dev/calandria/issues/304)) ([f23cb5c](https://github.com/calandria-dev/calandria/commit/f23cb5ceabb5030f58c5b89f9b55ed2cf4cb67d0))
+* **desktop:** name the product in the Windows installer UAC prompt ([#308](https://github.com/calandria-dev/calandria/issues/308)) ([2f8fb39](https://github.com/calandria-dev/calandria/commit/2f8fb39bf45a53fd1e6184c0077e6ba383b737ce))
+* **desktop:** remember the window's size and position across instance switches and restarts ([#307](https://github.com/calandria-dev/calandria/issues/307)) ([f87f117](https://github.com/calandria-dev/calandria/commit/f87f11764f2a68784572dbe2e89731882f9a6871))
+* **usage:** stop offering a usage-window resume for a redirected task ([#311](https://github.com/calandria-dev/calandria/issues/311)) ([bc8e92d](https://github.com/calandria-dev/calandria/commit/bc8e92d82769e17e4acdd6bd5819c05396f0d47c))
+
+## [0.12.0](https://github.com/calandria-dev/calandria/compare/v0.11.0...v0.12.0) (2026-09-10)
+
+
+### Features
+
+* **ci:** sign Windows artifacts with Azure Artifact Signing ([#301](https://github.com/calandria-dev/calandria/issues/301)) ([e31563d](https://github.com/calandria-dev/calandria/commit/e31563de22234a90c27038927073cefb7b8eab1a))
+* **ci:** verify the Windows signing credential actually signs ([#284](https://github.com/calandria-dev/calandria/issues/284)) ([89bce6a](https://github.com/calandria-dev/calandria/commit/89bce6a81c527e880a6994c8b734811dc4240b66))
+* **notifications:** report a queued start firing or being skipped ([#297](https://github.com/calandria-dev/calandria/issues/297)) ([4c3f5a4](https://github.com/calandria-dev/calandria/commit/4c3f5a4980d421b05f084f3dda5fbd39bca54e77))
+* **pin-drift:** watch @anthropic-ai/claude-agent-sdk for staleness ([#294](https://github.com/calandria-dev/calandria/issues/294)) ([176a0a7](https://github.com/calandria-dev/calandria/commit/176a0a743305c4c4e889c592eee93c21e116bd0e))
+* **sync:** flag the tasks a landing task's force-push orphaned ([#298](https://github.com/calandria-dev/calandria/issues/298)) ([e6d739f](https://github.com/calandria-dev/calandria/commit/e6d739f4692bd3501207ab762df39507006f6c7b))
+* **transcript:** copy a fenced code block on hover ([#285](https://github.com/calandria-dev/calandria/issues/285)) ([1c4784a](https://github.com/calandria-dev/calandria/commit/1c4784a0a00e4b031827f5dc32384237790f7147))
+* **updates:** titlebar update notifications, server check and desktop bridge ([#300](https://github.com/calandria-dev/calandria/issues/300)) ([7f4c542](https://github.com/calandria-dev/calandria/commit/7f4c542c88495754657fae4f77d5bf8ef9494ada))
+
+
+### Bug Fixes
+
+* **ci:** stop charging runner queue time to the release Test gate ([#293](https://github.com/calandria-dev/calandria/issues/293)) ([404713c](https://github.com/calandria-dev/calandria/commit/404713c3ca95c85d60f0191bee6afd0c91dab422))
+* **composer:** give the message field an accessible name ([#287](https://github.com/calandria-dev/calandria/issues/287)) ([e27c25d](https://github.com/calandria-dev/calandria/commit/e27c25dfa1f09c483d5ada4f13570564c5357523))
+* **composer:** make the message field a contenteditable editor ([#295](https://github.com/calandria-dev/calandria/issues/295)) ([9297967](https://github.com/calandria-dev/calandria/commit/92979675c3de204747a0cab38e45b2158428ff2e))
+* **deps:** bump next, sharp and hono to clear the critical advisories ([#289](https://github.com/calandria-dev/calandria/issues/289)) ([a230698](https://github.com/calandria-dev/calandria/commit/a230698f2e613f0a8b58354225773fe87d7970a2))
+* **plan-usage:** scope the plan meter and auth status to projects on the login ([#302](https://github.com/calandria-dev/calandria/issues/302)) ([67d230e](https://github.com/calandria-dev/calandria/commit/67d230eb8897dd7d005da6d22c29016b495ee6be))
+* **transcript:** open file links in the app instead of a 404 popup ([#303](https://github.com/calandria-dev/calandria/issues/303)) ([236daa4](https://github.com/calandria-dev/calandria/commit/236daa41b202fbfebc8223e062903ae38c36c21b))
+
+## [0.11.0](https://github.com/calandria-dev/calandria/compare/v0.10.0...v0.11.0) (2026-09-08)
+
+
+### Features
+
+* **collab:** persist edits and the general note, save a forgotten comment, edit draft comments ([#245](https://github.com/calandria-dev/calandria/issues/245)) ([607c03c](https://github.com/calandria-dev/calandria/commit/607c03c20dbe81c24a6ed599637826ce0daf5cbd))
+* **collab:** persist edits and the general note, save a forgotten comment, edit drafts ([607c03c](https://github.com/calandria-dev/calandria/commit/607c03c20dbe81c24a6ed599637826ce0daf5cbd))
+* **sync:** offer a rebase when a task's base branch was rewritten ([#276](https://github.com/calandria-dev/calandria/issues/276)) ([81b91d2](https://github.com/calandria-dev/calandria/commit/81b91d22c139ff236c7f31e7c0536f8cb2d4f651))
+* **tags:** collapse a long tag description behind Show more ([#248](https://github.com/calandria-dev/calandria/issues/248)) ([1f0a3fc](https://github.com/calandria-dev/calandria/commit/1f0a3fc0707c9e39f8529e6d83b98095e94432e4))
+* **usage:** opt-in auto-queue of a resume at the usage-window reset ([#283](https://github.com/calandria-dev/calandria/issues/283)) ([0cf163f](https://github.com/calandria-dev/calandria/commit/0cf163f07369de6ed7085e291661909aba15121a))
+
+
+### Bug Fixes
+
+* **desktop:** repair the macOS signing and release-manifest defects in the desktop release lane ([#239](https://github.com/calandria-dev/calandria/issues/239)) ([0416d2c](https://github.com/calandria-dev/calandria/commit/0416d2c428ab5d460d21eac82667805bf4971f17))
+* **desktop:** stop the packaged macOS app hanging on the platform keyring ([#250](https://github.com/calandria-dev/calandria/issues/250)) ([f248324](https://github.com/calandria-dev/calandria/commit/f24832487e413a39da51afa8b0a3c6e8ffd9b412)), closes [#240](https://github.com/calandria-dev/calandria/issues/240)
+* **pwa:** bound transcript state, suspend hidden phone terminals, add lifecycle diagnostics ([#260](https://github.com/calandria-dev/calandria/issues/260)) ([de50c65](https://github.com/calandria-dev/calandria/commit/de50c655c6dba8af96b17ee259cdc23de12b2bd7))
+* **reclaim:** don't auto-reclaim a task whose session is still open ([#280](https://github.com/calandria-dev/calandria/issues/280)) ([ec41512](https://github.com/calandria-dev/calandria/commit/ec41512abc2375306e2e57148f2b5332568e0c77))
+* **sync:** detect a base branch whose history was rewritten upstream ([#255](https://github.com/calandria-dev/calandria/issues/255)) ([a06b630](https://github.com/calandria-dev/calandria/commit/a06b630af2c49428d1a2afd1dcc1e8191c54cba6))
+* **tags:** make the +N tag pill reachable without a pointer ([#282](https://github.com/calandria-dev/calandria/issues/282)) ([df97a4b](https://github.com/calandria-dev/calandria/commit/df97a4baee411f23df23f0ac77dafc79051454b2))
+* **terminal:** respawn the visible mobile terminal on resume ([#272](https://github.com/calandria-dev/calandria/issues/272)) ([06f6e25](https://github.com/calandria-dev/calandria/commit/06f6e255d4a34ce8e9db3351f49574164a58753f))
+
+## [0.10.0](https://github.com/calandria-dev/calandria/compare/v0.9.0...v0.10.0) (2026-09-06)
+
+
+### Features
+
+* **agents:** stream assistant and reasoning deltas as live typing ([#236](https://github.com/calandria-dev/calandria/issues/236)) ([57b5f0f](https://github.com/calandria-dev/calandria/commit/57b5f0fac87f58247674ee2c7087fddaaf2493e4))
+* **codex:** app-server transport with real permission modes and approval cards ([#231](https://github.com/calandria-dev/calandria/issues/231)) ([eb9301b](https://github.com/calandria-dev/calandria/commit/eb9301b9db08cd3a565224df0d8478535f0eed82))
+* **codex:** feed app-server rate-limit notifications into the plan-usage meter ([#234](https://github.com/calandria-dev/calandria/issues/234)) ([504073e](https://github.com/calandria-dev/calandria/commit/504073ea90c4e1bbd6ae51054ecb613973751104))
+* **codex:** report sandbox health on the connect card and refuse broken sandboxed modes ([#235](https://github.com/calandria-dev/calandria/issues/235)) ([97739b8](https://github.com/calandria-dev/calandria/commit/97739b828f8e40f6e75af9973c546c8559db138a))
+* **codex:** stream command output into the live tool row ([#238](https://github.com/calandria-dev/calandria/issues/238)) ([e15ec2b](https://github.com/calandria-dev/calandria/commit/e15ec2b8f5eb7af3c86b7500357bb013efaecd27))
+
+## [0.9.0](https://github.com/calandria-dev/calandria/compare/v0.8.0...v0.9.0) (2026-09-04)
+
+
+### Features
+
+* **desktop:** sign in to an instance through the system browser ([#224](https://github.com/calandria-dev/calandria/issues/224)) ([e448dac](https://github.com/calandria-dev/calandria/commit/e448dac13f6c019546f2b69b3cb5f412b2460321))
+
+
+### Bug Fixes
+
+* **codex:** inert transport on disabled MCP overrides, inherit user servers by default ([#221](https://github.com/calandria-dev/calandria/issues/221)) ([c3a7131](https://github.com/calandria-dev/calandria/commit/c3a713127e47a8f6c5c0dc100907abb90a6f5878))
+
+## [0.8.0](https://github.com/calandria-dev/calandria/compare/v0.7.1...v0.8.0) (2026-09-04)
+
+Calandria 0.8.0 puts a LiteLLM gateway on the model-provider seam. Set one base URL and a
+project can route its Claude Code, Codex or Antigravity turns through the proxy, billed to a
+gateway key or forwarded to the CLI's own login, with every turn tagged by project, task and
+agent so LiteLLM's spend views break down by task on their own. The gateway's model catalog
+feeds the pickers, context gauges and price estimates. Opt in to per-task virtual keys and each
+task mints its own budget-capped key, deleted when the task finishes, with the proxy's ledger
+replacing the spend estimate. The gateway's hosted MCP servers mount on any task through the
+permission gate, and a turn that exceeds its budget parks its queue and offers Retry the way a
+dead login does. The desktop shell attaches to a remote instance by URL or through an SSH port
+forward, sums its badge across instances and gains a right-click menu. Claude Code can take
+Calandria's tools over the stdio bridge, every tool call is journaled with a named message when
+the CLI cuts one off, and a PR a session opened by hand is linked back to its task. Codex reads
+its context window and default model from `~/.codex` and offers GPT-6 Astra; the pickers show
+what a Claude alias resolves to, hide agents nobody is signed in to, and each titlebar usage
+tracker can be switched off.
+
+
+### Features
+
+* **agents:** route Claude Code through a LiteLLM gateway preset ([#181](https://github.com/calandria-dev/calandria/issues/181)) ([731a760](https://github.com/calandria-dev/calandria/commit/731a760512b58ce7af3fe22c3d7c1132d5069927))
+* **agents:** route Codex through the LiteLLM gateway ([#187](https://github.com/calandria-dev/calandria/issues/187)) ([63af6d1](https://github.com/calandria-dev/calandria/commit/63af6d18566393054f4f685dc0ba36d7dac1dfe1))
+* **agents:** serve the LiteLLM gateway's model catalog for picker options, context windows and price estimates ([#186](https://github.com/calandria-dev/calandria/issues/186)) ([ee5d26f](https://github.com/calandria-dev/calandria/commit/ee5d26fcbfca0057c999606c47f2f3f7b0b4e233))
+* **claude:** serve Calandria's tools over the stdio bridge on request ([#214](https://github.com/calandria-dev/calandria/issues/214)) ([4b18109](https://github.com/calandria-dev/calandria/commit/4b18109b1cd2394c489f4bfa7e9ba0fe945d5c22))
+* **codex:** offer GPT-6 Astra and price it at its own rates ([#198](https://github.com/calandria-dev/calandria/issues/198)) ([7afc6d5](https://github.com/calandria-dev/calandria/commit/7afc6d5cba62ad43a8313b0dc850073a207d25dc))
+* **codex:** read the context window and default model from ~/.codex ([#208](https://github.com/calandria-dev/calandria/issues/208)) ([65ce186](https://github.com/calandria-dev/calandria/commit/65ce18669ca62fefb522bd6f196294c964844f46))
+* **desktop:** attach the shell through an SSH port forward ([#180](https://github.com/calandria-dev/calandria/issues/180)) ([17833af](https://github.com/calandria-dev/calandria/commit/17833afb6d7ff7871319f1b4e5cdbc75044a8a8e))
+* **desktop:** attach the shell to remote instances by URL ([#178](https://github.com/calandria-dev/calandria/issues/178)) ([49783aa](https://github.com/calandria-dev/calandria/commit/49783aa2f23b412eeac0bf7a2c85c4dacc9e068d))
+* **desktop:** sum the badge across instances and let a server name itself ([#185](https://github.com/calandria-dev/calandria/issues/185)) ([d3a230c](https://github.com/calandria-dev/calandria/commit/d3a230c8e2101d0a850e3ac54ba59c44eb9fc352))
+* **diff:** move the PR status chip into the diff toolbar ([#199](https://github.com/calandria-dev/calandria/issues/199)) ([dcd5a89](https://github.com/calandria-dev/calandria/commit/dcd5a89dc77ebbbf1c63ba0773e2b6b1a79de3ec))
+* **github:** link a PR a session opened by hand to its task ([#212](https://github.com/calandria-dev/calandria/issues/212)) ([128079c](https://github.com/calandria-dev/calandria/commit/128079c6ec3b8c930d336fe1d07f896ec36ce12c))
+* **litellm:** per-task virtual keys, budget failures, hosted MCP servers and Antigravity routing ([#215](https://github.com/calandria-dev/calandria/issues/215)) ([e987365](https://github.com/calandria-dev/calandria/commit/e98736515fef849ed8b0783485e0c881c5a6df42))
+* **models:** show the id a Claude family alias resolves to ([#176](https://github.com/calandria-dev/calandria/issues/176)) ([74aca30](https://github.com/calandria-dev/calandria/commit/74aca300f6ac6207a21f946e734a27c02ea87e41))
+* **ui:** let each agent's titlebar usage tracker be switched off ([#202](https://github.com/calandria-dev/calandria/issues/202)) ([90e0c57](https://github.com/calandria-dev/calandria/commit/90e0c570ff6dea914d54ba59b9fdd263a45cc72c))
+* **usage:** record the model each internal job actually ran on ([#175](https://github.com/calandria-dev/calandria/issues/175)) ([52e7727](https://github.com/calandria-dev/calandria/commit/52e7727486fbd43ca335bc4fc059354dfc71a434))
+
+
+### Bug Fixes
+
+* **agents:** record every Calandria tool call, and say what to do when the CLI cuts one off ([#206](https://github.com/calandria-dev/calandria/issues/206)) ([96bad9d](https://github.com/calandria-dev/calandria/commit/96bad9d4b9ab401bd38ff65ad6d26daac9a3ae59))
+* **codex:** mark the resolved default in the model picker ([#213](https://github.com/calandria-dev/calandria/issues/213)) ([38b1a0e](https://github.com/calandria-dev/calandria/commit/38b1a0e5fc63dcaee668a920d4832bbd2df92787))
+* **desktop:** add a right-click menu so copy and paste work from the mouse ([#188](https://github.com/calandria-dev/calandria/issues/188)) ([97a69d2](https://github.com/calandria-dev/calandria/commit/97a69d2d6b017b483cc4428b22f9a501f4eb8e08))
+* **diff:** resolve a task's diff base through the base branch's remote-tracking ref ([#190](https://github.com/calandria-dev/calandria/issues/190)) ([dde26d4](https://github.com/calandria-dev/calandria/commit/dde26d48768ef12ecc0c527237e57c004145db35))
+* **docker:** bump the pinned Antigravity CLI to 1.1.25 ([#183](https://github.com/calandria-dev/calandria/issues/183)) ([7c67f78](https://github.com/calandria-dev/calandria/commit/7c67f783bea501edd7c4fd8f60f276f4404e4cd2))
+* **docker:** move the Antigravity CLI pin to 1.1.26 ([#216](https://github.com/calandria-dev/calandria/issues/216)) ([9d97d43](https://github.com/calandria-dev/calandria/commit/9d97d43d451402004ac0159d87578491d51765f3))
+* **docker:** move the Claude Code CLI pin to 2.1.260 ([#210](https://github.com/calandria-dev/calandria/issues/210)) ([a001c36](https://github.com/calandria-dev/calandria/commit/a001c36407ff0e32f0355a75db855081ea5584d4))
+* **suggestions:** withhold Start on a blocked suggestion ([#177](https://github.com/calandria-dev/calandria/issues/177)) ([c01c829](https://github.com/calandria-dev/calandria/commit/c01c82939d4c5ed6f680ff2ced17102d095c8111))
+* **tags:** offer Create for a base branch nothing has made yet ([#189](https://github.com/calandria-dev/calandria/issues/189)) ([3f92e7d](https://github.com/calandria-dev/calandria/commit/3f92e7dbfecf241231c18ea1a5bdc5e710742b1f))
+* **tags:** offer Create for a base branch nothing has made, and count remote-only ones as existing ([3f92e7d](https://github.com/calandria-dev/calandria/commit/3f92e7dbfecf241231c18ea1a5bdc5e710742b1f))
+* **ui:** filter unconnected agents out of the Schedules and Runbooks pickers ([#211](https://github.com/calandria-dev/calandria/issues/211)) ([632b4fd](https://github.com/calandria-dev/calandria/commit/632b4fd3b517edd235409d1dbd87eb1337de2c49))
+* **ui:** stop offering agents nobody is signed in to in the task dialogs ([#200](https://github.com/calandria-dev/calandria/issues/200)) ([bac37ad](https://github.com/calandria-dev/calandria/commit/bac37adf2c394063274b4b59d5fc1179cd668e25))
+
+## [0.7.1](https://github.com/calandria-dev/calandria/compare/v0.7.0...v0.7.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* **agents:** name the CLI's own interrupted tool result and log it ([#169](https://github.com/calandria-dev/calandria/issues/169)) ([cdfd554](https://github.com/calandria-dev/calandria/commit/cdfd554da443d7f7db279c3d558a82a139a8859c))
+* **projects:** keep the base branch when a project edit sends a blank one ([#168](https://github.com/calandria-dev/calandria/issues/168)) ([5e21c9b](https://github.com/calandria-dev/calandria/commit/5e21c9b63fe4e1a26a5f0d3ea279e4c0e044207d))
+* **usage:** record what a Stopped turn spent ([#171](https://github.com/calandria-dev/calandria/issues/171)) ([84ec089](https://github.com/calandria-dev/calandria/commit/84ec08956401b051b562d444f1389ad01bf7f0e9))
+
+## [0.7.0](https://github.com/calandria-dev/calandria/compare/v0.6.2...v0.7.0) (2026-09-02)
+
+Calandria 0.7.0 adds a third agent: Google's Antigravity (Gemini) CLI joins Claude Code and
+Codex as a first-class driver, with its own connect flow and plan-usage meter. Local models
+arrive too: a project can point Claude Code or Codex at Ollama or LM Studio and pick from the
+endpoint's live model list, and the internal jobs (recaps, context drafts, `/clear` summaries)
+can be pinned to a model of their own. The titlebar meters ChatGPT plan usage beside Claude's.
+Plans got sturdier: a tag's tasks can build on their own base branch and the strip says when it
+drifts from the project default, a session is told when its worktree was cut from a stale base,
+a whole plan can be refreshed against the code from the tag strip, and agents gain `move_task`.
+Fixes cover the `/clear` turn slot, remote-only base branches, silent agent and connection
+fallbacks, the Codex local-provider mapping, dependency gating on a manual start, reclaiming a
+squash-merged branch, a project saved with no base branch, and the pane-visibility race that
+flaked CI. Thanks to @hardiksh28 for the Codex test-isolation fix (#106)!
+
+
+### Features
+
+* **agents:** add Antigravity (Gemini) as a first-class agent driver ([#166](https://github.com/calandria-dev/calandria/issues/166)) ([96e8f8e](https://github.com/calandria-dev/calandria/commit/96e8f8e60bd93a8d182adfbe2738fbe5016f1a2d))
+* **agents:** add move_task so an agent can re-parent tasks ([#24](https://github.com/calandria-dev/calandria/issues/24)) ([64f90ae](https://github.com/calandria-dev/calandria/commit/64f90aeb2aa499f41632d0b42605b18d743729b7))
+* **agents:** free-form model picker and live model list for a local endpoint ([#132](https://github.com/calandria-dev/calandria/issues/132)) ([6982ddf](https://github.com/calandria-dev/calandria/commit/6982ddf9ce928839b9553fa2e6418886f6011088))
+* **agents:** per-project provider override for local models (Ollama / LM Studio) ([#114](https://github.com/calandria-dev/calandria/issues/114)) ([#121](https://github.com/calandria-dev/calandria/issues/121)) ([b91aad8](https://github.com/calandria-dev/calandria/commit/b91aad8060b0a95bb59b44bacd50e8a996d6569b))
+* **agents:** pick the model Calandria's internal jobs run on ([#141](https://github.com/calandria-dev/calandria/issues/141)) ([f3679cd](https://github.com/calandria-dev/calandria/commit/f3679cd13b7b20f188c2758af05e26055112a48a))
+* **agents:** pin Fable 5.1 so a stale CLI can still reach it ([#107](https://github.com/calandria-dev/calandria/issues/107)) ([eb10c78](https://github.com/calandria-dev/calandria/commit/eb10c786c412e9a4d1f9344f44572c1bafa2a39b))
+* **codex:** meter ChatGPT plan usage in the titlebar ([#159](https://github.com/calandria-dev/calandria/issues/159)) ([503bf3e](https://github.com/calandria-dev/calandria/commit/503bf3ed29dbfbb116a019ffd83f1c3a9611408d))
+* **desktop:** show a spinner on the boot screen, not a log console ([#89](https://github.com/calandria-dev/calandria/issues/89)) ([#122](https://github.com/calandria-dev/calandria/issues/122)) ([7f18115](https://github.com/calandria-dev/calandria/commit/7f1811589034845ee86bef366c1868641f594be2))
+* **git:** surface a tag branch's drift from the project default, with Sync ([#155](https://github.com/calandria-dev/calandria/issues/155)) ([88c4c09](https://github.com/calandria-dev/calandria/commit/88c4c092167e6652832463e529f8982d7684ebcc))
+* **git:** tell a session its worktree was cut from a stale base branch ([#156](https://github.com/calandria-dev/calandria/issues/156)) ([22f6e2d](https://github.com/calandria-dev/calandria/commit/22f6e2d38e1b875b7c83b516831ab18a08e6fe9e))
+* **schedules:** delete from the UI, and fire once instead of weekly ([#151](https://github.com/calandria-dev/calandria/issues/151)) ([1c36ec5](https://github.com/calandria-dev/calandria/commit/1c36ec57873b130438ebbc1144e006a5a4299259))
+* **tags:** refresh a whole plan against the code from the tag strip ([#158](https://github.com/calandria-dev/calandria/issues/158)) ([7c9b021](https://github.com/calandria-dev/calandria/commit/7c9b021f5ac1fbbae7102e9ceea3bf50ad1a0584))
+
+
+### Bug Fixes
+
+* **agents:** invalidate a Claude connection when the CLI's provider changes ([#109](https://github.com/calandria-dev/calandria/issues/109)) ([#116](https://github.com/calandria-dev/calandria/issues/116)) ([242640c](https://github.com/calandria-dev/calandria/commit/242640c64b73e6a4bdc6caf580c7cc949929a868))
+* **agents:** prove the Codex local-provider mapping took, don't silently bill the cloud login ([#146](https://github.com/calandria-dev/calandria/issues/146)) ([b7a25eb](https://github.com/calandria-dev/calandria/commit/b7a25ebb88ad5ea90e5bc4f8a22293b994be5e7e))
+* **ci:** key the Node Current lane's node-pty check on config.gypi, not build/ ([#149](https://github.com/calandria-dev/calandria/issues/149)) ([38bec73](https://github.com/calandria-dev/calandria/commit/38bec7348d565b46a2d46b9e7fab318b26e24eda))
+* **ci:** key the Node Current lane's node-pty check on config.gypi, not build/ ([#164](https://github.com/calandria-dev/calandria/issues/164)) ([38bec73](https://github.com/calandria-dev/calandria/commit/38bec7348d565b46a2d46b9e7fab318b26e24eda))
+* **composer:** stop the empty box growing to fit its own placeholder ([#150](https://github.com/calandria-dev/calandria/issues/150)) ([ad113cb](https://github.com/calandria-dev/calandria/commit/ad113cb7a0669ddd63b6eb7643189d8675d37fd7))
+* **core:** hold the /clear turn slot, guard checked-out base branches, dock parked questions, add move_task ([#165](https://github.com/calandria-dev/calandria/issues/165)) ([64f90ae](https://github.com/calandria-dev/calandria/commit/64f90aeb2aa499f41632d0b42605b18d743729b7))
+* **core:** materialise remote-only base branches, and stop silent agent and connection fallbacks ([#135](https://github.com/calandria-dev/calandria/issues/135)) ([185610c](https://github.com/calandria-dev/calandria/commit/185610c1e7a2c37a17de91773ef5b1b4e07cc546))
+* **deps:** clear the fast-uri and qs advisories failing npm audit ([#163](https://github.com/calandria-dev/calandria/issues/163)) ([1853103](https://github.com/calandria-dev/calandria/commit/185310307a3a80742fc5a25245f2fe30c87fd6bb))
+* **desktop:** stand the push panel down in the shell, and land macOS updates through the drain ([#120](https://github.com/calandria-dev/calandria/issues/120)) ([b2dc0b0](https://github.com/calandria-dev/calandria/commit/b2dc0b044c9bac5fae54b606ec66f49aa29bea93))
+* **git:** make a base branch with no local ref say so, not report zero ([#138](https://github.com/calandria-dev/calandria/issues/138)) ([78ae866](https://github.com/calandria-dev/calandria/commit/78ae866224eeb4f04256431dc64f4a501421b26f))
+* **mobile:** stop padding the composer for the home indicator twice ([#112](https://github.com/calandria-dev/calandria/issues/112)) ([#117](https://github.com/calandria-dev/calandria/issues/117)) ([d0308f1](https://github.com/calandria-dev/calandria/commit/d0308f1192d77821ffa13ca2c1a70d4dd7fcdc7f))
+* **models:** stop alias labels claiming a version the CLI may not pick ([#143](https://github.com/calandria-dev/calandria/issues/143)) ([16ea816](https://github.com/calandria-dev/calandria/commit/16ea816002fbaffcd5ff8d3fb871b1f98bf1f4e9))
+* **projects:** refuse an empty base branch instead of saving it ([#167](https://github.com/calandria-dev/calandria/issues/167)) ([3eaa772](https://github.com/calandria-dev/calandria/commit/3eaa77247554a12501b0df8451111b6c518659a9))
+* **reclaim:** stop reading a synced, squash-merged branch as unpushed work ([#137](https://github.com/calandria-dev/calandria/issues/137)) ([d0f815c](https://github.com/calandria-dev/calandria/commit/d0f815cdd421422cf27f5feb04e0bfd3ce7334d1))
+* **shell:** derive pane visibility from current state, not from a transition ([#104](https://github.com/calandria-dev/calandria/issues/104)) ([#115](https://github.com/calandria-dev/calandria/issues/115)) ([#118](https://github.com/calandria-dev/calandria/issues/118)) ([d41f673](https://github.com/calandria-dev/calandria/commit/d41f6734b019ad060dbed11dc4045773fdeafc30))
+* **tasks:** gate a manual start on dependencies server-side ([#139](https://github.com/calandria-dev/calandria/issues/139)) ([79843e8](https://github.com/calandria-dev/calandria/commit/79843e8463dab9639323c20189cb722d3a95c17f))
+* **tests:** reset codex_approval_downgraded in beforeEach to fix shuffled test isolation — thanks @hardiksh28! ([#106](https://github.com/calandria-dev/calandria/issues/106)) ([e1b6fb5](https://github.com/calandria-dev/calandria/commit/e1b6fb57fd9285d015d9ea9b287d96b116fee4d5))
+* **transcript:** settle an AskUserQuestion card the turn never answered ([#157](https://github.com/calandria-dev/calandria/issues/157)) ([a40d6df](https://github.com/calandria-dev/calandria/commit/a40d6dfc14737c4f63e5192d02efe212599aadfe))
+* **ui:** show suggested blockers in the dependency picker, and read a check's latest attempt in the PR rollup ([#133](https://github.com/calandria-dev/calandria/issues/133)) ([dc2cd65](https://github.com/calandria-dev/calandria/commit/dc2cd65d9cefeef3826fa5d678c9d0d8f32ea574))
+* **usage:** record a custom endpoint's cost as unknown, not as zero ([#129](https://github.com/calandria-dev/calandria/issues/129)) ([4e3291b](https://github.com/calandria-dev/calandria/commit/4e3291b65dadf120630c5bf2fbb56aa739e705f1))
+
+## [0.6.2](https://github.com/calandria-dev/calandria/compare/v0.6.1...v0.6.2) (2026-09-01)
+
+
+### Bug Fixes
+
+* **desktop:** read a launch env file, and stop leaking NODE_ENV into turns ([#103](https://github.com/calandria-dev/calandria/issues/103)) ([86446c1](https://github.com/calandria-dev/calandria/commit/86446c1d6b230f8be1baac847619e605fc8eaaf1))
+
+## [0.6.1](https://github.com/calandria-dev/calandria/compare/v0.6.0...v0.6.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* **desktop:** give the macOS titlebar the two jobs hiddenInset handed it ([#96](https://github.com/calandria-dev/calandria/issues/96)) ([2bd92bd](https://github.com/calandria-dev/calandria/commit/2bd92bd80fff0176b12d126782c4b755985c5b2c))
+
+## [0.6.0](https://github.com/calandria-dev/calandria/compare/v0.5.2...v0.6.0) (2026-08-31)
+
+
+### Features
+
+* **ui:** show the agent as its brand mark, left of the title ([#93](https://github.com/calandria-dev/calandria/issues/93)) ([1715d28](https://github.com/calandria-dev/calandria/commit/1715d2878698e5335eb0af6a70beb6605108164f))
+* **uploads:** accept any file type as a staged chat attachment ([#92](https://github.com/calandria-dev/calandria/issues/92)) ([8093e52](https://github.com/calandria-dev/calandria/commit/8093e5236fba0e39cbfc2cb59cfd4d449bf5124d))
+* **usage:** split cumulative token spend into main session and subagents ([#91](https://github.com/calandria-dev/calandria/issues/91)) ([9b984b8](https://github.com/calandria-dev/calandria/commit/9b984b826f064ed12854060002cba59397103df0))
+
+
+### Bug Fixes
+
+* **push:** zero-pad the VAPID private scalar to 32 bytes ([#95](https://github.com/calandria-dev/calandria/issues/95)) ([4931777](https://github.com/calandria-dev/calandria/commit/49317778266902e3fca4ad02604e9032d705478d))
+* **shell:** return to the last project open, not the first ([#90](https://github.com/calandria-dev/calandria/issues/90)) ([6ab916b](https://github.com/calandria-dev/calandria/commit/6ab916bb77594a8c100bcf2b5c5a4cc51d77b804))
+
+## [0.5.2](https://github.com/calandria-dev/calandria/compare/v0.5.1...v0.5.2) (2026-08-31)
+
+
+### Bug Fixes
+
+* **desktop:** hand electron-builder a signing qualifier, not a certificate name ([#87](https://github.com/calandria-dev/calandria/issues/87)) ([96f38c5](https://github.com/calandria-dev/calandria/commit/96f38c5fff471f4c49e4e178ffe6caa30bf22673))
+
+## [0.5.1](https://github.com/calandria-dev/calandria/compare/v0.5.0...v0.5.1) (2026-08-30)
+
+
+### Bug Fixes
+
+* **ci:** stop the desktop lanes publishing, and asking for a token they have no business holding ([#84](https://github.com/calandria-dev/calandria/issues/84)) ([15ce022](https://github.com/calandria-dev/calandria/commit/15ce022a577bd6830b8734f999d95bec78978261))
+
+## [0.5.0](https://github.com/calandria-dev/calandria/compare/v0.4.1...v0.5.0) (2026-08-30)
+
+
+### Features
+
+* **ci:** publish signed desktop artifacts on a release tag ([#77](https://github.com/calandria-dev/calandria/issues/77)) ([e216a90](https://github.com/calandria-dev/calandria/commit/e216a90a294080925c24cae83510c5b72a56eb98))
+* **desktop:** a Windows packaging target, unsigned ([#71](https://github.com/calandria-dev/calandria/issues/71)) ([d67a756](https://github.com/calandria-dev/calandria/commit/d67a756733b8767ae0f2b662d722f0c4b749cec0))
+* **desktop:** an Electron shell with a supervisor, packaging and four CI lanes ([#54](https://github.com/calandria-dev/calandria/issues/54)) ([1e8770b](https://github.com/calandria-dev/calandria/commit/1e8770bf5960658b5cbcb363c471625cab57cbec))
+* **desktop:** auto-update through the drain, never around it ([#79](https://github.com/calandria-dev/calandria/issues/79)) ([2aacc05](https://github.com/calandria-dev/calandria/commit/2aacc057b0893c72d6c89cac529c45cc7b939c30))
+* **desktop:** build macOS dmg and zip, and sign before they are cut ([#72](https://github.com/calandria-dev/calandria/issues/72)) ([f182301](https://github.com/calandria-dev/calandria/commit/f1823013592b1dc6dceebbdd2fc97829876ff67b))
+* **desktop:** env-driven Developer ID signing and notarization ([#76](https://github.com/calandria-dev/calandria/issues/76)) ([f9d95fa](https://github.com/calandria-dev/calandria/commit/f9d95fad074d46dcf0fd559948873afdf56d72aa))
+* **ui:** render the unstarted task's brief as markdown, and stop truncating the box under it ([#83](https://github.com/calandria-dev/calandria/issues/83)) ([33ca3fb](https://github.com/calandria-dev/calandria/commit/33ca3fb565927ec35a9e584d5117aa4930e42b2f))
+
+
+### Bug Fixes
+
+* collapse the session header's control rail to fit the pane ([#80](https://github.com/calandria-dev/calandria/issues/80)) ([6ea0283](https://github.com/calandria-dev/calandria/commit/6ea02834159473be9b73caa45b6cba0faf60a6d1))
+* don't offer a finished task as a blocker, and sort the pickers A→Z ([#81](https://github.com/calandria-dev/calandria/issues/81)) ([539ed39](https://github.com/calandria-dev/calandria/commit/539ed39366e1fb292f65ac43e990af194629086c))
+
 ## [0.4.1](https://github.com/calandria-dev/calandria/compare/v0.4.0...v0.4.1) (2026-08-29)
 
 

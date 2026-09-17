@@ -1,0 +1,177 @@
+# Branch rulesets
+
+GitHub rulesets are repository *settings*: GitHub does not read any file here directly. These
+payloads make a settings change reviewable in a diff and repeatable from one command, instead of
+a one-off edit in the web UI with no audit trail.
+
+Read the live state before changing it; the API is the source of truth:
+
+```sh
+gh api repos/calandria-dev/calandria/rulesets
+gh api repos/calandria-dev/calandria/rulesets/<id>
+```
+
+## What exists
+
+State as of 2026-09-07. The API above is authoritative; re-read it rather than trusting this
+table.
+
+| Ruleset | Targets | Rules | Live |
+|-|-|-|-|
+| `main-require-pr` | `~DEFAULT_BRANCH` | `deletion`, `pull_request` (squash only, 0 approvals, empty bypass list) | id `21757704`, active; the required-checks rule is still waiting on the PUT below |
+| `integration-require-checks` | `refs/heads/integration/**` | `required_status_checks` | not created yet, waits on the POST below |
+
+## The seven required checks
+
+`required-checks.json` holds the rule both rulesets use. Six contexts are workflow job **display
+names** from `.github/workflows/test.yml` and `.github/workflows/publish-image.yml`, not job keys.
+`Desktop release artifacts` is a commit status written by the trusted base-branch workflow in
+`.github/workflows/release-desktop.yml`. Every context must match byte-for-byte:
+
+- `Changed paths`
+- `Audit (npm)`
+- `Types (tsc)`
+- `Unit (vitest)`
+- `Windows (types + unit)`
+- `Desktop release artifacts`
+- `Image build`
+
+Seven facts about this list matter.
+
+**`Changed paths` is required because a failed `needs:` dependency makes GitHub report its
+dependents as `skipped`, and GitHub treats a skipped required check as satisfied.** Without this
+entry, a red `changes` job would let a PR merge having run nothing. Requiring `Changed paths`
+rules that out.
+
+**`Audit (npm)` is unambiguous only because `security-scan.yml`'s identical weekly job was renamed to
+`Audit (npm, weekly)`.** Don't rename either back.
+
+**The four slow lanes are absent from this list.** `End-to-end (Playwright)`, both desktop lanes
+and the Windows e2e pair are label-gated (`e2e`, `macos`), so they report `skipped` on most PRs.
+Requiring a check that is usually skipped buys nothing, since skipped satisfies the gate, and it
+would make every labelled PR wait half an hour.
+
+**The agent CLI pin PR reports the seven required contexts from `workflow_dispatch` runs.** A push
+made with `GITHUB_TOKEN` fires no `push` or `pull_request` workflow, so
+`.github/workflows/pin-drift.yml` dispatches `test.yml`, `release-desktop.yml` and
+`publish-image.yml` against `bot/agent-cli-pins`. Check runs attach to the branch head, so the same
+seven contexts appear under the same display names and satisfy the rule. The workflow verifies the
+exact PR head before it queues squash auto-merge. No PAT or bypass entry is needed. If this PR ever
+shows an empty check list, read the `bump` job's log. It fails when a dispatch produces no run for
+the SHA it pushed.
+
+Repository auto-merge must stay enabled for this path. Verify the setting with:
+
+```sh
+gh api repos/calandria-dev/calandria --jq .allow_auto_merge
+```
+
+**`strict_required_status_checks_policy` is `false`.** True means "branch must be up to date with
+the base before merging", which in a stacked tag tree forces a rebase of every open PR each time
+one of its siblings lands.
+
+**`Image build` is the stable aggregate for `publish-image.yml`'s two architecture legs.** The
+matrix job names include the runner and platform, so they are not required contexts.
+The aggregate fails when either leg fails or is cancelled. It succeeds for completed builds and for
+the intentional website-only or already-fresh scheduled skip. The workflow has no PR
+`paths-ignore`: `prepare` detects website-only changes and skips the expensive build while the
+aggregate still reports a check. This keeps the check present for every PR, including the
+`Pin drift` workflow-dispatch PR.
+
+## Ordering: a required check must already exist on the base branch
+
+**Adding one of these rules to a branch whose workflows do not yet produce every check blocks
+every PR into it, permanently.** The check never reports, and the PR stays in the expected state
+waiting for status with no way forward but an admin bypass.
+
+The order is always: land the workflow change on the branch first, then add the rule.
+
+`integration-require-checks` targets `refs/heads/integration/**` rather than naming individual
+branches because the namespace was empty when this payload was written, so the rule could strand
+nothing. **It is no longer empty.** Before creating or widening this ruleset, check that every
+branch it matches already produces all seven contexts, and that no open PR into one is sitting on a
+head that predates the workflow change:
+
+```sh
+gh pr list --repo calandria-dev/calandria --state all --limit 60 \
+  --json number,state,baseRefName \
+  --jq '.[] | select(.baseRefName | startswith("integration/")) | "\(.number) \(.state) -> \(.baseRefName)"'
+gh pr checks <N> --repo calandria-dev/calandria
+```
+
+Checked 2026-09-07: `integration/docs-cleanup` (PR #271) and `integration/model-providers`
+(PR #256) both report all five test contexts as `pass`, and both carry `pull_request: branches: ["**"]` in
+`test.yml`. `main` produces them too, on the one open PR into it (#241).
+
+The same check is what unblocks the `main-require-pr` half. It was held back while PR #142 was
+unmerged, because the required `Changed paths` context did not exist on `main` and the then-open
+release PR #108 would have hung on it forever. #142 landed 2026-09-02 and #108 merged the same
+day, so neither is a constraint now.
+
+For the same reason, `test.yml` and `publish-image.yml` have no `pull_request` `paths-ignore`.
+A workflow-level path filter and a required check are incompatible: filtering the workflow out is
+indistinguishable, to the merge gate, from a check that never ran. The website-only saving lives in
+the `changes` jobs instead, which report `skipped` where a filter would report nothing at all.
+
+## Applying
+
+**This is a human step.** A `gh api` write to `repos/.../rulesets` is refused by Claude Code's
+auto-mode classifier, so an agent session can prepare and verify these payloads but cannot apply
+them. Reads of the same endpoint go through fine.
+
+After this workflow change lands on `main`, verify that an ordinary PR and a website-only PR both
+report `Image build` and the generated release-please PR reports `Desktop release artifacts`, then apply the checked-in seven-context rule. The PUT replaces the whole rules
+array, so the command reads the current ruleset and preserves its deletion and pull-request rules:
+
+Create the integration ruleset:
+
+```sh
+gh api -X POST repos/calandria-dev/calandria/rulesets \
+  --input .github/rulesets/integration-require-checks.json
+```
+
+Add the same rule to `main-require-pr`. A ruleset PATCH replaces the whole `rules` array, so read
+the current one and append rather than sending the rule alone:
+
+```sh
+id=$(gh api repos/calandria-dev/calandria/rulesets --jq '.[] | select(.name=="main-require-pr") | .id')
+gh api "repos/calandria-dev/calandria/rulesets/$id" \
+  --jq '{name, target, enforcement, bypass_actors, conditions, rules}' \
+  > /tmp/main.json
+node -e '
+  const fs = require("fs");
+  const rs = JSON.parse(fs.readFileSync("/tmp/main.json"));
+  const rule = JSON.parse(fs.readFileSync(".github/rulesets/required-checks.json"));
+  rs.rules = rs.rules.filter(r => r.type !== "required_status_checks").concat([rule]);
+  fs.writeFileSync("/tmp/main.json", JSON.stringify(rs, null, 2));
+'
+gh api -X PUT "repos/calandria-dev/calandria/rulesets/$id" --input /tmp/main.json
+```
+
+Verify, and keep the table above honest:
+
+```sh
+gh api repos/calandria-dev/calandria/rulesets/<id> --jq '.rules[].type'
+```
+
+## Known friction
+
+`required_status_checks` applies to **direct pushes** to a matched branch, not only to merges. A
+fast-forward of an integration branch to a `main` commit is fine, since that SHA already carries
+`main`'s green run. A *merge commit* produced by syncing one is a new SHA with no checks, and the
+push is refused. Sync an `integration/**` branch by fast-forward, or open a PR for it.
+
+A branch that is both ahead of and behind `main` cannot fast-forward at all, so for it the PR is
+the only route. That is the normal state of a working integration branch: on 2026-09-07
+`integration/docs-cleanup` was 23 ahead and 11 behind. Check before reaching for a sync:
+
+```sh
+git rev-list --left-right --count origin/main...origin/integration/<name>
+```
+
+The left column is commits on `main` only (behind), the right is commits on the branch only
+(ahead). Getting them backwards is easy and turns "fully merged, safe to delete" into its
+opposite.
+
+`do_not_enforce_on_create: true` is set so creating a new `integration/**` branch is not itself
+refused for having no checks.

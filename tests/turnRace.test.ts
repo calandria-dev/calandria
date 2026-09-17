@@ -1,16 +1,16 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// Regression: the turn-launch TOCTOU. POST /messages used to check hasTurn()
-// and only register the turn later, after awaits (worktree creation, base-branch
-// sync) — so two rapid POSTs could both see "no turn", both start SDK turns on
-// the SAME session in the same worktree, and the abort registry (keyed by task
-// id) would only hold the second controller, leaving the first turn immune to
-// Stop. Same class of gap on the other side of a turn's life: the finally
-// unregistered before launching the dequeued follow-up (a POST in that window
-// double-ran), and a Stop deleted the registry entry before the turn unwound
-// (a successor turn started in that window had its running/queue state
-// clobbered by the dying turn's finally). These tests drive a SCRIPTED fake
-// driver through the real routes + runner and pin all three windows shut.
+// Turn-launch TOCTOU windows. POST /messages must register the turn before
+// any await (worktree creation, base-branch sync), or two rapid POSTs could
+// both see "no turn" and start SDK turns on the SAME session in the same
+// worktree, leaving the abort registry (keyed by task id) holding only the
+// second controller with the first turn immune to Stop. The same class of gap
+// exists on the other side of a turn's life: the finally must not unregister
+// before launching the dequeued follow-up (or a POST in that window
+// double-runs), and a Stop must not delete the registry entry before the turn
+// unwinds (or a successor turn started in that window has its running/queue
+// state clobbered by the dying turn's finally). These tests drive a SCRIPTED
+// fake driver through the real routes + runner and pin all three windows shut.
 const { runTurnMock } = vi.hoisted(() => ({ runTurnMock: vi.fn() }));
 
 vi.mock("@/lib/agents/claude/driver", () => ({
@@ -60,11 +60,11 @@ function deferred<T = void>() {
 }
 
 // Negative-timing exception: this waits for A's finally to run and then
-// asserts it did NOT clobber B's state — but the superseded path is silent by
-// design (no turn_end, no dequeued, nothing to poll for), so there's no event
-// to condition-wait on. The chain from gateA.resolve() to the finally
-// completing is pure microtask/promise plumbing (no real I/O), so this only
-// needs to flush that queue, not genuinely wait out wall-clock time.
+// asserts it did NOT clobber B's state. The superseded path produces no event
+// (no turn_end, no dequeued, nothing to poll for), so there's no event to
+// condition-wait on. The chain from gateA.resolve() to the finally completing
+// is pure microtask/promise plumbing (no real I/O), so this only needs to
+// flush that queue, not wait out wall-clock time.
 const settle = () => new Promise((r) => setTimeout(r, 25));
 
 beforeEach(() => {
@@ -73,8 +73,8 @@ beforeEach(() => {
 
 describe("turn-launch races", () => {
   it("two concurrent POSTs start exactly one turn; the other is queued", async () => {
-    // A real git repo so the winning POST awaits ensureWorktree — exactly the
-    // window where the old hasTurn check let the second POST through.
+    // A real git repo so the winning POST awaits ensureWorktree, the window
+    // where an unregistered turn would let the second POST through.
     const project = createProject({ name: "Race", repo_path: await makeRepo() });
     const task = createTask({ project_id: project.id, title: "T", description: "do the thing" });
 
@@ -88,7 +88,7 @@ describe("turn-launch races", () => {
     const [r1, r2] = await Promise.all([post(task.id, "first"), post(task.id, "second")]);
     const bodies = [await r1.json(), await r2.json()];
 
-    // Exactly one launched, exactly one parked — regardless of which POST won.
+    // Exactly one launched, exactly one parked, regardless of which POST won.
     expect(bodies.filter((b) => b.queued).length).toBe(1);
     expect(bodies.filter((b) => typeof b.generation === "number" && !b.queued).length).toBe(1);
     expect(runTurnMock).toHaveBeenCalledTimes(1);
@@ -162,9 +162,9 @@ describe("turn-launch races", () => {
     expect((await (await post(task.id, "b")).json()).queued).toBe(true);
 
     // The "dequeued" event is published inside the finishing turn's finally,
-    // right as it launches the follow-up. Before the fix the finally had
-    // already unregistered by then, so hasTurn read false there — the window
-    // where a POST could start a parallel turn. Sample it at that instant.
+    // right as it launches the follow-up. hasTurn must still read true at that
+    // instant, or a POST arriving in that window could start a parallel turn.
+    // Sample it right there.
     let occupiedAtHandoff: boolean | undefined;
     let turnEnds = 0;
     const unsub = subscribe(task.id, (ev) => {
@@ -188,7 +188,7 @@ describe("turn-launch races", () => {
     const task = createTask({ project_id: project.id, title: "T", description: "d" });
 
     // Turn A ignores its abort signal (stands in for an SDK turn that takes a
-    // while to notice), so it unwinds only when we release its gate — well
+    // while to notice), so it unwinds only once its gate is released, well
     // after the successor has started.
     const gateA = deferred();
     const gateB = deferred();

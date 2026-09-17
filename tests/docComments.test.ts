@@ -1,22 +1,22 @@
 // Document collaboration passage comments (task_doc_comments) are persisted
-// the moment they're added — the CollabDoc modal's twin of the Changes tab's
-// line comments (tests/collab.test.ts covers the packet/quote-location half;
-// this file covers storage and the routes). Two things are pinned that a
-// naive CRUD wrapper would get wrong:
-//   - a SENT comment is read-only server-side: deleteTaskDocComment refuses
+// the moment they're added: the CollabDoc modal's counterpart to the Changes
+// tab's line comments (tests/collab.test.ts covers the packet/quote-location
+// half; this file covers storage and the routes). Two things are pinned that
+// a naive CRUD wrapper would get wrong:
+//   - a sent comment is read-only server-side: deleteTaskDocComment refuses
 //     it (returns "sent" instead of deleting), and markTaskDocCommentsSent
 //     only flips rows that are still unsent, so re-sending is a no-op count.
-//   - the anchor is the FILE's git blob sha (stamped by the caller from the
-//     file route's `sha`), not the worktree HEAD — this file only checks that
+//   - the anchor is the file's git blob sha (stamped by the caller from the
+//     file route's `sha`), not the worktree HEAD. This file only checks that
 //     the value round-trips (blobSha itself is pinned in tests/collab.test.ts).
 import { describe, it, expect } from "vitest";
 import {
   createProject, createTask, deleteTask,
-  listTaskDocComments, addTaskDocComment, markTaskDocCommentsSent, deleteTaskDocComment,
+  listTaskDocComments, addTaskDocComment, markTaskDocCommentsSent, deleteTaskDocComment, updateTaskDocComment,
 } from "@/lib/store";
 import { GET, POST } from "@/app/api/tasks/[id]/doc-comments/route";
 import { POST as markSent } from "@/app/api/tasks/[id]/doc-comments/sent/route";
-import { DELETE as deleteComment } from "@/app/api/tasks/[id]/doc-comments/[cid]/route";
+import { DELETE as deleteComment, PATCH as editComment } from "@/app/api/tasks/[id]/doc-comments/[cid]/route";
 
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 const cidParams = (id: string, cid: string) => ({ params: Promise.resolve({ id, cid }) });
@@ -54,11 +54,11 @@ describe("store: task_doc_comments", () => {
     const theirs = addTaskDocComment(other.id, "docs/a.md", "q", null, "b", null);
 
     const flipped = markTaskDocCommentsSent(task.id, [mine.id, theirs.id]);
-    expect(flipped).toBe(1); // theirs is skipped — it belongs to another task
+    expect(flipped).toBe(1); // theirs is skipped: it belongs to another task
     expect(listTaskDocComments(task.id)[0].sent_to_agent).toBe(1);
     expect(listTaskDocComments(other.id)[0].sent_to_agent).toBe(0); // untouched
 
-    // Calling again with the same ids changes nothing — already sent.
+    // Calling again with the same ids changes nothing: already sent.
     expect(markTaskDocCommentsSent(task.id, [mine.id, theirs.id])).toBe(0);
   });
 
@@ -83,10 +83,25 @@ describe("store: task_doc_comments", () => {
     deleteTask(task.id);
     expect(listTaskDocComments(task.id)).toHaveLength(0);
   });
+
+  it("updateTaskDocComment: missing, sent (refused), then updated", () => {
+    const task = makeTask();
+    expect(updateTaskDocComment(task.id, "nope", "new body")).toBe("missing");
+
+    const sent = addTaskDocComment(task.id, "docs/a.md", "q", null, "b", null);
+    markTaskDocCommentsSent(task.id, [sent.id]);
+    expect(updateTaskDocComment(task.id, sent.id, "new body")).toBe("sent");
+    expect(listTaskDocComments(task.id).find((r) => r.id === sent.id)?.body).toBe("b"); // unchanged
+
+    const draft = addTaskDocComment(task.id, "docs/a.md", "q2", null, "b2", null);
+    const updated = updateTaskDocComment(task.id, draft.id, "new body");
+    expect(updated).toMatchObject({ id: draft.id, body: "new body" });
+    expect(listTaskDocComments(task.id).find((r) => r.id === draft.id)?.body).toBe("new body");
+  });
 });
 
 describe("routes: /api/tasks/[id]/doc-comments", () => {
-  it("404 on an unknown task across all four handlers", async () => {
+  it("404 on an unknown task across all five handlers", async () => {
     const bad = "nonexistent-task-id";
     expect((await GET(new Request(`http://x/api/tasks/${bad}/doc-comments`), params(bad))).status).toBe(404);
     expect(
@@ -115,6 +130,18 @@ describe("routes: /api/tasks/[id]/doc-comments", () => {
     ).toBe(404);
     expect(
       (await deleteComment(new Request(`http://x/api/tasks/${bad}/doc-comments/c1`, { method: "DELETE" }), cidParams(bad, "c1"))).status
+    ).toBe(404);
+    expect(
+      (
+        await editComment(
+          new Request(`http://x/api/tasks/${bad}/doc-comments/c1`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ body: "new body" }),
+          }),
+          cidParams(bad, "c1")
+        )
+      ).status
     ).toBe(404);
   });
 
@@ -218,6 +245,56 @@ describe("routes: /api/tasks/[id]/doc-comments", () => {
     expect(await ok.json()).toEqual({ ok: true });
 
     const gone = await deleteComment(new Request(`http://x/api/tasks/${task.id}/doc-comments/${draft.id}`, { method: "DELETE" }), cidParams(task.id, draft.id));
+    expect(gone.status).toBe(404);
+  });
+
+  it("PATCH: 400 on an empty body, 409 on a sent comment, 200 with the new body on a draft, 404 when gone", async () => {
+    const task = makeTask();
+    const draft = addTaskDocComment(task.id, "docs/a.md", "q", null, "b", null);
+
+    const bad = await editComment(
+      new Request(`http://x/api/tasks/${task.id}/doc-comments/${draft.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: "   " }),
+      }),
+      cidParams(task.id, draft.id)
+    );
+    expect(bad.status).toBe(400);
+
+    const sent = addTaskDocComment(task.id, "docs/a.md", "q2", null, "b2", null);
+    markTaskDocCommentsSent(task.id, [sent.id]);
+    const refused = await editComment(
+      new Request(`http://x/api/tasks/${task.id}/doc-comments/${sent.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: "new body" }),
+      }),
+      cidParams(task.id, sent.id)
+    );
+    expect(refused.status).toBe(409);
+
+    const ok = await editComment(
+      new Request(`http://x/api/tasks/${task.id}/doc-comments/${draft.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: "  new body  " }),
+      }),
+      cidParams(task.id, draft.id)
+    );
+    expect(ok.status).toBe(200);
+    const j = await ok.json();
+    expect(j.ok).toBe(true);
+    expect(j.comment.body).toBe("new body");
+
+    const gone = await editComment(
+      new Request(`http://x/api/tasks/${task.id}/doc-comments/nope`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: "new body" }),
+      }),
+      cidParams(task.id, "nope")
+    );
     expect(gone.status).toBe(404);
   });
 });

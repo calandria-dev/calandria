@@ -3,28 +3,37 @@
 // The feature is small; the way it can go wrong is not. This app supervises
 // long-running agent turns, so an update that restarts the process is an update
 // that can destroy work in flight. desktop/main.js already drains those turns on
-// quit — `before-quit` prevents the default, POSTs /api/instance/drain, stops
-// the sidecars, and only then exits — and the entire risk in adding an updater
-// is that the restart takes some other route to the same exit.
+// quit: `before-quit` prevents the default, POSTs /api/instance/drain, stops
+// the sidecars, and only then exits. The risk in adding an updater is that the
+// restart takes some other route to the same exit.
 //
 // electron-updater makes that easy to get wrong by default: `autoInstallOnAppQuit`
 // is true out of the box and installs from an `app.on("quit")` handler, which
-// fires AFTER our `before-quit` has finished draining and called `app.exit(0)`.
+// fires after our `before-quit` has finished draining and called `app.exit(0)`.
 // So the shipped default is one that either skips the install silently or runs
 // it over turns that were still settling.
 //
-// Five things are pinned here:
-//   1. `quitAction()` — the predicate the drain consults at its very end. An
+// Six things are pinned here:
+//   1. `quitAction()`, the predicate the drain consults at its very end. An
 //      install happens only on an explicit request against a real download.
-//   2. desktop/main.js turns `autoInstallOnAppQuit` off, and the ONLY
+//   2. desktop/main.js turns `autoInstallOnAppQuit` off, and the only
 //      `quitAndInstall` call site in the file is inside the drain's tail.
 //   3. A Linux install that is not an AppImage never reaches electron-updater at
 //      all, because on that path the module installs with `sudo dpkg -i`.
 //   4. `electron-updater` is a production dependency, which is the only reason
 //      electron-builder packs it (desktop/electron-builder.cjs's `files` list
 //      cannot and does not).
-//   5. The user-facing strings — the restart prompt and the menu labels — say
-//      what actually happens, including that in-flight turns are STOPPED.
+//   5. The user-facing strings (the restart prompt and the menu labels) say
+//      what actually happens, including that in-flight turns are stopped.
+//   6. The drain's tail does not kill the install it just started. With
+//      autoInstallOnAppQuit off, MacUpdater hands the zip to Squirrel.Mac only
+//      inside quitAndInstall(), so the fetch, extract and signature check all
+//      run after the drain. A fixed short exit there took the app down
+//      mid-install; the watchdog is now staged on Squirrel's own progress, and
+//      a failure is written down for the next launch to report.
+//   7. A macOS install that can never update (ad-hoc signed, running from the
+//      DMG, or translocated) is told so at boot from `codesign` and the bundle
+//      path, not discovered on the way out of the process.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -36,14 +45,16 @@ const DESKTOP = path.join(ROOT, "desktop");
 
 // Same trick as tests/desktopSigning.test.ts and tests/desktopPayload.test.ts:
 // desktop/ has its own package tree, so this is loaded by absolute path rather
-// than through "@/*". desktop/updater.js is deliberately dependency-free,
-// Electron-free CommonJS for exactly this reason — it is pure policy, and every
-// effect lives in main.js.
+// than through "@/*". desktop/updater.js is dependency-free, Electron-free
+// CommonJS for exactly this reason: it is pure policy, and every effect lives
+// in main.js.
 const require = createRequire(import.meta.url);
 
 type Env = Record<string, string | undefined>;
 type Disposition = { enabled: boolean; code: string; reason: string };
 type MenuItem = { label: string; enabled: boolean };
+
+type MacFacts = { bundlePath?: string; signature?: string | null };
 
 const updater = require(path.join(DESKTOP, "updater.js")) as {
   autoUpdateEnabled: (env: Env) => boolean;
@@ -52,7 +63,25 @@ const updater = require(path.join(DESKTOP, "updater.js")) as {
     platform?: string;
     packaged?: boolean;
     appImage?: string | null;
+    mac?: MacFacts | null;
   }) => Disposition;
+  macDisposition: (facts: MacFacts) => Disposition | null;
+  parseCodesign: (result: { stdout?: string; stderr?: string; code?: number }) => {
+    signature: string;
+    authority: string | null;
+  };
+  macBundlePath: (execPath: string | null) => string | null;
+  installStageTimeout: (stage: string) => number;
+  installStageOf: (nativeEvent: string) => string | null;
+  installFailureNotice: (record: {
+    version?: string | null;
+    stage?: string;
+    message?: string;
+    logPath?: string;
+  }) => { message: string; detail: string };
+  INSTALL_STAGE_TIMEOUT_MS: Record<string, number>;
+  MAC_SIGNED_SINCE: string;
+  RELEASES_URL: string;
   quitAction: (opts: { installRequested?: boolean; phase?: string }) => "install" | "exit";
   updateMenuItem: (state: {
     phase?: string;
@@ -64,11 +93,23 @@ const updater = require(path.join(DESKTOP, "updater.js")) as {
   classifyUpdaterError: (err: unknown) => { message: string; fatal: boolean };
   CHECK_INTERVAL_MS: number;
   FIRST_CHECK_DELAY_MS: number;
-  INSTALL_FALLBACK_MS: number;
+  pageUpdateState: (
+    state?: { phase?: string; version?: string | null; percent?: number | null; error?: string | null } | null,
+    disposition?: Disposition | null,
+    shellVersion?: string | null,
+  ) => {
+    shellVersion: string;
+    phase: "idle" | "checking" | "downloading" | "ready" | "error";
+    version: string | null;
+    percent: number | null;
+    disposition: Disposition;
+    error: string | null;
+  };
+  parseDesktopCommand: (url: string) => { command: "install" | "check" } | null;
 };
 
 // The structural assertions below read main.js as text, so they have to read
-// the CODE and not the prose around it — desktop/main.js is heavily commented,
+// the code and not the prose around it: desktop/main.js is heavily commented,
 // and several of those comments name the very calls being counted ("never
 // `updater.quitAndInstall()` directly", "`app.quit()`, never `app.exit()`").
 // Block comments and whole-line `//` comments go; a `//` mid-line is left alone
@@ -114,7 +155,7 @@ describe("desktop/main.js routes the restart through the drain", () => {
     expect(mainSource).not.toMatch(/autoInstallOnAppQuit\s*=\s*true/);
   });
 
-  // One call site, and it is in finishQuit() — which the before-quit handler
+  // One call site, and it is in finishQuit(), which the before-quit handler
   // calls from its `finally`, after `await supervisor.stop()`. If a second
   // appears, it is by definition a path that skipped the drain.
   it("has exactly one quitAndInstall call site, inside the drain's tail", () => {
@@ -137,7 +178,7 @@ describe("desktop/main.js routes the restart through the drain", () => {
     expect(handler).toContain("await supervisor.stop()");
     expect(handler).toContain("finishQuit()");
     // The old unconditional exit is gone from this handler. finishQuit() still
-    // exits — it is the "exit" arm of quitAction — but it is now the one place
+    // exits (it is the "exit" arm of quitAction), but it is now the one place
     // that decides.
     expect(handler).not.toMatch(/app\.exit\(0\)/);
   });
@@ -172,6 +213,214 @@ describe("desktop/main.js routes the restart through the drain", () => {
   });
 });
 
+describe("the drain's tail waits for the install it started", () => {
+  const finishQuit = mainSource.slice(
+    mainSource.indexOf("function finishQuit()"),
+    mainSource.indexOf("function armInstallWatchdog("),
+  );
+
+  // MacUpdater.quitAndInstall() (electron-updater 6.8.9) is where Squirrel.Mac
+  // is first told to fetch the zip when autoInstallOnAppQuit is off;
+  // electron-updater's own "update-downloaded" only means the zip is in its
+  // cache and a local proxy is up. So after quitAndInstall() the whole fetch,
+  // extract and signature verification of the bundle still lies ahead, and a
+  // fixed short app.exit(0) could land in the middle of it: the app would quit
+  // and relaunch unchanged, signed build or not.
+  it("does not arm a fixed short exit around quitAndInstall", () => {
+    expect(finishQuit).not.toHaveLength(0);
+    expect(finishQuit).not.toMatch(/INSTALL_FALLBACK_MS/);
+    expect(finishQuit).not.toMatch(/setTimeout\([^)]*\b\d{4,5}\b/);
+    expect(finishQuit).toContain('armInstallWatchdog("handoff")');
+  });
+
+  // Squirrel reports progress on Electron's native autoUpdater, which
+  // MacUpdater drives but does not re-emit; the drain listens to it directly.
+  it("re-arms the watchdog from Squirrel.Mac's own progress events", () => {
+    expect(finishQuit).toContain('require("electron").autoUpdater');
+    for (const event of ["checking-for-update", "update-available", "update-downloaded", "before-quit-for-update"]) {
+      expect(finishQuit).toContain(`"${event}"`);
+    }
+    // And it never calls the native install itself; MacUpdater does that when
+    // Squirrel is done. A second call site here would be the drain racing it.
+    expect((mainSource.match(/\.quitAndInstall\(/g) ?? []).length).toBe(1);
+  });
+
+  it("gives a working Squirrel minutes and a silent one seconds", () => {
+    const t = updater.INSTALL_STAGE_TIMEOUT_MS;
+    expect(t.fetching).toBeGreaterThanOrEqual(5 * 60_000);
+    expect(t.handoff).toBeGreaterThanOrEqual(10_000);
+    expect(t.handoff).toBeLessThan(t.fetching);
+    expect(t.staged).toBeLessThan(t.fetching);
+    // The clock the tail arms first is the short one; an unknown stage gets it
+    // too rather than the long one, so a typo cannot buy ten minutes.
+    expect(updater.installStageTimeout("handoff")).toBe(t.handoff);
+    expect(updater.installStageTimeout("nonsense")).toBe(t.handoff);
+  });
+
+  it("maps Squirrel's events onto stages, and 'nothing to install' onto none", () => {
+    expect(updater.installStageOf("checking-for-update")).toBe("fetching");
+    expect(updater.installStageOf("update-available")).toBe("fetching");
+    expect(updater.installStageOf("update-downloaded")).toBe("staged");
+    expect(updater.installStageOf("before-quit-for-update")).toBe("quitting");
+    expect(updater.installStageOf("update-not-available")).toBe(null);
+    expect(updater.installStageOf("error")).toBe(null);
+  });
+
+  // The failure lands after the tray is gone and the window is on its way out,
+  // so it is written down and the next launch reports it, naming the log,
+  // because the updater's own trace is what a bug report needs.
+  it("writes a failed install down and reports it on the next launch", () => {
+    expect(finishQuit).toContain("recordInstallFailure(");
+    // `afterAttach()` is what boot became when the shell learned to attach to
+    // instances other than the local one (docs/DESKTOP_APP.md): it is the
+    // tail every attach runs once a server has answered, and the updater is
+    // armed there, once per process, since it updates the shell rather than
+    // whichever server is on screen.
+    const attached = mainSource.slice(
+      mainSource.indexOf("async function afterAttach("),
+      mainSource.indexOf("async function attachUrl(")
+    );
+    expect(attached).toContain("await startUpdater()");
+    expect(attached).toContain("await reportLastInstallFailure()");
+
+    const notice = updater.installFailureNotice({
+      version: "0.7.0",
+      stage: "fetching",
+      logPath: "/Users/me/Library/Logs/Calandria/main.log",
+    });
+    expect(notice.message).toBe("Calandria 0.7.0 did not install");
+    expect(notice.detail).toContain("unchanged");
+    expect(notice.detail).toContain("/Users/me/Library/Logs/Calandria/main.log");
+    expect(notice.detail).toContain(updater.RELEASES_URL);
+
+    const errored = updater.installFailureNotice({ stage: "error", message: "Could not get code signature" });
+    expect(errored.message).toBe("The update did not install");
+    expect(errored.detail).toContain("Could not get code signature");
+  });
+});
+
+describe("a macOS install that can never update is told so at boot", () => {
+  const mac = (facts: MacFacts, env: Env = {}) =>
+    updater.updaterDisposition({ env, platform: "darwin", packaged: true, mac: facts });
+
+  // `codesign -dv --verbose=4` reports on stderr; an unsigned bundle is exit 1
+  // with a single line. These are the shapes the real tool produces.
+  it("reads what codesign said", () => {
+    expect(
+      updater.parseCodesign({
+        stderr: [
+          "Executable=/Applications/Calandria.app/Contents/MacOS/Calandria",
+          "Identifier=dev.calandria.desktop",
+          "CodeDirectory v=20500 size=1234 flags=0x10000(runtime) hashes=30+7 location=embedded",
+          "Authority=Developer ID Application: Calandria Contributors (ABCDE12345)",
+          "Authority=Developer ID Certification Authority",
+          "Authority=Apple Root CA",
+          "Timestamp=30 Aug 2026 at 10:00:00",
+        ].join("\n"),
+      }),
+    ).toEqual({
+      signature: "developer-id",
+      authority: "Developer ID Application: Calandria Contributors (ABCDE12345)",
+    });
+    expect(updater.parseCodesign({ stderr: "Signature=adhoc\nInfo.plist entries=30\n" })).toEqual({
+      signature: "adhoc",
+      authority: null,
+    });
+    expect(
+      updater.parseCodesign({ stderr: "/Applications/Calandria.app: code object is not signed at all\n", code: 1 }),
+    ).toEqual({ signature: "unsigned", authority: null });
+    expect(updater.parseCodesign({ stderr: "Authority=Apple Development: Someone (XYZ)\n" }).signature).toBe("other");
+    expect(updater.parseCodesign({})).toEqual({ signature: "unknown", authority: null });
+  });
+
+  it("finds the bundle from the running binary", () => {
+    expect(updater.macBundlePath("/Applications/Calandria.app/Contents/MacOS/Calandria")).toBe(
+      "/Applications/Calandria.app",
+    );
+    expect(updater.macBundlePath("/usr/local/bin/node")).toBe(null);
+    expect(updater.macBundlePath(null)).toBe(null);
+  });
+
+  // Squirrel.Mac refuses an app whose signature it cannot read, and with
+  // autoInstallOnAppQuit off it first looks inside quitAndInstall(), after the
+  // drain, where nothing can show the refusal. Every build from before the
+  // lane signed (and every local dist:mac, which defaults to ad-hoc) is one of
+  // these, and the message says which and what to do instead.
+  it("refuses an ad-hoc or unsigned build, naming the date and the way out", () => {
+    for (const signature of ["adhoc", "unsigned"]) {
+      const d = mac({ bundlePath: "/Applications/Calandria.app", signature });
+      expect(d.enabled).toBe(false);
+      expect(d.code).toBe("mac-unsigned");
+      expect(d.reason).toContain(updater.MAC_SIGNED_SINCE);
+      expect(d.reason).toMatch(/manual download/i);
+    }
+    expect(updater.MAC_SIGNED_SINCE).toBe("2026-08-30");
+  });
+
+  it("refuses a bundle running from the mounted disk image or a translocated path", () => {
+    expect(mac({ bundlePath: "/Volumes/Calandria 0.6.2/Calandria.app", signature: "developer-id" })).toMatchObject({
+      enabled: false,
+      code: "mac-dmg",
+    });
+    expect(
+      mac({
+        bundlePath: "/private/var/folders/ab/T/AppTranslocation/1234-5678/d/Calandria.app",
+        signature: "developer-id",
+      }),
+    ).toMatchObject({ enabled: false, code: "mac-translocated" });
+  });
+
+  it("updates a Developer ID build in /Applications, and leaves a failed probe alone", () => {
+    expect(mac({ bundlePath: "/Applications/Calandria.app", signature: "developer-id" })).toMatchObject({
+      enabled: true,
+      code: "ok",
+    });
+    // A probe that said nothing usable must not disable a working updater.
+    expect(mac({ bundlePath: "/Applications/Calandria.app", signature: "unknown" }).enabled).toBe(true);
+    expect(mac({ bundlePath: "/Applications/Calandria.app", signature: "other" }).enabled).toBe(true);
+    expect(updater.updaterDisposition({ env: {}, platform: "darwin", packaged: true, mac: null }).enabled).toBe(true);
+  });
+
+  // Off and dev-build come first, as everywhere; and the mac facts are only
+  // ever consulted on darwin.
+  it("is outranked by the off switch, and ignored off macOS", () => {
+    expect(mac({ bundlePath: "/Applications/Calandria.app", signature: "adhoc" }, { CALANDRIA_DESKTOP_AUTO_UPDATE: "off" }).code).toBe("off");
+    expect(
+      updater.updaterDisposition({
+        env: {},
+        platform: "win32",
+        packaged: true,
+        mac: { bundlePath: "/Volumes/x/Calandria.app", signature: "adhoc" },
+      }),
+    ).toMatchObject({ enabled: true, code: "ok" });
+  });
+
+  it("greys the menu item with a reason that says what to do", () => {
+    const unsigned = updater.updateMenuItem({
+      disposition: mac({ bundlePath: "/Applications/Calandria.app", signature: "adhoc" }),
+    });
+    expect(unsigned.enabled).toBe(false);
+    expect(unsigned.label).toMatch(/manual download/i);
+    const dmg = updater.updateMenuItem({
+      disposition: mac({ bundlePath: "/Volumes/Calandria/Calandria.app", signature: "developer-id" }),
+    });
+    expect(dmg.enabled).toBe(false);
+    expect(dmg.label).toMatch(/Applications/);
+  });
+
+  // The probe is a subprocess that can fail, so it runs before the require and
+  // its answer is the only mac-specific input the policy takes.
+  it("is probed in main.js with codesign, before the updater is required", () => {
+    const startUpdater = mainSource.slice(
+      mainSource.indexOf("async function startUpdater()"),
+      mainSource.indexOf("function trayUpdateItem()"),
+    );
+    expect(startUpdater).toContain("mac: await macBundleFacts()");
+    expect(startUpdater).toContain('"/usr/bin/codesign"');
+    expect(startUpdater.indexOf("macBundleFacts()")).toBeLessThan(startUpdater.indexOf('require("electron-updater")'));
+  });
+});
+
 describe("which installs may update themselves", () => {
   it("updates a packaged macOS or Windows build by default", () => {
     expect(packaged({}, "darwin")).toMatchObject({ enabled: true, code: "ok" });
@@ -192,7 +441,7 @@ describe("which installs may update themselves", () => {
   // getter answers that marker with a DebUpdater whose install path is
   // `sudo dpkg -i`, falling back to `apt install --allow-unauthenticated`.
   // There is no allowUnverifiedLinuxPackages setting to turn that off (checked
-  // against electron-builder 26.15.3 and electron-updater 6.8.9 — it exists in
+  // against electron-builder 26.15.3 and electron-updater 6.8.9, it exists in
   // neither), so the only way to make it deliberate is to stay off that path.
   it("refuses to update a Linux install that is not an AppImage", () => {
     const d = packaged({}, "linux", null);
@@ -209,7 +458,7 @@ describe("which installs may update themselves", () => {
   });
 
   // Env-driven, per the repo convention, and documented in .env.example.
-  // Default on is safe only because "on" means check and download — never
+  // Default on is safe only because "on" means check and download, never
   // install.
   it("is on unless CALANDRIA_DESKTOP_AUTO_UPDATE turns it off", () => {
     expect(updater.autoUpdateEnabled({})).toBe(true);
@@ -297,7 +546,7 @@ describe("what the restart prompt tells the user it will cost", () => {
     expect(updater.parseActiveTurns("calandria_tasks_total 41\n")).toBe(null);
     expect(updater.parseActiveTurns("")).toBe(null);
     expect(updater.parseActiveTurns(undefined)).toBe(null);
-    // A metric whose NAME merely starts the same must not be mistaken for it.
+    // A metric whose name merely starts the same must not be mistaken for it.
     expect(updater.parseActiveTurns("calandria_turns_active_total 7\n")).toBe(null);
   });
 
@@ -322,11 +571,24 @@ describe("update errors", () => {
   // Squirrel.Mac verifies the signature of the downloaded bundle and refuses an
   // app whose own signature it cannot read, so an unsigned or ad-hoc macOS
   // build can never auto-update. That is a property of the build, not a
-  // transient — main.js stops the six-hourly retry on a fatal verdict.
+  // transient, so main.js stops the six-hourly retry on a fatal verdict.
   it("treats an unreadable code signature as fatal for the session", () => {
     const v = updater.classifyUpdaterError(new Error("Could not get code signature for running application"));
     expect(v.fatal).toBe(true);
     expect(v.message).toMatch(/not signed/i);
+    expect(v.message).toContain(updater.RELEASES_URL);
+  });
+
+  // A fatal verdict on an automatic check is announced as an OS notification,
+  // not only logged, since no packaged app is launched from a terminal.
+  it("is announced by main.js on an automatic check, not only a manual one", () => {
+    const startUpdater = mainSource.slice(
+      mainSource.indexOf("async function startUpdater()"),
+      mainSource.indexOf("async function macBundleFacts()"),
+    );
+    const onError = startUpdater.slice(startUpdater.indexOf('updater.on("error"'));
+    expect(onError).toContain("if (!fatal) return;");
+    expect(onError).toMatch(/new Notification\(\{ title: "Calandria cannot update itself"/);
   });
 
   it("treats a missing release and a dead network as retryable", () => {
@@ -344,35 +606,52 @@ describe("update errors", () => {
   });
 });
 
-describe("electron-updater has to actually be in the package", () => {
+describe("electron-updater and electron-log have to actually be in the package", () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(DESKTOP, "package.json"), "utf8"));
+  const lock = JSON.parse(fs.readFileSync(path.join(DESKTOP, "package-lock.json"), "utf8"));
 
   // app-builder-lib collects production dependencies through a mechanism
   // entirely separate from the `files` globs, and splices `!**/node_modules/**`
-  // into those globs unconditionally — so naming it in `files` would do nothing
+  // into those globs unconditionally, so naming it in `files` would do nothing
   // and moving it to devDependencies would ship a shell that throws on the
-  // require the moment a packaged build reaches startUpdater().
-  it("is a production dependency, not a dev one", () => {
-    expect(pkg.dependencies?.["electron-updater"]).toBeTruthy();
-    expect(pkg.devDependencies?.["electron-updater"]).toBeUndefined();
+  // require the moment a packaged build reaches startUpdater(), or for
+  // electron-log, on the require at the top of main.js, before the window.
+  it.each(["electron-updater", "electron-log"])("%s is a production dependency, not a dev one", (name) => {
+    expect(pkg.dependencies?.[name]).toBeTruthy();
+    expect(pkg.devDependencies?.[name]).toBeUndefined();
   });
 
-  it("is pinned in desktop/package-lock.json as a non-dev package", () => {
-    const lock = JSON.parse(fs.readFileSync(path.join(DESKTOP, "package-lock.json"), "utf8"));
-    const entry = lock.packages?.["node_modules/electron-updater"];
+  it.each(["electron-updater", "electron-log"])("%s is pinned in desktop/package-lock.json as a non-dev package", (name) => {
+    const entry = lock.packages?.[`node_modules/${name}`];
     expect(entry).toBeTruthy();
     expect(entry.dev).toBeFalsy();
   });
 
+  // The log file is where an install that fails on the way out of the process
+  // leaves a trace. stdout has to stay as it was, because desktop/e2e reads
+  // `[shell] …` lines off it with startsWith.
+  it("routes console output into the log file without changing stdout", () => {
+    expect(mainSource).toContain('require("electron-log/main")');
+    expect(mainSource).toContain("Object.assign(console, log.functions)");
+    expect(mainSource).toMatch(/log\.transports\.console\.format\s*=\s*"\{text\}"/);
+    expect(mainSource).toMatch(/updater\.logger\s*=\s*log\.scope\("updater"\)/);
+  });
+
   // The feed the client reads is produced by the release lane's `--publish`,
-  // not by any code here. If this block ever goes, the updater silently finds
-  // nothing forever — which is why tests/desktopRelease.test.ts pins it too,
-  // and why it is worth restating from the consumer's side.
+  // not by any code here. If this block ever goes, the updater finds nothing
+  // forever, which is why tests/desktopRelease.test.ts pins it too, and why it
+  // is worth restating from the consumer's side.
   it("has a publish provider to read a feed from", () => {
     const configPath = path.join(DESKTOP, "electron-builder.cjs");
     delete require.cache[configPath];
     const config = require(configPath) as { publish?: unknown };
-    expect(config.publish).toEqual([{ provider: "github", owner: "calandria-dev", repo: "calandria" }]);
+    expect(config.publish).toEqual([
+      // `releaseType` belongs to this test too: the feed files are skipped by
+      // the same refusal that skips the installers, so a draft-typed publish
+      // leaves the updater with nothing to read even when downloads exist.
+      // tests/desktopRelease.test.ts carries the full account.
+      { provider: "github", owner: "calandria-dev", repo: "calandria", releaseType: "release" },
+    ]);
   });
 });
 
@@ -383,6 +662,84 @@ describe("the clocks", () => {
   it("checks well after launch, and rarely after that", () => {
     expect(updater.FIRST_CHECK_DELAY_MS).toBeGreaterThanOrEqual(30_000);
     expect(updater.CHECK_INTERVAL_MS).toBeGreaterThanOrEqual(60 * 60 * 1000);
-    expect(updater.INSTALL_FALLBACK_MS).toBeGreaterThan(0);
+  });
+});
+
+describe("the page's view of the updater is total, so it never has to guess", () => {
+  const disposition: Disposition = { enabled: true, code: "ok", reason: "" };
+
+  it("carries every field for an in-flight download", () => {
+    expect(updater.pageUpdateState({ phase: "downloading", version: "0.12.0", percent: 42 }, disposition, "0.11.0")).toEqual({
+      shellVersion: "0.11.0",
+      phase: "downloading",
+      version: "0.12.0",
+      percent: 42,
+      disposition: { enabled: true, code: "ok", reason: "" },
+      error: null,
+    });
+  });
+
+  it("carries the error message through an error phase, and drops a stale one from any other phase", () => {
+    expect(updater.pageUpdateState({ phase: "error", error: "network down" }, disposition, "0.11.0").error).toBe(
+      "network down",
+    );
+    expect(
+      updater.pageUpdateState({ phase: "idle", error: "network down" }, disposition, "0.11.0").error,
+    ).toBe(null);
+  });
+
+  // The page has no rendering for "none" (checked, nothing found), and no
+  // rendering for a phase it does not recognise either; both fall back to
+  // "idle" rather than reaching the page as an unstyled raw string.
+  it("maps 'none' and an unrecognised phase onto idle", () => {
+    expect(updater.pageUpdateState({ phase: "none" }, disposition, "0.11.0").phase).toBe("idle");
+    expect(updater.pageUpdateState({ phase: "something-new" }, disposition, "0.11.0").phase).toBe("idle");
+  });
+
+  it("reports a missing or non-finite percent as null", () => {
+    expect(updater.pageUpdateState({ phase: "downloading" }, disposition, "0.11.0").percent).toBe(null);
+    for (const percent of [NaN, Infinity, -Infinity, "42", null, undefined]) {
+      expect(updater.pageUpdateState({ phase: "downloading", percent } as never, disposition, "0.11.0").percent).toBe(
+        null,
+      );
+    }
+  });
+
+  // Missing state or disposition must not throw: a total object comes back
+  // either way.
+  it("does not throw on a missing state or disposition, and still returns a total object", () => {
+    expect(updater.pageUpdateState(null, null, "0.11.0")).toEqual({
+      shellVersion: "0.11.0",
+      phase: "idle",
+      version: null,
+      percent: null,
+      disposition: { enabled: false, code: "", reason: "" },
+      error: null,
+    });
+    expect(updater.pageUpdateState(undefined, undefined, undefined)).toEqual({
+      shellVersion: "",
+      phase: "idle",
+      version: null,
+      percent: null,
+      disposition: { enabled: false, code: "", reason: "" },
+      error: null,
+    });
+  });
+});
+
+describe("a calandria-desktop: URL is a call the page makes, never a page to load", () => {
+  it("recognises the two commands the shell answers", () => {
+    expect(updater.parseDesktopCommand("calandria-desktop://update/install")).toEqual({ command: "install" });
+    expect(updater.parseDesktopCommand("calandria-desktop://update/check")).toEqual({ command: "check" });
+  });
+
+  // The scheme is never registered with the OS, so nothing outside these two
+  // paths means anything; everything else, including a plausible-looking
+  // sibling path, comes back null.
+  it("is null for anything else, including a scheme mismatch and unparseable input", () => {
+    expect(updater.parseDesktopCommand("calandria-desktop://other")).toBe(null);
+    expect(updater.parseDesktopCommand("calandria-desktop://update/other")).toBe(null);
+    expect(updater.parseDesktopCommand("https://example.com/update/install")).toBe(null);
+    expect(updater.parseDesktopCommand("nonsense")).toBe(null);
   });
 });

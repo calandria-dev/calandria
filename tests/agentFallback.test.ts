@@ -1,10 +1,10 @@
 import { describe, expect, it, beforeEach } from "vitest";
 
-// Connected-first agent resolution: the utility agent for internal one-shots
-// (lib/agents/oneshots.ts), the connection record with its legacy-Claude
-// fallback (lib/agents/connections.ts), the client's new-task default
-// (app/shell/agents.ts), and the onboarding completion adoption that
-// makes a Codex-only first run work end to end (lib/onboarding.ts).
+// Pins connected-first agent resolution: the utility agent for internal
+// one-shots (lib/agents/oneshots.ts), the connection record with its
+// legacy-Claude fallback (lib/agents/connections.ts), the client's new-task
+// default (app/shell/agents.ts), and onboarding completion adoption for a
+// Codex-only first run (lib/onboarding.ts).
 
 import { setSetting, getSetting, createProject, createTask, getTask, updateTask } from "../lib/store";
 import { getDb } from "../lib/db";
@@ -12,10 +12,10 @@ import { setAgentConnection, isAgentConnected, firstConnectedAgent, resolveConne
 import { utilityDriver, resolveUtilityAgent } from "../lib/agents/oneshots";
 import { completeOnboarding } from "../lib/onboarding";
 import { createSuggestedTask } from "../lib/agentTools";
-import { agentPickerNeeded, defaultAgentFor } from "../app/shell/agents";
+import { agentPickerNeeded, defaultAgentFor, pickerAgents } from "../app/shell/agents";
 import type { AgentsBundle } from "../app/shell/types";
 
-// Settings persist across tests (one shared DB per suite run) — reset every key
+// Settings persist across tests (one shared DB per suite run). Reset every key
 // the resolvers read so each test states its own world.
 function resetSettings() {
   for (const key of [
@@ -23,6 +23,7 @@ function resetSettings() {
     "default_agent",
     "agent_conn_claude",
     "agent_conn_codex",
+    "agent_conn_gemini",
     "onboarding_method",
     "onboarding_account",
     "onboarding_complete",
@@ -41,7 +42,7 @@ describe("connection record", () => {
     setSetting("onboarding_method", "subscription");
     setSetting("onboarding_account", "a@b.c|Max");
     expect(isAgentConnected("claude")).toBe(true);
-    // The legacy fallback is Claude-only — other agents need a real record.
+    // The legacy fallback is Claude-only; other agents need a real record.
     expect(isAgentConnected("codex")).toBe(false);
   });
 
@@ -64,6 +65,16 @@ describe("utilityDriver (connected-first)", () => {
   it("falls to the only connected agent on a Codex-only instance", () => {
     connect("codex");
     expect(utilityDriver().id).toBe("codex");
+  });
+
+  // Same rule, third driver, no new code: the resolvers enumerate the registry
+  // instead of a fixed pair of ids, so an Antigravity-only instance gets its
+  // recaps and /clear summaries from Antigravity.
+  it("falls to the only connected agent on an Antigravity-only instance", () => {
+    connect("gemini");
+    expect(utilityDriver().id).toBe("gemini");
+    expect(resolveConnectedAgent(["claude", "codex"])).toBe("gemini");
+    expect(resolveUtilityAgent()).toEqual({ id: "gemini", configured: "claude", fallback: true });
   });
 
   it("prefers the built-in default when it is connected", () => {
@@ -92,8 +103,8 @@ describe("utilityDriver (connected-first)", () => {
   });
 });
 
-// What Settings renders as the EFFECTIVE utility agent. Same resolution as
-// utilityDriver(), but reported rather than thrown — the "(fallback)" hint and
+// What Settings renders as the effective utility agent. Same resolution as
+// utilityDriver(), but reported instead of thrown. The "(fallback)" hint and
 // the "nothing connected" note are both driven from here.
 describe("resolveUtilityAgent (reported effective agent)", () => {
   beforeEach(resetSettings);
@@ -138,13 +149,23 @@ describe("defaultAgentFor (client, connected-first)", () => {
         models: [],
         reasoningOptions: [],
         permissionModes: [],
+        providerTypes: ["anthropic"],
+        bundledProvider: "anthropic",
+        endpointTransport: "test transport",
         supportsAsks: true,
         supportsMcpTools: true,
         reportsCostUsd: true,
         costIsEstimated: false,
         supportsResume: true,
       },
+      connected: authenticated,
       authenticated,
+      status: authenticated ? "connected" : "absent",
+      installedVersion: null,
+      bundledProvider: "anthropic",
+      providerTypes: ["anthropic"],
+      endpointTransport: "test transport",
+      providers: [],
     })),
   });
 
@@ -190,14 +211,98 @@ describe("defaultAgentFor (client, connected-first)", () => {
       expect(agentPickerNeeded(bundle({ claude: true, codex: true }), "claude")).toBe(true);
     });
 
+    // The third driver is a third entry in the same bundle. Neither the default
+    // nor this predicate counts agents, so this test covers whether a third
+    // agent id works, which the mock driver can't stand in for since its id is
+    // fixed at "mock" and the onboarding e2e can only exercise one extra agent.
+    // What the picker offers does change with a third driver; see pickerAgents
+    // below.
+    it("treats a third agent id exactly like the second", () => {
+      const only = bundle({ claude: false, codex: false, gemini: true });
+      expect(defaultAgentFor(only, null)).toBe("gemini");
+      expect(defaultAgentFor(only, "codex")).toBe("gemini");
+      expect(agentPickerNeeded(only, "gemini")).toBe(false);
+      expect(agentPickerNeeded(only, "claude")).toBe(true);
+      const all = bundle({ claude: true, codex: true, gemini: true });
+      expect(defaultAgentFor(all, "gemini")).toBe("gemini");
+      expect(agentPickerNeeded(all, "gemini")).toBe(true);
+    });
+
     it("shows when nothing is connected, so the Connect CTA still renders", () => {
       expect(agentPickerNeeded(bundle({ claude: false, codex: false }), "claude")).toBe(true);
+    });
+  });
+
+  // What the picker renders; hiding it is a special case of this. With two
+  // drivers the two questions coincided: hiding the picker also hid the dead
+  // "not connected" button. A third driver splits them: a Claude + Antigravity
+  // instance has a real choice, so the picker shows, with an unconnected Codex
+  // included inside it.
+  const ids = (b: AgentsBundle, value: string) => pickerAgents(b, value).map((a) => a.id);
+
+  describe("pickerAgents", () => {
+    it("offers only the connected agents", () => {
+      expect(ids(bundle({ claude: true, codex: false, gemini: true }), "claude")).toEqual(["claude", "gemini"]);
+      // The New-task dialog opens on defaultAgentFor(), so this is the exact
+      // list it renders.
+      const b = bundle({ claude: true, codex: false, gemini: true });
+      expect(ids(b, defaultAgentFor(b, null))).not.toContain("codex");
+    });
+
+    it("keeps an unconnected agent when it is the one selected", () => {
+      // An old Codex task in Edit, or a project default that was signed out:
+      // dropping it would leave the picker with nothing on and no way off.
+      expect(ids(bundle({ claude: true, codex: false, gemini: true }), "codex")).toEqual(["claude", "gemini", "codex"]);
+    });
+
+    it("offers everything when nothing is connected, so the CTA has a target", () => {
+      expect(ids(bundle({ claude: false, codex: false, gemini: false }), "claude")).toEqual(["claude", "codex", "gemini"]);
+    });
+
+    // The schedule and runbook agent pickers (app/shell/Schedules.tsx,
+    // app/shell/Runbooks.tsx) render this same list instead of applying a
+    // second filter, since both mint a task and preflight on "agent connected".
+    // An unconnected choice there is a schedule that settles every occurrence
+    // failed, or a runbook button that fails on press. This test pins that
+    // contract for both callers so a future edit to pickerAgents accounts for
+    // them.
+    it("keeps a saved schedule/runbook agent selected even when it was since signed out", () => {
+      // Editing a schedule or runbook whose saved agent is no longer connected
+      // must still show that agent as the selected <option>, flagged, instead
+      // of re-pointing saved automation at a different driver.
+      expect(ids(bundle({ claude: true, codex: false, gemini: true }), "codex")).toContain("codex");
+    });
+
+    it("excludes an unconnected agent nobody has selected, unlike a raw driver list", () => {
+      // pickerAgents omits an unconnected, unselected agent instead of
+      // flagging it as "(not connected)".
+      const b = bundle({ claude: true, codex: false, gemini: true });
+      expect(ids(b, "claude")).toEqual(["claude", "gemini"]);
+      expect(ids(b, "claude")).not.toContain("codex");
+    });
+
+    it("agrees with agentPickerNeeded about there being a choice", () => {
+      // The picker must never render a single button that is already selected,
+      // and must never hide while it still had a second entry to offer.
+      for (const authed of [
+        { claude: true, codex: false, gemini: false },
+        { claude: true, codex: false, gemini: true },
+        { claude: false, codex: false, gemini: false },
+        { claude: true, codex: true, gemini: true },
+      ]) {
+        for (const value of ["claude", "codex", "gemini"]) {
+          const b = bundle(authed, "claude");
+          const offered = ids(b, value);
+          const alone = offered.length === 1 && offered[0] === value;
+          expect(agentPickerNeeded(b, value)).toBe(!alone);
+        }
+      }
     });
   });
 });
 
 // suggest_task mints tasks with no user in the loop, so nothing downstream can
-// correct a bad agent choice — and a task's agent is fixed for its whole life.
+// correct a bad agent choice, and a task's agent is fixed for its whole life.
 describe("suggested tasks are born on a connected agent", () => {
   beforeEach(resetSettings);
 
@@ -245,8 +350,24 @@ describe("completeOnboarding adopts the connected agent", () => {
     const proj = getDb().prepare("SELECT default_agent FROM projects WHERE id = ?").get(project.id) as { default_agent: string };
     expect(proj.default_agent).toBe("codex");
     expect(getTask(fresh.id)?.agent).toBe("codex");
-    // A task that already ran keeps its agent — a session lineage can't switch CLIs.
+    // A task that already ran keeps its agent: a session lineage can't switch CLIs.
     expect(getTask(started.id)?.agent).toBe("claude");
+  });
+
+  it("finishes a first run with ONLY Antigravity connected", () => {
+    const project = createProject({ name: "WelcomeSeedGemini" });
+    getDb().prepare("UPDATE projects SET seeded = 1, default_agent = 'claude' WHERE id = ?").run(project.id);
+    const fresh = createTask({ project_id: project.id, title: "Tutorial", description: "" });
+    getDb().prepare("UPDATE tasks SET agent = 'claude' WHERE id = ?").run(fresh.id);
+
+    connect("gemini");
+    completeOnboarding();
+
+    expect(getSetting("default_agent")).toBe("gemini");
+    expect(getTask(fresh.id)?.agent).toBe("gemini");
+    // …and a task suggested afterwards is born on it too.
+    const { task } = createSuggestedTask(project, { title: "Proposed", description: "" });
+    expect(getTask(task!.id)?.agent).toBe("gemini");
   });
 
   it("changes nothing when the default agent is connected", () => {

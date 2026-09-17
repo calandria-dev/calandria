@@ -1,8 +1,8 @@
 {
   "name": "calandria",
-  "version": "0.4.1",
+  "version": "0.16.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12"
   },
   "private": true,
   "scripts": {
@@ -26,14 +26,15 @@
     "test:e2e:docker": "bash scripts/docker-test.sh --e2e npm run test:e2e",
     "preflight:docker": "bash scripts/docker-test.sh --e2e npm run preflight",
     "backup": "node scripts/backup.mjs",
+    "fix-lockfile": "node scripts/fix-lockfile-gypfile.mjs",
     "postinstall": "node scripts/fix-pty.js"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.159",
+    "@anthropic-ai/claude-agent-sdk": "0.3.263",
     "@codemirror/lang-markdown": "^6.5.2",
     "@codemirror/language-data": "^6.5.2",
     "@modelcontextprotocol/sdk": "^1.12.0",
-    "@openai/codex-sdk": "^0.146.0",
+    "@openai/codex-sdk": "0.153.0",
     "@uiw/react-codemirror": "^4.25.11",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.11.0",
@@ -46,7 +47,7 @@
     "jose": "^6.2.3",
     "mermaid": "^11.17.1",
     "nanoid": "^5.1.16",
-    "next": "15.5.22",
+    "next": "15.5.25",
     "node-pty": "^1.1.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
@@ -59,15 +60,16 @@
   "devDependencies": {
     "@playwright/test": "^1.61.1",
     "@types/better-sqlite3": "^9.6.0",
-    "@types/node": "20.17.6",
+    "@types/node": "22.20.2",
     "@types/react": "19.2.17",
     "@types/react-dom": "^19",
     "@types/ws": "^8.18.1",
     "typescript": "5.8.2",
-    "vitest": "^3.2.6"
+    "vite": "^6.4.3",
+    "vitest": "^5.0.0"
   },
   "overrides": {
     "postcss": "^8.5.23",
-    "sharp": "^0.35.3"
+    "sharp": "^0.35.4"
   }
 }

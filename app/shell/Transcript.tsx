@@ -3,10 +3,11 @@
 import { memo, useCallback, useEffect, useState } from "react";
 import type { ToolData, ToolPeek, AskQuestion, AskAnswers, PermissionDecision, SuggestionCard, IssueReportCard } from "@/lib/types";
 import { Icon } from "../icons";
-import { Markdown } from "../Markdown";
+import { Markdown, type MarkdownLinks } from "../Markdown";
 import { jget } from "./api";
 import { PriPill } from "./shared";
-import { clockTime, diffCls, splitAttachments, type MsgAttachment } from "./format";
+import { blockedNote, clockTime, diffCls, isBlocking, splitAttachments } from "./format";
+import { AttachmentStrip } from "./attachments";
 import { CONTEXT_OVERFLOW_NOTICE } from "@/lib/promptLimits";
 import { AUTH_EXPIRED_NOTICE } from "@/lib/authFailure";
 import { USAGE_LIMIT_NOTICE } from "@/lib/usageLimit";
@@ -14,11 +15,12 @@ import { deferredStartFor } from "@/lib/usageReset";
 import { wakeLabel } from "./snooze";
 import { resetClock } from "./queuedStart";
 import { APPROVAL_BLOCKED_NOTICE } from "@/lib/approvalFailure";
+import { BUDGET_EXCEEDED_NOTICE } from "@/lib/budgetFailure";
 import { WORKTREE_REPAIR_NOTICE } from "@/lib/worktreeFailure";
 import type { Msg } from "./types";
 import { Avatar } from "./shared";
 
-// The always-visible "peek" tier — Claude Code's `⎿` line. Counts show no
+// The always-visible "peek" tier: Claude Code's `⎿` line. Counts show no
 // content; diffs/snippets show a capped hunk with a clickable "+N more" that
 // opens the full body. TodoWrite renders its checklist inline.
 function PeekView({ peek, expandable, onExpand }: { peek: ToolPeek; expandable: boolean; onExpand: () => void }) {
@@ -52,7 +54,7 @@ function PeekView({ peek, expandable, onExpand }: { peek: ToolPeek; expandable: 
       </div>
     );
   }
-  // fail: the exit status and the LAST lines — the reason for a non-zero exit
+  // fail: the exit status and the last lines. The reason for a non-zero exit
   // is at the end of the output, so that's what shows without expanding. Only
   // the status is red; the output itself isn't the error.
   if (peek.kind === "fail") {
@@ -76,17 +78,15 @@ function PeekView({ peek, expandable, onExpand }: { peek: ToolPeek; expandable: 
 
 // `onCollaborate` opens a file the call wrote in collaboration mode. The card
 // is the entry point that doesn't go through git: `data.file` is set by the
-// runner from the path the agent WROTE, so a gitignored scratch doc — which
-// the Changes tab never lists — is reachable the moment the Write lands.
+// runner from the path the agent wrote, so a gitignored scratch doc, which
+// the Changes tab never lists, is reachable the moment the Write lands.
 function ToolView({ data, onCollaborate }: { data: ToolData; onCollaborate?: (file: string) => void }) {
   const [open, setOpen] = useState(false);
   const hasDiff = !!data.diff?.length;
   const expandable = !!(data.detail || hasDiff || data.result !== undefined);
   // A failure surfaces its reason without a click. Results persisted with a
   // `fail` peek show it there (status + the tail of the output); older rows
-  // and drivers that peek nothing fall back to opening the whole body, which
-  // is what every failure did before — 6000 red chars with the reason clipped
-  // off the end, i.e. an "error banner" over output that looked fine.
+  // and drivers that peek nothing fall back to opening the whole body.
   const showBody = open || (!!data.isError && data.result !== undefined && !data.peek);
   const file = data.file;
   return (
@@ -128,6 +128,7 @@ function ToolView({ data, onCollaborate }: { data: ToolData; onCollaborate?: (fi
 function AskView({ data, agentLabel, onAnswer }: { data: ToolData; agentLabel: string; onAnswer: (answers: AskAnswers) => void }) {
   const questions = data.ask?.questions ?? [];
   const existing = data.ask?.answers;
+  const dismissed = data.ask?.dismissed;
   const [state, setState] = useState(() => questions.map(() => ({ picked: [] as string[], other: "" })));
   const [submitted, setSubmitted] = useState(false);
 
@@ -138,9 +139,27 @@ function AskView({ data, agentLabel, onAnswer }: { data: ToolData; agentLabel: s
         {questions.map((q, i) => (
           <div className="ask-q" key={i}>
             <div className="ask-qh"><span className="ask-chip">{q.header}</span>{q.question}</div>
-            <div className="ask-picked">{(existing[i] ?? []).join(", ") || "—"}</div>
+            <div className="ask-picked">{(existing[i] ?? []).join(", ") || "–"}</div>
           </div>
         ))}
+      </div>
+    );
+  }
+
+  // Never answered, and never will be: the turn was stopped or the app
+  // restarted with the question parked. Renders as a settled card, since
+  // live options here would be indistinguishable from a question somebody is
+  // actually waiting on, and picking one would resolve nothing.
+  if (dismissed) {
+    return (
+      <div className="ask dismissed">
+        <div className="ask-head">{Icon.spark()} Not answered</div>
+        {questions.map((q, i) => (
+          <div className="ask-q" key={i}>
+            <div className="ask-qh"><span className="ask-chip">{q.header}</span>{q.question}</div>
+          </div>
+        ))}
+        <div className="ask-note">{dismissed.note}</div>
       </div>
     );
   }
@@ -187,10 +206,10 @@ function AskView({ data, agentLabel, onAnswer }: { data: ToolData; agentLabel: s
 
 // Who refused, for a card that arrives already settled because Claude Code
 // blocked the call itself (PermissionOutcome.reason === "blocked"). Keyed by the
-// SDK's decision_reason_type, which is stored raw precisely so this mapping can
-// grow: the CLI mints values the SDK's docs don't list, and an unmapped one is
-// shown verbatim rather than swallowed — "Blocked by Claude Code" alone would
-// hide the only clue about which check fired.
+// SDK's decision_reason_type, which is stored raw so this mapping can grow: the
+// CLI mints values the SDK's docs don't list, and an unmapped one is shown
+// verbatim instead of swallowed. "Blocked by Claude Code" alone would hide the
+// only clue about which check fired.
 const BLOCKED_BY: Record<string, string> = {
   classifier: "Blocked by Claude Code's safety classifier",
   mode: "Blocked by this task's permission mode",
@@ -201,15 +220,15 @@ const BLOCKED_BY: Record<string, string> = {
 const blockedHead = (by?: string): string =>
   (by && BLOCKED_BY[by]) || (by ? `Blocked by Claude Code (${by})` : "Blocked by Claude Code");
 
-// Tool-permission card — the canUseTool gate under acceptEdits and plan
-// mode" (lib/permissions.ts). Unlike a question card this isn't a multiple
-// choice: the user needs the ACTION, so the request's detail (the full Bash
+// Tool-permission card: the canUseTool gate under acceptEdits and plan
+// mode (lib/permissions.ts). Unlike a question card this isn't a multiple
+// choice: the user needs the action, so the request's detail (the full Bash
 // command, the file path, the plan) is shown verbatim, with the diff when the
 // call would write. "Always allow" spells out the exact rule it will store, so
 // nobody grants more than they read.
 //
 // The same card also renders read-only, with no buttons, for a call Claude Code
-// refused on its own (the "auto" classifier, a deny rule) — that decision is
+// refused on its own (the "auto" classifier, a deny rule): that decision is
 // already made, and it arrives settled.
 function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentLabel: string; onDecide: (decision: PermissionDecision, note: string) => void }) {
   const req = data.permission?.request;
@@ -219,11 +238,11 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
   if (!req) return null;
 
   // The pre-turn settings gate (lib/settingsDrift.ts, issue #43): the same card
-  // asking about a different thing — not one tool call, but the configuration
+  // asking about a different thing, not one tool call, but the configuration
   // the whole turn would load. Declining doesn't refuse a call and let the
   // session carry on; it means the turn never runs, so every sentence below
   // that promises otherwise has to change. There is also nobody to write a note
-  // TO — the agent hasn't started — so the note field goes away with it.
+  // to, since the agent hasn't started, so the note field goes away with it.
   const settings = req.kind === "settings";
 
   if (outcome) {
@@ -234,7 +253,7 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
       : settings
         ? allowed
           ? "You approved this settings change"
-          : outcome.auto ? "Declined automatically — the turn did not run" : "You declined this settings change"
+          : outcome.auto ? "Declined automatically, the turn did not run" : "You declined this settings change"
         : outcome.decision === "allow_always"
           ? `Allowed: ${outcome.remembered ?? "remembered for this project"}`
           : outcome.decision === "allow_once"
@@ -244,10 +263,10 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
       <div className={`perm settled ${allowed ? "ok" : "no"}`}>
         <div className="perm-head">{allowed ? Icon.check() : Icon.x()} {what}</div>
         <div className="perm-what">{req.title}</div>
-        {/* On a block: this card was never open, so it's the one place the user
+        {/* On a block: this card was never open, so this is where the user
             gets to see what the agent was actually about to run. On a settings
-            change: what changed is the whole point of the record, and unlike a
-            tool call it stays true afterwards — the file is still sitting in
+            change: what changed is the point of the record, and unlike a
+            tool call it stays true afterwards. The file is still sitting in
             the worktree. Every other outcome had its input on screen before it
             settled. */}
         {(blocked || settings) && req.detail && <pre className="perm-pre">{req.detail}</pre>}
@@ -282,7 +301,7 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
       </div>
       <div className="perm-hint">
         {settings
-          ? "Declining ends this turn before the agent starts — nothing runs under the new settings. Revert the file, or send again and approve, to carry on."
+          ? "Declining ends this turn before the agent starts. Nothing runs under the new settings. Revert the file, or send again and approve, to carry on."
           : "Declines automatically if nobody responds. The session keeps running either way."}
       </div>
     </div>
@@ -291,13 +310,13 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
 
 /**
  * The three handlers a suggestion card in the transcript needs, and the project
- * it is being read FROM. All three are the tray's own — a suggestion started
+ * it is being read from. All three are the tray's own: a suggestion started
  * here has to be indistinguishable from one started there (same worktree cut,
  * same agent resolution, same auto-start-dependents sweep), which is only true
- * if it goes down the same code path rather than a second copy of it.
+ * if it goes down the same code path instead of a second copy of it.
  */
 export interface SuggestionActions {
-  /** The project whose session the transcript belongs to — see SuggestionView. */
+  /** The project whose session the transcript belongs to. See SuggestionView. */
   projectId: string;
   onStart: (taskId: string) => void | Promise<void>;
   onAccept: (taskId: string) => void | Promise<void>;
@@ -306,7 +325,7 @@ export interface SuggestionActions {
 
 // A suggestion filed by a `suggest_task` call, rendered on the call's own row.
 //
-// State is NEVER held here between renders: the transcript is persisted and a
+// State is never held here between renders: the transcript is persisted and a
 // reload must not resurrect a Start button for a task that has since been
 // started, accepted, withdrawn or hard-deleted. So the card holds two ids and
 // re-reads the task (GET /api/tasks/[id]/suggestion) on mount and after every
@@ -319,9 +338,9 @@ export interface SuggestionActions {
 //                         Restore in place of Add, the rest unchanged
 //   404                 → "No longer exists" (Dismiss is a hard delete)
 //
-// START AND ANOTHER PROJECT. `suggest_task` can file into ANY project, and
-// starting a task mints its session and selects it — which, for a suggestion
-// filed elsewhere, means being pulled out of the session you are reading and
+// Start and another project: `suggest_task` can file into any project, and
+// starting a task mints its session and selects it, which for a suggestion
+// filed elsewhere means being pulled out of the session you are reading and
 // into a project you may not have had on screen. That is a bigger, less
 // recoverable interruption than walking to the other project's tray, and the
 // tray is right there. So Start is offered only for a suggestion filed into the
@@ -377,12 +396,18 @@ function SuggestionView({ data, actions }: { data: ToolData; actions?: Suggestio
   // three so the two surfaces can't disagree about what is still actionable.
   const actionable = card.suggested === 1;
   const elsewhere = card.project_id !== actions?.projectId;
+  // Blockers that have since finished aren't blockers, so the same
+  // `isBlocking()` the tray and both dialogs use decides what the notice lists
+  // and whether Start is on offer. Only a first turn is gated, matching the
+  // server's own `!fresh.started` screen.
+  const openBlockers = card.blocked_by.filter(isBlocking);
+  const blockNote = card.started === 1 ? undefined : blockedNote(openBlockers.map((b) => b.title));
   const what = card.started === 1
     ? "Session started"
     : card.suggested === 0
       ? "Added to the task list"
       : withdrawn
-        ? `Withdrawn${card.withdrawn_reason ? ` — ${card.withdrawn_reason}` : ""}`
+        ? `Withdrawn${card.withdrawn_reason ? `: ${card.withdrawn_reason}` : ""}`
         : "Suggested a task";
 
   return (
@@ -399,24 +424,24 @@ function SuggestionView({ data, actions }: { data: ToolData; actions?: Suggestio
         </span>
       </div>
       {card.description && <div className="sugcard-why">{card.description}</div>}
-      {!!card.blocked_by.length && (
+      {!!openBlockers.length && (
         <div className="sugcard-blocked">
-          {Icon.lock()} Blocked by {card.blocked_by.map((b) => b.title).join(", ")}
+          {Icon.lock()} Blocked by {openBlockers.map((b) => b.title).join(", ")}
         </div>
       )}
       {actionable && actions && (
         <div className="sugcard-acts">
           {elsewhere ? (
-            <span className="sugcard-note">Open {card.project_name} to start it — starting it here would leave this session.</span>
+            <span className="sugcard-note">Open {card.project_name} to start it. Starting it here would leave this session.</span>
           ) : (
-            <button className="btn btn-accent btn-sm" disabled={busy} onClick={() => act(actions.onStart)} title="Cut a worktree and start the session now">
+            <button className="btn btn-accent btn-sm" disabled={busy || !!blockNote} onClick={() => act(actions.onStart)} title={blockNote ?? "Cut a worktree and start the session now"}>
               {Icon.play()} Start
             </button>
           )}
-          <button className="btn btn-sm" disabled={busy} onClick={() => act(actions.onAccept)} title={withdrawn ? "Disagree — restore it to the task list" : "Add to the task list to start later"}>
+          <button className="btn btn-sm" disabled={busy} onClick={() => act(actions.onAccept)} title={withdrawn ? "Disagree, restore it to the task list" : "Add to the task list to start later"}>
             {Icon.plus()} {withdrawn ? "Restore" : "Add"}
           </button>
-          <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => act(actions.onDismiss)} title="Dismiss — deletes the task">
+          <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => act(actions.onDismiss)} title="Dismiss, deletes the task">
             {Icon.x()} Dismiss
           </button>
         </div>
@@ -425,39 +450,16 @@ function SuggestionView({ data, actions }: { data: ToolData; actions?: Suggestio
   );
 }
 
-// Attachment chips parsed out of a user message's markers: image thumbnails
-// (click opens full size) and text-file chips (a big paste diverted to a file;
-// click opens it). Both are served from the task's uploads dir.
-function AttachmentStrip({ items }: { items: MsgAttachment[] }) {
-  if (!items.length) return null;
-  return (
-    <div className="msg-attachments">
-      {items.map((a, i) =>
-        a.kind === "image" ? (
-          <a key={i} href={a.url} target="_blank" rel="noreferrer" title="Open full size">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={a.url} alt="attached image" loading="lazy" />
-          </a>
-        ) : (
-          <a key={i} href={a.url} target="_blank" rel="noreferrer" className="file-chip" title={`Open ${a.name}`}>
-            {Icon.clip()} <span>attached file</span>
-          </a>
-        )
-      )}
-    </div>
-  );
-}
-
 // Memoized: during a live turn every SSE event re-renders the transcript's
 // parents, but message objects are append-only (replaced only when their content
-// changes), so unchanged messages skip re-rendering — and re-parsing their
-// markdown — entirely. Callers must pass identity-stable handlers or the memo
+// changes), so unchanged messages skip re-rendering, and re-parsing their
+// markdown, entirely. Callers must pass identity-stable handlers or the memo
 // is defeated (SessionView wraps its handlers for exactly this reason).
-// The usage-limit notice's one action, supplied only for the LAST message of
+// The usage-limit notice's one action, supplied only for the last message of
 // the transcript (an old notice from a limit that has since healed must not
 // offer to queue anything): `queuedAt` is the task's start_at (0 = not
 // queued), `resetAt` the reset the plan meter currently reports (null = none
-// known — a Codex task, or no telemetry yet), and the two handlers set/clear
+// known, a Codex task, or no telemetry yet), and the two handlers set/clear
 // the deadline. See app/shell/queuedStart.ts.
 export interface LimitResume {
   queuedAt: number;
@@ -469,7 +471,7 @@ export interface LimitResume {
 /**
  * The "Repair worktree" affordance on a worktree-prep failure. Owns its own
  * busy/error state because its handler does two round trips (repair, then the
- * resend) and the first can fail on its own terms — the other recovery buttons
+ * resend) and the first can fail on its own terms. The other recovery buttons
  * are one fire-and-forget send, and their failure comes back as a fresh
  * transcript line. Not memoized: it's rendered once, on one message.
  */
@@ -481,7 +483,7 @@ function RepairWorktree({ msgId, running, onRepair }: { msgId: string; running?:
       <button
         className="btn btn-sm"
         disabled={busy || running}
-        title="Clear the stale lock, prune the stale registration, cut the worktree again, and send the message"
+        title="Repair the worktree and send the message"
         onClick={async () => {
           setBusy(true);
           setErr(null);
@@ -659,7 +661,7 @@ function IssueReportView({ data }: { data: ToolData }) {
   );
 }
 
-export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onDecidePermission, onCancelQueued, onClear, onReconnect, onRetry, onRepairWorktree, onCollaborate, suggestionActions, limitResume }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onDecidePermission?: (permId: string, decision: PermissionDecision, note: string) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void; onRetry?: (msgId: string) => void; onRepairWorktree?: (msgId: string) => Promise<string | null>; onCollaborate?: (file: string) => void; suggestionActions?: SuggestionActions; limitResume?: LimitResume }) {
+export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onDecidePermission, onCancelQueued, onClear, onReconnect, onRetry, onRepairWorktree, onCollaborate, links, suggestionActions, limitResume }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onDecidePermission?: (permId: string, decision: PermissionDecision, note: string) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void; onRetry?: (msgId: string) => void; onRepairWorktree?: (msgId: string) => Promise<string | null>; onCollaborate?: (file: string) => void; links?: MarkdownLinks; suggestionActions?: SuggestionActions; limitResume?: LimitResume }) {
   if (m.role === "queued") {
     // A follow-up the user typed mid-turn, waiting its turn. Reads like a user
     // bubble but dimmed, tagged "Queued", with an × to drop it before it runs.
@@ -668,7 +670,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
       <div className="msg user queued">
         <div className="who"><Avatar who="user" /> You<span className="badge queued-badge">queued</span>{m.ts != null && <span className="msg-time">{clockTime(m.ts)}</span>}</div>
         <div className="msg-body">
-          {text && <Markdown>{text}</Markdown>}
+          {text && <Markdown links={links}>{text}</Markdown>}
           <AttachmentStrip items={attachments} />
           {onCancelQueued && <button className="queued-x" title="Remove from queue" aria-label="Remove from queue" onClick={() => onCancelQueued(m.id)}>{Icon.x()}</button>}
         </div>
@@ -684,8 +686,8 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     if (data.permission) {
       return <div className="msg msg-tool"><PermissionView data={data} agentLabel={agentLabel} onDecide={(d, note) => onDecidePermission?.(data.permission?.request.id || m.toolId || "", d, note)} /></div>;
     }
-    // A suggest_task call that actually filed a task carries its card BELOW the
-    // ordinary tool row rather than replacing it: the call, its input and its
+    // A suggest_task call that actually filed a task carries its card below the
+    // ordinary tool row instead of replacing it: the call, its input and its
     // result are still what happened, and the proposal is the artifact it left.
     return (
       <div className="msg msg-tool">
@@ -698,7 +700,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
   if (m.role === "system") {
     // A context-overflow failure: render the warning line plus a one-click path
     // to /clear, which resets the poisoned session and starts a fresh window
-    // (carrying a summary over). The notice string is matched verbatim — it's
+    // (carrying a summary over). The notice string is matched verbatim: it's
     // the durable, reconnect-safe channel written by lib/runner.ts.
     if (m.content.includes(CONTEXT_OVERFLOW_NOTICE)) {
       return (
@@ -716,8 +718,8 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
         </div>
       );
     }
-    // The agent's login died: same shape as the overflow case — the warning line
-    // plus the one action that fixes it (Settings → Agents, where the connect
+    // The agent's login died: same shape as the overflow case, the warning line
+    // plus the one action that fixes it (Settings → Models, where the connect
     // flow lives). Instance-wide, so the titlebar banner says it too; this is
     // the in-context copy for whoever is reading the failed task.
     if (m.content.includes(AUTH_EXPIRED_NOTICE)) {
@@ -737,11 +739,11 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
       );
     }
     // The agent's usage limit is spent: same shape as the two cases above. The
-    // only recovery is waiting for the reset — so the one action is to have
-    // the wait done for you: queue the task to resume on its own once the
-    // reset the plan meter reports has passed (lib/deferredStart.ts). Offered
-    // only on the newest message (see LimitResume) and only when a reset time
-    // is actually known; once queued, the same slot says so and offers Cancel.
+    // only recovery is waiting for the reset, so the one action queues the task
+    // to resume on its own once the reset the plan meter reports has passed
+    // (lib/deferredStart.ts). Offered only on the newest message (see
+    // LimitResume) and only when a reset time is actually known; once queued,
+    // the same slot says so and offers Cancel.
     if (m.content.includes(USAGE_LIMIT_NOTICE)) {
       return (
         <div className="msg system overflow">
@@ -756,8 +758,28 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
             {limitResume && limitResume.queuedAt === 0 && limitResume.resetAt != null && (
               <div className="overflow-actions">
                 <button className="btn btn-sm" onClick={() => limitResume.onQueue(deferredStartFor(limitResume.resetAt!))} disabled={running}
-                  title="Resume this session on its own once the usage window resets: the queued follow-up if there is one, otherwise a continue prompt">
+                  title="Resume automatically once the usage window resets, with the queued follow-up if there is one, or a continue prompt">
                   {Icon.clock()} Resume when the limit resets ({resetClock(limitResume.resetAt)})
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+    // The gateway key's LiteLLM budget is spent: same shape as the cases above,
+    // with a Retry button. There is nothing to reconnect, only the budget's
+    // own reset (or a raise) to wait for, which the gateway card in Settings →
+    // Agents shows (see lib/budgetFailure.ts).
+    if (m.content.includes(BUDGET_EXCEEDED_NOTICE)) {
+      return (
+        <div className="msg system overflow">
+          <div className="msg-body">
+            {m.content}
+            {onRetry && (
+              <div className="overflow-actions">
+                <button className="btn btn-sm" onClick={() => onRetry(m.id)} disabled={running} title="Send the failed message again">
+                  {Icon.bolt()} Retry
                 </button>
               </div>
             )}
@@ -767,7 +789,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     }
     // The approval policy blocked the turn (enterprise-managed Codex downgraded
     // the driver's "never" to an approval-requiring policy that exec mode can't
-    // service): same shape as the cases above, with a Retry button — the driver
+    // service): same shape as the cases above, with a Retry button. The driver
     // already switched future turns to the compatible "on-request" policy, so
     // resending the failed message is the recovery (see lib/approvalFailure.ts).
     if (m.content.includes(APPROVAL_BLOCKED_NOTICE)) {
@@ -789,9 +811,9 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     // The worktree couldn't be prepared, in one of the two ways stale git
     // bookkeeping causes (a crashed git's lock file, a registration pointing at
     // a directory that's gone): same shape as the cases above, with a "Repair
-    // worktree" button. Unlike them the action isn't a resend — it clears the
+    // worktree" button. Unlike them the action isn't a resend: it clears the
     // lock, prunes and re-cuts first (POST /repair-worktree), then sends the
-    // failed message — so it reports its own failure inline rather than handing
+    // failed message, and reports its own failure inline instead of handing
     // the user a second dead end (see lib/worktreeFailure.ts). The
     // non-recoverable classifications (full disk, detached HEAD) carry their
     // explanation without this notice, and fall through to the plain ⚠ line.
@@ -805,19 +827,33 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
         </div>
       );
     }
-    // The glyph the PRODUCER wrote decides the tone: ✓/ℹ/▶ is good news (the
+    // The glyph the producer wrote decides the tone: ✓/ℹ/▶ is good news (the
     // "caught up to main" sync note, the parked-queue note, a deferred start
     // firing at the usage-window reset), ⚠ is a warning (every runner error
-    // line is minted with one — tests/authFailure.test.ts and e2e/04 count
-    // errors by it) and so is ⏰ (a scheduled wakeup that will NOT fire,
-    // lib/agents/claude/sessionCrons.ts), and anything else is a quiet note —
+    // line is minted with one; tests/authFailure.test.ts and e2e/04 count
+    // errors by it) and so is ⏰ (a scheduled wakeup that will not fire,
+    // lib/agents/claude/sessionCrons.ts), and anything else is a quiet note:
     // a background command settling, a service URL, a lingered wake-up (⏵).
-    // This used to prepend ⚠ to glyph-less content, which turned every quiet
-    // notice into an error banner: `Background command "…" completed (exit
-    // code 0)` and the bare description of a command that ran fine both
-    // rendered red.
     const tone = /^[✓ℹ▶]/.test(m.content) ? "info" : /^[⚠⏰]/.test(m.content) ? "" : "note";
     return <div className={`msg system${tone ? ` ${tone}` : ""}`}><div className="msg-body">{m.content}</div></div>;
+  }
+  if (m.streaming) {
+    // The live-typing bubble (useTaskStream's LIVE_MSG_ID): the reply as the
+    // agent writes it, dropped the instant the persisted message lands under
+    // it. Reasoning gets the same collapsed, quiet treatment the "🧠 Thinking"
+    // tool row it becomes has, so the summary doesn't read as the answer.
+    const thinking = m.streaming === "reasoning";
+    return (
+      <div className={`msg assistant streaming${thinking ? " thinking" : ""}`}>
+        {!hideWho && (
+          <div className="who"><Avatar who="cc" agent={agent} /> {thinking ? "Thinking" : "Agent"}</div>
+        )}
+        <div className="msg-body">
+          {thinking ? <div className="stream-think">{m.content}</div> : <Markdown links={links}>{m.content}</Markdown>}
+          <span className="stream-caret" aria-hidden />
+        </div>
+      </div>
+    );
   }
   const isUser = m.role === "user";
   // Only user messages carry attachment markers; assistant text passes through.
@@ -834,7 +870,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
       )}
       <div className="msg-body">
         {initial && <div className="initial-tag">{Icon.spark()} sent with project context</div>}
-        {text && <Markdown>{text}</Markdown>}
+        {text && <Markdown links={links}>{text}</Markdown>}
         <AttachmentStrip items={attachments} />
       </div>
     </div>
