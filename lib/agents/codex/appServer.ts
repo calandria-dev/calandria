@@ -17,6 +17,8 @@
 import { spawn } from "node:child_process";
 import os from "node:os";
 import { codexSpawn } from "./bin";
+import { hasProcessGroups, killTree, type ProcessTreeOptions } from "../../processTree";
+import { isProjectUntrustedWarning, parseHooksList, type CodexHookInventory, type CodexConfigEdit } from "./hooks";
 
 // Only echoed back inside the server's `userAgent` string, so a fixed value
 // keeps this off package.json (which the bundler would inline wholesale).
@@ -55,6 +57,14 @@ export interface AppServerCallOptions {
    * server's own startup chatter.
    */
   settleMs?: number;
+  /**
+   * Working directory for the spawned app-server. Defaults to the user's home:
+   * an account question (rate limits, login) must not be steered by a
+   * repo-local config.toml. A cwd-scoped question (hook inventory, per-hook
+   * trust) passes its own cwd instead, since the answer is defined by what is
+   * configured for that directory.
+   */
+  cwd?: string;
 }
 
 function messageOf(e: unknown): string {
@@ -67,6 +77,38 @@ function messageOf(e: unknown): string {
 function stderrTail(s: string): string {
   const lines = s.split("\n").map((l) => l.trim()).filter(Boolean);
   return lines.slice(-2).join(" ").slice(0, 300);
+}
+
+/** The half of a spawned child this teardown needs. */
+interface KillableChild {
+  pid?: number | undefined;
+  kill(signal: NodeJS.Signals): boolean;
+}
+
+/**
+ * Stop the throwaway child. Nothing to drain and no shutdown RPC worth waiting
+ * on: the one answer we came for is already in hand, and a lingering
+ * app-server would outlive the poll.
+ *
+ * On win32 the direct child is cmd.exe wrapping codex's `.cmd` shim, so killing
+ * it leaves the CLI running with the call's `cwd` as its working directory, and
+ * Windows refuses to remove a directory that is any process's cwd. `taskkill
+ * /T` walks the parent chain, so it must run while the direct child is still
+ * alive.
+ *
+ * On POSIX the direct child is the CLI itself, and this spawn never asks for
+ * its own process group, so the negative-pid kill inside killTree would signal
+ * this process too. Keep the tree kill behind the platform check.
+ *
+ * `opts` is for the test that exercises the win32 branch on POSIX.
+ */
+export function teardownChild(child: KillableChild, opts: ProcessTreeOptions = {}): void {
+  if (!hasProcessGroups(opts.platform)) killTree(child.pid ?? 0, "SIGKILL", opts);
+  try {
+    child.kill("SIGKILL");
+  } catch {
+    /* already gone */
+  }
 }
 
 /**
@@ -84,9 +126,11 @@ export function callAppServer(
     let child;
     try {
       child = spawn(spec.command, spec.args, {
-        // Home rather than a task worktree: this asks about the account, and a
-        // repo-local config.toml must not steer it.
-        cwd: os.homedir(),
+        // Home for an account question (rate limits, login): a repo-local
+        // config.toml must not steer it. A cwd-scoped question (hook
+        // inventory, trust writes) passes its own cwd via opts.cwd instead,
+        // since the answer there is defined by what that directory configures.
+        cwd: opts.cwd ?? os.homedir(),
         env: process.env,
         stdio: ["pipe", "pipe", "pipe"],
         windowsVerbatimArguments: spec.windowsVerbatimArguments,
@@ -107,14 +151,7 @@ export function callAppServer(
       settled = true;
       clearTimeout(timer);
       if (settleTimer) clearTimeout(settleTimer);
-      // Nothing to drain and no shutdown RPC worth waiting on: the one answer
-      // we came for is already in hand, and a lingering app-server would
-      // outlive the poll.
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        /* already gone */
-      }
+      teardownChild(child);
       resolve({ ...r, handshook });
     };
 
@@ -232,4 +269,39 @@ export async function readConfigWarnings(): Promise<ConfigWarningProbe> {
     },
   );
   return { warnings, error: r.handshook ? null : (r.error ?? "codex app-server did not start") };
+}
+
+/**
+ * The hook inventory for one working directory (`hooks/list`).
+ *
+ * A settle window is required: an untrusted-project `configWarning` is pushed
+ * around the response rather than strictly before it, so without holding the
+ * child open past the answer the untrust signal would race it and sometimes
+ * be missed, leaving an empty inventory indistinguishable from "no hooks
+ * configured".
+ */
+export async function listCodexHooks(cwd: string): Promise<{ inventory?: CodexHookInventory; error?: string }> {
+  let suppressedReason: string | undefined;
+  const r = await callAppServer(
+    "hooks/list",
+    { cwds: [cwd] },
+    {
+      cwd,
+      settleMs: SETTLE_MS,
+      onNotification: (method, params) => {
+        if (method !== "configWarning") return;
+        const summary = (params as { summary?: unknown } | undefined)?.summary;
+        if (typeof summary === "string" && isProjectUntrustedWarning(summary)) suppressedReason = summary.trim();
+      },
+    },
+  );
+  if (r.error) return { error: r.error };
+  return { inventory: parseHooksList(r.data, suppressedReason) };
+}
+
+/** Write per-hook trust/enabled state via the generic `config/batchWrite` request. */
+export async function writeCodexConfig(edits: CodexConfigEdit[], cwd: string): Promise<{ ok: boolean; error?: string }> {
+  const r = await callAppServer("config/batchWrite", { edits }, { cwd });
+  if (r.error) return { ok: false, error: r.error };
+  return { ok: true };
 }

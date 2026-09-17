@@ -255,6 +255,40 @@ Two other upstream differences show up in the UI:
 
 `GET /api/agents` reports whether each environment mounts inherited external MCP servers.
 
+### Hooks
+
+A Codex hook runs a command, an MCP tool, or a prompt on a lifecycle event such as a tool call,
+outside Calandria's permission gate. Codex reviews hooks itself: it skips a hook it has not
+trusted, and trust is tied to the hook's exact definition, so editing a trusted hook untrusts it
+again.
+
+**Settings → Run defaults → Codex** lists every hook configured for the selected project's
+working directory. Each row shows the event it fires on, what it does, its source (your own
+config, the project's config, a plugin, an MDM policy, and so on), and a trust chip: Trusted, Not
+reviewed, Modified, or Managed. Reviewing a hook here writes the trust record Codex's own CLI
+reads; withdrawing trust removes it. A hook an administrator pinned (Managed) cannot be reviewed
+away.
+
+A hook that will not run says so on its row, with a reason: disabled, never reviewed, or edited
+since it was reviewed. Codex gives no other signal that a configured hook is inert, so this panel
+is the only place to see it.
+
+An untrusted **project** suppresses every project-local hook and says nothing about it in the
+ordinary answer. The panel shows a banner naming why the list is empty instead. Trust the project
+first, through Codex's own CLI prompt, then reload the panel.
+
+By default Calandria posts a transcript notice only for a hook run that blocked a call, failed, or
+otherwise had something to say. Set `CALANDRIA_CODEX_HOOK_TRACE=1` to trace every run, including a
+clean pass, while you work out what a hook does.
+
+Calandria adds no hook gate of its own. Codex already refuses to run an unreviewed hook, and
+reviewing a hook is a judgment about a script, separate from the permission card every tool call
+still goes through.
+
+Verified against codex-cli 0.153.0. Codex exposes no protocol method to mark a hook trusted;
+Calandria writes the trust record through the CLI's own generic configuration-write request, the
+one its own TUI uses for the same purpose. A future CLI release could add a dedicated method.
+
 ### Linux sandbox
 
 Codex confines `workspace-write` and `read-only` turns with bubblewrap, which needs to

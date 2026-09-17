@@ -14,6 +14,8 @@
 // installed.
 
 import type { ThreadEvent, ThreadItem, Usage } from "@openai/codex-sdk";
+import { parseHookRun, isCleanHookRun, hookRunDenied, hookRunNotice } from "./hooks";
+import { codexHookTrace } from "../../config";
 
 // ---------- app-server wire shapes (subset) ----------
 
@@ -205,6 +207,33 @@ export function mapNotification(method: string, params: unknown, state: AppServe
       const err = p.error as { message?: string } | undefined;
       return { events: [{ type: "error", message: err?.message || "Codex reported an error" }], warning: err?.message };
     }
+    // A hook fired. `run` (not `item`, unlike item/started) is the summary
+    // ../../codex/hooks.ts parses. A thread-scoped hook (sessionStart,
+    // sessionEnd) carries turnId: null and is still ours to show; forHookRun
+    // gates on it separately from forThisTurn, which would drop a null id.
+    case "hook/started": {
+      const run = parseHookRun(p.run);
+      if (!run) return NONE;
+      if (!forHookRun(p, state)) return NONE;
+      // A started event carries nothing a completion doesn't, so it is only
+      // worth a line while tracing every run; a preToolUse hook firing on
+      // every tool call would otherwise flood the transcript for no gain.
+      if (!codexHookTrace()) return NONE;
+      return { events: [], notice: hookRunNotice(run) };
+    }
+    case "hook/completed": {
+      const run = parseHookRun(p.run);
+      if (!run) return NONE;
+      if (!forHookRun(p, state)) return NONE;
+      // A hook that blocked a call or failed is the one thing a user cannot
+      // infer from the rest of the transcript, so it always posts a notice.
+      // hookRunDenied is already implied by a non-clean run; restated here so
+      // a denial can never read as suppressed even if that implication
+      // changes. A clean pass is noise and only posts while tracing.
+      const notable = hookRunDenied(run) || !isCleanHookRun(run);
+      if (!notable && !codexHookTrace()) return NONE;
+      return { events: [], notice: hookRunNotice(run) };
+    }
     case "configWarning": {
       const summary = String(p.summary ?? "");
       if (!summary || state.warned.has(summary)) return { events: [], warning: summary };
@@ -226,6 +255,18 @@ function forThisTurn(p: Record<string, unknown>, state: AppServerTurnState): boo
   // (impossible with a process per turn, cheap to guard) is dropped.
   const t = p.turnId ?? (p.turn as { id?: string } | undefined)?.id;
   return !!state.turnId && t === state.turnId;
+}
+
+/**
+ * The turn gate a hook notification needs, distinct from forThisTurn: a
+ * thread-scoped hook (sessionStart, sessionEnd) reports turnId: null, which
+ * still belongs to this session's own thread and has no turn to compare
+ * against, so it is accepted unconditionally. A turn-scoped hook must match
+ * the turn we started, same as every other notification.
+ */
+function forHookRun(p: Record<string, unknown>, state: AppServerTurnState): boolean {
+  if (p.turnId == null) return true;
+  return !!state.turnId && p.turnId === state.turnId;
 }
 
 // ---------- shape conversion ----------
