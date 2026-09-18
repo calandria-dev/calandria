@@ -1,6 +1,6 @@
 /* Shared contracts for Settings → Advanced: the scope-aware environment
  * catalog, its stored/presented row shapes, and the process-local app
- * bootstrap slot. Pure types only — no runtime behavior lives here, so this
+ * bootstrap slot. Pure types only: no runtime behavior lives here, so this
  * file is safe for both server modules and the client bundle to import.
  */
 
@@ -53,7 +53,7 @@ export type ValidationResult =
   | { readonly ok: true }
   | { readonly ok: false; readonly code: ValidationErrorCode; readonly reason: string };
 
-/** A saved override, on disk. `value` is plaintext even for a secret row —
+/** A saved override, on disk. `value` is plaintext even for a secret row:
  * masking happens only when presenting a row, never in storage. */
 export type StoredVariable = {
   id: string;
