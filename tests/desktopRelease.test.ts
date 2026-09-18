@@ -97,6 +97,25 @@ describe("desktop release publishing", () => {
   });
 });
 
+describe("Linux desktop native install", () => {
+  it("exports setup-node's local headers before both node-pty installs", () => {
+    const workflow = fs.readFileSync(path.join(ROOT, ".github", "workflows", "test.yml"), "utf8");
+    const desktop = workflow.slice(workflow.indexOf("  desktop:\n"), workflow.indexOf("  windows-e2e:\n"));
+    const headerStep = desktop.indexOf("- name: Use setup-node headers for native builds");
+    const rootInstall = desktop.indexOf("- run: npm ci");
+    const payloadInstall = desktop.indexOf("npm run payload -- --no-build");
+
+    expect(desktop).toContain("runs-on: ubuntu-24.04");
+    expect(desktop).toContain("node-pty 1.1.0 ships no Linux prebuild");
+    expect(desktop).toContain("node_root=$(dirname \"$(dirname \"$(node -p 'process.execPath')\")\")");
+    expect(desktop).toContain('"$node_root/include/node/node.h"');
+    expect(desktop).toContain('echo "npm_config_nodedir=$node_root" >> "$GITHUB_ENV"');
+    expect(headerStep).toBeGreaterThan(-1);
+    expect(rootInstall).toBeGreaterThan(headerStep);
+    expect(payloadInstall).toBeGreaterThan(rootInstall);
+  });
+});
+
 // The `publish` block pinned above is required for a release to work, and it
 // also determines whether every other lane fails unless it says otherwise.
 // electron-builder does not treat a missing `--publish` as "don't":
