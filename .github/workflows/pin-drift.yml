@@ -48,15 +48,19 @@
 # changes the turn contract and needs its own behavioral review.
 #
 # WHY THE BUMP JOB DISPATCHES CI. A push made with `GITHUB_TOKEN` fires no
-# `push` and no `pull_request` workflow. That is GitHub's recursion guard, and
-# it means the bot PR would sit at zero checks and read CLEAN, which is the exact
-# shape of the bug the `changes` job in test.yml was rewritten to avoid. The fix
-# is neither a PAT nor a weakened ruleset: `workflow_dispatch` is not subject to
-# the guard, check runs attach to the head SHA rather than to the PR, and the
-# PR's head SHA is the bot branch's head. The job dispatches `Test`, the desktop
-# release skip check, and `Publish image` against that branch. It refuses to
-# finish until each workflow has a run whose `headSha` is the commit it pushed.
-# A missing run means a PR with missing checks, and that is a red job here.
+# `push` workflow. A `pull_request` workflow caused by a PR opened with that
+# token can start in `action_required`, pending approval, so the bot PR can
+# have held checks even though the workflows exist. That is GitHub's recursion
+# and approval behavior. The fix is neither a PAT nor a weakened ruleset:
+# `workflow_dispatch` supplies deterministic checks, and the job approves only
+# the held `pull_request` runs for the exact PR head after the PR exists. Check
+# runs attach to the head SHA rather than to the PR, and the PR's head SHA is
+# the bot branch's head. The job dispatches `Test`, the desktop release skip
+# check, and `Publish image` against that branch. It refuses to finish until
+# each dispatched workflow has a run whose `headSha` is the commit it pushed,
+# and until the expected `PR title`, `Test` and `Publish image` pull-request
+# runs exist. A missing run means a PR with missing checks, and that is a red
+# job here.
 name: Pin drift
 
 on:
@@ -535,6 +539,60 @@ jobs:
               --comment "Superseded by #${{ steps.pr.outputs.number }} on \`$BOT_BRANCH\`. Closed by \`Pin drift\`."
             echo "Closed legacy PR #$legacy."
           fi
+
+      - name: Approve held pull-request checks for the exact head
+        if: (env.AGY_CHANGED == 'true' || env.NPM_CHANGED == 'true') && env.DRY_RUN != 'true'
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          SHA: ${{ steps.branch.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+
+          # A PR opened by GITHUB_TOKEN can create these pull_request runs in
+          # action_required. Wait for all three expected workflows before
+          # approving anything, and filter every API result by both the PR and
+          # exact head SHA so an older or unrelated run can never be approved.
+          runs_file="$RUNNER_TEMP/pull-request-runs.json"
+          missing="PR title,Test,Publish image"
+          for _ in $(seq 1 24); do
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${SHA}&per_page=100" > "$runs_file"
+            missing="$(jq -r --arg sha "$SHA" --arg pr "$PR_NUMBER" '
+              ["PR title", "Test", "Publish image"] as $expected
+              | [.workflow_runs[]
+                | select(.event == "pull_request" and .head_sha == $sha)
+                | select(any(.pull_requests[]?; (.number | tostring) == $pr))
+                | .name]
+              | ($expected - unique)
+              | join(",")
+            ' "$runs_file")"
+            if [ -z "$missing" ]; then
+              break
+            fi
+            sleep 5
+          done
+
+          if [ -n "$missing" ]; then
+            echo "::error::expected pull_request workflow runs never materialized for $SHA: $missing"
+            exit 1
+          fi
+
+          while IFS=$'\t' read -r run_id run_name; do
+            [ -n "$run_id" ] || continue
+            echo "Approving $run_name run $run_id for exact head $SHA."
+            gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/approve" \
+              >/dev/null
+          done < <(jq -r --arg sha "$SHA" --arg pr "$PR_NUMBER" '
+            .workflow_runs[]
+            | select(.event == "pull_request" and .head_sha == $sha)
+            | select(any(.pull_requests[]?; (.number | tostring) == $pr))
+            | select(.name == "PR title" or .name == "Test" or .name == "Publish image")
+            | select(.conclusion == "action_required")
+            | [.id, .name]
+            | @tsv
+          ' "$runs_file")
+
+          echo "All expected pull_request workflow runs exist for exact head $SHA."
 
       - name: Queue auto-merge after verifying the PR head
         if: (env.AGY_CHANGED == 'true' || env.NPM_CHANGED == 'true') && env.DRY_RUN != 'true'

@@ -52,13 +52,14 @@ Requiring a check that is usually skipped buys nothing, since skipped satisfies 
 would make every labelled PR wait half an hour.
 
 **The agent CLI pin PR reports the seven required contexts from `workflow_dispatch` runs.** A push
-made with `GITHUB_TOKEN` fires no `push` or `pull_request` workflow, so
-`.github/workflows/pin-drift.yml` dispatches `test.yml`, `release-desktop.yml` and
-`publish-image.yml` against `bot/agent-cli-pins`. Check runs attach to the branch head, so the same
-seven contexts appear under the same display names and satisfy the rule. The workflow verifies the
-exact PR head before it queues squash auto-merge. No PAT or bypass entry is needed. If this PR ever
-shows an empty check list, read the `bump` job's log. It fails when a dispatch produces no run for
-the SHA it pushed.
+made with `GITHUB_TOKEN` fires no `push` workflow. A PR opened by that token can create its
+`pull_request` workflows in `action_required`, so `.github/workflows/pin-drift.yml` dispatches
+`test.yml`, `release-desktop.yml` and `publish-image.yml` against `bot/agent-cli-pins`, then waits
+for and approves the `PR title`, `Test` and `Publish image` runs held for the exact PR head. Check
+runs attach to the branch head, so the same seven contexts appear under the same display names and
+satisfy the rule. The workflow fails if an expected exact-head run never materializes, and verifies
+the exact PR head before it queues squash auto-merge. No PAT or bypass entry is needed. If this PR
+ever shows an empty check list, read the `bump` job's log.
 
 Repository auto-merge must stay enabled for this path. Verify the setting with:
 

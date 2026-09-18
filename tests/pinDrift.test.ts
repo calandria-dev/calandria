@@ -325,6 +325,23 @@ describe("pin drift workflow", () => {
       "--json state,isDraft,headRefOid,autoMergeRequest",
     );
   });
+
+  it("approves only materialized exact-head pull_request runs", () => {
+    expect(workflow).toContain(
+      'name: Approve held pull-request checks for the exact head',
+    );
+    expect(workflow).toContain('["PR title", "Test", "Publish image"]');
+    expect(workflow).toContain('.event == "pull_request" and .head_sha == $sha');
+    expect(workflow).toContain(
+      'select(any(.pull_requests[]?; (.number | tostring) == $pr))',
+    );
+    expect(workflow).toContain('"repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/approve"');
+    expect(workflow).toContain('select(.conclusion == "action_required")');
+    expect(workflow).toContain(
+      'expected pull_request workflow runs never materialized for $SHA',
+    );
+    expect(workflow).toContain('exit 1');
+  });
 });
 
 /**
