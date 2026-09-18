@@ -14,13 +14,17 @@ import { FIXTURES_DIR, GIT_ENV } from "./env";
  * another agent" and welcome-coach modals scrim the whole UI and would
  * intercept every click). Onboarding itself is not bypassed here: 01-onboarding
  * covers the wizard; everything else calls ensureOnboarded() in beforeAll.
+ *
+ * `search` appends a query string ("?project=…"), the channel a spec uses to
+ * pin which project the shell lands on instead of depending on where the
+ * suite's accumulated project list happens to start.
  */
-export async function gotoApp(page: Page): Promise<void> {
+export async function gotoApp(page: Page, search = ""): Promise<void> {
   await page.addInitScript(() => {
     localStorage.setItem("calandria_agent_nudge_dismissed", "1");
     localStorage.setItem("calandria:welcomeCoach:dismissed", "1");
   });
-  await page.goto("/");
+  await page.goto(`/${search}`);
 }
 
 let seq = 0;
