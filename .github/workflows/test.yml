@@ -678,6 +678,21 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
+      # node-pty 1.1.0 ships no Linux prebuild, so its install always compiles
+      # with node-gyp. Point node-gyp at the headers bundled with the Node that
+      # setup-node installed. This avoids a separate nodejs.org header download;
+      # GITHUB_ENV carries the setting through root npm ci and the payload npm ci
+      # run later by desktop/scripts/build-payload.js.
+      - name: Use setup-node headers for native builds
+        shell: bash
+        run: |
+          node_root=$(dirname "$(dirname "$(node -p 'process.execPath')")")
+          if [ ! -f "$node_root/include/node/node.h" ]; then
+            echo "::error::setup-node Node headers not found under $node_root"
+            exit 1
+          fi
+          echo "npm_config_nodedir=$node_root" >> "$GITHUB_ENV"
+
       - run: npm ci
 
       # The only Linux-specific step in this job — a macOS or Windows desktop
