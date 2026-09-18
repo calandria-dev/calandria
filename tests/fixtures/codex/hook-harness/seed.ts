@@ -45,10 +45,19 @@ export function harnessRoot(): string {
  * Wipe and re-create the harness root, seed a private CODEX_HOME and a git
  * workspace carrying a project-local PreToolUse hook, and return every path the
  * caller needs. `model` names the model the fixture answers as; it never
- * reaches a real catalog, so any string does.
+ * reaches a real catalog, so any string does. `root` puts one case's evidence in
+ * its own directory, so a matrix of runs does not overwrite itself. `features`
+ * writes a `[features]` block into the private config.toml. `trustProject:
+ * false` omits the workspace's trust entry, the control under which the CLI
+ * reports no hooks at all.
  */
-export function seedHarness({ model = "calandria-harness-model", denyMarker = "DENY_ME" } = {}): HarnessPaths {
-  const root = harnessRoot();
+export function seedHarness({
+  model = "calandria-harness-model",
+  denyMarker = "DENY_ME",
+  root = harnessRoot(),
+  features = {} as Record<string, boolean>,
+  trustProject = true,
+}: { model?: string; denyMarker?: string; root?: string; features?: Record<string, boolean>; trustProject?: boolean } = {}): HarnessPaths {
   fs.rmSync(root, { recursive: true, force: true });
 
   const codexHome = path.join(root, "codex-home");
@@ -115,11 +124,14 @@ export function seedHarness({ model = "calandria-harness-model", denyMarker = "D
       "# Every run wipes and rewrites it. Nothing real belongs in here.",
       `model = ${JSON.stringify(model)}`,
       "",
-      `[projects.${JSON.stringify(workspace)}]`,
-      "# Project-local hooks are inert until this is set: hooks/list returns an",
-      "# empty array and the only signal is a configWarning naming the folder.",
-      'trust_level = "trusted"',
-      "",
+      // Codex feature flags. `code_mode` swaps the tool exposure surface: MCP
+      // tools stop being advertised as callable items in their own right and
+      // are reached from JavaScript run inside the `exec` tool instead.
+      ...(Object.keys(features).length ? ["[features]", ...Object.entries(features).map(([k, v]) => `${k} = ${v}`), ""] : []),
+      // Project-local hooks are inert until this is set: hooks/list returns an
+      // empty array and the only signal is a configWarning naming the folder.
+      // `trustProject: false` leaves it out, which is the untrusted control.
+      ...(trustProject ? [`[projects.${JSON.stringify(workspace)}]`, 'trust_level = "trusted"', ""] : []),
       "[mcp_servers.ledger]",
       `command = ${JSON.stringify(process.execPath)}`,
       `args = [${JSON.stringify(path.join(HARNESS_FIXTURES, "mcp-stub.mjs"))}]`,

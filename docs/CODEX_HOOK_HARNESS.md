@@ -259,6 +259,47 @@ Event names the binary accepts: `PreToolUse`, `PostToolUse`,
 `PermissionRequest`, `PreCompact`, `PostCompact`, `SessionStart`, `SessionEnd`,
 `SubagentStart`, `SubagentStop`, `Interrupt`.
 
+## Nested code-mode calls
+
+`tests/codexCodeModeMatrix.test.ts` builds on this harness and runs the same
+allow/deny pair down three call paths, plus four skip controls:
+
+```bash
+CALANDRIA_CODEX_HOOK_HARNESS=1 npx vitest run tests/codexCodeModeMatrix.test.ts
+```
+
+Codex's `code_mode` feature adds a tool named `exec` that runs JavaScript in a
+V8 isolate and hangs every other tool off a global `tools` object, reached as
+`tools.mcp__<server>__<tool>`. It is off by default; `seedHarness({ features: {
+code_mode: true } })` writes it into the private `config.toml`. Enabling it adds
+`exec` alongside the ordinary tools, so both call paths are reachable in one
+session. `exec` is advertised as a `custom` tool with a lark grammar, so the
+call item is a `custom_tool_call` whose `input` is raw source text. The fixture
+does not model that shape; the matrix emits it with a `raw` step.
+
+What the matrix measured against codex-cli 0.153.0:
+
+- A `PreToolUse` hook fires once per nested call, sequential or concurrent,
+  with the same payload a direct call produces: canonical
+  `tool_name: "mcp__<server>__<tool>"` and the real `tool_input`.
+- Denying a nested call stops it. The MCP stub records nothing for it and the
+  call rejects inside the isolate with
+  `Tool call blocked by PreToolUse hook: <reason>. Tool: <tool_name>`.
+- The gate is per call. Two calls in flight under `Promise.allSettled`, one
+  denied and one not, produce one stub invocation and one denial.
+- A nested call's `tool_use_id` is `exec-<uuid>`, minted by the code-mode host,
+  and matches the id of the `tool` StreamEvent on the transcript. A direct
+  call's is the model's own `call_id`.
+- The outer `exec` call fires no hook. A `matcher` written against `exec` sees
+  nothing; interception happens one level down.
+- The trusted hash does not cover the hooks file's top-level `description`.
+  Editing it leaves the hook `trusted` and running. The edit has to touch the
+  handler entry to drop the hook to `modified`.
+
+Full evidence, including the controls and what was not measured, is in the notes
+repo: `measurements/2026-09-17-codex-nested-code-mode-hook-interception.md` at
+https://github.com/calandria-dev/calandria-notes.
+
 ## Relationship to the fake app-server
 
 `tests/fixtures/codex/fake-app-server.mjs` has `hooks`,
