@@ -79,10 +79,13 @@ push is not a successful CI run.
   owns the Claude Code, Codex and Antigravity CLI pins in the Dockerfile: it force-pushes that
   branch from main when an upstream pin moves, refreshes one conventional-commit PR, and dispatches
   `test.yml`, `release-desktop.yml` (`check_only=true`) and `publish-image.yml` (`publish=false`,
-  `no_cache=true`) against the branch head so the PR has every required check. The workflow verifies
-  the exact PR head before enabling squash auto-merge. GitHub merges it only after all required
-  checks pass. Never hand-edit the branch, since the next run recreates it. If the pins are fixed
-  some other way, the next run closes the PR and deletes the branch.
+  `no_cache=true`) against the branch head so the PR has every required check. A PR opened by the
+  built-in `GITHUB_TOKEN` can also create `PR title`, `Test` and `Publish image` `pull_request` runs
+  in `action_required`; the workflow waits for those exact-head runs and approves only those held
+  runs with its `actions: write` token. It fails if an expected run never appears, then verifies the
+  exact PR head before enabling squash auto-merge. GitHub merges it only after all required checks
+  pass. Never hand-edit the branch, since the next run recreates it. If the pins are fixed some
+  other way, the next run closes the PR and deletes the branch.
 - **The buildx/BuildKit version pin in `publish-image.yml` is intentional**: its header comment
   explains why. Don't upgrade it away without reading that comment first.
 - **Release automation may be written and fixed freely by agents.** release-please, the

@@ -176,8 +176,17 @@ export function useShell() {
   // Latest agents bundle for the live stream handler (context-window sizing),
   // read without re-subscribing the EventSource.
 
+  // A project switch fires this load again while the previous one is still in
+  // flight, and the two responses can land in either order. Each load takes a
+  // monotonic ticket and writes nothing unless its ticket is still the newest,
+  // so a superseded response can never leave tasksFor naming a project that is
+  // no longer selected with another project's rows beside it.
+  const tasksTicket = useRef(0);
+
   const loadTasks = useCallback(async (projectId: string, selectFirst = true) => {
+    const ticket = ++tasksTicket.current;
     const data = await jget<{ tasks: TaskRow[]; tags?: TagRow[] }>(`/api/projects/${projectId}`);
+    if (ticket !== tasksTicket.current) return;
     setTasks(data.tasks);
     setTags(data.tags ?? []);
     setTasksFor(projectId);
@@ -203,13 +212,22 @@ export function useShell() {
     try { const { ids } = await jget<{ ids: string[] }>("/api/running"); setRunning(new Set(ids)); } catch {}
   }, []);
 
+  // Same ticket guard as loadTasks: this load is fired from the same
+  // project-switch effect, so a superseded response would leave the command
+  // palette listing another project's runbooks.
+  const runbooksTicket = useRef(0);
+
   const loadRunbooks = useCallback(async (projectId: string) => {
     // Swallowed: the palette degrades to having no runbook rows, which is the
     // pre-feature behavior. The Runbooks card is where a fetch failure is worth
     // reporting, and it reports its own.
+    const ticket = ++runbooksTicket.current;
     try {
-      setRunbooks((await jget<RunbooksResponse>(`/api/projects/${projectId}/runbooks`)).runbooks);
+      const { runbooks } = await jget<RunbooksResponse>(`/api/projects/${projectId}/runbooks`);
+      if (ticket !== runbooksTicket.current) return;
+      setRunbooks(runbooks);
     } catch {
+      if (ticket !== runbooksTicket.current) return;
       setRunbooks([]);
     }
   }, []);
@@ -369,7 +387,9 @@ export function useShell() {
   // palette has to feel instant. Fetching on open would render an empty
   // Commands group for a beat, every time.
   useEffect(() => {
-    if (!selProj) { setRunbooks([]); return; }
+    // Deselection takes a ticket too, so a load still in flight for the project
+    // just left cannot repopulate the palette after this clear.
+    if (!selProj) { runbooksTicket.current++; setRunbooks([]); return; }
     void loadRunbooks(selProj);
   }, [selProj, loadRunbooks]);
 
