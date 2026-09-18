@@ -5,21 +5,22 @@
 // (CLAUDE_CODE_VERSION, CODEX_VERSION, and the exactly pinned
 // `@anthropic-ai/claude-agent-sdk` in package.json) still builds but can ship a
 // model the CLI is too old to run, so it's reported on staleness instead. Run
-// daily by .github/workflows/pin-drift.yml, which files or updates one labeled
-// issue.
+// daily by .github/workflows/pin-drift.yml. That workflow automates the CLI
+// pins and files or updates one labeled issue for the pins that still require
+// manual review.
 //
-// The agy pins are the exception. `--update-agy` rewrites AGY_VERSION and both
-// SHA-512 ARGs from the manifests this run already fetched, and the workflow
-// turns that into a pull request instead of an issue paragraph. All three ARGs
-// move together or none of them move, a manifest pair that disagrees on the
-// version is refused outright, and the agy findings drop out of the report so
-// the issue keeps reporting only the pins a human still has to bump. The
-// checksum a bump writes is reviewed by building the image on the bot branch,
-// which is what .github/workflows/pin-drift.yml dispatches.
+// `--update-agy` rewrites AGY_VERSION and both SHA-512 ARGs from the manifests
+// this run already fetched. `--update-npm` records stale Claude Code and Codex
+// CLI versions for the same bot pull request. All related pins move together
+// or none of them move, malformed upstream data is refused, and automated
+// findings drop out of the issue report. The workflow dispatches the complete
+// test, desktop and image check set against the exact bot-branch head before
+// enabling auto-merge.
 //
 // Usage: node scripts/check-pin-drift.mjs [--dockerfile <path>]
 //        [--package-json <path>] [--report <path>]
 //        [--update-agy] [--agy-summary <path>] [--apply-agy <path>]
+//        [--update-npm] [--npm-summary <path>] [--apply-npm <path>]
 // Exit codes: 0 = current, 1 = drift found (report written), 2 = check itself failed.
 
 import { readFile, writeFile } from "node:fs/promises";
@@ -88,6 +89,9 @@ function parseArgs(argv) {
     updateAgy: false,
     agySummary: null,
     applyAgy: null,
+    updateNpm: false,
+    npmSummary: null,
+    applyNpm: null,
   };
   const paths = {
     "--dockerfile": "dockerfile",
@@ -95,11 +99,15 @@ function parseArgs(argv) {
     "--report": "report",
     "--agy-summary": "agySummary",
     "--apply-agy": "applyAgy",
+    "--npm-summary": "npmSummary",
+    "--apply-npm": "applyNpm",
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--update-agy") {
       opts.updateAgy = true;
+    } else if (arg === "--update-npm") {
+      opts.updateNpm = true;
     } else if (paths[arg]) {
       const value = argv[++i];
       if (!value) throw new Error(`${arg} needs a path`);
@@ -116,6 +124,16 @@ function parseArgs(argv) {
   if (opts.applyAgy && opts.updateAgy) {
     throw new Error(
       "--apply-agy replays a decision --update-agy already made; pass one or the other",
+    );
+  }
+  if (opts.npmSummary && !opts.updateNpm) {
+    throw new Error(
+      "--npm-summary describes what --update-npm wrote, so it needs --update-npm",
+    );
+  }
+  if (opts.applyNpm && opts.updateNpm) {
+    throw new Error(
+      "--apply-npm replays a decision --update-npm already made; pass one or the other",
     );
   }
   return opts;
@@ -279,6 +297,87 @@ export function applyAgyPin(source, plan, dockerfilePath = "Dockerfile") {
     changed = true;
   }
   return { source: out, changed };
+}
+
+const CLI_NPM_PLAN = [
+  { pkg: "@anthropic-ai/claude-code", pin: "claudeCode", arg: "CLAUDE_CODE_VERSION" },
+  { pkg: "@openai/codex", pin: "codexVersion", arg: "CODEX_VERSION" },
+];
+
+/**
+ * Selects stale CLI pins for an automated bump. The Agent SDK has no
+ * Dockerfile CLI coupling and stays on its behavioral-review path. The Codex
+ * SDK moves to the same `codexVersion` when npm regenerates package-lock.json.
+ */
+export function npmBumpPlan(pins, observed, stale) {
+  const staleByPackage = new Map((stale ?? []).map((entry) => [entry.pkg, entry]));
+  const plan = {};
+  for (const { pkg, pin } of CLI_NPM_PLAN) {
+    const entry = staleByPackage.get(pkg);
+    if (!entry) continue;
+    const version = observed?.[pkg];
+    if (typeof version !== "string" || !/^\d+\.\d+\.\d+$/.test(version)) {
+      throw new Error(`${pkg} latest is not an exact stable semver: ${String(version)}`);
+    }
+    if (version === pins[pin].value) continue;
+    plan[pin] = version;
+  }
+  return Object.keys(plan).length ? plan : null;
+}
+
+function replaceExactArg(source, arg, value, filePath) {
+  if (typeof value !== "string" || !/^\d+\.\d+\.\d+$/.test(value)) {
+    throw new Error(`the npm bump has no valid exact version for ${arg}`);
+  }
+  const re = new RegExp(`^ARG ${arg}=(\\S+)`, "m");
+  const match = re.exec(source);
+  if (!match) {
+    throw new Error(`could not find \`ARG ${arg}\` in ${filePath}: the pin moved or was renamed`);
+  }
+  if (match[1] === value) return { source, changed: false };
+  const start = match.index + match[0].length - match[1].length;
+  return {
+    source: source.slice(0, start) + value + source.slice(start + match[1].length),
+    changed: true,
+  };
+}
+
+/** Apply CLI ARG pins without touching unrelated Dockerfile text. */
+export function applyNpmDockerfilePins(source, plan, dockerfilePath = "Dockerfile") {
+  let out = source;
+  let changed = false;
+  for (const { pin, arg } of CLI_NPM_PLAN) {
+    if (plan?.[pin] === undefined) continue;
+    const applied = replaceExactArg(out, arg, plan[pin], dockerfilePath);
+    out = applied.source;
+    changed ||= applied.changed;
+  }
+  return { source: out, changed };
+}
+
+/**
+ * Update the exact Codex SDK dependency. package-lock.json must be regenerated
+ * with `npm install --package-lock-only` by the workflow after this operation.
+ */
+export function applyNpmPackagePins(source, plan, packageJsonPath = "package.json") {
+  if (plan?.codexVersion === undefined) return { source, changed: false };
+  const value = plan.codexVersion;
+  if (!/^\d+\.\d+\.\d+$/.test(value)) {
+    throw new Error("the npm bump has no valid exact version for @openai/codex-sdk");
+  }
+  let json;
+  try {
+    json = JSON.parse(source);
+  } catch {
+    throw new Error(`${packageJsonPath} is not JSON`);
+  }
+  if (json.dependencies?.["@openai/codex-sdk"] === undefined) {
+    throw new Error(`could not find \`@openai/codex-sdk\` in ${packageJsonPath} dependencies`);
+  }
+  if (json.dependencies["@openai/codex-sdk"] === value) return { source, changed: false };
+  const re = new RegExp(`(\"@openai/codex-sdk\"\\s*:\\s*\")[^\"]+(\")`);
+  if (!re.test(source)) throw new Error(`could not locate \`@openai/codex-sdk\` in ${packageJsonPath}`);
+  return { source: source.replace(re, `$1${value}$2`), changed: true };
 }
 
 /**
@@ -504,13 +603,17 @@ export function npmPinEntries(pins, packagePins) {
 }
 
 /**
- * `updateAgy` drops the agy rows from `findings`. Under --update-agy the bump
- * is a pull request, and repeating it in the issue would ask a human to do
- * work a branch is already carrying. The manifests are still fetched and still
- * appear in the observed-upstream table, since that is what the bump is
- * computed from.
+ * `updateAgy` drops AGY rows from `findings`, and `updateNpm` drops stale CLI
+ * rows from `stale`. Those changes share one bot pull request, so repeating
+ * them in the issue would duplicate work the branch already carries. The
+ * upstream values still appear in the observed table because they are the
+ * source of each saved bump plan.
  */
-async function collectFindings(pins, packagePins, { updateAgy = false } = {}) {
+async function collectFindings(
+  pins,
+  packagePins,
+  { updateAgy = false, updateNpm = false } = {},
+) {
   const findings = [];
 
   const gh = Object.fromEntries(
@@ -602,39 +705,32 @@ async function collectFindings(pins, packagePins, { updateAgy = false } = {}) {
     });
   }
 
-  return { findings, stale, entries, observed: { gh, agy, npm } };
+  const npmBumps = updateNpm ? npmBumpPlan(pins, npm, stale) : null;
+  const bumpedPackages = new Set(
+    npmBumps
+      ? CLI_NPM_PLAN.filter(({ pin }) => npmBumps[pin]).map(({ pkg }) => pkg)
+      : [],
+  );
+  return {
+    findings,
+    stale: updateNpm
+      ? stale.filter(({ pkg }) => !bumpedPackages.has(pkg))
+      : stale,
+    entries,
+    npmBumps,
+    observed: { gh, agy, npm },
+  };
 }
 
-// The step no job can take. Exercising an agent CLI needs a real Claude or
-// ChatGPT login, which CI does not have and should not be handed. So this is
-// a documented manual step, carried in the issue body itself instead of a
-// doc that would go stale unopened.
+// The Agent SDK remains manual because it is the in-process turn contract.
+// The CLI pins above run as subprocesses and move through the bot PR instead.
+// Keep the manual SDK checklist in the issue body so it is present where the
+// remaining action is assigned.
 const BUMP_CHECKLIST = [
-  "### Before merging a CLI bump",
-  "",
-  "No job can do this part: exercising an agent CLI needs a real Claude or",
-  "ChatGPT login. Do it by hand on the bump PR.",
-  "",
-  "1. Move the Dockerfile ARG. For Codex, move `@openai/codex-sdk` in the same",
-  "   commit (`npm install --save-exact @openai/codex-sdk@<version>`): the SDK",
-  "   exact-depends on `@openai/codex`, and outside the image, where",
-  "   `CODEX_CLI_PATH` is empty, that vendored copy is the binary that runs.",
-  "   `tests/cliPins.test.ts` fails if the two disagree. Any `npm install` here",
-  "   rewrites the lockfile, so the `gypfile` step below applies to this bump",
-  "   too.",
-  "2. `npm run typecheck && npm test`.",
-  "3. Build the image and run one real turn per bumped agent against a live",
-  "   login: a plain prompt, one tool call, one `/clear`. A CLI too old for a",
-  "   model the driver offers says so on the first turn: 0.146.0 answered",
-  "   GPT-6 Astra with `model requires a newer version of codex`.",
-  "4. Check the driver's model catalog against what the new CLI actually",
-  "   offers, and add anything it has gained.",
-  "",
   "### Before merging an `@anthropic-ai/claude-agent-sdk` bump",
   "",
-  "Different work from the CLI above. The CLI is a subprocess; the SDK is the",
-  "turn contract, so a bump can change how any turn behaves without changing a",
-  "line of this repo. Bump it with",
+  "The SDK is the turn contract, so a bump can change how any turn behaves",
+  "without changing a line of this repo. Bump it with",
   "`npm install --save-exact @anthropic-ai/claude-agent-sdk@<version>`, then:",
   "",
   '1. Re-add `"gypfile": false` to the `node_modules/better-sqlite3` entry in',
@@ -758,9 +854,41 @@ async function applySavedBump(opts) {
   return 0;
 }
 
+async function applySavedNpmBump(opts) {
+  const plan = JSON.parse(await readFile(opts.applyNpm, "utf8"));
+  if (!plan || !Object.keys(plan).length) {
+    console.log("Nothing to apply: the summary records no npm bump.");
+    return 0;
+  }
+  const dockerfile = await readFile(opts.dockerfile, "utf8");
+  const packageJson = await readFile(opts.packageJson, "utf8");
+  const dockerApplied = applyNpmDockerfilePins(
+    dockerfile,
+    plan,
+    opts.dockerfile,
+  );
+  const packageApplied = applyNpmPackagePins(
+    packageJson,
+    plan,
+    opts.packageJson,
+  );
+  if (dockerApplied.changed) {
+    await writeFile(opts.dockerfile, dockerApplied.source, "utf8");
+  }
+  if (packageApplied.changed) {
+    await writeFile(opts.packageJson, packageApplied.source, "utf8");
+  }
+  console.log(
+    `Applied npm CLI pins to ${opts.dockerfile}` +
+      (packageApplied.changed ? ` and ${opts.packageJson}.` : "."),
+  );
+  return 0;
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.applyAgy) return applySavedBump(opts);
+  if (opts.applyNpm) return applySavedNpmBump(opts);
   let source = await readFile(opts.dockerfile, "utf8");
   let pins = extractPins(source, opts.dockerfile);
   const packagePins = extractPackagePins(
@@ -769,7 +897,16 @@ async function main() {
   );
   const result = await collectFindings(pins, packagePins, {
     updateAgy: opts.updateAgy,
+    updateNpm: opts.updateNpm,
   });
+
+  if (opts.updateNpm && opts.npmSummary) {
+    await writeFile(
+      opts.npmSummary,
+      `${JSON.stringify(result.npmBumps ?? {}, null, 2)}\n`,
+      "utf8",
+    );
+  }
 
   let agyNote = null;
   if (opts.updateAgy) {
@@ -787,8 +924,8 @@ async function main() {
       }
       agyNote =
         plan.kind === "version"
-          ? `The agy pins moved from \`${plan.from}\` to \`${plan.version}\` in a pull request, not here.`
-          : `The agy ${plan.version} digests were refreshed in a pull request, not here.`;
+          ? `The agent CLI bot PR moves agy from \`${plan.from}\` to \`${plan.version}\`.`
+          : `The agent CLI bot PR refreshes the agy ${plan.version} digests.`;
       console.error(
         `Wrote AGY_VERSION=${plan.version} and both SHA-512s to ${opts.dockerfile}.`,
       );

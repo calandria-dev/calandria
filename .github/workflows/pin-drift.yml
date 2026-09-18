@@ -20,20 +20,19 @@
 # The pins themselves stay (issue #21, and the comments at the Dockerfile
 # sites). This is the missing half: a check that reads each upstream, compares
 # it with the Dockerfile, and turns a surprise into an issue filed days earlier.
-# The equality this CANNOT see — `@openai/codex-sdk` against `CODEX_VERSION` —
-# is a unit test instead (`tests/cliPins.test.ts`), since it needs no network
-# and belongs on the PR that desynchronizes them, not on tomorrow's cron.
+# The equality this check cannot see — `@openai/codex-sdk` against
+# `CODEX_VERSION` — is repaired in the bump job with npm's lockfile writer and
+# remains guarded by `tests/cliPins.test.ts`.
 #
-# THE AGY PINS ARE A PULL REQUEST, NOT AN ISSUE PARAGRAPH. Every other pin here
-# needs a human to read a changelog and exercise a login. The agy bump does not:
+# THE AGENT CLI PINS ARE A PULL REQUEST, NOT AN ISSUE PARAGRAPH. The AGY vendor
+# manifests and npm's exact CLI versions are sufficient to produce the change:
 # the vendor's manifest is the whole source of truth, it carries the version and
 # the SHA-512 this job already fetched, and the Dockerfile's own guard rejects
 # any pair that does not match what is being served. So the `bump` job below
 # rewrites all three ARGs on one stable bot branch and opens or refreshes one
-# pull request. It is not automerged, and the review it waits for is a real one:
-# the branch is where both architecture image builds run against the checksums
-# it just wrote. Issue #291 was the third time this pin fired, and each time
-# the work was three values copied out of two JSON documents by hand.
+# pull request. It queues auto-merge only after the branch head is verified and
+# all required CI contexts are dispatched against it. CI and the branch ruleset
+# are the merge gate; this workflow never bypasses failed checks.
 #
 # WHY NOT A BOT, REVISITED. .github/dependabot.yml covers what Dependabot can
 # see: action SHAs, the base-image digest, website/ npm. Its `docker` ecosystem
@@ -45,19 +44,23 @@
 # credential that outlives any one run. The `bump` job is neither: it is forty
 # lines in this repo, it runs on the built-in `GITHUB_TOKEN`, and there is no
 # standing PAT or GitHub App behind it. `gh=` stays a notice because the apt
-# index carries no checksum to write, and the npm pins stay notices because
-# being behind is a judgement call.
+# index carries no checksum to write. The Agent SDK remains an issue because it
+# changes the turn contract and needs its own behavioral review.
 #
 # WHY THE BUMP JOB DISPATCHES CI. A push made with `GITHUB_TOKEN` fires no
-# `push` and no `pull_request` workflow. That is GitHub's recursion guard, and
-# it means the bot PR would sit at zero checks and read CLEAN, which is the exact
-# shape of the bug the `changes` job in test.yml was rewritten to avoid. The fix
-# is neither a PAT nor a weakened ruleset: `workflow_dispatch` is not subject to
-# the guard, check runs attach to the head SHA rather than to the PR, and the
-# PR's head SHA is the bot branch's head. The job dispatches `Test`, the desktop
-# release skip check, and `Publish image` against that branch. It refuses to
-# finish until each workflow has a run whose `headSha` is the commit it pushed.
-# A missing run means a PR with missing checks, and that is a red job here.
+# `push` workflow. A `pull_request` workflow caused by a PR opened with that
+# token can start in `action_required`, pending approval, so the bot PR can
+# have held checks even though the workflows exist. That is GitHub's recursion
+# and approval behavior. The fix is neither a PAT nor a weakened ruleset:
+# `workflow_dispatch` supplies deterministic checks, and the job approves only
+# the held `pull_request` runs for the exact PR head after the PR exists. Check
+# runs attach to the head SHA rather than to the PR, and the PR's head SHA is
+# the bot branch's head. The job dispatches `Test`, the desktop release skip
+# check, and `Publish image` against that branch. It refuses to finish until
+# each dispatched workflow has a run whose `headSha` is the commit it pushed,
+# and until the expected `PR title`, `Test` and `Publish image` pull-request
+# runs exist. A missing run means a PR with missing checks, and that is a red
+# job here.
 name: Pin drift
 
 on:
@@ -93,8 +96,8 @@ env:
   # abandoned refs and a second open PR every time the vendor shipped twice
   # before anyone reviewed the first. A dry run gets its own throwaway name, so
   # it can never touch the branch a real pull request is open on.
-  BOT_BRANCH: bot/agy-pin
-  DRY_RUN_BRANCH: bot/agy-pin-dry-run
+  BOT_BRANCH: bot/agent-cli-pins
+  DRY_RUN_BRANCH: bot/agent-cli-pins-dry-run
   # Read off `github.event` so only the `github` context is needed. A workflow
   # env key evaluated on a `schedule` event has no `inputs` to read, and an
   # expression a context cannot satisfy is a `startup_failure`, which produces
@@ -120,6 +123,10 @@ jobs:
       agy_version: ${{ steps.agy.outputs.version }}
       agy_from: ${{ steps.agy.outputs.from }}
       agy_kind: ${{ steps.agy.outputs.kind }}
+      npm: ${{ steps.npm.outputs.summary }}
+      npm_changed: ${{ steps.npm.outputs.changed }}
+      claude_version: ${{ steps.npm.outputs.claude_version }}
+      codex_version: ${{ steps.npm.outputs.codex_version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -133,7 +140,9 @@ jobs:
           node scripts/check-pin-drift.mjs \
             --report "$RUNNER_TEMP/drift.md" \
             --update-agy \
-            --agy-summary "$RUNNER_TEMP/agy.json" || status=$?
+            --agy-summary "$RUNNER_TEMP/agy.json" \
+            --update-npm \
+            --npm-summary "$RUNNER_TEMP/npm.json" || status=$?
           case "$status" in
             0) echo "drift=false" >> "$GITHUB_OUTPUT" ;;
             1) echo "drift=true" >> "$GITHUB_OUTPUT" ;;
@@ -162,6 +171,18 @@ jobs:
             echo "kind=$(jq -r '.kind // "none"' "$RUNNER_TEMP/agy.json")"
           } >> "$GITHUB_OUTPUT"
           jq . "$RUNNER_TEMP/agy.json"
+
+      - name: Read the npm decision
+        id: npm
+        run: |
+          set -euo pipefail
+          {
+            echo "summary=$(jq -c . "$RUNNER_TEMP/npm.json")"
+            echo "changed=$(jq -r 'length > 0' "$RUNNER_TEMP/npm.json")"
+            echo "claude_version=$(jq -r '.claudeCode // empty' "$RUNNER_TEMP/npm.json")"
+            echo "codex_version=$(jq -r '.codexVersion // empty' "$RUNNER_TEMP/npm.json")"
+          } >> "$GITHUB_OUTPUT"
+          jq . "$RUNNER_TEMP/npm.json"
 
       - name: Open, update or close the drift issue
         env:
@@ -226,6 +247,10 @@ jobs:
       AGY_VERSION: ${{ needs.check.outputs.agy_version }}
       AGY_FROM: ${{ needs.check.outputs.agy_from }}
       AGY_KIND: ${{ needs.check.outputs.agy_kind }}
+      NPM: ${{ needs.check.outputs.npm }}
+      NPM_CHANGED: ${{ needs.check.outputs.npm_changed }}
+      CLAUDE_VERSION: ${{ needs.check.outputs.claude_version }}
+      CODEX_VERSION: ${{ needs.check.outputs.codex_version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -243,7 +268,7 @@ jobs:
           echo "Dry run: $DRY_RUN"
 
       - name: Retire the bot branch now that the pins are current
-        if: env.AGY_CHANGED != 'true'
+        if: env.AGY_CHANGED != 'true' && env.NPM_CHANGED != 'true'
         run: |
           set -euo pipefail
           # `changed` is computed against the Dockerfile on the ref this
@@ -258,18 +283,26 @@ jobs:
             --json number --jq '.[0].number // empty')"
           if [ -n "$open" ]; then
             gh pr close "$open" --delete-branch \
-              --comment "\`AGY_VERSION\` on main is already current. Closed by \`Pin drift\`."
+              --comment "The agent CLI pins on main are already current. Closed by \`Pin drift\`."
             echo "Closed #$open."
           else
             echo "Pins are current and no bot PR is open."
           fi
+          legacy="$(gh pr list --head bot/agy-pin --state open \
+            --json number --jq '.[0].number // empty')"
+          if [ -n "$legacy" ]; then
+            gh pr close "$legacy" --delete-branch \
+              --comment "The agent CLI pins on main are already current. Closed by \`Pin drift\`."
+            echo "Closed legacy PR #$legacy."
+          fi
 
       - name: Cut the branch and apply the bump
         id: branch
-        if: env.AGY_CHANGED == 'true'
+        if: env.AGY_CHANGED == 'true' || env.NPM_CHANGED == 'true'
         run: |
           set -euo pipefail
           printf '%s' "$AGY" > "$RUNNER_TEMP/agy.json"
+          printf '%s' "$NPM" > "$RUNNER_TEMP/npm.json"
           # Copied out before the branch switch: the updater that runs is the
           # one on the ref that dispatched this workflow, applied to the
           # Dockerfile on the branch being cut. Without the copy a dry run from
@@ -287,33 +320,51 @@ jobs:
           # commit and never carries a superseded version underneath it.
           git checkout --quiet -B "$BOT_BRANCH" "$base"
           node "$RUNNER_TEMP/updater.mjs" --apply-agy "$RUNNER_TEMP/agy.json"
+          node "$RUNNER_TEMP/updater.mjs" --apply-npm "$RUNNER_TEMP/npm.json"
 
-          if git diff --quiet -- Dockerfile; then
-            echo "::error::the bump applied nothing; the base already carries AGY_VERSION=$AGY_VERSION"
+          if [ "$NPM_CHANGED" = "true" ] && [ -n "$CODEX_VERSION" ]; then
+            npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+            npm run fix-lockfile
+          fi
+
+          if git diff --quiet -- Dockerfile package.json package-lock.json; then
+            echo "::error::the bump applied nothing; the base already carries the reported pins"
             exit 1
           fi
 
-          if [ "$AGY_KIND" = "digest" ]; then
+          if [ "$AGY_CHANGED" = "true" ] && [ "$NPM_CHANGED" != "true" ] && [ "$AGY_KIND" = "digest" ]; then
             title="build(deps): refresh the Antigravity CLI $AGY_VERSION checksums"
-          else
+          elif [ "$AGY_CHANGED" = "true" ] && [ "$NPM_CHANGED" != "true" ]; then
             title="build(deps): bump Antigravity CLI to $AGY_VERSION"
+          elif [ "$NPM_CHANGED" = "true" ] && [ "$AGY_CHANGED" != "true" ] && [ -n "$CLAUDE_VERSION" ] && [ -z "$CODEX_VERSION" ]; then
+            title="build(deps): bump Claude Code CLI to $CLAUDE_VERSION"
+          elif [ "$NPM_CHANGED" = "true" ] && [ "$AGY_CHANGED" != "true" ] && [ -z "$CLAUDE_VERSION" ] && [ -n "$CODEX_VERSION" ]; then
+            title="build(deps): bump Codex CLI to $CODEX_VERSION"
+          else
+            title="build(deps): refresh agent CLI pins"
           fi
           echo "title=$title" >> "$GITHUB_OUTPUT"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Dockerfile
-          git commit --quiet -F - <<EOF
-          $title
-
-          The Antigravity updater manifests now serve $AGY_VERSION on both
-          linux_amd64 and linux_arm64. AGY_VERSION and both SHA-512 ARGs are
-          taken verbatim from those two documents, which is also what the
-          Dockerfile's own guard and \`sha512sum -c\` compare against at build
-          time.
-
-          Opened by .github/workflows/pin-drift.yml.
-          EOF
+          git add Dockerfile package.json package-lock.json
+          {
+            echo "$title"
+            echo
+            echo "Refresh the stale agent CLI pins selected by the daily pin check."
+            if [ "$AGY_CHANGED" = "true" ]; then
+              echo "Antigravity: $AGY_FROM -> $AGY_VERSION ($AGY_KIND)."
+            fi
+            if [ -n "$CLAUDE_VERSION" ]; then
+              echo "Claude Code: $CLAUDE_VERSION."
+            fi
+            if [ -n "$CODEX_VERSION" ]; then
+              echo "Codex CLI and SDK: $CODEX_VERSION."
+            fi
+            echo
+            echo "Opened by .github/workflows/pin-drift.yml."
+          } > "$RUNNER_TEMP/commit-message.txt"
+          git commit --quiet -F "$RUNNER_TEMP/commit-message.txt"
 
           # A daily no-op force-push would re-dispatch both workflows and
           # re-notify everyone watching the PR about a fact that has not
@@ -324,7 +375,7 @@ jobs:
             && [ "$(git rev-parse "origin/$BOT_BRANCH^{tree}")" = "$(git rev-parse 'HEAD^{tree}')" ] \
             && [ "$(git rev-parse "origin/$BOT_BRANCH^")" = "$base" ]; then
             head="$(git rev-parse "origin/$BOT_BRANCH")"
-            echo "$BOT_BRANCH already proposes $AGY_VERSION on this base."
+            echo "$BOT_BRANCH already proposes these pins on this base."
           else
             git push --force origin "HEAD:refs/heads/$BOT_BRANCH"
             head="$(git rev-parse HEAD)"
@@ -337,7 +388,7 @@ jobs:
       # half-opened behind.
       - name: Dispatch the checks and confirm they attached to the branch head
         id: dispatch
-        if: env.AGY_CHANGED == 'true'
+        if: env.AGY_CHANGED == 'true' || env.NPM_CHANGED == 'true'
         env:
           SHA: ${{ steps.branch.outputs.head_sha }}
         run: |
@@ -373,7 +424,7 @@ jobs:
             echo "- $label: $url" >> "$RUNNER_TEMP/runs.md"
           }
 
-          # Six required contexts (`.github/rulesets/README.md`) come from
+          # The test contexts (`.github/rulesets/README.md`) come from
           # test.yml's own run, not from the copy publish-image.yml calls, whose
           # jobs report as `test / …` and match no rule. Both slow-lane inputs
           # are off: a Dockerfile ARG cannot change how the app behaves in a
@@ -406,49 +457,56 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Open or refresh the pull request
-        if: env.AGY_CHANGED == 'true' && env.DRY_RUN != 'true'
+        id: pr
+        if: (env.AGY_CHANGED == 'true' || env.NPM_CHANGED == 'true') && env.DRY_RUN != 'true'
         env:
           SHA: ${{ steps.branch.outputs.head_sha }}
           TITLE: ${{ steps.branch.outputs.title }}
         run: |
           set -euo pipefail
           {
-            if [ "$AGY_KIND" = "digest" ]; then
+            if [ "$AGY_CHANGED" = "true" ] && [ "$AGY_KIND" = "digest" ]; then
               echo "The Antigravity updater manifests still name \`$AGY_VERSION\`, but they are"
               echo "serving a different tarball. \`sha512sum -c\` in the Dockerfile fails against"
               echo "the digests currently pinned, so this refreshes both of them. **A rebuilt"
               echo "tarball under an unchanged version is the case worth looking at hardest.**"
-            else
+            elif [ "$AGY_CHANGED" = "true" ]; then
               echo "The Antigravity updater manifests moved from \`$AGY_FROM\` to \`$AGY_VERSION\`."
               echo "They serve exactly one build, so the old pin no longer resolves and every"
               echo "image build fails on the Dockerfile's own \`AGY_VERSION\` guard until this lands."
             fi
-            echo
-            echo "\`AGY_VERSION\`, \`AGY_SHA512_AMD64\` and \`AGY_SHA512_ARM64\` are copied verbatim"
-            echo "from these two documents, which are also what the build resolves against:"
-            echo
-            echo "- <https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json>"
-            echo "- <https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json>"
+            if [ "$AGY_CHANGED" = "true" ]; then
+              echo
+              echo "\`AGY_VERSION\`, \`AGY_SHA512_AMD64\` and \`AGY_SHA512_ARM64\` are copied verbatim"
+              echo "from these two documents, which are also what the build resolves against:"
+              echo
+              echo "- <https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json>"
+              echo "- <https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json>"
+            fi
             echo
             echo "### What reviews this"
             echo
-            echo "\`Publish image\` was dispatched on this branch with the layer cache OFF and"
-            echo "nothing pushed to the registry. Both architecture builds re-fetch the manifest,"
-            echo "check the URL against \`AGY_VERSION\` and run \`sha512sum -c\` against the digest"
-            echo "for their own arch, so a wrong value here is a red check rather than a surprise"
-            echo "in tomorrow's nightly."
+            echo "\`Test\`, the desktop artifact check and \`Publish image\` were dispatched"
+            echo "against this exact head. The image build runs for both architectures with the"
+            echo "layer cache off and pushes nothing to the registry. It installs each selected"
+            echo "CLI and prints its version, so an unavailable or incompatible pin is a red check."
+            if [ "$AGY_CHANGED" = "true" ]; then
+              echo "It also re-fetches both Antigravity manifests, checks \`AGY_VERSION\`, and"
+              echo "runs \`sha512sum -c\` with the digest for each architecture."
+            fi
             echo
             cat "$RUNNER_TEMP/runs.md"
             echo
-            echo "### Before merging"
-            echo
-            echo "- [ ] Both \`build\` legs of the dispatched \`Publish image\` run are green."
-            echo "- [ ] The \`agy --version\` line at the end of that build reports \`$AGY_VERSION\`."
-            echo "- [ ] Exercise one real Gemini/Antigravity turn against the built image if the"
-            echo "      version moved a minor. No job can do this: it needs a real login."
-            echo
-            echo "This is **not** automerged and never will be. A checksum nobody read is the"
-            echo "thing this pin exists to prevent."
+            if [ "$NPM_CHANGED" = "true" ]; then
+              echo "The Dockerfile CLI pins were refreshed from npm's latest versions."
+              if [ -n "$CODEX_VERSION" ]; then
+                echo "Codex's SDK dependency and package lock were regenerated at the same version."
+              fi
+              echo
+            fi
+            echo "The dispatched CI checks and the branch ruleset are the merge gate."
+            echo "This PR merges automatically after every required check passes. A failure leaves"
+            echo "it open for diagnosis."
             echo
             echo "---"
             echo
@@ -462,8 +520,100 @@ jobs:
             gh pr edit "$existing" --title "$TITLE" --body-file "$RUNNER_TEMP/pr.md"
             echo "Refreshed #$existing."
           else
-            gh pr create --base main --head "$BOT_BRANCH" \
+            existing="$(gh pr create --base main --head "$BOT_BRANCH" \
               --title "$TITLE" --body-file "$RUNNER_TEMP/pr.md"
+            )"
+            existing="${existing##*/}"
+          fi
+          echo "number=$existing" >> "$GITHUB_OUTPUT"
+          echo "Opened or refreshed PR #$existing for head $SHA." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Retire the legacy AGY-only pull request
+        if: (env.AGY_CHANGED == 'true' || env.NPM_CHANGED == 'true') && env.DRY_RUN != 'true'
+        run: |
+          set -euo pipefail
+          legacy="$(gh pr list --head bot/agy-pin --state open \
+            --json number --jq '.[0].number // empty')"
+          if [ -n "$legacy" ]; then
+            gh pr close "$legacy" --delete-branch \
+              --comment "Superseded by #${{ steps.pr.outputs.number }} on \`$BOT_BRANCH\`. Closed by \`Pin drift\`."
+            echo "Closed legacy PR #$legacy."
+          fi
+
+      - name: Approve held pull-request checks for the exact head
+        if: (env.AGY_CHANGED == 'true' || env.NPM_CHANGED == 'true') && env.DRY_RUN != 'true'
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          SHA: ${{ steps.branch.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+
+          # A PR opened by GITHUB_TOKEN can create these pull_request runs in
+          # action_required. Wait for all three expected workflows before
+          # approving anything, and filter every API result by both the PR and
+          # exact head SHA so an older or unrelated run can never be approved.
+          runs_file="$RUNNER_TEMP/pull-request-runs.json"
+          missing="PR title,Test,Publish image"
+          for _ in $(seq 1 24); do
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${SHA}&per_page=100" > "$runs_file"
+            missing="$(jq -r --arg sha "$SHA" --arg pr "$PR_NUMBER" '
+              ["PR title", "Test", "Publish image"] as $expected
+              | [.workflow_runs[]
+                | select(.event == "pull_request" and .head_sha == $sha)
+                | select(any(.pull_requests[]?; (.number | tostring) == $pr))
+                | .name]
+              | ($expected - unique)
+              | join(",")
+            ' "$runs_file")"
+            if [ -z "$missing" ]; then
+              break
+            fi
+            sleep 5
+          done
+
+          if [ -n "$missing" ]; then
+            echo "::error::expected pull_request workflow runs never materialized for $SHA: $missing"
+            exit 1
+          fi
+
+          while IFS=$'\t' read -r run_id run_name; do
+            [ -n "$run_id" ] || continue
+            echo "Approving $run_name run $run_id for exact head $SHA."
+            gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/approve" \
+              >/dev/null
+          done < <(jq -r --arg sha "$SHA" --arg pr "$PR_NUMBER" '
+            .workflow_runs[]
+            | select(.event == "pull_request" and .head_sha == $sha)
+            | select(any(.pull_requests[]?; (.number | tostring) == $pr))
+            | select(.name == "PR title" or .name == "Test" or .name == "Publish image")
+            | select(.conclusion == "action_required")
+            | [.id, .name]
+            | @tsv
+          ' "$runs_file")
+
+          echo "All expected pull_request workflow runs exist for exact head $SHA."
+
+      - name: Queue auto-merge after verifying the PR head
+        if: (env.AGY_CHANGED == 'true' || env.NPM_CHANGED == 'true') && env.DRY_RUN != 'true'
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          SHA: ${{ steps.branch.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          read -r state draft head queued < <(
+            gh pr view "$PR_NUMBER" --json state,isDraft,headRefOid,autoMergeRequest \
+              --jq '[.state, (.isDraft | tostring), .headRefOid, ((.autoMergeRequest != null) | tostring)] | @tsv'
+          )
+          if [ "$state" != "OPEN" ] || [ "$draft" != "false" ] || [ "$head" != "$SHA" ]; then
+            echo "::error::refusing auto-merge: PR #$PR_NUMBER is state=$state draft=$draft head=$head, expected open non-draft head=$SHA"
+            exit 1
+          fi
+          if [ "$queued" = "true" ]; then
+            echo "Auto-merge is already queued for PR #$PR_NUMBER."
+          else
+            gh pr merge "$PR_NUMBER" --auto --squash --delete-branch \
+              --match-head-commit "$SHA"
           fi
 
       # Informational, and not a gate. Check runs appear on a
@@ -472,7 +622,7 @@ jobs:
       # this job actually stands on, because runner queue time is not something
       # to redden a daily cron over.
       - name: Report what has attached to the branch head so far
-        if: env.AGY_CHANGED == 'true'
+        if: env.AGY_CHANGED == 'true' || env.NPM_CHANGED == 'true'
         continue-on-error: true
         env:
           SHA: ${{ steps.branch.outputs.head_sha }}

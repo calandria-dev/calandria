@@ -383,6 +383,34 @@ export function init(db: Database.Database) {
       PRIMARY KEY (task_id, file)
     );
 
+    -- A drafted bug report / feature request from the agent's report_issue
+    -- tool (lib/issueReports.ts). Its own table rather than a column on the
+    -- tool row: the transcript card re-reads this by id every render, because
+    -- nothing is public until 'status' leaves 'draft' and a frozen snapshot
+    -- would still be offering to file something already filed. 'repo' is
+    -- frozen at draft time so a re-pointed CALANDRIA_ISSUE_REPO can't redirect
+    -- a pending card, and 'matches' is the duplicate search's own result,
+    -- kept so the card doesn't re-query GitHub on every render.
+    -- CREATE IF NOT EXISTS means older DBs pick it up with no migrate() entry.
+    CREATE TABLE IF NOT EXISTS issue_reports (
+      id           TEXT PRIMARY KEY,
+      task_id      TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      project_id   TEXT NOT NULL,
+      kind         TEXT NOT NULL,
+      repo         TEXT NOT NULL,
+      title        TEXT NOT NULL,
+      body         TEXT NOT NULL,
+      status       TEXT NOT NULL,
+      matches      TEXT NOT NULL DEFAULT '[]',
+      issue_number INTEGER,
+      issue_url    TEXT NOT NULL DEFAULT '',
+      error        TEXT NOT NULL DEFAULT '',
+      created_at   INTEGER NOT NULL,
+      updated_at   INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_issue_reports_task ON issue_reports(task_id);
+
     -- Remembered "always allow" answers to a tool-permission prompt (the
     -- canUseTool gate under acceptEdits / plan, see lib/permissions.ts).
     -- Project-scoped on purpose: approving "npm test" for one repo must not

@@ -121,32 +121,24 @@
 #      keeping the bot honest. (Config upkeep is not free either: fileMatch ->
 #      managerFilePatterns was already one breaking migration.)
 #   2. The Dockerfile ARGs are a trap, not a bonus. CODEX_VERSION has to move
-#      in step with @openai/codex-sdk in package-lock.json, and root npm
-#      version updates are excluded above, so Renovate would open CLI bumps
-#      that are unsafe to merge as written.
-#      @anthropic-ai/claude-code ships ~21 stable releases a month, so
-#      that PR would be rewritten several times a week. Both ARGs are bumped by
-#      hand BECAUSE the upgrade is a behavioural decision, not because no bot
-#      could see them.
-#      Hand-bumped must not mean unwatched, which it was: CODEX_VERSION sat
-#      seven minors back at 0.146.0 until GPT-6 Astra failed on it outright.
-#      Both halves a bot would have given us are now covered without one.
-#      `Pin drift` (.github/workflows/pin-drift.yml) files an issue when either
-#      ARG goes three weeks old or three minors behind — a notice, not a PR,
-#      because the merge needs a human to exercise the agent either way. And
-#      the step-in-with-the-SDK constraint is `tests/cliPins.test.ts`, which
-#      fails on the PR that desynchronizes them; a Renovate PR touching only
-#      the ARG could not have satisfied it.
-#      AGY_VERSION is the exception, and it is the one case where "a bot should
-#      open the PR" was right. The vendor's manifest carries the version AND
-#      the SHA-512, so the bump is three values copied out of two JSON
-#      documents with nothing to judge, and the Dockerfile's own guard rejects
-#      any pair that is not what upstream serves. `Pin drift` owns those three
-#      ARGs outright: it force-pushes `bot/agy-pin` and opens one pull request
-#      per version, dispatches both architecture image builds against that
-#      branch to check the digests it wrote, and never automerges. That is
-#      forty lines in this repo running on `GITHUB_TOKEN`, with no standing PAT
-#      and no third-party app holding write access.
+#      in step with @openai/codex-sdk in package-lock.json, and the Claude Code
+#      CLI must remain compatible with the driver. `Pin drift` owns all three
+#      agent CLI ARGs. It force-pushes one bot branch from main, updates the
+#      Dockerfile and the Codex lockfile coupling as needed, and opens one
+#      conventional-commit pull request. It dispatches the required test,
+#      desktop skip and uncached image workflows against the exact branch head.
+#      The workflow verifies the exact PR head before enabling squash
+#      auto-merge. GitHub merges it only after every required check passes.
+#      `tests/cliPins.test.ts` prevents a Codex CLI and SDK mismatch, while the
+#      image build verifies the installed binaries. A real login is not needed
+#      to decide whether these pinned packages install and pass the repository
+#      checks.
+#      AGY_VERSION and both SHA-512 values remain in the same PR. The vendor
+#      manifests carry the version and checksums, and the Dockerfile guard
+#      rejects values that do not match what upstream serves. The workflow
+#      still dispatches both architecture image builds with the cache disabled.
+#      All writes use the built-in GITHUB_TOKEN. No standing PAT or third-party
+#      app has write access.
 #   3. The coverage bought is one image that is already recorded (versions plus
 #      resolved digest, to the run summary), floored (hard-fails below the
 #      type=gha minimums), and removed outright from the merge job.
@@ -157,13 +149,12 @@
 # artifacts, so a registry-side tag retarget moves the engine without touching
 # the action SHA. That gain is real. It is outweighed here because collecting
 # it needs a second bot whose failure mode is silence, plus either prompt
-# manual merges (which reintroduce the staleness the pin was meant to remove)
-# or automerge (which removes the human gate the pin was meant to add).
+# manual merges, which reintroduce the staleness the pin was meant to remove.
 #
-# Re-open only if: Renovate is adopted for repo-wide coverage anyway — in which
-# case it takes EVERYTHING except the three agy ARGs, which `Pin drift` owns and
-# must be excluded from any regex manager, since one pin must have exactly one
-# owner and two bots on the same SHA is the real failure mode;
+# Re-open only if: Renovate is adopted for repo-wide coverage anyway. In that
+# case it takes everything except the agent CLI ARGs that `Pin drift` owns.
+# Those pins must stay excluded from any regex manager because one pin must have
+# exactly one owner, and two bots on the same SHA is the real failure mode;
 # deterministic builder identity becomes a compliance requirement; or
 # `buildx-stable-1` actually causes an incident.
 version: 2

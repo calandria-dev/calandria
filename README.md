@@ -210,6 +210,11 @@ already queued. The transcript records that it was sent.
   reset fires or is skipped. Calandria delivers these as a browser
   notification in any open tab and as a push to your phone with the app
   closed, and stays silent only when you're already looking at that task.
+- **Report a bug where you hit it:** mention that something in Calandria is
+  broken, or that a feature would help, and the agent offers a card in the
+  transcript: an editable title and body plus any existing issues that look
+  like the same thing. Nothing is filed until you press File new issue or Add
+  to an existing one.
 - **Installable app:** a PWA with its own icon and standalone window. Install
   from Chrome/Edge or iOS Add to Home Screen, and the "needs you" inbox lives
   on your phone's home screen (needs HTTPS; works behind Cloudflare Access).

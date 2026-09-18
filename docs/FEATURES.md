@@ -923,6 +923,29 @@ per-device "Reload after a long background" setting for iOS. See
 [iOS home-screen app comes back frozen](docs/TROUBLESHOOTING.md#ios-home-screen-app-comes-back-frozen)
 in the troubleshooting guide.
 
+## Reporting a bug without leaving the session
+
+When you hit something broken in Calandria, or say a feature would help, the agent is told to
+notice and offer to write it up. What appears is a card in the transcript, right where you said
+it: a title and body you can edit, the repository it would go to, and any existing issues that
+look like the same thing.
+
+Nothing has been filed when that card appears. The tool drafts and searches; the only thing that
+leaves the machine is the duplicate lookup, which is a read. Filing happens when you press a
+button, and you get two: **File new issue**, or **Add to #N** against one of the matches, so a
+second report of a known problem lands as a comment on the existing thread instead of another
+duplicate. **Dismiss** drops the draft.
+
+The text is editable because it becomes a public issue under your GitHub account, and approving a
+model's paraphrase wholesale is not the same as writing it yourself. If GitHub isn't connected the
+card says so and keeps the draft, so connecting `gh` and pressing the same button again still
+works: a dead CLI costs you the send, never the report.
+
+Reports go to `calandria-dev/calandria` by default. Self-hosters can point
+`CALANDRIA_ISSUE_REPO` at their own fork, or set it to `off` to remove the tool entirely; see
+[Self-hosting](SELF_HOSTING.md). This is for Calandria itself: work on your own project is what
+the Suggested tray and `suggest_task` are for.
+
 ## Workspace tools
 
 **What it is:** an integrated terminal and managed dev/test services for each project, so you

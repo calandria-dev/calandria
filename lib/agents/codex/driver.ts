@@ -27,7 +27,7 @@ import type { Project, Task, StreamEvent, TurnUsage } from "../../types";
 import type { AgentDriver, AgentHookInventoryResult, AgentHookReview, OneShotOptions, OneShotResult } from "../types";
 import { codexCapabilities } from "./capabilities";
 import { getSetting, setSetting, getThreadUsageCum, setThreadUsageCum } from "../../store";
-import { AGENT_TOOL_TIMEOUT_MS, CODEX_CLI_PATH, CODEX_TRANSPORT, INTERNAL_BASE_URL, CALANDRIA_MCP_SCRIPT } from "../../config";
+import { AGENT_TOOL_TIMEOUT_MS, CODEX_CLI_PATH, CODEX_TRANSPORT, INTERNAL_BASE_URL, CALANDRIA_MCP_SCRIPT, ISSUE_REPO } from "../../config";
 import { isApprovalDowngrade } from "../../approvalFailure";
 import { buildProjectContext, buildTagRefreshPrompt } from "../shared";
 import { ATTACHMENT_NUDGE, hasAttachmentMarkers } from "../../uploadTypes";
@@ -99,6 +99,10 @@ export function calandriaMcpConfig(
           // Whether the bridge registers create_pr at all (scripts/calandria-mcp.mjs).
           // The Claude driver makes the same call in-process off the same column.
           CALANDRIA_LANDING_MODE: project.landing_mode,
+          // Whether the bridge registers report_issue at all, same shape as the
+          // line above: empty (CALANDRIA_ISSUE_REPO=off) means the tool is
+          // absent rather than present-and-refusing.
+          CALANDRIA_ISSUE_REPO: ISSUE_REPO,
           CALANDRIA_BASE_URL: INTERNAL_BASE_URL,
           SERVICE_TOKEN: process.env.SERVICE_TOKEN || "",
           // The bridge is plain Node and can't read lib/config.ts, and this env

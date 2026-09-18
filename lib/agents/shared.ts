@@ -10,7 +10,7 @@ import { tagContextBlock } from "../tagContext";
 import { hasOwnBase, resolveBaseBranch } from "../baseBranch";
 import { takeBaseCutNote } from "../baseDrift";
 import { getCapabilities } from "./capabilities";
-import { BACKGROUND_LINGER_MS, DELEGATE_COLLECTION } from "../config";
+import { BACKGROUND_LINGER_MS, DELEGATE_COLLECTION, ISSUE_REPO } from "../config";
 import { ATTACHMENT_NUDGE, hasAttachmentMarkers } from "../uploadTypes";
 
 // A fresh agent session still needs a user turn to begin, but task metadata is
@@ -170,6 +170,30 @@ export function buildProjectContext(project: Project, task: Task): string {
       `Next dev \`allowedDevOrigins: [process.env.CALANDRIA_PUBLIC_HOST]\` in next.config, ` +
       `CRA/webpack-dev-server is pre-cleared via env.`
   );
+
+  // The one tool whose trigger is something the USER says in passing rather
+  // than something the agent set out to do, so it is stated as a watch order.
+  // Named repo, not "the tracker": the instance owner may have repointed it,
+  // and an agent that says where the report is going lets the user object
+  // before they click rather than after.
+  const issueRepo = ISSUE_REPO.trim();
+  if (issueRepo) {
+    lines.push(
+      `\nYou also have a \`report_issue\` tool, and part of the job is NOTICING when it applies. ` +
+        `If the user hits a bug in Calandria itself (the app running this session, not the code you ` +
+        `are editing) or says a feature would help them ("I wish it would…", "it's annoying that…", ` +
+        `"why can't I…"), call \`report_issue(kind, title, body)\`. It FILES NOTHING: it drafts the ` +
+        `report, searches ${issueRepo} for issues that already cover it, and puts a card in the ` +
+        `transcript where the user edits the wording and clicks to open a new issue or add to a ` +
+        `matching one. The card IS how you ask, so don't ask for permission in prose first: that ` +
+        `just makes them answer twice, and don't try to file it any other way. One call per ` +
+        `distinct problem; mention that the card is there and let them decide. Write the body for a ` +
+        `maintainer who wasn't in this session (what happened, what was expected, what they were ` +
+        `doing, the exact error text), not as a quote of the chat, and keep out anything the user ` +
+        `wouldn't publish: the tracker may be public. Wants about the USER'S OWN project are not ` +
+        `this tool; those are \`suggest_task\`.`
+    );
+  }
 
   // Bulk collection goes to a subagent. Placed last so it overrides the CLI's
   // own "work through Bash" guidance from earlier in the same window. Lives

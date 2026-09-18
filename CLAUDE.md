@@ -282,6 +282,24 @@ Three processes and entrypoints, one origin:
   non-terminal → terminal transition (not just into `done`), from both the tool and the
   user-facing PATCH, so cancelling the last blocker in the UI can start an `auto_start` dependent.
 
+**`report_issue(kind, title, body)`** (`lib/issueReports.ts`) is the one tool whose trigger is
+something the USER says in passing (hitting a bug in Calandria, or wishing for a feature), so
+`buildProjectContext()` states it as a watch order rather than a capability. **The call files
+nothing.** It writes an `issue_reports` row, asks GitHub whether an issue already covers it, and
+settles a card onto the calling tool row exactly as `suggest_task` does (`lib/issueReportCard.ts`,
+same newest-unclaimed correlation, same reason for persisting only an id). The only thing that
+leaves the machine at draft time is that search, a read.
+
+Publishing to a public tracker is outward-facing, so the consent is the card's own button, which
+is also the only card in the transcript the user can EDIT, because the words become a public issue
+under their account and approving a model's paraphrase wholesale is not the same as writing it.
+Hence the model is told the card IS the asking: an agent that asks in prose first collects consent
+twice, and one that treats the call as the filing collects it never. Two rules guard the artifact:
+only a `draft` may be submitted, and submission is single-flight per report (the status write lands
+*after* `gh` returns, so the draft check alone would let two clicks through). A failed send keeps
+the report a draft with the reason on the row, so a dead `gh` costs the user their wording, never
+their report. `CALANDRIA_ISSUE_REPO` picks the repo and `off` removes the tool from the prompt.
+
 ### Key modules (by responsibility)
 
 - `lib/db.ts`: SQLite schema and migrations, single shared connection, WAL. `lib/store.ts`:

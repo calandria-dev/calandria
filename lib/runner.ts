@@ -10,6 +10,7 @@
 import fs from "node:fs";
 import { updateTask, addMessage, updateMessage, getMessage, recordSession, endSession, addUsage, getTask, getProject, addPendingMessage, popPendingMessage, listPendingMessages, deletePendingMessage, clearPendingMessages, getSetting, setSetting } from "@/lib/store";
 import { isSuggestTaskTool } from "@/lib/suggestionCard";
+import { isReportIssueTool } from "@/lib/issueReportCard";
 import { recordedCostUsd } from "@/lib/agentEnv";
 import { resolvedTaskProvider } from "@/lib/providers/resolve";
 import { estimateCostUsd as estimateGatewayCostUsd } from "@/lib/gatewayPricing";
@@ -545,6 +546,9 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // are matched in order: a planning turn issues its whole batch in one
   // assistant message, and each call gets exactly one card.
   const pendingSuggestCalls: string[] = [];
+  // report_issue tool_use ids whose `issue_report` event hasn't arrived yet,
+  // oldest first: same reasoning as pendingSuggestCalls above.
+  const pendingIssueCalls: string[] = [];
   // Everything currently parked on the user: AskUserQuestion cards and
   // permission prompts alike. One assistant message can park several at
   // once, and awaiting_input must stay up until the last one is settled.
@@ -885,23 +889,26 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         // batch of suggestions lands one card each, in the order the calls
         // were made.
         if (isSuggestTaskTool(ev.name)) pendingSuggestCalls.push(ev.id);
+        if (isReportIssueTool(ev.name)) pendingIssueCalls.push(ev.id);
         publish(id, { ...ev, file, msgId: m.id, generation: gen, ts: m.created_at });
       } else if (ev.type === "tool_result") {
         if (ev.cutOff) toolCutoffs++;
         const t = toolMsgs[ev.id];
         if (t) {
-          // A suggest_task row can have been given its card out of band
-          // while the call was in flight: the stdio bridge's endpoint
+          // A suggest_task or report_issue row can have been given its card
+          // out of band while the call was in flight: the stdio bridge's endpoint
           // writes straight to the message row, since a Codex session's MCP
           // client never touches this event stream. The in-memory copy
           // predates that write, so re-read it before stamping the result
           // over the top; otherwise the card the bridge just attached
-          // disappears one event later. Narrowed to suggest_task rows so an
-          // ordinary tool_result still costs no read.
-          if (isSuggestTaskTool(t.data.name) && !t.data.suggestion) {
+          // disappears one event later. Narrowed to suggest_task and
+          // report_issue rows, one read serving both, so an ordinary
+          // tool_result still costs no read.
+          if ((isSuggestTaskTool(t.data.name) && !t.data.suggestion) || (isReportIssueTool(t.data.name) && !t.data.issueReport)) {
             try {
               const fresh = JSON.parse(getMessage(t.dbId)?.content ?? "{}") as ToolData;
               if (fresh.suggestion) t.data.suggestion = fresh.suggestion;
+              if (fresh.issueReport) t.data.issueReport = fresh.issueReport;
             } catch { /* keep what we have */ }
           }
           t.data.result = ev.content;
@@ -1082,6 +1089,19 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         const t = callId ? toolMsgs[callId] : undefined;
         if (ev.taskId && t) {
           t.data.suggestion = { taskId: ev.taskId, projectId: ev.projectId };
+          updateMessage(t.dbId, JSON.stringify(t.data));
+          publish(id, { ...ev, msgId: t.dbId, generation: gen });
+        } else {
+          publish(id, ev);
+        }
+      } else if (ev.type === "issue_report") {
+        // Same move as "suggested" above: settle the report onto the
+        // report_issue tool row that raised it, so the card is reviewable in
+        // the session that made it rather than only wherever it's re-read from.
+        const callId = pendingIssueCalls.shift();
+        const t = callId ? toolMsgs[callId] : undefined;
+        if (t) {
+          t.data.issueReport = { id: ev.reportId };
           updateMessage(t.dbId, JSON.stringify(t.data));
           publish(id, { ...ev, msgId: t.dbId, generation: gen });
         } else {
