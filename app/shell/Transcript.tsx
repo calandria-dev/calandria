@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useState } from "react";
-import type { ToolData, ToolPeek, AskQuestion, AskAnswers, PermissionDecision, SuggestionCard } from "@/lib/types";
+import type { ToolData, ToolPeek, AskQuestion, AskAnswers, PermissionDecision, SuggestionCard, IssueReportCard } from "@/lib/types";
 import { Icon } from "../icons";
 import { Markdown, type MarkdownLinks } from "../Markdown";
 import { jget } from "./api";
@@ -497,6 +497,170 @@ function RepairWorktree({ msgId, running, onRepair }: { msgId: string; running?:
   );
 }
 
+/**
+ * A drafted bug report / feature request, offered where the user raised it.
+ *
+ * Unlike the suggestion card this one takes no handlers from the shell: every
+ * action it offers is its own API route, and none of them navigate. It is also
+ * the only card in the transcript whose content is EDITABLE: the text becomes
+ * a public issue under the user's GitHub account, so the
+ * wording has to be theirs rather than a model's paraphrase they approved
+ * wholesale. Nothing has left the machine when this renders: the tool drafted,
+ * and the buttons below are the send.
+ */
+function IssueReportView({ data }: { data: ToolData }) {
+  const id = data.issueReport?.id;
+  const [card, setCard] = useState<IssueReportCard | null>(null);
+  const [state, setState] = useState<"loading" | "ready" | "gone" | "error">("loading");
+  const [edit, setEdit] = useState<{ title: string; body: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState("");
+
+  const load = useCallback(async () => {
+    if (!id) return;
+    try {
+      const c = await jget<IssueReportCard>(`/api/issue-reports/${id}`);
+      setCard(c);
+      // Seed the editable fields ONCE. `load()` runs again after every action,
+      // and re-seeding there would throw away what the user was in the middle
+      // of typing the moment a send failed, exactly when they need it kept.
+      setEdit((prev) => prev ?? { title: c.title, body: c.body });
+      setState("ready");
+    } catch (e) {
+      setState(e instanceof Error && /not found/i.test(e.message) ? "gone" : "error");
+    }
+  }, [id]);
+  useEffect(() => { void load(); }, [load]);
+
+  const act = useCallback(
+    async (path: string, payload?: unknown) => {
+      if (!id) return;
+      setBusy(true);
+      setFailure("");
+      try {
+        const res = await fetch(`/api/issue-reports/${id}/${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload ?? {}),
+        });
+        const out = (await res.json().catch(() => null)) as { error?: string; card?: IssueReportCard } | null;
+        if (!res.ok) setFailure(out?.error || `Couldn't do that (${res.status}).`);
+        if (out?.card) setCard(out.card);
+      } catch (e) {
+        setFailure(e instanceof Error ? e.message : "Couldn't reach the server.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [id]
+  );
+
+  if (!id) return null;
+  if (state === "loading") return <div className="sugcard loading">{Icon.github()} Drafting a report…</div>;
+  if (state === "gone") {
+    return (
+      <div className="sugcard gone">
+        <div className="sugcard-head">{Icon.x()} Report no longer exists</div>
+      </div>
+    );
+  }
+  if (state === "error" || !card || !edit) {
+    return <div className="sugcard gone"><div className="sugcard-head">{Icon.x()} Couldn&apos;t read this report</div></div>;
+  }
+
+  const draft = card.status === "draft";
+  const feature = card.kind === "feature";
+  const head =
+    card.status === "filed"
+      ? `Filed #${card.issue_number}`
+      : card.status === "commented"
+        ? `Added to #${card.issue_number}`
+        : card.status === "dismissed"
+          ? "Report dismissed"
+          : feature
+            ? "Feature request: nothing filed yet"
+            : "Bug report: nothing filed yet";
+  const trouble = failure || (draft ? card.error : "");
+
+  return (
+    <div className={`sugcard issuecard ${draft ? "open" : "settled"}`}>
+      <div className="sugcard-head">
+        {draft ? Icon.flag() : card.status === "dismissed" ? Icon.x() : Icon.check()} {head}
+        <span className="issuecard-repo" title="Where this goes">{Icon.github()} {card.repo}</span>
+      </div>
+
+      {draft ? (
+        <>
+          <input
+            className="issuecard-title"
+            value={edit.title}
+            disabled={busy}
+            aria-label="Issue title"
+            onChange={(e) => setEdit({ ...edit, title: e.target.value })}
+          />
+          <textarea
+            className="issuecard-body"
+            value={edit.body}
+            disabled={busy}
+            rows={6}
+            aria-label="Issue body"
+            onChange={(e) => setEdit({ ...edit, body: e.target.value })}
+          />
+        </>
+      ) : (
+        <div className="sugcard-title">
+          <span className={card.status === "dismissed" ? "struck" : ""}>{card.title}</span>
+        </div>
+      )}
+
+      {!draft && card.issue_url && (
+        <div className="sugcard-note">
+          <a className="issuecard-link" href={card.issue_url} target="_blank" rel="noreferrer">
+            {Icon.external()} View on GitHub
+          </a>
+        </div>
+      )}
+
+      {draft && !!card.matches.length && (
+        <div className="issuecard-dupes">
+          <div className="issuecard-dupes-head">Possibly already reported: add to one instead of opening another:</div>
+          {card.matches.map((m) => (
+            <div className="issuecard-dupe" key={m.number}>
+              <a href={m.url} target="_blank" rel="noreferrer" title={m.title}>
+                #{m.number} {m.title}
+              </a>
+              <span className={`issuecard-state ${m.state.toLowerCase() === "closed" ? "closed" : "open"}`}>
+                {m.state.toLowerCase()}
+              </span>
+              <button className="btn btn-sm" disabled={busy || !edit.title.trim()} onClick={() => void act("submit", { ...edit, issueNumber: m.number })}>
+                {Icon.plus()} Add to #{m.number}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {trouble && <div className="issuecard-error">{Icon.x()} {trouble}</div>}
+
+      {draft && (
+        <div className="sugcard-acts">
+          <button
+            className="btn btn-accent btn-sm"
+            disabled={busy || !edit.title.trim()}
+            title={`Open a new issue on ${card.repo}`}
+            onClick={() => void act("submit", { ...edit, issueNumber: null })}
+          >
+            {Icon.github()} File new issue
+          </button>
+          <button className="btn btn-sm btn-danger" disabled={busy} title="Drop this report: nothing is sent" onClick={() => void act("dismiss")}>
+            {Icon.x()} Dismiss
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onDecidePermission, onCancelQueued, onClear, onReconnect, onRetry, onRepairWorktree, onCollaborate, links, suggestionActions, limitResume }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onDecidePermission?: (permId: string, decision: PermissionDecision, note: string) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void; onRetry?: (msgId: string) => void; onRepairWorktree?: (msgId: string) => Promise<string | null>; onCollaborate?: (file: string) => void; links?: MarkdownLinks; suggestionActions?: SuggestionActions; limitResume?: LimitResume }) {
   if (m.role === "queued") {
     // A follow-up the user typed mid-turn, waiting its turn. Reads like a user
@@ -529,6 +693,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
       <div className="msg msg-tool">
         <ToolView data={data} onCollaborate={onCollaborate} />
         {data.suggestion && <SuggestionView data={data} actions={suggestionActions} />}
+        {data.issueReport && <IssueReportView data={data} />}
       </div>
     );
   }

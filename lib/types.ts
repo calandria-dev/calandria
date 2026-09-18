@@ -741,6 +741,7 @@ export type StreamEvent =
   // re-reads the task (started? accepted? deleted?) instead of freezing a
   // snapshot.
   | { type: "suggested"; title: string; projectId: string; taskId?: string }
+  | { type: "issue_report"; reportId: string }
   // `usage.cost_usd` is 0 when `unpriced` is set, since the client adds this
   // to the task's running total and an unknown price must not inflate it. The
   // flag stops the client from reading that 0 as "this turn was free": it
@@ -926,6 +927,8 @@ export interface ToolData {
   // tool ran. `projectId` is where it was filed, which suggest_task can point
   // at any project, so it is not necessarily the session's own.
   suggestion?: { taskId: string; projectId: string };
+  /** A drafted bug report / feature request; the card re-reads it (lib/issueReportCard.ts). */
+  issueReport?: { id: string };
 }
 
 /**
@@ -947,6 +950,53 @@ export interface SuggestionCard {
   project_id: string;
   project_name: string;
   blocked_by: { id: string; title: string; status: Status }[];
+}
+
+/** One issue that may already cover what the user just reported. */
+export interface IssueMatch {
+  number: number;
+  title: string;
+  url: string;
+  /** "OPEN" / "CLOSED" as gh reports it: shown so adding to a closed issue is a considered choice. */
+  state: string;
+}
+
+export type IssueReportStatus = "draft" | "filed" | "commented" | "dismissed";
+
+/** A drafted bug report or feature request. Nothing is public until `status` leaves `draft`. */
+export interface IssueReport {
+  id: string;
+  task_id: string;
+  project_id: string;
+  /** "bug" | "feature" */
+  kind: string;
+  /** owner/name, frozen at draft time so a re-pointed instance can't redirect a pending card. */
+  repo: string;
+  title: string;
+  body: string;
+  status: IssueReportStatus;
+  /** JSON array of IssueMatch, parsed by lib/issueReports.ts. */
+  matches: string;
+  issue_number: number | null;
+  issue_url: string;
+  /** Last failure (dead gh, rejected write), kept so the card can explain itself. */
+  error: string;
+  created_at: number;
+  updated_at: number;
+}
+
+/** What the transcript card renders; `matches` parsed, row fields otherwise as-is. */
+export interface IssueReportCard {
+  id: string;
+  kind: string;
+  repo: string;
+  title: string;
+  body: string;
+  status: IssueReportStatus;
+  issue_number: number | null;
+  issue_url: string;
+  error: string;
+  matches: IssueMatch[];
 }
 
 /** A recurring prompt. */

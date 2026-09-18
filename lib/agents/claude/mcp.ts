@@ -16,7 +16,7 @@
 
 import type { McpStdioServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import type { Project, Task } from "../../types";
-import { AGENT_TOOL_TIMEOUT_MS, CALANDRIA_MCP_SCRIPT, INTERNAL_BASE_URL } from "../../config";
+import { AGENT_TOOL_TIMEOUT_MS, CALANDRIA_MCP_SCRIPT, INTERNAL_BASE_URL, ISSUE_REPO } from "../../config";
 
 /**
  * The `mcpServers.calandria` entry for one Claude turn, as a stdio server.
@@ -49,6 +49,12 @@ export function calandriaBridgeServer(project: Project, task: Task): McpStdioSer
       // Whether the bridge registers create_pr at all (scripts/calandria-mcp.mjs).
       // The in-process server gates on the same column.
       CALANDRIA_LANDING_MODE: project.landing_mode,
+      // Same shape: whether the bridge registers report_issue at all. Empty
+      // (CALANDRIA_ISSUE_REPO=off) leaves the tool absent rather than present
+      // and refusing. This env block replaces the inherited environment, so
+      // without the line the stdio transport would silently drop a tool the
+      // in-process one offers.
+      CALANDRIA_ISSUE_REPO: ISSUE_REPO,
       CALANDRIA_BASE_URL: INTERNAL_BASE_URL,
       SERVICE_TOKEN: process.env.SERVICE_TOKEN || "",
       // The bridge is plain Node and can't read lib/config.ts, and this env

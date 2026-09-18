@@ -25,6 +25,7 @@
  *   CALANDRIA_TASK_ID     the task this turn belongs to
  *   CALANDRIA_PROJECT_ID  the owning project (tasks/services are created under it)
  *   CALANDRIA_LANDING_MODE  "merge" | "pr": whether create_pr is offered at all
+ *   CALANDRIA_ISSUE_REPO  owner/name reports go to; absent/empty means report_issue is not offered
  *   CALANDRIA_BASE_URL    the app's loopback origin (e.g. http://127.0.0.1:3000)
  *   SERVICE_TOKEN         the per-instance secret the internal endpoints require
  *   CALANDRIA_MCP_ASK_USER  "0" to withhold ask_user from an agent that has its own
@@ -36,7 +37,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_PROVIDERS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, REPORT_BASE_REWRITE, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK } from "../lib/agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_PROVIDERS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, REPORT_BASE_REWRITE, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK, REPORT_ISSUE } from "../lib/agentToolDefs.mjs";
 import { guardToolHandler, watchToolCancellation, DEFAULT_AGENT_TOOL_TIMEOUT_MS } from "../lib/agentToolGuard.mjs";
 
 const TASK_ID = process.env.CALANDRIA_TASK_ID || "";
@@ -53,6 +54,11 @@ const LANDING_MODE = process.env.CALANDRIA_LANDING_MODE || "merge";
 // has AskUserQuestion, already routed to the same card through the same
 // registry, and a second asking tool would be redundant.
 const ASK_USER_ENABLED = !["0", "off", "false", "no"].includes(String(process.env.CALANDRIA_MCP_ASK_USER || "").toLowerCase());
+// Absent means NOT OFFERED, not "use the default". The driver always passes the
+// resolved value, so the only way to get here empty is an instance that turned
+// the tool off, or a bridge started outside a turn, which has no business
+// offering to file on the user's GitHub account either.
+const ISSUE_REPO = (process.env.CALANDRIA_ISSUE_REPO || "").trim();
 
 // Titles created this turn map to their task ids, so `blocked_by` can
 // reference an earlier suggestion by title (mirrors the in-process server's
@@ -231,6 +237,31 @@ server.registerTool(
     return { content: [{ type: "text", text: data.text }] };
   }
 );
+
+// Registered UNCONDITIONALLY here: unlike the in-process server's gate, this
+// bridge is a separate process with no view of CALANDRIA_ISSUE_REPO; the
+// endpoint is what refuses when the instance has the feature off.
+// Only when the instance has somewhere to file. Same reasoning as create_pr
+// above: absent rather than present-and-refusing, because an offered tool reads
+// as a sanctioned move, and this one would read as "Calandria wants you to
+// post this publicly".
+if (ISSUE_REPO) {
+  server.registerTool(
+    REPORT_ISSUE.name,
+    {
+      description: REPORT_ISSUE.description,
+      inputSchema: {
+        kind: z.enum(REPORT_ISSUE.kinds).default(REPORT_ISSUE.defaultKind).describe(REPORT_ISSUE.params.kind),
+        title: z.string().describe(REPORT_ISSUE.params.title),
+        body: z.string().describe(REPORT_ISSUE.params.body),
+      },
+    },
+    async ({ kind, title, body }) => {
+      const data = await callInternal("report-issue", { kind, title, body });
+      return { content: [{ type: "text", text: data.text }] };
+    }
+  );
+}
 
 server.registerTool(
   LIST_TASKS.name,
