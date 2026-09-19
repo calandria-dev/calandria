@@ -164,6 +164,12 @@ instead.
   `That is why`, or the phrase `the whole point`, `is what makes`, `load-bearing`, or
   `deliberately`; a genuine quote of a program string or UI label goes on that test's
   `ALLOWLIST` instead of being edited.
+- **Run the three guards above before you commit:** `npm run hooks:install` points git at
+  `.githooks/`, whose `pre-commit` hook runs `npm run guards`. The guards read the tracked
+  file list from `git ls-files`, which fails inside `npm run test:docker` in a task
+  worktree, so those three suites skip there and a violation stays invisible until CI. The
+  hook runs on the host, where git answers, and it uses Node built-ins only, so it needs
+  no `npm install` and no Docker. `git commit --no-verify` skips it for one commit.
 
 ## AI-assisted contributions
 

@@ -1,0 +1,17 @@
+#!/bin/sh
+# Repo hygiene guards, run before a commit is written.
+#
+# These same scans gate CI (tests/naming.test.ts, tests/commentStyle.test.ts,
+# tests/prose.test.ts). They need the tracked-file list, which `git ls-files`
+# cannot produce from inside `npm run test:docker` in a task worktree, so those
+# suites skip there and a violation is invisible until CI. Running them here,
+# on the host, where git works, is what closes that gap.
+#
+# Node built-ins only: a task worktree has no node_modules, and this hook runs
+# on every commit in every worktree, so it must not need an install or Docker.
+# `git ls-files` covers staged new files, so a file added in this commit is
+# scanned before it lands.
+#
+# Install with `npm run hooks:install`. Bypass a single commit with
+# `git commit --no-verify`.
+exec node "$(git rev-parse --show-toplevel)/scripts/guards/run.mjs"

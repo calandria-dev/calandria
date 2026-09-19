@@ -336,6 +336,35 @@ function hold(port) {
     assert.equal("NODE_ENV" in unnamed, false, "an inherited NODE_ENV must be dropped, not merely left unset");
   });
 
+  await test("sidecarEnv gives both sidecars the same storage and deployment inputs", async () => {
+    // Both entrypoints read the advanced-settings file for themselves at
+    // boot (lib/advanced-env/bootstrap.mjs), and each resolves its path from
+    // CALANDRIA_DB_DIR. The two sidecars have to agree on that directory and
+    // on the environment-file layer above it, or the app server and the pty
+    // sidecar would apply different app settings from different files.
+    const launch = {
+      PATH: "/usr/bin",
+      HOME: "/home/x",
+      CALANDRIA_LOG_FORMAT: "json",
+      ELECTRON_RUN_AS_NODE: "1",
+    };
+    const dbDir = "/home/x/.calandria";
+    const ptyEnv = sidecarEnv({ env: launch, port: 4123, ptyPort: 4124, dbDir });
+    const appEnv = sidecarEnv({ env: launch, port: 4123, ptyPort: 4124, dbDir, nodeEnv: "production" });
+
+    assert.equal(ptyEnv.CALANDRIA_DB_DIR, dbDir);
+    assert.equal(appEnv.CALANDRIA_DB_DIR, dbDir);
+    // Everything except the per-sidecar knobs is identical, so a value from
+    // the env file reaches both processes unchanged.
+    const perSidecar = new Set(["NODE_ENV"]);
+    const names = new Set([...Object.keys(ptyEnv), ...Object.keys(appEnv)]);
+    for (const name of names) {
+      if (perSidecar.has(name)) continue;
+      assert.equal(ptyEnv[name], appEnv[name], `${name} differs between the two sidecars`);
+    }
+    assert.equal(appEnv.CALANDRIA_LOG_FORMAT, "json");
+  });
+
   await test("sidecarEnv never invents a SHELL, the pty sidecar probes a better one", async () => {
     // pty-server.js resolves CALANDRIA_PTY_SHELL, then $SHELL, then a probed
     // default. Setting SHELL here would short-circuit that probe and pin

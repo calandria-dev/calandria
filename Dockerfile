@@ -291,6 +291,13 @@ COPY --from=build --chown=root:root /app/server.js /app/pty-server.js /app/next.
 #   already migrated.
 COPY --from=build --chown=root:root /app/lib/cf-access.mjs /app/lib/service-router.mjs /app/lib/service-host.mjs /app/lib/env-keys.mjs /app/lib/db-lock.mjs /app/lib/resolveHostname.js /app/lib/env.mjs /app/lib/storage.mjs /app/lib/log.mjs /app/lib/schema-version.mjs ./lib/
 COPY --from=build --chown=root:root /app/lib/auth ./lib/auth
+# The advanced-settings bootstrap (lib/advanced-env/bootstrap.mjs) and the two
+# plain-Node modules it loads. Both entrypoints await it before any other
+# import, so a missing file here leaves the server unable to apply saved app
+# settings at all: catalog.mjs supplies the reserved-name rule the boot path
+# re-checks, and disk.mjs is the reader for the settings file beside the
+# database. The .ts half of that directory is bundled by the Next build.
+COPY --from=build --chown=root:root /app/lib/advanced-env/bootstrap.mjs /app/lib/advanced-env/catalog.mjs /app/lib/advanced-env/disk.mjs ./lib/advanced-env/
 # The stdio MCP bridge the non-Claude drivers spawn per turn
 # (node scripts/calandria-mcp.mjs) and its shared tool defs: plain-Node .mjs
 # the build output doesn't bundle, so they need explicit COPYs, the same

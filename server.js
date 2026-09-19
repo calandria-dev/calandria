@@ -11,6 +11,22 @@ const http = require("node:http");
 const nextImport = require("next");
 const { resolveHostname, hostnameMigrationWarning } = require("./lib/resolveHostname");
 
+// Saved app-scope settings (Settings -> Advanced), applied to process.env
+// before anything that reads configuration loads. lib/config.ts, lib/log.mjs
+// and the auth modules all capture their values at import time, so every
+// other dynamic import in this file chains off this promise. The names this
+// entrypoint reads synchronously above and below (PORT, PTY_PORT, NODE_ENV,
+// CALANDRIA_HOSTNAME, CALANDRIA_DB_DIR) are reserved to the launcher and
+// cannot be set here. See lib/advanced-env/bootstrap.mjs.
+// Every later import chains off this one, so a failure here has to leave the
+// chain resolved: boot with no overlay, and say so.
+const appEnvApplied = import("./lib/advanced-env/bootstrap.mjs")
+  .then((m) => m.applyAppEnvironment())
+  .catch((err) => {
+    log.error("advanced settings could not be applied; starting without them", { err });
+    return null;
+  });
+
 // Structured logging (lib/log.mjs), dynamic-imported like the other lib/*.mjs
 // modules this CommonJS entrypoint needs. Until the import resolves, `log` is
 // a console shim; only numEnv's parse warning below can run in that window.
@@ -19,7 +35,7 @@ let log = {
   warn: (msg) => console.warn(`[server] ${msg}`),
   error: (msg) => console.error(`[server] ${msg}`),
 };
-const logImport = import("./lib/log.mjs").then((m) => {
+const logImport = appEnvApplied.then(() => import("./lib/log.mjs")).then((m) => {
   log = m.createLogger("server");
   return m;
 });
@@ -54,32 +70,32 @@ process.on("uncaughtException", (err) => {
 // Cloudflare Access when configured. middleware.ts covers HTTP routes; this
 // file gates WebSocket upgrades, since an unverified /pty upgrade hands out a
 // shell. jose v6 is ESM-only, so the import is dynamic from this CommonJS file.
-const cfAccessImport = import("./lib/auth/origin.mjs");
-const localOriginImport = import("./lib/auth/local-origin.mjs");
+const cfAccessImport = appEnvApplied.then(() => import("./lib/auth/origin.mjs"));
+const localOriginImport = appEnvApplied.then(() => import("./lib/auth/local-origin.mjs"));
 
 // Host-header router for public service hostnames (<slug>--<appHost>). Opt-in
 // via CALANDRIA_SERVICE_HOSTS; a no-op (requests fall through to Next) when
 // that, the services feature flag, or PUBLIC_BASE_URL is unset. Rule: service
 // hostnames carry their own visibility-based auth (private/shared/public, see
 // lib/service-router.mjs) and bypass the app-session origin gate below.
-const serviceRouterImport = import("./lib/service-router.mjs");
+const serviceRouterImport = appEnvApplied.then(() => import("./lib/service-router.mjs"));
 
 // Strips an inherited ANTHROPIC_API_KEY before serving any request: left set,
 // it would bill every SDK turn per-token while the UI still shows the
 // subscription login. Persisted keys are re-applied from their 0600 files at
 // db init; CALANDRIA_ALLOW_API_KEY_ENV=1 opts in to keeping an env-provided key.
-const envKeysImport = import("./lib/env-keys.mjs");
+const envKeysImport = appEnvApplied.then(() => import("./lib/env-keys.mjs"));
 
 // CALANDRIA_*/ORCH_* alias reader (lib/env.mjs), dynamic-imported like the
 // other lib/*.mjs modules above. Needed before listen() (SHUTDOWN_GRACE_MS,
 // SCHEDULER) and for the deprecation notice printed below.
-const envImport = import("./lib/env.mjs");
+const envImport = appEnvApplied.then(() => import("./lib/env.mjs"));
 
 // Where the database and per-task worktrees live, including the pre-rename
 // fallback (lib/config.ts and lib/db-lock.mjs read the same module rather
 // than inlining `env || default`). Dynamic-imported: plain CommonJS
 // entrypoint, ES module.
-const storageImport = import("./lib/storage.mjs");
+const storageImport = appEnvApplied.then(() => import("./lib/storage.mjs"));
 
 // One app process per database: two processes against the same database
 // corrupt each other if the loser is mid-turn when the other's crash-recovery
@@ -87,7 +103,7 @@ const storageImport = import("./lib/storage.mjs");
 // service or schedule against a database this process doesn't own; only this
 // entrypoint claims it, so `next build` and the test suite never contend for
 // the lock. See lib/db-lock.mjs.
-const dbLockImport = import("./lib/db-lock.mjs");
+const dbLockImport = appEnvApplied.then(() => import("./lib/db-lock.mjs"));
 
 // PTY_HOST/PTY_PORT must match what pty-server.js binds: the sidecar is
 // loopback-only by default and reached only through this proxy.
