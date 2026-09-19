@@ -115,8 +115,8 @@ export function noteCodexSandboxHealthy(): void {
  * this module exists to stop. A read-only turn on a host with no working
  * sandbox is refused instead.
  */
-export function usesExternalSandbox(sandbox: CodexSandboxMode): boolean {
-  return CODEX_EXTERNAL_SANDBOX && sandbox === "workspace-write";
+export function usesExternalSandbox(sandbox: CodexSandboxMode, external: boolean = CODEX_EXTERNAL_SANDBOX): boolean {
+  return external && sandbox === "workspace-write";
 }
 
 /**
@@ -125,8 +125,8 @@ export function usesExternalSandbox(sandbox: CodexSandboxMode): boolean {
  * run on a host where bubblewrap is dead, which is exactly what the hint
  * offers as the escape.
  */
-export function sandboxRefusal(sandbox: CodexSandboxMode): string | null {
-  if (sandbox === "danger-full-access" || usesExternalSandbox(sandbox)) return null;
+export function sandboxRefusal(sandbox: CodexSandboxMode, external: boolean = CODEX_EXTERNAL_SANDBOX): string | null {
+  if (sandbox === "danger-full-access" || usesExternalSandbox(sandbox, external)) return null;
   const broken = getAgentSandboxBroken(CODEX_AGENT);
   if (!broken) return null;
   return (

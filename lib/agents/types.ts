@@ -350,8 +350,15 @@ export interface AgentDriver {
    * TurnHooks). Optional in the signature so a driver that mounts no Calandria
    * tools can ignore it entirely; the runner always passes what its caller
    * gave it.
+   *
+   * `env` is the advanced-settings snapshot the runner captured once for this
+   * task-turn (lib/advanced-env/runtime.ts), the same object across a lingering
+   * turn's injected follow-ups and refreshed only on the next `startTurn`/
+   * `startResumeTurn`. Optional so a driver ignorant of it (or a direct test
+   * call) still satisfies the interface and falls back to its own default
+   * (ordinarily `process.env`).
    */
-  runTurn(task: Task, project: Project, userText: string, abort?: AbortController, hooks?: TurnHooks): AsyncGenerator<StreamEvent>;
+  runTurn(task: Task, project: Project, userText: string, abort?: AbortController, hooks?: TurnHooks, env?: AgentEnvironmentInput): AsyncGenerator<StreamEvent>;
 
   /**
    * Files inside the task's working directory that this driver re-reads from

@@ -117,7 +117,7 @@ const NONE: Mapped = { events: [] };
  * usage report exec put on `turn.completed` (from the last tokenUsage seen)
  * and, on failure, `turn.failed`.
  */
-export function mapNotification(method: string, params: unknown, state: AppServerTurnState): Mapped {
+export function mapNotification(method: string, params: unknown, state: AppServerTurnState, hookTrace: boolean = codexHookTrace()): Mapped {
   const p = (params ?? {}) as Record<string, unknown>;
   switch (method) {
     case "item/started":
@@ -218,7 +218,7 @@ export function mapNotification(method: string, params: unknown, state: AppServe
       // A started event carries nothing a completion doesn't, so it is only
       // worth a line while tracing every run; a preToolUse hook firing on
       // every tool call would otherwise flood the transcript for no gain.
-      if (!codexHookTrace()) return NONE;
+      if (!hookTrace) return NONE;
       return { events: [], notice: hookRunNotice(run) };
     }
     case "hook/completed": {
@@ -231,7 +231,7 @@ export function mapNotification(method: string, params: unknown, state: AppServe
       // a denial can never read as suppressed even if that implication
       // changes. A clean pass is noise and only posts while tracing.
       const notable = hookRunDenied(run) || !isCleanHookRun(run);
-      if (!notable && !codexHookTrace()) return NONE;
+      if (!notable && !hookTrace) return NONE;
       return { events: [], notice: hookRunNotice(run) };
     }
     case "configWarning": {

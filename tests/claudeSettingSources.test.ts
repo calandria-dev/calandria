@@ -107,6 +107,21 @@ describe("claude driver setting sources", () => {
     expect("NODE_ENV" in env).toBe(false);
     expect(env.PORT).toBe(String(project.port));
   });
+
+  it("reads its base env from the runner's captured advanced-settings snapshot when given one", async () => {
+    const { buildAgentSnapshot } = await import("@/lib/advanced-env/runtime");
+    const snapshot = buildAgentSnapshot({
+      inheritedEnv: process.env,
+      appliedAppEnvironment: null,
+      savedAgentRows: [{ id: "r1", scope: "agent", name: "MY_CLAUDE_SNAPSHOT_VAR", value: "hi", secret: false, revision: 1 }],
+    });
+    for await (const _ev of claudeDriver.runTurn(task, project, "hello", undefined, undefined, { snapshot, codex: { transport: "app-server", approvalPolicy: "never", writableRoots: "", externalSandbox: false, inheritMcp: true, hookTrace: false } })) void _ev;
+    const env = optionsOfCall(0).env as Record<string, string>;
+    expect(env.MY_CLAUDE_SNAPSHOT_VAR).toBe("hi");
+    // Still scoped the same way even with a snapshot supplied.
+    expect("NODE_ENV" in env).toBe(false);
+    expect(env.PORT).toBe(String(project.port));
+  });
 });
 
 describe("drift detection covers every source a turn loads from the worktree", () => {

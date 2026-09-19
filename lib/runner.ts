@@ -47,7 +47,10 @@ import { clearRunContext, setRunContext, type RunContext } from "@/lib/runContex
 import { sendTurnInput } from "@/lib/turnInput";
 import { ASK_INTERRUPTED_NOTE } from "@/lib/asks";
 import { settleRun } from "@/lib/schedule/store";
-import type { TurnHooks } from "@/lib/agents/types";
+import type { TurnHooks, AgentEnvironmentInput } from "@/lib/agents/types";
+import { buildAgentSnapshot, resolveCodexControls } from "@/lib/advanced-env/runtime";
+import { savedRows } from "@/lib/advanced-env/store";
+import { appliedAppEnvironment } from "@/lib/advanced-env/bootstrap.mjs";
 import type { Task, Project, PermissionOutcome, ToolData, LedgerUsage, TurnUsage } from "@/lib/types";
 import { createLogger } from "@/lib/log.mjs";
 import { countTurnFinished, countTurnStarted } from "@/lib/metrics";
@@ -824,7 +827,21 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // through any public or documented API, so persisting one would mean
     // reading private, minified SDK internals liable to break on every
     // version bump.
-    for await (const ev of driver.runTurn(task, project, userText, abortController, hooks)) {
+    // One immutable environment snapshot per task-turn (lib/advanced-env/runtime.ts):
+    // the saved advanced-settings agent rows, layered on the inherited/launch
+    // environment with the app-scope overlay undone. Built once here, before the
+    // driver starts, so a save made mid-turn is only ever visible to the NEXT
+    // turn's own capture; a lingering turn's injected follow-ups keep observing
+    // this same object, since they run inside this one call to run().
+    const envInput: AgentEnvironmentInput = (() => {
+      const snapshot = buildAgentSnapshot({
+        inheritedEnv: process.env,
+        appliedAppEnvironment: appliedAppEnvironment(),
+        savedAgentRows: savedRows("agent"),
+      });
+      return { snapshot, codex: resolveCodexControls(snapshot) };
+    })();
+    for await (const ev of driver.runTurn(task, project, userText, abortController, hooks, envInput)) {
       // This turn is producing something, whatever it is. One Map write,
       // before the branch ladder, so nothing added below can skip it; the
       // gaps between these writes are the signal the idle mark is derived
