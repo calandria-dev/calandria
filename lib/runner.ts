@@ -49,6 +49,7 @@ import { ASK_INTERRUPTED_NOTE } from "@/lib/asks";
 import { settleRun } from "@/lib/schedule/store";
 import type { TurnHooks, AgentEnvironmentInput } from "@/lib/agents/types";
 import { buildAgentSnapshot, resolveCodexControls } from "@/lib/advanced-env/runtime";
+import { mintTurnCapability, revokeTurnCapability } from "@/lib/advanced-env/capabilities";
 import { savedRows } from "@/lib/advanced-env/store";
 import { appliedAppEnvironment } from "@/lib/advanced-env/bootstrap.mjs";
 import type { Task, Project, PermissionOutcome, ToolData, LedgerUsage, TurnUsage } from "@/lib/types";
@@ -128,6 +129,13 @@ export function startTurn(
   // it to settle the schedule run. Registered here rather than inside run()
   // so it is in place before the first tool call can arrive.
   if (runContext) setRunContext(task.id, runContext);
+  // Minted here, alongside the run context, so it exists before the first
+  // tool call can arrive and is bound to this task's whole turn. A queue
+  // handoff into a successor re-enters startTurn and mints its own,
+  // superseding this one (lib/advanced-env/capabilities.ts), so a stale
+  // token from an outgoing turn can never authorize a mutation the
+  // successor's turn didn't ask for.
+  const capabilityToken = mintTurnCapability(task.id, project.id);
   // A turn is what a queued start (tasks.start_at, lib/deferredStart.ts) was
   // waiting to produce, so any launch consumes the deadline: the sweep's own,
   // a Start-session click, or a follow-up sent by hand. If left set, a task
@@ -147,7 +155,7 @@ export function startTurn(
   // unhandled rejection and, under Node's default policy, crash the whole
   // server, taking down every other tenant's turn. Catch and log so one
   // deleted task can't do that.
-  run(task, project, userText, syncNote, abortController, runContext, hooks).catch((err) => {
+  run(task, project, userText, syncNote, abortController, runContext, hooks, capabilityToken).catch((err) => {
     log.error("turn crashed after its finally settled", { task: task.id, err });
     // Best-effort settle so this last-resort path can't wedge the task in a
     // running-forever state. unregisterTurn is identity-checked, so a newer
@@ -187,6 +195,15 @@ export function startTurn(
       } catch (contextErr) {
         log.error("could not clear run context after crash", { task: task.id, err: contextErr });
       }
+    }
+    // Same last-resort settle as the run context above: run()'s own finally
+    // never reached its revoke, so do it here rather than leave this turn's
+    // capability valid indefinitely. Identity-checked, so a successor that
+    // already minted its own is untouched.
+    try {
+      revokeTurnCapability(task.id, capabilityToken);
+    } catch (capErr) {
+      log.error("could not revoke turn capability after crash", { task: task.id, err: capErr });
     }
   });
 }
@@ -536,7 +553,7 @@ export function publishTurnError(id: string, gen: number, errText: string): void
   }
 }
 
-async function run(task: Task, project: Project, userText: string, syncNote: string, abortController: AbortController, runContext?: RunContext, hooks?: TurnHooks): Promise<void> {
+async function run(task: Task, project: Project, userText: string, syncNote: string, abortController: AbortController, runContext: RunContext | undefined, hooks: TurnHooks | undefined, capabilityToken: string): Promise<void> {
   const id = task.id;
   const gen = task.generation;
   let sessionId: string | null = task.session_id;
@@ -1457,6 +1474,9 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       }
     }
     if (runContext) clearRunContext(id, runContext);
+    // Identity-checked, like clearRunContext above: a no-op if a queued
+    // handoff already minted the successor's capability for this task id.
+    revokeTurnCapability(id, capabilityToken);
     // Keyed by (task_id, generation), so this settles this generation's
     // session row and never touches the fresh generation, safe to run
     // either way.

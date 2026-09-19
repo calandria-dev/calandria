@@ -25,6 +25,7 @@ import {
 import { submitAnswer } from "@/lib/asks";
 import { subscribeGlobal, watcherCount } from "@/lib/events";
 import { ensureNotifier, stopNotifier } from "@/lib/notifications/dispatcher";
+import type { PermissionDecisionWaiter } from "@/lib/permissions";
 import type { PermissionMatchKind, PermissionRule } from "@/lib/types";
 
 const bash = (command: string) => ({ command });
@@ -401,6 +402,75 @@ describe("parking on a human", () => {
       // 0 attended cap = park indefinitely, reported as no deadline at all.
       expect(promptDeadline(0, 45_000)).toBe(0);
     });
+  });
+});
+
+// The `waiter` adapter (lib/advanced-env/capabilities.ts's mandatory decision
+// waiter is the one production caller) swaps only WHERE a decision is parked;
+// every default-caller behavior above must survive untouched, since the
+// default is what the whole existing suite exercises.
+describe("the waiter adapter", () => {
+  it("defaults to the generic ask registry, unchanged from before the adapter existed", async () => {
+    const p = waitForPermission({ taskId: "t-waiter-1", id: "perm:1", attendedMs: 0, unattendedMs: 0 });
+    expect(submitAnswer("t-waiter-1", "perm:1", [["deny"]])).toBe(true);
+    await expect(p).resolves.toEqual({ answers: [["deny"]] });
+  });
+
+  it("parks and cancels through a supplied adapter instead of the generic registry", async () => {
+    const parked: { taskId: string; id: string }[] = [];
+    let resolveIt!: (answers: string[][]) => void;
+    const waiter = {
+      park: (taskId: string, id: string) => {
+        parked.push({ taskId, id });
+        return new Promise<string[][]>((resolve) => {
+          resolveIt = resolve;
+        });
+      },
+      cancel: vi.fn(() => true),
+    };
+    const p = waitForPermission({ taskId: "t-waiter-2", id: "perm:2", attendedMs: 0, unattendedMs: 0, waiter });
+    expect(parked).toEqual([{ taskId: "t-waiter-2", id: "perm:2" }]);
+    // The generic registry was never touched, so it has nothing to resolve.
+    expect(submitAnswer("t-waiter-2", "perm:2", [["allow_once"]])).toBe(false);
+    resolveIt([["allow_once"]]);
+    await expect(p).resolves.toEqual({ answers: [["allow_once"]] });
+  });
+
+  // A real waiter's cancel() causes the promise it parked to settle (cancelAsk
+  // rejects it; the mandatory waiter's cancelMandatoryDecision does the same).
+  // These mocks reproduce that contract instead of stubbing cancel as a no-op,
+  // since a cancel that doesn't settle the parked promise would hang
+  // waitForPermission's own `await answer` forever, in the mock same as in
+  // production.
+  function rejectingWaiter(): { waiter: PermissionDecisionWaiter & { cancel: ReturnType<typeof vi.fn> } } {
+    let rejectIt!: (err: Error) => void;
+    const cancel = vi.fn((_taskId: string, _id: string, reason: string): boolean => {
+      rejectIt(new Error(reason));
+      return true;
+    });
+    const park = () => new Promise<string[][]>((_resolve, reject) => (rejectIt = reject));
+    return { waiter: { park, cancel } };
+  }
+
+  it("cancels through the adapter, not cancelAsk, on unattended expiry", async () => {
+    const { waiter } = rejectingWaiter();
+    await expect(waitForPermission({ taskId: "t-waiter-3", id: "perm:3", attendedMs: 0, unattendedMs: 60, waiter }))
+      .resolves.toEqual({ expired: "unattended" });
+    expect(waiter.cancel).toHaveBeenCalledWith("t-waiter-3", "perm:3", expect.any(String));
+  });
+
+  it("settles at once, through the adapter, for a scheduled (interaction-denied) turn", async () => {
+    const { setRunContext, clearRunContext, SCHEDULED_RUN_CONTEXT } = await import("@/lib/runContext");
+    const ctx = { ...SCHEDULED_RUN_CONTEXT };
+    setRunContext("t-waiter-4", ctx);
+    try {
+      const { waiter } = rejectingWaiter();
+      await expect(waitForPermission({ taskId: "t-waiter-4", id: "perm:4", attendedMs: 60_000, unattendedMs: 60_000, waiter }))
+        .resolves.toEqual({ expired: "unattended" });
+      expect(waiter.cancel).toHaveBeenCalledWith("t-waiter-4", "perm:4", "unattended: scheduled run");
+    } finally {
+      clearRunContext("t-waiter-4", ctx);
+    }
   });
 });
 

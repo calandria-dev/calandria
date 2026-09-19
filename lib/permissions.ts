@@ -364,6 +364,25 @@ export type PermissionWait =
   /** The turn, or this specific request, was torn down before anyone decided. */
   | { aborted: true };
 
+/**
+ * Where a decision is parked and how it is given up on. The default is the
+ * generic ask registry (lib/asks.ts), which POST /api/tasks/[id]/answer
+ * settles. A mandatory prompt (lib/advanced-env/capabilities.ts) passes its
+ * own adapter instead, parked in a registry that route has no access to, so
+ * it can never settle one. Everything else about the wait (the
+ * attended/unattended deadline, the presence heuristic, abort handling) is
+ * identical either way.
+ */
+export interface PermissionDecisionWaiter {
+  park: (taskId: string, id: string, signal?: AbortSignal) => Promise<string[][]>;
+  cancel: (taskId: string, id: string, reason: string) => boolean;
+}
+
+const defaultWaiter: PermissionDecisionWaiter = {
+  park: (taskId, id, signal) => waitForAnswer(taskId, id, [], signal),
+  cancel: cancelAsk,
+};
+
 export async function waitForPermission(opts: {
   taskId: string;
   id: string;
@@ -372,11 +391,13 @@ export async function waitForPermission(opts: {
   attendedMs: number;
   /** ms to wait while NO client is connected; 0 = never shortcut, use attendedMs. */
   unattendedMs: number;
+  /** Defaults to the generic ask registry; see PermissionDecisionWaiter. */
+  waiter?: PermissionDecisionWaiter;
 }): Promise<PermissionWait> {
-  const { taskId, id, signal, attendedMs, unattendedMs } = opts;
+  const { taskId, id, signal, attendedMs, unattendedMs, waiter = defaultWaiter } = opts;
   // Register the waiter first, so an answer arriving in the same tick as the
   // published card can't miss it. The registry keys on the id, not questions.
-  const answer = waitForAnswer(taskId, id, [], signal);
+  const answer = waiter.park(taskId, id, signal);
 
   // A scheduled turn is unattended regardless of watcherCount(): the user
   // didn't launch it, so an open tab isn't consent to be interrupted by it.
@@ -384,7 +405,7 @@ export async function waitForPermission(opts: {
   // unattended deny.
   const denied = interactionDenied(taskId);
   if (denied) {
-    cancelAsk(taskId, id, "unattended: scheduled run");
+    waiter.cancel(taskId, id, "unattended: scheduled run");
     await answer.catch(() => {});
     return { expired: "unattended" };
   }
@@ -404,8 +425,7 @@ export async function waitForPermission(opts: {
       clearInterval(timer);
       // Settles the waiter and removes the registry entry, so a late answer
       // reports "nothing waiting" instead of resolving a dead turn.
-
-      cancelAsk(taskId, id, "permission expired");
+      waiter.cancel(taskId, id, "permission expired");
     }
   }, every);
 
