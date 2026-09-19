@@ -34,6 +34,7 @@ import {
 } from "./permissions";
 import { PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS } from "./config";
 import { addPermissionRule, listPermissionRules } from "./store";
+import { mandatoryDecisionWaiter } from "./advanced-env/capabilities";
 
 export interface PromptContext {
   taskId: string;
@@ -73,6 +74,17 @@ export interface PromptSpec {
    * remembered rule may swallow the CLI's own warning.
    */
   blockedPath?: string;
+  /**
+   * Bypass every auto-allow rule (the read-only allowlist, remembered
+   * project rules) and never offer a durable or session-scoped grant: every
+   * call gets a fresh card, decided as allow-once or deny only. The decision
+   * is parked on a dedicated waiter (lib/advanced-env/capabilities.ts)
+   * instead of the generic ask registry, so POST /api/tasks/[id]/answer can
+   * never settle it. For Advanced Settings mutations, where a task's
+   * bypass/full-access mode or a trusted MCP rule must not be able to
+   * shortcut approval.
+   */
+  mandatory?: boolean;
 }
 
 export type PromptDecision =
@@ -88,17 +100,24 @@ export type PromptDecision =
  */
 export async function promptPermission(ctx: PromptContext, spec: PromptSpec): Promise<PromptDecision> {
   const auto: PromptDecision = { kind: "allow", always: false, auto: true };
-  if (isAlwaysAllowed(spec.tool, spec.blockedPath)) return auto;
-  // Re-read the rules per call, not per turn: an "always allow" answered
-  // earlier in THIS turn has to take effect immediately, and a rule the user
-  // revokes mid-turn has to stop applying just as fast.
-  if (!spec.blockedPath && allowedByRules(listPermissionRules(ctx.projectId), spec.tool, spec.input)) return auto;
+  if (!spec.mandatory) {
+    if (isAlwaysAllowed(spec.tool, spec.blockedPath)) return auto;
+    // Re-read the rules per call, not per turn: an "always allow" answered
+    // earlier in THIS turn has to take effect immediately, and a rule the user
+    // revokes mid-turn has to stop applying just as fast.
+    if (!spec.blockedPath && allowedByRules(listPermissionRules(ctx.projectId), spec.tool, spec.input)) return auto;
+  }
 
   // Build the card lazily: a prompted session runs this gate on every Read
   // and Grep, and the card's rendering is not free.
   let card: ReturnType<typeof describePermission> | undefined;
   const described = () => (card ??= describePermission(spec.tool, spec.input));
-  const scope = spec.scope ?? scopeOfferFor(spec.tool, spec.input) ?? spec.scopeFallback;
+  // A mandatory prompt never offers a durable or session-scoped grant: every
+  // mutation gets a fresh decision, so there is nothing here to remember.
+  // The transcript card renders its "Always allow" button only when `scope`
+  // is present (app/shell/Transcript.tsx), so this alone limits it to
+  // Allow once / Deny with no separate UI branch.
+  const scope = spec.mandatory ? undefined : (spec.scope ?? scopeOfferFor(spec.tool, spec.input) ?? spec.scopeFallback);
   const request: PermissionRequest = {
     id: spec.id,
     tool: spec.tool,
@@ -120,6 +139,7 @@ export async function promptPermission(ctx: PromptContext, spec: PromptSpec): Pr
     signal: ctx.signal,
     attendedMs: PERMISSION_PROMPT_TIMEOUT_MS,
     unattendedMs: PERMISSION_UNATTENDED_MS,
+    waiter: spec.mandatory ? mandatoryDecisionWaiter : undefined,
   });
 
   if ("aborted" in waited) {
