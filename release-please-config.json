@@ -7,7 +7,9 @@
   "packages": {
     ".": {
       "exclude-paths": [
-        "website"
+        "website",
+        ".github",
+        ".claude"
       ],
       "extra-files": [
         {

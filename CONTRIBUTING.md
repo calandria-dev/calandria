@@ -110,6 +110,21 @@ feat!: drop the control-plane interop routes
 Reverting needs the `revert:` type; GitHub's default `Revert "..."` title doesn't parse.
 If the check goes red, edit the title: it re-runs by itself, with no new push.
 
+### Some changes are outside the release entirely
+
+`exclude-paths` in `release-please-config.json` lists paths whose changes ship nothing:
+`website` (the marketing site, deployed on its own), `.github` (workflows, templates and
+the notes beside them) and `.claude` (this repository's own development tooling). A PR
+that touches only those paths gets no version bump and no changelog line, whatever its
+type. Touch one of them together with anything else and the commit counts in full.
+
+The rule reads paths because the type alone gets it wrong. A workflow repair titled
+`fix(ci):` used to cut a patch release carrying a "Bug Fixes" entry for a file no user
+runs. `fix(ci): upgrade base packages so the weekly image scan can pass` shares that type
+and edits the `Dockerfile`, which ships in the image and belongs in the notes. Title CI
+work `ci:` when it changes no behavior and `fix:` when it does; the paths decide the
+release either way.
+
 **Write your commit subjects the same way.** The repository's `squash_merge_commit_title`
 is `PR_TITLE`: the title the check just passed is the subject that lands, whether your
 branch has one commit or twenty. Write Conventional subjects on the branch too: they're
