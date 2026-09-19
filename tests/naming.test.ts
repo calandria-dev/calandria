@@ -109,6 +109,11 @@ const ALLOWED: Record<string, RegExp[]> = {
   // Case-insensitive: this test also exercises a lowercase "orch_db_dir"
   // input, since the catalog's own alias check is case-insensitive too.
   "tests/advancedEnvCatalog.test.ts": [/ORCH_/i],
+  // A saved app row is shadowed by the launch environment under either
+  // spelling, so the store checks the ORCH_* alias of a CALANDRIA_* name
+  // before it calls a row unshadowed; its test covers that alias.
+  "lib/advanced-env/store.ts": [LEGACY_ENV],
+  "tests/advancedEnvStore.test.ts": [LEGACY_ENV],
   // The shared log emitter and its test, which document why CALANDRIA_LOG_FORMAT
   // is read straight off process.env: a knob born AFTER the rename has no old
   // spelling to honor, and routing it through the table would mint a deprecated
