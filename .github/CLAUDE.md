@@ -94,9 +94,16 @@ push is not a successful CI run.
   `release-please-config.json`, repair the workflow when it breaks.
 - **Diff main's subjects against the changelog before proposing a release.**
   `git log <last-tag>..origin/main --format='%s'` beside the entries the release PR adds to
-  `CHANGELOG.md`. Every subject should appear except the types release-please legitimately hides
-  (`chore:`, `ci:`, `test:`, `style:`, `refactor:`); anything else missing is a real omission to
-  chase down.
+  `CHANGELOG.md`. Every subject should appear except two groups release-please drops on purpose:
+  the hidden types (`chore:`, `ci:`, `test:`, `style:`, `refactor:`), and any commit whose files
+  all sit under an `exclude-paths` entry in `release-please-config.json` (`website`, `.github`,
+  `.claude`), which is dropped whatever its type. Confirm the second group with
+  `git show --stat --name-only <sha>` before chasing it; anything else missing is a real omission.
+- **A change confined to `.github/`, `.claude/` or `website/` cuts no release.** A workflow-only
+  PR gets no version bump and no changelog line, even when it is titled `fix(ci):`. Title such
+  work `ci:`, and keep `fix:` for a change that reaches something a user runs
+  (`Dockerfile`, `lib/`, `app/`, `scripts/`, `desktop/`). `tests/releaseScope.test.ts` pins the
+  path list.
 - **Merging a release PR takes a recorded user confirmation naming the version.** Present what the
   release contains and what is green, ask through the ask tool, and require an explicit
   affirmative naming the version before merging. Never merge on your own initiative, and never

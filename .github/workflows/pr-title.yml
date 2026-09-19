@@ -84,6 +84,12 @@ jobs:
           #   docs style chore refactor test build ci
           #            -> recorded, hidden from CHANGELOG.md
           #
+          # The type is only half of it. `exclude-paths` in
+          # release-please-config.json drops any commit whose files all sit
+          # under website/, .github/ or .claude/, so a workflow-only PR cuts no
+          # release even when it is titled `fix(ci):`
+          # (tests/releaseScope.test.ts).
+          #
           # (`feature` is the preset's accepted alias for `feat`; prefer `feat`.)
           #
           # <type>[(scope)][!]: <description>. `!` is the breaking-change
@@ -127,6 +133,11 @@ jobs:
 
           A revert needs the `revert:` type; GitHub's default `Revert "..."`
           title does not parse.
+
+          A PR confined to website/, .github/ or .claude/ is outside the
+          release either way: `exclude-paths` in release-please-config.json
+          drops those commits whatever their type. Title CI work that changes
+          no shipped behavior `ci:`.
 
           Edit the title and this check re-runs on its own. CONTRIBUTING.md has
           the full policy.
