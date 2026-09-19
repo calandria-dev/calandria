@@ -2982,3 +2982,14 @@ button.gbadge.more:hover,button.gbadge.more[aria-expanded="true"]{color:var(--in
   .mv-row{min-height:44px;}
   .mv-nm,.mv-ty{white-space:normal;}
 }
+
+/* Settings -> Advanced: reuses the .mv- row/list/modal shapes above, plus a
+ * few additions for the value column and the catalog picker. */
+.adv-row{flex-wrap:wrap;}
+.adv-val{white-space:normal;overflow-wrap:anywhere;}
+.adv-cat-row{align-items:flex-start;text-align:left;}
+.adv-cat-desc{margin-top:2px;font-size:11px;color:var(--ink-3);white-space:normal;line-height:1.5;}
+
+@media (max-width:460px){
+  .adv-row{min-height:auto;}
+}
