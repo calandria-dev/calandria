@@ -1,111 +1,26 @@
-// Pins the result of the comment-style cleanup (CLAUDE.md, "code-deslop" tag):
-// no em dash anywhere in tracked source, and no comment written as a work log
-// ("deliberately", "the whole point", dated "Measured" notes, and similar) in
-// place of stating the invariant a maintainer has to keep.
-//
-// A simple line rule, not a parser: a line is a "comment line" if it starts
-// with `//`, `/*`, `*` or `{/*` after optional whitespace. A false positive
-// inside a string literal is acceptable as long as it names a real hit; the
-// em-dash check applies to every line regardless, since a user-visible string
-// with an em dash is a UI copy problem too.
-//
-// Markdown is out of scope: tests/prose.test.ts (integration/docs-cleanup)
-// covers docs, and the two guards must not overlap so the branches don't
-// conflict on the same file.
+// Pins the result of the comment-style cleanup (CLAUDE.md, "code-deslop" tag).
+// The rule tables and the scan itself live in scripts/guards/commentStyle.mjs,
+// shared with the plain `node` CLI a pre-commit hook runs without
+// node_modules; this file only asserts. See that module's header comment for
+// the full rationale.
 
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-
-const ROOT = path.resolve(__dirname, "..");
-
-const EM_DASH = /—/;
-
-const COMMENT_LINE = /^\s*(\/\/|\/\*|\*|\{\/\*)/;
-
-const WORK_LOG_PHRASES = [
-  /\bdeliberately\b/i,
-  /\bthe whole point\b/i,
-  /\bload-bearing\b/i,
-  /\bis what makes\b/i,
-  /\bthis has bitten\b/i,
-];
-
-const MEASURED_OPENER = /^\s*(\/\/|\/\*|\*|\{\/\*)\s*Measured\b/;
-
-/**
- * file -> lines that may keep a hit, and why. Every entry here is a real
- * exception, named in the PR body that adds it.
- */
-const ALLOWED: Record<string, RegExp[]> = {
-  // This guard has to spell out and demonstrate everything it forbids: the
-  // em-dash regex literal, the banned-phrase list, and the sanity-check
-  // examples all necessarily contain the exact patterns being guarded
-  // against. Same precedent as tests/naming.test.ts's own entry below.
-  "tests/commentStyle.test.ts": [/./],
-  // tests/prose.test.ts is the same guard for Markdown, and needs the same
-  // self-exemption for the same reason: its own literals and examples
-  // necessarily contain the patterns it guards against.
-  "tests/prose.test.ts": [/./],
-};
-
-const DIRS = ["lib/", "app/", "desktop/", "scripts/", "tests/", "e2e/"];
-const EXTRA_FILES = new Set(["server.js", "pty-server.js", "middleware.ts", "next.config.mjs"]);
-const EXTENSIONS = [".ts", ".tsx", ".js", ".mjs", ".cjs", ".css"];
-
-function isTargetFile(file: string): boolean {
-  if (EXTRA_FILES.has(file)) return true;
-  if (!DIRS.some((d) => file.startsWith(d))) return false;
-  return EXTENSIONS.some((ext) => file.endsWith(ext));
-}
-
-/**
- * Tracked text files under the covered directories. `null` when git can't
- * answer: a task worktree's `.git` is a file pointing outside the mount, so
- * `git ls-files` fails under `npm run test:docker` (tests/naming.test.ts hits
- * the same case). CI runs against a real clone, which is the run that gates a
- * merge, so the guard skips rather than walking the filesystem by hand.
- */
-function trackedFiles(): string[] | null {
-  let out: Buffer;
-  try {
-    out = execFileSync("git", ["ls-files", "-z"], { cwd: ROOT, maxBuffer: 32 << 20, stdio: ["ignore", "pipe", "ignore"] });
-  } catch {
-    return null;
-  }
-  return out
-    .toString("utf8")
-    .split("\0")
-    .filter(Boolean)
-    .filter(isTargetFile)
-    .filter((f) => {
-      const abs = path.join(ROOT, f);
-      return fs.existsSync(abs) && fs.statSync(abs).isFile();
-    });
-}
-
-function scan(files: string[]) {
-  const emDashHits: string[] = [];
-  const phraseHits: string[] = [];
-  for (const file of files) {
-    const allowed = ALLOWED[file] ?? [];
-    const lines = fs.readFileSync(path.join(ROOT, file), "utf8").split("\n");
-    lines.forEach((line, i) => {
-      if (allowed.some((p) => p.test(line))) return;
-      const at = `${file}:${i + 1}: ${line.trim().slice(0, 160)}`;
-      if (EM_DASH.test(line)) emDashHits.push(at);
-      if (COMMENT_LINE.test(line) && (WORK_LOG_PHRASES.some((p) => p.test(line)) || MEASURED_OPENER.test(line))) {
-        phraseHits.push(at);
-      }
-    });
-  }
-  return { emDashHits, phraseHits };
-}
+import {
+  ALLOWED,
+  COMMENT_LINE,
+  EM_DASH,
+  MEASURED_OPENER,
+  WORK_LOG_PHRASES,
+  scan,
+  trackedTargetFiles,
+} from "../scripts/guards/commentStyle.mjs";
+import { ROOT } from "../scripts/guards/files.mjs";
 
 describe("comment style guard (plain source, no em dashes or work-log phrasing)", () => {
   it("no tracked source file contains an em dash", (ctx) => {
-    const files = trackedFiles();
+    const files = trackedTargetFiles();
     if (!files) return ctx.skip("git ls-files unavailable (worktree .git is outside the mount)");
     const { emDashHits } = scan(files);
     expect(
@@ -117,7 +32,7 @@ describe("comment style guard (plain source, no em dashes or work-log phrasing)"
   });
 
   it("no comment reads as a work log instead of an invariant", (ctx) => {
-    const files = trackedFiles();
+    const files = trackedTargetFiles();
     if (!files) return ctx.skip("git ls-files unavailable (worktree .git is outside the mount)");
     const { phraseHits } = scan(files);
     expect(

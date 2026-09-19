@@ -1,0 +1,11 @@
+export const EM_DASH: RegExp;
+export const COMMENT_LINE: RegExp;
+export const WORK_LOG_PHRASES: RegExp[];
+export const MEASURED_OPENER: RegExp;
+export const ALLOWED: Record<string, RegExp[]>;
+export const DIRS: string[];
+export const EXTRA_FILES: Set<string>;
+export const EXTENSIONS: string[];
+export function isTargetFile(file: string): boolean;
+export function trackedTargetFiles(): string[] | null;
+export function scan(files: string[]): { emDashHits: string[]; phraseHits: string[] };
