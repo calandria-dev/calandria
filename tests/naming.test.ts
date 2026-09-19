@@ -101,6 +101,14 @@ const ALLOWED: Record<string, RegExp[]> = {
   // (b) the alias table itself, plus everything that documents or tests it.
   "lib/env.mjs": [LEGACY_ENV],
   "tests/env.test.ts": [LEGACY_ENV],
+  // The advanced-env catalog normalizes a submitted ORCH_* name to its
+  // CALANDRIA_* spelling before checking reservation, so a custom variable
+  // can't dodge a reserved/unsupported name via the alias table; its test
+  // exercises that normalization directly.
+  "lib/advanced-env/catalog.mjs": [LEGACY_ENV],
+  // Case-insensitive: this test also exercises a lowercase "orch_db_dir"
+  // input, since the catalog's own alias check is case-insensitive too.
+  "tests/advancedEnvCatalog.test.ts": [/ORCH_/i],
   // The shared log emitter and its test, which document why CALANDRIA_LOG_FORMAT
   // is read straight off process.env: a knob born AFTER the rename has no old
   // spelling to honor, and routing it through the table would mint a deprecated
