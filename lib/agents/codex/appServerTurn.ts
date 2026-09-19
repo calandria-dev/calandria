@@ -24,6 +24,7 @@ import { promptPermission, type PromptDecision } from "../../permissionPrompt";
 import { ingestRateLimits } from "./planUsage";
 import { sandboxPolicyObject, type CodexRunPolicy } from "./policy";
 import { usesExternalSandbox } from "./sandbox";
+import type { CodexControls } from "../../advanced-env/runtime";
 import { interactionDenied, recordUnattendedDenial, UNATTENDED_ASK_DENIAL, UNATTENDED_ASK_NOTE } from "../../runContext";
 import { waitForAnswer, ASK_INTERRUPTED_NOTE } from "../../asks";
 
@@ -42,6 +43,10 @@ export interface AppServerTurnArgs {
   model: string | null;
   effort?: ModelReasoningEffort;
   policy: CodexRunPolicy;
+  /** The turn's resolved advanced-settings Codex controls (external sandbox,
+   * hook trace); falls back to lib/config.ts's import-time constants when
+   * omitted (a direct test call). */
+  codex?: CodexControls;
   /** The usage baseline and emitted-tool set (./events.ts). Mutated in place. */
   state: CodexMapState;
   abort?: AbortController;
@@ -90,7 +95,7 @@ export async function* runAppServerTurn(args: AppServerTurnArgs): AsyncGenerator
     // throwaway `codex app-server` to read the same numbers; it produces no
     // stream event, so it stays out of the mapper (which returns NONE for it).
     if (method === "account/rateLimits/updated") ingestRateLimits(params);
-    const mapped = mapNotification(method, params, tstate);
+    const mapped = mapNotification(method, params, tstate, args.codex?.hookTrace);
     for (const ev of mapped.events) for (const out of mapThreadEvent(ev, state)) push(out);
     // Live typing, straight onto the queue: the runner publishes it without
     // persisting, so it costs the transcript nothing and reaches whoever has
@@ -335,7 +340,7 @@ export async function* runAppServerTurn(args: AppServerTurnArgs): AsyncGenerator
         threadId,
         input: [{ type: "text", text: args.prompt(fresh), text_elements: [] }],
         cwd: args.cwd,
-        sandboxPolicy: sandboxPolicyObject(policy, usesExternalSandbox(policy.sandbox)),
+        sandboxPolicy: sandboxPolicyObject(policy, usesExternalSandbox(policy.sandbox, args.codex?.externalSandbox)),
         ...(policy.approval ? { approvalPolicy: policy.approval } : {}),
         approvalsReviewer: policy.reviewer,
         ...(args.model ? { model: args.model } : {}),

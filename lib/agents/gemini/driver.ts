@@ -19,7 +19,7 @@
 
 import { spawn } from "node:child_process";
 import type { Project, Task, StreamEvent, TurnUsage } from "../../types";
-import type { AgentDriver, OneShotResult } from "../types";
+import type { AgentDriver, AgentEnvironmentInput, OneShotResult, TurnHooks } from "../types";
 import { GEMINI_CAPABILITIES } from "./capabilities";
 import { getSetting, getThreadUsageCum, setThreadUsageCum } from "../../store";
 import { AGY_CLI_PATH, AGY_PRINT_TIMEOUT } from "../../config";
@@ -92,9 +92,11 @@ async function* runTurn(
   task: Task,
   project: Project,
   userText: string,
-  abortController?: AbortController
+  abortController?: AbortController,
+  _hooks?: TurnHooks,
+  envInput?: AgentEnvironmentInput
 ): AsyncGenerator<StreamEvent> {
-  const providerEnv = resolvedAgentTurnEnv(project, task, "gemini");
+  const providerEnv = resolvedAgentTurnEnv(project, task, "gemini", envInput?.snapshot.env);
   // The task's own choice, else this agent's Settings default ("default_model:<agent>";
   // agent-scoped, since a model id names one provider's catalog).
   const chosen = task.model ?? getSetting(`default_model:${task.agent}`) ?? resolvedProviderDefaultModel(project, task, "gemini") ?? providerEnv.GEMINI_MODEL;

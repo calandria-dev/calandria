@@ -147,7 +147,7 @@ export function disableInheritedServers(servers: UserMcpServer[]): Record<string
  * without spawning anything, under the default (CODEX_INHERIT_MCP on): the
  * user's servers stay mounted and there is nothing to override.
  */
-export async function inheritedServerOverrides(): Promise<Record<string, DisabledMcpServer>> {
-  if (CODEX_INHERIT_MCP) return {};
+export async function inheritedServerOverrides(inheritMcp: boolean = CODEX_INHERIT_MCP): Promise<Record<string, DisabledMcpServer>> {
+  if (inheritMcp) return {};
   return disableInheritedServers(await listUserMcpServers());
 }

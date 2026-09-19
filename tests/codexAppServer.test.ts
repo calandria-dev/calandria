@@ -37,6 +37,8 @@ import { startResumeTurn } from "@/lib/runner";
 import { getCodexPlanUsage, resetCodexPlanUsageStateForTests } from "@/lib/agents/codex/planUsage";
 import { toolCutoffNotice } from "@/lib/agentToolGuard.mjs";
 import type { Project, Task, StreamEvent, TaskStreamEvent, ToolData } from "@/lib/types";
+import type { AgentEnvironmentInput } from "@/lib/agents/types";
+import { buildAgentSnapshot, resolveCodexControls } from "@/lib/advanced-env/runtime";
 
 type Ev<T extends StreamEvent["type"]> = Extract<StreamEvent, { type: T }>;
 
@@ -106,9 +108,13 @@ const logged = (method: string) => readLog().find((l) => l.method === method)?.p
 const decision = () => readLog().find((l) => l.decision !== undefined)?.decision;
 
 /** Drive the driver directly, answering the first card with `answer`. */
-async function turn(task: Task, project: Project, opts: { answer?: string[]; onEvent?: (ev: StreamEvent) => void; abort?: AbortController } = {}): Promise<StreamEvent[]> {
+async function turn(
+  task: Task,
+  project: Project,
+  opts: { answer?: string[]; onEvent?: (ev: StreamEvent) => void; abort?: AbortController; env?: AgentEnvironmentInput } = {}
+): Promise<StreamEvent[]> {
   const out: StreamEvent[] = [];
-  for await (const ev of codexDriver.runTurn(task, project, "go", opts.abort)) {
+  for await (const ev of codexDriver.runTurn(task, project, "go", opts.abort, undefined, opts.env)) {
     out.push(ev);
     opts.onEvent?.(ev);
     if (ev.type === "permission" && opts.answer) {
@@ -210,6 +216,24 @@ describe("codex app-server transport", () => {
     expect((evs.find((e) => e.type === "context") as Ev<"context">).tokens).toBe(1000);
     // The CLI's config warning surfaces once as a notice.
     expect(evs.filter((e) => e.type === "notice" && e.content.includes("fake warning"))).toHaveLength(1);
+  });
+
+  it("a resolved advanced-settings snapshot overrides the approval policy for a never-asking mode", async () => {
+    // acceptEdits never asks by default (CODEX_APPROVAL_POLICY defaults to
+    // "never"); a saved CODEX_APPROVAL_POLICY agent-scope row must reach this
+    // turn's request instead of the import-time constant.
+    const { project, task } = fixture("acceptEdits");
+    const snapshot = buildAgentSnapshot({
+      inheritedEnv: process.env,
+      appliedAppEnvironment: null,
+      savedAgentRows: [{ id: "r1", scope: "agent", name: "CODEX_APPROVAL_POLICY", value: "on-request", secret: false, revision: 1 }],
+    });
+    const env: AgentEnvironmentInput = { snapshot, codex: resolveCodexControls(snapshot) };
+    expect(env.codex.approvalPolicy).toBe("on-request");
+
+    await turn(task, project, { answer: ["allow_once"], env });
+
+    expect(logged("thread/start")).toMatchObject({ approvalPolicy: "on-request" });
   });
 
   it("feeds the plan-usage meter from the turn's rate-limit notification, without spawning", async () => {

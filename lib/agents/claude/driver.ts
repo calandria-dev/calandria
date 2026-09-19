@@ -20,7 +20,7 @@ import type {
   Priority,
   Status as TaskStatus,
 } from "../../types";
-import type { AgentDriver, OneShotOptions, OneShotResult, TurnHooks } from "../types";
+import type { AgentDriver, AgentEnvironmentInput, OneShotOptions, OneShotResult, TurnHooks } from "../types";
 import { claudeCapabilities } from "./capabilities";
 import { listClaudeCommands, recordMcpPrompts } from "./commands";
 import { getClaudePlanUsage, recordClaudeRateLimit, claudeLimitResetAt } from "./planUsage";
@@ -730,7 +730,8 @@ async function* runTurn(
   project: Project,
   userText: string,
   abortController?: AbortController,
-  hooks?: TurnHooks
+  hooks?: TurnHooks,
+  envInput?: AgentEnvironmentInput
 ): AsyncGenerator<StreamEvent> {
   let sessionId: string | null = task.session_id;
   // AskUserQuestion tool_use ids: surfaced as interactive "ask" cards by the
@@ -1084,7 +1085,10 @@ async function* runTurn(
       cwd,
       // Drops NODE_ENV and repoints PORT at the project's own port; see
       // lib/agentEnv.ts for why a turn can't just inherit the server's env.
-      env: resolvedAgentTurnEnv(project, task, "claude"),
+      // `base` defaults to `process.env` when no snapshot was captured (a
+      // direct test call, an older caller): the runner always supplies one for
+      // a real task turn (lib/advanced-env/runtime.ts).
+      env: resolvedAgentTurnEnv(project, task, "claude", envInput?.snapshot.env),
       resume: task.session_id ?? undefined,
       // Model selection ("opus"/"sonnet"/"haiku" alias): the task's own pick,
       // else this agent's Settings default. Omit to inherit Claude Code's own.

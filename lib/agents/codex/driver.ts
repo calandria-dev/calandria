@@ -24,10 +24,23 @@
 import { Codex } from "@openai/codex-sdk";
 import type { SandboxMode, ApprovalMode, ModelReasoningEffort, ThreadOptions, CodexOptions } from "@openai/codex-sdk";
 import type { Project, Task, StreamEvent, TurnUsage } from "../../types";
-import type { AgentDriver, AgentHookInventoryResult, AgentHookReview, OneShotOptions, OneShotResult } from "../types";
+import type { AgentDriver, AgentEnvironmentInput, AgentHookInventoryResult, AgentHookReview, OneShotOptions, OneShotResult, TurnHooks } from "../types";
+import type { CodexControls } from "../../advanced-env/runtime";
 import { codexCapabilities } from "./capabilities";
 import { getSetting, setSetting, getThreadUsageCum, setThreadUsageCum } from "../../store";
-import { AGENT_TOOL_TIMEOUT_MS, CODEX_CLI_PATH, CODEX_TRANSPORT, INTERNAL_BASE_URL, CALANDRIA_MCP_SCRIPT, ISSUE_REPO } from "../../config";
+import {
+  AGENT_TOOL_TIMEOUT_MS,
+  CODEX_CLI_PATH,
+  CODEX_TRANSPORT,
+  CODEX_APPROVAL_POLICY,
+  CODEX_WRITABLE_ROOTS,
+  CODEX_EXTERNAL_SANDBOX,
+  CODEX_INHERIT_MCP,
+  codexHookTrace,
+  INTERNAL_BASE_URL,
+  CALANDRIA_MCP_SCRIPT,
+  ISSUE_REPO,
+} from "../../config";
 import { isApprovalDowngrade } from "../../approvalFailure";
 import { buildProjectContext, buildTagRefreshPrompt } from "../shared";
 import { ATTACHMENT_NUDGE, hasAttachmentMarkers } from "../../uploadTypes";
@@ -207,7 +220,9 @@ async function* runTurn(
   task: Task,
   project: Project,
   userText: string,
-  abortController?: AbortController
+  abortController?: AbortController,
+  _hooks?: TurnHooks,
+  envInput?: AgentEnvironmentInput
 ): AsyncGenerator<StreamEvent> {
   let sessionId: string | null = task.session_id;
   // What the turn asks for: the task's own choice, else this agent's Settings
@@ -216,8 +231,22 @@ async function* runTurn(
   // The env the CLI subprocess runs with: the server's, minus NODE_ENV, with
   // the project/task provider override laid over it and PORT repointed (see
   // lib/agentEnv.ts). Built first because the override also decides the
-  // provider entry and the fallback model below.
-  const env = resolvedAgentTurnEnv(project, task, "codex");
+  // provider entry and the fallback model below. `base` falls back to
+  // process.env when the runner supplied no snapshot (a direct test call).
+  const env = resolvedAgentTurnEnv(project, task, "codex", envInput?.snapshot.env);
+  // The six Codex knobs, resolved from this turn's snapshot instead of the
+  // import-time lib/config.ts constants, so a saved advanced-setting reaches a
+  // task turn on its next start. Falls back to the same constants when no
+  // snapshot was captured, matching the resolver's own unset-value defaults
+  // (lib/advanced-env/runtime.ts).
+  const codex: CodexControls = envInput?.codex ?? {
+    transport: CODEX_TRANSPORT,
+    approvalPolicy: CODEX_APPROVAL_POLICY,
+    writableRoots: CODEX_WRITABLE_ROOTS,
+    externalSandbox: CODEX_EXTERNAL_SANDBOX,
+    inheritMcp: CODEX_INHERIT_MCP,
+    hookTrace: codexHookTrace(),
+  };
   const local = codexProviderConfig(env);
   // Below the task's own choice and the agent's Settings default sits the
   // override's CODEX_MODEL: a local endpoint serves its own model names, and
@@ -248,10 +277,15 @@ async function* runTurn(
   // Prefer the task's isolated worktree; fall back to the shared repo path.
   const cwd = task.worktree_path || project.repo_path || process.cwd();
   const sandbox = task.sandbox_mode ?? getSetting("default_sandbox_mode:codex");
-  const policy = codexRunPolicy(permission, cwd, { sandbox, downgraded: approvalDowngraded() });
+  const policy = codexRunPolicy(permission, cwd, {
+    sandbox,
+    downgraded: approvalDowngraded(),
+    approvalPolicy: codex.approvalPolicy,
+    writableRootsRaw: codex.writableRoots,
+  });
 
   // Refuse a selected sandbox that the host cannot create before starting a turn.
-  const refusal = sandboxRefusal(policy.sandbox);
+  const refusal = sandboxRefusal(policy.sandbox, codex.externalSandbox);
   if (refusal) {
     yield { type: "error", content: refusal };
     return;
@@ -282,7 +316,7 @@ async function* runTurn(
   // The provider entry goes in as config rather than env: codex reads
   // `model_provider` from config.toml, never from the environment, and with
   // a ChatGPT login ignores OPENAI_BASE_URL outright (lib/agents/codex/provider.ts).
-  const config = { ...calandriaMcpConfig(project, task, await inheritedServerOverrides(), gatewayServers), ...local.config };
+  const config = { ...calandriaMcpConfig(project, task, await inheritedServerOverrides(codex.inheritMcp), gatewayServers), ...local.config };
 
   // Chat attachments travel as "[Attached image: /abs/path]" (images) or
   // "[Attached file: /abs/path]" (any other type) marker lines in the message
@@ -310,7 +344,7 @@ async function* runTurn(
     if (sessionId) setThreadUsageCum(sessionId, state.cum);
   };
 
-  if (CODEX_TRANSPORT === "app-server") {
+  if (codex.transport === "app-server") {
     // Every configWarning the server pushes goes to both classifiers: one
     // decides whether the CLI downgraded the approval policy, the other
     // whether its sandbox is dead. A turn that ends without the second one
@@ -334,6 +368,7 @@ async function* runTurn(
       model: chosen,
       effort: reasoningEffort(reasoning).modelReasoningEffort,
       policy,
+      codex,
       state,
       abort: abortController,
       onWarning,
@@ -356,7 +391,7 @@ async function* runTurn(
     return;
   }
 
-  yield* runExecTurn({ task, project, cwd, env, config, chosen, reasoning, policy, prompt, state, abortController, sessionId });
+  yield* runExecTurn({ task, project, cwd, env, config, chosen, reasoning, policy, codex, prompt, state, abortController, sessionId });
 }
 
 // The exec transport: `codex exec --experimental-json` through
@@ -373,6 +408,7 @@ async function* runExecTurn(a: {
   chosen: string | null;
   reasoning: string | null;
   policy: CodexRunPolicy;
+  codex: CodexControls;
   prompt: (fresh: boolean) => string;
   state: ReturnType<typeof newState>;
   abortController?: AbortController;
@@ -381,7 +417,7 @@ async function* runExecTurn(a: {
   const { task, policy, state, abortController } = a;
   let sessionId = a.sessionId;
   const asking = policy.mode === "auto" || policy.mode === "default";
-  const approval = asking ? neverAskPolicy(approvalDowngraded()) : policy.approval;
+  const approval = asking ? neverAskPolicy(approvalDowngraded(), a.codex.approvalPolicy) : policy.approval;
   const threadOptions: ThreadOptions = {
     workingDirectory: a.cwd,
     // Worktrees are git repos, but non-git projects and the cwd fallback may not

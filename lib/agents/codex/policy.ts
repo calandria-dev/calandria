@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { CODEX_APPROVAL_POLICY, CODEX_WRITABLE_ROOTS } from "../../config";
+import { CODEX_APPROVAL_POLICY, CODEX_WRITABLE_ROOTS, type CodexApprovalPolicySetting } from "../../config";
 import { isCodexSandboxMode } from "../../codexSandbox";
 export type { CodexSandboxMode } from "../../codexSandbox";
 import type { CodexSandboxMode } from "../../codexSandbox";
@@ -43,11 +43,14 @@ export function resolveCodexMode(mode: string | null | undefined): CodexMode {
  * driver has seen the CLI's downgrade warning (lib/agents/codex/driver.ts
  * approvalOverride); "inherit" sends nothing and lets ~/.codex/config.toml
  * decide. `downgraded` is that flag, passed in so this stays store-free.
+ * `policySetting` defaults to the import-time CODEX_APPROVAL_POLICY constant;
+ * a task turn passes its resolved advanced-settings snapshot value instead
+ * (lib/advanced-env/runtime.ts's CodexControls.approvalPolicy).
  */
-export function neverAskPolicy(downgraded: boolean): CodexApprovalPolicy | undefined {
-  if (CODEX_APPROVAL_POLICY === "inherit") return undefined;
+export function neverAskPolicy(downgraded: boolean, policySetting: CodexApprovalPolicySetting = CODEX_APPROVAL_POLICY): CodexApprovalPolicy | undefined {
+  if (policySetting === "inherit") return undefined;
   if (downgraded) return "on-request";
-  return CODEX_APPROVAL_POLICY as CodexApprovalPolicy;
+  return policySetting as CodexApprovalPolicy;
 }
 
 /**
@@ -57,11 +60,19 @@ export function neverAskPolicy(downgraded: boolean): CodexApprovalPolicy | undef
 export function codexRunPolicy(
   mode: string | null | undefined,
   cwd: string,
-  opts: { downgraded?: boolean; extraRoots?: string[]; sandbox?: string | null } = {},
+  opts: {
+    downgraded?: boolean;
+    extraRoots?: string[];
+    sandbox?: string | null;
+    /** Overrides CODEX_APPROVAL_POLICY; see neverAskPolicy. */
+    approvalPolicy?: CodexApprovalPolicySetting;
+    /** Overrides CODEX_WRITABLE_ROOTS; see configuredWritableRoots. */
+    writableRootsRaw?: string;
+  } = {},
 ): CodexRunPolicy {
   const m = resolveCodexMode(mode);
-  const never = neverAskPolicy(!!opts.downgraded);
-  const roots = () => dedupe([...gitWritableRoots(cwd), ...configuredWritableRoots(), ...(opts.extraRoots ?? [])]);
+  const never = neverAskPolicy(!!opts.downgraded, opts.approvalPolicy);
+  const roots = () => dedupe([...gitWritableRoots(cwd), ...configuredWritableRoots(opts.writableRootsRaw), ...(opts.extraRoots ?? [])]);
   const sandboxFor = (legacy: CodexSandboxMode) => isCodexSandboxMode(opts.sandbox) ? opts.sandbox : legacy;
   const withSandbox = (legacy: CodexSandboxMode, approval: CodexApprovalPolicy | undefined, reviewer: CodexApprovalsReviewer, asks: boolean): CodexRunPolicy => {
     const sandbox = sandboxFor(legacy);

@@ -29,6 +29,7 @@ import { prepareTaskHome } from "@/lib/agents/gemini/home";
 import type { GeminiCum } from "@/lib/agents/gemini/events";
 import type { StreamEvent, Project, Task } from "@/lib/types";
 import { ATTACHMENT_NUDGE, attachmentMarker } from "@/lib/uploadTypes";
+import { buildAgentSnapshot, resolveCodexControls } from "@/lib/advanced-env/runtime";
 
 function fixtureText(name: string): string {
   return fs.readFileSync(path.join(__dirname, "fixtures", "gemini", name), "utf8");
@@ -182,6 +183,23 @@ describe("runTurn", () => {
     expect(opts.env.HOME).toContain(task.id);
     // A self-update mid-turn would swap the pinned binary out from under us.
     expect(opts.env.AGY_CLI_DISABLE_AUTO_UPDATE).toBe("true");
+  });
+
+  it("threads a saved advanced-settings agent snapshot into the spawned child's env", async () => {
+    const { project, task } = rows();
+    spawnMock.mockReturnValue(fakeChild({ stdout: fixtureText("mcp-tool-call.jsonl") }));
+
+    const snapshot = buildAgentSnapshot({
+      inheritedEnv: process.env,
+      appliedAppEnvironment: null,
+      savedAgentRows: [{ id: "r1", scope: "agent", name: "MY_GEMINI_SNAPSHOT_VAR", value: "hello", secret: false, revision: 1 }],
+    });
+    const env = { snapshot, codex: resolveCodexControls(snapshot) };
+
+    await drain(geminiDriver.runTurn(task, project, "go", undefined, undefined, env));
+
+    const [, , opts] = spawnMock.mock.calls[0];
+    expect(opts.env.MY_GEMINI_SNAPSHOT_VAR).toBe("hello");
   });
 
   it("persists the cumulative usage baseline so the next turn isn't re-billed", async () => {

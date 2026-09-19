@@ -19,8 +19,8 @@ vi.mock("@/lib/agents/claude/driver", () => ({
   claudeDriver: {
     id: "claude",
     label: "Scripted Fake",
-    runTurn: (task: unknown, project: unknown, userText: string, ac?: unknown, hooks?: unknown) =>
-      runTurnMock(task, project, userText, ac, hooks),
+    runTurn: (task: unknown, project: unknown, userText: string, ac?: unknown, hooks?: unknown, env?: unknown) =>
+      runTurnMock(task, project, userText, ac, hooks, env),
   },
 }));
 
@@ -81,6 +81,8 @@ import type { StreamEvent, TaskStreamEvent, ToolData } from "@/lib/types";
 import { gatewayModelCatalog, clearGatewayModelCache } from "@/lib/gatewayModels";
 import { clearGatewayRates } from "@/lib/gatewayPricing";
 import { startFakeGateway, type FakeGateway } from "./fakeGateway";
+import { createVariable, patchVariable, environmentFilePath } from "@/lib/advanced-env/store";
+import fs from "node:fs";
 
 // Collect every event the runner publishes for a task until turn_end.
 function collectEvents(taskId: string): { events: TaskStreamEvent[]; done: Promise<void> } {
@@ -668,5 +670,61 @@ describe("gateway provider usage accounting", () => {
     await startResumeTurn(task, getProject(project.id)!, "go");
     await done;
     expect(getTaskUsage(task.id)).toMatchObject({ cost_usd: 0, turns: 1, unpriced_turns: 1 });
+  });
+});
+
+// The advanced-settings agent-environment snapshot (lib/advanced-env/runtime.ts):
+// the runner captures it once per task-turn and passes it to the driver as the
+// 6th runTurn argument (lib/agents/types.ts's AgentEnvironmentInput).
+describe("advanced-settings environment snapshot reaches a driver's turn", () => {
+  afterEach(() => {
+    fs.rmSync(environmentFilePath(), { force: true });
+  });
+
+  it("a fresh turn observes a saved agent-scope custom variable", async () => {
+    const created = createVariable({ scope: "agent", name: "MY_SNAPSHOT_VAR", value: "v1", secret: false, expectedRevision: 0 });
+    expect(created.ok).toBe(true);
+
+    const project = createProject({ name: "Snapshot" });
+    const task = createTask({ project_id: project.id, title: "T", description: "" });
+    script([{ type: "session", sessionId: "snap-1" }, { type: "done", sessionId: "snap-1" }]);
+    const { done } = collectEvents(task.id);
+    await startResumeTurn(task, project, "go");
+    await done;
+
+    expect(runTurnMock).toHaveBeenCalledTimes(1);
+    const env = runTurnMock.mock.calls[0][5] as { snapshot: { env: Record<string, string>; revision: number } };
+    expect(env.snapshot.env.MY_SNAPSHOT_VAR).toBe("v1");
+    expect(env.snapshot.revision).toBeGreaterThan(0);
+  });
+
+  it("a resumed turn captures the next snapshot, not the one the prior turn started with", async () => {
+    const created = createVariable({ scope: "agent", name: "MY_SNAPSHOT_VAR", value: "before", secret: false, expectedRevision: 0 });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const id = created.row!.id;
+
+    const project = createProject({ name: "Snapshot resume" });
+    const task = createTask({ project_id: project.id, title: "T", description: "" });
+    script([{ type: "session", sessionId: "snap-2" }, { type: "done", sessionId: "snap-2" }]);
+    const { done: done1 } = collectEvents(task.id);
+    await startResumeTurn(task, project, "go");
+    await done1;
+    const first = runTurnMock.mock.calls[0][5] as { snapshot: { env: Record<string, string> } };
+    expect(first.snapshot.env.MY_SNAPSHOT_VAR).toBe("before");
+
+    // Saved mid-lineage, between turns: the prior (already-finished) turn's
+    // captured snapshot object is untouched; only the NEXT turn's own capture
+    // observes the change.
+    const patched = patchVariable(id, { value: "after", expectedRevision: created.revision });
+    expect(patched.ok).toBe(true);
+
+    script([{ type: "session", sessionId: "snap-2" }, { type: "done", sessionId: "snap-2" }]);
+    const { done: done2 } = collectEvents(task.id);
+    await startResumeTurn(getTask(task.id)!, getProject(project.id)!, "go again");
+    await done2;
+    const second = runTurnMock.mock.calls[1][5] as { snapshot: { env: Record<string, string> } };
+    expect(second.snapshot.env.MY_SNAPSHOT_VAR).toBe("after");
+    expect(first.snapshot.env.MY_SNAPSHOT_VAR).toBe("before");
   });
 });
