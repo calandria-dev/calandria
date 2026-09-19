@@ -712,7 +712,10 @@ runbook.
 
 **How to use it:** `create_runbook`, `list_runbooks`, and `update_runbook` are available to
 every task session. An agent-created recipe is tagged with which agent filed it and sits inert,
-like any other runbook, until you dispatch it.
+like any other runbook, until you dispatch it. `create_runbook` also takes the coding
+environment, provider and model the dispatched tasks run on, checked before the row is saved: a
+model the environment does not run is refused with nothing created, so a saved recipe cannot mint
+tasks that fail on their first turn.
 
 **What it does not do:**
 

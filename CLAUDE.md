@@ -403,7 +403,10 @@ their report. `CALANDRIA_ISSUE_REPO` picks the repo and `off` removes the tool f
   `ON DELETE SET NULL` would leave the schedule firing nothing. Cross-project links are refused at
   save and fire time. Agents get `create_runbook`/`list_runbooks`/`update_runbook`
   (`lib/runbookTools.ts`) and no delete; `update_runbook` is refused for any runbook a schedule
-  fires. `created_by` is read off the caller's own task row, never a parameter. Live refresh rides
+  fires. `created_by` is read off the caller's own task row, never a parameter. `create_runbook`
+  takes the same `environment`/`provider`/`model` triple `suggest_task` does and makes the same
+  checks before the insert; `update_runbook` has no `environment`, since it never changes a
+  runbook's agent, so its model is checked against the stored one. Live refresh rides
   `runbooks_changed`.
 - `lib/scheduler.ts`, `lib/schedule/`: the largest of three server-owned periodic tickers, the
   only one `CALANDRIA_SCHEDULER` governs (turning it off does not stop the other two).

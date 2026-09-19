@@ -210,3 +210,99 @@ describe("runbook provider/model", () => {
     expect(off.text).toMatch(/is off under/);
   });
 });
+
+// A runbook stores one agent and every task it dispatches runs under it, so a
+// model id from another environment is a recipe that fails on the first turn of
+// every task it ever mints, the same failure suggest_task's `environment`
+// check prevents (lib/agents/environmentRef.ts).
+describe("runbook model environment", () => {
+  beforeEach(() => {
+    setAgentConnection("claude", { method: "subscription", email: null, plan: null });
+  });
+
+  it("refuses a model the resolved environment doesn't run, and creates nothing", () => {
+    const project = createProject({ name: "RB-Env-Wrong" });
+    const { runbook, text } = createRunbookForAgent(
+      project, { name: "Sweep", description: "", prompt: "/sweep", model: "gpt-5.6-sol" }, "claude"
+    );
+    expect(runbook).toBeNull();
+    expect(text).toMatch(/isn't a model claude runs/);
+    expect(listRunbooks(project.id)).toHaveLength(0);
+  });
+
+  it("stores the environment catalog's own spelling of a model on its bundled login", () => {
+    const project = createProject({ name: "RB-Env-Normalize" });
+    const { runbook } = createRunbookForAgent(
+      project, { name: "Sweep", description: "", prompt: "/sweep", model: "SONNET" }, "claude"
+    );
+    expect(runbook!.model).toBe("sonnet");
+  });
+
+  it("an explicit environment sets the runbook's agent and decides which catalog the model is checked against", () => {
+    setAgentConnection("codex", { method: "subscription", email: null, plan: null });
+    const project = createProject({ name: "RB-Env-Explicit" });
+    const { runbook } = createRunbookForAgent(
+      project, { name: "Sweep", description: "", prompt: "/sweep", environment: "codex", model: "gpt-5.6-sol" }, "claude"
+    );
+    expect(runbook!.agent).toBe("codex");
+    expect(runbook!.model).toBe("gpt-5.6-sol");
+  });
+
+  it("refuses an unregistered environment id", () => {
+    const project = createProject({ name: "RB-Env-Ghost" });
+    const { runbook, text } = createRunbookForAgent(
+      project, { name: "Sweep", description: "", prompt: "/sweep", environment: "ghost-agent" }, "claude"
+    );
+    expect(runbook).toBeNull();
+    expect(text).toMatch(/isn't a coding environment/);
+    expect(listRunbooks(project.id)).toHaveLength(0);
+  });
+
+  // The environment catalog governs a bundled login only. A provider the user
+  // added carries its own on-list, and its models are not in any CLI's catalog.
+  it("leaves a user-added provider's model to the provider policy", () => {
+    const project = createProject({ name: "RB-Env-NonBundled" });
+    const provider = createProvider({
+      type: "ollama",
+      config: { base_url: "http://localhost:11434" },
+      model_policy: { mode: "deny", ids: [], known: ["qwen3-coder"], unavailable: [] },
+    });
+    const { runbook } = createRunbookForAgent(
+      project,
+      { name: "Sweep", description: "", prompt: "/sweep", provider: provider.id, model: "qwen3-coder" },
+      "claude"
+    );
+    expect(runbook).toMatchObject({ provider_id: provider.id, model: "qwen3-coder" });
+  });
+
+  // update_runbook never changes a runbook's agent, so the stored one is the
+  // environment its new model has to be valid for.
+  it("checks an update's model against the runbook's stored environment", () => {
+    setAgentConnection("codex", { method: "subscription", email: null, plan: null });
+    const project = createProject({ name: "RB-Env-Update" });
+    const rb = createRunbook({ project_id: project.id, name: "Sweep", prompt: "/sweep", agent: "codex" });
+
+    const bad = updateRunbookForAgent(project, rb.id, { model: "opus" });
+    expect(bad.runbook).toBeNull();
+    expect(bad.text).toMatch(/isn't a model codex runs/);
+    expect(getRunbook(rb.id)!.model).toBeNull();
+
+    const ok = updateRunbookForAgent(project, rb.id, { model: "GPT-5.6-SOL" });
+    expect(ok.runbook!.model).toBe("gpt-5.6-sol");
+  });
+
+  // Last in the file: connecting gemini writes instance settings every later
+  // test in this file would see, the same reason agentTools.test.ts orders its
+  // gemini case last.
+  it("refuses a provider that doesn't serve the resolved environment", () => {
+    setAgentConnection("gemini", { method: "subscription", email: null, plan: null });
+    const project = createProject({ name: "RB-Env-ProviderMismatch" });
+    const provider = createProvider({ type: "ollama", config: { base_url: "http://localhost:11434" } });
+    const { runbook, text } = createRunbookForAgent(
+      project, { name: "Sweep", description: "", prompt: "/sweep", environment: "gemini", provider: provider.id }, "claude"
+    );
+    expect(runbook).toBeNull();
+    expect(text).toMatch(/doesn't serve gemini/);
+    expect(listRunbooks(project.id)).toHaveLength(0);
+  });
+});

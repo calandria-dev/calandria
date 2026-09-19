@@ -29,9 +29,11 @@ import {
   createRunbook, getRunbook, listRunbooks, schedulesUsing, updateRunbook,
 } from "@/lib/runbooks/store";
 import type { Priority, Project, Runbook } from "@/lib/types";
+import { checkEnvironmentModel, resolveEnvironmentRef } from "@/lib/agents/environmentRef";
 import { checkProviderModel, resolveProviderRef } from "@/lib/providers/agentRef";
 import { getProvider } from "@/lib/providers/store";
 import type { ModelProvider } from "@/lib/providers/rows";
+import type { EnvironmentId } from "@/lib/providers/types";
 
 // Every permission_mode value any registered driver honors: the same
 // capability data GET /api/agents renders into the human picker
@@ -92,9 +94,11 @@ export interface CreateRunbookToolInput {
   permission_mode?: string;
   /** An id, or an exact (case-insensitive) name from list_projects. */
   project?: string;
+  /** Coding environment id (resolveEnvironmentRef). Omit to inherit the project's default. */
+  environment?: string;
   /** Provider id/label, or "local"/"cloud". Omit to inherit the project's default. */
   provider?: string;
-  /** Model id, checked against the provider named above. Omit to inherit. */
+  /** Model id, checked against the provider named above or the environment's own catalog. */
   model?: string;
 }
 
@@ -104,9 +108,10 @@ export interface CreateRunbookToolInput {
  * unrecognized value, because a recipe saved into the wrong repo without a
  * trace is worse than an error the agent can retry.
  *
- * The agent it will run under is resolved connected-first instead of taken
- * from the model: which CLI a saved recipe should use is a property of the
- * user's setup, not something worth spending a tool parameter on.
+ * The agent it will run under is resolved connected-first, or named outright
+ * by `environment` when the model the call wants belongs to a different CLI
+ * than the project's default. That agent is what the model id is checked
+ * against, since every task the runbook dispatches runs under it.
  */
 export function createRunbookForAgent(
   current: Project,
@@ -126,21 +131,61 @@ export function createRunbookForAgent(
   const target = resolveTargetProject(current, input.project);
   if ("error" in target) return { runbook: null, text: target.error };
 
-  const agent = resolveConnectedAgent([target.project.default_agent]) ?? undefined;
+  // The coding environment, resolved BEFORE the provider: it decides which
+  // provider "cloud" means and which model ids are valid. Named explicitly it
+  // must be a registered, connected agent; omitted it is the target project's
+  // default, connected-first.
+  //
+  // `agent` stays undefined when nothing is connected, leaving createRunbook's
+  // own default in place; `environment` still needs a string to check against,
+  // so it falls back to the project default.
+  let agent = resolveConnectedAgent([target.project.default_agent]) ?? undefined;
+  if (input.environment?.trim()) {
+    const env = resolveEnvironmentRef(input.environment);
+    if ("error" in env) return { runbook: null, text: `Could not save the runbook: ${env.error} Nothing was created.` };
+    agent = env.environment;
+  }
+  const environment = agent ?? target.project.default_agent;
 
   // Same resolution suggest_task's `provider` uses: an id, an exact label, or
   // the "local"/"cloud" alias. Checked before the insert so a runbook is
   // never saved pointing at a provider or model that doesn't exist.
-  const model = input.model?.trim() || null;
+  let model = input.model?.trim() || null;
   let providerId: string | null = null;
+  let resolvedProvider: ModelProvider | null = null;
   if (input.provider?.trim()) {
-    const ref = resolveProviderRef(input.provider, agent ?? target.project.default_agent);
+    const ref = resolveProviderRef(input.provider, environment);
     if ("error" in ref) return { runbook: null, text: `Could not save the runbook: ${ref.error} Nothing was created.` };
-    if (model) {
-      const check = checkProviderModel(ref.provider, model);
-      if ("error" in check) return { runbook: null, text: `Could not save the runbook: ${check.error} Nothing was created.` };
+    // A provider that doesn't serve this environment saves a recipe whose
+    // every dispatched turn fails at once, the same class of failure the
+    // model check below catches.
+    if (!ref.provider.environments.includes(environment as EnvironmentId)) {
+      return {
+        runbook: null,
+        text:
+          `Could not save the runbook: "${ref.provider.label}" doesn't serve ${environment}. It serves ` +
+          `${ref.provider.environments.join(", ") || "no environment"}. Nothing was created.`,
+      };
     }
     providerId = ref.provider.id;
+    resolvedProvider = ref.provider;
+  }
+  // The model, checked against whichever list actually governs it, the same
+  // routing createSuggestedTask makes. A user-added provider (an Ollama box, a
+  // gateway) carries its own on-list; a bundled login, or no provider at all,
+  // means the environment's own CLI runs it, so the environment's catalog is
+  // the list. Without this a runbook could be saved naming a model from
+  // another environment, and every task it dispatched would fail on its first
+  // turn. The catalog's own spelling is what gets stored.
+  if (model) {
+    if (resolvedProvider && !resolvedProvider.bundled) {
+      const check = checkProviderModel(resolvedProvider, model);
+      if ("error" in check) return { runbook: null, text: `Could not save the runbook: ${check.error} Nothing was created.` };
+    } else {
+      const check = checkEnvironmentModel(environment, model);
+      if ("error" in check) return { runbook: null, text: `Could not save the runbook: ${check.error} Nothing was created.` };
+      model = check.model;
+    }
   }
 
   const runbook = createRunbook({
@@ -276,13 +321,20 @@ export function updateRunbookForAgent(
       providerForCheck = ref.provider;
     }
   }
+  // Routed the same way create_runbook's is. The environment here is the
+  // runbook's stored agent, since update_runbook never changes it: a model
+  // belonging to another CLI would fail every turn the recipe ever dispatches.
   if (fields.model !== undefined) {
-    const model = fields.model.trim() || null;
+    let model = fields.model.trim() || null;
     if (model) {
       const provider = providerForCheck !== undefined ? providerForCheck : (cur.provider_id ? getProvider(cur.provider_id) : null);
-      if (provider) {
+      if (provider && !provider.bundled) {
         const check = checkProviderModel(provider, model);
         if ("error" in check) return { runbook: null, text: `Could not update "${cur.name}": ${check.error} Nothing was changed.` };
+      } else {
+        const check = checkEnvironmentModel(cur.agent, model);
+        if ("error" in check) return { runbook: null, text: `Could not update "${cur.name}": ${check.error} Nothing was changed.` };
+        model = check.model;
       }
     }
     patch.model = model;
