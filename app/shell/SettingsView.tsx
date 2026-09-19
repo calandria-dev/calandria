@@ -12,6 +12,7 @@ import { GitHubSettings } from "./github";
 import { WorktreePrune } from "./WorktreePrune";
 import { Diagnostics } from "./Diagnostics";
 import { ModelsSection } from "./ModelsSection";
+import { AdvancedSettingsSection } from "./AdvancedSettingsSection";
 import { CodexHooksPanel } from "./CodexHooks";
 import { ErrNote } from "./shared";
 import { autoResumeOnLimitKey } from "@/lib/usageReset";
@@ -642,6 +643,7 @@ const SETTINGS_SECTIONS: { id: string; label: string; icon: () => React.ReactNod
   { id: "notifications", label: "Notifications", icon: Icon.bell },
   { id: "run", label: "Run defaults", icon: Icon.spark },
   { id: "models", label: "Models", icon: Icon.bolt },
+  { id: "advanced", label: "Advanced", icon: Icon.terminal },
   { id: "storage", label: "Storage", icon: Icon.archive },
   { id: "github", label: "GitHub", icon: Icon.github },
   { id: "diagnostics", label: "Diagnostics", icon: Icon.chart },
@@ -784,13 +786,15 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
           ))}
           <NavLogout />
         </div>
-        <div className="settings-nav-foot">{section === "appearance" ? "theme, mode & fonts · saved on this browser" : section === "background" ? "agent utility work · saved to this workspace" : section === "notifications" ? "alerts · saved to this workspace" : section === "run" ? "run defaults · saved to this workspace" : section === "models" ? "environments & providers · stored in this workspace" : section === "storage" ? "disk cleanup · acts on this workspace" : section === "github" ? "GitHub connection · stored in this workspace" : section === "setup" ? "first-run setup · stored in this workspace" : "app-level preferences · saved on this browser"}</div>
+        <div className="settings-nav-foot">{section === "appearance" ? "theme, mode & fonts · saved on this browser" : section === "background" ? "agent utility work · saved to this workspace" : section === "notifications" ? "alerts · saved to this workspace" : section === "run" ? "run defaults · saved to this workspace" : section === "models" ? "environments & providers · stored in this workspace" : section === "advanced" ? "app & agent environment variables · stored on this instance" : section === "storage" ? "disk cleanup · acts on this workspace" : section === "github" ? "GitHub connection · stored in this workspace" : section === "setup" ? "first-run setup · stored in this workspace" : "app-level preferences · saved on this browser"}</div>
       </div>
       <div className="col col-session">
         <div className="settings-head">
           <div className="settings-title">{active.label}</div>
           <span className="spacer" />
-          <button className="btn btn-ghost btn-sm" onClick={onReset} disabled={isDefault} title="Restore every setting to its default">{Icon.restore()} Reset to defaults</button>
+          {section !== "advanced" && (
+            <button className="btn btn-ghost btn-sm" onClick={onReset} disabled={isDefault} title="Restore every setting to its default">{Icon.restore()} Reset to defaults</button>
+          )}
           <button className="btn btn-line btn-sm" onClick={onClose}>{Icon.chevRight({ style: { transform: "rotate(180deg)" } })} Back to workspace</button>
         </div>
         <div className="scroll">
@@ -1092,6 +1096,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
               </>
             )}
             {section === "models" && <ModelsSection appDefaults={appDefaults} setAppDefault={setAppDefault} onChanged={onAgentsRefresh} />}
+            {section === "advanced" && <AdvancedSettingsSection />}
             {section === "storage" && <WorktreePrune />}
             {section === "diagnostics" && <Diagnostics settings={settings} setSetting={setSetting} />}
             {section === "github" && <GitHubSettings />}
