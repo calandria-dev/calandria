@@ -64,6 +64,8 @@ const PINNED = [
   "lib/binPath.ts", //           where a CLI is on disk + how to launch it on Windows; node:fs/node:path only
   "lib/processTree.ts", //       how to kill a spawned command's whole tree per platform; node:child_process only, and lib/services.ts sits on it
   "lib/secretFile.ts", //        how a persisted credential is locked to its owner on each platform; node:fs/node:os/node:path only
+  "lib/advanced-env/store.ts", // the saved app/agent environment rows; fs + storage.mjs + secretFile + the pure catalog, behind sync-compiled settings routes
+  "lib/advanced-env/browserAuth.ts", // the same-origin guard those routes sit on; the two auth .mjs boundary modules only
   "lib/providers/types.ts", //   the provider registry: which environments a type serves, its policy mode, its config schema and its secret fields; zod only, and the client bundles it alongside the routes
   "lib/providers/rows.ts", //    the model_providers SQL over a caller's connection; better-sqlite3 + the registry, and lib/db.ts's init() reaches it through the seed
   "lib/providers/store.ts", //   the same CRUD on the shared connection; DB only, no driving, and lib/agents/connections.ts sits on it
@@ -186,6 +188,15 @@ function resolveLocal(fromFile: string, spec: string): string | null {
   for (const suffix of ["", ".ts", ".tsx", ".mjs", ".js", "/index.ts"]) {
     const candidate = base + suffix;
     if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+  }
+  // An .mjs module documents its types with `import("./types.js")`, the
+  // extension TypeScript wants in emitted JS for a sibling .ts module. The
+  // file on disk is the .ts (or a .d.mts beside a .mjs), so map it back.
+  if (base.endsWith(".js")) {
+    for (const suffix of [".ts", ".d.mts", ".d.ts"]) {
+      const candidate = base.slice(0, -".js".length) + suffix;
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+    }
   }
   throw new Error(`unresolvable import "${spec}" from ${relKey(fromFile)}`);
 }
