@@ -9,8 +9,22 @@
 import type { PlanUsageSnapshot, Project, Task, StreamEvent, TurnUsage } from "../types";
 import type { ProviderType } from "../providers/types";
 import type { CodexHookInventory } from "./codex/hooks";
+import type { AgentSnapshot, CodexControls } from "../advanced-env/runtime";
 
 export type { StreamEvent };
+
+/**
+ * The advanced-settings environment input a driver's turn receives. Task 5
+ * wires this through `startTurn`/`startResumeTurn`: the runner captures one
+ * `AgentSnapshot` (lib/advanced-env/runtime.ts) when the turn starts, and a
+ * driver reads `codex` instead of importing lib/config.ts's Codex constants
+ * directly. A resumed session captures the next snapshot; a running turn
+ * keeps observing the one it started with, since the object is immutable.
+ */
+export interface AgentEnvironmentInput {
+  readonly snapshot: AgentSnapshot;
+  readonly codex: CodexControls;
+}
 
 // One selectable model in a driver's picker. `value` is what's persisted in
 // tasks.model (null there means inherit the driver's default); `contextWindow`

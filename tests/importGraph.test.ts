@@ -66,6 +66,7 @@ const PINNED = [
   "lib/secretFile.ts", //        how a persisted credential is locked to its owner on each platform; node:fs/node:os/node:path only
   "lib/advanced-env/store.ts", // the saved app/agent environment rows; fs + storage.mjs + secretFile + the pure catalog, behind sync-compiled settings routes
   "lib/advanced-env/browserAuth.ts", // the same-origin guard those routes sit on; the two auth .mjs boundary modules only
+  "lib/advanced-env/runtime.ts", // pure agent-snapshot/Codex-resolver contracts; lib/config.ts + the bootstrap/catalog .mjs modules only, reached from lib/agents/types.ts
   "lib/providers/types.ts", //   the provider registry: which environments a type serves, its policy mode, its config schema and its secret fields; zod only, and the client bundles it alongside the routes
   "lib/providers/rows.ts", //    the model_providers SQL over a caller's connection; better-sqlite3 + the registry, and lib/db.ts's init() reaches it through the seed
   "lib/providers/store.ts", //   the same CRUD on the shared connection; DB only, no driving, and lib/agents/connections.ts sits on it
