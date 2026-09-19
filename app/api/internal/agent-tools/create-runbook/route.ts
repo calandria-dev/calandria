@@ -29,6 +29,7 @@ export async function POST(req: NextRequest) {
     priority?: "hi" | "med" | "lo";
     permission_mode?: string;
     project?: string;
+    environment?: string;
     provider?: string;
     model?: string;
   };
@@ -53,6 +54,7 @@ export async function POST(req: NextRequest) {
       priority: body.priority,
       permission_mode: body.permission_mode,
       project: body.project,
+      environment: body.environment,
       provider: body.provider,
       model: body.model,
     },

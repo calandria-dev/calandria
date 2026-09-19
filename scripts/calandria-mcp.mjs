@@ -514,6 +514,7 @@ server.registerTool(
       priority: z.enum(["hi", "med", "lo"]).optional().describe(CREATE_RUNBOOK.params.priority),
       permission_mode: z.string().optional().describe(CREATE_RUNBOOK.params.permission_mode),
       project: z.string().optional().describe(CREATE_RUNBOOK.params.project),
+      environment: z.string().optional().describe(CREATE_RUNBOOK.params.environment),
       provider: z.string().optional().describe(CREATE_RUNBOOK.params.provider),
       model: z.string().optional().describe(CREATE_RUNBOOK.params.model),
     },

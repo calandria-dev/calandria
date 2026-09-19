@@ -248,7 +248,7 @@ describe("calandria-mcp stdio bridge", () => {
       // the card shows that value to the user as provenance.
       expect(Object.keys(schema.properties ?? {})).not.toContain("created_by");
       expect(Object.keys(schema.properties ?? {}).sort()).toEqual(
-        ["description", "model", "name", "permission_mode", "priority", "project", "prompt", "provider"]
+        ["description", "environment", "model", "name", "permission_mode", "priority", "project", "prompt", "provider"]
       );
       expect((schema.required ?? []).sort()).toEqual(["description", "name", "prompt"]);
 

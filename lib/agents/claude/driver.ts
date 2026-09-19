@@ -614,10 +614,11 @@ function calandriaServer(
           priority: z.enum(["hi", "med", "lo"]).optional().describe(CREATE_RUNBOOK.params.priority),
           permission_mode: z.string().optional().describe(CREATE_RUNBOOK.params.permission_mode),
           project: z.string().optional().describe(CREATE_RUNBOOK.params.project),
+          environment: z.string().optional().describe(CREATE_RUNBOOK.params.environment),
           provider: z.string().optional().describe(CREATE_RUNBOOK.params.provider),
           model: z.string().optional().describe(CREATE_RUNBOOK.params.model),
         },
-        async (args: { name: string; description: string; prompt: string; priority?: "hi" | "med" | "lo"; permission_mode?: string; project?: string; provider?: string; model?: string }) => {
+        async (args: { name: string; description: string; prompt: string; priority?: "hi" | "med" | "lo"; permission_mode?: string; project?: string; environment?: string; provider?: string; model?: string }) => {
           // The agent id is the server's word (this driver is Claude), never a
           // parameter: a model must not be able to file a recipe under another
           // agent's name.
