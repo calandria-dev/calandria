@@ -352,11 +352,12 @@ function calandriaServer(
           project: z.string().optional().describe(SUGGEST_TASK.params.project),
           blocked_by: z.array(z.string()).optional().describe(SUGGEST_TASK.params.blocked_by),
           tags: z.array(z.string()).optional().describe(SUGGEST_TASK.params.tags),
+          environment: z.string().optional().describe(SUGGEST_TASK.params.environment),
           provider: z.string().optional().describe(SUGGEST_TASK.params.provider),
           model: z.string().optional().describe(SUGGEST_TASK.params.model),
           attachments: z.array(z.string()).optional().describe(SUGGEST_TASK.params.attachments),
         },
-        async (args: { title: string; description: string; priority: "hi" | "med" | "lo"; project?: string; blocked_by?: string[]; tags?: string[]; provider?: string; model?: string; attachments?: string[] }) => {
+        async (args: { title: string; description: string; priority: "hi" | "med" | "lo"; project?: string; blocked_by?: string[]; tags?: string[]; environment?: string; provider?: string; model?: string; attachments?: string[] }) => {
           // Resolve which project this lands in before anything else: the
           // task's agent, send_context and board position all come from it,
           // and a wrong answer is a misfiled task, not a visible
@@ -382,6 +383,7 @@ function calandriaServer(
             // lands. The origin is the closed-over caller, never a parameter.
             tags: args.tags,
             origin_task_id: originTaskId,
+            environment: args.environment,
             provider: args.provider,
             model: args.model,
             // Resolved against the caller's worktree inside createSuggestedTask.

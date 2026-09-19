@@ -222,6 +222,13 @@ Three processes and entrypoints, one origin:
   `.mjs` copy. Bound by `CALANDRIA_AGENT_TOOL_TIMEOUT_MS` (10 min; 0 for `ask_user`, which waits on
   a human), since the CLI's own per-call MCP timeout defaults to ~27.7 hours. `create_pr` names its
   PR by number and URL, the only way a session records in git that its work is finished.
+- `suggest_task` also picks where the task RUNS: `environment` (the coding CLI), `provider` and
+  `model`, all resolved before the insert. An environment nothing is signed in to, a provider that
+  doesn't serve it, and a model that environment doesn't run are each refused with nothing created
+  (`lib/agents/environmentRef.ts`). A model on one of the user's own providers is checked against
+  that provider's on-list instead (`lib/providers/agentRef.ts`); a model on a CLI's bundled login
+  is checked against the environment's own catalog, since a Codex model id on a Claude Code task
+  fails every turn it ever runs.
 - `list_tasks` takes the same optional `project` and flags the caller `current: true`; `get_task`
   reads any id, defaulting to the session's own.
 - `update_task` writes any task in any project: the caller's own row by default, or any other,

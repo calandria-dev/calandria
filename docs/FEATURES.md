@@ -591,6 +591,12 @@ existing tasks and dependencies across the whole board, subject to review contro
   into another project takes that project's default agent and settings. An unrecognized project
   name is refused outright; it never falls back to the calling project. Blocked-by links still
   cannot span projects, so they point at tasks in whichever project the new task lands in.
+- **Choosing where it runs.** `suggest_task` takes `environment` (the coding CLI: `claude`,
+  `codex`, `gemini`), `provider` and `model`. The environment must be one this instance is signed
+  in to, and the model must be one that environment or provider actually offers, checked before
+  the task is created. A model from the wrong environment is refused with nothing filed, so a
+  Codex session planning into a Claude Code project cannot leave behind tasks that fail on their
+  first turn. See [Agents](AGENTS.md) for the resolution rules.
 - **Reading the tray.** Each suggestion row has a disclosure triangle to expand its full brief.
   The ✎ opens the full **Edit task** dialog; the tray's footer offers **Save** (keeps edits in
   the tray), **Add**, and **Add & start**. An already-added task that has not started shows

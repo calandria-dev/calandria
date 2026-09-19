@@ -200,12 +200,13 @@ server.registerTool(
       project: z.string().optional().describe(SUGGEST_TASK.params.project),
       blocked_by: z.array(z.string()).optional().describe(SUGGEST_TASK.params.blocked_by),
       tags: z.array(z.string()).optional().describe(SUGGEST_TASK.params.tags),
+      environment: z.string().optional().describe(SUGGEST_TASK.params.environment),
       provider: z.string().optional().describe(SUGGEST_TASK.params.provider),
       model: z.string().optional().describe(SUGGEST_TASK.params.model),
       attachments: z.array(z.string()).optional().describe(SUGGEST_TASK.params.attachments),
     },
   },
-  async ({ title, description, priority, project, blocked_by, tags, provider, model, attachments }) => {
+  async ({ title, description, priority, project, blocked_by, tags, environment, provider, model, attachments }) => {
     // Resolve refs before handing off (an id passes through; a title filed
     // earlier this turn into the same project resolves to its id). The
     // endpoint just forwards ids to setTaskDeps, which only keeps
@@ -220,7 +221,7 @@ server.registerTool(
     // `attachments` are forwarded as typed: the endpoint resolves them
     // against the caller's worktree (CALANDRIA_TASK_ID's), never this
     // process's cwd.
-    const data = await callInternal("suggest-task", { title, description, priority, project, blocked_by: deps, tags, provider, model, attachments });
+    const data = await callInternal("suggest-task", { title, description, priority, project, blocked_by: deps, tags, environment, provider, model, attachments });
     if (data.id) {
       // The ref as typed is the alias that always exists ("" when omitted).
       // The resolved id/name (echoed by the endpoint) additionally let a
