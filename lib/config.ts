@@ -359,11 +359,19 @@ export const SHUTDOWN_GRACE_MS = ms(readEnv("CALANDRIA_SHUTDOWN_GRACE_MS"), 5000
  * command that isn't on an explicit exec-policy allowlist, a prompt per
  * command for a task session. Unknown values fall back to "never".
  */
-export const CODEX_APPROVAL_POLICY = (() => {
-  const v = String(process.env.CODEX_APPROVAL_POLICY || "never").toLowerCase();
+export type CodexApprovalPolicySetting = "never" | "on-request" | "on-failure" | "inherit";
+
+/** The pure parse behind {@link CODEX_APPROVAL_POLICY}, extracted so
+ * lib/advanced-env/runtime.ts can resolve the same setting from a composed
+ * agent-turn snapshot instead of the process's own `process.env`. */
+export function resolveCodexApprovalPolicy(raw: string | undefined): CodexApprovalPolicySetting {
+  const v = String(raw || "never").toLowerCase();
   if (v === "untrusted") return "on-request";
-  return ["never", "on-request", "on-failure", "inherit"].includes(v) ? v : "never";
-})();
+  const known: readonly string[] = ["never", "on-request", "on-failure", "inherit"];
+  return known.includes(v) ? (v as CodexApprovalPolicySetting) : "never";
+}
+
+export const CODEX_APPROVAL_POLICY = resolveCodexApprovalPolicy(process.env.CODEX_APPROVAL_POLICY);
 
 /**
  * Which codex protocol a task turn runs on. "app-server" (default) drives
@@ -376,10 +384,14 @@ export const CODEX_APPROVAL_POLICY = (() => {
  * inside the CLI (codex-rs exec/src/lib.rs), so under it the asking modes
  * behave like acceptEdits. Unknown values fall back to "app-server".
  */
-export const CODEX_TRANSPORT = ((): "app-server" | "exec" => {
-  const v = String(process.env.CODEX_TRANSPORT || "").toLowerCase();
-  return v === "exec" ? "exec" : "app-server";
-})();
+export type CodexTransportSetting = "app-server" | "exec";
+
+/** The pure parse behind {@link CODEX_TRANSPORT}; see {@link resolveCodexApprovalPolicy}. */
+export function resolveCodexTransport(raw: string | undefined): CodexTransportSetting {
+  return String(raw || "").toLowerCase() === "exec" ? "exec" : "app-server";
+}
+
+export const CODEX_TRANSPORT = resolveCodexTransport(process.env.CODEX_TRANSPORT);
 
 /**
  * Extra directories a workspace-write Codex turn may write to, beyond the
@@ -406,9 +418,12 @@ export const CODEX_WRITABLE_ROOTS = String(process.env.CODEX_WRITABLE_ROOTS || "
  * Only the app-server transport can express this; `codex exec` has no such
  * `--sandbox` value, so under CODEX_TRANSPORT=exec the knob does nothing.
  */
-export const CODEX_EXTERNAL_SANDBOX = ["1", "on", "true", "yes"].includes(
-  String(process.env.CODEX_EXTERNAL_SANDBOX || "").toLowerCase(),
-);
+/** The pure parse behind {@link CODEX_EXTERNAL_SANDBOX}; see {@link resolveCodexApprovalPolicy}. */
+export function resolveCodexExternalSandbox(raw: string | undefined): boolean {
+  return ["1", "on", "true", "yes"].includes(String(raw || "").toLowerCase());
+}
+
+export const CODEX_EXTERNAL_SANDBOX = resolveCodexExternalSandbox(process.env.CODEX_EXTERNAL_SANDBOX);
 
 /**
  * Whether Codex tasks inherit the MCP servers configured in the user's
@@ -423,9 +438,12 @@ export const CODEX_EXTERNAL_SANDBOX = ["1", "on", "true", "yes"].includes(
  * instead (lib/agents/codex/mcp.ts), for a user whose own servers should stay
  * off task sessions.
  */
-export const CODEX_INHERIT_MCP = !["0", "false", "off"].includes(
-  String(process.env.CODEX_INHERIT_MCP || "").toLowerCase(),
-);
+/** The pure parse behind {@link CODEX_INHERIT_MCP}; see {@link resolveCodexApprovalPolicy}. */
+export function resolveCodexInheritMcp(raw: string | undefined): boolean {
+  return !["0", "false", "off"].includes(String(raw || "").toLowerCase());
+}
+
+export const CODEX_INHERIT_MCP = resolveCodexInheritMcp(process.env.CODEX_INHERIT_MCP);
 
 /**
  * Whether every Codex hook run posts a transcript notice, including clean
@@ -439,8 +457,13 @@ export const CODEX_INHERIT_MCP = !["0", "false", "off"].includes(
  * suite drives directly, and a frozen read would pin the flag to whatever the
  * env held when the module graph loaded.
  */
+/** The pure parse behind {@link codexHookTrace}; see {@link resolveCodexApprovalPolicy}. */
+export function resolveCodexHookTrace(raw: string | undefined): boolean {
+  return ["1", "true", "on"].includes(String(raw || "").toLowerCase());
+}
+
 export function codexHookTrace(): boolean {
-  return ["1", "true", "on"].includes(String(process.env.CALANDRIA_CODEX_HOOK_TRACE || "").toLowerCase());
+  return resolveCodexHookTrace(process.env.CALANDRIA_CODEX_HOOK_TRACE);
 }
 
 /**
