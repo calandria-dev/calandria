@@ -50,14 +50,13 @@ const NPM_PINS = [
 // a subprocess. `tests/cliPins.test.ts` holds it to an exact version, so
 // nothing floats it and nothing else reports that it is behind.
 //
-// Only age can fire for this one. The SDK moves on the PATCH inside a single
-// 0.3.x minor (0.3.159 to 0.3.263 is 104 patches and zero minors), so
-// MAX_MINORS_BEHIND never counts anything. This check adds no patch-distance
-// trigger: a threshold low enough to catch a real gap fires every few days on
-// this cadence, which is the noise MAX_MINORS_BEHIND is shaped to avoid, and
-// there is no measured number to set one at. Age is
-// bounded to one notice per package per MAX_PIN_AGE_DAYS and the issue closes
-// itself on the bump, so a stalled pin still surfaces within three weeks.
+// Age and patch distance both fire for this one. The SDK moves on the PATCH
+// inside a single 0.3.x minor (0.3.159 to 0.3.263 is 104 patches and zero
+// minors), so MAX_MINORS_BEHIND counts nothing here and MAX_PATCHES_BEHIND is
+// what sees a gap. Each trigger is bounded to one notice per package per
+// window and the issue closes itself on the bump. This pin stays issue-only
+// while the CLI ARGs go to the bot pull request: the SDK is the turn contract
+// every Claude session runs through, so its bump wants a behavioural review.
 const PACKAGE_JSON_PINS = [{ pkg: "@anthropic-ai/claude-agent-sdk" }];
 
 // A class-two pin is reported once it reaches this age, regardless of
@@ -71,6 +70,23 @@ const MAX_PIN_AGE_DAYS = 21;
 // pin, so this fires independently of age. Counted as distinct newer minors,
 // since a package that ships several patches of one minor hasn't moved.
 const MAX_MINORS_BEHIND = 3;
+
+// Third trigger, for a package that ships nearly every release inside one
+// minor line, where the two above are both blind. Counted as stable releases
+// published above the pin within the pin's own major.minor. Claude Code put 18
+// patches between 2.1.260 and 2.1.278 while minorsAhead stayed 0 and the age
+// clock still had 5 days to run.
+//
+// The number comes from the measured cadence of @anthropic-ai/claude-code and
+// @anthropic-ai/claude-agent-sdk, which publish 6 to 8 stable releases a week
+// on one minor line (npm registry `time` map, read 2026-09-19). Across the
+// whole 2.1 and 0.3 lines, reaching 5 patches ahead took a median of 5.3 days
+// and never less than 1.0 day. So a pin left alone is reported inside a week,
+// and a pin bumped to the newest version cannot be reported again on the day
+// upstream publishes. @openai/codex moves its minor (0.155 carried 2
+// releases), so this trigger stays quiet there and MAX_MINORS_BEHIND remains
+// its signal.
+const MAX_PATCHES_BEHIND = 5;
 
 // Both arches are checked, not just amd64: the image is built for both
 // (publish-image.yml's matrix), each has its own apt index and its own agy
@@ -545,6 +561,16 @@ export function npmStaleness({ pinned, latest, pinnedAt, versions, now }) {
       .map(minorKey)
       .filter((m) => compareVersions(`${m}.0`, `${pinnedMinor}.0`) > 0),
   ).size;
+  // Stable releases published above the pin on the pin's own minor line. The
+  // prerelease exclusion is the one above; the pin itself is excluded by the
+  // strict compare, so the number is how many installable releases this line
+  // has moved since the pin.
+  const patchesAhead = versions.filter(
+    (v) =>
+      !v.includes("-") &&
+      minorKey(v) === pinnedMinor &&
+      compareVersions(v, pinned) > 0,
+  ).length;
 
   const reasons = [];
   if (ageDays !== null && ageDays >= MAX_PIN_AGE_DAYS) {
@@ -555,7 +581,14 @@ export function npmStaleness({ pinned, latest, pinnedAt, versions, now }) {
       `${minorsAhead} newer minor${minorsAhead === 1 ? "" : "s"} published`,
     );
   }
-  return reasons.length ? { ageDays, minorsAhead, reasons } : null;
+  if (patchesAhead >= MAX_PATCHES_BEHIND) {
+    reasons.push(
+      `${patchesAhead} newer patch${patchesAhead === 1 ? "" : "es"} on ${pinnedMinor}`,
+    );
+  }
+  return reasons.length
+    ? { ageDays, minorsAhead, patchesAhead, reasons }
+    : null;
 }
 
 /**
@@ -793,8 +826,10 @@ function buildReport({ findings, stale, entries, observed }, pins, agyNote) {
     }
     lines.push(
       "",
-      `Reported at ${MAX_PIN_AGE_DAYS} days old or ${MAX_MINORS_BEHIND} newer minors,` +
-        " not on every release, so this is at most one notice per pin per three weeks.",
+      `Reported at ${MAX_PIN_AGE_DAYS} days old, ${MAX_MINORS_BEHIND} newer` +
+        ` minors, or ${MAX_PATCHES_BEHIND} newer patches on the pinned minor` +
+        " line, not on every release. A pin bumped to the newest version" +
+        " clears all three, so this is at most one notice per pin per window.",
       "",
       ...BUMP_CHECKLIST,
     );
