@@ -64,6 +64,7 @@ import { interactionDenied, recordUnattendedDenial, UNATTENDED_ASK_DENIAL, UNATT
 import { turnSignal } from "./abort";
 import { formatAnswers } from "./agents/shared";
 import { resolveConnectedAgent } from "./agents/connections";
+import { checkEnvironmentModel, resolveEnvironmentRef } from "./agents/environmentRef";
 import { checkProviderModel, resolveProviderRef } from "./providers/agentRef";
 import { presentProvider, type ProviderStatus } from "./providers/present";
 import { listProviders } from "./providers/store";
@@ -347,7 +348,14 @@ export interface SuggestTaskInput {
    * project's default.
    */
   provider?: string;
-  /** The model to run on, checked against the resolved provider's on-list. */
+  /**
+   * Which coding environment (agent CLI) runs the new task, as
+   * `list_providers` reports it (resolveEnvironmentRef). Omitted = the
+   * project's default, connected-first. Fixed for the task's whole life once
+   * created.
+   */
+  environment?: string;
+  /** The model to run on, checked against the resolved provider's on-list or the environment's own catalog. */
   model?: string;
   /** Files to attach, as the model named them; resolved by resolveAgentAttachments against the CALLER's worktree. */
   attachments?: string[];
@@ -434,24 +442,60 @@ export function createSuggestedTask(project: Project, input: SuggestTaskInput): 
     tags = hit.tags;
     createdTags = hit.created;
   }
+  // The coding environment, resolved BEFORE the provider: it decides which
+  // provider "cloud" means and which model ids are valid. Named explicitly it
+  // must be a registered, connected agent; omitted it is the target project's
+  // default, connected-first (the same resolution the New-task dialog makes,
+  // see the agent field below).
+  //
+  // `agent` stays undefined when nothing is connected, leaving createTask's
+  // own default in place; `environment` still needs a string to check against,
+  // so it falls back to the project default.
+  let agent = resolveConnectedAgent([project.default_agent]) ?? undefined;
+  if (input.environment?.trim()) {
+    const env = resolveEnvironmentRef(input.environment);
+    if ("error" in env) return { task: null, text: `Could not add "${input.title}": ${env.error} Nothing was created.` };
+    agent = env.environment;
+  }
+  const environment = agent ?? project.default_agent;
   // The provider override, resolved and validated BEFORE the insert so a
   // task is never created pointing at something that doesn't exist. "local"
   // and "cloud" are aliases (resolveProviderRef); anything else must match a
-  // provider id or exact label. The model is checked against the resolved
-  // provider's own list only when a provider was actually named here: a
-  // model passed with no provider inherits whatever the task resolves to at
-  // turn time, which isn't known yet.
-  const environment = resolveConnectedAgent([project.default_agent]) ?? project.default_agent;
-  const model = input.model?.trim() || null;
+  // provider id or exact label.
+  let model = input.model?.trim() || null;
   let resolvedProvider: ModelProvider | null = null;
   if (input.provider?.trim()) {
     const ref = resolveProviderRef(input.provider, environment);
     if ("error" in ref) return { task: null, text: `Could not add "${input.title}": ${ref.error} Nothing was created.` };
-    if (model) {
-      const check = checkProviderModel(ref.provider, model);
-      if ("error" in check) return { task: null, text: `Could not add "${input.title}": ${check.error} Nothing was created.` };
+    // A provider that doesn't serve this environment mints a task whose every
+    // turn fails on the first call, the same class of failure the model check
+    // below catches (lib/planScope.ts makes the same test for a plan).
+    if (!ref.provider.environments.includes(environment as EnvironmentId)) {
+      return {
+        task: null,
+        text:
+          `Could not add "${input.title}": "${ref.provider.label}" doesn't serve ${environment}. It serves ` +
+          `${ref.provider.environments.join(", ") || "no environment"}. Nothing was created.`,
+      };
     }
     resolvedProvider = ref.provider;
+  }
+  // The model, checked against whichever list actually governs it. A user-added
+  // provider (an Ollama box, a gateway) carries its own on-list; a bundled
+  // login, or no provider at all, means the environment's own CLI runs it, so
+  // the environment's catalog is the list. This is what keeps a model id from
+  // one environment off a task that runs in another: Codex naming a GPT model
+  // on a Claude Code project used to create a task that failed instantly on
+  // its first turn.
+  if (model) {
+    if (resolvedProvider && !resolvedProvider.bundled) {
+      const check = checkProviderModel(resolvedProvider, model);
+      if ("error" in check) return { task: null, text: `Could not add "${input.title}": ${check.error} Nothing was created.` };
+    } else {
+      const check = checkEnvironmentModel(environment, model);
+      if ("error" in check) return { task: null, text: `Could not add "${input.title}": ${check.error} Nothing was created.` };
+      model = check.model;
+    }
   }
   // Attachments, resolved against the CALLER's worktree before the insert so
   // a bad path refuses the whole call with nothing created. Staged under the
@@ -479,13 +523,14 @@ export function createSuggestedTask(project: Project, input: SuggestTaskInput): 
     description,
     priority: input.priority ?? "med",
     suggested: true,
-    // Connected-first, matching the New-task dialog (defaultAgentFor). A task's
-    // agent is fixed for its whole life, so inheriting an unconnected project
-    // default would mint tasks that can never run: the way a Codex-only
-    // instance would accumulate dead Claude tasks in the tray. Null (nothing
-    // connected) leaves createTask's own default in place. The default read
-    // here is the TARGET project's, not the calling session's.
-    agent: resolveConnectedAgent([project.default_agent]) ?? undefined,
+    // The environment resolved above: the one the call named, or connected-first
+    // from the TARGET project's default, matching the New-task dialog
+    // (defaultAgentFor). A task's agent is fixed for its whole life, so
+    // inheriting an unconnected project default would mint tasks that can never
+    // run: the way a Codex-only instance would accumulate dead Claude tasks in
+    // the tray. Undefined (nothing connected) leaves createTask's own default in
+    // place.
+    agent,
     tag_ids: tags.map((t) => t.id),
   });
   // Say which of the two things happened to each tag, always. "Created" is the
@@ -498,12 +543,19 @@ export function createSuggestedTask(project: Project, input: SuggestTaskInput): 
   const tagNote =
     (reused.length ? ` Tagged ${reused.map((t) => `"${t.name}"`).join(", ")}.` : "") +
     (createdTags.length ? ` Created tag${createdTags.length === 1 ? "" : "s"} ${createdTags.map((t) => `"${t.name}"`).join(", ")} in ${project.name}.` : "");
-  const providerNote = resolvedProvider ? ` Runs on ${resolvedProvider.label}${model ? `, model ${model}` : ""}.` : "";
+  // Say where it will run whenever the call steered it, so a planning turn can
+  // see its environment and model took effect without reading the task back.
+  const envNote = input.environment?.trim() ? ` Runs in ${environment}.` : "";
+  const providerNote = resolvedProvider
+    ? ` Runs on ${resolvedProvider.label}${model ? `, model ${model}` : ""}.`
+    : model
+      ? ` Model ${model}.`
+      : "";
   const attached = input.attachments?.length ?? 0;
   const attachNote = attached ? ` Attached ${attached} file${attached === 1 ? "" : "s"}.` : "";
   return {
     task,
-    text: `Suggested task "${input.title}" added to ${project.name}'s tray (id: ${task.id}).${depNote(task, project, input.blocked_by)}${tagNote}${providerNote}${attachNote}`,
+    text: `Suggested task "${input.title}" added to ${project.name}'s tray (id: ${task.id}).${depNote(task, project, input.blocked_by)}${tagNote}${envNote}${providerNote}${attachNote}`,
   };
 }
 

@@ -500,6 +500,19 @@ Ollama, LM Studio, then custom and selects the oldest row of the first configure
 `provider: "cloud"` alias selects the environment's bundled login. The REST field is `provider_id`
 on `PATCH /api/tasks/[id]`.
 
+**Choosing the coding environment.** `suggest_task` also takes `environment`, the coding CLI the
+new task runs in (`claude`, `codex`, `gemini`), matched case-insensitively. Omitted, the task
+takes the target project's default agent, connected-first. An environment this instance is not
+signed in to is refused, and so is a provider that does not serve the resolved environment.
+
+A task's agent is fixed for its whole life and its model id is handed to that agent's CLI
+verbatim, so `model` is checked before the task is created. A model that runs on a provider of
+your own is checked against that provider's on-list in Settings → Models. A model that runs on the
+environment's own login is checked against that environment's catalog, the same list the task
+dialog's model picker offers, and a spelling that differs only in case is stored in the catalog's
+spelling. A Codex model id on a Claude Code task is refused with nothing created, since every turn
+of that task would fail at once.
+
 **Permission modes.** The override changes only the endpoint; permission modes are unchanged from
 the [Claude Code](#claude-code) or [OpenAI Codex](#openai-codex) section for whichever driver the
 task uses.

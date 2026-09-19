@@ -30,6 +30,7 @@ export async function POST(req: NextRequest) {
     priority?: Priority;
     blocked_by?: string[];
     tags?: string[];
+    environment?: string;
     provider?: string;
     model?: string;
     attachments?: string[];
@@ -63,6 +64,7 @@ export async function POST(req: NextRequest) {
     // one is created; it is never read from a model-set field.
     tags: Array.isArray(body.tags) ? body.tags : undefined,
     origin_task_id: body.taskId ?? null,
+    environment: typeof body.environment === "string" ? body.environment : undefined,
     provider: typeof body.provider === "string" ? body.provider : undefined,
     model: typeof body.model === "string" ? body.model : undefined,
     // Resolved against the CALLER's worktree (taskId, trusted) inside

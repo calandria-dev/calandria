@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { NextRequest } from "next/server";
-import { createTag, createProject, createTask, deleteTask, getTask, getTaskDeps, getTaskTagIds, listTags, setTaskDeps, updateTask } from "@/lib/store";
+import { createTag, createProject, createTask, deleteTask, getTask, getTaskDeps, getTaskTagIds, listTags, listTasks, setTaskDeps, updateTask } from "@/lib/store";
 import {
   createSuggestedTask,
   getTaskForAgent,
@@ -955,11 +955,13 @@ describe("suggest_task provider/model", () => {
     expect(text).toMatch(/is off under/);
   });
 
-  it("does not check the model against a bundled provider's catalog", () => {
+  it("checks a bundled provider's model against the environment's catalog, not the provider's own policy", () => {
     const project = createProject({ name: "Prov-Bundled" });
     setAgentConnection("claude", { method: "subscription", email: null, plan: null });
-    const { task } = createSuggestedTask(project, { title: "Any model", description: "", provider: "cloud", model: "anything-goes" });
-    expect(task!.model).toBe("anything-goes");
+    const anthropic = bundledProviderFor("claude")!;
+    const { task } = createSuggestedTask(project, { title: "Sonnet", description: "", provider: "cloud", model: "sonnet" });
+    expect(task!.model).toBe("sonnet");
+    expect(task!.provider_id).toBe(anthropic.id);
   });
 
   it("list_providers reports id, label, type, bundled, environments and models_on", () => {
@@ -973,5 +975,104 @@ describe("suggest_task provider/model", () => {
     const row = rows.find((r) => r.id === ollama.id)!;
     expect(row).toMatchObject({ label: "Home box", type: "ollama", bundled: null, models_on: 2 });
     expect(row.status).toBe("untested");
+  });
+});
+
+describe("suggest_task environment", () => {
+  it("an explicit connected environment sets the created task's agent", () => {
+    setAgentConnection("claude", { method: "subscription", email: null, plan: null });
+    setAgentConnection("codex", { method: "subscription", email: null, plan: null });
+    const project = createProject({ name: "Env-Explicit" });
+    expect(project.default_agent).toBe("claude");
+    const { task } = createSuggestedTask(project, { title: "Codex task", description: "", environment: "codex" });
+    expect(task!.agent).toBe("codex");
+  });
+
+  it("environment matching is case-insensitive", () => {
+    setAgentConnection("codex", { method: "subscription", email: null, plan: null });
+    const project = createProject({ name: "Env-Case" });
+    const { task } = createSuggestedTask(project, { title: "Codex task", description: "", environment: "Codex" });
+    expect(task!.agent).toBe("codex");
+  });
+
+  it("refuses an unregistered environment id and creates nothing", () => {
+    const project = createProject({ name: "Env-Unregistered" });
+    const { task, text } = createSuggestedTask(project, { title: "Nope", description: "", environment: "ghost-agent" });
+    expect(task).toBeNull();
+    expect(text).toMatch(/isn't a coding environment/);
+    expect(listTasks(project.id)).toHaveLength(0);
+  });
+
+  // Depends on nothing above having connected gemini: connections live in the
+  // instance settings, shared by every test in this file. The one test that
+  // does connect it is the last in this block, for that reason.
+  it("refuses an environment nobody is connected to", () => {
+    const project = createProject({ name: "Env-Unconnected" });
+    const { task, text } = createSuggestedTask(project, { title: "Nope", description: "", environment: "gemini" });
+    expect(task).toBeNull();
+    expect(text).toMatch(/isn't connected/);
+    expect(listTasks(project.id)).toHaveLength(0);
+  });
+
+  it("refuses a model that belongs to a different environment's catalog, naming real models for the one it named", () => {
+    setAgentConnection("claude", { method: "subscription", email: null, plan: null });
+    const project = createProject({ name: "Env-WrongModel" });
+    const { task, text } = createSuggestedTask(project, { title: "Codex model on Claude", description: "", environment: "claude", model: "gpt-5.6-sol" });
+    expect(task).toBeNull();
+    expect(text).toMatch(/isn't a model claude runs/);
+    expect(text).toMatch(/sonnet/);
+    expect(text).toMatch(/opus/);
+    expect(listTasks(project.id)).toHaveLength(0);
+  });
+
+  it("accepts that same model on the environment that runs it, and refuses a Claude id there", () => {
+    setAgentConnection("codex", { method: "subscription", email: null, plan: null });
+    const project = createProject({ name: "Env-Mirror" });
+    const { task } = createSuggestedTask(project, { title: "Codex model", description: "", environment: "codex", model: "gpt-5.6-sol" });
+    expect(task).not.toBeNull();
+    expect(task!.agent).toBe("codex");
+    expect(task!.model).toBe("gpt-5.6-sol");
+    const back = createSuggestedTask(project, { title: "Claude model", description: "", environment: "codex", model: "opus" });
+    expect(back.task).toBeNull();
+    expect(back.text).toMatch(/isn't a model codex runs/);
+  });
+
+  it("a model with no environment named is still checked against the project's resolved environment", () => {
+    setAgentConnection("claude", { method: "subscription", email: null, plan: null });
+    const project = createProject({ name: "Env-Implicit" });
+    expect(project.default_agent).toBe("claude");
+    const { task, text } = createSuggestedTask(project, { title: "Bad model", description: "", model: "gpt-5.6-sol" });
+    expect(task).toBeNull();
+    expect(text).toMatch(/isn't a model claude runs/);
+  });
+
+  it("normalizes a model's spelling to the environment catalog's own", () => {
+    setAgentConnection("claude", { method: "subscription", email: null, plan: null });
+    const project = createProject({ name: "Env-Normalize" });
+    const { task } = createSuggestedTask(project, { title: "Shouty model", description: "", environment: "claude", model: "SONNET" });
+    expect(task!.model).toBe("sonnet");
+  });
+
+  it("does not check a non-bundled provider's model against the environment catalog", () => {
+    setAgentConnection("claude", { method: "subscription", email: null, plan: null });
+    const project = createProject({ name: "Env-NonBundledProvider" });
+    const provider = createProvider({
+      type: "ollama",
+      config: { base_url: "http://localhost:11434" },
+      model_policy: { mode: "deny", ids: [], known: ["qwen3-coder", "llama3.3"], unavailable: [] },
+    });
+    const { task } = createSuggestedTask(project, { title: "Ollama model", description: "", environment: "claude", provider: provider.id, model: "qwen3-coder" });
+    expect(task).not.toBeNull();
+    expect(task!.model).toBe("qwen3-coder");
+    expect(task!.provider_id).toBe(provider.id);
+  });
+
+  it("refuses a provider that doesn't serve the resolved environment", () => {
+    setAgentConnection("gemini", { method: "subscription", email: null, plan: null });
+    const project = createProject({ name: "Env-ProviderMismatch" });
+    const provider = createProvider({ type: "ollama", config: { base_url: "http://localhost:11434" } });
+    const { task, text } = createSuggestedTask(project, { title: "Nope", description: "", environment: "gemini", provider: provider.id });
+    expect(task).toBeNull();
+    expect(text).toMatch(/doesn't serve gemini/);
   });
 });
