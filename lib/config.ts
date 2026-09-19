@@ -118,6 +118,16 @@ export const CODEX_CLI_PATH = process.env.CODEX_CLI_PATH || "";
 export const AGY_CLI_PATH = process.env.AGY_CLI_PATH || "";
 
 /**
+ * How long `agy` waits for a print-mode turn to finish, as a Go duration
+ * string. The CLI's own default is 5m, which ends any longer turn with
+ * "timeout waiting for response". `0` does not mean "no limit": it times out
+ * immediately, so a large finite duration is the only way to lift the ceiling.
+ * The runner owns turn cancellation, so this only has to stay above any turn
+ * the user would wait out.
+ */
+export const AGY_PRINT_TIMEOUT = readEnv("CALANDRIA_AGY_PRINT_TIMEOUT") || "24h";
+
+/**
  * Where the Gemini driver keeps each task's private HOME. `agy` reads MCP
  * servers from exactly one user-global file, so a per-task HOME is the only way
  * parallel tasks get their own bridge entry; see lib/agents/gemini/home.ts for

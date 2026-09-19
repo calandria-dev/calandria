@@ -108,6 +108,15 @@ describe("argv", () => {
     expect(args).not.toContain("--model");
   });
 
+  it("lifts the CLI's own 5m print-mode deadline", () => {
+    const args = turnArgs({ prompt: "hi", conversationId: null, model: null, permission: null });
+    const timeout = args[args.indexOf("--print-timeout") + 1];
+    expect(timeout).toBe("24h");
+    // `0` is an immediate timeout in this CLI, not an unlimited one, so it must
+    // never be what the driver sends.
+    expect(timeout).not.toBe("0");
+  });
+
   it("resumes by conversation id", () => {
     const args = turnArgs({ prompt: "hi", conversationId: "c-1", model: null, permission: null });
     expect(args).toContain("--conversation");
@@ -132,6 +141,18 @@ describe("argv", () => {
     // The CLI's own default mode auto-denies every tool in headless mode, so an
     // unknown/absent choice must not fall back to it.
     expect(permissionFlags(null)).toEqual(["--dangerously-skip-permissions"]);
+  });
+});
+
+describe("one-shot argv", () => {
+  it("pins the CLI's print deadline to the helper's own", async () => {
+    const { project } = rows();
+    spawnMock.mockReturnValue(fakeChild({ stdout: "", code: 0 }));
+    await geminiDriver.summarizeTranscript!("transcript", project);
+    const args = spawnMock.mock.calls[0][1] as string[];
+    // The helper's default budget is 5 minutes; without this the CLI's own
+    // 5m default would race it and report "timeout waiting for response".
+    expect(args[args.indexOf("--print-timeout") + 1]).toBe(`${5 * 60 * 1000}ms`);
   });
 });
 
