@@ -24,7 +24,21 @@ let log = {
   warn: (msg) => console.warn(`[pty-server] ${msg}`),
   error: (msg) => console.error(`[pty-server] ${msg}`),
 };
-import("./lib/log.mjs").then((m) => {
+
+// Saved app-scope settings, read from the same file the app server reads and
+// applied before this process's own configuration consumers load. The
+// supervisor hands both sidecars the same storage and deployment inputs, so
+// each one resolves the same file for itself. PTY_PORT and PTY_HOST are
+// reserved to the launcher, which is why they stay synchronous reads below.
+// See lib/advanced-env/bootstrap.mjs.
+const appEnvApplied = import("./lib/advanced-env/bootstrap.mjs")
+  .then((m) => m.applyAppEnvironment())
+  .catch((err) => {
+    log.error("advanced settings could not be applied; starting without them", { err });
+    return null;
+  });
+
+appEnvApplied.then(() => import("./lib/log.mjs")).then((m) => {
   log = m.createLogger("pty-server");
 });
 
@@ -141,8 +155,8 @@ const server = http.createServer((_req, res) => {
 // the wrong mode's policy: the local-mode Host allowlist would reject the
 // tunnel Host when the app runs behind Cloudflare Access. jose is ESM-only,
 // hence the dynamic imports from this CommonJS file.
-const localOriginImport = import("./lib/auth/local-origin.mjs");
-const originImport = import("./lib/auth/origin.mjs");
+const localOriginImport = appEnvApplied.then(() => import("./lib/auth/local-origin.mjs"));
+const originImport = appEnvApplied.then(() => import("./lib/auth/origin.mjs"));
 
 const wss = new WebSocketServer({
   server,
@@ -260,7 +274,7 @@ wss.on("connection", (ws, req) => {
 // would switch `claude` in a terminal tab to per-token billing. Listen only
 // after the strip so no shell can spawn with the key still present. See
 // lib/env-keys.mjs (CALANDRIA_ALLOW_API_KEY_ENV opts in).
-import("./lib/env-keys.mjs").then((envKeys) => {
+appEnvApplied.then(() => import("./lib/env-keys.mjs")).then((envKeys) => {
   for (const name of envKeys.stripInheritedAgentKeys()) {
     log.warn(`WARN: ${name} was set in the environment, unsetting it (CALANDRIA_ALLOW_API_KEY_ENV=1 to keep).`);
   }
