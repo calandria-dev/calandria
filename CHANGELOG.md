@@ -8,6 +8,28 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.18.0](https://github.com/calandria-dev/calandria/compare/v0.17.0...v0.18.0) (2026-09-19)
+
+
+### Features
+
+* **advanced-env:** add pure agent snapshot and Codex control resolvers ([#406](https://github.com/calandria-dev/calandria/issues/406)) ([94b6a6d](https://github.com/calandria-dev/calandria/commit/94b6a6da01363df600faecdad932e87fa3ae9d5a))
+* **advanced-env:** add scope-aware environment catalog and validators ([#397](https://github.com/calandria-dev/calandria/issues/397)) ([26dccc6](https://github.com/calandria-dev/calandria/commit/26dccc63c216a74151f70e46456f7651b4e6ce4a))
+* **advanced-env:** apply saved app settings at boot and package the loader ([#404](https://github.com/calandria-dev/calandria/issues/404)) ([5abb807](https://github.com/calandria-dev/calandria/commit/5abb807162862f6a620cbf1cb345eb3ec06a5940))
+* **advanced-env:** persist app and agent settings and serve browser CRUD ([#400](https://github.com/calandria-dev/calandria/issues/400)) ([6153f08](https://github.com/calandria-dev/calandria/commit/6153f08963df2a7905c56a687dd38184f5d95c61))
+* **advanced-env:** wire session settings across agent drivers ([#408](https://github.com/calandria-dev/calandria/issues/408)) ([471ecfc](https://github.com/calandria-dev/calandria/commit/471ecfc8ce7619751b484ab307015b1fe0a7cad8))
+* **agent-tools:** let suggest_task pick the coding environment ([#399](https://github.com/calandria-dev/calandria/issues/399)) ([49e5060](https://github.com/calandria-dev/calandria/commit/49e506068e9cbd7b05cbdc50af2a14663d3c5062))
+* **pin-drift:** report a class-two pin behind on patch distance ([#407](https://github.com/calandria-dev/calandria/issues/407)) ([c9fda07](https://github.com/calandria-dev/calandria/commit/c9fda0717e81018a3d7d375f540df74c92f8dc51))
+
+
+### Bug Fixes
+
+* **agent-tools:** check a runbook's model against its coding environment ([#403](https://github.com/calandria-dev/calandria/issues/403)) ([9ae039e](https://github.com/calandria-dev/calandria/commit/9ae039ed6fc8d98e1499e8b6a19a750a93143662))
+* **ci:** reuse setup-node headers for Linux desktop builds ([#394](https://github.com/calandria-dev/calandria/issues/394)) ([b1cdfd5](https://github.com/calandria-dev/calandria/commit/b1cdfd587b69ae013df192a951fff361452f39c2))
+* **ci:** unblock agent CLI bump auto-merge ([#392](https://github.com/calandria-dev/calandria/issues/392)) ([32f34a5](https://github.com/calandria-dev/calandria/commit/32f34a5c6ceeeaac83421d4595564d5e0d21a461))
+* **gemini:** lift the agy print-mode turn timeout ([#402](https://github.com/calandria-dev/calandria/issues/402)) ([3055c2d](https://github.com/calandria-dev/calandria/commit/3055c2d22484e4e1bcf2356bf6a940b8476cd146))
+* **shell:** drop superseded project loads in the shell ([#396](https://github.com/calandria-dev/calandria/issues/396)) ([1d712f4](https://github.com/calandria-dev/calandria/commit/1d712f488831332637a9d8f1954bec275d3e6ca5))
+
 ## [0.17.0](https://github.com/calandria-dev/calandria/compare/v0.16.0...v0.17.0) (2026-09-18)
 
 
