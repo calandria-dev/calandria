@@ -22,7 +22,7 @@ import type { Project, Task, StreamEvent, TurnUsage } from "../../types";
 import type { AgentDriver, OneShotResult } from "../types";
 import { GEMINI_CAPABILITIES } from "./capabilities";
 import { getSetting, getThreadUsageCum, setThreadUsageCum } from "../../store";
-import { AGY_CLI_PATH } from "../../config";
+import { AGY_CLI_PATH, AGY_PRINT_TIMEOUT } from "../../config";
 import { buildProjectContext } from "../shared";
 import { ATTACHMENT_NUDGE, hasAttachmentMarkers } from "../../uploadTypes";
 import { mapAgyEvent, newState, ZERO_CUM, type GeminiCum, type GeminiMapState } from "./events";
@@ -67,6 +67,10 @@ export function turnArgs(opts: {
   permission: string | null;
 }): string[] {
   const args = ["-p", opts.prompt, "--output-format", "stream-json"];
+  // Print mode's own deadline is 5m by default, which kills a long turn from
+  // under the runner. `0` is an immediate timeout, not an infinite one, so the
+  // ceiling is raised with a large finite duration (lib/config.ts).
+  args.push("--print-timeout", AGY_PRINT_TIMEOUT);
   if (opts.conversationId) args.push("--conversation", opts.conversationId);
   // Omitted when nothing chose, so the CLI's own default keeps winning.
   if (opts.model) args.push("--model", opts.model);
@@ -246,7 +250,10 @@ function firstMeaningfulLine(text: string): string {
  */
 async function oneShot(project: Project, prompt: string, timeoutMs = 5 * 60 * 1000): Promise<OneShotResult> {
   const env = applyStoredApiKey({ ...resolvedAgentTurnEnv(project, undefined, "gemini"), AGY_CLI_DISABLE_AUTO_UPDATE: "true" });
-  const args = ["-p", prompt, "--output-format", "stream-json", "--mode", "plan"];
+  // The CLI's print-mode deadline is pinned to this helper's own, so a
+  // one-shot that outlives 5m is ended by the SIGTERM below rather than by the
+  // CLI's default (which would report a bare "timeout waiting for response").
+  const args = ["-p", prompt, "--output-format", "stream-json", "--mode", "plan", "--print-timeout", `${timeoutMs}ms`];
   const child = spawn(AGY(), args, {
     cwd: project.repo_path || process.cwd(),
     env: env as NodeJS.ProcessEnv,

@@ -354,6 +354,7 @@ subscription login as normal.
 |-|-|-|
 | `GEMINI_API_KEY` | unset | Set it, or paste a key while connecting the Antigravity environment, for API-key billing against Google's API instead of the Antigravity subscription. |
 | `AGY_CLI_PATH` | unset (uses `agy` on PATH) | Pins a specific binary when PATH is trimmed. The published image installs a version the `Dockerfile` records and reviews the checksum of. |
+| `CALANDRIA_AGY_PRINT_TIMEOUT` | `24h` | How long `agy` waits for one print-mode turn, as a Go duration string. The CLI's own default is 5m, which ends a longer turn with "timeout waiting for response". `0` is an immediate timeout, not an unlimited one, so raise the ceiling with a large finite duration. |
 | `AGY_CLI_DISABLE_AUTO_UPDATE` | always set to `true` | Always applied by Calandria; a self-update can never swap the binary out mid-turn or mid-login. |
 
 **Permission modes.**
