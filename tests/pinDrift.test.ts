@@ -389,7 +389,8 @@ describe("package.json pin extraction", () => {
 
   it("puts the SDK on the same staleness path as the two CLI pins", () => {
     // One row per npm pin whichever file it lives in, so the SDK gets the same
-    // MAX_PIN_AGE_DAYS / MAX_MINORS_BEHIND rules and the same report tables.
+    // MAX_PIN_AGE_DAYS / MAX_MINORS_BEHIND / MAX_PATCHES_BEHIND rules and the
+    // same report tables.
     const entries = npmPinEntries(
       extractPins(readFileSync(DOCKERFILE, "utf8"), "Dockerfile"),
       extractPackagePins(source, "package.json"),
@@ -408,33 +409,25 @@ describe("package.json pin extraction", () => {
     expect(sdk.pinLabel).toBe(sdk.pinned);
   });
 
-  it("can only ever fire on age, never on minors", () => {
+  it("is reported on patch distance, since its minor never moves", () => {
     // The SDK moves on the PATCH within one 0.3.x minor: 0.3.159 to 0.3.263 is
     // 104 releases and zero newer minor lines. MAX_MINORS_BEHIND counts nothing
-    // here by construction, and no patch-distance trigger was added, so age is
-    // the only thing that reports this pin.
+    // here by construction, so patch distance is what reports this pin long
+    // before the age clock runs out.
     const versions = Array.from({ length: 264 }, (_, i) => `0.3.${i}`);
     const NOW = Date.parse("2026-09-03T00:00:00Z");
     const daysAgo = (n: number) => new Date(NOW - n * 86_400_000).toISOString();
 
-    const quiet = npmStaleness({
+    const verdict = npmStaleness({
       pinned: "0.3.159",
       latest: "0.3.263",
-      pinnedAt: daysAgo(20),
+      pinnedAt: daysAgo(3),
       versions,
       now: NOW,
     });
-    expect(quiet).toBeNull();
-
-    const aged = npmStaleness({
-      pinned: "0.3.159",
-      latest: "0.3.263",
-      pinnedAt: daysAgo(21),
-      versions,
-      now: NOW,
-    });
-    expect(aged?.minorsAhead).toBe(0);
-    expect(aged?.reasons).toEqual(["pinned 21 days ago"]);
+    expect(verdict?.minorsAhead).toBe(0);
+    expect(verdict?.patchesAhead).toBe(104);
+    expect(verdict?.reasons).toEqual(["104 newer patches on 0.3"]);
   });
 });
 
@@ -482,34 +475,70 @@ describe("npmStaleness", () => {
     ).toBeNull();
   });
 
-  it("stays quiet through a burst of patches on one minor", () => {
-    // @anthropic-ai/claude-code published 25 releases in 23 days. Reporting on
-    // "something newer exists" is a notice a day, which is the noise this
-    // threshold exists to avoid.
+  it("stays quiet on the day upstream publishes past the pin", () => {
+    // @anthropic-ai/claude-code ships 6 to 8 releases a week on one minor, so
+    // a few patches ahead is the normal state of a pin bumped this week.
+    // Reporting on "something newer exists" is a notice a day, which is the
+    // noise these thresholds exist to avoid.
     expect(
       npmStaleness({
-        pinned: "2.1.228",
+        pinned: "2.1.250",
         latest: "2.1.253",
-        pinnedAt: daysAgo(5),
+        pinnedAt: daysAgo(1),
         versions: patches("2.1", 254),
         now: NOW,
       }),
     ).toBeNull();
   });
 
-  it("fires on age once the same pin has sat for three weeks", () => {
+  it("fires on patch distance long before the age clock runs out", () => {
+    // The 2026-09-19 miss: 2.1.260 against 2.1.278 is 18 patches and zero
+    // newer minors, with 5 days still to run on MAX_PIN_AGE_DAYS.
     const verdict = npmStaleness({
-      pinned: "2.1.228",
-      latest: "2.1.259",
+      pinned: "2.1.260",
+      latest: "2.1.278",
+      pinnedAt: daysAgo(16),
+      versions: patches("2.1", 279),
+      now: NOW,
+    });
+    expect(verdict?.ageDays).toBe(16);
+    // No newer MINOR line: claude-code stays on 2.1.
+    expect(verdict?.minorsAhead).toBe(0);
+    expect(verdict?.patchesAhead).toBe(18);
+    expect(verdict?.reasons).toEqual(["18 newer patches on 2.1"]);
+  });
+
+  it("fires on age when a slow line never reaches the patch threshold", () => {
+    const verdict = npmStaleness({
+      pinned: "2.1.259",
+      latest: "2.1.261",
       pinnedAt: daysAgo(23),
-      versions: patches("2.1", 260),
+      versions: patches("2.1", 262),
       now: NOW,
     });
     expect(verdict?.ageDays).toBe(23);
-    // No newer MINOR line: claude-code stays on 2.1, so age is the only
-    // trigger that can ever cover it.
-    expect(verdict?.minorsAhead).toBe(0);
+    expect(verdict?.patchesAhead).toBe(2);
     expect(verdict?.reasons).toEqual(["pinned 23 days ago"]);
+  });
+
+  it("counts only the pin's own minor line, and no prereleases", () => {
+    // A patch on a LATER minor is that minor's business, and an alpha is never
+    // what the Dockerfile installs. Both would otherwise carry this past the
+    // threshold on their own.
+    const verdict = npmStaleness({
+      pinned: "0.146.0",
+      latest: "0.147.4",
+      pinnedAt: daysAgo(1),
+      versions: [
+        ...patches("0.146", 4),
+        "0.146.4-alpha.1",
+        "0.146.5-rc.1",
+        ...patches("0.147", 5),
+      ],
+      now: NOW,
+    });
+    // 0.146.1 through 0.146.3 only, so under MAX_PATCHES_BEHIND.
+    expect(verdict).toBeNull();
   });
 
   it("fires on minors before the age threshold when upstream moves fast", () => {
