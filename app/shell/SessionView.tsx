@@ -579,7 +579,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   onMerged?: () => void;
   onPrCreated?: (url: string) => void;
   onAnswer: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void;
-  onDecidePermission: (permId: string, decision: PermissionDecision, note: string) => void;
+  onDecidePermission: (permId: string, decision: PermissionDecision, note: string, kind?: "settings" | "environment", priv?: { name?: string; value?: string }) => void;
   onCancelQueued: (pendingId: string) => void;
   // The Suggested tray's own three actions, reached from a suggestion card the
   // transcript settles onto the suggest_task call that filed the task. Passed

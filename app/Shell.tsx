@@ -435,7 +435,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
             onMerged={o.onMerged}
             onPrCreated={o.onPrCreated}
             onAnswer={(askId, questions, answers) => o.answerQuestion(task.id, askId, questions, answers)}
-            onDecidePermission={(permId, decision, note) => o.decidePermission(task.id, permId, decision, note)}
+            onDecidePermission={(permId, decision, note, kind, priv) => o.decidePermission(task.id, permId, decision, note, kind, priv)}
             onCancelQueued={(pendingId) => o.cancelQueued(task.id, pendingId)}
             onStartSuggestion={o.startSuggestion} onAcceptSuggestion={o.acceptSuggestion} onDismissSuggestion={o.dismissSuggestion}
             railW={layout.railW}
@@ -546,7 +546,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
                 onMerged={o.onMerged}
                 onPrCreated={o.onPrCreated}
                 onAnswer={(askId, questions, answers) => o.answerQuestion(task.id, askId, questions, answers)}
-                onDecidePermission={(permId, decision, note) => o.decidePermission(task.id, permId, decision, note)}
+                onDecidePermission={(permId, decision, note, kind, priv) => o.decidePermission(task.id, permId, decision, note, kind, priv)}
                 onCancelQueued={(pendingId) => o.cancelQueued(task.id, pendingId)}
                 onStartSuggestion={o.startSuggestion} onAcceptSuggestion={o.acceptSuggestion} onDismissSuggestion={o.dismissSuggestion}
                 railW={layout.railW}

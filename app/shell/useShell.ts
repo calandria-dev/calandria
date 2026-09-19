@@ -494,10 +494,34 @@ export function useShell() {
   // Unlike an ask there is no resume fallback: if nothing is parked the turn is
   // already gone, and re-sending "allow_once" as a chat message would be
   // meaningless. The card locks itself and the failed state says why.
-  const decidePermission = useCallback(async (taskId: string, permId: string, decision: PermissionDecision, note?: string) => {
+  //
+  // An Advanced Settings mutation proposal (kind: "environment") never rides
+  // this route: it settles only through the dedicated decision endpoint
+  // (lib/advanced-env/capabilities.ts's mandatory waiter has no access to the
+  // generic ask registry this route answers into), and a secret's private
+  // name/value goes straight there, never into this function's `note` or the
+  // generic answers payload.
+  const decidePermission = useCallback(async (
+    taskId: string,
+    permId: string,
+    decision: PermissionDecision,
+    note?: string,
+    kind?: "settings" | "environment",
+    priv?: { name?: string; value?: string },
+  ) => {
     const optimistic: PermissionOutcome = { decision, note: note?.trim() || undefined };
     setOutcomeOnMsg(taskId, permId, optimistic); // the stream echoes permission_decided
     try {
+      if (kind === "environment") {
+        await jsend<{ ok: boolean }>(`/api/settings/environment/proposals/${permId}/decision`, "POST", {
+          taskId,
+          decision,
+          note: note?.trim() || undefined,
+          privateName: priv?.name,
+          privateValue: priv?.value,
+        });
+        return;
+      }
       const answers: AskAnswers = [[decision, ...(note?.trim() ? [note.trim()] : [])]];
       const { resolved } = await jsend<{ resolved: boolean }>(`/api/tasks/${taskId}/answer`, "POST", { askId: permId, answers });
       if (!resolved) {

@@ -85,6 +85,10 @@ export interface PromptSpec {
    * shortcut approval.
    */
   mandatory?: boolean;
+  /** Forwarded verbatim onto the built PermissionRequest. See its doc for
+   * what each marks; promptPermission itself never inspects either. */
+  kind?: "environment";
+  privateInput?: { name?: boolean; value?: boolean };
 }
 
 export type PromptDecision =
@@ -121,6 +125,7 @@ export async function promptPermission(ctx: PromptContext, spec: PromptSpec): Pr
   const request: PermissionRequest = {
     id: spec.id,
     tool: spec.tool,
+    kind: spec.kind,
     title: spec.title?.trim() || described().title,
     detail: spec.detail ?? described().detail,
     description: spec.blockedPath
@@ -128,6 +133,7 @@ export async function promptPermission(ctx: PromptContext, spec: PromptSpec): Pr
       : spec.description?.trim() || undefined,
     diff: spec.diff ?? described().diff,
     scope,
+    privateInput: spec.privateInput,
     expiresAt: promptDeadline(PERMISSION_PROMPT_TIMEOUT_MS, PERMISSION_UNATTENDED_MS, ctx.taskId),
   };
   ctx.push({ type: "permission", request });
