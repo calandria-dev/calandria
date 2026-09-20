@@ -479,7 +479,12 @@ export interface PermissionRequest {
    * before it runs, instead of refusing one call inside it, so the UI must
    * not tell the user the session keeps running either way.
    */
-  kind?: "settings";
+  /**
+   * "environment" is an Advanced Settings mutation proposal
+   * (lib/advanced-env/proposals.ts): a mandatory card, settled only through
+   * the dedicated decision route, never through POST /api/tasks/[id]/answer.
+   */
+  kind?: "settings" | "environment";
   /** Headline: the CLI's own prompt sentence when it supplies one, else a derived title. */
   title: string;
   /** The input worth judging: the full command for Bash, the path for a write. */
@@ -489,6 +494,13 @@ export interface PermissionRequest {
   diff?: DiffLine[];
   /** Absent when the call can't be generalized into a rule. */
   scope?: PermissionScopeOffer;
+  /**
+   * kind: "environment" only. Which private fields the card should collect
+   * from the browser before submitting a decision: a secret's plaintext (and
+   * optionally its name), kept out of `detail`, tool arguments, this request,
+   * and every persisted/published record. Absent for a non-secret proposal.
+   */
+  privateInput?: { name?: boolean; value?: boolean };
   /** ms epoch after which the prompt auto-denies itself; 0 = parks indefinitely. */
   expiresAt: number;
 }

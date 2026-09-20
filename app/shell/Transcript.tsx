@@ -230,10 +230,12 @@ const blockedHead = (by?: string): string =>
 // The same card also renders read-only, with no buttons, for a call Claude Code
 // refused on its own (the "auto" classifier, a deny rule): that decision is
 // already made, and it arrives settled.
-function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentLabel: string; onDecide: (decision: PermissionDecision, note: string) => void }) {
+function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentLabel: string; onDecide: (decision: PermissionDecision, note: string, priv?: { name?: string; value?: string }) => void }) {
   const req = data.permission?.request;
   const outcome = data.permission?.outcome;
   const [note, setNote] = useState("");
+  const [privName, setPrivName] = useState("");
+  const [privValue, setPrivValue] = useState("");
   const [sent, setSent] = useState(false);
   if (!req) return null;
 
@@ -244,6 +246,13 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
   // that promises otherwise has to change. There is also nobody to write a note
   // to, since the agent hasn't started, so the note field goes away with it.
   const settings = req.kind === "settings";
+  // An Advanced Settings mutation proposal (lib/advanced-env/proposals.ts):
+  // a mandatory card with no "always allow", settled through a dedicated
+  // browser route, never the generic /answer path. A secret's plaintext (and
+  // optionally its name) is typed directly into the fields below and never
+  // touches `note`, the tool's arguments, or anything else this card sends
+  // to the ordinary decision path.
+  const environment = req.kind === "environment";
 
   if (outcome) {
     const allowed = outcome.decision !== "deny";
@@ -279,7 +288,18 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
     );
   }
 
-  const decide = (d: PermissionDecision) => { if (!sent) { setSent(true); onDecide(d, note); } };
+  const decide = (d: PermissionDecision) => {
+    if (sent) return;
+    setSent(true);
+    if (environment && d === "allow_once" && req.privateInput) {
+      onDecide(d, note, {
+        name: req.privateInput.name && privName.trim() ? privName.trim() : undefined,
+        value: req.privateInput.value && privValue ? privValue : undefined,
+      });
+    } else {
+      onDecide(d, note);
+    }
+  };
   return (
     <div className="perm">
       <div className="perm-head">{Icon.lock()} {settings ? "This task's settings changed" : `${agentLabel} needs permission`}</div>
@@ -288,6 +308,28 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
       {req.detail && <pre className="perm-pre">{req.detail}</pre>}
       {!!req.diff?.length && (
         <pre className="perm-pre diff">{req.diff.map((l, i) => <div className={`dl ${diffCls(l.sign)}`} key={i}>{l.sign} {l.text}</div>)}</pre>
+      )}
+      {environment && req.privateInput?.name && (
+        <input
+          className="ask-other"
+          type="text"
+          autoComplete="off"
+          placeholder="Private name (kept off this card and the transcript; blank keeps the proposed name)…"
+          value={privName}
+          disabled={sent}
+          onChange={(e) => setPrivName(e.target.value)}
+        />
+      )}
+      {environment && req.privateInput?.value && (
+        <input
+          className="ask-other"
+          type="password"
+          autoComplete="new-password"
+          placeholder="Private value (kept off this card and the transcript; required to create a new secret)…"
+          value={privValue}
+          disabled={sent}
+          onChange={(e) => setPrivValue(e.target.value)}
+        />
       )}
       {!settings && (
         <input className="ask-other" placeholder="Note for the agent (used if you decline)…" value={note} disabled={sent} onChange={(e) => setNote(e.target.value)} />
@@ -302,7 +344,9 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
       <div className="perm-hint">
         {settings
           ? "Declining ends this turn before the agent starts. Nothing runs under the new settings. Revert the file, or send again and approve, to carry on."
-          : "Declines automatically if nobody responds. The session keeps running either way."}
+          : environment
+            ? "This is a one-time decision: there is no \"always allow\" for an environment change. Declines automatically if nobody responds."
+            : "Declines automatically if nobody responds. The session keeps running either way."}
       </div>
     </div>
   );
@@ -661,7 +705,7 @@ function IssueReportView({ data }: { data: ToolData }) {
   );
 }
 
-export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onDecidePermission, onCancelQueued, onClear, onReconnect, onRetry, onRepairWorktree, onCollaborate, links, suggestionActions, limitResume }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onDecidePermission?: (permId: string, decision: PermissionDecision, note: string) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void; onRetry?: (msgId: string) => void; onRepairWorktree?: (msgId: string) => Promise<string | null>; onCollaborate?: (file: string) => void; links?: MarkdownLinks; suggestionActions?: SuggestionActions; limitResume?: LimitResume }) {
+export const MessageView = memo(function MessageView({ m, initial, hideWho, running, agent, agentLabel = "The agent", onAnswer, onDecidePermission, onCancelQueued, onClear, onReconnect, onRetry, onRepairWorktree, onCollaborate, links, suggestionActions, limitResume }: { m: Msg; initial: boolean; hideWho: boolean; running?: boolean; agent?: string | null; agentLabel?: string; onAnswer?: (askId: string, questions: AskQuestion[], answers: AskAnswers) => void; onDecidePermission?: (permId: string, decision: PermissionDecision, note: string, kind?: "settings" | "environment", priv?: { name?: string; value?: string }) => void; onCancelQueued?: (pendingId: string) => void; onClear?: () => void; onReconnect?: () => void; onRetry?: (msgId: string) => void; onRepairWorktree?: (msgId: string) => Promise<string | null>; onCollaborate?: (file: string) => void; links?: MarkdownLinks; suggestionActions?: SuggestionActions; limitResume?: LimitResume }) {
   if (m.role === "queued") {
     // A follow-up the user typed mid-turn, waiting its turn. Reads like a user
     // bubble but dimmed, tagged "Queued", with an × to drop it before it runs.
@@ -684,7 +728,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
       return <div className="msg msg-tool"><AskView data={data} agentLabel={agentLabel} onAnswer={(answers) => onAnswer?.(data.ask?.id || m.toolId || "", data.ask?.questions ?? [], answers)} /></div>;
     }
     if (data.permission) {
-      return <div className="msg msg-tool"><PermissionView data={data} agentLabel={agentLabel} onDecide={(d, note) => onDecidePermission?.(data.permission?.request.id || m.toolId || "", d, note)} /></div>;
+      return <div className="msg msg-tool"><PermissionView data={data} agentLabel={agentLabel} onDecide={(d, note, priv) => onDecidePermission?.(data.permission?.request.id || m.toolId || "", d, note, data.permission?.request.kind, priv)} /></div>;
     }
     // A suggest_task call that actually filed a task carries its card below the
     // ordinary tool row instead of replacing it: the call, its input and its
