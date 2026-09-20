@@ -1,0 +1,421 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-20T07:55:22-07:00",
+  "title": "Design System: Calandria",
+  "extensions": {
+    "colorMeta": {
+      "bg": {
+        "role": "background",
+        "displayName": "Cherenkov Black",
+        "tonalRamp": [
+          "oklch(15% 0.025 220)",
+          "oklch(26% 0.025 220)",
+          "oklch(38% 0.025 220)",
+          "oklch(49% 0.025 220)",
+          "oklch(61% 0.025 220)",
+          "oklch(72% 0.025 220)",
+          "oklch(84% 0.025 220)",
+          "oklch(95% 0.025 220)"
+        ]
+      },
+      "panel": {
+        "role": "surface",
+        "displayName": "Deep Teal Panel",
+        "tonalRamp": [
+          "oklch(15% 0.03 225)",
+          "oklch(26% 0.03 225)",
+          "oklch(38% 0.03 225)",
+          "oklch(49% 0.03 225)",
+          "oklch(61% 0.03 225)",
+          "oklch(72% 0.03 225)",
+          "oklch(84% 0.03 225)",
+          "oklch(95% 0.03 225)"
+        ]
+      },
+      "line": {
+        "role": "border",
+        "displayName": "Submerged Line",
+        "tonalRamp": [
+          "oklch(15% 0.025 225)",
+          "oklch(26% 0.025 225)",
+          "oklch(38% 0.025 225)",
+          "oklch(49% 0.025 225)",
+          "oklch(61% 0.025 225)",
+          "oklch(72% 0.025 225)",
+          "oklch(84% 0.025 225)",
+          "oklch(95% 0.025 225)"
+        ]
+      },
+      "ink": {
+        "role": "text",
+        "displayName": "Pale Blue Ink",
+        "tonalRamp": [
+          "oklch(15% 0.02 225)",
+          "oklch(26% 0.02 225)",
+          "oklch(38% 0.02 225)",
+          "oklch(49% 0.02 225)",
+          "oklch(61% 0.02 225)",
+          "oklch(72% 0.02 225)",
+          "oklch(84% 0.02 225)",
+          "oklch(95% 0.02 225)"
+        ]
+      },
+      "dim": {
+        "role": "muted",
+        "displayName": "Muted Teal Gray",
+        "tonalRamp": [
+          "oklch(15% 0.03 225)",
+          "oklch(26% 0.03 225)",
+          "oklch(38% 0.03 225)",
+          "oklch(49% 0.03 225)",
+          "oklch(61% 0.03 225)",
+          "oklch(72% 0.03 225)",
+          "oklch(84% 0.03 225)",
+          "oklch(95% 0.03 225)"
+        ]
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "Cherenkov Teal",
+        "tonalRamp": [
+          "oklch(15% 0.11 180)",
+          "oklch(26% 0.11 180)",
+          "oklch(38% 0.11 180)",
+          "oklch(49% 0.11 180)",
+          "oklch(61% 0.11 180)",
+          "oklch(72% 0.11 180)",
+          "oklch(84% 0.11 180)",
+          "oklch(95% 0.11 180)"
+        ]
+      },
+      "term": {
+        "role": "terminal-surface",
+        "displayName": "Terminal Black",
+        "tonalRamp": [
+          "oklch(15% 0.018 220)",
+          "oklch(26% 0.018 220)",
+          "oklch(38% 0.018 220)",
+          "oklch(49% 0.018 220)",
+          "oklch(61% 0.018 220)",
+          "oklch(72% 0.018 220)",
+          "oklch(84% 0.018 220)",
+          "oklch(95% 0.018 220)"
+        ]
+      },
+      "run-bg": {
+        "role": "success-surface",
+        "displayName": "Run Deep Green",
+        "tonalRamp": [
+          "oklch(15% 0.05 175)",
+          "oklch(26% 0.05 175)",
+          "oklch(38% 0.05 175)",
+          "oklch(49% 0.05 175)",
+          "oklch(61% 0.05 175)",
+          "oklch(72% 0.05 175)",
+          "oklch(84% 0.05 175)",
+          "oklch(95% 0.05 175)"
+        ]
+      },
+      "run": {
+        "role": "success",
+        "displayName": "Run Teal",
+        "tonalRamp": [
+          "oklch(15% 0.11 165)",
+          "oklch(26% 0.11 165)",
+          "oklch(38% 0.11 165)",
+          "oklch(49% 0.11 165)",
+          "oklch(61% 0.11 165)",
+          "oklch(72% 0.11 165)",
+          "oklch(84% 0.11 165)",
+          "oklch(95% 0.11 165)"
+        ]
+      },
+      "rev-bg": {
+        "role": "review-surface",
+        "displayName": "Review Umber",
+        "tonalRamp": [
+          "oklch(15% 0.05 85)",
+          "oklch(26% 0.05 85)",
+          "oklch(38% 0.05 85)",
+          "oklch(49% 0.05 85)",
+          "oklch(61% 0.05 85)",
+          "oklch(72% 0.05 85)",
+          "oklch(84% 0.05 85)",
+          "oklch(95% 0.05 85)"
+        ]
+      },
+      "rev": {
+        "role": "review",
+        "displayName": "Review Gold",
+        "tonalRamp": [
+          "oklch(15% 0.11 85)",
+          "oklch(26% 0.11 85)",
+          "oklch(38% 0.11 85)",
+          "oklch(49% 0.11 85)",
+          "oklch(61% 0.11 85)",
+          "oklch(72% 0.11 85)",
+          "oklch(84% 0.11 85)",
+          "oklch(95% 0.11 85)"
+        ]
+      },
+      "err": {
+        "role": "error",
+        "displayName": "Coral Error",
+        "tonalRamp": [
+          "oklch(15% 0.13 10)",
+          "oklch(26% 0.13 10)",
+          "oklch(38% 0.13 10)",
+          "oklch(49% 0.13 10)",
+          "oklch(61% 0.13 10)",
+          "oklch(72% 0.13 10)",
+          "oklch(84% 0.13 10)",
+          "oklch(95% 0.13 10)"
+        ]
+      },
+      "warn": {
+        "role": "warning",
+        "displayName": "Warning Gold",
+        "tonalRamp": [
+          "oklch(15% 0.11 85)",
+          "oklch(26% 0.11 85)",
+          "oklch(38% 0.11 85)",
+          "oklch(49% 0.11 85)",
+          "oklch(61% 0.11 85)",
+          "oklch(72% 0.11 85)",
+          "oklch(84% 0.11 85)",
+          "oklch(95% 0.11 85)"
+        ]
+      },
+      "s1": {
+        "role": "series",
+        "displayName": "Series Blue",
+        "tonalRamp": [
+          "oklch(15% 0.15 265)",
+          "oklch(26% 0.15 265)",
+          "oklch(38% 0.15 265)",
+          "oklch(49% 0.15 265)",
+          "oklch(61% 0.15 265)",
+          "oklch(72% 0.15 265)",
+          "oklch(84% 0.15 265)",
+          "oklch(95% 0.15 265)"
+        ]
+      },
+      "s2": {
+        "role": "series",
+        "displayName": "Series Gold",
+        "tonalRamp": [
+          "oklch(15% 0.13 85)",
+          "oklch(26% 0.13 85)",
+          "oklch(38% 0.13 85)",
+          "oklch(49% 0.13 85)",
+          "oklch(61% 0.13 85)",
+          "oklch(72% 0.13 85)",
+          "oklch(84% 0.13 85)",
+          "oklch(95% 0.13 85)"
+        ]
+      },
+      "s3": {
+        "role": "series",
+        "displayName": "Series Coral",
+        "tonalRamp": [
+          "oklch(15% 0.13 10)",
+          "oklch(26% 0.13 10)",
+          "oklch(38% 0.13 10)",
+          "oklch(49% 0.13 10)",
+          "oklch(61% 0.13 10)",
+          "oklch(72% 0.13 10)",
+          "oklch(84% 0.13 10)",
+          "oklch(95% 0.13 10)"
+        ]
+      },
+      "s4": {
+        "role": "series",
+        "displayName": "Series Violet",
+        "tonalRamp": [
+          "oklch(15% 0.14 295)",
+          "oklch(26% 0.14 295)",
+          "oklch(38% 0.14 295)",
+          "oklch(49% 0.14 295)",
+          "oklch(61% 0.14 295)",
+          "oklch(72% 0.14 295)",
+          "oklch(84% 0.14 295)",
+          "oklch(95% 0.14 295)"
+        ]
+      },
+      "s5": {
+        "role": "series",
+        "displayName": "Series Slate",
+        "tonalRamp": [
+          "oklch(15% 0.025 225)",
+          "oklch(26% 0.025 225)",
+          "oklch(38% 0.025 225)",
+          "oklch(49% 0.025 225)",
+          "oklch(61% 0.025 225)",
+          "oklch(72% 0.025 225)",
+          "oklch(84% 0.025 225)",
+          "oklch(95% 0.025 225)"
+        ]
+      },
+      "calandria": {
+        "role": "brand",
+        "displayName": "Calandria Teal",
+        "tonalRamp": [
+          "oklch(15% 0.11 180)",
+          "oklch(26% 0.11 180)",
+          "oklch(38% 0.11 180)",
+          "oklch(49% 0.11 180)",
+          "oklch(61% 0.11 180)",
+          "oklch(72% 0.11 180)",
+          "oklch(84% 0.11 180)",
+          "oklch(95% 0.11 180)"
+        ]
+      }
+    },
+    "shadows": [
+      {
+        "name": "sh-1",
+        "value": "0 1px 2px rgba(0,0,0,.34)",
+        "purpose": "Resting elevation for accent buttons, task cards, and tag rows."
+      },
+      {
+        "name": "sh-2",
+        "value": "0 10px 28px rgba(0,0,0,.4)",
+        "purpose": "Hover elevation for task cards."
+      },
+      {
+        "name": "sh-3",
+        "value": "0 24px 60px rgba(0,0,0,.55)",
+        "purpose": "High elevation for overlays."
+      }
+    ],
+    "motion": [
+      {
+        "name": "control-state",
+        "value": "120ms",
+        "purpose": "Background, color, border-color, filter, and box-shadow changes on controls."
+      },
+      {
+        "name": "card-lift",
+        "value": "100ms",
+        "purpose": "Task-card transform response."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "0.01ms",
+        "purpose": "Reduced-motion override for transitions and animations."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact",
+        "value": "900px"
+      },
+      {
+        "name": "mobile",
+        "value": "760px"
+      },
+      {
+        "name": "narrow",
+        "value": "700px"
+      },
+      {
+        "name": "phone",
+        "value": "460px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Accent action button for the primary action in a local control group.",
+      "html": "<button class=\"ds-btn-primary\">Start task</button>",
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 13px;border:0;border-radius:var(--r-sm,7px);background:var(--accent,#45cabb);color:var(--on-accent,var(--bg,#081217));box-shadow:var(--sh-1,0 1px 2px rgba(0,0,0,.34));font-family:var(--font-body,\"Source Sans 3\",system-ui,sans-serif);font-size:12.5px;font-weight:600;cursor:pointer;transition:background .12s,filter .12s}.ds-btn-primary:hover:not(:disabled){filter:brightness(1.06)}.ds-btn-primary:focus-visible{outline:2px solid var(--accent,#45cabb);outline-offset:2px}.ds-btn-primary:disabled{opacity:.45;cursor:default;filter:none}@media (prefers-reduced-motion:reduce){.ds-btn-primary{transition-duration:.01ms!important}}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Outlined action for a secondary operation.",
+      "html": "<button class=\"ds-btn-secondary\">Refresh</button>",
+      "css": ".ds-btn-secondary{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 13px;border:1px solid var(--line-strong,color-mix(in oklab,var(--ink,#d5e4ea) 22%,var(--line,#1a2f39)));border-radius:var(--r-sm,7px);background:var(--surface,var(--panel,#0d1b22));color:var(--ink-2,color-mix(in oklab,var(--ink,#d5e4ea) 72%,var(--dim,#7e9aa6)));font-family:var(--font-body,\"Source Sans 3\",system-ui,sans-serif);font-size:12.5px;font-weight:600;cursor:pointer;transition:background .12s,filter .12s}.ds-btn-secondary:hover:not(:disabled){background:var(--surface-2,color-mix(in oklab,var(--ink,#d5e4ea) 4%,var(--panel,#0d1b22)));color:var(--ink,#d5e4ea)}.ds-btn-secondary:focus-visible{outline:2px solid var(--accent,#45cabb);outline-offset:2px}.ds-btn-secondary:disabled{opacity:.45;cursor:default}@media (prefers-reduced-motion:reduce){.ds-btn-secondary{transition-duration:.01ms!important}}"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Quiet action for controls that sit within an existing surface.",
+      "html": "<button class=\"ds-btn-ghost\">Dismiss</button>",
+      "css": ".ds-btn-ghost{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 13px;border:0;border-radius:var(--r-sm,7px);background:transparent;color:var(--ink-2,color-mix(in oklab,var(--ink,#d5e4ea) 72%,var(--dim,#7e9aa6)));font-family:var(--font-body,\"Source Sans 3\",system-ui,sans-serif);font-size:12.5px;font-weight:600;cursor:pointer;transition:background .12s,filter .12s}.ds-btn-ghost:hover:not(:disabled){background:var(--surface-2,color-mix(in oklab,var(--ink,#d5e4ea) 4%,var(--panel,#0d1b22)));color:var(--ink,#d5e4ea)}.ds-btn-ghost:focus-visible{outline:2px solid var(--accent,#45cabb);outline-offset:2px}.ds-btn-ghost:disabled{opacity:.45;cursor:default}@media (prefers-reduced-motion:reduce){.ds-btn-ghost{transition-duration:.01ms!important}}"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Terminal-toned text field for editable settings and task metadata.",
+      "html": "<label class=\"ds-field\"><span>Task title</span><input class=\"ds-input\" type=\"text\" value=\"Improve task board\" /></label>",
+      "css": ".ds-field{display:grid;gap:8px;color:var(--ink-3,var(--dim,#7e9aa6));font-family:var(--font-body,\"Source Sans 3\",system-ui,sans-serif);font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase}.ds-input{width:100%;border:1px solid var(--line,#1a2f39);border-radius:var(--r-sm,7px);background:var(--term,#060e12);padding:11px 13px;color:var(--ink,#d5e4ea);font-family:var(--font-body,\"Source Sans 3\",system-ui,sans-serif);font-size:14px;outline:none;transition:border-color .12s,box-shadow .12s}.ds-input:focus{border-color:var(--accent,#45cabb);box-shadow:0 0 0 3px var(--accent-soft,color-mix(in oklab,#45cabb 15%,transparent))}@media (prefers-reduced-motion:reduce){.ds-field{transition-duration:.01ms!important}}"
+    },
+    {
+      "name": "Navigation Item",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "Compact navigation row with a teal active state.",
+      "html": "<button class=\"ds-nav-item ds-active\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z\"/></svg>Settings</button>",
+      "css": ".ds-nav-item{display:flex;align-items:center;gap:10px;width:100%;padding:8px 9px;border:0;border-radius:var(--r,10px);background:transparent;color:var(--ink-2,var(--ink,#d5e4ea));font-family:var(--font-body,\"Source Sans 3\",system-ui,sans-serif);font-size:13px;font-weight:600;text-align:left;cursor:pointer;transition:background .12s,color .12s}.ds-nav-item svg{width:16px;height:16px;flex:none}.ds-nav-item:hover{background:var(--panel,#0d1b22);color:var(--ink,#d5e4ea)}.ds-nav-item.ds-active{background:color-mix(in srgb,var(--accent,#45cabb) 14%,transparent);color:var(--accent,#45cabb)}.ds-nav-item:focus-visible{outline:2px solid var(--accent,#45cabb);outline-offset:2px}@media (prefers-reduced-motion:reduce){.ds-nav-item{transition-duration:.01ms!important}}"
+    },
+    {
+      "name": "Blocked Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Status pill that marks a task as blocked by another task.",
+      "html": "<span class=\"ds-chip\">Blocked by deploy</span>",
+      "css": ".ds-chip{display:inline-flex;align-items:center;gap:5px;max-width:100%;overflow:hidden;padding:2px 8px;border:1px solid var(--amber,var(--warn,#d3b054));border-radius:999px;background:var(--amber-soft,color-mix(in oklab,#d3b054 16%,transparent));color:var(--amber,var(--warn,#d3b054));font-family:var(--font-body,\"Source Sans 3\",system-ui,sans-serif);font-size:10.5px;font-weight:600;white-space:nowrap;text-overflow:ellipsis}"
+    },
+    {
+      "name": "Task Card",
+      "kind": "card",
+      "refersTo": "task-card",
+      "description": "Selectable task record with restrained resting depth and stronger hover elevation.",
+      "html": "<button class=\"ds-task-card\"><span class=\"ds-task-title\">Add a project command palette</span><span class=\"ds-task-desc\">Keep task actions easy to scan from the main board.</span><span class=\"ds-task-meta\">idle · 2 files changed</span></button>",
+      "css": ".ds-task-card{display:grid;gap:5px;width:100%;padding:11px 13px;border:1px solid var(--line-2,color-mix(in oklab,var(--line,#1a2f39) 55%,transparent));border-radius:var(--r-lg,14px);background:var(--surface,var(--panel,#0d1b22));box-shadow:var(--sh-1,0 1px 2px rgba(0,0,0,.34));color:var(--ink,#d5e4ea);font-family:var(--font-body,\"Source Sans 3\",system-ui,sans-serif);text-align:left;cursor:pointer;transition:transform .1s,box-shadow .12s,border-color .12s}.ds-task-card:hover{border-color:var(--line-strong,color-mix(in oklab,var(--ink,#d5e4ea) 22%,var(--line,#1a2f39)));box-shadow:var(--sh-2,0 10px 28px rgba(0,0,0,.4))}.ds-task-card:focus-visible{outline:2px solid var(--accent,#45cabb);outline-offset:2px}.ds-task-title{font-size:13.5px;font-weight:650;letter-spacing:-.01em;line-height:1.35}.ds-task-desc{color:var(--ink-2,color-mix(in oklab,var(--ink,#d5e4ea) 72%,var(--dim,#7e9aa6)));font-size:12px;line-height:1.42}.ds-task-meta{margin-top:4px;color:var(--ink-3,var(--dim,#7e9aa6));font-family:var(--font-mono,\"JetBrains Mono\",ui-monospace,monospace);font-size:10px}@media (prefers-reduced-motion:reduce){.ds-task-card{transition-duration:.01ms!important}}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Quiet control room",
+    "overview": "Calandria combines compact task lists, readable session transcripts, and persistent status indicators. Serif headings establish the major surfaces. Sans-serif controls and monospaced technical details keep the workspace easy to scan.\n\nThis document captures the current application. The north-star phrase is provisional descriptive language. The implementation establishes the tokens and component behavior.",
+    "keyCharacteristics": [
+      "Dense desktop panes and a single active pane on phones.",
+      "Four selectable palettes, each with dark and light modes.",
+      "Tonal surfaces, fine borders, and rounded controls.",
+      "Accent selection states and separate running, attention, and error signals."
+    ],
+    "rules": [
+      {
+        "name": "The Theme Rule",
+        "body": "Use the runtime semantic variables for UI colors. The frontmatter records palette values for documentation and tooling.",
+        "section": "colors"
+      },
+      {
+        "name": "The Type Role Rule",
+        "body": "Keep display type on headings and identity elements. Use body type for controls and task rows, and mono type for technical content.",
+        "section": "typography"
+      }
+    ],
+    "dos": [
+      "**Do** use semantic color and font variables so palette and appearance settings apply.",
+      "**Do** retain visible labels or icons alongside status colors.",
+      "**Do** preserve keyboard focus, reduced-motion behavior, and mobile viewport handling.",
+      "**Do** reuse existing component states and check both dark and light modes.",
+      "**Do** give new component classes a distinct prefix in the flat global CSS namespace."
+    ],
+    "donts": [
+      "**Don't** hardcode the default palette into new components.",
+      "**Don't** apply display typography to every control or task row.",
+      "**Don't** treat desktop button heights as mobile hit-target guidance.",
+      "**Don't** use the generated sidecar tonal ramps as new application tokens.",
+      "**Don't** infer current product behavior from older screenshots."
+    ]
+  }
+}
