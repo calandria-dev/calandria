@@ -25,10 +25,15 @@ test.describe.serial("advanced settings", () => {
   test.afterAll(async ({ request }) => {
     // Best-effort cleanup: this instance is shared across the whole suite
     // (workers: 1), so leftover synthetic rows must not linger for later specs.
+    // Every delete bumps the store revision, so each one sends the revision
+    // the previous delete returned; a single stale revision would make every
+    // delete after the first a 409 and leave the rows behind.
     const list = (await (await request.get("/api/settings/environment")).json()) as EnvListResponse;
+    let revision = list.revision;
     for (const row of list.rows) {
-      if (row.name === APP_NAME || row.name === AGENT_NAME || row.secret) {
-        await request.delete(`/api/settings/environment/${row.id}`, { headers: SAME_ORIGIN_HEADERS, data: { expectedRevision: list.revision } }).catch(() => {});
+      if (row.name?.startsWith(APP_NAME) || row.name?.startsWith(AGENT_NAME) || row.secret) {
+        const res = await request.delete(`/api/settings/environment/${row.id}`, { headers: SAME_ORIGIN_HEADERS, data: { expectedRevision: revision } }).catch(() => null);
+        if (res?.ok()) revision = ((await res.json()) as { revision: number }).revision;
       }
     }
   });

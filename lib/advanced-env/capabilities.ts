@@ -130,15 +130,24 @@ function parkMandatoryDecision(taskId: string, id: string, signal?: AbortSignal)
     // A collision (retried mint under the same id) settles the old promise
     // instead of orphaning it, mirroring lib/asks.ts's waitForAnswer.
     mandatory().get(k)?.reject(new Error("superseded"));
-    mandatory().set(k, { resolve, reject });
-    signal?.addEventListener(
-      "abort",
-      () => {
-        mandatory().delete(k);
-        reject(new Error("aborted"));
+    const onAbort = () => {
+      mandatory().delete(k);
+      reject(new Error("aborted"));
+    };
+    // Settling by decision or cancel drops the listener too, so a turn that
+    // parks many proposals does not stack one closure per proposal on its
+    // signal until the turn ends.
+    mandatory().set(k, {
+      resolve: (v) => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve(v);
       },
-      { once: true }
-    );
+      reject: (e) => {
+        signal?.removeEventListener("abort", onAbort);
+        reject(e);
+      },
+    });
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 

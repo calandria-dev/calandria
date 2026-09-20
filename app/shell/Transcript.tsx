@@ -288,8 +288,13 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
     );
   }
 
+  // A mandatory environment proposal is one-use: an Allow once that reaches
+  // the server without the value a new secret needs fails the commit and
+  // burns the decision, so the button waits for the field instead.
+  const valueMissing = !!environment && !!req.privateInput?.valueRequired && privValue.length === 0;
   const decide = (d: PermissionDecision) => {
     if (sent) return;
+    if (d === "allow_once" && valueMissing) return;
     setSent(true);
     if (environment && d === "allow_once" && req.privateInput) {
       onDecide(d, note, {
@@ -325,7 +330,11 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
           className="ask-other"
           type="password"
           autoComplete="new-password"
-          placeholder="Private value (kept off this card and the transcript; required to create a new secret)…"
+          placeholder={
+            req.privateInput.valueRequired
+              ? "Private value (required to create this secret; kept off this card and the transcript)…"
+              : "Private value (blank keeps the stored value; kept off this card and the transcript)…"
+          }
           value={privValue}
           disabled={sent}
           onChange={(e) => setPrivValue(e.target.value)}
@@ -335,7 +344,14 @@ function PermissionView({ data, agentLabel, onDecide }: { data: ToolData; agentL
         <input className="ask-other" placeholder="Note for the agent (used if you decline)…" value={note} disabled={sent} onChange={(e) => setNote(e.target.value)} />
       )}
       <div className="perm-foot">
-        <button className="btn btn-accent btn-sm" onClick={() => decide("allow_once")} disabled={sent}>{settings ? "Run this turn" : "Allow once"}</button>
+        <button
+          className="btn btn-accent btn-sm"
+          onClick={() => decide("allow_once")}
+          disabled={sent || valueMissing}
+          title={valueMissing ? "Enter the secret's value first" : undefined}
+        >
+          {settings ? "Run this turn" : "Allow once"}
+        </button>
         {req.scope && (
           <button className="btn btn-sm" onClick={() => decide("allow_always")} disabled={sent} title={req.scope.label}>{req.scope.label}</button>
         )}

@@ -500,7 +500,7 @@ export interface PermissionRequest {
    * optionally its name), kept out of `detail`, tool arguments, this request,
    * and every persisted/published record. Absent for a non-secret proposal.
    */
-  privateInput?: { name?: boolean; value?: boolean };
+  privateInput?: { name?: boolean; value?: boolean; valueRequired?: boolean };
   /** ms epoch after which the prompt auto-denies itself; 0 = parks indefinitely. */
   expiresAt: number;
 }

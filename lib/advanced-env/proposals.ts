@@ -232,7 +232,13 @@ export async function proposeEnvironmentMutation(ctx: ProposalContext, input: Pr
     description,
     mandatory: true,
     kind: "environment",
-    privateInput: needsPrivateValue || needsPrivateName ? { name: needsPrivateName, value: needsPrivateValue } : undefined,
+    // valueRequired: a new secret has no value to keep, so the card must
+    // collect one before Allow once can be pressed. A patch may leave the
+    // field blank to keep the stored value.
+    privateInput:
+      needsPrivateValue || needsPrivateName
+        ? { name: needsPrivateName, value: needsPrivateValue, ...(input.operation === "create" ? { valueRequired: true } : {}) }
+        : undefined,
   });
 
   if (decision.kind === "deny") {
