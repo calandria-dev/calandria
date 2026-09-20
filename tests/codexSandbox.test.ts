@@ -1,15 +1,24 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   sandboxWarningReason,
   firstSandboxWarning,
   noteCodexSandboxWarning,
   noteCodexSandboxHealthy,
   sandboxRefusal,
+  sandboxRefusalChecked,
   usesExternalSandbox,
   CODEX_AGENT,
 } from "@/lib/agents/codex/sandbox";
 import { getAgentSandboxBroken, clearAgentSandboxBroken, markAgentSandboxBroken, getAgentAuthBroken } from "@/lib/agents/connections";
 import { codexRunPolicy, sandboxPolicyObject } from "@/lib/agents/codex/policy";
+
+// The re-probe spawns a throwaway `codex app-server`. Stand in for that one
+// call so the re-check can be driven without a CLI on the host.
+const probe = vi.hoisted(() => ({ warnings: [] as string[], error: null as string | null }));
+vi.mock("@/lib/agents/codex/appServer", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/agents/codex/appServer")>()),
+  readConfigWarnings: async () => ({ warnings: probe.warnings, error: probe.error }),
+}));
 
 // The exact strings codex-cli 0.153.0 ships, read out of the binary. The point
 // of pinning them verbatim is that the classifier is the ONLY thing standing
@@ -126,6 +135,41 @@ describe("refusing a turn that cannot work", () => {
     expect(sandboxRefusal(full.sandbox)).toBeNull();
     const read = codexRunPolicy("bypassPermissions", process.cwd(), { sandbox: "read-only" });
     expect(sandboxRefusal(read.sandbox)).toContain("read-only");
+  });
+});
+
+describe("re-probing before refusing", () => {
+  const workspace = () => codexRunPolicy("default", process.cwd()).sandbox;
+
+  beforeEach(() => {
+    probe.warnings = [];
+    probe.error = null;
+  });
+
+  it("lets the turn run when the host has since been fixed, and clears the flag", async () => {
+    noteCodexSandboxWarning(USERNS);
+    expect(await sandboxRefusalChecked(workspace())).toBeNull();
+    expect(getAgentSandboxBroken(CODEX_AGENT)).toBeNull();
+  });
+
+  it("still refuses while the warning is still there", async () => {
+    noteCodexSandboxWarning(USERNS);
+    probe.warnings = [USERNS];
+    expect(await sandboxRefusalChecked(workspace())).toContain(USERNS);
+    expect(getAgentSandboxBroken(CODEX_AGENT)).not.toBeNull();
+  });
+
+  it("still refuses when the probe could not run, since that is no evidence", async () => {
+    noteCodexSandboxWarning(USERNS);
+    probe.error = "codex app-server did not start";
+    expect(await sandboxRefusalChecked(workspace())).toContain(USERNS);
+  });
+
+  it("does not probe at all while the flag is clear", async () => {
+    probe.warnings = [USERNS];
+    expect(await sandboxRefusalChecked(workspace())).toBeNull();
+    // A probe would have recorded the warning it was handed.
+    expect(getAgentSandboxBroken(CODEX_AGENT)).toBeNull();
   });
 });
 
