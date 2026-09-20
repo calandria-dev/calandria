@@ -92,6 +92,26 @@ its server, layering it over what it inherited. The format supports comments (`#
 values but does no shell-style expansion: `$VAR` references and command substitution are taken
 literally, not evaluated. A missing file is not an error; the app just starts without it.
 
+### Per-instance settings in the app
+
+The environment file above is a launch-time input, read once before the server
+starts. Settings → Advanced, inside the app itself, is a separate,
+per-instance mechanism layered on top of it: it edits the environment of
+whichever server the window is currently attached to, over the app's own REST
+API, and its "App" table takes effect after that server's own restart rather
+than the desktop shell's. See
+[`SELF_HOSTING.md`](SELF_HOSTING.md#advanced-settings-settings--advanced) for
+scopes, precedence, secrets, and recovering a malformed saved file.
+
+The page always names the connected instance above its tables. When the
+window is attached to a **remote** instance, Advanced edits that server's own
+saved settings, over the network, exactly as a browser open on that server
+directly would; it never touches this machine's local supervisor, this
+machine's environment file, or a local instance you are not currently viewing.
+Switching the window to `This computer` shows the local instance's own
+settings instead, separately saved and unaffected by whatever a remote
+instance's table holds.
+
 ## Instances
 
 The desktop app is not tied to one server. It keeps a small list of instances and points its

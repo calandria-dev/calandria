@@ -208,6 +208,13 @@ MCP bridge because the upstream non-interactive CLI has no such hook of its own.
 | `CODEX_WRITABLE_ROOTS` | unset | Extra paths a sandboxed turn can write to, beyond the worktree's own git plumbing. |
 | `CODEX_EXTERNAL_SANDBOX` | unset | In a container, set to `1` to run `workspace-write` turns unconfined and rely on the container as the boundary. |
 
+All five are also editable per instance from Settings → Advanced's Agent
+sessions table, alongside `CALANDRIA_CODEX_HOOK_TRACE` (below) and any custom
+variable a task's environment should carry. A value saved there takes effect
+on the next turn, including a resumed one; a launch-environment value for the
+same name always wins over a saved one. See
+[`SELF_HOSTING.md`](SELF_HOSTING.md#advanced-settings-settings--advanced).
+
 **Permissions and sandbox.** Task turns run on `codex app-server` by default. Its approval requests
 come back to Calandria over JSON-RPC and park on the same permission card a Claude prompt uses,
 with Allow once / Always allow / Decline and the same remembered rules per project. The five
