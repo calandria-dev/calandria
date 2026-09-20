@@ -317,6 +317,11 @@ workspace-write or read-only turn and fails it with an explanation instead of ru
 where every command fails. A task with **Full access** selected uses danger-full-access and is
 never refused.
 
+The refusal re-probes the CLI first, so a host fixed after the flag was recorded starts
+working on the next turn without pressing "Check again". The probe costs one throwaway
+`codex app-server` spawn and runs only on a turn that was going to be refused. A probe
+that cannot reach the CLI leaves the flag as it was and the turn is still refused.
+
 Fix it one of these ways:
 
 - Run `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` and persist it under

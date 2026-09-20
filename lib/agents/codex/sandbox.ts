@@ -134,3 +134,29 @@ export function sandboxRefusal(sandbox: CodexSandboxMode, external: boolean = CO
     `Codex reported: ${broken.reason} ${SANDBOX_FIX_HINT}`
   );
 }
+
+/**
+ * The same refusal, but never on stale evidence.
+ *
+ * `sandboxRefusal` reads a flag that only two things clear: a completed
+ * app-server turn, and the Settings button. This refusal blocks the first of
+ * those, so once the flag is set a host whose sandbox has since started
+ * working refuses every sandboxed turn forever, with no signal in the task
+ * that a re-check is what is needed. Re-probe before spending the refusal.
+ *
+ * The probe costs one throwaway `codex app-server` spawn, and runs only on
+ * the path that was otherwise going to end the turn without doing any work.
+ * A probe that could not run leaves the flag as it was, so an unreachable CLI
+ * still refuses.
+ */
+export async function sandboxRefusalChecked(
+  sandbox: CodexSandboxMode,
+  external: boolean = CODEX_EXTERNAL_SANDBOX,
+): Promise<string | null> {
+  if (!sandboxRefusal(sandbox, external)) return null;
+  const health = await probeCodexSandbox();
+  if (health.ok) return null;
+  // Re-read rather than reuse the first message: the probe may have recorded a
+  // newer reason, and the refusal should quote what the CLI says now.
+  return sandboxRefusal(sandbox, external);
+}

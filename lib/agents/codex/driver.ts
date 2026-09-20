@@ -53,7 +53,7 @@ import { codexStatus, verifyCodexTurn, startCodexLogin, getCodexLogin, submitCod
 import { resolvedAgentTurnEnv, resolvedProviderDefaultModel } from "../../providers/resolve";
 import { codexProviderConfig } from "./provider";
 import { verifyCodexProvider } from "./providerCheck";
-import { sandboxRefusal, noteCodexSandboxWarning, noteCodexSandboxHealthy, probeCodexSandbox } from "./sandbox";
+import { sandboxRefusalChecked, noteCodexSandboxWarning, noteCodexSandboxHealthy, probeCodexSandbox } from "./sandbox";
 import { getCodexPlanUsage } from "./planUsage";
 import { listCodexHooks, writeCodexConfig } from "./appServer";
 import { hookTrustEdit, hookUntrustEdit, hookEnabledEdit, allHooks, type CodexConfigEdit } from "./hooks";
@@ -291,8 +291,9 @@ async function* runTurn(
     writableRootsRaw: codex.writableRoots,
   });
 
-  // Refuse a selected sandbox that the host cannot create before starting a turn.
-  const refusal = sandboxRefusal(policy.sandbox, codex.externalSandbox);
+  // Refuse a selected sandbox that the host cannot create before starting a
+  // turn. Re-probed, so a host that has since been fixed is not locked out.
+  const refusal = await sandboxRefusalChecked(policy.sandbox, codex.externalSandbox);
   if (refusal) {
     yield { type: "error", content: refusal };
     return;
