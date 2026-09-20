@@ -461,6 +461,7 @@ either reader is current.
 - [Windows: native and WSL2 setup](docs/INSTALLATION.md#windows) · [platform notes](docs/WINDOWS.md)
 - [Desktop app spike](docs/DESKTOP_APP.md) · [desktop e2e testing](docs/DESKTOP_E2E.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Design system](DESIGN.md): visual tokens, typography and component states
 - [Security](SECURITY.md)
 
 ## License
