@@ -44,8 +44,12 @@ import {
   updateTagForAgent,
   updateTaskForAgent,
   withdrawSuggestionForAgent,
+  listEnvironmentSettingsForAgent,
+  changeEnvironmentSettingForAgent,
 } from "../../agentTools";
-import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_PROVIDERS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, REPORT_BASE_REWRITE, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK, REPORT_ISSUE } from "../../agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_PROVIDERS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, REPORT_BASE_REWRITE, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK, REPORT_ISSUE, LIST_ENVIRONMENT_SETTINGS, CHANGE_ENVIRONMENT_SETTING } from "../../agentToolDefs.mjs";
+import type { ProposalInput } from "../../advanced-env/proposals";
+import type { EnvScope } from "../../advanced-env/types";
 import { createPrForAgent } from "../../prTools";
 import { createRunbookForAgent, listRunbooksForAgent, updateRunbookForAgent } from "../../runbookTools";
 import { draftIssueReport, issueReportsEnabled } from "../../issueReports";
@@ -285,13 +289,22 @@ function claudeDebugFile(task: Task): string | undefined {
   return path.join(CLAUDE_DEBUG_DIR, `${task.id}-g${task.generation}-${stamp}.log`);
 }
 
+// change_environment_setting is the one in-process tool that must not carry
+// the guard's generic call-length bound (lib/agentToolGuard.mjs): it waits on
+// a human's mandatory approval decision, governed instead by
+// lib/config.ts's own attended/unattended deadlines. Mirrors ASK_USER's
+// timeoutMs: 0 on the stdio bridge (scripts/calandria-mcp.mjs); Claude has no
+// in-process ask_user of its own (AskUserQuestion is native), so this is the
+// only name in the set here.
+const NO_GUARD_DEADLINE = new Set([CHANGE_ENVIRONMENT_SETTING.name]);
+
 function guardTools<T extends { name: string; handler: (args: never, extra: never) => Promise<unknown> }>(taskId: string, tools: T[]): T[] {
   return tools.map(
     (t) =>
       ({
         ...t,
         handler: guardToolHandler(t.name, t.handler, {
-          timeoutMs: AGENT_TOOL_TIMEOUT_MS,
+          timeoutMs: NO_GUARD_DEADLINE.has(t.name) ? 0 : AGENT_TOOL_TIMEOUT_MS,
           // The server-side record that the call arrived, and how it settled.
           // A call the CLI cuts off never reaches this, so its absence is
           // what tells a cut-off apart from an ordinary call in the logs.
@@ -311,7 +324,16 @@ function calandriaServer(
   // Injected, never imported: see TurnHooks in lib/agents/types.ts for why this
   // file must not name lib/autoStart.ts. Absent means nothing to notify (a
   // driver run outside the runner), so the sweep is skipped.
-  hooks?: TurnHooks
+  hooks: TurnHooks | undefined,
+  // change_environment_setting's own permission card rides the turn's own
+  // event queue, exactly like canUseTool's card (lib/permissionPrompt.ts):
+  // pushed here, lib/runner.ts persists it the same way it persists any other
+  // permission request. `turnAbortSignal` is the turn's own Stop signal,
+  // linked at call time with this specific tool call's own MCP signal
+  // (`extra`), so a Stop and a post-dispatch cancellation both reach the
+  // mandatory decision waiter the identical way canUseTool's card does.
+  push: (ev: StreamEvent) => void,
+  turnAbortSignal?: AbortSignal
 ) {
   // Titles created this session, so `blocked_by` can reference earlier
   // suggestions by title as well as id, which is easier for the model when
@@ -658,6 +680,46 @@ function calandriaServer(
           return { content: [{ type: "text", text }], ...(updated ? {} : { isError: true }) };
         }
       ),
+      tool(
+        LIST_ENVIRONMENT_SETTINGS.name,
+        LIST_ENVIRONMENT_SETTINGS.description,
+        { scope: z.enum(["app", "agent"]).optional().describe(LIST_ENVIRONMENT_SETTINGS.params.scope) },
+        async (args: { scope?: EnvScope }) => ({
+          content: [{ type: "text", text: listEnvironmentSettingsForAgent(args.scope).text }],
+        })
+      ),
+      tool(
+        CHANGE_ENVIRONMENT_SETTING.name,
+        CHANGE_ENVIRONMENT_SETTING.description,
+        {
+          operation: z.enum(["create", "patch", "delete"]).describe(CHANGE_ENVIRONMENT_SETTING.params.operation),
+          scope: z.enum(["app", "agent"]).optional().describe(CHANGE_ENVIRONMENT_SETTING.params.scope),
+          id: z.string().optional().describe(CHANGE_ENVIRONMENT_SETTING.params.id),
+          name: z.string().optional().describe(CHANGE_ENVIRONMENT_SETTING.params.name),
+          value: z.string().optional().describe(CHANGE_ENVIRONMENT_SETTING.params.value),
+          secret: z.boolean().optional().describe(CHANGE_ENVIRONMENT_SETTING.params.secret),
+          reason: z.string().optional().describe(CHANGE_ENVIRONMENT_SETTING.params.reason),
+          expectedRevision: z.number().int().describe(CHANGE_ENVIRONMENT_SETTING.params.expectedRevision),
+        },
+        async (
+          args: { operation: "create" | "patch" | "delete"; scope?: EnvScope; id?: string; name?: string; value?: string; secret?: boolean; reason?: string; expectedRevision: number },
+          extra: unknown
+        ) => {
+          const input =
+            args.operation === "create"
+              ? ({ operation: "create", scope: (args.scope ?? "agent") as EnvScope, name: args.name ?? "", value: args.value, secret: !!args.secret, expectedRevision: args.expectedRevision, reason: args.reason } as ProposalInput)
+              : args.operation === "patch"
+                ? ({ operation: "patch", id: args.id ?? "", name: args.name, value: args.value, secret: args.secret, expectedRevision: args.expectedRevision, reason: args.reason } as ProposalInput)
+                : ({ operation: "delete", id: args.id ?? "", expectedRevision: args.expectedRevision, reason: args.reason } as ProposalInput);
+          const linked = linkSignals(turnAbortSignal, toolCallSignal(extra));
+          try {
+            const { text } = await changeEnvironmentSettingForAgent(task, input, push, linked.signal);
+            return { content: [{ type: "text", text }] };
+          } finally {
+            linked.dispose();
+          }
+        }
+      ),
     ]),
   });
 }
@@ -718,6 +780,15 @@ function linkSignals(...signals: (AbortSignal | undefined)[]): { signal: AbortSi
   if (live.some((s) => s.aborted)) trip();
   else for (const s of live) s.addEventListener("abort", trip, { once: true });
   return { signal: ac.signal, dispose: () => { for (const s of live) s.removeEventListener("abort", trip); } };
+}
+
+// The SDK's `tool()` handler takes an untyped `extra` second argument (its own
+// per-request AbortSignal, mirroring canUseTool's `opts.signal`). Read
+// defensively: an SDK version that changes this shape should degrade to "no
+// per-call signal", never throw.
+function toolCallSignal(extra: unknown): AbortSignal | undefined {
+  const signal = (extra as { signal?: unknown } | null | undefined)?.signal;
+  return signal instanceof AbortSignal ? signal : undefined;
 }
 
 /**
@@ -1140,7 +1211,9 @@ async function* runTurn(
                 ({ title, projectId, taskId }) => queue.push({ type: "suggested", title, projectId, taskId }),
                 ({ reportId }) => queue.push({ type: "issue_report", reportId }),
                 ({ name, url }) => queue.push({ type: "notice", content: `Service "${name}" is live at ${url}` }),
-                hooks
+                hooks,
+                (ev) => queue.push(ev),
+                abortController?.signal
               ),
       },
       // Lets the Stop button interrupt the stream mid-turn (see lib/abort.ts).

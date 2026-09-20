@@ -139,6 +139,13 @@ export async function GET(req: Request) {
           send({ type: "updates_changed" });
           return;
         }
+        // Settings -> Advanced changed (an agent's change_environment_setting
+        // call committed). Same shape as updates_changed: no row, no project,
+        // one fact about the whole instance.
+        if (ev.type === "environment_changed") {
+          send({ type: "environment_changed" });
+          return;
+        }
         // A composed notification (lib/notifications/notify.ts). Bypasses the
         // re-read below because the payload is a message already written for a
         // human, screened against the row when it was minted. A test

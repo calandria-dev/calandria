@@ -66,6 +66,7 @@ export type TaskMutationEvent =
   | { type: "runbooks_changed"; projectId: string }
   | { type: "tags_changed"; projectId: string }
   | { type: "updates_changed" }
+  | { type: "environment_changed" }
   | { type: "notification"; payload: NotificationPayload };
 
 /** Everything a global listener can see: turn events plus route mutations. */
@@ -125,6 +126,16 @@ export type TagsChangedWireEvent = {
 export type UpdatesChangedWireEvent = {
   type: "updates_changed";
 };
+/**
+ * Settings -> Advanced changed: an agent's change_environment_setting call
+ * committed (lib/agentTools.ts). Payload-free and instance-wide like
+ * updates_changed, for the same reason: environment settings are stored per
+ * instance, not per project, and a secret's name/value must never ride this
+ * bus, so there is nothing safe to name beyond "go refetch".
+ */
+export type EnvironmentChangedWireEvent = {
+  type: "environment_changed";
+};
 /** A composed, ready-to-render notification. See lib/notifications/. */
 export type NotificationWireEvent = { type: "notification"; payload: NotificationPayload };
 export type GlobalWireEvent =
@@ -134,6 +145,7 @@ export type GlobalWireEvent =
   | RunbooksChangedWireEvent
   | TagsChangedWireEvent
   | UpdatesChangedWireEvent
+  | EnvironmentChangedWireEvent
   | NotificationWireEvent
   | AgentAuthEvent;
 

@@ -83,6 +83,14 @@ export function useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProje
       window.dispatchEvent(new CustomEvent("calandria:updates"));
       return;
     }
+    // Settings -> Advanced changed (an agent's proposed environment mutation
+    // was approved and committed). Relayed the same way as updates above:
+    // AdvancedSettingsSection owns its own fetch, and this hook holds no
+    // environment state of its own.
+    if (ev.type === "environment_changed") {
+      window.dispatchEvent(new CustomEvent("calandria:advanced-env-changed"));
+      return;
+    }
     // A project's tags changed (create, rename, recolor, delete, or
     // membership moved by a task write or the bulk tag route), here, in
     // another tab, or by an agent. Tags ride the project GET with their

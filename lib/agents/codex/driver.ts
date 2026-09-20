@@ -42,6 +42,7 @@ import {
   ISSUE_REPO,
 } from "../../config";
 import { isApprovalDowngrade } from "../../approvalFailure";
+import { currentTurnCapability } from "../../advanced-env/capabilities";
 import { buildProjectContext, buildTagRefreshPrompt } from "../shared";
 import { ATTACHMENT_NUDGE, hasAttachmentMarkers } from "../../uploadTypes";
 import { mapThreadEvent, newState, ZERO_CUM, type CodexCum } from "./events";
@@ -123,6 +124,12 @@ export function calandriaMcpConfig(
           // handed over explicitly or every bridged tool would fall back to the
           // built-in default (lib/agentToolGuard.mjs).
           CALANDRIA_AGENT_TOOL_TIMEOUT_MS: String(AGENT_TOOL_TIMEOUT_MS),
+          // The task+turn capability lib/runner.ts minted for this turn
+          // (lib/advanced-env/capabilities.ts), so the bridge's
+          // change_environment_setting call can carry it as a header. Empty
+          // when no turn is registered under this task id, which the internal
+          // endpoint then refuses same as a mismatched one.
+          CALANDRIA_ENV_EDIT_CAPABILITY: currentTurnCapability(task.id) || "",
         },
       },
     },

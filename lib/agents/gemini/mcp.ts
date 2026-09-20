@@ -5,6 +5,7 @@
 import type { Project, Task } from "../../types";
 import { INTERNAL_BASE_URL, CALANDRIA_MCP_SCRIPT } from "../../config";
 import { gatewayMcpServersForGemini, type GatewayMcpGeminiServer } from "../../gatewayMcp";
+import { currentTurnCapability } from "../../advanced-env/capabilities";
 
 /**
  * The bridge's server name. The CLI dispatches MCP calls through its own
@@ -56,6 +57,12 @@ export function bridgeConfig(project: Project, task: Task): GeminiMcpConfig {
           CALANDRIA_LANDING_MODE: project.landing_mode,
           CALANDRIA_BASE_URL: INTERNAL_BASE_URL,
           SERVICE_TOKEN: process.env.SERVICE_TOKEN || "",
+          // The task+turn capability lib/runner.ts minted for this turn
+          // (lib/advanced-env/capabilities.ts), so the bridge's
+          // change_environment_setting call can carry it as a header. Empty
+          // when no turn is registered under this task id, which the internal
+          // endpoint then refuses same as a mismatched one.
+          CALANDRIA_ENV_EDIT_CAPABILITY: currentTurnCapability(task.id) || "",
         },
       },
     },

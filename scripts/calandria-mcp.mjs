@@ -37,7 +37,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_PROVIDERS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, REPORT_BASE_REWRITE, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK, REPORT_ISSUE } from "../lib/agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_PROVIDERS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, REPORT_BASE_REWRITE, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK, REPORT_ISSUE, LIST_ENVIRONMENT_SETTINGS, CHANGE_ENVIRONMENT_SETTING } from "../lib/agentToolDefs.mjs";
 import { guardToolHandler, watchToolCancellation, DEFAULT_AGENT_TOOL_TIMEOUT_MS } from "../lib/agentToolGuard.mjs";
 
 const TASK_ID = process.env.CALANDRIA_TASK_ID || "";
@@ -59,6 +59,13 @@ const ASK_USER_ENABLED = !["0", "off", "false", "no"].includes(String(process.en
 // the tool off, or a bridge started outside a turn, which has no business
 // offering to file on the user's GitHub account either.
 const ISSUE_REPO = (process.env.CALANDRIA_ISSUE_REPO || "").trim();
+// The task+turn capability lib/runner.ts mints and the three mcp.ts env-block
+// builders (claude/codex/gemini) inject, carried as a header instead of a
+// tool argument so a model can never see or forge it
+// (lib/advanced-env/capabilities.ts). Only change_environment_setting sends
+// it; every other tool here is unaffected.
+const ENV_EDIT_CAPABILITY = process.env.CALANDRIA_ENV_EDIT_CAPABILITY || "";
+const TURN_CAPABILITY_HEADER = "x-calandria-turn-capability";
 
 // Titles created this turn map to their task ids, so `blocked_by` can
 // reference an earlier suggestion by title (mirrors the in-process server's
@@ -82,13 +89,18 @@ const norm = (s) => (s ?? "").trim().toLowerCase();
 const titleKey = (projectAlias, title) => `${norm(projectAlias)}\u0000${title}`;
 
 /** POST a tool call to an internal endpoint; return its `text` (thrown on error). */
-async function callInternal(path, payload) {
+async function callInternal(path, payload, opts) {
   let res;
   try {
     res = await fetch(`${BASE_URL}/api/internal/agent-tools/${path}`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-service-token": SERVICE_TOKEN },
+      headers: {
+        "content-type": "application/json",
+        "x-service-token": SERVICE_TOKEN,
+        ...(opts?.headers || {}),
+      },
       body: JSON.stringify({ projectId: PROJECT_ID, taskId: TASK_ID, ...payload }),
+      signal: opts?.signal,
     });
   } catch (e) {
     throw new Error(`Calandria unreachable at ${BASE_URL}: ${e?.message || e}`);
@@ -120,6 +132,11 @@ const TOOL_TIMEOUT_MS = (() => {
   const n = Number(process.env.CALANDRIA_AGENT_TOOL_TIMEOUT_MS);
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_AGENT_TOOL_TIMEOUT_MS;
 })();
+// change_environment_setting is the other guard.timeoutMs: 0 tool, for the
+// same reason as ask_user: it waits on a human's mandatory approval decision,
+// governed by lib/config.ts's own attended/unattended deadlines, not the
+// guard's generic call-length bound.
+const NO_GUARD_DEADLINE = new Set([ASK_USER.name, CHANGE_ENVIRONMENT_SETTING.name]);
 /**
  * Report a call the CLI cut off after dispatching it. Best effort in both
  * directions: the stderr line lands even when the app is unreachable or this
@@ -149,7 +166,7 @@ server.registerTool = (name, config, handler) =>
   registerToolUnguarded(
     name,
     config,
-    watchToolCancellation(name, guardToolHandler(name, handler, { timeoutMs: name === ASK_USER.name ? 0 : TOOL_TIMEOUT_MS }), {
+    watchToolCancellation(name, guardToolHandler(name, handler, { timeoutMs: NO_GUARD_DEADLINE.has(name) ? 0 : TOOL_TIMEOUT_MS }), {
       onCutoff: (cut) => {
         void reportCutoff(cut);
       },
@@ -449,6 +466,73 @@ server.registerTool(
     // the ref inside CALANDRIA_PROJECT_ID and nothing here can point it elsewhere.
     const data = await callInternal("update-tag", args);
     return { content: [{ type: "text", text: data.text }] };
+  }
+);
+
+server.registerTool(
+  LIST_ENVIRONMENT_SETTINGS.name,
+  {
+    description: LIST_ENVIRONMENT_SETTINGS.description,
+    inputSchema: {
+      scope: z.enum(["app", "agent"]).optional().describe(LIST_ENVIRONMENT_SETTINGS.params.scope),
+    },
+  },
+  async ({ scope }) => {
+    const data = await callInternal("list-environment-settings", { scope });
+    return { content: [{ type: "text", text: data.text }] };
+  }
+);
+
+server.registerTool(
+  CHANGE_ENVIRONMENT_SETTING.name,
+  {
+    description: CHANGE_ENVIRONMENT_SETTING.description,
+    inputSchema: {
+      operation: z.enum(["create", "patch", "delete"]).describe(CHANGE_ENVIRONMENT_SETTING.params.operation),
+      scope: z.enum(["app", "agent"]).optional().describe(CHANGE_ENVIRONMENT_SETTING.params.scope),
+      id: z.string().optional().describe(CHANGE_ENVIRONMENT_SETTING.params.id),
+      name: z.string().optional().describe(CHANGE_ENVIRONMENT_SETTING.params.name),
+      value: z.string().optional().describe(CHANGE_ENVIRONMENT_SETTING.params.value),
+      secret: z.boolean().optional().describe(CHANGE_ENVIRONMENT_SETTING.params.secret),
+      reason: z.string().optional().describe(CHANGE_ENVIRONMENT_SETTING.params.reason),
+      expectedRevision: z.number().int().describe(CHANGE_ENVIRONMENT_SETTING.params.expectedRevision),
+    },
+  },
+  async ({ operation, scope, id, name, value, secret, reason, expectedRevision }, extra) => {
+    // Starts the proposal detached (the internal route returns at once) and
+    // polls its outcome, the same shape ask_user uses and for the same
+    // reason: proposeEnvironmentMutation can await a human for hours, which
+    // an HTTP request held open that long does not survive.
+    const { proposalId } = await callInternal(
+      "change-environment-setting",
+      { operation, scope, id, name, value, secret, reason, expectedRevision },
+      { headers: ENV_EDIT_CAPABILITY ? { [TURN_CAPABILITY_HEADER]: ENV_EDIT_CAPABILITY } : {} }
+    );
+    const deadline = Date.now() + 24 * 60 * 60 * 1000; // mirrors ask_user's own outer cap
+    const signal = extra && extra.signal;
+    let cancelSent = false;
+    for (;;) {
+      if (signal && signal.aborted && !cancelSent) {
+        // The CLI cancelled THIS call specifically (not necessarily the whole
+        // turn). Tell the server so the parked mandatory decision is aborted
+        // too: a decision that arrives after this must not be able to commit
+        // (lib/advanced-env/capabilities.ts's mandatory waiter reacts to the
+        // same abort a Stop would cause). watchToolCancellation reports the
+        // cutoff itself; this only stops the proposal from outliving it.
+        cancelSent = true;
+        try {
+          await callInternal("change-environment-setting/wait", { proposalId, cancel: true });
+        } catch {
+          /* best-effort: the call is already being discarded by the SDK */
+        }
+      }
+      await new Promise((r) => setTimeout(r, 1500));
+      const r = await callInternal("change-environment-setting/wait", { proposalId });
+      if (r.status === "done") return { content: [{ type: "text", text: r.text }] };
+      if (Date.now() > deadline) {
+        return { content: [{ type: "text", text: "No decision arrived in time. The settings file is unchanged." }] };
+      }
+    }
   }
 );
 

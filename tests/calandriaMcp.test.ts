@@ -122,9 +122,11 @@ describe("calandria-mcp stdio bridge", () => {
       const { tools } = await client.listTools();
       expect(tools.map((t) => t.name).sort()).toEqual([
         "ask_user",
+        "change_environment_setting",
         "create_runbook",
         "expose_service",
         "get_task",
+        "list_environment_settings",
         "list_projects",
         "list_providers",
         "list_runbooks",
@@ -190,9 +192,11 @@ describe("calandria-mcp stdio bridge", () => {
       const { tools } = await client.listTools();
       expect(tools.map((t) => t.name)).not.toContain("ask_user");
       expect(tools.map((t) => t.name).sort()).toEqual([
+        "change_environment_setting",
         "create_runbook",
         "expose_service",
         "get_task",
+        "list_environment_settings",
         "list_projects",
         "list_providers",
         "list_runbooks",
