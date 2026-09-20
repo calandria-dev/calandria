@@ -128,7 +128,7 @@ describe("proposeEnvironmentMutation: the card", () => {
       expectedRevision: 0,
     });
     const card = pushed.find((e): e is Extract<StreamEvent, { type: "permission" }> => e.type === "permission");
-    expect(card?.request.privateInput).toEqual({ name: true, value: true });
+    expect(card?.request.privateInput).toEqual({ name: true, value: true, valueRequired: true });
     submitMandatoryDecision(id, cardId(pushed), "deny");
     await p;
   });

@@ -88,7 +88,7 @@ export interface PromptSpec {
   /** Forwarded verbatim onto the built PermissionRequest. See its doc for
    * what each marks; promptPermission itself never inspects either. */
   kind?: "environment";
-  privateInput?: { name?: boolean; value?: boolean };
+  privateInput?: { name?: boolean; value?: boolean; valueRequired?: boolean };
 }
 
 export type PromptDecision =

@@ -1916,15 +1916,23 @@ export function startEnvironmentProposal(task: Task, input: ProposalInput): { pr
   const key = envPollKey(task.id, proposalId);
   const controller = new AbortController();
   const turnSig = turnSignal(task.id);
+  const onTurnAbort = () => controller.abort();
   if (turnSig) {
     if (turnSig.aborted) controller.abort();
-    else turnSig.addEventListener("abort", () => controller.abort(), { once: true });
+    else turnSig.addEventListener("abort", onTurnAbort, { once: true });
   }
   const entry: PendingEnvProposal = { controller };
   envPolls().set(key, entry);
-  void changeEnvironmentSettingForAgent(task, input, persistingEnvPush(task), controller.signal).then(({ result }) => {
-    entry.outcome = result;
-  });
+  // Every exit settles `outcome`: the bridge polls until it sees one, so a
+  // throw left unsettled here would keep it polling for its whole 24h cap.
+  void changeEnvironmentSettingForAgent(task, input, persistingEnvPush(task), controller.signal)
+    .then(({ result }) => {
+      entry.outcome = result;
+    })
+    .catch((err: unknown) => {
+      entry.outcome = { kind: "invalid", reason: `The proposal failed before a decision could be recorded: ${err instanceof Error ? err.message : String(err)}` };
+    })
+    .finally(() => turnSig?.removeEventListener("abort", onTurnAbort));
   return { proposalId };
 }
 
