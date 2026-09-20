@@ -25,7 +25,7 @@ import type {
 // The SDK's Usage, with every counter optional, since the app reads a `codex`
 // binary the user installed, which may be older or newer than the SDK types.
 type TurnCompletedUsage = Partial<Usage>;
-import { clip, clipKeepTail, summarizeResult, summarizeFailure, resultText } from "../shared";
+import { clip, clipKeepTail, summarizeResult, summarizeFailure, resultText, environmentToolSummary } from "../shared";
 import { isCodexPreDispatchToolCutoff, toolCutoffNotice } from "../../agentToolGuard.mjs";
 import { logAgentToolCutoff } from "../../agentToolLog";
 import { DEFAULT_CODEX_MODEL } from "./pricing";
@@ -246,7 +246,9 @@ function mapMcp(phase: ItemPhase, item: McpToolCallItem, state: CodexMapState): 
   // `mcp__calandria__suggest_task`. What matches on it (lib/suggestionCard.ts)
   // matches a substring for that reason.
   const name = `${item.server}__${item.tool}`;
-  const tool = toolOnce(state, item.id, { name, title: `⚙ ${item.server}: ${item.tool}`, detail: clip(item.arguments) });
+  const args = item.arguments && typeof item.arguments === "object" ? (item.arguments as Record<string, unknown>) : undefined;
+  const env = item.server === "calandria" ? environmentToolSummary(item.tool, args) : null;
+  const tool = toolOnce(state, item.id, env ? { name, ...env } : { name, title: `⚙ ${item.server}: ${item.tool}`, detail: clip(item.arguments) });
   if (nonEmpty(tool)) out.push(tool);
   if (phase === "completed") {
     const isError = item.status === "failed" || !!item.error;

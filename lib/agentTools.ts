@@ -17,7 +17,7 @@ import { nanoid } from "nanoid";
 import { PRIORITIES, parseTagColor, tagIsDone } from "./types";
 import { copyIntoTaskUploads, MAX_UPLOAD_BYTES, plannedTaskUpload, taskUploadsDir } from "./uploads";
 import { attachmentKindOf, joinAttachmentText, splitAttachmentText } from "./uploadTypes";
-import type { Project, Task, Tag, ServiceInfo, Priority, Status, AskQuestion, PermissionOutcome, PermissionRequest, ToolData, AgentEditChange } from "./types";
+import type { Project, Task, Tag, ServiceInfo, Priority, Status, AskQuestion, PermissionOutcome, PermissionRequest, StreamEvent, ToolData, AgentEditChange } from "./types";
 import {
   createTask,
   setTaskDeps,
@@ -62,6 +62,10 @@ import { publish, publishGlobal } from "./events";
 import { waitForAnswer, settleAsk, ASK_DISMISSED_REPLY, ASK_INTERRUPTED_NOTE } from "./asks";
 import { interactionDenied, recordUnattendedDenial, UNATTENDED_ASK_DENIAL, UNATTENDED_ASK_NOTE } from "./runContext";
 import { turnSignal } from "./abort";
+import { listEditableDescriptors } from "./advanced-env/catalog.mjs";
+import { listEnvironment } from "./advanced-env/store";
+import { proposeEnvironmentMutation, type ProposalContext, type ProposalInput, type ProposalResult } from "./advanced-env/proposals";
+import type { EnvScope } from "./advanced-env/types";
 import { formatAnswers } from "./agents/shared";
 import { resolveConnectedAgent } from "./agents/connections";
 import { checkEnvironmentModel, resolveEnvironmentRef } from "./agents/environmentRef";
@@ -1791,4 +1795,153 @@ export function registerExposedService(project: Project, name: string, port: num
       ? ` (visibility: private: only the signed-in owner can open it; they can share it from the panel).`
       : ` (visibility: ${info.visibility}).`);
   return { info, url, text };
+}
+
+// ---------- list_environment_settings / change_environment_setting ----------
+//
+// Settings -> Advanced's agent-facing pair (task 9). list is a plain read: the
+// redacted rows lib/advanced-env/store.ts already presents, plus the editable
+// catalog. change proposes one mutation through lib/advanced-env/proposals.ts,
+// which raises a mandatory permission card and only writes after a fresh
+// allow-once decision; every outcome funnels back through
+// lib/permissionPrompt.ts's shared gate, so a task's bypass mode, a
+// remembered rule, or a trusted MCP rule can never shortcut it.
+//
+// Two callers share this: the Claude driver's in-process tool handler awaits
+// changeEnvironmentSettingForAgent() directly (one process, no HTTP hop, held
+// open for as long as the mandatory prompt's own deadline allows). The stdio
+// bridge cannot hold an HTTP request open that long (the ask_user tool hit
+// the same undici header-timeout wall), so its internal route instead calls
+// startEnvironmentProposal() to kick the same call off detached and returns a
+// proposalId at once; the bridge polls pollEnvironmentProposal() the way it
+// polls ask_user's wait endpoint.
+
+/** The catalog plus every currently saved row, both already redacted. */
+export function listEnvironmentSettingsForAgent(scope?: EnvScope): { text: string } {
+  const view = listEnvironment(scope);
+  const catalog = listEditableDescriptors(scope);
+  return { text: JSON.stringify({ rows: view.rows, catalog, restartRequired: view.restartRequired }, null, 2) };
+}
+
+/**
+ * A push that persists a card the way lib/runner.ts's own "permission" /
+ * "permission_decided" handling does, for a caller with no live turn stream
+ * to route through: the stdio bridge's internal route runs outside
+ * runTurn()'s generator entirely, so nothing else will ever write these rows.
+ * Mirrors startAskUser's out-of-band persistence above for the identical
+ * reason. Scoped per call (one Map per proposal), so two concurrent bridge
+ * proposals on the same task can't cross-settle each other's card.
+ */
+function persistingEnvPush(task: Task): (ev: StreamEvent) => void {
+  const toolMsgs = new Map<string, { dbId: string; data: ToolData }>();
+  return (ev) => {
+    if (ev.type === "permission") {
+      const data: ToolData = { title: "Permission needed", permission: { request: ev.request } };
+      const m = addMessage(task.id, task.generation, "tool", JSON.stringify(data));
+      toolMsgs.set(ev.request.id, { dbId: m.id, data });
+      updateTask(task.id, { awaiting_input: 1 });
+      publish(task.id, { ...ev, msgId: m.id, generation: task.generation, ts: m.created_at });
+    } else if (ev.type === "permission_decided") {
+      const t = toolMsgs.get(ev.id);
+      if (t && t.data.permission) {
+        t.data.permission = { request: t.data.permission.request, outcome: ev.outcome };
+        updateMessage(t.dbId, JSON.stringify(t.data));
+        updateTask(task.id, { awaiting_input: 0 });
+        publish(task.id, { ...ev, msgId: t.dbId, generation: task.generation });
+      }
+    }
+  };
+}
+
+function describeProposalResult(result: ProposalResult): string {
+  switch (result.kind) {
+    case "committed":
+      publishGlobal("", { type: "environment_changed" });
+      return result.row
+        ? `Committed. ${result.row.scope} variable ${result.row.id} now at revision ${result.revision}.`
+        : `Committed. The variable was removed; the store is now at revision ${result.revision}.`;
+    case "denied":
+      return `Not approved: ${result.message}`;
+    case "conflict":
+      return `Conflict: the settings changed since expectedRevision was read (current revision ${result.currentRevision}). Call list_environment_settings again and retry with the new revision.`;
+    case "invalid":
+      return `Invalid: ${result.reason}`;
+  }
+}
+
+/**
+ * Propose one mutation and await its outcome directly. `push` is the live
+ * turn's own event queue for an in-process caller (the Claude driver, same
+ * closure canUseTool already uses), so lib/runner.ts persists the card
+ * exactly like any other permission request; a caller with no such queue
+ * (startEnvironmentProposal below) passes persistingEnvPush(task) instead.
+ * Held open for as long as the mandatory prompt's own attended/unattended
+ * deadline runs; the in-process tool handler can just await this directly.
+ */
+export async function changeEnvironmentSettingForAgent(
+  task: Task,
+  input: ProposalInput,
+  push: (ev: StreamEvent) => void,
+  signal?: AbortSignal
+): Promise<{ result: ProposalResult; text: string }> {
+  const ctx: ProposalContext = { taskId: task.id, projectId: task.project_id, push, signal };
+  const result = await proposeEnvironmentMutation(ctx, input);
+  return { result, text: describeProposalResult(result) };
+}
+
+interface PendingEnvProposal {
+  controller: AbortController;
+  outcome?: ProposalResult;
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __calandriaEnvProposalPolls: Map<string, PendingEnvProposal> | undefined;
+}
+
+const envPolls = (): Map<string, PendingEnvProposal> => (global.__calandriaEnvProposalPolls ??= new Map());
+const envPollKey = (taskId: string, proposalId: string): string => `${taskId}:${proposalId}`;
+
+/**
+ * Kick off a proposal without holding the caller's request open, for the
+ * stdio bridge. Its own AbortController becomes the proposal's signal, linked
+ * to the turn's own signal at mint time; a later cancel (see below) or a Stop
+ * aborts it the same way an in-process call's linked signal would, and
+ * lib/advanced-env/capabilities.ts's mandatory waiter reacts to that abort by
+ * denying rather than leaving the card answerable after the model stopped
+ * listening.
+ */
+export function startEnvironmentProposal(task: Task, input: ProposalInput): { proposalId: string } {
+  const proposalId = `envreq:${nanoid()}`;
+  const key = envPollKey(task.id, proposalId);
+  const controller = new AbortController();
+  const turnSig = turnSignal(task.id);
+  if (turnSig) {
+    if (turnSig.aborted) controller.abort();
+    else turnSig.addEventListener("abort", () => controller.abort(), { once: true });
+  }
+  const entry: PendingEnvProposal = { controller };
+  envPolls().set(key, entry);
+  void changeEnvironmentSettingForAgent(task, input, persistingEnvPush(task), controller.signal).then(({ result }) => {
+    entry.outcome = result;
+  });
+  return { proposalId };
+}
+
+/**
+ * Poll a proposal started above. `cancel` propagates a post-dispatch MCP
+ * cancellation (the CLI cut this specific tool call off, not necessarily the
+ * whole turn): aborting the controller here reaches the same mandatory-waiter
+ * abort path a Stop does, so a decision that arrives after cancellation can
+ * no longer commit. Take-once, like lib/asks.ts's takeAskOutcome: the settled
+ * result is handed back exactly once.
+ */
+export function pollEnvironmentProposal(taskId: string, proposalId: string, cancel?: boolean): { status: "pending" } | { status: "done"; text: string } {
+  const key = envPollKey(taskId, proposalId);
+  const entry = envPolls().get(key);
+  if (!entry) return { status: "done", text: "This proposal is no longer tracked." };
+  if (cancel && entry.outcome === undefined) entry.controller.abort();
+  if (entry.outcome === undefined) return { status: "pending" };
+  envPolls().delete(key);
+  return { status: "done", text: describeProposalResult(entry.outcome) };
 }

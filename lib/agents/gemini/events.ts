@@ -28,7 +28,7 @@
 // `tool_result` events that update the same row in place.
 
 import type { StreamEvent, ToolPeek } from "../../types";
-import { clip, clipKeepTail, summarizeResult, summarizeFailure } from "../shared";
+import { clip, clipKeepTail, summarizeResult, summarizeFailure, environmentToolSummary } from "../shared";
 import { DEFAULT_GEMINI_MODEL } from "./pricing";
 import { geminiUsage, type GeminiTokenUsage } from "./usage";
 import { BRIDGE_SERVER_NAME } from "./mcp";
@@ -335,6 +335,8 @@ function mapTool(step: AgyStepUpdate, state: GeminiMapState): StreamEvent[] {
   const key = stepKey(step);
   const out: StreamEvent[] = [];
   const params = paramText(info.parameters);
+  const mcpArgs = mcp ? (asObj(info.parameters) as AgyMcpParams).Arguments : undefined;
+  const env = mcp && (!mcp.server || mcp.server === BRIDGE_SERVER_NAME) ? environmentToolSummary(mcp.tool, mcpArgs && typeof mcpArgs === "object" ? (mcpArgs as Record<string, unknown>) : undefined) : null;
 
   if (!state.emittedTool.has(key)) {
     state.emittedTool.add(key);
@@ -346,8 +348,8 @@ function mapTool(step: AgyStepUpdate, state: GeminiMapState): StreamEvent[] {
       // each driver spells it differently, so the bare tool name has to
       // survive: hence the MCP identity instead of "call_mcp_tool".
       name: mcp ? `${mcp.server || BRIDGE_SERVER_NAME}__${mcp.tool}` : cliName || undefined,
-      title: title(cliName, mcp, info),
-      detail: clip(params),
+      title: env ? env.title : title(cliName, mcp, info),
+      detail: env ? env.detail : clip(params),
       file: writtenFile(cliName, info),
     });
   }

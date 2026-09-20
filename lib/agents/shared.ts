@@ -433,6 +433,38 @@ export function summarizeResult(kind: ResultKind, raw: string): ToolPeek {
   }
 }
 
+/**
+ * A safe, value-free title/detail for `list_environment_settings` and
+ * `change_environment_setting` (task 9), shared by every driver that renders
+ * an ordinary tool-call row from raw MCP arguments: the in-process default
+ * below, and codex/events.ts's and gemini/events.ts's own `clip(arguments)`
+ * fallbacks, which describeToolUse never sees since those two drivers only
+ * reach Calandria's tools over the stdio bridge. Returns null for every other
+ * tool, so a caller falls back to its own generic rendering unchanged.
+ *
+ * Never echoes `name`/`value`, whether or not the row is secret: this is the
+ * ordinary tool-call row, not the approval card (which shows a
+ * non-secret value on purpose, redacted separately by
+ * lib/advanced-env/proposals.ts's own card builder, since the human approving
+ * it has to see what they're approving).
+ */
+export function environmentToolSummary(name: string, input: Record<string, unknown> | undefined): { title: string; detail: string } | null {
+  const args = input ?? {};
+  if (name.includes("list_environment_settings")) {
+    const scope = typeof args.scope === "string" ? args.scope : undefined;
+    return { title: `⚙ Listed environment settings${scope ? ` (${scope})` : ""}`, detail: scope ? `Scope: ${scope}` : "Every scope" };
+  }
+  if (name.includes("change_environment_setting")) {
+    const op = typeof args.operation === "string" ? args.operation : "change";
+    const scope = typeof args.scope === "string" ? args.scope : undefined;
+    const id = typeof args.id === "string" ? args.id : undefined;
+    const reason = typeof args.reason === "string" ? args.reason : undefined;
+    const lines = [`Operation: ${op}`, scope && `Scope: ${scope}`, id && `Row: ${id}`, reason && `Reason: ${reason}`].filter((l): l is string => !!l);
+    return { title: `⚙ Proposed to ${op} an environment variable`, detail: lines.join("\n") };
+  }
+  return null;
+}
+
 // Returns a one-line title, an expandable detail of the tool input, an optional
 // always-visible peek, and (for result-derived peeks) the kind to summarize the
 // eventual output with. Mirrors what Claude Code reveals per tool; the names
@@ -486,10 +518,13 @@ export function describeToolUse(
       // Plan mode's handoff: the agent is asking to stop planning and start
       // editing, with the plan itself as the input worth reading.
       return { title: `📋 Proposed a plan`, detail: clip(input?.plan) };
-    default:
+    default: {
       if (name.includes("suggest_task")) return { title: `✦ Suggested a task`, detail: clip(input) };
       if (name.includes("expose_service")) return { title: `🔌 Exposed ${String(input?.name ?? "service")} :${String(input?.port ?? "")}`, detail: clip(input) };
+      const env = environmentToolSummary(name, input);
+      if (env) return env;
       return { title: `⚙ ${name}`, detail: clip(input) };
+    }
   }
 }
 

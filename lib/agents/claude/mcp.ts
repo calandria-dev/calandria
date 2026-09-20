@@ -17,6 +17,7 @@
 import type { McpStdioServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import type { Project, Task } from "../../types";
 import { AGENT_TOOL_TIMEOUT_MS, CALANDRIA_MCP_SCRIPT, INTERNAL_BASE_URL, ISSUE_REPO } from "../../config";
+import { currentTurnCapability } from "../../advanced-env/capabilities";
 
 /**
  * The `mcpServers.calandria` entry for one Claude turn, as a stdio server.
@@ -62,6 +63,12 @@ export function calandriaBridgeServer(project: Project, task: Task): McpStdioSer
       // handed over explicitly or the bridged tool falls back to the built-in
       // default (lib/agentToolGuard.mjs).
       CALANDRIA_AGENT_TOOL_TIMEOUT_MS: String(AGENT_TOOL_TIMEOUT_MS),
+      // The task+turn capability lib/runner.ts minted for this turn
+      // (lib/advanced-env/capabilities.ts), so the bridge's
+      // change_environment_setting call can carry it as a header. Empty when
+      // no turn is registered under this task id, which the internal
+      // endpoint then refuses same as a mismatched one.
+      CALANDRIA_ENV_EDIT_CAPABILITY: currentTurnCapability(task.id) || "",
       // The one field the Codex entry doesn't set. Claude has AskUserQuestion of
       // its own, which the driver's PreToolUse hook already routes to the same
       // card through the same lib/asks.ts registry; offering ask_user beside it

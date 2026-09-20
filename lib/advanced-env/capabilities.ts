@@ -85,6 +85,19 @@ export function verifyTurnCapability(token: string): { taskId: string; projectId
   return entry ? { taskId: entry.taskId, projectId: entry.projectId } : null;
 }
 
+/**
+ * The live capability minted for this task's current turn, if any. Task 9's
+ * only caller: the three mcp.ts env-block builders (claude/codex/gemini)
+ * inject it into the stdio bridge's env as CALANDRIA_ENV_EDIT_CAPABILITY, and
+ * the in-process Claude server closes over it directly instead of calling
+ * this at all (no HTTP hop to authenticate). Never the source of identity by
+ * itself: the bridge only ever forwards it as a header, verified by
+ * verifyTurnCapability() token-first at the internal mutation endpoint.
+ */
+export function currentTurnCapability(taskId: string): string | undefined {
+  return byTask().get(taskId)?.token;
+}
+
 // ---------- the mandatory-decision waiter ----------
 //
 // A one-use allow-once/deny decision, parked in a registry the generic
