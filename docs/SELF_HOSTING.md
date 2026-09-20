@@ -684,6 +684,95 @@ recent writes. This recipe doesn't cover per-task worktrees: either leave
 yourself and run `git worktree repair <new-path>/<task-id>` inside each
 affected project repo.
 
+## Advanced settings (Settings → Advanced)
+
+Settings → Advanced manages environment variables for this instance from the
+browser instead of a launcher's env or a `.env` file. It writes one file,
+`advanced-environment.json`, next to `calandria.db` in `CALANDRIA_DB_DIR`, and
+covers two separate scopes:
+
+- **App**: server-process settings such as the permission and retention
+  timers. A change here needs a server restart to take effect; Settings shows
+  a "Restart required" banner until one happens, and the API's
+  `restartRequired` flag stays accurate across a delete too. Restarting the
+  desktop app is one click (see [`DESKTOP_APP.md`](DESKTOP_APP.md)); a
+  self-hosted or remote server needs its own manual restart (`docker restart`,
+  `systemctl restart`, or however it's supervised).
+- **Agent sessions**: variables agent turns run under (the Codex transport,
+  approval policy and sandbox controls, plus any custom name). A change here
+  takes effect on the next turn, including a resumed one; a turn already
+  running keeps the environment snapshot it started with.
+
+**Precedence.** For the app scope: built-in defaults, then a saved row, then
+whatever the launch environment (or the desktop environment file) already
+sets for that name or its `ORCH_*` alias. A launch-environment value always
+wins; Settings marks a shadowed row "Overridden by host" and deleting it has
+no effect until the host value is also removed, since the saved row was never
+the active one. For the agent scope, existing task, project, and run-default
+precedence for model, permission and sandbox choices is unchanged; these
+environment controls are a fallback layer under all of that, not a way to
+override a task's own configured permission mode.
+
+**Deleting a row** restores whatever value the variable would otherwise have:
+the inherited launch environment for an app-scope name, or that variable's
+own default for an agent-scope one. Nothing else changes as a side effect.
+
+**Reserved and provider-owned names.** Deployment, identity, storage and
+network inputs (`PORT`, `PTY_*`, `NODE_ENV`, `CALANDRIA_DB_DIR`,
+`CALANDRIA_HOSTNAME`, and the rest of the table in **Configuration** above),
+plus task/turn identity and bridge internals on the agent side, are rejected
+outright, under a custom name too. Provider routing, model keys and billing
+credentials stay in Settings → Models; Advanced only points at that page for
+them; it is not a second place to store a provider credential.
+
+**Values are literal.** A saved value is used exactly as typed: quotes,
+`$`, backticks, and newlines all pass through unevaluated, and an empty
+string is a value distinct from having no saved row at all. Nothing here ever
+runs a shell.
+
+**Secrets.** A row marked Secret hides both its name and its value in the
+list, shown only as an opaque label like `Secret variable · a1b2`; the list
+API redacts the same way, so nothing recovers the plaintext by reading the
+network response either. Editing a secret can rename it or replace its value
+without retyping the other; leaving a field on Keep does not resend the old
+value at all. Turning Secret off requires an explicit confirmation, since
+doing so reveals the name and value in the list from then on.
+
+**Disk permissions.** `advanced-environment.json` is written owner-only: POSIX
+mode `0600`, or on Windows an ACL granting only the running account
+(`icacls <file> /inheritance:r /grant:r <owner>:(R,W)`, the same rule
+`lib/secretFile.ts` applies to provider credentials). This is a control over
+Calandria's own read/write paths, not disk encryption or an OS-level secret
+store: another process running as the same account can still read the file,
+the same way it could read any other file that account owns.
+
+**The approval gate.** An agent can propose a change through its own tools,
+but every create, rename, value change, delete, or secret-flag flip parks the
+turn on a one-time Allow once / Deny card in the transcript, with no "always
+allow" option. This card is mandatory: a task's bypass/full-access permission
+mode, a remembered Bash rule, and a trusted MCP server all still stop and wait
+for it, and a secret's plaintext, when the human types one on the card, is
+sent straight to the server and never appears in the tool's arguments, the
+transcript, or an event.
+
+**Recovering from a malformed saved file.** A corrupted or unreadable
+`advanced-environment.json` blocks every write until it is fixed, and Settings
+shows a diagnostic instead of the tables, but the server still boots (with no
+saved app overlay) rather than refusing to start. To recover:
+
+```bash
+# Stop the server first: don't edit the file while something has it open.
+mv ~/.calandria/advanced-environment.json ~/.calandria/advanced-environment.json.bad
+# Start the server again. Settings now shows an empty store; re-add any
+# rows you need from the file you just moved aside, or repair its JSON by
+# hand and move it back before restarting once more.
+```
+
+(Substitute your actual `CALANDRIA_DB_DIR` above.) Moving the bad file aside
+rather than deleting it keeps whatever was in it recoverable; nothing in
+Calandria repairs it automatically, since a best-effort JSON fixup could
+silently apply half of a broken edit.
+
 ## Backup & restore
 
 `npm run backup` ([`scripts/backup.mjs`](../scripts/backup.mjs)) takes a hot
