@@ -384,9 +384,12 @@ tasks and automatic ordering.
 1. Switch between a compact list and a full-width kanban board. The board's columns are
    **Suggested**, **Not started**, **In progress**, **Needs input**, **Ran clean**, **Snoozed**,
    and **Done**.
-2. Set which tasks a task depends on from its edit dialog's dependency picker (the **Blocked
+2. In the list, click any group header to fold that group away. Each group remembers its own
+   state per project, across reloads. **Cancelled** starts folded; the rest start open. A search
+   opens every group that has a match in it.
+3. Set which tasks a task depends on from its edit dialog's dependency picker (the **Blocked
    by** field). Once every blocker is marked done, an opted-in task starts on its own.
-3. Opt a blocked task in from its own start screen: its "Blocked until …" notice carries a
+4. Opt a blocked task in from its own start screen: its "Blocked until …" notice carries a
    **Start when unblocked** button, and once queued, that notice carries **Cancel** to hand the
    start back to you.
 

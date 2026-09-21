@@ -211,7 +211,7 @@ const canPick = (t: TaskRow) => t.running === 0;
 // they're passed explicitly instead of derived from SCLS.
 type DotCls = "r" | "a" | "h" | "g" | "x" | "c" | "z" | "u";
 
-function TaskGroup({ label, tasks, agents, selTaskId, running, blockedBy, onSelect, picked, onPick, onSnooze, onUnsnooze, onAckRun, onStopTurn, sparklines, tagsById, onSelectTag, projectBranch, accent, dot, collapsible, collapsed, onToggle }: { label: string; tasks: TaskRow[]; agents: AgentsBundle; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; onSelect: (id: string) => void; picked: Set<string>; onPick: (id: string, range: boolean) => void; onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void; onAckRun: (id: string) => void; onStopTurn: (id: string) => void; sparklines: Record<string, number[]>; tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void; projectBranch: string; accent?: boolean; dot?: DotCls; collapsible?: boolean; collapsed?: boolean; onToggle?: () => void }) {
+function TaskGroup({ label, tasks, agents, selTaskId, running, blockedBy, onSelect, picked, onPick, onSnooze, onUnsnooze, onAckRun, onStopTurn, sparklines, tagsById, onSelectTag, projectBranch, accent, dot, collapsed, onToggle }: { label: string; tasks: TaskRow[]; agents: AgentsBundle; selTaskId: string | null; running: Set<string>; blockedBy: Map<string, string[]>; onSelect: (id: string) => void; picked: Set<string>; onPick: (id: string, range: boolean) => void; onSnooze: (id: string, until: number) => void; onUnsnooze: (id: string) => void; onAckRun: (id: string) => void; onStopTurn: (id: string) => void; sparklines: Record<string, number[]>; tagsById: Map<string, TagRow>; onSelectTag: (id: string) => void; projectBranch: string; accent?: boolean; dot?: DotCls; collapsed: boolean; onToggle: () => void }) {
   if (tasks.length === 0) return null;
   const cards = tasks.map((t) => (
     <TaskCard key={t.id} task={t} agents={agents} selected={t.id === selTaskId} running={running.has(t.id)}
@@ -220,25 +220,14 @@ function TaskGroup({ label, tasks, agents, selTaskId, running, blockedBy, onSele
       tagsById={tagsById} onSelectTag={onSelectTag} projectBranch={projectBranch} />
   ));
   const dotEl = dot && <span className={`sdot sm ${dot}`} />;
-  if (collapsible) {
-    return (
-      <>
-        <button className={`task-group-h tgh-btn ${collapsed ? "is-collapsed" : ""}`} onClick={onToggle} title={`${collapsed ? "Show" : "Hide"} ${label.toLowerCase()} tasks`}>
-          {Icon.chevDown({ className: "tgh-chev" })}
-          {dotEl}
-          {label} <span className="gcount">{tasks.length}</span><span className="gline" />
-        </button>
-        {!collapsed && cards}
-      </>
-    );
-  }
   return (
     <>
-      <div className={`task-group-h ${accent ? "needs-you" : ""}`}>
+      <button className={`task-group-h tgh-btn ${accent ? "needs-you" : ""} ${collapsed ? "is-collapsed" : ""}`} onClick={onToggle} title={`${collapsed ? "Show" : "Hide"} ${label.toLowerCase()} tasks`}>
+        {Icon.chevDown({ className: "tgh-chev" })}
         {dotEl}
         {label} <span className="gcount">{tasks.length}</span><span className="gline" />
-      </div>
-      {cards}
+      </button>
+      {!collapsed && cards}
     </>
   );
 }
@@ -318,22 +307,50 @@ function useExpanded(scope: string) {
   return { expanded, toggleExpanded: toggle };
 }
 
-// Per-group collapsed flag, persisted in localStorage under `key` (falling
-// back to `legacyKey` for a reader that hasn't written the new key yet).
-function useCollapsed(key: string, legacyKey: string, def: boolean) {
-  const [collapsed, setCollapsed] = useState(def);
+// The status groups in list view, in the order they render. Every one of
+// them collapses, so a project whose attention is on one group can minimize
+// the rest, not only the finished work.
+type GroupKey = "needs_you" | "ran_clean" | "in_progress" | "on_hold" | "not_started" | "snoozed" | "done" | "cancelled";
+
+// Cancelled starts collapsed: it's the graveyard. Everything else starts
+// open, so the list looks the way it always has until the user minimizes
+// something.
+const GROUP_COLLAPSED_DEFAULT: Record<GroupKey, boolean> = {
+  needs_you: false, ran_clean: false, in_progress: false, on_hold: false,
+  not_started: false, snoozed: false, done: false, cancelled: true,
+};
+
+// Done and Cancelled were the only collapsible groups once, and their keys
+// carry a pre-rename spelling a returning reader may still hold.
+const GROUP_LEGACY_KEY: Partial<Record<GroupKey, (projectId: string) => string>> = {
+  done: (id) => `orch_done_collapsed_${id}`,
+  cancelled: (id) => `orch_cancelled_collapsed_${id}`,
+};
+
+const groupKeyFor = (projectId: string, group: GroupKey) => `calandria_${group}_collapsed_${projectId}`;
+
+// Per-group collapsed flags, persisted in localStorage one key per group and
+// per project, so the choice sticks across reloads and doesn't follow the
+// user into another project.
+function useCollapsedGroups(projectId: string) {
+  const [collapsed, setCollapsed] = useState<Record<GroupKey, boolean>>(GROUP_COLLAPSED_DEFAULT);
   useEffect(() => {
-    try {
-      const v = localStorage.getItem(key) ?? localStorage.getItem(legacyKey);
-      setCollapsed(v === null ? def : v === "1");
-    } catch {}
-  }, [key, legacyKey, def]);
-  const toggle = () => setCollapsed((c) => {
-    const next = !c;
-    try { localStorage.setItem(key, next ? "1" : "0"); } catch {}
-    return next;
+    const next = { ...GROUP_COLLAPSED_DEFAULT };
+    for (const group of Object.keys(next) as GroupKey[]) {
+      try {
+        const legacy = GROUP_LEGACY_KEY[group];
+        const v = localStorage.getItem(groupKeyFor(projectId, group)) ?? (legacy ? localStorage.getItem(legacy(projectId)) : null);
+        if (v !== null) next[group] = v === "1";
+      } catch {}
+    }
+    setCollapsed(next);
+  }, [projectId]);
+  const toggle = (group: GroupKey) => setCollapsed((c) => {
+    const next = !c[group];
+    try { localStorage.setItem(groupKeyFor(projectId, group), next ? "1" : "0"); } catch {}
+    return { ...c, [group]: next };
   });
-  return [collapsed, toggle] as const;
+  return { collapsed, toggle };
 }
 
 export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId, running, blockedBy, sparklines, width, loading, view, onSetView, onMoveTask, onSelectTask, onNewTask, onEditContext, onShowSessions, onShowRecap, onEditTask, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onSnoozeTask, onUnsnoozeTask, onAckRun, onStopTurn, onBulkMove, onBulkTag, onCollapse, mobile, onBack, baseBranchTick }: {
@@ -357,12 +374,9 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
   baseBranchTick?: number;
 }) {
   const [query, setQuery] = useState("");
-  // Minimize the Done/Cancelled groups so a long backlog of finished (or
-  // abandoned) tasks doesn't force scrolling past them. Per-project,
-  // persisted so the choice sticks across reloads. Cancelled starts
-  // collapsed: it's the graveyard.
-  const [doneCollapsed, toggleDone] = useCollapsed(`calandria_done_collapsed_${project.id}`, `orch_done_collapsed_${project.id}`, false);
-  const [cancelledCollapsed, toggleCancelled] = useCollapsed(`calandria_cancelled_collapsed_${project.id}`, `orch_cancelled_collapsed_${project.id}`, true);
+  // Minimize any group so a long run of tasks the user isn't working on
+  // doesn't force scrolling past them.
+  const { collapsed: groupCollapsed, toggle: toggleGroup } = useCollapsedGroups(project.id);
   // The tag chips narrow every bucket below, including the Suggested tray,
   // to the lit tags' members (any/all: TagChips.tsx). Applied before the
   // search so the two compose. (Named `tags`, not `groups`: the status
@@ -379,6 +393,9 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
   const selectTag = (id: string) => selectOneTag(project.id, id);
   const q = query.trim().toLowerCase();
   const match = (t: TaskRow) => !q || t.title.toLowerCase().includes(q) || (t.description ?? "").toLowerCase().includes(q);
+  // A search reveals every group it matched in: a hit hidden behind a
+  // collapsed header reads as no hit at all.
+  const groupShut = (group: GroupKey) => groupCollapsed[group] && !q;
   const shown = inTags(tasks, tagFilter).filter(match);
   // Withdrawn suggestions sink to the bottom of the tray: they're retractions
   // awaiting a decision, not proposals competing for attention.
@@ -428,10 +445,12 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
   // one row at a time in the modal. Suggested rows are ordinary unstarted
   // task rows server-side, so a range crossing into the tray is a real
   // selection.
+  const inOrder = (group: GroupKey, tasks: TaskRow[]) => (groupShut(group) ? [] : tasks);
   const order = [
-    ...needsYouGroup, ...ranClean, ...groups.a, ...groups.h, ...groups.r, ...groups.z,
-    ...(doneCollapsed && !q ? [] : groups.g),
-    ...(cancelledCollapsed && !q ? [] : groups.x),
+    ...inOrder("needs_you", needsYouGroup), ...inOrder("ran_clean", ranClean),
+    ...inOrder("in_progress", groups.a), ...inOrder("on_hold", groups.h),
+    ...inOrder("not_started", groups.r), ...inOrder("snoozed", groups.z),
+    ...inOrder("done", groups.g), ...inOrder("cancelled", groups.x),
     ...shownSuggested,
   ].filter(canPick).map((t) => t.id);
   // The tag filter is part of the scope: narrowing the list is a navigation,
@@ -540,19 +559,19 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
           )}
           {noMatches && <div className="search-empty">No tasks match “{query.trim()}”.</div>}
           {tagEmpty && <div className="search-empty">{tagEmptyMsg}</div>}
-          <TaskGroup label="Needs your input" tasks={needsYouGroup} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} accent dot="c" />
+          <TaskGroup label="Needs your input" tasks={needsYouGroup} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} accent dot="c" collapsed={groupShut("needs_you")} onToggle={() => toggleGroup("needs_you")} />
           {/* Between the two for a reason: a clean run needs reading, which
               is less than answering a question and more than a task that is
               simply still open. */}
-          <TaskGroup label={RAN_LABEL} tasks={ranClean} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="u" />
-          <TaskGroup label="In progress" tasks={groups.a} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="a" />
-          <TaskGroup label="On hold" tasks={groups.h} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="h" />
-          <TaskGroup label="Not started" tasks={groups.r} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="r" />
+          <TaskGroup label={RAN_LABEL} tasks={ranClean} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="u" collapsed={groupShut("ran_clean")} onToggle={() => toggleGroup("ran_clean")} />
+          <TaskGroup label="In progress" tasks={groups.a} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="a" collapsed={groupShut("in_progress")} onToggle={() => toggleGroup("in_progress")} />
+          <TaskGroup label="On hold" tasks={groups.h} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="h" collapsed={groupShut("on_hold")} onToggle={() => toggleGroup("on_hold")} />
+          <TaskGroup label="Not started" tasks={groups.r} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="r" collapsed={groupShut("not_started")} onToggle={() => toggleGroup("not_started")} />
           {/* Parked work sits between the live groups and the terminal ones:
               it isn't finished, but it isn't asking for anything either. */}
-          <TaskGroup label={SNOOZE_LABEL} tasks={groups.z} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="z" />
-          <TaskGroup label="Done" tasks={groups.g} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="g" collapsible collapsed={doneCollapsed && !q} onToggle={toggleDone} />
-          <TaskGroup label="Cancelled" tasks={groups.x} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="x" collapsible collapsed={cancelledCollapsed && !q} onToggle={toggleCancelled} />
+          <TaskGroup label={SNOOZE_LABEL} tasks={groups.z} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="z" collapsed={groupShut("snoozed")} onToggle={() => toggleGroup("snoozed")} />
+          <TaskGroup label="Done" tasks={groups.g} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="g" collapsed={groupShut("done")} onToggle={() => toggleGroup("done")} />
+          <TaskGroup label="Cancelled" tasks={groups.x} agents={agents} selTaskId={selTaskId} running={running} blockedBy={blockedBy} onSelect={onSelectTask} picked={picked} onPick={pick} onSnooze={onSnoozeTask} onUnsnooze={onUnsnoozeTask} onAckRun={onAckRun} onStopTurn={onStopTurn} sparklines={sparklines} tagsById={tagsById} onSelectTag={selectTag} projectBranch={project.branch} dot="x" collapsed={groupShut("cancelled")} onToggle={() => toggleGroup("cancelled")} />
         </div>
         {shownSuggested.length > 0 && (
           <div className="suggest">
