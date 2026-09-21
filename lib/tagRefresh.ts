@@ -173,7 +173,7 @@ export interface TagRefreshOutcome {
  * named in the summary for the user to judge, the same answer
  * withdraw_suggestion's own refusal gives.
  */
-export function applyTagPlan(tag: Tag, members: Task[], plan: TagPlan, actor: AgentEditActor): TagRefreshOutcome {
+export async function applyTagPlan(tag: Tag, members: Task[], plan: TagPlan, actor: AgentEditActor): Promise<TagRefreshOutcome> {
   const byId = new Map(members.map((m) => [m.id, m]));
   const out: TagRefreshOutcome = {
     descriptionRewritten: false, reworded: 0, retired: 0, flagged: [], ignored: 0, summary: "",
@@ -234,7 +234,7 @@ export function applyTagPlan(tag: Tag, members: Task[], plan: TagPlan, actor: Ag
     if (entry.title && entry.title !== member.title) patch.title = entry.title;
     if (entry.description && entry.description !== member.description) patch.description = entry.description;
     if (!patch.title && !patch.description) continue;
-    const r = updateTaskForAgent(actor, member.id, patch);
+    const r = await updateTaskForAgent(actor, member.id, patch);
     if (r.task) out.reworded++;
   }
 
@@ -292,7 +292,7 @@ async function runRefresh(project: Project, tag: Tag): Promise<void> {
       title: `Refresh of tag "${fresh.name}"`,
       agent: resolveUtilityAgent().id ?? resolveUtilityAgent().configured,
     };
-    const outcome = applyTagPlan(fresh, tagMembers(fresh), parseTagPlan(raw), actor);
+    const outcome = await applyTagPlan(fresh, tagMembers(fresh), parseTagPlan(raw), actor);
 
     setTagRefresh(tag.id, { refresh_status: "done", refresh_stage: "", refresh_summary: outcome.summary, refresh_error: "" });
   } catch (e) {

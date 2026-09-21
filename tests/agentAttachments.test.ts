@@ -184,12 +184,12 @@ describe("createSuggestedTask with attachments", () => {
 });
 
 describe("updateTaskForAgent attachments", () => {
-  it("appends a marker and the file exists on disk", () => {
+  it("appends a marker and the file exists on disk", async () => {
     const { project, caller, worktree } = callerWithWorktree();
     fs.writeFileSync(path.join(worktree, "a.txt"), "a content");
     const target = createSuggestedTask(project, { title: "Target", description: "brief" }).task!;
 
-    const first = updateTaskForAgent(caller, target.id, { attachments: ["a.txt"] });
+    const first = await updateTaskForAgent(caller, target.id, { attachments: ["a.txt"] });
 
     expect(first.task).not.toBeNull();
     const { text: prose1, attachments: att1 } = splitAttachmentText(first.task!.description);
@@ -199,22 +199,22 @@ describe("updateTaskForAgent attachments", () => {
     expect(first.text).toContain("1 file attached");
 
     // A second call that only rewrites the prose keeps the existing marker.
-    const second = updateTaskForAgent(caller, target.id, { description: "new prose" });
+    const second = await updateTaskForAgent(caller, target.id, { description: "new prose" });
     expect(second.task).not.toBeNull();
     const { text: prose2, attachments: att2 } = splitAttachmentText(second.task!.description);
     expect(prose2).toBe("new prose");
     expect(att2).toEqual(att1);
   });
 
-  it("does not duplicate markers when the description comes back with them in place", () => {
+  it("does not duplicate markers when the description comes back with them in place", async () => {
     const { project, caller, worktree } = callerWithWorktree();
     fs.writeFileSync(path.join(worktree, "a.txt"), "a");
     const target = createSuggestedTask(project, { title: "Target", description: "brief" }).task!;
-    const withFile = updateTaskForAgent(caller, target.id, { attachments: ["a.txt"] }).task!;
+    const withFile = (await updateTaskForAgent(caller, target.id, { attachments: ["a.txt"] })).task!;
 
     // The shape get_task hands back: prose plus the marker line. An agent
     // editing from that copy sends the marker along with its new prose.
-    const res = updateTaskForAgent(caller, target.id, { description: withFile.description.replace("brief", "sharper brief") });
+    const res = await updateTaskForAgent(caller, target.id, { description: withFile.description.replace("brief", "sharper brief") });
 
     expect(res.task).not.toBeNull();
     const { text, attachments } = splitAttachmentText(res.task!.description);
@@ -222,16 +222,16 @@ describe("updateTaskForAgent attachments", () => {
     expect(attachments).toHaveLength(1);
     expect(res.text).toContain("description rewritten");
     // Sending the unchanged text back, markers included, is a no-op.
-    expect(updateTaskForAgent(caller, target.id, { description: res.task!.description }).text).toMatch(/^No change/);
+    expect((await updateTaskForAgent(caller, target.id, { description: res.task!.description })).text).toMatch(/^No change/);
   });
 
-  it("records the edit on an ACCEPTED (no longer suggested) task", () => {
+  it("records the edit on an ACCEPTED (no longer suggested) task", async () => {
     const { project, caller, worktree } = callerWithWorktree();
     fs.writeFileSync(path.join(worktree, "a.txt"), "hi");
     const target = createTask({ project_id: project.id, title: "Accepted", description: "" });
     updateTask(target.id, { suggested: 0 });
 
-    const res = updateTaskForAgent(caller, target.id, { attachments: ["a.txt"] });
+    const res = await updateTaskForAgent(caller, target.id, { attachments: ["a.txt"] });
 
     expect(res.task).not.toBeNull();
     const edits = listAgentEdits(target.id);
@@ -239,24 +239,24 @@ describe("updateTaskForAgent attachments", () => {
     expect(edits[0].changes.map((c) => c.field)).toContain("description");
   });
 
-  it("refuses the whole call when a bad attachment accompanies a valid title change", () => {
+  it("refuses the whole call when a bad attachment accompanies a valid title change", async () => {
     const { project, caller } = callerWithWorktree();
     const target = createSuggestedTask(project, { title: "Target", description: "" }).task!;
     const before = uploadDirs();
 
-    const res = updateTaskForAgent(caller, target.id, { title: "Renamed", attachments: ["ghost.txt"] });
+    const res = await updateTaskForAgent(caller, target.id, { title: "Renamed", attachments: ["ghost.txt"] });
 
     expect(res.task).toBeNull();
     expect(getTask(target.id)!.title).toBe("Target");
     expect(uploadDirs()).toEqual(before);
   });
 
-  it("stages nothing when a valid attachment accompanies an invalid priority", () => {
+  it("stages nothing when a valid attachment accompanies an invalid priority", async () => {
     const { project, caller, worktree } = callerWithWorktree();
     fs.writeFileSync(path.join(worktree, "a.txt"), "hi");
     const target = createSuggestedTask(project, { title: "Target", description: "" }).task!;
 
-    const res = updateTaskForAgent(caller, target.id, { attachments: ["a.txt"], priority: "urgent" as never });
+    const res = await updateTaskForAgent(caller, target.id, { attachments: ["a.txt"], priority: "urgent" as never });
 
     expect(res.task).toBeNull();
     // The copy is deferred until every field passes; priority never did.

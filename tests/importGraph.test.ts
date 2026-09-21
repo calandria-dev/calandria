@@ -51,6 +51,7 @@ const PINNED = [
   "lib/tagContext.ts", //        the tag blocks buildProjectContext appends; store + types only
   "lib/taskMove.ts", //          behind both move routes; store + locks + bus, no driving
   "lib/baseBranch.ts", //        which branch a task is based on + the retarget policy; store + git + bus, no driving
+  "lib/strandedWork.ts", //      whether a task's checkout still holds the only copy of its work; store + git + baseBranch, and update_task's done gate sits on it
   "lib/baseRewrite.ts", //     which sibling tasks a rewritten base orphaned + the flag; store + git + baseBranch + bus, no driving
   "lib/baseDrift.ts", //         the stale-base note a cut records for the opening turn; git + globalThis, no driving
   "lib/prMerge.ts", //          may this PR be squash-merged, and if not why not; pure types-only policy the client bundles alongside the route that enforces it

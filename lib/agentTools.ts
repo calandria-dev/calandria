@@ -53,6 +53,9 @@ import { flagBaseRewrite, describeSweep } from "./baseRewrite";
 // string that reaches a `git` argv later, and `--upload-pack=evil` is a
 // perfectly ordinary-looking one.
 import { refNameSafe } from "./git";
+// The done gate: whether a task's checkout still holds the only copy of its
+// work. SDK-free and pinned that way, like this module.
+import { strandedWorkReason } from "./strandedWork";
 import { withTaskLock } from "./taskLock";
 // The re-parenting operation itself, shared with POST /api/tasks/[id]/move and
 // POST /api/tasks/move. SDK-free and pinned that way, like this module.
@@ -883,11 +886,11 @@ export function isInertSuggestion(t: Task): boolean {
  */
 export type AgentEditActor = Pick<Task, "id" | "title" | "agent">;
 
-export function updateTaskForAgent(
+export async function updateTaskForAgent(
   caller: AgentEditActor,
   targetRef: string | undefined,
   input: UpdateTaskInput
-): { task: Task | null; text: string; autoStartDependents: boolean } {
+): Promise<{ task: Task | null; text: string; autoStartDependents: boolean }> {
   const wanted = targetRef?.trim() ?? "";
   const own = !wanted || wanted === caller.id;
 
@@ -1123,6 +1126,19 @@ export function updateTaskForAgent(
         `${input.tags !== undefined ? tagsPhrase(getTaskTags(cur.id)) : ""}).`,
       autoStartDependents: false,
     };
+  }
+
+  // The done gate (lib/strandedWork.ts), after the no-op return above so a
+  // task already done pays no git subprocess, and before every write below so
+  // a refusal leaves the row, its edges and its tags untouched. The git state
+  // is read live here: `cur` is a snapshot from the top of this call, and the
+  // session has been committing into that checkout ever since.
+  if (patch.status === "done") {
+    const stranded = await strandedWorkReason(cur);
+    if (stranded)
+      return fail(
+        `Could not update ${what}: ${stranded}. The user can still mark it done from the board. Nothing was changed.`
+      );
   }
 
   // Edges before fields, so the two writes can't half-land. setTaskDeps runs its

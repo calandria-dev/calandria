@@ -361,7 +361,7 @@ export const mockDriver: AgentDriver = {
     // globally from updateTaskForAgent, and that's precisely what the e2e
     // asserts, so a stream event here would mask a broken global path.
     const retitle = instructionText.match(/e2e:retitle=([^\n]+)/)?.[1];
-    if (retitle) updateTaskForAgent(task, undefined, { title: retitle.trim() });
+    if (retitle) await updateTaskForAgent(task, undefined, { title: retitle.trim() });
 
     // Live typing. The deltas are published and never persisted, so what a spec
     // can prove here is exactly what the feature promises: the bubble grows

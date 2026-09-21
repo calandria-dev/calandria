@@ -147,10 +147,10 @@ describe("detached tag refresh job", () => {
 });
 
 describe("applyTagPlan", () => {
-  it("records a reword as a revertable agent edit", () => {
+  it("records a reword as a revertable agent edit", async () => {
     const { project, tag } = fixture();
     const m = member(project.id, tag.id, "old title");
-    const out = applyTagPlan(tag, tagMembers(tag), { description: "", tasks: [{ id: m.id, title: "new title" }] }, ACTOR);
+    const out = await applyTagPlan(tag, tagMembers(tag), { description: "", tasks: [{ id: m.id, title: "new title" }] }, ACTOR);
     expect(out.reworded).toBe(1);
     expect(getTask(m.id)!.title).toBe("new title");
     // The chip is the review surface: without the row there is no Revert, which
@@ -163,10 +163,10 @@ describe("applyTagPlan", () => {
     expect(getTask(m.id)!.agent_edited_at).toBeGreaterThan(0);
   });
 
-  it("leaves a task alone when the plan repeats what it already says", () => {
+  it("leaves a task alone when the plan repeats what it already says", async () => {
     const { project, tag } = fixture();
     const m = member(project.id, tag.id, "step");
-    const out = applyTagPlan(
+    const out = await applyTagPlan(
       tag, tagMembers(tag),
       { description: tag.description, tasks: [{ id: m.id, title: "step", description: m.description }] },
       ACTOR
@@ -175,10 +175,10 @@ describe("applyTagPlan", () => {
     expect(edits(m.id)).toHaveLength(0);
   });
 
-  it("withdraws an unreviewed suggestion, keeping it in the tray with its reason", () => {
+  it("withdraws an unreviewed suggestion, keeping it in the tray with its reason", async () => {
     const { project, tag } = fixture();
     const m = member(project.id, tag.id, "already shipped", { suggested: 1 });
-    const out = applyTagPlan(
+    const out = await applyTagPlan(
       tag, tagMembers(tag),
       { description: "", tasks: [{ id: m.id, retire: true, reason: "lib/x.ts already does this" }] },
       ACTOR
@@ -190,10 +190,10 @@ describe("applyTagPlan", () => {
     expect(after.withdrawn_reason).toBe("lib/x.ts already does this");
   });
 
-  it("cancels an accepted-but-never-started task and records it so Revert works", () => {
+  it("cancels an accepted-but-never-started task and records it so Revert works", async () => {
     const { project, tag } = fixture();
     const m = member(project.id, tag.id, "overtaken"); // accepted (suggested 0), started 0
-    const out = applyTagPlan(
+    const out = await applyTagPlan(
       tag, tagMembers(tag),
       { description: "", tasks: [{ id: m.id, retire: true, reason: "landed in #77" }] },
       ACTOR
@@ -207,10 +207,10 @@ describe("applyTagPlan", () => {
     ]);
   });
 
-  it("refuses to retire a STARTED task and flags it for the user instead", () => {
+  it("refuses to retire a STARTED task and flags it for the user instead", async () => {
     const { project, tag } = fixture();
     const m = member(project.id, tag.id, "half done", { started: 1, worktree_path: "/tmp/wt" });
-    const out = applyTagPlan(
+    const out = await applyTagPlan(
       tag, tagMembers(tag),
       { description: "", tasks: [{ id: m.id, retire: true, reason: "looks redundant" }] },
       ACTOR
@@ -223,10 +223,10 @@ describe("applyTagPlan", () => {
     expect(out.summary).toMatch(/left alone for you to judge/);
   });
 
-  it("never touches a task a turn is streaming in", () => {
+  it("never touches a task a turn is streaming in", async () => {
     const { project, tag } = fixture();
     const m = member(project.id, tag.id, "live", { running: 1 });
-    const out = applyTagPlan(
+    const out = await applyTagPlan(
       tag, tagMembers(tag),
       { description: "", tasks: [{ id: m.id, retire: true, reason: "x" }, { id: m.id, title: "renamed" }] },
       ACTOR
@@ -236,11 +236,11 @@ describe("applyTagPlan", () => {
     expect(getTask(m.id)!.title).toBe("live");
   });
 
-  it("ignores ids that don't carry this tag, and retirements with no reason", () => {
+  it("ignores ids that don't carry this tag, and retirements with no reason", async () => {
     const { project, tag } = fixture();
     const outsider = createTask({ project_id: project.id, title: "not a member" });
     const m = member(project.id, tag.id, "member", { suggested: 1 });
-    const out = applyTagPlan(
+    const out = await applyTagPlan(
       tag, tagMembers(tag),
       { description: "", tasks: [{ id: outsider.id, title: "hijacked" }, { id: "made-up" }, { id: m.id, retire: true }] },
       ACTOR
