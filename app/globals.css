@@ -665,6 +665,9 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .status-ctl.awaiting .cv{color:var(--rev);font-weight:600;}
 /* tasks-column group header */
 .task-group-h.needs-you{color:var(--rev);}
+/* The header is a collapse button, and .tgh-btn:hover would otherwise win on
+   specificity and grey out the one group that has to stay accented. */
+.task-group-h.needs-you:hover{color:var(--rev);}
 .task-group-h.needs-you .gcount{background:var(--rev-bg);color:var(--rev);}
 
 /* board (kanban) view -------------------------------------------------- */
