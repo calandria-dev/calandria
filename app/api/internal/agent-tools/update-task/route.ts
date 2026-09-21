@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
   const caller = body.taskId ? getTask(body.taskId) : undefined;
   if (!caller) return NextResponse.json({ error: "unknown task" }, { status: 404 });
 
-  const { task: updated, text, autoStartDependents } = updateTaskForAgent(caller, body.task, {
+  const { task: updated, text, autoStartDependents } = await updateTaskForAgent(caller, body.task, {
     title: body.title,
     description: body.description,
     priority: body.priority,

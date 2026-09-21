@@ -32,13 +32,13 @@ function accepted(projectId: string, title = "Accepted") {
 }
 
 describe("update_task records an edit exactly when the old ownership gate would have refused it", () => {
-  it("edits an ACCEPTED task in another project and records one edit naming the fields that moved", () => {
+  it("edits an ACCEPTED task in another project and records one edit naming the fields that moved", async () => {
     const project = createProject({ name: "Edits-Basic" });
     const other = createProject({ name: "Edits-Basic-Other" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
     const target = accepted(other.id);
 
-    const { task, text } = updateTaskForAgent(caller, target.id, { title: "Renamed", priority: "hi" });
+    const { task, text } = await updateTaskForAgent(caller, target.id, { title: "Renamed", priority: "hi" });
     expect(task).not.toBeNull();
     expect(getTask(target.id)).toMatchObject({ title: "Renamed", priority: "hi" });
 
@@ -52,13 +52,13 @@ describe("update_task records an edit exactly when the old ownership gate would 
     expect(text).toContain("flagged as changed");
   });
 
-  it("refuses a RUNNING task that isn't the caller's own row, writes nothing, and records nothing", () => {
+  it("refuses a RUNNING task that isn't the caller's own row, writes nothing, and records nothing", async () => {
     const project = createProject({ name: "Edits-Running" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
     const target = createTask({ project_id: project.id, title: "Live", description: "" });
     updateTask(target.id, { running: 1 });
 
-    const { task, text } = updateTaskForAgent(caller, target.id, { title: "Hijacked" });
+    const { task, text } = await updateTaskForAgent(caller, target.id, { title: "Hijacked" });
     expect(task).toBeNull();
     expect(text).toContain("streaming");
     expect(getTask(target.id)!.title).toBe("Live");
@@ -66,22 +66,22 @@ describe("update_task records an edit exactly when the old ownership gate would 
     expect(getTask(target.id)!.agent_edited_at).toBe(0);
   });
 
-  it("edits an inert tray suggestion and records nothing, since that write was always allowed", () => {
+  it("edits an inert tray suggestion and records nothing, since that write was always allowed", async () => {
     const project = createProject({ name: "Edits-Inert" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
     const inert = createSuggestedTask(project, { title: "Proposed", description: "" }).task!;
 
-    const { task } = updateTaskForAgent(caller, inert.id, { title: "Sharpened" });
+    const { task } = await updateTaskForAgent(caller, inert.id, { title: "Sharpened" });
     expect(task!.title).toBe("Sharpened");
     expect(listAgentEdits(inert.id)).toHaveLength(0);
     expect(getTask(inert.id)!.agent_edited_at).toBe(0);
   });
 
-  it("edits the caller's OWN row and records NOTHING", () => {
+  it("edits the caller's OWN row and records NOTHING", async () => {
     const project = createProject({ name: "Edits-Own" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
 
-    updateTaskForAgent(caller, undefined, { title: "Renamed" });
+    await updateTaskForAgent(caller, undefined, { title: "Renamed" });
     expect(getTask(caller.id)!.title).toBe("Renamed");
     expect(listAgentEdits(caller.id)).toHaveLength(0);
     expect(getTask(caller.id)!.agent_edited_at).toBe(0);
@@ -93,7 +93,7 @@ describe("GET /api/tasks/[id]/agent-edits", () => {
     const project = createProject({ name: "Edits-Get" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
     const target = accepted(project.id, "T");
-    updateTaskForAgent(caller, target.id, { title: "Renamed" });
+    await updateTaskForAgent(caller, target.id, { title: "Renamed" });
 
     const res = await getEdits(target.id);
     expect(res.status).toBe(200);
@@ -111,7 +111,7 @@ describe("POST /api/tasks/[id]/agent-edits, revert and ack", () => {
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
     const target = accepted(project.id, "Original");
 
-    updateTaskForAgent(caller, target.id, {
+    await updateTaskForAgent(caller, target.id, {
       title: "Renamed",
       description: "new brief",
       priority: "hi",
@@ -140,7 +140,7 @@ describe("POST /api/tasks/[id]/agent-edits, revert and ack", () => {
     updateTask(target.id, { suggested: 0, started: 1 });
     setTaskDeps(target.id, [b.id]);
 
-    updateTaskForAgent(caller, target.id, { blocked_by: [c.id], tags: [tagB.id] });
+    await updateTaskForAgent(caller, target.id, { blocked_by: [c.id], tags: [tagB.id] });
     expect(getTaskDeps(target.id)).toEqual([c.id]);
     expect(getTaskTagIds(target.id)).toEqual([tagB.id]);
 
@@ -159,7 +159,7 @@ describe("POST /api/tasks/[id]/agent-edits, revert and ack", () => {
     const target = createTask({ project_id: project.id, title: "Target", description: "", tag_ids: [tagA.id] });
     updateTask(target.id, { suggested: 0, started: 1 });
 
-    updateTaskForAgent(caller, target.id, { tags: [tagB.id] });
+    await updateTaskForAgent(caller, target.id, { tags: [tagB.id] });
     expect(getTaskTagIds(target.id)).toEqual([tagB.id]);
     const edit = listAgentEdits(target.id)[0];
 
@@ -176,7 +176,7 @@ describe("POST /api/tasks/[id]/agent-edits, revert and ack", () => {
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
 
     const target1 = accepted(project.id, "T1");
-    updateTaskForAgent(caller, target1.id, { title: "T1-renamed" });
+    await updateTaskForAgent(caller, target1.id, { title: "T1-renamed" });
     expect(getTask(target1.id)!.agent_edited_at).toBeGreaterThan(0);
     const edit1 = listAgentEdits(target1.id)[0];
     const revertRes = await postEdits(target1.id, { action: "revert", edit_id: edit1.id });
@@ -185,7 +185,7 @@ describe("POST /api/tasks/[id]/agent-edits, revert and ack", () => {
     expect(getTask(target1.id)!.title).toBe("T1");
 
     const target2 = accepted(project.id, "T2");
-    updateTaskForAgent(caller, target2.id, { title: "T2-renamed" });
+    await updateTaskForAgent(caller, target2.id, { title: "T2-renamed" });
     expect(getTask(target2.id)!.agent_edited_at).toBeGreaterThan(0);
     const ackRes = await postEdits(target2.id, { action: "ack" });
     expect(ackRes.status).toBe(200);
@@ -202,7 +202,7 @@ describe("POST /api/tasks/[id]/agent-edits, revert and ack", () => {
     const project = createProject({ name: "Edits-Stale" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
     const target = accepted(project.id, "A");
-    updateTaskForAgent(caller, target.id, { title: "B", priority: "hi" });
+    await updateTaskForAgent(caller, target.id, { title: "B", priority: "hi" });
     const edit = listAgentEdits(target.id)[0];
     // The user renames it themselves without acking the chip…
     updateTask(target.id, { title: "C" });
@@ -218,8 +218,8 @@ describe("POST /api/tasks/[id]/agent-edits, revert and ack", () => {
     const project = createProject({ name: "Edits-Stack" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
     const target = accepted(project.id, "A");
-    updateTaskForAgent(caller, target.id, { title: "B" });
-    updateTaskForAgent(caller, target.id, { title: "C" });
+    await updateTaskForAgent(caller, target.id, { title: "B" });
+    await updateTaskForAgent(caller, target.id, { title: "C" });
     const [newer, older] = listAgentEdits(target.id);
     expect(older.changes[0].after).toBe("B");
     // Oldest first: B is no longer what the row holds, so this would land on
@@ -238,12 +238,12 @@ describe("POST /api/tasks/[id]/agent-edits, revert and ack", () => {
     const project = createProject({ name: "Edits-AckThenRevert" });
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
     const target = accepted(project.id, "A");
-    updateTaskForAgent(caller, target.id, { title: "B" });
+    await updateTaskForAgent(caller, target.id, { title: "B" });
     expect((await postEdits(target.id, { action: "ack" })).status).toBe(200);
     expect(listAgentEdits(target.id)[0].acknowledged_at).toBeGreaterThan(0);
     expect(getTask(target.id)!.agent_edited_at).toBe(0);
     // A fresh edit re-raises the chip…
-    updateTaskForAgent(caller, target.id, { priority: "hi" });
+    await updateTaskForAgent(caller, target.id, { priority: "hi" });
     expect(getTask(target.id)!.agent_edited_at).toBeGreaterThan(0);
     const latest = listAgentEdits(target.id)[0];
     // …and reverting it alone clears the chip: the acked row is not outstanding.
@@ -257,7 +257,7 @@ describe("POST /api/tasks/[id]/agent-edits, revert and ack", () => {
     const caller = createTask({ project_id: project.id, title: "Caller", description: "" });
     const target = accepted(project.id, "T");
     const other = accepted(project.id, "Other");
-    updateTaskForAgent(caller, target.id, { title: "Renamed" });
+    await updateTaskForAgent(caller, target.id, { title: "Renamed" });
     const edit = listAgentEdits(target.id)[0];
 
     expect((await postEdits(target.id, { action: "revert", edit_id: "ghost" })).status).toBe(404);

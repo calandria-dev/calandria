@@ -36,35 +36,35 @@ function callerTask(projectId: string, title = "Caller") {
 }
 
 describe("update_task sets dependencies after the fact", () => {
-  it("wires blockers onto a suggestion filed earlier in the turn", () => {
+  it("wires blockers onto a suggestion filed earlier in the turn", async () => {
     const project = createProject({ name: "UD-Wire" });
     const caller = callerTask(project.id);
     const first = createSuggestedTask(project, { title: "First", description: "" }).task!;
     const second = createSuggestedTask(project, { title: "Second", description: "" }).task!;
 
-    const { task, text } = updateTaskForAgent(caller, second.id, { blocked_by: [first.id] });
+    const { task, text } = await updateTaskForAgent(caller, second.id, { blocked_by: [first.id] });
     expect(task).not.toBeNull();
     expect(getTaskDeps(second.id)).toEqual([first.id]);
     expect(text).toContain("blocked by 1 task(s)");
   });
 
-  it("replaces the dep set rather than adding to it, and [] clears it", () => {
+  it("replaces the dep set rather than adding to it, and [] clears it", async () => {
     const project = createProject({ name: "UD-Replace" });
     const caller = callerTask(project.id);
     const a = createSuggestedTask(project, { title: "A", description: "" }).task!;
     const b = createSuggestedTask(project, { title: "B", description: "" }).task!;
     const dependent = createSuggestedTask(project, { title: "Dependent", description: "", blocked_by: [a.id] }).task!;
 
-    updateTaskForAgent(caller, dependent.id, { blocked_by: [b.id] });
+    await updateTaskForAgent(caller, dependent.id, { blocked_by: [b.id] });
     expect(getTaskDeps(dependent.id)).toEqual([b.id]);
 
-    const cleared = updateTaskForAgent(caller, dependent.id, { blocked_by: [] });
+    const cleared = await updateTaskForAgent(caller, dependent.id, { blocked_by: [] });
     expect(getTaskDeps(dependent.id)).toEqual([]);
     expect(cleared.task).not.toBeNull();
     expect(cleared.text).toContain("no longer blocked");
   });
 
-  it("refuses the whole call on an unusable ref rather than wiring the rest", () => {
+  it("refuses the whole call on an unusable ref rather than wiring the rest", async () => {
     // Fail-closed, unlike suggest_task, which partitions and reports.
     // suggest_task fills in a blank set on a newly invented task; this
     // replaces an existing one. Keeping the refs that resolved and dropping
@@ -78,7 +78,7 @@ describe("update_task sets dependencies after the fact", () => {
     const foreign = createSuggestedTask(other, { title: "Foreign", description: "" }).task!;
     const target = createSuggestedTask(project, { title: "Target", description: "", blocked_by: [kept.id] }).task!;
 
-    const { task, text } = updateTaskForAgent(caller, target.id, { blocked_by: [blocker.id, foreign.id, "ghost"] });
+    const { task, text } = await updateTaskForAgent(caller, target.id, { blocked_by: [blocker.id, foreign.id, "ghost"] });
     expect(task).toBeNull();
     expect(getTaskDeps(target.id)).toEqual([kept.id]);
     // Each bad ref is named with the reason it failed. The fix differs per
@@ -87,38 +87,38 @@ describe("update_task sets dependencies after the fact", () => {
     expect(text).toContain(`"ghost" isn't a task id`);
   });
 
-  it("refuses a self-reference instead of wiring a task to itself", () => {
+  it("refuses a self-reference instead of wiring a task to itself", async () => {
     const project = createProject({ name: "UD-Self" });
     const caller = callerTask(project.id);
     const target = createSuggestedTask(project, { title: "Target", description: "" }).task!;
 
-    const { task, text } = updateTaskForAgent(caller, target.id, { blocked_by: [target.id] });
+    const { task, text } = await updateTaskForAgent(caller, target.id, { blocked_by: [target.id] });
     expect(task).toBeNull();
     expect(getTaskDeps(target.id)).toEqual([]);
     expect(text).toContain("is this task itself");
   });
 
-  it("takes several blockers at once and treats reordering as no change", () => {
+  it("takes several blockers at once and treats reordering as no change", async () => {
     const project = createProject({ name: "UD-Many" });
     const caller = callerTask(project.id);
     const a = createSuggestedTask(project, { title: "A", description: "" }).task!;
     const b = createSuggestedTask(project, { title: "B", description: "" }).task!;
     const target = createSuggestedTask(project, { title: "Target", description: "" }).task!;
 
-    expect(updateTaskForAgent(caller, target.id, { blocked_by: [a.id, b.id] }).text).toContain("blocked by 2 task(s)");
+    expect((await updateTaskForAgent(caller, target.id, { blocked_by: [a.id, b.id] })).text).toContain("blocked by 2 task(s)");
     expect(getTaskDeps(target.id).slice().sort()).toEqual([a.id, b.id].sort());
     // Edges have no order, so the same set the other way round is not an edit.
-    expect(updateTaskForAgent(caller, target.id, { blocked_by: [b.id, a.id] }).text).toContain("No change");
+    expect((await updateTaskForAgent(caller, target.id, { blocked_by: [b.id, a.id] })).text).toContain("No change");
   });
 
-  it("refuses the WHOLE call on a cycle, leaving the other fields untouched", () => {
+  it("refuses the WHOLE call on a cycle, leaving the other fields untouched", async () => {
     const project = createProject({ name: "UD-Cycle" });
     const caller = callerTask(project.id);
     const a = createSuggestedTask(project, { title: "A", description: "" }).task!;
     const b = createSuggestedTask(project, { title: "B", description: "", blocked_by: [a.id] }).task!;
 
     // a blocked_by b would close the loop a → b → a.
-    const { task, text } = updateTaskForAgent(caller, a.id, { title: "Renamed", blocked_by: [b.id] });
+    const { task, text } = await updateTaskForAgent(caller, a.id, { title: "Renamed", blocked_by: [b.id] });
     expect(task).toBeNull();
     expect(text).toContain("cycle");
     expect(getTaskDeps(a.id)).toEqual([]);
@@ -126,19 +126,19 @@ describe("update_task sets dependencies after the fact", () => {
     expect(getTask(a.id)!.title).toBe("A");
   });
 
-  it("refuses to set blockers on the calling session's own row", () => {
+  it("refuses to set blockers on the calling session's own row", async () => {
     const project = createProject({ name: "UD-Own" });
     const caller = callerTask(project.id);
     const blocker = createSuggestedTask(project, { title: "Blocker", description: "" }).task!;
 
-    const { task, text } = updateTaskForAgent(caller, undefined, { blocked_by: [blocker.id] });
+    const { task, text } = await updateTaskForAgent(caller, undefined, { blocked_by: [blocker.id] });
     expect(task).toBeNull();
     expect(getTaskDeps(caller.id)).toEqual([]);
     // The refusal has to name the verb that does mean "park this": on_hold.
     expect(text).toContain("on_hold");
   });
 
-  it("still refuses a target with a live turn streaming in it", () => {
+  it("still refuses a target with a live turn streaming in it", async () => {
     // A target with a live turn streaming in it is still refused: a turn may
     // be mid-way through reading the very fields this call would rewrite.
     const project = createProject({ name: "UD-Boundary" });
@@ -146,19 +146,19 @@ describe("update_task sets dependencies after the fact", () => {
     const blocker = createSuggestedTask(project, { title: "Blocker", description: "" }).task!;
     const theirs = callerTask(project.id, "Someone else's live task");
 
-    const { task, text } = updateTaskForAgent(caller, theirs.id, { blocked_by: [blocker.id] });
+    const { task, text } = await updateTaskForAgent(caller, theirs.id, { blocked_by: [blocker.id] });
     expect(task).toBeNull();
     expect(getTaskDeps(theirs.id)).toEqual([]);
     expect(text).toContain("streaming");
   });
 
-  it("reports no change when the dep set already matches", () => {
+  it("reports no change when the dep set already matches", async () => {
     const project = createProject({ name: "UD-Noop" });
     const caller = callerTask(project.id);
     const blocker = createSuggestedTask(project, { title: "Blocker", description: "" }).task!;
     const target = createSuggestedTask(project, { title: "Target", description: "", blocked_by: [blocker.id] }).task!;
 
-    const { task, text } = updateTaskForAgent(caller, target.id, { blocked_by: [blocker.id] });
+    const { task, text } = await updateTaskForAgent(caller, target.id, { blocked_by: [blocker.id] });
     expect(task).not.toBeNull();
     expect(text).toContain("No change");
   });
@@ -171,7 +171,7 @@ describe("update_task sets dependencies after the fact", () => {
 
     const seen: BusEvent[] = [];
     const off = subscribeGlobal((_id, e) => seen.push(e));
-    updateTaskForAgent(caller, target.id, { blocked_by: [blocker.id] });
+    await updateTaskForAgent(caller, target.id, { blocked_by: [blocker.id] });
     off();
     expect(seen.map((e) => e.type)).toContain("task_edited");
   });

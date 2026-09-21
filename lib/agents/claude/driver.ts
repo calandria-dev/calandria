@@ -515,7 +515,7 @@ function calandriaServer(
           // is the target it named; updateTaskForAgent decides whether that may
           // be written and re-reads both rows first, so a task deleted or
           // started mid-turn is a refusal, not a stale write.
-          const { task: updated, text, autoStartDependents } = updateTaskForAgent(task, args.task, args);
+          const { task: updated, text, autoStartDependents } = await updateTaskForAgent(task, args.task, args);
           // Reported to the launcher, not acted on here: the sweep lives in
           // lib/autoStart.ts and this file must not reach it (TurnHooks).
           if (autoStartDependents && updated) hooks?.onTaskCleared(updated.id);
