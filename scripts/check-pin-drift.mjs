@@ -7,7 +7,8 @@
 // model the CLI is too old to run, so it's reported on staleness instead. Run
 // daily by .github/workflows/pin-drift.yml. That workflow automates the CLI
 // pins and files or updates one labeled issue for the pins that still require
-// manual review.
+// manual review. Claude Code family aliases also get a behavior check between
+// the pinned and latest CLIs, independent of the version-distance thresholds.
 //
 // `--update-agy` rewrites AGY_VERSION and both SHA-512 ARGs from the manifests
 // this run already fetched. `--update-npm` records stale Claude Code and Codex
@@ -19,11 +20,15 @@
 //
 // Usage: node scripts/check-pin-drift.mjs [--dockerfile <path>]
 //        [--package-json <path>] [--report <path>]
+//        --claude-alias-pinned-bin <path>
+//        --claude-alias-latest-bin <path>
 //        [--update-agy] [--agy-summary <path>] [--apply-agy <path>]
 //        [--update-npm] [--npm-summary <path>] [--apply-npm <path>]
 // Exit codes: 0 = current, 1 = drift found (report written), 2 = check itself failed.
 
+import { spawn } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
 import { pathToFileURL } from "node:url";
 
 const AGY_MANIFEST_BASE =
@@ -96,6 +101,18 @@ const ARCHES = ["amd64", "arm64"];
 
 const FETCH_TIMEOUT_MS = 20_000;
 const FETCH_ATTEMPTS = 3;
+const CLAUDE_PROBE_TIMEOUT_MS = 20_000;
+
+// Keep this list aligned with PROBE_ALIASES in
+// lib/agents/claude/modelProbe.ts. The drift script runs under plain Node, so
+// it cannot import the application's TypeScript module graph.
+export const CLAUDE_PROBE_ALIASES = [
+  "fable",
+  "opus",
+  "sonnet",
+  "haiku",
+  "opusplan",
+];
 
 function parseArgs(argv) {
   const opts = {
@@ -108,6 +125,8 @@ function parseArgs(argv) {
     updateNpm: false,
     npmSummary: null,
     applyNpm: null,
+    pinnedClaude: null,
+    latestClaude: null,
   };
   const paths = {
     "--dockerfile": "dockerfile",
@@ -117,6 +136,8 @@ function parseArgs(argv) {
     "--apply-agy": "applyAgy",
     "--npm-summary": "npmSummary",
     "--apply-npm": "applyNpm",
+    "--claude-alias-pinned-bin": "pinnedClaude",
+    "--claude-alias-latest-bin": "latestClaude",
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -150,6 +171,16 @@ function parseArgs(argv) {
   if (opts.applyNpm && opts.updateNpm) {
     throw new Error(
       "--apply-npm replays a decision --update-npm already made; pass one or the other",
+    );
+  }
+  if (Boolean(opts.pinnedClaude) !== Boolean(opts.latestClaude)) {
+    throw new Error(
+      "--claude-alias-pinned-bin and --claude-alias-latest-bin must name the two installed Claude Code binaries together",
+    );
+  }
+  if (!opts.applyAgy && !opts.applyNpm && !opts.pinnedClaude) {
+    throw new Error(
+      "--claude-alias-pinned-bin and --claude-alias-latest-bin are required to check Claude alias resolution",
     );
   }
   return opts;
@@ -592,6 +623,161 @@ export function npmStaleness({ pinned, latest, pinnedAt, versions, now }) {
 }
 
 /**
+ * The family aliases are a CLI contract. A version can be close enough to
+ * skip npm staleness while one of these aliases starts selecting a new model.
+ *
+ * Both maps must answer every alias. An absent answer is an operational probe
+ * failure, never evidence that the two CLIs agree.
+ */
+export function compareClaudeAliasResolutions(pinned, latest) {
+  const read = (readings, label, alias) => {
+    const reading = readings?.[alias];
+    if (typeof reading?.model !== "string" || !reading.model.trim()) {
+      throw new Error(
+        `the ${label} Claude alias probe did not resolve \`${alias}\``,
+      );
+    }
+    if (typeof reading.version !== "string" || !reading.version.trim()) {
+      throw new Error(
+        `the ${label} Claude alias probe did not report a version for \`${alias}\``,
+      );
+    }
+    return { model: reading.model.trim(), version: reading.version.trim() };
+  };
+
+  const changes = [];
+  const versions = { pinned: null, latest: null };
+  for (const alias of CLAUDE_PROBE_ALIASES) {
+    const pinnedReading = read(pinned, "pinned", alias);
+    const latestReading = read(latest, "latest", alias);
+    for (const [label, reading] of [
+      ["pinned", pinnedReading],
+      ["latest", latestReading],
+    ]) {
+      if (versions[label] && versions[label] !== reading.version) {
+        throw new Error(
+          `the ${label} Claude alias probe reported multiple versions: ` +
+            `\`${versions[label]}\` and \`${reading.version}\``,
+        );
+      }
+      versions[label] = reading.version;
+    }
+    if (pinnedReading.model !== latestReading.model) {
+      changes.push({
+        alias,
+        pinned: pinnedReading.model,
+        latest: latestReading.model,
+        pinnedVersion: pinnedReading.version,
+        latestVersion: latestReading.version,
+      });
+    }
+  }
+  return changes;
+}
+
+/** The `system/init` row that carries an alias's resolved model id. */
+function resolvedModelFromInit(line) {
+  const text = line.trim();
+  if (!text.startsWith("{")) return null;
+  try {
+    const row = JSON.parse(text);
+    if (row.type !== "system" || row.subtype !== "init") return null;
+    if (typeof row.model !== "string" || !row.model.trim()) return null;
+    if (
+      typeof row.claude_code_version !== "string" ||
+      !row.claude_code_version.trim()
+    ) {
+      return null;
+    }
+    return {
+      model: row.model.trim(),
+      version: row.claude_code_version.trim(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read an alias before Claude Code can make a request. The unreachable
+ * loopback endpoint keeps this side-effect free, and the child is killed as
+ * soon as its init record arrives.
+ */
+function probeClaudeAlias(bin, alias) {
+  const args = [
+    "-p",
+    "--bare",
+    "--model",
+    alias,
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--no-session-persistence",
+    "hi",
+  ];
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = spawn(bin, args, {
+        cwd: os.tmpdir(),
+        env: {
+          ...process.env,
+          ANTHROPIC_BASE_URL: "http://127.0.0.1:9",
+          DISABLE_AUTOUPDATER: "1",
+        },
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    } catch (err) {
+      reject(new Error(`could not start Claude alias probe for \`${alias}\`: ${err.message}`));
+      return;
+    }
+
+    let done = false;
+    const finish = (err, model) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      child.kill();
+      if (err) reject(err);
+      else resolve(model);
+    };
+    const timer = setTimeout(() => {
+      finish(new Error(`Claude alias probe timed out for \`${alias}\``));
+    }, CLAUDE_PROBE_TIMEOUT_MS);
+
+    let buffer = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      buffer += chunk;
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const model = resolvedModelFromInit(line);
+        if (model) {
+          finish(null, model);
+          return;
+        }
+      }
+    });
+    child.on("error", (err) => {
+      finish(new Error(`Claude alias probe failed for \`${alias}\`: ${err.message}`));
+    });
+    child.on("close", () => {
+      finish(new Error(`Claude alias probe ended before resolving \`${alias}\``));
+    });
+  });
+}
+
+/** Read every family alias from one installed Claude Code binary. */
+async function probeClaudeAliasResolutions(bin) {
+  const readings = {};
+  for (const alias of CLAUDE_PROBE_ALIASES) {
+    readings[alias] = await probeClaudeAlias(bin, alias);
+  }
+  return readings;
+}
+
+/**
  * Both arches nearly always report the same upstream version, so reporting one
  * row per arch would just say everything twice. Collapse equal values into one
  * finding and name the arches only when they actually disagree.
@@ -645,7 +831,12 @@ export function npmPinEntries(pins, packagePins) {
 async function collectFindings(
   pins,
   packagePins,
-  { updateAgy = false, updateNpm = false } = {},
+  {
+    updateAgy = false,
+    updateNpm = false,
+    pinnedClaude,
+    latestClaude,
+  } = {},
 ) {
   const findings = [];
 
@@ -739,6 +930,10 @@ async function collectFindings(
   }
 
   const npmBumps = updateNpm ? npmBumpPlan(pins, npm, stale) : null;
+  const aliasDrift = compareClaudeAliasResolutions(
+    await probeClaudeAliasResolutions(pinnedClaude),
+    await probeClaudeAliasResolutions(latestClaude),
+  );
   const bumpedPackages = new Set(
     npmBumps
       ? CLI_NPM_PLAN.filter(({ pin }) => npmBumps[pin]).map(({ pkg }) => pkg)
@@ -746,6 +941,7 @@ async function collectFindings(
   );
   return {
     findings,
+    aliasDrift,
     stale: updateNpm
       ? stale.filter(({ pkg }) => !bumpedPackages.has(pkg))
       : stale,
@@ -780,7 +976,7 @@ const BUMP_CHECKLIST = [
   "",
 ];
 
-function buildReport({ findings, stale, entries, observed }, pins, agyNote) {
+function buildReport({ findings, aliasDrift, stale, entries, observed }, pins, agyNote) {
   const lines = [];
 
   if (agyNote) lines.push(agyNote, "");
@@ -832,6 +1028,25 @@ function buildReport({ findings, stale, entries, observed }, pins, agyNote) {
         " clears all three, so this is at most one notice per pin per window.",
       "",
       ...BUMP_CHECKLIST,
+    );
+  }
+
+  if (aliasDrift.length) {
+    lines.push(
+      "## Alias resolution changed",
+      "",
+      "These family aliases resolve to different model ids in the pinned and",
+      "latest Claude Code releases. This signal does not wait for a staleness",
+      "threshold. Review CLI and Agent SDK compatibility before choosing a",
+      "bump. Their exact pins are independently versioned.",
+      "",
+      "| Alias | Pinned CLI | Pinned model | Latest CLI | Latest model |",
+      "|-|-|-|-|-|",
+      ...aliasDrift.map(
+        ({ alias, pinnedVersion, pinned, latestVersion, latest }) =>
+          `| \`${alias}\` | \`${pinnedVersion}\` | \`${pinned}\` | \`${latestVersion}\` | \`${latest}\` |`,
+      ),
+      "",
     );
   }
 
@@ -933,6 +1148,8 @@ async function main() {
   const result = await collectFindings(pins, packagePins, {
     updateAgy: opts.updateAgy,
     updateNpm: opts.updateNpm,
+    pinnedClaude: opts.pinnedClaude,
+    latestClaude: opts.latestClaude,
   });
 
   if (opts.updateNpm && opts.npmSummary) {
@@ -985,7 +1202,7 @@ async function main() {
     }
   }
 
-  const total = result.findings.length + result.stale.length;
+  const total = result.findings.length + result.aliasDrift.length + result.stale.length;
   if (total === 0) {
     console.log(
       `Pins are current: gh=${pins.gh.value}, ` +
@@ -1005,6 +1222,7 @@ async function main() {
   console.log(report);
   console.error(
     `\n${result.findings.length} pin(s) have aged out, ` +
+      `${result.aliasDrift.length} alias resolution(s) changed, and ` +
       `${result.stale.length} are behind.`,
   );
   return 1;

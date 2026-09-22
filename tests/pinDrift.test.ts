@@ -8,6 +8,8 @@ import {
   npmPinEntries,
   byUpstreamValue,
   npmStaleness,
+  compareClaudeAliasResolutions,
+  CLAUDE_PROBE_ALIASES,
   agyBumpPlan,
   applyAgyPin,
   npmBumpPlan,
@@ -19,6 +21,7 @@ const ROOT = path.join(__dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
 const PACKAGE_JSON = path.join(ROOT, "package.json");
 const PIN_WORKFLOW = path.join(ROOT, ".github/workflows/pin-drift.yml");
+const MODEL_PROBE = path.join(ROOT, "lib/agents/claude/modelProbe.ts");
 
 /**
  * scripts/check-pin-drift.mjs reads the Dockerfile with regexes, and the only
@@ -311,6 +314,16 @@ describe("pin drift workflow", () => {
     expect(workflow).toContain("npm run fix-lockfile");
   });
 
+  it("installs isolated Claude Code probes and passes both binary paths", () => {
+    expect(workflow).toContain('npm install --prefix "$pinned_prefix"');
+    expect(workflow).toContain('npm install --prefix "$latest_prefix"');
+    expect(workflow).toContain("--claude-alias-pinned-bin");
+    expect(workflow).toContain("--claude-alias-latest-bin");
+    expect(workflow).toMatch(
+      /- name: Open, update or close the drift issue\n\s+if: env\.DRY_RUN != 'true'/,
+    );
+  });
+
   it("dispatches CI and enables exact-head squash auto-merge", () => {
     expect(workflow).toContain("dispatch_and_confirm test.yml Test");
     expect(workflow).toContain(
@@ -428,6 +441,88 @@ describe("package.json pin extraction", () => {
     expect(verdict?.minorsAhead).toBe(0);
     expect(verdict?.patchesAhead).toBe(104);
     expect(verdict?.reasons).toEqual(["104 newer patches on 0.3"]);
+  });
+});
+
+describe("Claude alias resolution drift", () => {
+  const version = "2.1.278";
+  const pinned = {
+    fable: { model: "claude-opus-4-6", version },
+    opus: { model: "claude-opus-5", version },
+    sonnet: { model: "claude-sonnet-4-5", version },
+    haiku: { model: "claude-haiku-4-5", version },
+    opusplan: { model: "claude-opus-4-6", version },
+  };
+
+  it("stays quiet when every family alias resolves identically", () => {
+    expect(compareClaudeAliasResolutions(pinned, { ...pinned })).toEqual([]);
+  });
+
+  it("reports a changed alias before version staleness would fire", () => {
+    expect(
+      compareClaudeAliasResolutions(pinned, {
+        ...pinned,
+        opus: { model: "claude-opus-5-5", version: "2.1.280" },
+        fable: { ...pinned.fable, version: "2.1.280" },
+        sonnet: { ...pinned.sonnet, version: "2.1.280" },
+        haiku: { ...pinned.haiku, version: "2.1.280" },
+        opusplan: { ...pinned.opusplan, version: "2.1.280" },
+      }),
+    ).toEqual([
+      {
+        alias: "opus",
+        pinned: "claude-opus-5",
+        latest: "claude-opus-5-5",
+        pinnedVersion: "2.1.278",
+        latestVersion: "2.1.280",
+      },
+    ]);
+  });
+
+  it("orders several changed aliases by the probe's fixed alias order", () => {
+    expect(
+      compareClaudeAliasResolutions(pinned, {
+        fable: { model: "claude-opus-5-5", version: "2.1.280" },
+        opus: { model: "claude-opus-5-5", version: "2.1.280" },
+        sonnet: { ...pinned.sonnet, version: "2.1.280" },
+        haiku: { model: "claude-haiku-5", version: "2.1.280" },
+        opusplan: { ...pinned.opusplan, version: "2.1.280" },
+      }).map((change) => change.alias),
+    ).toEqual(["fable", "opus", "haiku"]);
+  });
+
+  it("fails when either probe leaves an alias unresolved", () => {
+    const incomplete: Partial<typeof pinned> = { ...pinned };
+    delete incomplete.opus;
+    expect(() => compareClaudeAliasResolutions(incomplete, pinned)).toThrow(
+      /pinned Claude alias probe did not resolve `opus`/,
+    );
+    expect(() => compareClaudeAliasResolutions(pinned, incomplete)).toThrow(
+      /latest Claude alias probe did not resolve `opus`/,
+    );
+  });
+
+  it("fails when a probe omits its CLI version or mixes versions", () => {
+    expect(() =>
+      compareClaudeAliasResolutions(
+        { ...pinned, opus: { model: pinned.opus.model, version: "" } },
+        pinned,
+      ),
+    ).toThrow(/pinned Claude alias probe did not report a version/);
+
+    expect(() =>
+      compareClaudeAliasResolutions(
+        { ...pinned, opus: { ...pinned.opus, version: "2.1.279" } },
+        pinned,
+      ),
+    ).toThrow(/pinned Claude alias probe reported multiple versions/);
+  });
+
+  it("stays aligned with the application alias list", () => {
+    const source = readFileSync(MODEL_PROBE, "utf8");
+    const match = /export const PROBE_ALIASES = (\[[^;]+\]) as const;/.exec(source);
+    expect(match?.[1]).toBeDefined();
+    expect(CLAUDE_PROBE_ALIASES).toEqual(JSON.parse(match![1]));
   });
 });
 
