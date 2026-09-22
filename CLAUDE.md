@@ -9,7 +9,7 @@ Claude or Codex login. It never uses an API key.
 
 - `npm run dev`: app (:3000, `server.js`) plus the pty sidecar (:3001, `pty-server.js`) via
   concurrently. `npm run dev:next` and `npm run pty` run them separately.
-- `npm run build` (turbopack), then `npm start` for production.
+- `npm run build`, then `npm start` for production.
 - `npm test`: vitest, serial on purpose: tests spawn many real git subprocesses. Single file:
   `npx vitest run tests/merge.test.ts`.
 - `npm run test:e2e`: Playwright. Builds, then boots the real prod server against a hermetic

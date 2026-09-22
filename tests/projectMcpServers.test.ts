@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { GET, POST } from "@/app/api/projects/[id]/mcp-servers/route";
+import { getDb } from "@/lib/db";
 import { createProject, listPermissionRules, updateProject } from "@/lib/store";
 import { createProvider } from "@/lib/providers/store";
 import { setProviderSecret } from "@/lib/providerSecrets";
@@ -13,9 +14,17 @@ import { startFakeGateway, type FakeGateway } from "./fakeGateway";
 
 let gw: FakeGateway | null = null;
 
+function resetGatewayState() {
+  delete process.env.CALANDRIA_LITELLM_BASE_URL;
+  getDb().prepare("DELETE FROM model_providers WHERE type = 'litellm'").run();
+}
+
+beforeEach(resetGatewayState);
+
 afterEach(async () => {
   await gw?.close();
   gw = null;
+  resetGatewayState();
 });
 
 async function pointAtGateway(url: string, key = "", mcp = true) {
