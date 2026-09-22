@@ -526,6 +526,14 @@ dialog's model picker offers, and a spelling that differs only in case is stored
 spelling. A Codex model id on a Claude Code task is refused with nothing created, since every turn
 of that task would fail at once.
 
+**Choosing effort.** `suggest_task` accepts `reasoning`: `off`, `think`, `think_hard`,
+or `ultrathink`. Codex maps these presets to low, medium, high, and xhigh.
+Omit the field or pass `null` to inherit the environment's default from Settings →
+Run defaults. An unsupported preset is refused before the task is created.
+Gemini encodes effort in its model choice and does not accept a separate preset.
+You can review or change effort in the New task and Edit task dialogs, or in the
+session controls.
+
 **Permission modes.** The override changes only the endpoint; permission modes are unchanged from
 the [Claude Code](#claude-code) or [OpenAI Codex](#openai-codex) section for whichever driver the
 task uses.

@@ -156,6 +156,10 @@ describe("calandria-mcp stdio bridge", () => {
       expect(tools.map((t) => t.name)).not.toContain("report_issue");
       // Descriptions come from the shared defs; sanity check they're populated.
       expect(tools.find((t) => t.name === "suggest_task")?.description).toContain("Suggested tray");
+      const suggestSchema = tools.find((t) => t.name === "suggest_task")?.inputSchema as {
+        properties?: Record<string, { description?: string }>;
+      };
+      expect(suggestSchema.properties?.reasoning?.description).toContain("off, think, think_hard or ultrathink");
     } finally {
       await close();
     }
@@ -454,7 +458,7 @@ describe("calandria-mcp stdio bridge", () => {
     try {
       const r1 = (await client.callTool({
         name: "suggest_task",
-        arguments: { title: "First", description: "do first", priority: "hi" },
+        arguments: { title: "First", description: "do first", priority: "hi", reasoning: "think_hard" },
       })) as { content: { type: string; text: string }[] };
       expect(r1.content[0].text).toContain("id-0");
 
@@ -467,7 +471,7 @@ describe("calandria-mcp stdio bridge", () => {
       const first = calls.find((c) => c.body.title === "First")!;
       expect(first.path).toBe("/api/internal/agent-tools/suggest-task");
       expect(first.token).toBe("smoke-token");
-      expect(first.body).toMatchObject({ projectId: "proj-abc", taskId: "task-xyz", priority: "hi" });
+      expect(first.body).toMatchObject({ projectId: "proj-abc", taskId: "task-xyz", priority: "hi", reasoning: "think_hard" });
 
       const second = calls.find((c) => c.body.title === "Second")!;
       expect(second.body.blocked_by).toEqual(["id-0"]);

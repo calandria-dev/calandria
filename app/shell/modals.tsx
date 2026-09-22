@@ -8,7 +8,7 @@ import { nanoid } from "nanoid";
 import { relTime, duration, fmtJobCost, alphabetical, isBlocking, splitAttachments } from "./format";
 import { AttachmentChips, stagedAttachment, uploadToDraft, uploadToTask, useAttachments } from "./attachments";
 import { joinAttachmentText } from "@/lib/uploadTypes";
-import { SLABEL, permissionOptions, codexSandboxOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate, type TagRow } from "./types";
+import { SLABEL, reasoningOptions, permissionOptions, codexSandboxOptions, type BulkMoveResult, type DiscardPreview, type ProjectRow, type ProjectSession, type SaveAction, type TaskRow, type AgentsBundle, type InternalUsageEstimate, type TagRow } from "./types";
 import { tagProgress } from "./TagChips";
 import { agentLabel, agentPickerNeeded, defaultAgentFor, findAgent, pickerAgents } from "./agents";
 import { StatusDot, Skel, ErrNote } from "./shared";
@@ -274,7 +274,7 @@ function DescriptionField({ value, onChange, placeholder, files, help }: {
   );
 }
 
-export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, onCreateTag, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; tags: TagRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; provider_id: string | null; permission_mode: string | null; sandbox_mode: string | null; tag_ids: string[]; attachments: string[] }) => void; onCreateTag: (name: string) => Promise<TagRow>; onOpenSetup?: () => void }) {
+export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, onCreateTag, onOpenSetup }: { project: ProjectRow; agents: AgentsBundle; tasks: TaskRow[]; tags: TagRow[]; onClose: () => void; onCreate: (i: { title: string; desc: string; priority: Priority; agent: string; startNow: boolean; sendContext: boolean; depends_on: string[]; auto_start: boolean; model: string | null; provider_id: string | null; reasoning: string | null; permission_mode: string | null; sandbox_mode: string | null; tag_ids: string[]; attachments: string[] }) => void; onCreateTag: (name: string) => Promise<TagRow>; onOpenSetup?: () => void }) {
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
@@ -296,6 +296,7 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   // of this dialog: a rail pick afterwards would land a model behind the turn
   // that already ran on the default one.
   const [model, setModel] = useState<string | null>(null);
+  const [reasoning, setReasoning] = useState<string | null>(null);
   // Attachments stage under a draft id (POST /api/uploads) since the task has
   // no id yet; POST /api/tasks adopts them into the new task's dir. Cancel
   // drops the draft, and a draft this dialog never closes is swept server-side.
@@ -311,8 +312,20 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   useEffect(() => { ref.current?.focus(); }, []);
   // The bundle can arrive after mount; adopt the resolved default until the user picks.
   const touched = useRef(false);
-  useEffect(() => { if (!touched.current) setAgent(defaultAgentFor(agents, project.default_agent)); }, [agents, project.default_agent]);
-  const pickAgent = (id: string) => { touched.current = true; setAgent(id); };
+  useEffect(() => {
+    const next = defaultAgentFor(agents, project.default_agent);
+    if (!touched.current && agent !== next) {
+      setAgent(next);
+      setReasoning(null);
+    }
+  }, [agent, agents, project.default_agent]);
+  const pickAgent = (id: string) => {
+    touched.current = true;
+    if (id !== agent) {
+      setAgent(id);
+      setReasoning(null);
+    }
+  };
   // An upload still in flight has no path to write yet, so Create waits for it.
   const can = title.trim().length > 0 && !files.uploading;
   // A task with unfinished blockers can't start now, so the two options are exclusive.
@@ -338,6 +351,8 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   const canStart = !blocked && agentReady && !gatewayInsecure;
   const willAutoStart = autoStart && deps.length > 0;
   const permissionOpts = useMemo(() => permissionOptions(selAgent?.capabilities), [selAgent]);
+  const reasoningOpts = useMemo(() => reasoningOptions(selAgent?.capabilities), [selAgent]);
+  const hasReasoningOptions = (selAgent?.capabilities.reasoningOptions.length ?? 0) > 0;
   const sandboxOpts = agent === "codex" ? codexSandboxOptions("Use the Codex Settings default, or follow the permission mode") : [];
   // Permission modes are provider-specific (each driver labels its own: Claude
   // speaks Anthropic's mode names, Codex its sandbox modes), so a choice made
@@ -355,7 +370,7 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
   // (null) can resolve to one that does, so it counts as unsafe for unattended
   // too: what it resolves to isn't guessed at here.
   const unattendedRisk = willAutoStart && permission !== "bypassPermissions";
-  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: willAutoStart, model, provider_id: providerId, permission_mode: permission, sandbox_mode: sandbox, tag_ids: tagIds, attachments: files.ready.map((a) => a.path) });
+  const create = () => can && onCreate({ title: title.trim(), desc: desc.trim(), priority, agent, startNow: startNow && canStart, sendContext, depends_on: deps, auto_start: willAutoStart, model, provider_id: providerId, reasoning, permission_mode: permission, sandbox_mode: sandbox, tag_ids: tagIds, attachments: files.ready.map((a) => a.path) });
   return (
     <Modal title="New task" sub={`${project.name} · title + description define ${agentLabel(agents, agent)}'s task context`} onClose={close}
       footer={<>
@@ -397,6 +412,20 @@ export function NewTaskModal({ project, agents, tasks, tags, onClose, onCreate, 
         inherit={{ label: "Project default" }}
         help="Changeable later from the session rail."
       />
+      {hasReasoningOptions && (
+        <div className="field">
+          <div className="lab">{Icon.spark()} Effort</div>
+          <div className="seg wrap" style={{ maxWidth: 520 }} role="group" aria-label="Effort">
+            {reasoningOpts.map((r) => (
+              <Fragment key={r.label}>
+                <button className={reasoning === r.value ? "on" : ""} aria-pressed={reasoning === r.value} title={r.sub} onClick={() => setReasoning(r.value)}>{r.label}</button>
+                {r.value === null && <span className="seg-sep" aria-hidden />}
+              </Fragment>
+            ))}
+          </div>
+          <div className="hlp">{reasoningOpts.find((r) => r.value === reasoning)?.sub ?? reasoningOpts[0]?.sub}</div>
+        </div>
+      )}
       <div className="field">
         <div className="lab">Priority</div>
         <PrioritySeg value={priority} onChange={setPriority} />
@@ -1032,7 +1061,7 @@ export function TagTasksModal({ selected, tags, onClose, onApply, onCreateTag }:
   );
 }
 
-export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, onSave, onDelete, onMove, onCreateTag, onOpenSetup }: { task: TaskRow; tasks: TaskRow[]; tags: TagRow[]; projects: ProjectRow[]; agents: AgentsBundle; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; model: string | null; provider_id: string | null; depends_on: string[]; auto_start: boolean; tag_ids: string[] }, action?: SaveAction) => void; onCreateTag: (name: string) => Promise<TagRow>; onDelete: (id: string) => void; onMove: (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => Promise<void>; onOpenSetup?: () => void }) {
+export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, onSave, onDelete, onMove, onCreateTag, onOpenSetup }: { task: TaskRow; tasks: TaskRow[]; tags: TagRow[]; projects: ProjectRow[]; agents: AgentsBundle; onClose: () => void; onSave: (id: string, patch: { title: string; description: string; priority: Priority; agent?: string; model: string | null; provider_id: string | null; reasoning: string | null; depends_on: string[]; auto_start: boolean; tag_ids: string[] }, action?: SaveAction) => void; onCreateTag: (name: string) => Promise<TagRow>; onDelete: (id: string) => void; onMove: (id: string, projectId: string, opts?: { discardWorktree?: boolean; discardUnsafe?: boolean }) => Promise<void>; onOpenSetup?: () => void }) {
   const [title, setTitle] = useState(task.title);
   // The stored description is prose plus one marker line per attachment
   // (lib/uploadTypes.ts). The textarea edits the prose; the attachments are
@@ -1057,6 +1086,7 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
   // per turn, so this stays editable for a task's whole life (it's the same
   // value the session rail's picker writes) and takes effect on the next turn.
   const [model, setModel] = useState<string | null>(task.model);
+  const [reasoning, setReasoning] = useState<string | null>(task.reasoning);
   const [providerId, setProviderId] = useState<string | null>(task.provider_id);
   const providers = useProvidersMap();
   const [deps, setDeps] = useState<string[]>(task.depends_on ?? []);
@@ -1072,7 +1102,7 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
     if (!can) return;
     const kept = files.ready;
     discard([...seedPaths].filter((p) => !kept.some((a) => a.path === p)));
-    onSave(task.id, { title: title.trim(), description: joinAttachmentText(desc, kept), priority, agent: canChangeAgent ? agent : undefined, model, provider_id: providerId, depends_on: deps, auto_start: autoStart && deps.length > 0, tag_ids: tagIds }, action);
+    onSave(task.id, { title: title.trim(), description: joinAttachmentText(desc, kept), priority, agent: canChangeAgent ? agent : undefined, model, provider_id: providerId, reasoning, depends_on: deps, auto_start: autoStart && deps.length > 0, tag_ids: tagIds }, action);
   };
   // Editing a suggestion is usually the last step before deciding on it, so the
   // tray's two verbs live here too: sharpen the brief and accept it in one
@@ -1110,6 +1140,8 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
     setProviderId(null);
   }, [agent, task.agent]);
   const agentReady = selAgent ? selAgent.authenticated : true;
+  const reasoningOpts = useMemo(() => reasoningOptions(selAgent?.capabilities), [selAgent]);
+  const hasReasoningOptions = (selAgent?.capabilities.reasoningOptions.length ?? 0) > 0;
   // Same refusal as the New-task dialog (lib/agentEnv.ts): a gateway that's
   // http:// and not loopback fails every Antigravity turn inside `agy`.
   const gatewayInsecure = (canChangeAgent ? agent : task.agent) === "gemini" && gatewayInsecureForGemini(provider);
@@ -1164,7 +1196,12 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
         ) : (
           <div className="hlp">Project context is prepended automatically. No need to restate the stack or conventions.</div>
         )} />
-      {canChangeAgent && <AgentPicker agents={agents} value={agent} onChange={setAgent} onConnect={onOpenSetup} />}
+      {canChangeAgent && <AgentPicker agents={agents} value={agent} onChange={(id) => {
+        if (id !== agent) {
+          setAgent(id);
+          setReasoning(null);
+        }
+      }} onConnect={onOpenSetup} />}
       {gatewayInsecure && (
         <div className="hlp" style={{ color: "var(--amber)" }}>
           This gateway is <code className="ctx-mono">http://</code> and not loopback. Antigravity needs an{" "}
@@ -1178,6 +1215,23 @@ export function EditTaskModal({ task, tasks, tags, projects, agents, onClose, on
         inherit={{ label: "Project default" }}
         help={task.started === 1 ? "Takes effect on this task's next turn." : undefined}
       />
+      {hasReasoningOptions && (
+        <div className="field">
+          <div className="lab">{Icon.spark()} Effort</div>
+          <div className="seg wrap" style={{ maxWidth: 520 }} role="group" aria-label="Effort">
+            {reasoningOpts.map((r) => (
+              <Fragment key={r.label}>
+                <button className={reasoning === r.value ? "on" : ""} aria-pressed={reasoning === r.value} title={r.sub} onClick={() => setReasoning(r.value)}>{r.label}</button>
+                {r.value === null && <span className="seg-sep" aria-hidden />}
+              </Fragment>
+            ))}
+          </div>
+          <div className="hlp">
+            {reasoningOpts.find((r) => r.value === reasoning)?.sub ?? reasoningOpts[0]?.sub}
+            {task.started === 1 && " Takes effect on this task's next turn."}
+          </div>
+        </div>
+      )}
       <div className="field">
         <div className="lab">Priority</div>
         <PrioritySeg value={priority} onChange={setPriority} />

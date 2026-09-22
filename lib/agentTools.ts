@@ -72,6 +72,7 @@ import type { EnvScope } from "./advanced-env/types";
 import { formatAnswers } from "./agents/shared";
 import { resolveConnectedAgent } from "./agents/connections";
 import { checkEnvironmentModel, resolveEnvironmentRef } from "./agents/environmentRef";
+import { checkReasoningForAgent } from "./agents/capabilities";
 import { checkProviderModel, resolveProviderRef } from "./providers/agentRef";
 import { presentProvider, type ProviderStatus } from "./providers/present";
 import { listProviders } from "./providers/store";
@@ -364,6 +365,8 @@ export interface SuggestTaskInput {
   environment?: string;
   /** The model to run on, checked against the resolved provider's on-list or the environment's own catalog. */
   model?: string;
+  /** The cross-agent reasoning/effort preset, validated against the resolved environment. */
+  reasoning?: string | null;
   /** Files to attach, as the model named them; resolved by resolveAgentAttachments against the CALLER's worktree. */
   attachments?: string[];
 }
@@ -436,6 +439,18 @@ export function createSuggestedTask(project: Project, input: SuggestTaskInput): 
   if (!getProject(project.id)) {
     return { task: null, text: `Could not add "${input.title}": the project no longer exists.` };
   }
+  // Resolve the environment and validate effort before tags or files can
+  // create side effects. A bad suggestion must leave no partial work behind.
+  let agent = resolveConnectedAgent([project.default_agent]) ?? undefined;
+  if (input.environment?.trim()) {
+    const env = resolveEnvironmentRef(input.environment);
+    if ("error" in env) return { task: null, text: `Could not add "${input.title}": ${env.error} Nothing was created.` };
+    agent = env.environment;
+  }
+  const environment = agent ?? project.default_agent;
+  const checkedReasoning = checkReasoningForAgent(environment, input.reasoning);
+  if ("error" in checkedReasoning)
+    return { task: null, text: `Could not add "${input.title}": ${checkedReasoning.error}. Nothing was created.` };
   // Tags are resolved in the TARGET project, before the insert, so a
   // cross-project suggestion tags within the project it lands in, and a task is
   // never created against a tag that turned out to be unusable. Missing names
@@ -449,24 +464,12 @@ export function createSuggestedTask(project: Project, input: SuggestTaskInput): 
     tags = hit.tags;
     createdTags = hit.created;
   }
-  // The coding environment, resolved BEFORE the provider: it decides which
+  // Resolve the coding environment before the provider: it decides which
   // provider "cloud" means and which model ids are valid. Named explicitly it
   // must be a registered, connected agent; omitted it is the target project's
-  // default, connected-first (the same resolution the New-task dialog makes,
-  // see the agent field below).
-  //
-  // `agent` stays undefined when nothing is connected, leaving createTask's
-  // own default in place; `environment` still needs a string to check against,
-  // so it falls back to the project default.
-  let agent = resolveConnectedAgent([project.default_agent]) ?? undefined;
-  if (input.environment?.trim()) {
-    const env = resolveEnvironmentRef(input.environment);
-    if ("error" in env) return { task: null, text: `Could not add "${input.title}": ${env.error} Nothing was created.` };
-    agent = env.environment;
-  }
-  const environment = agent ?? project.default_agent;
-  // The provider override, resolved and validated BEFORE the insert so a
-  // task is never created pointing at something that doesn't exist. "local"
+  // connected-first default. The provider override is validated before the
+  // insert so a task is never created pointing at something that doesn't exist.
+  // "local"
   // and "cloud" are aliases (resolveProviderRef); anything else must match a
   // provider id or exact label.
   let model = input.model?.trim() || null;
@@ -524,6 +527,7 @@ export function createSuggestedTask(project: Project, input: SuggestTaskInput): 
   const task = createTask({
     id,
     model,
+    reasoning: checkedReasoning.reasoning,
     provider_id: resolvedProvider?.id ?? null,
     project_id: project.id,
     title: input.title,
@@ -558,11 +562,12 @@ export function createSuggestedTask(project: Project, input: SuggestTaskInput): 
     : model
       ? ` Model ${model}.`
       : "";
+  const reasoningNote = input.reasoning != null ? ` Effort ${input.reasoning}.` : "";
   const attached = input.attachments?.length ?? 0;
   const attachNote = attached ? ` Attached ${attached} file${attached === 1 ? "" : "s"}.` : "";
   return {
     task,
-    text: `Suggested task "${input.title}" added to ${project.name}'s tray (id: ${task.id}).${depNote(task, project, input.blocked_by)}${tagNote}${envNote}${providerNote}${attachNote}`,
+    text: `Suggested task "${input.title}" added to ${project.name}'s tray (id: ${task.id}).${depNote(task, project, input.blocked_by)}${tagNote}${envNote}${providerNote}${reasoningNote}${attachNote}`,
   };
 }
 
