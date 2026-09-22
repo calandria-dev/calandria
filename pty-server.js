@@ -237,48 +237,27 @@ wss.on("connection", (ws, req) => {
     env,
   });
 
-  const pendingOutput = [];
-  let outputSending = false;
-  let pendingExitCode;
-
+  let termStopped = false;
   const stopTerm = () => {
+    if (termStopped) return;
+    termStopped = true;
     try { term.kill(); } catch {}
   };
-  const finishOutput = () => {
-    if (outputSending || pendingOutput.length > 0) return;
-    if (pendingExitCode !== undefined) {
-      sendFrame("exit", JSON.stringify({ type: "exit", exitCode: pendingExitCode }), { closeAfter: true });
-      return;
-    }
-    if (ws.readyState === ws.OPEN) {
-      try { term.resume(); } catch {}
-    }
-  };
-  const pumpOutput = () => {
-    if (outputSending) return;
-    const payload = pendingOutput.shift();
-    if (!payload) {
-      finishOutput();
-      return;
-    }
-    outputSending = true;
-    const accepted = sendFrame("pty_output", payload, {
-      onFlushed: () => {
-        outputSending = false;
-        pumpOutput();
-      },
-    });
-    if (!accepted) stopTerm();
-  };
 
+  // Keep ConPTY callbacks non-reentrant. The frame writer bounds queued bytes
+  // and terminates a client that cannot drain them, so node-pty itself never
+  // needs to be paused from inside its data callback.
   term.onData((d) => {
-    try { term.pause(); } catch {}
-    pendingOutput.push(...splitPtyOutput(d));
-    pumpOutput();
+    for (const payload of splitPtyOutput(d)) {
+      if (!sendFrame("pty_output", payload)) {
+        stopTerm();
+        break;
+      }
+    }
   });
   term.onExit(({ exitCode }) => {
-    pendingExitCode = exitCode;
-    finishOutput();
+    termStopped = true;
+    sendFrame("exit", JSON.stringify({ type: "exit", exitCode }), { closeAfter: true });
   });
 
   ws.on("message", (raw) => {
