@@ -236,7 +236,10 @@ describe("pty sidecar frame handling", () => {
       { length: 128 },
       (_, i) => `echo calandria-frame-${String(i).padStart(3, "0")}`,
     );
-    ws.send(JSON.stringify({ type: "input", data: `${commands.join("\n")}\nexit\n` }));
+    // xterm sends carriage return for Enter. cmd.exe does not execute a batch
+    // of PTY input separated only by line feeds, so exercise the real client
+    // spelling on every platform.
+    ws.send(JSON.stringify({ type: "input", data: `${commands.join("\r")}\rexit\r` }));
 
     const { output, exitCode } = await outcome;
     await closeSession(ws);
