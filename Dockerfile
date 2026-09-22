@@ -285,11 +285,13 @@ COPY --from=build --chown=root:root /app/server.js /app/pty-server.js /app/next.
 # - lib/log.mjs: the shared line emitter (CALANDRIA_LOG_FORMAT), imported by
 #   both entrypoints for their own output and by lib/config.ts for the bundled
 #   half.
+# - lib/pty-frame-writer.mjs: bounded frame serialization and PTY backpressure,
+#   imported by pty-server.js before it accepts terminal connections.
 # - lib/schema-version.mjs (-> lib/storage.mjs): the schema stamp and boot
 #   gate. server.js runs it right after claiming the lock so a rolled-back
 #   image tag refuses to start instead of writing to a database a newer build
 #   already migrated.
-COPY --from=build --chown=root:root /app/lib/cf-access.mjs /app/lib/service-router.mjs /app/lib/service-host.mjs /app/lib/env-keys.mjs /app/lib/db-lock.mjs /app/lib/resolveHostname.js /app/lib/env.mjs /app/lib/storage.mjs /app/lib/log.mjs /app/lib/schema-version.mjs ./lib/
+COPY --from=build --chown=root:root /app/lib/cf-access.mjs /app/lib/service-router.mjs /app/lib/service-host.mjs /app/lib/env-keys.mjs /app/lib/db-lock.mjs /app/lib/resolveHostname.js /app/lib/env.mjs /app/lib/storage.mjs /app/lib/log.mjs /app/lib/pty-frame-writer.mjs /app/lib/schema-version.mjs ./lib/
 COPY --from=build --chown=root:root /app/lib/auth ./lib/auth
 # The advanced-settings bootstrap (lib/advanced-env/bootstrap.mjs) and the two
 # plain-Node modules it loads. Both entrypoints await it before any other

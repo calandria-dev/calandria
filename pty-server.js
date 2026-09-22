@@ -37,6 +37,12 @@ const appEnvApplied = import("./lib/advanced-env/bootstrap.mjs")
     log.error("advanced settings could not be applied; starting without them", { err });
     return null;
   });
+let createFrameWriter;
+let splitPtyOutput;
+const frameWriterImport = appEnvApplied.then(() => import("./lib/pty-frame-writer.mjs")).then((m) => {
+  createFrameWriter = m.createFrameWriter;
+  splitPtyOutput = m.splitPtyOutput;
+});
 
 appEnvApplied.then(() => import("./lib/log.mjs")).then((m) => {
   log = m.createLogger("pty-server");
@@ -160,6 +166,9 @@ const originImport = appEnvApplied.then(() => import("./lib/auth/origin.mjs"));
 
 const wss = new WebSocketServer({
   server,
+  // Terminal output is already an encoded byte stream. Keeping compression
+  // disabled also guarantees that every frame leaves RSV1 clear.
+  perMessageDeflate: false,
   verifyClient: (info, callback) => {
     Promise.all([localOriginImport, originImport])
       .then(async ([localOrigin, origin]) => {
@@ -202,6 +211,7 @@ const wss = new WebSocketServer({
 
 wss.on("connection", (ws, req) => {
   const connectionId = nextConnectionId++;
+  const sendFrame = createFrameWriter(ws, connectionId, traceFrame);
   const url = new URL(req.url, "http://localhost");
   let cwd = url.searchParams.get("cwd") || os.homedir();
   try {
@@ -227,20 +237,27 @@ wss.on("connection", (ws, req) => {
     env,
   });
 
+  let termStopped = false;
+  const stopTerm = () => {
+    if (termStopped) return;
+    termStopped = true;
+    try { term.kill(); } catch {}
+  };
+
+  // Keep ConPTY callbacks non-reentrant. The frame writer bounds queued bytes
+  // and terminates a client that cannot drain them, so node-pty itself never
+  // needs to be paused from inside its data callback.
   term.onData((d) => {
-    try {
-      const payload = Buffer.from(d, "utf8");
-      traceFrame(ws, connectionId, "pty_output", payload);
-      ws.send(payload);
-    } catch {}
+    for (const payload of splitPtyOutput(d)) {
+      if (!sendFrame("pty_output", payload)) {
+        stopTerm();
+        break;
+      }
+    }
   });
   term.onExit(({ exitCode }) => {
-    try {
-      const payload = JSON.stringify({ type: "exit", exitCode });
-      traceFrame(ws, connectionId, "exit", payload);
-      ws.send(payload);
-      ws.close();
-    } catch {}
+    termStopped = true;
+    sendFrame("exit", JSON.stringify({ type: "exit", exitCode }), { closeAfter: true });
   });
 
   ws.on("message", (raw) => {
@@ -260,13 +277,9 @@ wss.on("connection", (ws, req) => {
       try { term.resize(msg.cols, msg.rows); } catch {}
     }
   });
-  ws.on("close", () => { try { term.kill(); } catch {} });
+  ws.on("close", stopTerm);
 
-  try {
-    const payload = JSON.stringify({ type: "ready", cwd });
-    traceFrame(ws, connectionId, "ready", payload);
-    ws.send(payload);
-  } catch {}
+  sendFrame("ready", JSON.stringify({ type: "ready", cwd }));
 });
 
 // Separate process from server.js, so it needs its own inherited-credential
@@ -274,7 +287,8 @@ wss.on("connection", (ws, req) => {
 // would switch `claude` in a terminal tab to per-token billing. Listen only
 // after the strip so no shell can spawn with the key still present. See
 // lib/env-keys.mjs (CALANDRIA_ALLOW_API_KEY_ENV opts in).
-appEnvApplied.then(() => import("./lib/env-keys.mjs")).then((envKeys) => {
+const envKeysImport = appEnvApplied.then(() => import("./lib/env-keys.mjs"));
+Promise.all([frameWriterImport, envKeysImport]).then(([, envKeys]) => {
   for (const name of envKeys.stripInheritedAgentKeys()) {
     log.warn(`WARN: ${name} was set in the environment, unsetting it (CALANDRIA_ALLOW_API_KEY_ENV=1 to keep).`);
   }
