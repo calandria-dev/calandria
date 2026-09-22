@@ -24,6 +24,7 @@ let sidecar: ChildProcess;
 let exited: { code: number | null; signal: string | null } | null = null;
 const SIDECAR_STDERR_LIMIT = 64 * 1024;
 let sidecarStderr = "";
+const sessionDiagnostics = new WeakMap<WebSocket, SessionDiagnostics>();
 
 type SessionDiagnostics = {
   phase: string;
@@ -63,7 +64,9 @@ function openSession(phase = "session"): Promise<WebSocket> {
     };
     const ws = new WebSocket(`ws://127.0.0.1:${PORT}/?cols=80&rows=24`, {
       headers: { Origin: ORIGIN },
+      perMessageDeflate: false,
     });
+    sessionDiagnostics.set(ws, diagnostics);
     let settled = false;
     const fail = (error: unknown) => {
       if (settled) return;
@@ -202,4 +205,43 @@ describe("pty sidecar frame handling", () => {
     await closeSession(ws);
     expect(seen).toContain("calandria-pty-alive");
   }, 10_000);
+
+  it("serializes terminal output before the exit control frame", async () => {
+    const ws = await openSession("output-and-exit");
+    const outcome = new Promise<{ output: string; exitCode: number | undefined }>((resolve, reject) => {
+      let output = "";
+      const fail = (error: unknown) => {
+        clearTimeout(timer);
+        reject(diagnosticError(error, sessionDiagnostics.get(ws)!));
+      };
+      const timer = setTimeout(() => fail(new Error("no exit frame")), 10_000);
+      ws.on("message", (raw, isBinary) => {
+        if (isBinary) {
+          output += raw.toString("utf8");
+          return;
+        }
+        let msg: { type?: string; exitCode?: number };
+        try { msg = JSON.parse(raw.toString()); } catch { return; }
+        if (msg.type !== "exit") return;
+        clearTimeout(timer);
+        ws.off("error", fail);
+        resolve({ output, exitCode: msg.exitCode });
+      });
+      ws.once("error", fail);
+    });
+
+    const first = "calandria-frame-000";
+    const last = "calandria-frame-127";
+    const commands = Array.from(
+      { length: 128 },
+      (_, i) => `echo calandria-frame-${String(i).padStart(3, "0")}`,
+    );
+    ws.send(JSON.stringify({ type: "input", data: `${commands.join("\n")}\nexit\n` }));
+
+    const { output, exitCode } = await outcome;
+    await closeSession(ws);
+    expect(output).toContain(first);
+    expect(output).toContain(last);
+    expect(exitCode).toBe(0);
+  }, 15_000);
 });

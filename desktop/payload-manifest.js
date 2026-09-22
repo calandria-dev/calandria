@@ -42,6 +42,7 @@ const COPY_FILES = [
   "lib/env.mjs",
   "lib/storage.mjs",
   "lib/log.mjs",
+  "lib/pty-frame-writer.mjs",
   "lib/schema-version.mjs",
   "lib/advanced-env/bootstrap.mjs",
   "lib/advanced-env/catalog.mjs",
