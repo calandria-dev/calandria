@@ -80,7 +80,7 @@ on:
         # dispatched and confirmed, and nothing else happens. Cut from the
         # DISPATCHING ref rather than from main, so a change to this file can
         # be exercised on its own PR branch before it is merged.
-        description: "Push a throwaway branch and dispatch CI, but open no pull request"
+        description: "Push a throwaway branch and dispatch CI, but publish no issue or pull request"
         type: boolean
         default: false
 
@@ -107,7 +107,7 @@ env:
 jobs:
   check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
       # For the drift issue below. Nothing in THIS job writes code: it rewrites
@@ -130,19 +130,58 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Install Claude Code releases for alias comparison
+        run: |
+          set -euo pipefail
+          pinned="$(awk '
+            $1 == "ARG" && $2 ~ /^CLAUDE_CODE_VERSION=/ {
+              sub(/^CLAUDE_CODE_VERSION=/, "", $2)
+              print $2
+              exit
+            }
+          ' Dockerfile)"
+          if [ -z "$pinned" ]; then
+            echo "::error::Dockerfile has no CLAUDE_CODE_VERSION ARG"
+            exit 1
+          fi
+          latest="$(npm view @anthropic-ai/claude-code version)"
+          if [ -z "$latest" ]; then
+            echo "::error::npm returned no Claude Code version"
+            exit 1
+          fi
+
+          pinned_prefix="$RUNNER_TEMP/claude-alias-pinned"
+          latest_prefix="$RUNNER_TEMP/claude-alias-latest"
+          npm install --prefix "$pinned_prefix" --no-audit --no-fund --package-lock=false \
+            "@anthropic-ai/claude-code@$pinned"
+          npm install --prefix "$latest_prefix" --no-audit --no-fund --package-lock=false \
+            "@anthropic-ai/claude-code@$latest"
+
+          pinned_bin="$pinned_prefix/node_modules/.bin/claude"
+          latest_bin="$latest_prefix/node_modules/.bin/claude"
+          test -x "$pinned_bin"
+          test -x "$latest_bin"
+          {
+            echo "CLAUDE_ALIAS_PINNED_BIN=$pinned_bin"
+            echo "CLAUDE_ALIAS_LATEST_BIN=$latest_bin"
+          } >> "$GITHUB_ENV"
+
       # No setup-node and no `npm ci`: the script imports nothing outside
-      # node:*, so the runner's bundled Node runs it as-is.
+      # node:*, so the runner's bundled Node runs it as-is. The two temporary
+      # prefixes above exist only for the CLI behavior probe.
       - name: Compare pins with upstream
         id: check
         run: |
-          set -u
+          set -euo pipefail
           status=0
           node scripts/check-pin-drift.mjs \
             --report "$RUNNER_TEMP/drift.md" \
             --update-agy \
             --agy-summary "$RUNNER_TEMP/agy.json" \
             --update-npm \
-            --npm-summary "$RUNNER_TEMP/npm.json" || status=$?
+            --npm-summary "$RUNNER_TEMP/npm.json" \
+            --claude-alias-pinned-bin "$CLAUDE_ALIAS_PINNED_BIN" \
+            --claude-alias-latest-bin "$CLAUDE_ALIAS_LATEST_BIN" || status=$?
           case "$status" in
             0) echo "drift=false" >> "$GITHUB_OUTPUT" ;;
             1) echo "drift=true" >> "$GITHUB_OUTPUT" ;;
@@ -185,6 +224,7 @@ jobs:
           jq . "$RUNNER_TEMP/npm.json"
 
       - name: Open, update or close the drift issue
+        if: env.DRY_RUN != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           DRIFT: ${{ steps.check.outputs.drift }}
