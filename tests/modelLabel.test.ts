@@ -17,6 +17,7 @@ const claude = CLAUDE_CAPABILITIES;
 describe("modelLabel", () => {
   it("keeps the version, so Opus 5 never reads as bare Opus", () => {
     expect(modelLabel("claude-opus-5", claude)).toBe("Opus 5");
+    expect(modelLabel("claude-opus-5-5", claude)).toBe("Opus 5.5");
     expect(modelLabel("claude-opus-4-8", claude)).toBe("Opus 4.8");
     expect(modelLabel("claude-opus-4-8-20251101", claude)).toBe("Opus 4.8");
     expect(modelLabel("claude-sonnet-5", claude)).toBe("Sonnet 5");
@@ -37,6 +38,7 @@ describe("modelLabel", () => {
 
   it("marks the 1M-context variant as a distinct run mode", () => {
     expect(modelLabel("claude-opus-5[1m]", claude)).toBe("Opus 5 (1M)");
+    expect(modelLabel("claude-opus-5-5[1m]", claude)).toBe("Opus 5.5 (1M)");
     expect(modelLabel("claude-sonnet-4-6[1m]", claude)).toBe("Sonnet 4.6 (1M)");
   });
 
