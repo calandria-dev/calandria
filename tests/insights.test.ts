@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureWorktree, mergeTask } from "../lib/git";
+import { getDb } from "../lib/db";
 import {
   addUsage,
   createTag,
@@ -256,15 +257,24 @@ describe("getInsightsData", () => {
   // rows leave "" on, so an unguarded query would double-count cloud spend as
   // gateway cache reads.
   describe("gatewayCache", () => {
+    let gatewayHost = "";
+
+    beforeEach(() => {
+      gatewayHost = `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.litellm.example.com`;
+    });
+
+    afterEach(() => {
+      getDb().prepare("DELETE FROM task_usage WHERE provider = ?").run(gatewayHost);
+    });
+
     it("sums input/cache-read tokens for the given gateway host, excluding ordinary cloud-billed rows", () => {
       const { project, task } = makeProjectTask();
-      const host = "litellm.example.com";
       addUsage({
-        project_id: project.id, task_id: task.id, generation: 1, agent: "claude", provider: host,
+        project_id: project.id, task_id: task.id, generation: 1, agent: "claude", provider: gatewayHost,
         usage: usage({ input_tokens: 1000, cache_read_tokens: 400 }),
       });
       addUsage({
-        project_id: project.id, task_id: task.id, generation: 1, agent: "claude", provider: host,
+        project_id: project.id, task_id: task.id, generation: 1, agent: "claude", provider: gatewayHost,
         usage: usage({ input_tokens: 500, cache_read_tokens: 100 }),
       });
       // An ordinary cloud-billed turn, provider "", must not be counted.
@@ -273,7 +283,7 @@ describe("getInsightsData", () => {
         usage: usage({ input_tokens: 9999, cache_read_tokens: 9999 }),
       });
 
-      const data = getInsightsData(Date.now() - DAY, host);
+      const data = getInsightsData(Date.now() - DAY, gatewayHost);
       const mine = data.gatewayCache.filter((r) => r.a === "claude");
       expect(mine).toHaveLength(1);
       expect(mine[0].inp).toBe(1500);
@@ -283,7 +293,7 @@ describe("getInsightsData", () => {
     it("returns nothing when no gateway host is given, rather than matching the cloud-billed rows", () => {
       const { project, task } = makeProjectTask();
       addUsage({
-        project_id: project.id, task_id: task.id, generation: 1, agent: "claude", provider: "litellm.example.com",
+        project_id: project.id, task_id: task.id, generation: 1, agent: "claude", provider: gatewayHost,
         usage: usage({ input_tokens: 1000, cache_read_tokens: 400 }),
       });
 
