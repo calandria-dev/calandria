@@ -36,6 +36,7 @@ vi.mock("@/lib/git", async () => ({
 }));
 
 import { createProject, createTask, getTask } from "@/lib/store";
+import { getDb } from "@/lib/db";
 import { startResumeTurn } from "@/lib/runner";
 import { subscribe } from "@/lib/events";
 import { claimRun, createSchedule, settleRun } from "@/lib/schedule/store";
@@ -71,6 +72,7 @@ function sample(text: string, series: string): number | undefined {
 }
 
 beforeEach(() => {
+  getDb().prepare("DELETE FROM schedule_runs").run();
   runTurnMock.mockReset();
   diskUsageMock.mockReset();
   diskUsageMock.mockResolvedValue(4096);
@@ -78,6 +80,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  getDb().prepare("DELETE FROM schedule_runs").run();
   vi.restoreAllMocks();
 });
 
