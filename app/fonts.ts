@@ -1,94 +1,52 @@
-// Self-hosted Google Fonts via next/font: downloaded once at build time and
-// served from this instance, no runtime CDN request. Each font exposes a
-// CSS custom property (its `variable`) that the token layer in globals.css
-// and the per-font metadata in shell/types.ts both point at.
-import {
-  Spectral,
-  Source_Sans_3,
-  JetBrains_Mono,
-  Fira_Code,
-  Red_Hat_Mono,
-  Atkinson_Hyperlegible_Mono,
-  Literata,
-  Atkinson_Hyperlegible_Next,
-  Cascadia_Code,
-} from "next/font/google";
+// The three default fonts are vendored in the repository and loaded with
+// next/font/local. Optional picker fonts use system fallbacks so production
+// builds do not depend on a Google Fonts response being available.
+import localFont from "next/font/local";
 
 // Type system: display headings + dense body UI (brand/Type System.html).
-export const spectral = Spectral({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  style: ["normal", "italic"],
+export const spectral = localFont({
+  src: [{
+    path: "./fonts/spectral-500-latin.woff2",
+    weight: "500",
+    style: "normal",
+  }],
   variable: "--nf-spectral",
   display: "swap",
 });
-export const sourceSans = Source_Sans_3({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  style: ["normal", "italic"],
+export const sourceSans = localFont({
+  src: [{
+    path: "./fonts/source-sans-3-variable-latin.woff2",
+    weight: "200 900",
+    style: "normal",
+  }],
   variable: "--nf-source-sans",
   display: "swap",
 });
-export const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500", "700"],
-  style: ["normal", "italic"],
+export const jetbrainsMono = localFont({
+  src: [{
+    path: "./fonts/jetbrains-mono-variable-latin.woff2",
+    weight: "100 800",
+    style: "normal",
+  }],
   variable: "--nf-jetbrains-mono",
   display: "swap",
 });
 
 // User-selectable code/terminal alternates (Settings → Appearance, once that
 // picker lands; see shell/types.ts MonoFontId).
-export const firaCode = Fira_Code({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  variable: "--nf-fira-code",
-  display: "swap",
-});
-export const redHatMono = Red_Hat_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  variable: "--nf-red-hat-mono",
-  display: "swap",
-});
-export const atkinsonMono = Atkinson_Hyperlegible_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  variable: "--nf-atkinson-mono",
-  display: "swap",
-});
-export const cascadiaCode = Cascadia_Code({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  variable: "--nf-cascadia-code",
-  display: "swap",
-});
+export const firaCode = { variable: "--nf-fira-code" } as const;
+export const redHatMono = { variable: "--nf-red-hat-mono" } as const;
+export const atkinsonMono = { variable: "--nf-atkinson-mono" } as const;
+export const cascadiaCode = { variable: "--nf-cascadia-code" } as const;
 
 // User-selectable prompt-input alternates (shell/types.ts PromptFontId).
-export const literata = Literata({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  variable: "--nf-literata",
-  display: "swap",
-});
-export const atkinsonNext = Atkinson_Hyperlegible_Next({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  variable: "--nf-atkinson-next",
-  display: "swap",
-});
+export const literata = { variable: "--nf-literata" } as const;
+export const atkinsonNext = { variable: "--nf-atkinson-next" } as const;
 
-// All .variable classNames joined, applied together to <html> in layout.tsx
-// so every --nf-* custom property is available globally regardless of which
-// font is actually selected in Appearance.
+// Local font classNames joined, applied together to <html> in layout.tsx.
+// Optional fallback variables are declared globally in globals.css.
 export const fontVariables = [
   spectral.variable,
   sourceSans.variable,
   jetbrainsMono.variable,
-  firaCode.variable,
-  redHatMono.variable,
-  atkinsonMono.variable,
-  cascadiaCode.variable,
-  literata.variable,
-  atkinsonNext.variable,
 ].join(" ");

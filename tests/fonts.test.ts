@@ -5,8 +5,8 @@
 // pixels. Neither shows up in a typecheck, a unit test, or a Chromium e2e, so
 // this file pins the two lists against each other.
 //
-// Fonts load via next/font/google: downloaded once at build time and served
-// from this instance, with no runtime Google Fonts CDN link.
+// Default fonts load from repository-local files, with no build-time or
+// runtime Google Fonts request.
 //
 // Space Grotesk's U+0027/U+0022 are composite glyphs built from the same
 // component and identity transform as U+2019/U+201D, the closing curly quote
@@ -23,9 +23,9 @@ const layout = readFileSync(path.join(root, "app/layout.tsx"), "utf8");
 const fontsSrc = readFileSync(path.join(root, "app/fonts.ts"), "utf8");
 const fontPicker = readFileSync(path.join(root, "app/shell/types.ts"), "utf8");
 
-/** Every `--nf-*` custom property declared via next/font's `variable:` option. */
+/** Every `--nf-*` custom property declared by app/fonts.ts. */
 function declaredFonts(): { importName: string; cssVar: string }[] {
-  return [...fontsSrc.matchAll(/export const \w+\s*=\s*(\w+)\(\{[^}]*variable:\s*"(--nf-[a-z0-9-]+)"/g)].map((m) => ({
+  return [...fontsSrc.matchAll(/export const (\w+)\s*=\s*[\s\S]*?variable:\s*"(--nf-[a-z0-9-]+)"/g)].map((m) => ({
     importName: m[1],
     cssVar: m[2],
   }));
@@ -43,7 +43,8 @@ describe("web fonts", () => {
 
   it("does not load fonts from the Google Fonts CDN at runtime", () => {
     expect(layout).not.toMatch(/fonts\.googleapis\.com/);
-    expect(fontsSrc).toMatch(/from\s+"next\/font\/google"/);
+    expect(fontsSrc).toMatch(/from\s+"next\/font\/local"/);
+    expect(fontsSrc).not.toMatch(/next\/font\/google/);
   });
 
   it("loads every --nf-* variable referenced by CSS tokens or the font picker", () => {

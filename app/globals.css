@@ -32,6 +32,12 @@
   --font-body:var(--nf-source-sans),system-ui,sans-serif;      /* everything else: rows, chips, labels, controls */
   --font-mono:var(--nf-jetbrains-mono),ui-monospace,monospace; /* code blocks, terminal, metadata (user-selectable, Settings → Appearance) */
   --font-prompt:var(--font-body);                              /* composer / prompt-input (user-selectable) */
+  --nf-fira-code:"Fira Code",ui-monospace,monospace;
+  --nf-red-hat-mono:"Red Hat Mono",ui-monospace,monospace;
+  --nf-atkinson-mono:"Atkinson Hyperlegible Mono",ui-monospace,monospace;
+  --nf-cascadia-code:"Cascadia Code",ui-monospace,monospace;
+  --nf-literata:Literata,Georgia,serif;
+  --nf-atkinson-next:"Atkinson Hyperlegible Next",system-ui,sans-serif;
   --display-weight:500;
   --display-tracking:-0.005em;
   --sans:var(--font-body);   /* legacy alias: most of the component CSS below still reads --sans */
