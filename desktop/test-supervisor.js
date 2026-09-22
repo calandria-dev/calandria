@@ -681,7 +681,10 @@ function hold(port) {
     const impostor = require("node:http").createServer((_q, r) => r.writeHead(200).end("calandria pty-server"));
     await new Promise((r) => impostor.listen(45090, "127.0.0.1", r));
     try {
-      await assert.rejects(() => waitForReady(45090, { timeoutMs: 500, intervalMs: 100 }), /not as the app/);
+      await assert.rejects(
+        () => waitForReady(45090, { timeoutMs: 2_000, intervalMs: 100, probeTimeoutMs: 500 }),
+        /not as the app/,
+      );
     } finally {
       impostor.close();
     }
@@ -905,6 +908,55 @@ function hold(port) {
 
   await test("waitForReady gives up rather than hanging", async () => {
     await assert.rejects(() => waitForReady(45199, { timeoutMs: 400, intervalMs: 50 }), /did not become ready/);
+  });
+
+  await test("waitForReady keeps its total deadline when a probe never responds", async () => {
+    const sockets = new Set();
+    const hanging = http.createServer(() => {});
+    hanging.on("connection", (socket) => {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+    });
+    await new Promise((resolve) => hanging.listen(45220, "127.0.0.1", resolve));
+    const started = Date.now();
+    try {
+      await assert.rejects(
+        () => waitForReady(45220, { timeoutMs: 300, intervalMs: 20 }),
+        /did not become ready.*readiness probe timed out/,
+      );
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolve) => hanging.close(resolve));
+    }
+    const took = Date.now() - started;
+    assert.ok(took < 1500, `waitForReady took ${took}ms, the total deadline was not authoritative`);
+  });
+
+  await test("spawnChild settles boot failure on an executable spawn error", async () => {
+    const exits = [];
+    const sup = new Supervisor(stubOpts({ onExit: (record) => exits.push(record) }));
+    sup.node = { path: path.join(os.tmpdir(), `calandria-missing-node-${process.pid}-${Date.now()}`) };
+    const bootExit = new Promise((resolve) => {
+      sup.notifyBootExit = resolve;
+    });
+    sup.spawnChild("app", path.join(HERE, "stub-server.js"), process.env);
+    let timeout;
+    const timedOut = new Promise((_, reject) => {
+      timeout = setTimeout(() => reject(new Error("spawn error did not settle boot")), 1000);
+    });
+    const record = await Promise.race([
+      bootExit,
+      timedOut,
+    ]);
+    clearTimeout(timeout);
+    assert.equal(record.name, "app");
+    assert.equal(record.error.code, "ENOENT");
+    assert.match(record.error.message, /spawn|ENOENT/i);
+    assert.equal(sup.children[0].exited.error.code, "ENOENT");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(exits.length, 1, "error and exit-like events must settle only once");
+    assert.equal(exits[0].error.code, "ENOENT");
+    sup.notifyBootExit = null;
   });
 
   await test("preferredPorts reads PORT/PTY_PORT and ignores junk", async () => {
@@ -2653,6 +2705,8 @@ function hold(port) {
     assert.ok(/width:\s*geometry\.width/.test(createWindow), "the window's size comes from the saved state");
     assert.ok(/minWidth:\s*MIN_SIZE\.width/.test(createWindow), "the floor is the one window-state.js clamps to");
     assert.ok(/trackWindowGeometry\(win\)/.test(createWindow), "and every window is followed from then on");
+    assert.ok(/const initialLoad = win\.loadURL\(appUrl \|\| LOADING_PAGE\)/.test(createWindow), "createWindow captures its initial navigation");
+    assert.ok(/return initialLoad/.test(createWindow), "createWindow returns its initial navigation");
 
     // The instance switch reads the outgoing window BEFORE it builds the
     // replacement, which is also before `old.destroy()` takes it away. Wrong
@@ -2665,6 +2719,18 @@ function hold(port) {
       "capture must precede the rebuild",
     );
     assert.ok(apply.indexOf("createWindow()") < apply.indexOf("old?.destroy()"), "and the rebuild the destroy");
+    assert.ok(apply.indexOf("initialLoad = createWindow()") < apply.indexOf("old?.destroy()"), "the replacement load starts before destroying the old window");
+    assert.ok(apply.indexOf("old?.destroy()") < apply.indexOf("await initialLoad;"), "the old window is destroyed after the replacement starts loading");
+    assert.ok(apply.indexOf("await initialLoad;") < apply.indexOf("await attach(next);"), "replacement attach waits for its initial navigation");
+
+    const boot = src.indexOf("app.whenReady().then(async () =>");
+    const bootBody = src.slice(boot, src.indexOf("function loadInstanceList()"));
+    assert.ok(/await createWindow\(\)/.test(bootBody), "boot waits for the initial window navigation");
+
+    const exit = src.indexOf("onExit: ({ name, code, error, dbLockHeld })");
+    const exitBody = src.slice(exit, exit + 1100);
+    assert.ok(/error\.code/.test(exitBody) && /error\.message/.test(exitBody), "spawn errors reach the desktop failure dialog");
+    assert.ok(/exited unexpectedly \(code \$\{code\}\)/.test(exitBody), "normal exit wording stays unchanged");
 
     // The debounced flush is unref'd, so the only guaranteed write is the one
     // the quit makes on its way out.

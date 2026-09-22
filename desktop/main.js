@@ -392,7 +392,7 @@ function main() {
     // Before the window, for the same reason as the instance list: the size
     // and position are constructor options Electron will not revisit.
     loadWindowGeometry();
-    createWindow();
+    await createWindow();
     // AFTER the window, and before the first attach.
     //
     // Before the attach because an instance whose token is still good should go
@@ -1031,7 +1031,7 @@ function createWindow() {
   // The boot screen only while there is nothing better: a window recreated
   // after its predecessor was destroyed (macOS, dock click) must land on the
   // app, not on a spinner for a server that came up minutes ago.
-  win.loadURL(appUrl || LOADING_PAGE);
+  const initialLoad = win.loadURL(appUrl || LOADING_PAGE);
 
   // Anything that isn't our own loopback origin opens in the user's real
   // browser: GitHub PR links, docs, a task's exposed service. A new
@@ -1133,6 +1133,7 @@ function createWindow() {
   win.on("closed", () => {
     if (win === self) win = null;
   });
+  return initialLoad;
 }
 
 function isAppUrl(url) {
@@ -1518,14 +1519,16 @@ async function bootLocal(seq) {
       const write = `(() => { const el = document.getElementById("log"); if (!el) return; el.textContent += ${JSON.stringify(line + "\n")}; el.scrollTop = el.scrollHeight; })()`;
       win?.webContents.executeJavaScript(write).catch(() => {});
     },
-    onExit: ({ name, code, dbLockHeld }) => {
+    onExit: ({ name, code, error, dbLockHeld }) => {
       if (quitting || failed) return;
       failed = true;
       // Not recoverable in place: the renderer's SSE streams are already
       // broken and the db lock may be gone.
       const detail = dbLockHeld
         ? "Another Calandria instance is already running against this database.\n\nQuit that one first, or open it in your browser."
-        : `The ${name} process exited unexpectedly (code ${code}).\n\n${supervisor.recentLog(15)}`;
+        : error
+          ? `The ${name} process failed to start (${error.code || "unknown error"}: ${error.message || error}).\n\n${supervisor.recentLog(15)}`
+          : `The ${name} process exited unexpectedly (code ${code}).\n\n${supervisor.recentLog(15)}`;
       dialog.showErrorBox("Calandria stopped", detail);
       app.exit(1);
     },
@@ -1592,6 +1595,7 @@ async function switchTo(id) {
  */
 async function applyActiveInstance() {
   const next = activeInstance(instancesState);
+  let initialLoad = null;
   // Nothing is stopped here. A subscriber is bound to an instance's session,
   // not the window, so destroying the window below leaves it reading and
   // the instance being left behind keeps contributing to the badge.
@@ -1614,12 +1618,13 @@ async function applyActiveInstance() {
     // event when no status area hosts its tray icon; building first means
     // the event either doesn't fire or finds the new window and stands
     // down.
-    createWindow();
+    initialLoad = createWindow();
     // `destroy()`, not `close()`: the close handler hides instead of
     // closing, and this window is being replaced, not put away.
     old?.destroy();
     console.log(`[shell] window rebuilt for ${next.name} (${partitionFor(next) || "default session"})`);
   }
+  if (initialLoad) await initialLoad;
   await attach(next);
 }
 
@@ -2447,7 +2452,7 @@ const DRAIN_OVERLAY = `(() => {
  */
 function showWindow() {
   if (!win || win.isDestroyed()) {
-    createWindow();
+    void createWindow().catch((err) => console.log(`[shell] window load failed: ${err?.message || err}`));
     return;
   }
   if (win.isMinimized()) win.restore();
