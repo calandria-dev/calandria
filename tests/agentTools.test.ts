@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect } from "vitest";
 import { NextRequest } from "next/server";
+import { getDb } from "@/lib/db";
 import { createTag, createProject, createTask, deleteTask, getTask, getTaskDeps, getTaskTagIds, listTags, listTasks, setTaskDeps, updateTask } from "@/lib/store";
 import {
   createSuggestedTask,
@@ -34,6 +35,14 @@ function post(handler: (req: NextRequest) => Promise<Response>, url: string, bod
     })
   );
 }
+
+function clearAgentState() {
+  getDb().prepare("DELETE FROM model_providers").run();
+  getDb().prepare("DELETE FROM settings WHERE key LIKE 'agent_conn_%' OR key LIKE 'onboarding_%'").run();
+}
+
+beforeEach(clearAgentState);
+afterEach(clearAgentState);
 
 describe("agentTools shared logic", () => {
   it("createSuggestedTask creates a suggested task with the given priority", () => {
