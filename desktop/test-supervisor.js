@@ -681,7 +681,10 @@ function hold(port) {
     const impostor = require("node:http").createServer((_q, r) => r.writeHead(200).end("calandria pty-server"));
     await new Promise((r) => impostor.listen(45090, "127.0.0.1", r));
     try {
-      await assert.rejects(() => waitForReady(45090, { timeoutMs: 500, intervalMs: 100 }), /not as the app/);
+      await assert.rejects(
+        () => waitForReady(45090, { timeoutMs: 2_000, intervalMs: 100, probeTimeoutMs: 500 }),
+        /not as the app/,
+      );
     } finally {
       impostor.close();
     }
