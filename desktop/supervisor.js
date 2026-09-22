@@ -337,32 +337,63 @@ function loginShellPath({ env = process.env, timeoutMs = 5000 } = {}) {
  * Electron's own process.env never sees. Reading process.env here would poll
  * an authenticated instance with no token and time the boot out on a 401.
  */
-async function waitForReady(port, { timeoutMs = 60_000, intervalMs = 250, signal = null, env = process.env } = {}) {
+async function waitForReady(
+  port,
+  { timeoutMs = 60_000, intervalMs = 250, signal = null, env = process.env, probeTimeoutMs = 5_000 } = {},
+) {
   const deadline = Date.now() + timeoutMs;
   let lastErr = null;
   while (Date.now() < deadline) {
     if (signal?.aborted) throw new Error("readiness wait aborted");
+    const remaining = deadline - Date.now();
+    const probeMs = Math.max(1, Math.min(remaining, probeTimeoutMs ?? remaining));
+    const probe = new AbortController();
+    let callerAborted = false;
+    const abortProbe = () => {
+      callerAborted = true;
+      probe.abort();
+    };
+    if (signal) {
+      signal.addEventListener("abort", abortProbe, { once: true });
+      if (signal.aborted) abortProbe();
+    }
+    let probeTimedOut = false;
+    const timer = setTimeout(() => {
+      probeTimedOut = true;
+      probe.abort();
+    }, probeMs);
     try {
       const res = await fetch(`http://127.0.0.1:${port}/api/version`, {
         headers: env.SERVICE_TOKEN ? { "x-service-token": env.SERVICE_TOKEN } : {},
-        // Passed to the fetch too: an abort arriving mid-probe ends the wait
-        // immediately, without waiting on this request and the next sleep.
-        signal,
+        // The per-probe signal covers both response headers and body reads.
+        // The caller's signal is forwarded through abortProbe below so a
+        // sidecar exit still cancels this request immediately.
+        signal: probe.signal,
       });
       if (res.ok) {
         // Checks the response shape as well as the status: pty-server.js
         // answers every path with its own banner, so a port mismatch would
         // otherwise read as ready and load the pty sidecar into the window.
-        const body = await res.json().catch(() => null);
+        const body = await res.json().catch((err) => {
+          // A malformed body is a normal failed probe, while an abort during
+          // the body read must retain the timeout or caller-cancel cause.
+          if (probeTimedOut || callerAborted || signal?.aborted) throw err;
+          return null;
+        });
         if (body && typeof body.version === "string") return body;
         lastErr = new Error(`port ${port} answered, but not as the app`);
       } else {
         lastErr = new Error(`status ${res.status}`);
       }
     } catch (err) {
-      lastErr = err;
+      if (callerAborted || signal?.aborted) throw new Error("readiness wait aborted");
+      lastErr = probeTimedOut ? new Error(`readiness probe timed out after ${probeMs}ms`) : err;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abortProbe);
     }
-    await new Promise((r) => setTimeout(r, intervalMs));
+    const delay = Math.min(intervalMs, Math.max(0, deadline - Date.now()));
+    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
   }
   throw new Error(`server did not become ready on port ${port} within ${timeoutMs}ms (${lastErr?.message || "no response"})`);
 }
@@ -382,7 +413,7 @@ async function waitForReady(port, { timeoutMs = 60_000, intervalMs = 250, signal
  * died are used: the other sidecar's boot chatter is often the last thing
  * printed and could otherwise be mistaken for the explanation.
  */
-function bootExitError({ name, code, signal, dbLockHeld }, tail = "") {
+function bootExitError({ name, code, signal, error, dbLockHeld }, tail = "") {
   const prefix = `[${name}] `;
   const said = String(tail)
     .split("\n")
@@ -390,10 +421,21 @@ function bootExitError({ name, code, signal, dbLockHeld }, tail = "") {
     .map((l) => l.slice(prefix.length).trim())
     .filter(Boolean)
     .pop();
-  const how = signal ? `on ${signal}` : `with code ${code}`;
-  const err = new Error(`the ${name} sidecar exited ${how} before the server became ready${said ? `: ${said}` : ""}`);
+  const how = error
+    ? `with spawn error ${describeError(error)}`
+    : signal
+      ? `on ${signal}`
+      : `with code ${code}`;
+  const verb = error ? "failed" : "exited";
+  const err = new Error(`the ${name} sidecar ${verb} ${how} before the server became ready${said ? `: ${said}` : ""}`);
   err.code = "ESIDECAREXIT";
-  err.child = { name, exitCode: code ?? null, signal: signal ?? null, dbLockHeld: !!dbLockHeld };
+  err.child = {
+    name,
+    exitCode: code ?? null,
+    signal: signal ?? null,
+    error: error ? { code: error.code ?? null, message: error.message || String(error) } : null,
+    dbLockHeld: !!dbLockHeld,
+  };
   return err;
 }
 
@@ -602,28 +644,53 @@ class Supervisor {
       // `detached` means "new console window", which is wrong here.
       windowsHide: true,
     });
+    const childRec = { name, child, exited: null, settled: false };
+    this.children.push(childRec);
+    let spawned = false;
+    const settle = ({ code = null, signal = null, error = null } = {}) => {
+      if (childRec.settled) return;
+      childRec.settled = true;
+      childRec.exited = { code, signal, ...(error ? { error } : {}) };
+      if (error) {
+        this.log(`[shell] ${name} failed to spawn (${describeError(error)})`);
+      } else {
+        this.log(`[shell] ${name} exited (code ${code}, signal ${signal ?? "none"})`);
+      }
+      if (this.stopping) return;
+      // The db lock is the expected non-crash exit: server.js catches
+      // DbLockHeldError, prints the holder, and exit(1)s. Surfacing the code
+      // lets the shell say "another Calandria is already running" instead of
+      // "the app crashed".
+      const rec = {
+        name,
+        code,
+        signal,
+        ...(error ? { error } : {}),
+        dbLockHeld: !error && name === "app" && code === 1 && /already (running|holds)/i.test(this.recentLog(20)),
+      };
+      // Before `onExit`, which is somebody else's callback: main.js's ends
+      // in `app.exit(1)` and never returns. Resolving here only queues a
+      // microtask, so the shell's handler still runs first either way. This
+      // ordering keeps a start() in flight from being stranded on the 90s
+      // timeout by a host callback that throws or never returns.
+      this.notifyBootExit?.(rec);
+      this.onExit(rec);
+    };
     child.stdout.on("data", (d) => this.log(`[${name}] ${d}`));
     child.stderr.on("data", (d) => this.log(`[${name}] ${d}`));
-    child.on("exit", (code, signal) => {
-      const rec = this.children.find((c) => c.name === name);
-      if (rec) rec.exited = { code, signal };
-      this.log(`[shell] ${name} exited (code ${code}, signal ${signal ?? "none"})`);
-      if (!this.stopping) {
-        // The db lock is the expected non-crash exit: server.js catches
-        // DbLockHeldError, prints the holder, and exit(1)s. Surfacing the code
-        // lets the shell say "another Calandria is already running" instead of
-        // "the app crashed".
-        const rec = { name, code, signal, dbLockHeld: name === "app" && code === 1 && /already (running|holds)/i.test(this.recentLog(20)) };
-        // Before `onExit`, which is somebody else's callback: main.js's ends
-        // in `app.exit(1)` and never returns. Resolving here only queues a
-        // microtask, so the shell's handler still runs first either way. This
-        // ordering keeps a start() in flight from being stranded on the 90s
-        // timeout by a host callback that throws or never returns.
-        this.notifyBootExit?.(rec);
-        this.onExit(rec);
-      }
+    child.once("spawn", () => {
+      spawned = true;
     });
-    this.children.push({ name, child, exited: null });
+    child.on("error", (error) => {
+      // A failed kill must not make stop() believe a live process exited.
+      // Before `spawn`, the same event means there is no process to reap.
+      if (spawned && this.stopping) {
+        this.log(`[shell] ${name} process error while stopping (${describeError(error)})`);
+        return;
+      }
+      settle({ error });
+    });
+    child.on("exit", (code, signal) => settle({ code, signal }));
     return child;
   }
 

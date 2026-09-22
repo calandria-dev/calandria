@@ -218,6 +218,10 @@ async function switchInstance(id: string): Promise<Page> {
 test("switching to This computer boots the local server and moves the window", async () => {
   const win = await switchInstance("local");
 
+  // applyActiveInstance builds the replacement before destroying the old one,
+  // then waits for createWindow's initial loading.html navigation before attach.
+  await win.waitForURL((url) => url.protocol === "file:" && /\/loading\.html$/i.test(url.pathname), { timeout: 15_000 });
+
   // The local server has to come up from cold here, which is a Next boot.
   await win.waitForURL(/^http:\/\/127\.0\.0\.1:\d+/, { timeout: 120_000 });
   await expect.poll(() => originOf(win), { timeout: 120_000 }).not.toBe(remote.origin);
