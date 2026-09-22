@@ -59,6 +59,23 @@ export function getCapabilities(id: string | null | undefined): AgentCapabilitie
   return read();
 }
 
+/** Validate the cross-agent reasoning preset stored on a task. */
+export function checkReasoningForAgent(agent: string | null | undefined, value: unknown): { reasoning: string | null } | { error: string } {
+  if (value == null) return { reasoning: null };
+  if (typeof value !== "string" || value.length === 0)
+    return { error: "reasoning must be one of the supported effort presets or null" };
+  const options = getCapabilities(agent).reasoningOptions;
+  if (!options.some((option) => option.value === value)) {
+    const supported = options.map((option) => option.value).join(", ");
+    return {
+      error: supported
+        ? `reasoning \"${value}\" is not supported by ${agent || DEFAULT_AGENT}; use one of: ${supported}`
+        : `reasoning \"${value}\" is not supported by ${agent || DEFAULT_AGENT}; this environment has no separate effort control, so choose a model that includes its effort level`,
+    };
+  }
+  return { reasoning: value };
+}
+
 // Context window for an (agent, model) pair, read from the capability
 // descriptor (models[].contextWindow), so each agent's models report their own
 // window with no per-agent table here. The miss policy (widest for an

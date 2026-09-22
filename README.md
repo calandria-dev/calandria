@@ -266,6 +266,10 @@ host that blocks the user namespaces Codex's sandbox needs, Settings →
 Models displays the fix when you connect the Codex environment. Calandria blocks the sandboxed
 modes instead of running turns whose every command fails.
 
+Choose **Effort** in the New task or Edit task dialog to override the environment's
+default for that task. The picker offers the same levels as the session controls.
+Agents can select a level when calling `suggest_task` with `reasoning`.
+
 Settings → Models separates **Environments**, the coding CLIs that run tasks,
 from **Providers**, the endpoints, credentials and model policies that supply models.
 Signing in to an environment adds its bundled provider. You can add LiteLLM, Ollama,

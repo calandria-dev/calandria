@@ -5,6 +5,7 @@ import { adoptDraftUploads, removeTaskUploads } from "@/lib/uploads";
 import { attachmentKindOf, joinAttachmentText } from "@/lib/uploadTypes";
 import { getProvider } from "@/lib/providers/store";
 import { isCodexSandboxMode } from "@/lib/codexSandbox";
+import { checkReasoningForAgent } from "@/lib/agents/capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -18,13 +19,20 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const body = await req.json();
-  if (!body?.project_id || !getProject(body.project_id))
+  const project = body?.project_id ? getProject(body.project_id) : undefined;
+  if (!project)
     return NextResponse.json({ error: "valid project_id required" }, { status: 400 });
   if (!body?.title?.trim()) return NextResponse.json({ error: "title required" }, { status: 400 });
   if (body.provider_id !== undefined && body.provider_id !== null && (typeof body.provider_id !== "string" || !getProvider(body.provider_id)))
     return NextResponse.json({ error: "valid provider_id required" }, { status: 400 });
   if (body.sandbox_mode !== undefined && body.sandbox_mode !== null && !isCodexSandboxMode(body.sandbox_mode))
     return NextResponse.json({ error: "sandbox_mode must be read-only, workspace-write, danger-full-access, or null" }, { status: 400 });
+  const reasoning = checkReasoningForAgent(
+    typeof body.agent === "string" && body.agent ? body.agent : project.default_agent,
+    body.reasoning,
+  );
+  if ("error" in reasoning)
+    return NextResponse.json({ error: reasoning.error }, { status: 400 });
   // Same screen the PATCH route applies: every tag must exist and belong to
   // this task's project, since a tag can't span repositories.
   let tagIds: string[] = [];
@@ -89,6 +97,7 @@ export async function POST(req: Request) {
       ? body.model.trim()
       : undefined,
     provider_id: body.provider_id ?? null,
+    reasoning: reasoning.reasoning,
     tag_ids: tagIds,
     });
   } catch (e) {

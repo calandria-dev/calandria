@@ -377,9 +377,10 @@ function calandriaServer(
           environment: z.string().optional().describe(SUGGEST_TASK.params.environment),
           provider: z.string().optional().describe(SUGGEST_TASK.params.provider),
           model: z.string().optional().describe(SUGGEST_TASK.params.model),
+          reasoning: z.enum(["off", "think", "think_hard", "ultrathink"]).nullable().optional().describe(SUGGEST_TASK.params.reasoning),
           attachments: z.array(z.string()).optional().describe(SUGGEST_TASK.params.attachments),
         },
-        async (args: { title: string; description: string; priority: "hi" | "med" | "lo"; project?: string; blocked_by?: string[]; tags?: string[]; environment?: string; provider?: string; model?: string; attachments?: string[] }) => {
+        async (args: { title: string; description: string; priority: "hi" | "med" | "lo"; project?: string; blocked_by?: string[]; tags?: string[]; environment?: string; provider?: string; model?: string; reasoning?: "off" | "think" | "think_hard" | "ultrathink" | null; attachments?: string[] }) => {
           // Resolve which project this lands in before anything else: the
           // task's agent, send_context and board position all come from it,
           // and a wrong answer is a misfiled task, not a visible
@@ -408,6 +409,7 @@ function calandriaServer(
             environment: args.environment,
             provider: args.provider,
             model: args.model,
+            reasoning: args.reasoning,
             // Resolved against the caller's worktree inside createSuggestedTask.
             attachments: args.attachments,
           });

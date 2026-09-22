@@ -33,6 +33,7 @@ export async function POST(req: NextRequest) {
     environment?: string;
     provider?: string;
     model?: string;
+    reasoning?: string | null;
     attachments?: string[];
   };
   try {
@@ -67,6 +68,7 @@ export async function POST(req: NextRequest) {
     environment: typeof body.environment === "string" ? body.environment : undefined,
     provider: typeof body.provider === "string" ? body.provider : undefined,
     model: typeof body.model === "string" ? body.model : undefined,
+    reasoning: body.reasoning,
     // Resolved against the CALLER's worktree (taskId, trusted) inside
     // createSuggestedTask, never against anything the bridge process sees.
     attachments: Array.isArray(body.attachments) ? body.attachments : undefined,

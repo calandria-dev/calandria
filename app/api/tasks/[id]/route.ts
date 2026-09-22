@@ -6,7 +6,7 @@ import { abortTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { maybeAutoStartDependents } from "@/lib/autoStart";
 import { publishGlobal } from "@/lib/events";
-import { isAgentId } from "@/lib/agents/capabilities";
+import { isAgentId, checkReasoningForAgent } from "@/lib/agents/capabilities";
 import { serializeGatewayMcp } from "@/lib/gatewayMcp";
 import { isCodexSandboxMode } from "@/lib/codexSandbox";
 import { getProvider } from "@/lib/providers/store";
@@ -169,6 +169,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       allowed.sandbox_mode = null;
       allowed.session_id = null;
     }
+  }
+  if ("reasoning" in body) {
+    const reasoning = checkReasoningForAgent(allowed.agent ?? current.agent, body.reasoning);
+    if ("error" in reasoning)
+      return NextResponse.json({ error: reasoning.error }, { status: 400 });
+    allowed.reasoning = reasoning.reasoning;
   }
   // A manual status change means the user is taking over: clear the "your
   // turn" flag and the ran-clean mark an unattended run left behind. Both
