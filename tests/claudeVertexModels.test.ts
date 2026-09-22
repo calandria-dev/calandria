@@ -129,9 +129,13 @@ describe("claudeCapabilities on Vertex", () => {
   });
 
   // Bare Anthropic model ids do not need an `@version` suffix on Vertex; all
-  // six pinned entries resolve.
+  // ten pinned entries resolve.
   it("leaves the pinned-version group exactly as it is: bare ids do resolve on Vertex", () => {
     for (const value of [
+      "claude-opus-5",
+      "claude-opus-5[1m]",
+      "claude-sonnet-5",
+      "claude-sonnet-5[1m]",
       "claude-opus-4-8",
       "claude-opus-4-8[1m]",
       "claude-sonnet-4-6",
