@@ -1,6 +1,10 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { tmpDir } from "./helpers";
 import {
   createFrameWriter,
+  drainPtyBeforeDestroy,
   MAX_PTY_OUTPUT_FRAME_BYTES,
   MAX_QUEUED_FRAME_BYTES,
   splitPtyOutput,
@@ -75,5 +79,49 @@ describe("PTY frame writer", () => {
     callbacks.shift()?.(new Error("write failed"));
     expect(ws.terminate).toHaveBeenCalledOnce();
     expect(send("late", "late")).toBe(false);
+  });
+
+  // A file stands in for the pty master: readSync drains it and stops at EOF
+  // the way a master stops at EAGAIN or EIO.
+  function terminalOver(contents: Buffer) {
+    const file = path.join(tmpDir("pty-drain-"), "master");
+    fs.writeFileSync(file, contents);
+    const fd = fs.openSync(file, "r");
+    const order: string[] = [];
+    const destroy = vi.fn(() => { order.push("destroy"); });
+    const term = { _fd: fd, _socket: { destroyed: false, destroy } };
+    return { term, destroy, order, close: () => fs.closeSync(fd) };
+  }
+
+  it("delivers unread terminal output before the read socket is destroyed", () => {
+    const { term, destroy, order, close } = terminalOver(Buffer.from("last line\r\n"));
+    const output: Buffer[] = [];
+
+    expect(drainPtyBeforeDestroy(term, (chunk: Buffer) => {
+      output.push(chunk);
+      order.push("output");
+    })).toBe(true);
+    term._socket.destroy();
+    close();
+
+    expect(Buffer.concat(output).toString()).toBe("last line\r\n");
+    expect(order).toEqual(["output", "destroy"]);
+    expect(destroy).toHaveBeenCalledOnce();
+  });
+
+  it("bounds the drain for a writer that never stops", () => {
+    const { term, destroy, close } = terminalOver(Buffer.alloc(MAX_PTY_OUTPUT_FRAME_BYTES * 4));
+    let drained = 0;
+
+    drainPtyBeforeDestroy(term, (chunk: Buffer) => { drained += chunk.length; }, MAX_PTY_OUTPUT_FRAME_BYTES * 2);
+    term._socket.destroy();
+    close();
+
+    expect(drained).toBe(MAX_PTY_OUTPUT_FRAME_BYTES * 2);
+    expect(destroy).toHaveBeenCalledOnce();
+  });
+
+  it("leaves a terminal without the expected internals alone", () => {
+    expect(drainPtyBeforeDestroy({}, vi.fn())).toBe(false);
   });
 });

@@ -39,9 +39,11 @@ const appEnvApplied = import("./lib/advanced-env/bootstrap.mjs")
   });
 let createFrameWriter;
 let splitPtyOutput;
+let drainPtyBeforeDestroy;
 const frameWriterImport = appEnvApplied.then(() => import("./lib/pty-frame-writer.mjs")).then((m) => {
   createFrameWriter = m.createFrameWriter;
   splitPtyOutput = m.splitPtyOutput;
+  drainPtyBeforeDestroy = m.drainPtyBeforeDestroy;
 });
 
 appEnvApplied.then(() => import("./lib/log.mjs")).then((m) => {
@@ -247,14 +249,18 @@ wss.on("connection", (ws, req) => {
   // Keep ConPTY callbacks non-reentrant. The frame writer bounds queued bytes
   // and terminates a client that cannot drain them, so node-pty itself never
   // needs to be paused from inside its data callback.
-  term.onData((d) => {
+  const forwardOutput = (d) => {
     for (const payload of splitPtyOutput(d)) {
       if (!sendFrame("pty_output", payload)) {
         stopTerm();
         break;
       }
     }
-  });
+  };
+  term.onData(forwardOutput);
+  // node-pty discards output still unread when the shell exits under load, so
+  // the exit frame could overtake the shell's last lines. Drain it first.
+  if (!IS_WINDOWS) drainPtyBeforeDestroy(term, forwardOutput);
   term.onExit(({ exitCode }) => {
     termStopped = true;
     sendFrame("exit", JSON.stringify({ type: "exit", exitCode }), { closeAfter: true });
