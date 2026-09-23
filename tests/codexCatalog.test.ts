@@ -172,7 +172,7 @@ describe("codex catalog: the default model", () => {
     // price table has never seen, and the estimate must not become NaN.
     writeCache([entry("gpt-9-nova", { priority: 1 })]);
     const usage = { input_tokens: 1_000_000, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 };
-    expect(estimateCostUsd("also-unheard-of", usage)).toBeCloseTo(5, 6);
+    expect(estimateCostUsd("also-unheard-of", usage)).toBeCloseTo(10, 6); // DEFAULT_CODEX_MODEL's input rate
   });
 
   it("skips hidden entries when ranking", () => {

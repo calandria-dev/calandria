@@ -60,14 +60,17 @@ const PRICES: { prefix: string; input: number; cachedInput: number; output: numb
 // whether a model is listed at all, and since prices vary by model, guessing
 // wrong misprices every default turn. ./catalog.ts reads the account catalog
 // instead of guessing. What stays here is the value for an account that has
-// fetched no catalog, which is also the value the CLI itself falls back to.
+// fetched no catalog: the top-priority entry of the fallback catalog embedded
+// in @openai/codex 0.155.1, the Dockerfile's `ARG CODEX_VERSION`.
+// tests/cliPins.test.ts records the same pair and fails when the pin moves.
 //
 // To re-check the embedded half, offline and with no login: the binary embeds
 // that fallback catalog as readable JSON. Find `{\n  "models": [`, brace-match
 // it, and read `slug` and `priority`; a slug that appears zero times in the
-// binary is one the fallback has never heard of.
+// binary is one the fallback has never heard of. probeCodexEmbeddedDefault()
+// in scripts/check-pin-drift.mjs does exactly this for an installed shim.
 
-export const DEFAULT_CODEX_MODEL = "gpt-5.6-sol";
+export const DEFAULT_CODEX_MODEL = "gpt-6-astra";
 
 /**
  * The model a codex turn effectively runs: the task's choice, else whatever the

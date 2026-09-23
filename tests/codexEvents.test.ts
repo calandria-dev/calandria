@@ -78,7 +78,7 @@ describe("codex event mapping", () => {
     // input_tokens carries fresh prompt only and the total doesn't double-count
     // the cache. Reasoning folds into output. cost_usd is ESTIMATED from the
     // token counts at the default model's published API prices
-    // (8764×$5.00 + 30848×$0.50 + 119×$30, per 1M).
+    // (8764×$10.00 + 30848×$1.00 + 119×$50, per 1M).
     const usage = byType(evs, "usage") as Extract<StreamEvent, { type: "usage" }>[];
     expect(usage).toHaveLength(1);
     expect(usage[0].usage).toMatchObject({
@@ -87,7 +87,7 @@ describe("codex event mapping", () => {
       cache_read_tokens: 30848,
       cache_creation_tokens: 0,
     });
-    expect(usage[0].usage.cost_usd).toBeCloseTo(0.062814, 6);
+    expect(usage[0].usage.cost_usd).toBeCloseTo(0.124438, 6);
 
     // No EMPTY sentinel leaks through, and every tool id is emitted at most once.
     expect(evs.some((e) => e.type === "notice")).toBe(false);
@@ -194,13 +194,13 @@ describe("codex cost estimation", () => {
     expect(estimateCostUsd("gpt-5.6", usage)).toBeCloseTo(estimateCostUsd("gpt-5.6-sol", usage), 10);
   });
 
-  it("prices gpt-6-astra off its own row, not the default-family fallback", () => {
-    // Astra $10/$1/$50 per 1M. It shares no prefix with any gpt-5 row, so with
-    // no row of its own it would take the unknown-model fallback and read as
-    // Sol, 6.2 against a true 11.4, half price. Standard rates: Fast mode
-    // doubles them, and the usage payload doesn't say which one served the turn.
+  it("prices gpt-6-astra off its own row, not a gpt-5 row", () => {
+    // Astra $10/$1/$50 per 1M. It shares no prefix with any gpt-5 row, so it
+    // needs a row of its own to read 11.4 and not Sol's 6.2. Standard rates:
+    // Fast mode doubles them, and the usage payload doesn't say which one
+    // served the turn.
     expect(estimateCostUsd("gpt-6-astra", usage)).toBeCloseTo(11.4, 10); // 6.0 + 0.4 + 5.0
-    expect(estimateCostUsd("gpt-6-astra", usage)).not.toBeCloseTo(estimateCostUsd(DEFAULT_CODEX_MODEL, usage), 10);
+    expect(estimateCostUsd("gpt-6-astra", usage)).not.toBeCloseTo(estimateCostUsd("gpt-5.6-sol", usage), 10);
   });
 
   it("has a real price row for every model the picker offers", () => {
