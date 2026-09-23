@@ -140,6 +140,7 @@ function parseArgs(argv) {
     updateNpm: false,
     npmSummary: null,
     applyNpm: null,
+    codexEmbeddedDefault: CODEX_EMBEDDED_DEFAULT_JSON,
     pinnedClaude: null,
     latestClaude: null,
     pinnedCodex: null,
@@ -153,6 +154,7 @@ function parseArgs(argv) {
     "--apply-agy": "applyAgy",
     "--npm-summary": "npmSummary",
     "--apply-npm": "applyNpm",
+    "--codex-embedded-default": "codexEmbeddedDefault",
     "--claude-alias-pinned-bin": "pinnedClaude",
     "--claude-alias-latest-bin": "latestClaude",
     "--codex-default-pinned-bin": "pinnedCodex",
@@ -375,6 +377,9 @@ export function applyAgyPin(source, plan, dockerfilePath = "Dockerfile") {
   return { source: out, changed };
 }
 
+/** The Codex embedded default recorded for ARG CODEX_VERSION. */
+export const CODEX_EMBEDDED_DEFAULT_JSON = "lib/agents/codex/embeddedDefault.json";
+
 const CLI_NPM_PLAN = [
   { pkg: "@anthropic-ai/claude-code", pin: "claudeCode", arg: "CLAUDE_CODE_VERSION" },
   { pkg: "@openai/codex", pin: "codexVersion", arg: "CODEX_VERSION" },
@@ -454,6 +459,59 @@ export function applyNpmPackagePins(source, plan, packageJsonPath = "package.jso
   const re = new RegExp(`(\"@openai/codex-sdk\"\\s*:\\s*\")[^\"]+(\")`);
   if (!re.test(source)) throw new Error(`could not locate \`@openai/codex-sdk\` in ${packageJsonPath}`);
   return { source: source.replace(re, `$1${value}$2`), changed: true };
+}
+
+/**
+ * Carries the model probed from the latest Codex binary into a plan that moves
+ * CODEX_VERSION, so the bump rewrites the recorded embedded default in the
+ * same commit. The probe must have read the exact version the plan pins: a
+ * release published between the npm lookup and the install would otherwise
+ * record one version's model against another.
+ */
+export function withCodexEmbeddedDefault(plan, latest) {
+  if (plan?.codexVersion === undefined) return plan;
+  if (latest?.version !== plan.codexVersion) {
+    throw new Error(
+      `the latest Codex probe read ${String(latest?.version)}, but the bump pins ${plan.codexVersion}`,
+    );
+  }
+  if (typeof latest.model !== "string" || !latest.model.trim()) {
+    throw new Error("the latest Codex default probe did not resolve a model");
+  }
+  return { ...plan, codexModel: latest.model.trim() };
+}
+
+/**
+ * Rewrite the recorded embedded default (CODEX_EMBEDDED_DEFAULT_JSON) to the
+ * version and model a Codex bump carries. tests/cliPins.test.ts compares the
+ * file against both ARG CODEX_VERSION and DEFAULT_CODEX_MODEL.
+ */
+export function applyCodexEmbeddedDefault(
+  source,
+  plan,
+  filePath = CODEX_EMBEDDED_DEFAULT_JSON,
+) {
+  if (plan?.codexVersion === undefined) return { source, changed: false };
+  const { codexVersion, codexModel } = plan;
+  if (!/^\d+\.\d+\.\d+$/.test(codexVersion)) {
+    throw new Error(`the npm bump has no valid exact version for ${filePath}`);
+  }
+  if (typeof codexModel !== "string" || !codexModel.trim()) {
+    throw new Error(
+      `the npm bump moves CODEX_VERSION to ${codexVersion} but carries no probed model for ${filePath}`,
+    );
+  }
+  let json;
+  try {
+    json = JSON.parse(source);
+  } catch {
+    throw new Error(`${filePath} is not JSON`);
+  }
+  if (json.codexVersion === codexVersion && json.model === codexModel) {
+    return { source, changed: false };
+  }
+  const next = { ...json, codexVersion, model: codexModel };
+  return { source: `${JSON.stringify(next, null, 2)}\n`, changed: true };
 }
 
 /**
@@ -1160,15 +1218,18 @@ async function collectFindings(
     });
   }
 
-  const npmBumps = updateNpm ? npmBumpPlan(pins, npm, stale) : null;
   const aliasDrift = compareClaudeAliasResolutions(
     await probeClaudeAliasResolutions(pinnedClaude),
     await probeClaudeAliasResolutions(latestClaude),
   );
+  const latestCodexDefault = await probeCodexEmbeddedDefault(latestCodex);
   const codexDefaultDrift = compareCodexDefaults(
     await probeCodexEmbeddedDefault(pinnedCodex),
-    await probeCodexEmbeddedDefault(latestCodex),
+    latestCodexDefault,
   );
+  const npmBumps = updateNpm
+    ? withCodexEmbeddedDefault(npmBumpPlan(pins, npm, stale), latestCodexDefault)
+    : null;
   const bumpedPackages = new Set(
     npmBumps
       ? CLI_NPM_PLAN.filter(({ pin }) => npmBumps[pin]).map(({ pkg }) => pkg)
@@ -1390,9 +1451,21 @@ async function applySavedNpmBump(opts) {
   if (packageApplied.changed) {
     await writeFile(opts.packageJson, packageApplied.source, "utf8");
   }
+  const defaultApplied = applyCodexEmbeddedDefault(
+    await readFile(opts.codexEmbeddedDefault, "utf8"),
+    plan,
+    opts.codexEmbeddedDefault,
+  );
+  if (defaultApplied.changed) {
+    await writeFile(opts.codexEmbeddedDefault, defaultApplied.source, "utf8");
+  }
+  const also = [
+    packageApplied.changed && opts.packageJson,
+    defaultApplied.changed && opts.codexEmbeddedDefault,
+  ].filter(Boolean);
   console.log(
     `Applied npm CLI pins to ${opts.dockerfile}` +
-      (packageApplied.changed ? ` and ${opts.packageJson}.` : "."),
+      (also.length ? ` and ${also.join(" and ")}.` : "."),
   );
   return 0;
 }

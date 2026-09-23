@@ -417,7 +417,7 @@ jobs:
             npm run fix-lockfile
           fi
 
-          if git diff --quiet -- Dockerfile package.json package-lock.json; then
+          if git diff --quiet -- Dockerfile package.json package-lock.json lib/agents/codex/embeddedDefault.json; then
             echo "::error::the bump applied nothing; the base already carries the reported pins"
             exit 1
           fi
@@ -437,7 +437,7 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Dockerfile package.json package-lock.json
+          git add Dockerfile package.json package-lock.json lib/agents/codex/embeddedDefault.json
           {
             echo "$title"
             echo
