@@ -283,7 +283,13 @@ jobs:
       - run: npm ci
 
       - name: Build the app the shell serves
-        run: npm run build
+        # Windows webpack gets EACCES while scanning ActionsMcpHost.exe on the hosted runner. Use Turbopack there to avoid that scan.
+        run: |
+          if [ "${{ matrix.platform }}" = "win" ]; then
+            npm run build -- --turbopack
+          else
+            npm run build
+          fi
 
       - name: Install Electron
         run: npm run desktop:install
