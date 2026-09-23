@@ -524,13 +524,24 @@ test.describe("mobile settings nav", () => {
 
     const chips = page.locator(".settings-nav-list .nav-item");
     await expect(chips.first()).toBeVisible();
+    // Shrink-to-fit, not full-bleed: several chips share the row, the rest
+    // sit past the right edge, and the rail itself scrolls to reach them.
+    // Whether a chip happens to straddle the edge depends on label text and
+    // font metrics (a 6px gap can land exactly on it), so the contract is
+    // measured on the rail's overflow, never on one chip's clipping.
     const boxes = await chips.evaluateAll((els) =>
       els.map((el) => el.getBoundingClientRect()).map((r) => ({ left: r.left, right: r.right })));
     expect(boxes.every((b) => b.right - b.left < 390)).toBe(true);
     expect(boxes.filter((b) => b.left >= 0 && b.right <= 390).length).toBeGreaterThanOrEqual(2);
-    // Horizontal overflow keeps the remaining sections reachable.
+    expect(boxes.some((b) => b.right > 390)).toBe(true);
     const rail = page.locator(".settings-nav-list");
-    await expect.poll(() => rail.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+    const overflow = await rail.evaluate((el) => ({
+      scrollWidth: el.scrollWidth,
+      clientWidth: el.clientWidth,
+      overflowX: getComputedStyle(el).overflowX,
+    }));
+    expect(overflow.scrollWidth).toBeGreaterThan(overflow.clientWidth);
+    expect(overflow.overflowX).toBe("auto");
 
     // A section past the fold still selects, and gets scrolled into view.
     const models = chips.filter({ hasText: "Models" });
