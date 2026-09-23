@@ -292,7 +292,8 @@ wrong misprices every turn that picks no model.
 Reads are synchronous behind a 60s cache (`getCapabilities()` sits on the request path) and fail
 soft on any bad input (absent file, bad JSON, unrecognized shape, wrong field type), falling back
 to `CTX_FALLBACK` (272,000, `lib/agents/codex/capabilities.ts`) and `DEFAULT_CODEX_MODEL`
-(`"gpt-5.6-sol"`, `lib/agents/codex/pricing.ts`), what the CLI itself falls back to uncatalogued.
+(`"gpt-6-astra"`, `lib/agents/codex/pricing.ts`), what the pinned CLI (0.155.1) itself falls back to
+uncatalogued.
 
 **Plan usage is fed two ways.** The app-server transport gets a passive feed for free: while a
 turn runs, the server pushes `account/rateLimits/updated` carrying the same `RateLimitSnapshot`

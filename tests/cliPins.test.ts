@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { extractPins } from "../scripts/check-pin-drift.mjs";
+import { DEFAULT_CODEX_MODEL } from "../lib/agents/codex/pricing";
 
 const ROOT = path.join(__dirname, "..");
 const read = (file: string) =>
@@ -77,6 +78,31 @@ describe("Codex CLI pins", () => {
         `${declared}-`,
       );
     }
+  });
+
+  /**
+   * The model the pinned CLI runs with no `--model`, no config.toml `model`
+   * and no account catalog: the top-priority entry of the fallback catalog
+   * compiled into the binary. A CLI patch can move it, so it is recorded here
+   * against the version it was read from. Re-read it for a new pin with:
+   *
+   *   npm install --prefix <prefix> --package-lock=false @openai/codex@<CODEX_VERSION>
+   *   node -e 'import("./scripts/check-pin-drift.mjs").then(async m =>
+   *     console.log(await m.probeCodexEmbeddedDefault("<prefix>/node_modules/.bin/codex")))'
+   *
+   * then update both fields, and DEFAULT_CODEX_MODEL if the model moved.
+   */
+  const CODEX_EMBEDDED_DEFAULT = { version: "0.155.1", model: "gpt-6-astra" };
+
+  it("records the embedded default model for the pinned CLI", () => {
+    expect(
+      pins.codexVersion.value,
+      "ARG CODEX_VERSION moved: re-probe the embedded default (recipe above)",
+    ).toBe(CODEX_EMBEDDED_DEFAULT.version);
+  });
+
+  it("defaults DEFAULT_CODEX_MODEL to the pinned CLI's embedded default", () => {
+    expect(DEFAULT_CODEX_MODEL).toBe(CODEX_EMBEDDED_DEFAULT.model);
   });
 });
 

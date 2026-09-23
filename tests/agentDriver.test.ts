@@ -461,7 +461,7 @@ describe("codex driver contract through the runner", () => {
     // The fixture's 39612 input_tokens include its 30848 cached reads; the
     // buckets are disjoint here, so the prompt is counted once (8764 + 30848).
     expect(taskUsage.total_tokens).toBe(8764 + 30848 + 119);
-    expect(taskUsage.cost_usd).toBeCloseTo(0.062814, 6);
+    expect(taskUsage.cost_usd).toBeCloseTo(0.124438, 6);
 
     // The driver reports the model it resolved (task.model null → the CLI
     // default), persisted for the badge and the Insights provider panel.
@@ -483,7 +483,7 @@ describe("codex driver contract through the runner", () => {
     // The usage event is published live, so the cost chip updates the moment
     // the turn ends instead of on the next page load.
     const live = events.find((e) => e.type === "usage") as { usage?: { cost_usd: number } } | undefined;
-    expect(live?.usage?.cost_usd).toBeCloseTo(0.062814, 6);
+    expect(live?.usage?.cost_usd).toBeCloseTo(0.124438, 6);
   });
 
   it("bills a resumed codex turn for its own tokens, not the whole thread's running total", async () => {
