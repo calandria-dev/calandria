@@ -45,17 +45,12 @@ const M1 = 1_000_000;
 
 export const CLAUDE_CAPABILITIES: AgentCapabilities = {
   models: [
-    // Pinned ahead of an alias because the alias may not reach it. An alias
-    // resolves through the installed CLI's own catalog, so an older CLI can
-    // resolve it to an earlier version than the pin names. `fable` is one
-    // measured case. `opus` is another: Claude Code 2.1.278 still resolves
-    // `opus` to `claude-opus-5`, while 2.1.280 resolves it to
-    // `claude-opus-5-5`. The pin says which version was meant regardless of
-    // what the installed CLI knows. An id the CLI doesn't recognize logs
-    // `[claude-code:unrecognized_model]` and passes through unchanged, so the
-    // turn still runs and bills under that id; a genuinely bogus id errors
-    // instead, so an unrecognized pin is a pass-through, not a silent
-    // fallback.
+    // Pinned ahead of an alias because the alias may not reach it. Alias
+    // resolution follows the installed CLI's catalog: Claude Code 2.1.278
+    // resolves `opus` to `claude-opus-5`, while 2.1.280 resolves it to
+    // `claude-opus-5-5`. The explicit id selects the intended version. An id
+    // the CLI doesn't recognize logs `[claude-code:unrecognized_model]` and
+    // passes through to the API. An invalid id fails the turn.
     { value: "claude-fable-5-1", label: "Fable 5.1", sub: "newest Fable · 1M context", contextWindow: M1, group: "Latest" },
     { value: "fable", label: "Fable (latest)", sub: "most capable · 1M context", contextWindow: M1, group: "Latest" },
     { value: "claude-opus-5-5", label: "Opus 5.5", sub: "newest Opus", contextWindow: K200, group: "Latest" },
