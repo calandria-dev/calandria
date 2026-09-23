@@ -36,6 +36,14 @@ Nothing is baked into the image: the checkout is bind-mounted at `/work` and
 is a one-time cost that the next run, and every other worktree, inherits. The
 container's entrypoint reinstalls only when `package-lock.json` changes; wipe
 the volume (`docker volume rm calandria-test-node-modules`) to force a clean tree.
+The wrapper labels newly created volumes `com.calandria.cache=disposable`. An
+existing unlabeled shared cache remains reusable until you remove it manually.
+On Linux, clean dangling disposable caches with:
+
+```bash
+docker volume ls -q --filter dangling=true --filter label=com.calandria.cache=disposable \
+  | xargs -r docker volume rm
+```
 
 The four `*:docker` scripts invoke `bash scripts/docker-test.sh` rather than the
 file directly, so they also run from a Windows shell with Git Bash on PATH
@@ -67,7 +75,9 @@ command run at `/work` prints `fatal: not a git repository`. Neither suite cares
 both build their own fixture repos under a temp root with a pinned gitconfig.
 Don't read it as a broken checkout. Run git on the host.
 
-Knobs (all optional): `CALANDRIA_TEST_VOLUME` to use a different node_modules volume,
+Knobs (all optional): `CALANDRIA_TEST_VOLUME` to use a different node_modules volume.
+Newly created volumes receive the `com.calandria.cache=disposable` label. An existing
+unlabeled shared cache remains reusable until manually removed.
 `CALANDRIA_TEST_USER=$(id -u):$(id -g)` on a Linux daemon that does not remap bind
 mounts (otherwise `.next/` and `test-results/` come back root-owned; OrbStack
 and Docker Desktop remap, so the default root user is fine there), and

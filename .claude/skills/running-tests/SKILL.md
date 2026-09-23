@@ -39,6 +39,14 @@ npm run test:docker -- -- tests/merge.test.ts -t "conflicts"  # ✅ reaches vite
 The checkout is bind-mounted at `/work`; `node_modules` is the named volume
 `calandria-test-node-modules`, reinstalled only when `package-lock.json` changes. That
 install is a one-time cost: every later run, and every other worktree, inherits it.
+Newly created volumes receive the `com.calandria.cache=disposable` label. An existing
+unlabeled shared cache remains reusable until manually removed. On Linux, clean
+dangling disposable caches with:
+
+```bash
+docker volume ls -q --filter dangling=true --filter label=com.calandria.cache=disposable \
+  | xargs -r docker volume rm
+```
 
 A worktree with no `node_modules` of its own is **normal**. Leave it alone. Run
 `docker volume rm calandria-test-node-modules` only to force a clean install (a

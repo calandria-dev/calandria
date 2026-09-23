@@ -9,9 +9,10 @@
 #
 # Env knobs:
 #   CALANDRIA_TEST_VOLUME   named volume holding node_modules (default below).
-#                           Shared by every worktree; `docker volume rm` it to
-#                           reset. Renamed from ORCH_TEST_VOLUME; `docker
-#                           volume rm` any leftover orch-test-node-modules
+#                           Shared by every worktree. Newly created volumes use
+#                           the `com.calandria.cache=disposable` label; `docker
+#                           volume rm` resets the cache. Renamed from ORCH_TEST_VOLUME;
+#                           `docker volume rm` any leftover orch-test-node-modules
 #                           and `docker image rm` old orch-test:* tags too.
 #   CALANDRIA_TEST_USER     "uid:gid" to run as. Unset (root) is right on a host
 #                           whose bind mounts remap ownership (OrbStack/Docker
@@ -38,6 +39,11 @@ fi
 pw=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")
 image="calandria-test:${target}-pw${pw}"
 volume=${CALANDRIA_TEST_VOLUME:-calandria-test-node-modules}
+
+# Newly created test caches carry a disposable label so a Linux host can clean
+# dangling caches without selecting unrelated Docker volumes. Docker leaves an
+# existing volume unchanged, including its labels.
+docker volume create --label "com.calandria.cache=disposable" --name "$volume" >/dev/null
 
 if [ "${CALANDRIA_TEST_REBUILD:-}" = "1" ] || ! docker image inspect "$image" >/dev/null 2>&1; then
   echo "[docker-test] building $image (once; ~a few minutes for the e2e target)" >&2
