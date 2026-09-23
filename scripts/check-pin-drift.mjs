@@ -7,8 +7,14 @@
 // model the CLI is too old to run, so it's reported on staleness instead. Run
 // daily by .github/workflows/pin-drift.yml. That workflow automates the CLI
 // pins and files or updates one labeled issue for the pins that still require
-// manual review. Claude Code family aliases also get a behavior check between
-// the pinned and latest CLIs, independent of the version-distance thresholds.
+// manual review. Two behavior checks run between the pinned and latest CLIs,
+// independent of the version-distance thresholds: the model each Claude Code
+// family alias resolves to, and the model Codex runs when nothing overrides
+// it. The Codex default is read from the fallback catalog compiled into each
+// binary, offline and with an empty CODEX_HOME, so no account catalog and no
+// config.toml can answer for it. Runtime discovery (lib/agents/codex/catalog.ts)
+// already resolves those two per account; this check covers the value the CLI
+// itself falls back to.
 //
 // `--update-agy` rewrites AGY_VERSION and both SHA-512 ARGs from the manifests
 // this run already fetched. `--update-npm` records stale Claude Code and Codex
@@ -22,13 +28,16 @@
 //        [--package-json <path>] [--report <path>]
 //        --claude-alias-pinned-bin <path>
 //        --claude-alias-latest-bin <path>
+//        --codex-default-pinned-bin <path>
+//        --codex-default-latest-bin <path>
 //        [--update-agy] [--agy-summary <path>] [--apply-agy <path>]
 //        [--update-npm] [--npm-summary <path>] [--apply-npm <path>]
 // Exit codes: 0 = current, 1 = drift found (report written), 2 = check itself failed.
 
 import { spawn } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const AGY_MANIFEST_BASE =
@@ -102,6 +111,12 @@ const ARCHES = ["amd64", "arm64"];
 const FETCH_TIMEOUT_MS = 20_000;
 const FETCH_ATTEMPTS = 3;
 const CLAUDE_PROBE_TIMEOUT_MS = 20_000;
+const CODEX_PROBE_TIMEOUT_MS = 20_000;
+
+// The fallback model catalog is compiled into the codex binary as this
+// pretty-printed JSON object. lib/agents/codex/pricing.ts documents the same
+// recipe for re-checking the embedded half by hand.
+const CODEX_CATALOG_NEEDLE = '{\n  "models": [';
 
 // Keep this list aligned with PROBE_ALIASES in
 // lib/agents/claude/modelProbe.ts. The drift script runs under plain Node, so
@@ -127,6 +142,8 @@ function parseArgs(argv) {
     applyNpm: null,
     pinnedClaude: null,
     latestClaude: null,
+    pinnedCodex: null,
+    latestCodex: null,
   };
   const paths = {
     "--dockerfile": "dockerfile",
@@ -138,6 +155,8 @@ function parseArgs(argv) {
     "--apply-npm": "applyNpm",
     "--claude-alias-pinned-bin": "pinnedClaude",
     "--claude-alias-latest-bin": "latestClaude",
+    "--codex-default-pinned-bin": "pinnedCodex",
+    "--codex-default-latest-bin": "latestCodex",
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -181,6 +200,16 @@ function parseArgs(argv) {
   if (!opts.applyAgy && !opts.applyNpm && !opts.pinnedClaude) {
     throw new Error(
       "--claude-alias-pinned-bin and --claude-alias-latest-bin are required to check Claude alias resolution",
+    );
+  }
+  if (Boolean(opts.pinnedCodex) !== Boolean(opts.latestCodex)) {
+    throw new Error(
+      "--codex-default-pinned-bin and --codex-default-latest-bin must name the two installed Codex binaries together",
+    );
+  }
+  if (!opts.applyAgy && !opts.applyNpm && !opts.pinnedCodex) {
+    throw new Error(
+      "--codex-default-pinned-bin and --codex-default-latest-bin are required to check the Codex default model",
     );
   }
   return opts;
@@ -778,6 +807,206 @@ async function probeClaudeAliasResolutions(bin) {
 }
 
 /**
+ * The fallback model catalog compiled into a codex binary. `bytes` is the
+ * executable's contents (a Buffer, or its latin1 string). Exactly one catalog
+ * must be present: zero means the layout changed and the check can no longer
+ * see it, two means it cannot tell which one the CLI reads.
+ */
+export function extractCodexEmbeddedCatalog(bytes) {
+  const text = Buffer.isBuffer(bytes) ? bytes.toString("latin1") : String(bytes);
+  const start = text.indexOf(CODEX_CATALOG_NEEDLE);
+  if (start === -1) {
+    throw new Error("the codex binary embeds no fallback model catalog");
+  }
+  if (text.indexOf(CODEX_CATALOG_NEEDLE, start + 1) !== -1) {
+    throw new Error("the codex binary embeds more than one fallback model catalog");
+  }
+  let depth = 0;
+  let end = -1;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) {
+      end = i;
+      break;
+    }
+  }
+  if (end === -1) {
+    throw new Error("the codex binary's fallback model catalog is unterminated");
+  }
+  let catalog;
+  try {
+    catalog = JSON.parse(text.slice(start, end + 1));
+  } catch (err) {
+    throw new Error(`the codex binary's fallback model catalog is not JSON: ${err.message}`);
+  }
+  if (!Array.isArray(catalog?.models)) {
+    throw new Error("the codex binary's fallback model catalog has no `models` array");
+  }
+  return catalog;
+}
+
+/**
+ * The model codex runs with no `--model`, no config.toml `model`, and no
+ * account catalog: the listed entry with the lowest `priority`. Same rule as
+ * `lib/agents/codex/catalog.ts` applies to the account catalog. A missing
+ * `visibility` counts as listed and "hide" is the only exclusion.
+ */
+export function codexEmbeddedDefault(catalog) {
+  const models = Array.isArray(catalog?.models) ? catalog.models : [];
+  let best = null;
+  for (const entry of models) {
+    if (typeof entry?.slug !== "string" || !entry.slug.trim()) continue;
+    if (entry.visibility != null && entry.visibility !== "list") continue;
+    if (typeof entry.priority !== "number" || !Number.isFinite(entry.priority)) continue;
+    if (best == null || entry.priority < best.priority) {
+      best = { slug: entry.slug.trim(), priority: entry.priority };
+    }
+  }
+  if (!best) {
+    throw new Error("the codex fallback model catalog lists no model with a priority");
+  }
+  return best;
+}
+
+/**
+ * The no-override default is a CLI contract in the same way the Claude
+ * aliases are: a patch release can move it while every staleness threshold
+ * stays quiet. Both readings must carry a model and a version. An absent
+ * reading is a probe failure, never evidence that the two CLIs agree.
+ */
+export function compareCodexDefaults(pinned, latest) {
+  const read = (reading, label) => {
+    if (typeof reading?.model !== "string" || !reading.model.trim()) {
+      throw new Error(`the ${label} Codex default probe did not resolve a model`);
+    }
+    if (typeof reading.version !== "string" || !reading.version.trim()) {
+      throw new Error(`the ${label} Codex default probe did not report a version`);
+    }
+    return { model: reading.model.trim(), version: reading.version.trim() };
+  };
+  const pinnedReading = read(pinned, "pinned");
+  const latestReading = read(latest, "latest");
+  if (pinnedReading.model === latestReading.model) return [];
+  return [
+    {
+      pinned: pinnedReading.model,
+      latest: latestReading.model,
+      pinnedVersion: pinnedReading.version,
+      latestVersion: latestReading.version,
+    },
+  ];
+}
+
+/**
+ * `@openai/codex`'s `codex` bin is a Node shim that spawns the native
+ * executable from the platform package installed beside it
+ * (`@openai/codex-<os>-<arch>/vendor/<triple>/bin/codex`). npm installs only
+ * the platform package that matches the runner, so exactly one must be found.
+ */
+async function locateCodexExecutable(shim) {
+  const resolved = await realpath(shim);
+  const scope = path.resolve(path.dirname(resolved), "..", "..");
+  const found = [];
+  for (const pkg of await readdir(scope)) {
+    if (!pkg.startsWith("codex-")) continue;
+    const vendor = path.join(scope, pkg, "vendor");
+    let triples;
+    try {
+      triples = await readdir(vendor);
+    } catch {
+      continue;
+    }
+    for (const triple of triples) {
+      for (const name of ["codex", "codex.exe"]) {
+        const candidate = path.join(vendor, triple, "bin", name);
+        try {
+          if ((await stat(candidate)).isFile()) found.push(candidate);
+        } catch {
+          // Not this platform's layout.
+        }
+      }
+    }
+  }
+  if (found.length !== 1) {
+    throw new Error(
+      `expected one native codex executable beside \`${shim}\`, found ${found.length}` +
+        (found.length ? `: ${found.join(", ")}` : ""),
+    );
+  }
+  return found[0];
+}
+
+/**
+ * `codex --version` under an empty CODEX_HOME. The CLI reads that directory
+ * for config.toml and the cached account catalog, so an empty one makes the
+ * reading the binary's own. `--version` sends nothing, so this is offline.
+ */
+async function probeCodexVersion(bin) {
+  const home = await mkdtemp(path.join(os.tmpdir(), "codex-default-probe-"));
+  try {
+    return await new Promise((resolve, reject) => {
+      let child;
+      try {
+        child = spawn(bin, ["--version"], {
+          cwd: home,
+          env: { ...process.env, CODEX_HOME: home },
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+      } catch (err) {
+        reject(new Error(`could not start Codex version probe: ${err.message}`));
+        return;
+      }
+      let done = false;
+      const finish = (err, version) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        if (err) {
+          child.kill();
+          reject(err);
+        } else {
+          resolve(version);
+        }
+      };
+      const timer = setTimeout(() => {
+        finish(new Error("Codex version probe timed out"));
+      }, CODEX_PROBE_TIMEOUT_MS);
+      let out = "";
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (chunk) => {
+        out += chunk;
+      });
+      child.on("error", (err) => {
+        finish(new Error(`Codex version probe failed: ${err.message}`));
+      });
+      child.on("close", (code) => {
+        const match = /(\d+\.\d+\.\d+\S*)/.exec(out);
+        if (code !== 0 || !match) {
+          finish(
+            new Error(
+              `Codex version probe exited ${code} without a version: ${JSON.stringify(out.trim())}`,
+            ),
+          );
+        } else {
+          finish(null, match[1]);
+        }
+      });
+    });
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+}
+
+/** The version and embedded default model of one installed codex shim. */
+export async function probeCodexEmbeddedDefault(shim) {
+  const version = await probeCodexVersion(shim);
+  const executable = await locateCodexExecutable(shim);
+  const catalog = extractCodexEmbeddedCatalog(await readFile(executable));
+  return { model: codexEmbeddedDefault(catalog).slug, version };
+}
+
+/**
  * Both arches nearly always report the same upstream version, so reporting one
  * row per arch would just say everything twice. Collapse equal values into one
  * finding and name the arches only when they actually disagree.
@@ -836,6 +1065,8 @@ async function collectFindings(
     updateNpm = false,
     pinnedClaude,
     latestClaude,
+    pinnedCodex,
+    latestCodex,
   } = {},
 ) {
   const findings = [];
@@ -934,6 +1165,10 @@ async function collectFindings(
     await probeClaudeAliasResolutions(pinnedClaude),
     await probeClaudeAliasResolutions(latestClaude),
   );
+  const codexDefaultDrift = compareCodexDefaults(
+    await probeCodexEmbeddedDefault(pinnedCodex),
+    await probeCodexEmbeddedDefault(latestCodex),
+  );
   const bumpedPackages = new Set(
     npmBumps
       ? CLI_NPM_PLAN.filter(({ pin }) => npmBumps[pin]).map(({ pkg }) => pkg)
@@ -942,6 +1177,7 @@ async function collectFindings(
   return {
     findings,
     aliasDrift,
+    codexDefaultDrift,
     stale: updateNpm
       ? stale.filter(({ pkg }) => !bumpedPackages.has(pkg))
       : stale,
@@ -976,7 +1212,11 @@ const BUMP_CHECKLIST = [
   "",
 ];
 
-function buildReport({ findings, aliasDrift, stale, entries, observed }, pins, agyNote) {
+function buildReport(
+  { findings, aliasDrift, codexDefaultDrift, stale, entries, observed },
+  pins,
+  agyNote,
+) {
   const lines = [];
 
   if (agyNote) lines.push(agyNote, "");
@@ -1045,6 +1285,28 @@ function buildReport({ findings, aliasDrift, stale, entries, observed }, pins, a
       ...aliasDrift.map(
         ({ alias, pinnedVersion, pinned, latestVersion, latest }) =>
           `| \`${alias}\` | \`${pinnedVersion}\` | \`${pinned}\` | \`${latestVersion}\` | \`${latest}\` |`,
+      ),
+      "",
+    );
+  }
+
+  if (codexDefaultDrift.length) {
+    lines.push(
+      "## Codex default model changed",
+      "",
+      "The model Codex runs with no `--model`, no config.toml `model` and no",
+      "account catalog differs between the pinned and latest `@openai/codex`",
+      "releases, read from the fallback catalog compiled into each binary.",
+      "This signal does not wait for a staleness threshold. An account catalog",
+      "still overrides it at runtime; the app resolves that per account.",
+      "Review `DEFAULT_CODEX_MODEL` in `lib/agents/codex/pricing.ts` against",
+      "the new value before choosing a bump.",
+      "",
+      "| Pinned CLI | Pinned default | Latest CLI | Latest default |",
+      "|-|-|-|-|",
+      ...codexDefaultDrift.map(
+        ({ pinnedVersion, pinned, latestVersion, latest }) =>
+          `| \`${pinnedVersion}\` | \`${pinned}\` | \`${latestVersion}\` | \`${latest}\` |`,
       ),
       "",
     );
@@ -1150,6 +1412,8 @@ async function main() {
     updateNpm: opts.updateNpm,
     pinnedClaude: opts.pinnedClaude,
     latestClaude: opts.latestClaude,
+    pinnedCodex: opts.pinnedCodex,
+    latestCodex: opts.latestCodex,
   });
 
   if (opts.updateNpm && opts.npmSummary) {
@@ -1202,7 +1466,11 @@ async function main() {
     }
   }
 
-  const total = result.findings.length + result.aliasDrift.length + result.stale.length;
+  const total =
+    result.findings.length +
+    result.aliasDrift.length +
+    result.codexDefaultDrift.length +
+    result.stale.length;
   if (total === 0) {
     console.log(
       `Pins are current: gh=${pins.gh.value}, ` +
@@ -1222,7 +1490,8 @@ async function main() {
   console.log(report);
   console.error(
     `\n${result.findings.length} pin(s) have aged out, ` +
-      `${result.aliasDrift.length} alias resolution(s) changed, and ` +
+      `${result.aliasDrift.length} alias resolution(s) changed, ` +
+      `${result.codexDefaultDrift.length} Codex default(s) changed, and ` +
       `${result.stale.length} are behind.`,
   );
   return 1;
