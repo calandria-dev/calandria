@@ -10,6 +10,9 @@ import {
   npmStaleness,
   compareClaudeAliasResolutions,
   CLAUDE_PROBE_ALIASES,
+  extractCodexEmbeddedCatalog,
+  codexEmbeddedDefault,
+  compareCodexDefaults,
   agyBumpPlan,
   applyAgyPin,
   npmBumpPlan,
@@ -317,11 +320,32 @@ describe("pin drift workflow", () => {
   it("installs isolated Claude Code probes and passes both binary paths", () => {
     expect(workflow).toContain('npm install --prefix "$pinned_prefix"');
     expect(workflow).toContain('npm install --prefix "$latest_prefix"');
+    expect(workflow).toContain('"@anthropic-ai/claude-code@$pinned"');
+    expect(workflow).toContain('"@anthropic-ai/claude-code@$latest"');
     expect(workflow).toContain("--claude-alias-pinned-bin");
     expect(workflow).toContain("--claude-alias-latest-bin");
     expect(workflow).toMatch(
       /- name: Open, update or close the drift issue\n\s+if: env\.DRY_RUN != 'true'/,
     );
+  });
+
+  it("installs isolated Codex probes from the Dockerfile pin and npm latest", () => {
+    expect(workflow).toMatch(/\$2 ~ \/\^CODEX_VERSION=\/ \{/);
+    expect(workflow).toContain('latest="$(npm view @openai/codex version)"');
+    expect(workflow).toContain('"@openai/codex@$pinned"');
+    expect(workflow).toContain('"@openai/codex@$latest"');
+    expect(workflow).toContain('pinned_prefix="$RUNNER_TEMP/codex-default-pinned"');
+    expect(workflow).toContain('latest_prefix="$RUNNER_TEMP/codex-default-latest"');
+    expect(workflow).toContain("CODEX_DEFAULT_PINNED_BIN=$pinned_bin");
+    expect(workflow).toContain("CODEX_DEFAULT_LATEST_BIN=$latest_bin");
+    expect(workflow).toContain('--codex-default-pinned-bin "$CODEX_DEFAULT_PINNED_BIN"');
+    expect(workflow).toContain('--codex-default-latest-bin "$CODEX_DEFAULT_LATEST_BIN"');
+    // The Codex prefixes must reach the script from the same step that
+    // supplies the Claude ones, so a missing pair fails the check instead of
+    // silently skipping it.
+    const check = /- name: Compare pins with upstream[\s\S]*?case "\$status" in/.exec(workflow);
+    expect(check?.[0]).toContain("--claude-alias-latest-bin");
+    expect(check?.[0]).toContain("--codex-default-latest-bin");
   });
 
   it("dispatches CI and enables exact-head squash auto-merge", () => {
@@ -523,6 +547,112 @@ describe("Claude alias resolution drift", () => {
     const match = /export const PROBE_ALIASES = (\[[^;]+\]) as const;/.exec(source);
     expect(match?.[1]).toBeDefined();
     expect(CLAUDE_PROBE_ALIASES).toEqual(JSON.parse(match![1]));
+  });
+});
+
+describe("Codex embedded default model drift", () => {
+  const catalog = {
+    models: [
+      { slug: "gpt-6-astra", priority: 1, visibility: "list" },
+      { slug: "gpt-5.6-sol", priority: 6, visibility: "list" },
+      { slug: "gpt-daybreak-blue-latest", priority: 0, visibility: "hide" },
+      { slug: "codex-auto-review", priority: 43, visibility: "hide" },
+    ],
+  };
+  /** A binary-like buffer: junk, the pretty-printed catalog, more junk. */
+  const embed = (json: string) =>
+    Buffer.concat([
+      Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x00, 0xff, 0x7b, 0x7d]),
+      Buffer.from("other { \"models\": [] } text\n", "latin1"),
+      Buffer.from(json, "latin1"),
+      Buffer.from("\u0000}}}{{{ tail", "latin1"),
+    ]);
+  const pretty = JSON.stringify(catalog, null, 2);
+
+  it("brace-matches the one embedded catalog out of surrounding bytes", () => {
+    expect(extractCodexEmbeddedCatalog(embed(pretty))).toEqual(catalog);
+    expect(extractCodexEmbeddedCatalog(embed(pretty).toString("latin1"))).toEqual(catalog);
+  });
+
+  it("refuses a binary with no catalog, two catalogs, or a broken one", () => {
+    expect(() => extractCodexEmbeddedCatalog(embed('{"models": []}'))).toThrow(
+      /embeds no fallback model catalog/,
+    );
+    expect(() => extractCodexEmbeddedCatalog(embed(pretty + "\n" + pretty))).toThrow(
+      /more than one fallback model catalog/,
+    );
+    expect(() =>
+      extractCodexEmbeddedCatalog(Buffer.from("junk " + pretty.slice(0, -3), "latin1")),
+    ).toThrow(/unterminated/);
+    expect(() => extractCodexEmbeddedCatalog(embed('{\n  "models": [ nope ] }'))).toThrow(
+      /not JSON/,
+    );
+    expect(() =>
+      extractCodexEmbeddedCatalog(embed('{\n  "models": [] , "x": { "models": {} } }')),
+    ).not.toThrow();
+    expect(() =>
+      extractCodexEmbeddedCatalog(embed('{\n  "models": [],\n  "models": 5 }')),
+    ).toThrow(/no `models` array/);
+  });
+
+  it("picks the listed entry with the lowest priority, skipping hidden ones", () => {
+    expect(codexEmbeddedDefault(catalog)).toEqual({ slug: "gpt-6-astra", priority: 1 });
+    expect(
+      codexEmbeddedDefault({
+        models: [
+          { slug: "b", priority: 2 },
+          { slug: "a", priority: 1, visibility: "hide" },
+          { slug: "c", priority: "1" },
+          { slug: "", priority: 0 },
+          { slug: "d", priority: 3, visibility: "list" },
+        ],
+      }),
+    ).toEqual({ slug: "b", priority: 2 });
+  });
+
+  it("fails when the catalog lists nothing it can rank", () => {
+    expect(() => codexEmbeddedDefault({ models: [] })).toThrow(/lists no model with a priority/);
+    expect(() =>
+      codexEmbeddedDefault({ models: [{ slug: "hidden", priority: 1, visibility: "hide" }] }),
+    ).toThrow(/lists no model with a priority/);
+  });
+
+  it("stays quiet when both CLIs embed the same default", () => {
+    expect(
+      compareCodexDefaults(
+        { model: "gpt-6-astra", version: "0.155.1" },
+        { model: "gpt-6-astra", version: "0.156.0" },
+      ),
+    ).toEqual([]);
+  });
+
+  it("reports a changed default with both versions, before staleness would fire", () => {
+    expect(
+      compareCodexDefaults(
+        { model: "gpt-5.6-sol", version: "0.153.0" },
+        { model: "gpt-6-astra", version: "0.153.1" },
+      ),
+    ).toEqual([
+      {
+        pinned: "gpt-5.6-sol",
+        latest: "gpt-6-astra",
+        pinnedVersion: "0.153.0",
+        latestVersion: "0.153.1",
+      },
+    ]);
+  });
+
+  it("fails when either probe lacks a model or a version", () => {
+    const ok = { model: "gpt-6-astra", version: "0.155.1" };
+    expect(() => compareCodexDefaults({ model: "", version: "0.155.1" }, ok)).toThrow(
+      /pinned Codex default probe did not resolve a model/,
+    );
+    expect(() => compareCodexDefaults(ok, undefined)).toThrow(
+      /latest Codex default probe did not resolve a model/,
+    );
+    expect(() => compareCodexDefaults(ok, { model: "gpt-6-astra", version: " " })).toThrow(
+      /latest Codex default probe did not report a version/,
+    );
   });
 });
 

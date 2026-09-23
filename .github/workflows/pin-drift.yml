@@ -17,6 +17,14 @@
 # because claude-code ships ~25 releases a month and "newer exists" would be a
 # notice a day. Thresholds and the reasoning are in the script.
 #
+# Two behavior checks sit beside those thresholds and ignore them. The pinned
+# and latest CLIs are installed into isolated prefixes and asked what they do:
+# Claude Code, which model each family alias resolves to; Codex, which model
+# runs with no override, read from the fallback catalog compiled into the
+# binary under an empty CODEX_HOME. A patch release can move either answer
+# with every version-distance rule quiet, so a disagreement is reported in the
+# issue on its own, naming both CLI versions and both model ids.
+#
 # The pins themselves stay (issue #21, and the comments at the Dockerfile
 # sites). This is the missing half: a check that reads each upstream, compares
 # it with the Dockerfile, and turns a surprise into an issue filed days earlier.
@@ -166,9 +174,49 @@ jobs:
             echo "CLAUDE_ALIAS_LATEST_BIN=$latest_bin"
           } >> "$GITHUB_ENV"
 
+      # The script reads each binary's embedded fallback catalog offline and
+      # runs `codex --version` under an empty CODEX_HOME, so no login and no
+      # config.toml take part. The runner has neither anyway; the empty home
+      # is what makes that a stated condition instead of a coincidence.
+      - name: Install Codex releases for default-model comparison
+        run: |
+          set -euo pipefail
+          pinned="$(awk '
+            $1 == "ARG" && $2 ~ /^CODEX_VERSION=/ {
+              sub(/^CODEX_VERSION=/, "", $2)
+              print $2
+              exit
+            }
+          ' Dockerfile)"
+          if [ -z "$pinned" ]; then
+            echo "::error::Dockerfile has no CODEX_VERSION ARG"
+            exit 1
+          fi
+          latest="$(npm view @openai/codex version)"
+          if [ -z "$latest" ]; then
+            echo "::error::npm returned no Codex version"
+            exit 1
+          fi
+
+          pinned_prefix="$RUNNER_TEMP/codex-default-pinned"
+          latest_prefix="$RUNNER_TEMP/codex-default-latest"
+          npm install --prefix "$pinned_prefix" --no-audit --no-fund --package-lock=false \
+            "@openai/codex@$pinned"
+          npm install --prefix "$latest_prefix" --no-audit --no-fund --package-lock=false \
+            "@openai/codex@$latest"
+
+          pinned_bin="$pinned_prefix/node_modules/.bin/codex"
+          latest_bin="$latest_prefix/node_modules/.bin/codex"
+          test -x "$pinned_bin"
+          test -x "$latest_bin"
+          {
+            echo "CODEX_DEFAULT_PINNED_BIN=$pinned_bin"
+            echo "CODEX_DEFAULT_LATEST_BIN=$latest_bin"
+          } >> "$GITHUB_ENV"
+
       # No setup-node and no `npm ci`: the script imports nothing outside
-      # node:*, so the runner's bundled Node runs it as-is. The two temporary
-      # prefixes above exist only for the CLI behavior probe.
+      # node:*, so the runner's bundled Node runs it as-is. The four temporary
+      # prefixes above exist only for the CLI behavior probes.
       - name: Compare pins with upstream
         id: check
         run: |
@@ -181,7 +229,9 @@ jobs:
             --update-npm \
             --npm-summary "$RUNNER_TEMP/npm.json" \
             --claude-alias-pinned-bin "$CLAUDE_ALIAS_PINNED_BIN" \
-            --claude-alias-latest-bin "$CLAUDE_ALIAS_LATEST_BIN" || status=$?
+            --claude-alias-latest-bin "$CLAUDE_ALIAS_LATEST_BIN" \
+            --codex-default-pinned-bin "$CODEX_DEFAULT_PINNED_BIN" \
+            --codex-default-latest-bin "$CODEX_DEFAULT_LATEST_BIN" || status=$?
           case "$status" in
             0) echo "drift=false" >> "$GITHUB_OUTPUT" ;;
             1) echo "drift=true" >> "$GITHUB_OUTPUT" ;;
