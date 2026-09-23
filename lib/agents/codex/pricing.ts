@@ -61,8 +61,10 @@ const PRICES: { prefix: string; input: number; cachedInput: number; output: numb
 // wrong misprices every default turn. ./catalog.ts reads the account catalog
 // instead of guessing. What stays here is the value for an account that has
 // fetched no catalog: the top-priority entry of the fallback catalog embedded
-// in @openai/codex 0.155.1, the Dockerfile's `ARG CODEX_VERSION`.
-// tests/cliPins.test.ts records the same pair and fails when the pin moves.
+// in the CLI the Dockerfile's `ARG CODEX_VERSION` pins. ./embeddedDefault.json
+// records that version and model, and the Pin drift bot rewrites it on every
+// Codex bump. tests/cliPins.test.ts fails when either the pin or this constant
+// disagrees with the file.
 //
 // To re-check the embedded half, offline and with no login: the binary embeds
 // that fallback catalog as readable JSON. Find `{\n  "models": [`, brace-match

@@ -18,12 +18,16 @@ import {
   npmBumpPlan,
   applyNpmDockerfilePins,
   applyNpmPackagePins,
+  withCodexEmbeddedDefault,
+  applyCodexEmbeddedDefault,
+  CODEX_EMBEDDED_DEFAULT_JSON,
 } from "../scripts/check-pin-drift.mjs";
 
 const ROOT = path.join(__dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
 const PACKAGE_JSON = path.join(ROOT, "package.json");
 const PIN_WORKFLOW = path.join(ROOT, ".github/workflows/pin-drift.yml");
+const EMBEDDED_DEFAULT = path.join(ROOT, CODEX_EMBEDDED_DEFAULT_JSON);
 const MODEL_PROBE = path.join(ROOT, "lib/agents/claude/modelProbe.ts");
 
 /**
@@ -304,6 +308,93 @@ describe("npm CLI bump", () => {
         { codexVersion: "8.8.8" },
       ),
     ).toThrow(/codex-sdk/);
+  });
+});
+
+describe("Codex embedded default on a bump", () => {
+  const recorded = readFileSync(EMBEDDED_DEFAULT, "utf8");
+
+  it("carries the latest probe's model into a plan that moves CODEX_VERSION", () => {
+    expect(
+      withCodexEmbeddedDefault(
+        { claudeCode: "9.9.9", codexVersion: "8.8.8" },
+        { version: "8.8.8", model: " gpt-7 " },
+      ),
+    ).toEqual({ claudeCode: "9.9.9", codexVersion: "8.8.8", codexModel: "gpt-7" });
+  });
+
+  it("leaves a plan without a Codex bump alone", () => {
+    const latest = { version: "8.8.8", model: "gpt-7" };
+    expect(withCodexEmbeddedDefault(null, latest)).toBeNull();
+    expect(withCodexEmbeddedDefault({ claudeCode: "9.9.9" }, latest)).toEqual({
+      claudeCode: "9.9.9",
+    });
+  });
+
+  it("refuses a probe of a different version or with no model", () => {
+    expect(() =>
+      withCodexEmbeddedDefault(
+        { codexVersion: "8.8.8" },
+        { version: "8.8.9", model: "gpt-7" },
+      ),
+    ).toThrow(/8\.8\.9.*8\.8\.8/);
+    expect(() =>
+      withCodexEmbeddedDefault({ codexVersion: "8.8.8" }, { version: "8.8.8", model: " " }),
+    ).toThrow(/did not resolve a model/);
+  });
+
+  it("rewrites the recorded version and model together", () => {
+    const applied = applyCodexEmbeddedDefault(recorded, {
+      codexVersion: "8.8.8",
+      codexModel: "gpt-7",
+    });
+    expect(applied.changed).toBe(true);
+    expect(applied.source.endsWith("}\n")).toBe(true);
+    expect(JSON.parse(applied.source)).toEqual({
+      ...JSON.parse(recorded),
+      codexVersion: "8.8.8",
+      model: "gpt-7",
+    });
+    expect(
+      applyCodexEmbeddedDefault(applied.source, {
+        codexVersion: "8.8.8",
+        codexModel: "gpt-7",
+      }),
+    ).toEqual({ source: applied.source, changed: false });
+  });
+
+  it("moves only the version when the model is unchanged", () => {
+    const { model } = JSON.parse(recorded);
+    const applied = applyCodexEmbeddedDefault(recorded, {
+      codexVersion: "8.8.8",
+      codexModel: model,
+    });
+    expect(JSON.parse(applied.source)).toEqual({ codexVersion: "8.8.8", model });
+  });
+
+  it("writes nothing for a plan that does not move CODEX_VERSION", () => {
+    expect(applyCodexEmbeddedDefault(recorded, { claudeCode: "9.9.9" })).toEqual({
+      source: recorded,
+      changed: false,
+    });
+  });
+
+  it("refuses a Codex bump that carries no probed model", () => {
+    expect(() =>
+      applyCodexEmbeddedDefault(recorded, { codexVersion: "8.8.8" }),
+    ).toThrow(/no probed model/);
+    expect(() =>
+      applyCodexEmbeddedDefault("not json", {
+        codexVersion: "8.8.8",
+        codexModel: "gpt-7",
+      }),
+    ).toThrow(/not JSON/);
+  });
+
+  it("is committed by the workflow alongside the Dockerfile", () => {
+    const workflow = readFileSync(PIN_WORKFLOW, "utf8");
+    expect(workflow).toMatch(/git add [^\n]*lib\/agents\/codex\/embeddedDefault\.json/);
+    expect(workflow).toMatch(/git diff --quiet -- [^\n]*lib\/agents\/codex\/embeddedDefault\.json/);
   });
 });
 

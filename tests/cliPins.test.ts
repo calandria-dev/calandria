@@ -83,8 +83,10 @@ describe("Codex CLI pins", () => {
   /**
    * The model the pinned CLI runs with no `--model`, no config.toml `model`
    * and no account catalog: the top-priority entry of the fallback catalog
-   * compiled into the binary. A CLI patch can move it, so it is recorded here
-   * against the version it was read from. Re-read it for a new pin with:
+   * compiled into the binary. A CLI patch can move it, so
+   * lib/agents/codex/embeddedDefault.json records it against the version it
+   * was read from. The Pin drift bot rewrites that file in the same commit
+   * that moves ARG CODEX_VERSION. To re-read it by hand:
    *
    *   npm install --prefix <prefix> --package-lock=false @openai/codex@<CODEX_VERSION>
    *   node -e 'import("./scripts/check-pin-drift.mjs").then(async m =>
@@ -92,17 +94,20 @@ describe("Codex CLI pins", () => {
    *
    * then update both fields, and DEFAULT_CODEX_MODEL if the model moved.
    */
-  const CODEX_EMBEDDED_DEFAULT = { version: "0.155.1", model: "gpt-6-astra" };
+  const recorded = read("lib/agents/codex/embeddedDefault.json");
 
   it("records the embedded default model for the pinned CLI", () => {
     expect(
       pins.codexVersion.value,
       "ARG CODEX_VERSION moved: re-probe the embedded default (recipe above)",
-    ).toBe(CODEX_EMBEDDED_DEFAULT.version);
+    ).toBe(recorded.codexVersion);
   });
 
   it("defaults DEFAULT_CODEX_MODEL to the pinned CLI's embedded default", () => {
-    expect(DEFAULT_CODEX_MODEL).toBe(CODEX_EMBEDDED_DEFAULT.model);
+    expect(
+      DEFAULT_CODEX_MODEL,
+      "the pinned CLI's embedded default moved: update DEFAULT_CODEX_MODEL and check its pricing",
+    ).toBe(recorded.model);
   });
 });
 
