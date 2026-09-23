@@ -48,9 +48,9 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
     // Pinned ahead of an alias because the alias may not reach it. An alias
     // resolves through the installed CLI's own catalog, so an older CLI can
     // resolve it to an earlier version than the pin names. `fable` is one
-    // measured case. `opus` is another: Claude Code 2.1.278 still resolves
-    // `opus` to `claude-opus-5`, while 2.1.280 resolves it to
-    // `claude-opus-5-5`. The pin says which version was meant regardless of
+    // measured case. `opus` is another: Claude Code 2.1.278 maps it to
+    // `claude-opus-5`. Starting with 2.1.280, it maps to `claude-opus-5-5`.
+    // The pin says which version was meant regardless of
     // what the installed CLI knows. An id the CLI doesn't recognize logs
     // `[claude-code:unrecognized_model]` and passes through unchanged, so the
     // turn still runs and bills under that id; a genuinely bogus id errors

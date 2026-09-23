@@ -2353,7 +2353,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
      a flex ROW that width is what `flex-basis:auto` resolves to, so every chip
      was a full screen wide and exactly one section was ever visible. Nothing
      hinted the other nine existed. `width:auto` shrinks each to its label so
-     3-4 fit at 390px with the next one clipped at the edge, which is the scroll
+     at least two fit at 390px with the next one clipped at the edge, which is the scroll
      affordance; SettingsView scrolls the active chip into view so a deep-linked
      section (or a tap near the edge) isn't left off-screen. The "Settings"
      heading goes with the foot note: the content pane's own header already
@@ -2362,7 +2362,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
   .app.mobile .settings-nav-h{display:none;}
   .app.mobile .settings-nav-list{flex:0 0 auto;flex-direction:row;gap:6px;padding:0 12px 2px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
   .app.mobile .settings-nav-list::-webkit-scrollbar{display:none;}
-  .app.mobile .settings-nav-list .nav-item{flex:0 0 auto;width:auto;white-space:nowrap;padding:8px 12px;border:1px solid var(--line-strong);background:var(--surface);}
+  .app.mobile .settings-nav-list .nav-item{flex:0 0 auto;width:auto;white-space:nowrap;padding:8px 14px;border:1px solid var(--line-strong);background:var(--surface);}
   /* the desktop `.nav-item.active` tint is a weaker selector than the chip base
      rule above, so the active fill has to be restated here or it loses. */
   .app.mobile .settings-nav-list .nav-item.active{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent);}
