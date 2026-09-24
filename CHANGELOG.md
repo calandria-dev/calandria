@@ -8,6 +8,27 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.19.0](https://github.com/calandria-dev/calandria/compare/v0.18.0...v0.19.0) (2026-09-23)
+
+
+### Features
+
+* **claude:** name the Opus 5 family in the model picker ([#428](https://github.com/calandria-dev/calandria/issues/428)) ([332e02a](https://github.com/calandria-dev/calandria/commit/332e02af1084bc8f6c42973ed345e5c9349246d1))
+* detect Claude alias resolution drift ([#429](https://github.com/calandria-dev/calandria/issues/429)) ([6fe7f37](https://github.com/calandria-dev/calandria/commit/6fe7f378f0356c30c8436a83c1d795d206f1e71a))
+* detect Codex embedded default-model drift between CLI patches ([#435](https://github.com/calandria-dev/calandria/issues/435)) ([e1646cb](https://github.com/calandria-dev/calandria/commit/e1646cb1d79d0d7ad128b8f4ebee4339c9015fd0))
+* **tasks:** add effort selection to suggestions and task dialogs ([#421](https://github.com/calandria-dev/calandria/issues/421)) ([0157a91](https://github.com/calandria-dev/calandria/commit/0157a91388a0768e234760d69fd6b418efe4fc62))
+
+
+### Bug Fixes
+
+* **codex:** default to gpt-6-astra, the pinned CLI's embedded default ([#437](https://github.com/calandria-dev/calandria/issues/437)) ([0ddac38](https://github.com/calandria-dev/calandria/commit/0ddac3834dab7d3fceb408000ef1ec7fc85a4931))
+* **desktop:** bound Windows shell startup waits ([#424](https://github.com/calandria-dev/calandria/issues/424)) ([d7dd501](https://github.com/calandria-dev/calandria/commit/d7dd501d56f6442cba2ebbd1c6935359760dfe7e))
+* **pin-drift:** rewrite the recorded Codex embedded default on bump ([#438](https://github.com/calandria-dev/calandria/issues/438)) ([8e0dc3a](https://github.com/calandria-dev/calandria/commit/8e0dc3a4d57d0860a644a99dbd4a672727744984))
+* **pty:** drain unread shell output before node-pty discards it on exit ([#434](https://github.com/calandria-dev/calandria/issues/434)) ([08c0b21](https://github.com/calandria-dev/calandria/commit/08c0b21a832cabd95f9f9ef54b67c63903498f88))
+* **pty:** serialize sidecar frame writes ([#427](https://github.com/calandria-dev/calandria/issues/427)) ([74fdf8f](https://github.com/calandria-dev/calandria/commit/74fdf8f026d03e78f0d49fc04541f5c9220078c0))
+* support Opus 5.5 and restore release builds ([#433](https://github.com/calandria-dev/calandria/issues/433)) ([c4eb265](https://github.com/calandria-dev/calandria/commit/c4eb26593565f563315965c04443748c7da4ec80))
+* **test:** label disposable Docker caches ([#430](https://github.com/calandria-dev/calandria/issues/430)) ([87c4065](https://github.com/calandria-dev/calandria/commit/87c4065317e2638d2196028fd7c7f4cfc5e493cc))
+
 ## [0.18.0](https://github.com/calandria-dev/calandria/compare/v0.17.0...v0.18.0) (2026-09-21)
 
 
