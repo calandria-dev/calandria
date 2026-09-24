@@ -41,6 +41,7 @@ const COPY_FILES = [
   "lib/resolveHostname.js",
   "lib/env.mjs",
   "lib/storage.mjs",
+  "lib/homeDir.mjs",
   "lib/log.mjs",
   "lib/pty-frame-writer.mjs",
   "lib/schema-version.mjs",

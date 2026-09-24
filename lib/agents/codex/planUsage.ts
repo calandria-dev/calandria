@@ -42,10 +42,10 @@
 // CLI holds the login and answers about it.
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { PLAN_USAGE_ENABLED, PLAN_USAGE_MIN_FETCH_MS } from "@/lib/config";
 import type { PlanUsageSnapshot, PlanUsageWindow } from "@/lib/types";
+import { homeDir } from "@/lib/homeDir.mjs";
 import { hasOpenAiKey } from "../../openai-key";
 import { readAccountRateLimits } from "./appServer";
 
@@ -186,7 +186,7 @@ export function ingestRateLimits(snapshot: unknown): boolean {
 // isn't recognized still proceeds to the RPC, which is the authority and
 // answers "authentication required" for itself.
 function hasChatgptLogin(): boolean {
-  const dir = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+  const dir = process.env.CODEX_HOME || path.join(homeDir(), ".codex");
   try {
     const raw: unknown = JSON.parse(fs.readFileSync(path.join(dir, "auth.json"), "utf8"));
     if (!raw || typeof raw !== "object") return false;

@@ -282,6 +282,8 @@ COPY --from=build --chown=root:root /app/server.js /app/pty-server.js /app/next.
 #   the auth .mjs files, and server.js itself.
 # - lib/storage.mjs: resolves the database/worktree locations, including the
 #   pre-rename fallback; imported by server.js and db-lock.mjs.
+# - lib/homeDir.mjs (<- lib/storage.mjs): the home directory, read through a
+#   module boundary the build's file tracer cannot see past.
 # - lib/log.mjs: the shared line emitter (CALANDRIA_LOG_FORMAT), imported by
 #   both entrypoints for their own output and by lib/config.ts for the bundled
 #   half.
@@ -291,7 +293,7 @@ COPY --from=build --chown=root:root /app/server.js /app/pty-server.js /app/next.
 #   gate. server.js runs it right after claiming the lock so a rolled-back
 #   image tag refuses to start instead of writing to a database a newer build
 #   already migrated.
-COPY --from=build --chown=root:root /app/lib/cf-access.mjs /app/lib/service-router.mjs /app/lib/service-host.mjs /app/lib/env-keys.mjs /app/lib/db-lock.mjs /app/lib/resolveHostname.js /app/lib/env.mjs /app/lib/storage.mjs /app/lib/log.mjs /app/lib/pty-frame-writer.mjs /app/lib/schema-version.mjs ./lib/
+COPY --from=build --chown=root:root /app/lib/cf-access.mjs /app/lib/service-router.mjs /app/lib/service-host.mjs /app/lib/env-keys.mjs /app/lib/db-lock.mjs /app/lib/resolveHostname.js /app/lib/env.mjs /app/lib/storage.mjs /app/lib/homeDir.mjs /app/lib/log.mjs /app/lib/pty-frame-writer.mjs /app/lib/schema-version.mjs ./lib/
 COPY --from=build --chown=root:root /app/lib/auth ./lib/auth
 # The advanced-settings bootstrap (lib/advanced-env/bootstrap.mjs) and the two
 # plain-Node modules it loads. Both entrypoints await it before any other

@@ -21,8 +21,8 @@
 // the same shape lastGatewayModelCatalog() keeps for the Claude descriptor.
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { homeDir } from "@/lib/homeDir.mjs";
 
 /** How long one read of ~/.codex serves. The CLI refetches its catalog per
  *  process start, so nothing here changes on a scale this misses; the window
@@ -65,7 +65,7 @@ const EMPTY: CodexLocalCatalog = { entries: [], model: null, windowOverride: nul
 type Store = { __calandriaCodexCatalog?: { at: number; value: CodexLocalCatalog } };
 
 function codexHome(): string {
-  return process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+  return process.env.CODEX_HOME || path.join(homeDir(), ".codex");
 }
 
 function num(v: unknown): number | null {

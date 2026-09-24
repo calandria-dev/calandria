@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { promises as fs } from "fs";
-import os from "os";
 import path from "path";
+import { homeDir } from "@/lib/homeDir.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 // instead of forcing the user to hand-type a working-dir path. Read-only.
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const home = os.homedir();
+  const home = homeDir();
   const showHidden = url.searchParams.get("hidden") === "1";
   const raw = url.searchParams.get("path");
   // Default to the user's home directory; resolve to an absolute path.

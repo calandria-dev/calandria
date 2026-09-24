@@ -2,9 +2,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import fs from "node:fs";
-import os from "node:os";
 import { spawn as ptySpawn, type IPty } from "node-pty";
 import { GH_BIN, PROJECTS_DIR } from "./config";
+import { homeDir } from "./homeDir.mjs";
 import { findInDirs, findOnPath, type BinLookupOptions } from "./binPath";
 import { gitErrorDetail } from "./git";
 import type { IssueMatch, LandingMode } from "./types";
@@ -25,16 +25,16 @@ const run = promisify(execFile);
 const GH_PROBE_DIRS =
   process.platform === "win32"
     ? [
-        path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "Microsoft", "WinGet", "Links"),
+        path.join(process.env.LOCALAPPDATA || path.join(homeDir(), "AppData", "Local"), "Microsoft", "WinGet", "Links"),
         path.join(process.env.ProgramFiles || "C:\\Program Files", "GitHub CLI"),
-        path.join(os.homedir(), "scoop", "shims"),
+        path.join(homeDir(), "scoop", "shims"),
       ]
     : [
         "/home/linuxbrew/.linuxbrew/bin",
         "/opt/homebrew/bin",
         "/usr/local/bin",
         "/snap/bin",
-        path.join(os.homedir(), ".local", "bin"),
+        path.join(homeDir(), ".local", "bin"),
       ];
 
 /**
@@ -219,7 +219,7 @@ export async function startLogin(): Promise<LoginSession> {
       name: "xterm-256color",
       cols: 200,
       rows: 50,
-      cwd: os.homedir(),
+      cwd: homeDir(),
       env: { ...process.env, BROWSER: "true", GH_NO_UPDATE_NOTIFIER: "1" } as Record<string, string>,
     });
   } catch (e) {

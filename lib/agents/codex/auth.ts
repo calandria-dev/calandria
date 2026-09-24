@@ -20,8 +20,8 @@
 
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
-import os from "node:os";
 import { codexSpawn } from "./bin";
+import { homeDir } from "@/lib/homeDir.mjs";
 import { hasOpenAiKey, looksLikeOpenAiKey, setOpenAiKey, clearOpenAiKey } from "../../openai-key";
 import type { AgentApiKeyAuth, AgentAuthStatus, AgentLoginSession, AgentVerifyResult } from "../types";
 import type { TurnUsage } from "../../types";
@@ -105,7 +105,7 @@ export async function verifyCodexTurn(): Promise<AgentVerifyResult> {
       timeout: 90_000,
       env: process.env,
       maxBuffer: 4 * 1024 * 1024,
-      cwd: os.homedir(),
+      cwd: homeDir(),
       windowsVerbatimArguments: verify.windowsVerbatimArguments,
     });
     // `codex exec` treats a non-TTY stdin as pending input ("Reading additional
@@ -224,7 +224,7 @@ export async function startCodexLogin(): Promise<AgentLoginSession> {
   try {
     const login = codexSpawn(["login", "--device-auth"]);
     st.proc = spawn(login.command, login.args, {
-      cwd: os.homedir(),
+      cwd: homeDir(),
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
       windowsVerbatimArguments: login.windowsVerbatimArguments,

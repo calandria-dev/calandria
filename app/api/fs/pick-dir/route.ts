@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { execFile } from "child_process";
 import { promises as fs } from "fs";
-import os from "os";
+import { homeDir } from "@/lib/homeDir.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +32,7 @@ async function pickMac(initial?: string): Promise<NextResponse> {
   if (initial && initial.trim()) {
     try {
       const st = await fs.stat(initial.trim());
-      const dir = st.isDirectory() ? initial.trim() : os.homedir();
+      const dir = st.isDirectory() ? initial.trim() : homeDir();
       const esc = dir.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       defaultLoc = ` default location (POSIX file "${esc}")`;
     } catch {

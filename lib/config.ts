@@ -1,6 +1,6 @@
 import path from "node:path";
-import os from "node:os";
 import { readEnv } from "./env.mjs";
+import { homeDir } from "./homeDir.mjs";
 import { resolveLogFormat } from "./log.mjs";
 import { findInDirs, findOnPath } from "./binPath";
 import { resolveDbLocation, resolveWorktreesDir } from "./storage.mjs";
@@ -48,7 +48,7 @@ export const WORKTREES_DIR = resolveWorktreesDir().dir;
 export const BACKUP_DIR = readEnv("CALANDRIA_BACKUP_DIR") || path.join(dbLocation.dir, "backups");
 
 /** Where "Clone a repository" puts cloned repos (the container home's projects/). */
-export const PROJECTS_DIR = readEnv("CALANDRIA_PROJECTS_DIR") || path.join(os.homedir(), "projects");
+export const PROJECTS_DIR = readEnv("CALANDRIA_PROJECTS_DIR") || path.join(homeDir(), "projects");
 
 /**
  * Largest single chat attachment, in megabytes (default 25).
@@ -91,7 +91,7 @@ export const MAX_UPLOAD_MB = Math.max(1, Number(readEnv("CALANDRIA_MAX_UPLOAD_MB
  * DEFAULT_PATHEXT for that reason, and .env.example says so.
  */
 const claudeDefaultPath = () => {
-  const localBin = path.join(os.homedir(), ".local", "bin");
+  const localBin = path.join(homeDir(), ".local", "bin");
   if (process.platform !== "win32") return path.join(localBin, "claude");
   return (
     findInDirs("claude", [localBin]) ?? findOnPath("claude") ?? path.join(localBin, "claude.exe")

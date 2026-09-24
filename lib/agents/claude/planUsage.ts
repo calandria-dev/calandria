@@ -33,10 +33,10 @@
 // token just means coasting on cache until the next turn refreshes it.
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { PLAN_USAGE_ENABLED, PLAN_USAGE_MIN_FETCH_MS } from "@/lib/config";
 import type { PlanUsageSnapshot, PlanUsageWindow } from "@/lib/types";
+import { homeDir } from "@/lib/homeDir.mjs";
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const FETCH_TIMEOUT_MS = 5000;
@@ -162,7 +162,7 @@ interface OauthCreds {
 }
 
 function readOauthCreds(): OauthCreds | null {
-  const dir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
+  const dir = process.env.CLAUDE_CONFIG_DIR || path.join(homeDir(), ".claude");
   try {
     const raw = JSON.parse(fs.readFileSync(path.join(dir, ".credentials.json"), "utf8")) as {
       claudeAiOauth?: { accessToken?: unknown; expiresAt?: unknown; subscriptionType?: unknown };

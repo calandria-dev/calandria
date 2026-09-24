@@ -5,10 +5,10 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { isExecutableFile, resolveBin, spawnSpec } from "../binPath";
+import { homeDir } from "@/lib/homeDir.mjs";
 import type { EnvironmentId } from "../providers/types";
 
 export interface AgentInstallation {
@@ -60,7 +60,7 @@ function isDirectory(dir: string): boolean {
 
 function homeDirectory(env: NodeJS.ProcessEnv, explicit?: string): string {
   if (explicit) return explicit;
-  return env.HOME || env.USERPROFILE || os.homedir();
+  return env.HOME || env.USERPROFILE || homeDir();
 }
 
 function binaryPath(spec: EnvironmentInstallSpec, env: NodeJS.ProcessEnv, home: string, pathEnv?: string): string | null {
