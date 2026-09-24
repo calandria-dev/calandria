@@ -15,8 +15,8 @@
 // to classify.
 
 import { spawn } from "node:child_process";
-import os from "node:os";
 import { codexSpawn } from "./bin";
+import { homeDir } from "@/lib/homeDir.mjs";
 import { hasProcessGroups, killTree, type ProcessTreeOptions } from "../../processTree";
 import { isProjectUntrustedWarning, parseHooksList, type CodexHookInventory, type CodexConfigEdit } from "./hooks";
 
@@ -130,7 +130,7 @@ export function callAppServer(
         // config.toml must not steer it. A cwd-scoped question (hook
         // inventory, trust writes) passes its own cwd via opts.cwd instead,
         // since the answer there is defined by what that directory configures.
-        cwd: opts.cwd ?? os.homedir(),
+        cwd: opts.cwd ?? homeDir(),
         env: process.env,
         stdio: ["pipe", "pipe", "pipe"],
         windowsVerbatimArguments: spec.windowsVerbatimArguments,

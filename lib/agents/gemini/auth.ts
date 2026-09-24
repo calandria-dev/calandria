@@ -20,6 +20,7 @@ import type { AgentAuthStatus, AgentLoginSession, AgentVerifyResult, AgentApiKey
 import { AGY_CLI_PATH } from "../../config";
 import { getSetting, setSetting } from "../../store";
 import { GEMINI_API_KEY_HINT } from "./capabilities";
+import { homeDir } from "../../homeDir.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -376,7 +377,7 @@ const SETTINGS_REL = path.join(".gemini", "antigravity-cli", "settings.json");
  * there is no per-task divergence to preserve.
  */
 export function writeModelProviderSetting(useKey: boolean): void {
-  const file = path.join(os.homedir(), SETTINGS_REL);
+  const file = path.join(homeDir(), SETTINGS_REL);
   let current: Record<string, unknown> = {};
   try {
     current = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;

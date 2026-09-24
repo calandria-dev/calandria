@@ -9,14 +9,14 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import os from "node:os";
+import { homeDir } from "@/lib/homeDir.mjs";
 
 type Env = Record<string, string | undefined>;
 
 const enabled = (value: unknown) => ["1", "true", "on"].includes(String(value ?? "").toLowerCase());
 
 function readClaudeSettings(env: Env): { env?: Record<string, unknown> } | null {
-  const dir = env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
+  const dir = env.CLAUDE_CONFIG_DIR || path.join(homeDir(), ".claude");
   try {
     return JSON.parse(fs.readFileSync(path.join(dir, "settings.json"), "utf8"));
   } catch {

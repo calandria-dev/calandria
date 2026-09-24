@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import os from "node:os";
 import { spawn as ptySpawn, type IPty } from "node-pty";
 import { CLAUDE_CLI_PATH as CLAUDE } from "./config";
+import { homeDir } from "./homeDir.mjs";
 import { addInternalUsage } from "./internalUsage";
 import { claudeMessageModel, claudeUsage } from "./agents/claude/usage";
 import type { TurnUsage } from "./types";
@@ -135,7 +135,7 @@ export async function startClaudeLogin(): Promise<ClaudeLoginSession> {
       name: "xterm-256color",
       cols: SIZE.cols,
       rows: SIZE.rows,
-      cwd: os.homedir(),
+      cwd: homeDir(),
       env: { ...process.env, BROWSER: "true" } as Record<string, string>,
     });
   } catch (e) {

@@ -22,9 +22,9 @@
 // real home across, substituting only `.gemini`.
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type { Project, Task } from "../../types";
+import { homeDir } from "../../homeDir.mjs";
 import { GEMINI_HOMES_DIR } from "../../config";
 import { bridgeConfig } from "./mcp";
 import { resolvedTaskProvider } from "../../providers/resolve";
@@ -85,7 +85,7 @@ function overlayRealHome(realHome: string, taskHome: string): void {
  * change between turns while the worktree persists.
  */
 export function prepareTaskHome(project: Project, task: Task): TaskHome {
-  const realHome = os.homedir();
+  const realHome = homeDir();
   const home = path.join(GEMINI_HOMES_DIR, task.id);
   const configDir = path.join(home, GEMINI_DIR, CONFIG_DIR);
   fs.mkdirSync(configDir, { recursive: true });
