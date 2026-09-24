@@ -95,3 +95,62 @@ jobs:
           # (observed: PR #23 proposed 1.0.0). Omitting it selects manifest
           # mode, which reads both files from their default paths.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+  # The desktop release promotes installers prebuilt on the release PR head.
+  # release-please leaves that head alone when main gains only hidden commit
+  # types, so the prebuild can fall behind the tree the merge will tag. This job
+  # compares what main gained since the PR branched against packaged-app inputs.
+  # On drift it fails the PR's required "Desktop release artifacts" status and
+  # updates the branch from main, which starts a fresh prebuild.
+  release-pr-freshness:
+    needs: release-please
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    env:
+      RELEASE_BRANCH: release-please--branches--main--components--calandria
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Fail a release PR whose prebuild main has outdated
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPDATE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          pull=$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&base=main&head=${GITHUB_REPOSITORY_OWNER}:${RELEASE_BRANCH}" \
+            --jq '[.[] | select(.head.repo.full_name == env.GITHUB_REPOSITORY)] | first // empty')
+          if [ -z "$pull" ]; then
+            echo "No open release PR."
+            exit 0
+          fi
+          pr=$(printf '%s' "$pull" | jq -r .number)
+          head_sha=$(printf '%s' "$pull" | jq -r .head.sha)
+          git fetch --no-tags origin "refs/pull/${pr}/head"
+          main_sha=$(git rev-parse HEAD)
+          base=$(git merge-base "$head_sha" "$main_sha")
+          drift=$(node scripts/release-source-drift.mjs "$base" "$main_sha")
+          if [ -z "$drift" ]; then
+            echo "Release PR ${pr} at ${head_sha} matches main in packaged-app inputs."
+            exit 0
+          fi
+          echo "::warning::main changed packaged-app inputs after release PR ${pr} branched:"
+          printf '%s\n' "$drift"
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${head_sha}" \
+            -f state=failure \
+            -f context='Desktop release artifacts' \
+            -f description='main changed packaged-app inputs after this prebuild; update the branch'
+          if [ -n "$UPDATE_TOKEN" ]; then
+            GH_TOKEN="$UPDATE_TOKEN" gh api --method PUT "repos/${GITHUB_REPOSITORY}/pulls/${pr}/update-branch" \
+              -f expected_head_sha="$head_sha" \
+              || echo "::warning::Could not update release PR ${pr}. Run gh pr update-branch ${pr}."
+          else
+            echo "::warning::RELEASE_PLEASE_TOKEN is absent. Run gh pr update-branch ${pr} to start a fresh prebuild."
+          fi
