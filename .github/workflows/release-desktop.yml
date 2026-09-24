@@ -10,10 +10,19 @@
 #
 # The tag job identifies the merged release PR through GitHub's commit-to-PR
 # association. Every platform manifest must match that PR's head SHA and tree,
-# and the released version. The tag may differ only in CI, tests, and agent
-# instructions that cannot enter the packaged app. It also verifies each asset's
-# byte count and SHA-256 digest before upload. A new commit on the release PR
-# produces new artifact names, so a stale run cannot be promoted.
+# and the released version. The tag may differ only in CI, tests, agent
+# instructions, and Dockerfile lines outside its COPY and ADD inventory, none of
+# which enter the packaged app (scripts/release-source-drift.mjs). It also
+# verifies each asset's byte count and SHA-256 digest before upload. A new
+# commit on the release PR produces new artifact names, so a stale run cannot
+# be promoted.
+#
+# When the prebuild is stale or missing, dispatch with publish=true and
+# rebuild=true. That builds the tag's own tree through the same handoff,
+# manifest, and notes steps, then promotes those artifacts from the same run.
+# release-please.yml blocks the race that produces a stale prebuild: it fails
+# the release PR's required status when main changes packaged inputs after the
+# prebuild.
 name: Publish desktop artifacts
 
 on:
@@ -26,6 +35,11 @@ on:
     inputs:
       publish:
         description: "Attach the release PR's prebuilt artifacts to this tag"
+        type: boolean
+        default: false
+        required: false
+      rebuild:
+        description: "With publish, build the tag's own tree and attach that build"
         type: boolean
         default: false
         required: false
@@ -78,6 +92,7 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
           REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           mode=skip
@@ -109,8 +124,8 @@ jobs:
               ;;
             workflow_dispatch)
               if [ "${{ inputs.check_only }}" = "true" ]; then
-                if [ "${{ inputs.publish }}" = "true" ]; then
-                  echo "::error::check_only and publish cannot both be true."
+                if [ "${{ inputs.publish }}" = "true" ] || [ "${{ inputs.rebuild }}" = "true" ]; then
+                  echo "::error::check_only cannot be combined with publish or rebuild."
                   exit 1
                 fi
                 mode=check
@@ -126,6 +141,12 @@ jobs:
                   release_tag="$REQUESTED_RELEASE_TAG"
                 fi
                 mode=promote
+                if [ "${{ inputs.rebuild }}" = "true" ]; then
+                  mode=rebuild
+                fi
+              elif [ "${{ inputs.rebuild }}" = "true" ]; then
+                echo "::error::rebuild requires publish=true."
+                exit 1
               else
                 mode=dry-run
                 source_sha="$GITHUB_SHA"
@@ -134,10 +155,22 @@ jobs:
               ;;
           esac
 
-          if [ "$mode" = "promote" ] &&
+          if { [ "$mode" = "promote" ] || [ "$mode" = "rebuild" ]; } &&
              [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::Publishing requires release_tag to name a vX.Y.Z tag."
             exit 1
+          fi
+
+          if [ "$mode" = "rebuild" ]; then
+            ref=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${release_tag}")
+            source_sha=$(printf '%s' "$ref" | jq -r .object.sha)
+            if [ "$(printf '%s' "$ref" | jq -r .object.type)" = "tag" ]; then
+              source_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${source_sha}" --jq .object.sha)
+            fi
+            source_pr=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${source_sha}/pulls" \
+              -H "Accept: application/vnd.github+json" \
+              --jq '[.[] | select(.merged_at != null and .base.ref == "main" and .head.ref == env.RELEASE_BRANCH and .head.repo.full_name == env.GITHUB_REPOSITORY)] | if length == 1 then .[0].number else error("expected one merged release-please PR") end')
+            suffix="tag-${release_tag}-${source_sha}"
           fi
 
           {
@@ -177,7 +210,7 @@ jobs:
           node scripts/validate-release-pr.mjs --base "$BASE_SHA" --head "$HEAD_SHA"
 
       - name: Decide which platforms can sign
-        if: steps.mode.outputs.mode == 'prebuild' || steps.mode.outputs.mode == 'dry-run'
+        if: steps.mode.outputs.mode == 'prebuild' || steps.mode.outputs.mode == 'dry-run' || steps.mode.outputs.mode == 'rebuild'
         id: credentials
         env:
           CALANDRIA_MAC_SIGN_IDENTITY: ${{ secrets.CALANDRIA_MAC_SIGN_IDENTITY }}
@@ -218,7 +251,7 @@ jobs:
   build:
     name: ${{ matrix.label }}
     needs: gate
-    if: needs.gate.outputs.mode == 'prebuild' || needs.gate.outputs.mode == 'dry-run'
+    if: needs.gate.outputs.mode == 'prebuild' || needs.gate.outputs.mode == 'dry-run' || needs.gate.outputs.mode == 'rebuild'
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout }}
     environment: windows-signing
@@ -370,7 +403,7 @@ jobs:
           xcrun stapler validate "$dmg"
 
       - name: Stage the release handoff
-        if: needs.gate.outputs.mode == 'prebuild'
+        if: needs.gate.outputs.mode == 'prebuild' || needs.gate.outputs.mode == 'rebuild'
         env:
           VERSION: ${{ steps.source.outputs.version }}
           SOURCE_TREE: ${{ steps.source.outputs.tree }}
@@ -391,7 +424,7 @@ jobs:
             --source-pr "${{ needs.gate.outputs.source_pr }}"
 
       - name: Upload the release handoff
-        if: needs.gate.outputs.mode == 'prebuild'
+        if: needs.gate.outputs.mode == 'prebuild' || needs.gate.outputs.mode == 'rebuild'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: desktop-${{ matrix.platform }}-${{ needs.gate.outputs.artifact_suffix }}
@@ -417,7 +450,7 @@ jobs:
           retention-days: 7
 
       - name: Write checksums and signing notes
-        if: needs.gate.outputs.mode == 'prebuild'
+        if: needs.gate.outputs.mode == 'prebuild' || needs.gate.outputs.mode == 'rebuild'
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/release-notes-fragment"
@@ -453,7 +486,7 @@ jobs:
           printf '| %s | %s |\n' "${{ matrix.label }}" "$signing" > "$out/signing-${{ matrix.platform }}.md"
 
       - name: Upload checksums and signing notes
-        if: needs.gate.outputs.mode == 'prebuild'
+        if: needs.gate.outputs.mode == 'prebuild' || needs.gate.outputs.mode == 'rebuild'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-notes-fragment-${{ matrix.platform }}-${{ needs.gate.outputs.artifact_suffix }}
@@ -499,8 +532,8 @@ jobs:
 
   promote:
     name: Promote prebuilt desktop artifacts
-    needs: gate
-    if: needs.gate.outputs.mode == 'promote'
+    needs: [gate, build]
+    if: always() && needs.gate.result == 'success' && (needs.gate.outputs.mode == 'promote' || (needs.gate.outputs.mode == 'rebuild' && needs.build.result == 'success'))
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -512,27 +545,53 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_TAG: ${{ needs.gate.outputs.release_tag }}
     steps:
+      # The workflow's own ref supplies the release tooling. On a tag push that
+      # is the tag. A dispatch from main can promote an older tag with the
+      # current tooling. Release data is read from the tag commit itself.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-          ref: refs/tags/${{ needs.gate.outputs.release_tag }}
 
       - name: Find the release PR and artifact run
         id: source
+        env:
+          MODE: ${{ needs.gate.outputs.mode }}
+          REBUILD_SHA: ${{ needs.gate.outputs.source_sha }}
+          REBUILD_PR: ${{ needs.gate.outputs.source_pr }}
+          REBUILD_SUFFIX: ${{ needs.gate.outputs.artifact_suffix }}
         run: |
           set -euo pipefail
-          version=$(node -p "require('./desktop/package.json').version")
+          git fetch --no-tags --force origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          tag_sha=$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")
+          version=$(git show "${tag_sha}:desktop/package.json" | jq -r .version)
           if [ "v${version}" != "$RELEASE_TAG" ]; then
             echo "::error::desktop/package.json is ${version}, which does not match ${RELEASE_TAG}."
             exit 1
           fi
 
-          tag_sha=$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")
           pull=$(gh api "repos/${GH_REPO}/commits/${tag_sha}/pulls" \
             -H "Accept: application/vnd.github+json" \
             --jq '[.[] | select(.merged_at != null and .base.ref == "main" and .head.ref == env.RELEASE_BRANCH and .head.repo.full_name == env.GH_REPO)] | if length == 1 then .[0] else error("expected one merged release-please PR") end')
           pr=$(printf '%s' "$pull" | jq -r .number)
+
+          if [ "$MODE" = "rebuild" ]; then
+            if [ "$REBUILD_SHA" != "$tag_sha" ] || [ "$REBUILD_PR" != "$pr" ]; then
+              echo "::error::${RELEASE_TAG} resolved to ${tag_sha} (PR ${pr}), but this run built ${REBUILD_SHA} (PR ${REBUILD_PR})."
+              exit 1
+            fi
+            {
+              echo "version=$version"
+              echo "source_pr=$pr"
+              echo "source_sha=$tag_sha"
+              echo "source_tree=$(git rev-parse "${tag_sha}^{tree}")"
+              echo "suffix=$REBUILD_SUFFIX"
+              echo "run_id=$GITHUB_RUN_ID"
+              echo "built_from=from the release tag"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           head_sha=$(printf '%s' "$pull" | jq -r .head.sha)
           git fetch --no-tags origin "refs/pull/${pr}/head"
           fetched_head=$(git rev-parse FETCH_HEAD)
@@ -541,12 +600,9 @@ jobs:
             exit 1
           fi
 
-          unexpected_changes=$(git diff --name-only "$head_sha" "$tag_sha" -- . \
-            ':(exclude).github/**' \
-            ':(exclude)CLAUDE.md' \
-            ':(exclude)tests/**')
+          unexpected_changes=$(node scripts/release-source-drift.mjs "$head_sha" "$tag_sha")
           if [ -n "$unexpected_changes" ]; then
-            echo "::error::The release tag differs from the prebuilt source in packaged-app inputs."
+            echo "::error::The release tag differs from the prebuilt source in packaged-app inputs. Dispatch with publish=true and rebuild=true to build the tag instead."
             printf '%s\n' "$unexpected_changes"
             exit 1
           fi
@@ -557,7 +613,7 @@ jobs:
             -f name="$artifact" -f per_page=100 \
             --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last | .workflow_run.id')
           if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
-            echo "::error::No unexpired ${artifact} handoff exists. Re-run the release PR workflow."
+            echo "::error::No unexpired ${artifact} handoff exists. Dispatch with publish=true and rebuild=true to build the tag instead."
             exit 1
           fi
 
@@ -584,6 +640,7 @@ jobs:
             echo "source_tree=$(git rev-parse "${head_sha}^{tree}")"
             echo "suffix=$suffix"
             echo "run_id=$run_id"
+            echo "built_from=on the release PR"
           } >> "$GITHUB_OUTPUT"
 
       - name: Download the prebuilt platform artifacts
@@ -683,6 +740,8 @@ jobs:
           gh release upload "$RELEASE_TAG" SHA256SUMS.txt --clobber
 
       - name: Record signing and download details
+        env:
+          BUILT_FROM: ${{ steps.source.outputs.built_from }}
         run: |
           set -euo pipefail
           marker='<!-- desktop-artifacts -->'
@@ -697,7 +756,7 @@ jobs:
             echo "|-|-|"
             cat fragments/signing-*.md
             echo
-            echo "These installers were built and verified on the release PR. Verify a download with:"
+            echo "These installers were built and verified ${BUILT_FROM}. Verify a download with:"
             echo
             echo '```'
             echo "sha256sum -c SHA256SUMS.txt --ignore-missing   # shasum -a 256 -c on macOS"

@@ -69,6 +69,18 @@ push is not a successful CI run.
   desktop promotion and `publish=false` is a dry run that attaches nothing); don't close or edit the
   release, both publishers attach to the existing one for the tag. The failed-build bot only files
   for scheduled builds, not a refused tag push, so don't wait for an issue to appear.
+- **Desktop promotion refused a stale prebuild.** Promote attaches the release PR's prebuilt
+  installers only when the tag matches that PR head in packaged-app inputs
+  (`scripts/release-source-drift.mjs`: everything except `.github/**`, `tests/**`, `CLAUDE.md`,
+  and Dockerfile lines outside COPY/ADD). The error `The release tag differs from the prebuilt
+  source` or `No unexpired ... handoff exists` means main moved after the prebuild. Rebuild from
+  the tag instead: `gh workflow run release-desktop.yml --ref main -f publish=true -f rebuild=true
+  -f release_tag=vX.Y.Z`. That runs the full signed build, handoff manifest and notes against the
+  tag's own tree and promotes that build in the same run (about three hours, bounded by macOS
+  notarization). Dispatch from `main` so the fix runs with current tooling; a dispatch on the tag
+  runs the workflow as it was when tagged. `release-please.yml`'s `release-pr-freshness` job
+  prevents most of these: when main changes packaged inputs under an open release PR, it fails that
+  PR's `Desktop release artifacts` status and updates the branch, which starts a fresh prebuild.
 - **The app's "Needs you" inbox is a backstop, not a substitute.** It raises a task for an open PR
   with a failing check rollup and offers a Fix CI button, but it only catches what a session
   missed; it does not relieve the session of watching its own push to terminal state.

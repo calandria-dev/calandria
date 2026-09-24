@@ -193,13 +193,17 @@ describe("no lane publishes by accident", () => {
     expect(RELEASE_WORKFLOW).toContain("mode=promote");
     expect(RELEASE_WORKFLOW).toContain('mode=dry-run');
     expect(RELEASE_WORKFLOW).toContain('source_sha="$GITHUB_SHA"');
-    expect(RELEASE_WORKFLOW).toContain("if: needs.gate.outputs.mode == 'promote'");
+    expect(RELEASE_WORKFLOW).toContain(
+      "if: always() && needs.gate.result == 'success' && (needs.gate.outputs.mode == 'promote' || (needs.gate.outputs.mode == 'rebuild' && needs.build.result == 'success'))",
+    );
+    expect(RELEASE_WORKFLOW).toContain("mode=rebuild");
+    expect(RELEASE_WORKFLOW).toContain('echo "::error::rebuild requires publish=true."');
     expect(RELEASE_WORKFLOW).toContain('release_tag:');
     expect(RELEASE_WORKFLOW).toContain('release_tag="$GITHUB_REF_NAME"');
     expect(RELEASE_WORKFLOW).toContain('REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}');
     expect(RELEASE_WORKFLOW).toContain('release_tag="$REQUESTED_RELEASE_TAG"');
     expect(RELEASE_WORKFLOW).toContain('[[ ! "$release_tag" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+');
-    expect(RELEASE_WORKFLOW).toContain('ref: refs/tags/${{ needs.gate.outputs.release_tag }}');
+    expect(RELEASE_WORKFLOW).toContain('version=$(git show "${tag_sha}:desktop/package.json" | jq -r .version)');
     expect(RELEASE_WORKFLOW).toContain('tag_sha=$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")');
     expect(RELEASE_WORKFLOW).toContain('commits/${tag_sha}/pulls');
     expect(RELEASE_WORKFLOW).toContain('RELEASE_TAG: ${{ needs.gate.outputs.release_tag }}');
@@ -235,9 +239,24 @@ describe("no lane publishes by accident", () => {
     expect(RELEASE_WORKFLOW).toContain('.head.repo.full_name == env.GH_REPO');
     expect(RELEASE_WORKFLOW).toContain('git fetch --no-tags origin "refs/pull/${pr}/head"');
     expect(RELEASE_WORKFLOW).toContain('if [ "$fetched_head" != "$head_sha" ]; then');
-    expect(RELEASE_WORKFLOW).toContain("':(exclude).github/**'");
-    expect(RELEASE_WORKFLOW).toContain("':(exclude)CLAUDE.md'");
-    expect(RELEASE_WORKFLOW).toContain("':(exclude)tests/**'");
+    expect(RELEASE_WORKFLOW).toContain(
+      'unexpected_changes=$(node scripts/release-source-drift.mjs "$head_sha" "$tag_sha")',
+    );
+    expect(RELEASE_WORKFLOW).toContain('if [ "$REBUILD_SHA" != "$tag_sha" ] || [ "$REBUILD_PR" != "$pr" ]; then');
+    expect(RELEASE_WORKFLOW).toContain('echo "run_id=$GITHUB_RUN_ID"');
+    for (const step of [
+      "Stage the release handoff",
+      "Upload the release handoff",
+      "Write checksums and signing notes",
+      "Upload checksums and signing notes",
+    ]) {
+      expect(RELEASE_WORKFLOW).toContain(
+        `- name: ${step}\n        if: needs.gate.outputs.mode == 'prebuild' || needs.gate.outputs.mode == 'rebuild'`,
+      );
+    }
+    const releasePlease = fs.readFileSync(path.join(WORKFLOWS, "release-please.yml"), "utf8");
+    expect(releasePlease).toContain('drift=$(node scripts/release-source-drift.mjs "$base" "$main_sha")');
+    expect(releasePlease).toContain("-f context='Desktop release artifacts'");
     expect(RELEASE_WORKFLOW).toContain('git rev-parse "${head_sha}^{tree}"');
     expect(RELEASE_WORKFLOW).toMatch(/- name: Stage the release handoff[\s\S]*- name: Upload the release handoff/);
     expect(RELEASE_WORKFLOW).not.toContain("-name '*.yml'");
