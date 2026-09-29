@@ -50,7 +50,8 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
     // resolve it to an earlier version than the pin names. `fable` is one
     // measured case. `opus` is another: Claude Code 2.1.278 maps it to
     // `claude-opus-5`. Starting with 2.1.280, it maps to `claude-opus-5-5`.
-    // The pin says which version was meant regardless of
+    // `sonnet` too: 2.1.280 maps it to `claude-sonnet-5`, and starting with
+    // 2.1.284 it maps to `claude-sonnet-5-5`. The pin says which version was meant regardless of
     // what the installed CLI knows. An id the CLI doesn't recognize logs
     // `[claude-code:unrecognized_model]` and passes through unchanged, so the
     // turn still runs and bills under that id; a genuinely bogus id errors
@@ -60,17 +61,19 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
     { value: "fable", label: "Fable (latest)", sub: "most capable · 1M context", contextWindow: M1, group: "Latest" },
     { value: "claude-opus-5-5", label: "Opus 5.5", sub: "newest Opus", contextWindow: K200, group: "Latest" },
     { value: "opus", label: "Opus (latest)", sub: "everyday complex work", contextWindow: K200, group: "Latest" },
+    { value: "claude-sonnet-5-5", label: "Sonnet 5.5", sub: "newest Sonnet", contextWindow: K200, group: "Latest" },
     { value: "sonnet", label: "Sonnet (latest)", sub: "efficient for routine tasks", contextWindow: K200, group: "Latest" },
     { value: "haiku", label: "Haiku (latest)", sub: "fastest, lowest cost", contextWindow: K200, group: "Latest" },
     { value: "opusplan", label: "Opus Plan Mode", sub: "Opus while planning, Sonnet after", contextWindow: K200, group: "Latest" },
     { value: "claude-opus-5-5[1m]", label: "Opus 5.5 (1M)", sub: "newest Opus, 1M context", contextWindow: M1, group: "1M context" },
     { value: "opus[1m]", label: "Opus (1M)", sub: "long sessions, large codebases", contextWindow: M1, group: "1M context" },
+    { value: "claude-sonnet-5-5[1m]", label: "Sonnet 5.5 (1M)", sub: "newest Sonnet, 1M context", contextWindow: M1, group: "1M context" },
     { value: "sonnet[1m]", label: "Sonnet (1M)", sub: "long sessions, large codebases", contextWindow: M1, group: "1M context" },
     { value: "opusplan[1m]", label: "Opus Plan Mode (1M)", sub: "plan on Opus, run on Sonnet 1M", contextWindow: M1, group: "1M context" },
     { value: "claude-opus-5", label: "Opus 5", sub: "previous Opus", contextWindow: K200, group: "Pinned versions" },
     { value: "claude-opus-5[1m]", label: "Opus 5 (1M)", sub: "previous Opus, 1M context", contextWindow: M1, group: "Pinned versions" },
-    { value: "claude-sonnet-5", label: "Sonnet 5", sub: "current Sonnet", contextWindow: K200, group: "Pinned versions" },
-    { value: "claude-sonnet-5[1m]", label: "Sonnet 5 (1M)", sub: "current Sonnet, 1M context", contextWindow: M1, group: "Pinned versions" },
+    { value: "claude-sonnet-5", label: "Sonnet 5", sub: "previous Sonnet", contextWindow: K200, group: "Pinned versions" },
+    { value: "claude-sonnet-5[1m]", label: "Sonnet 5 (1M)", sub: "previous Sonnet, 1M context", contextWindow: M1, group: "Pinned versions" },
     { value: "claude-opus-4-8", label: "Opus 4.8", sub: "legacy", contextWindow: K200, group: "Pinned versions" },
     { value: "claude-opus-4-8[1m]", label: "Opus 4.8 (1M)", sub: "legacy, 1M context", contextWindow: M1, group: "Pinned versions" },
     { value: "claude-sonnet-4-6", label: "Sonnet 4.6", sub: "legacy", contextWindow: K200, group: "Pinned versions" },
