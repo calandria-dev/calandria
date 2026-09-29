@@ -199,7 +199,7 @@ function BoardCard({ task, agents, selected, running, blockedBy, mini, dragging,
     : task.started ? relTime(task.updated_at) : "not started";
   return (
     <article
-      role="button" tabIndex={0}
+      role="button" tabIndex={0} data-task-id={task.id}
       className={`bcard ${mini ? "mini" : ""} ${selected ? "sel" : ""} ${awaiting || ciRed ? "needs" : ""} ${running ? "working" : ""} ${dragging ? "dragging" : ""} ${withdrawn ? "withdrawn" : ""} ${snoozed ? "snoozed" : ""}`}
       onClick={onSelect}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(); } }}

@@ -19,6 +19,7 @@ import { UpdatePill } from "./shell/UpdatePill";
 import { useUpdates } from "./shell/useUpdates";
 import { AppearancePanel } from "./shell/AppearancePanel";
 import { ColResize, ColRail, TerminalDrawer, BootSkeleton } from "./shell/Layout";
+import { taskKeyAction, stepTask } from "./shell/taskKeys";
 import { ServicesDrawer, ServicesPane } from "./shell/Services";
 import { clientFeatures } from "@/lib/features";
 import { NewTaskModal, EditTaskModal, MoveTasksModal, TagTasksModal, ContextModal, NewProjectModal, SessionsModal } from "./shell/modals";
@@ -323,6 +324,57 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  // Single-key task navigation (handoff States; app/shell/taskKeys.ts decides
+  // which keydowns count). j/k walk the rendered task cards in DOM order,
+  // which is the order on screen in both list and board, and move keyboard
+  // focus there; the focused card handles its own Enter. List mode selects as
+  // it moves, since a list row's selection is the open session. Desktop
+  // workspace only, and never while a modal or the palette is up.
+  const [diffRequest, setDiffRequest] = useState(0);
+  useEffect(() => {
+    if (isMobile || o.view !== "workspace" || !project) return;
+    if (o.modal || o.editId || paletteOpen || bulkMoveIds || bulkTagIds) return;
+    const onKey = (e: KeyboardEvent) => {
+      const action = taskKeyAction(e);
+      if (!action) return;
+      const cards = Array.from(document.querySelectorAll<HTMLElement>("[data-task-id]"));
+      const focused = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>("[data-task-id]")?.dataset.taskId ?? null;
+      if (action === "next" || action === "prev") {
+        const ids = cards.map((c) => c.dataset.taskId!);
+        const id = stepTask(ids, focused ?? selTask, action === "next" ? 1 : -1);
+        if (!id) return;
+        e.preventDefault();
+        const card = cards[ids.indexOf(id)];
+        card.focus();
+        card.scrollIntoView({ block: "nearest" });
+        if (!boardMode) o.setSelTask(id);
+      } else if (action === "open") {
+        const id = focused ?? selTask;
+        if (!id) return;
+        e.preventDefault();
+        if (boardMode) openBoardTask(id); else o.setSelTask(id);
+      } else if (action === "terminal") {
+        e.preventDefault();
+        o.setTermMounted(true);
+        o.setTermOpen(true);
+      } else if (action === "diff") {
+        const id = focused ?? selTask;
+        if (!id) return;
+        e.preventDefault();
+        // A task opened here mounts a fresh rail, which starts on DIFF; the
+        // bump covers the task already open, whose rail may sit on CONTEXT.
+        if (boardMode) openBoardTask(id); else o.setSelTask(id);
+        setCollapsed("rail", false);
+        setDiffRequest((n) => n + 1);
+      } else if (action === "new") {
+        e.preventDefault();
+        o.setModal("task");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   // On a phone only one of these is mounted at a time; on desktop the same
   // elements sit side by side. Which pane shows is derived purely from the
   // selection state, so the titlebar "needs you" pill (which drives selection)
@@ -444,6 +496,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
             railCollapsed={railCollapsed}
             onRailCollapse={() => setCollapsed("rail", true)}
             onRailExpand={() => setCollapsed("rail", false)}
+            diffRequest={diffRequest}
           />
         ) : project ? (
           <ProjectLanding
@@ -461,7 +514,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
           <div className="empty void" style={{ margin: "auto" }}>
             <div className="e-ic"><Logo size={40} /></div>
             <div className="e-t">No task selected</div>
-            <div className="e-s">Create a task to start an agent session.</div>
+            <div className="e-s">Create a task to start an agent session{isMobile ? "." : <>, or press <kbd className="palette-kbd">n</kbd>.</>}</div>
           </div>
         )}
       </div>
@@ -555,6 +608,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
                 railCollapsed={railCollapsed}
                 onRailCollapse={() => setCollapsed("rail", true)}
                 onRailExpand={() => setCollapsed("rail", false)}
+                diffRequest={diffRequest}
               />
             </div>
           </div>

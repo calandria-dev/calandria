@@ -73,8 +73,8 @@ driver interface.
   failing job's log.
 - Keyboard use on desktop is a first-class path: `⌘K`/`Ctrl+K` opens the command palette,
   `⌘⇧B`/`Ctrl+Shift+B` toggles list and board, `Escape` closes panels, and arrow keys move through
-  pickers. The identity handoff also specifies single-key task navigation (`j`/`k` move, `enter`
-  open, `t` terminal, `d` diff, `n` new); those keys are not implemented yet.
+  pickers. Single keys drive the task list: `j`/`k` move, `enter` opens, `t` opens the terminal,
+  `d` opens the diff, and `n` creates a task.
 
 ## Capabilities and Constraints
 
