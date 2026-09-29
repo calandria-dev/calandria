@@ -2603,6 +2603,9 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .collab-editor{background:var(--term);}
 .collab-editor .collab-cm,.collab-editor .cm-editor{height:100%;}
 .collab-editor .cm-editor{background:transparent;font-size:13px;}
+/* The focus outline sits on the pane: CodeMirror's sticky gutter (z-index 200)
+   would paint over an outline drawn on .cm-editor itself. */
+.collab-editor:focus-within{outline:2px solid var(--accent);outline-offset:2px;}
 .collab-editor .cm-editor.cm-focused{outline:none;}
 .collab-editor .cm-scroller{font-family:var(--mono);line-height:1.6;}
 .collab-editor .cm-gutters{background:var(--term);border-right:1px solid var(--line);color:var(--ink-4);}

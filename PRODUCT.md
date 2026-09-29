@@ -180,7 +180,6 @@ No formal standard has been chosen; the owner left WCAG 2.2 AA unselected. Commi
 in the identity handoff and CSS: `prefers-reduced-motion` disables pulse dots and caret blink,
 mobile hit targets are at least 44px, and Atkinson Hyperlegible fonts are offered as code and
 prompt-input choices. The handoff also requires a 2px accent focus outline on every interactive
-element and never `outline: none`. `app/globals.css` still sets `outline: none` on several
-fields and inputs, some of which substitute a border or ring on focus, so that rule is not yet
-met everywhere. Future work keeps these; whether to hold surfaces to a named standard is an open
+element and never `outline: none`. Text fields, selects and the composer are the one sanctioned
+exception: they drop the outline and show an accent border or ring on focus instead. Future work keeps these; whether to hold surfaces to a named standard is an open
 decision.
