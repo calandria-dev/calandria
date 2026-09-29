@@ -17,14 +17,16 @@ import { codexDefaultModel } from "./catalog";
 // Retired models keep their rows: historical turns still price against the
 // model they actually ran on, even once the picker stops offering it.
 const PRICES: { prefix: string; input: number; cachedInput: number; output: number }[] = [
-  // GPT-6 Astra. Priced here ahead of the picker, which still doesn't offer it
-  // (see the note in ./capabilities.ts). A row costs nothing while nothing
-  // runs on it, and without one a turn that reaches the id out of band (a
-  // project-level override, an update_task setting tasks.model) falls through
-  // to the Sol fallback below and under-reports by 2x on input. These are the
-  // standard rates; Fast mode doubles all three, and nothing in the turn's
-  // usage says which one served it, so a Fast turn reads half its true cost.
+  // The GPT-6 family. None of these ids shares a prefix with a gpt-5 row, so
+  // each needs a row of its own or it falls through to the gpt-5 catch-all
+  // and misprices. "gpt-6-sol" is not a prefix of "gpt-6.1-sol". These are
+  // the standard short-context rates; Fast mode raises them, and nothing in
+  // the turn's usage says which tier served it, so a Fast turn reads below
+  // its true cost.
   { prefix: "gpt-6-astra", input: 10.0, cachedInput: 1.0, output: 50.0 },
+  { prefix: "gpt-6.1-sol", input: 2.0, cachedInput: 0.1, output: 10.0 },
+  { prefix: "gpt-6-sol", input: 2.0, cachedInput: 0.2, output: 10.0 },
+  { prefix: "gpt-6-luna", input: 0.1, cachedInput: 0.01, output: 0.5 },
   { prefix: "gpt-5.6-sol", input: 5.0, cachedInput: 0.5, output: 30.0 },
   { prefix: "gpt-5.6-terra", input: 2.0, cachedInput: 0.2, output: 12.0 },
   { prefix: "gpt-5.6-luna", input: 0.2, cachedInput: 0.02, output: 1.2 },

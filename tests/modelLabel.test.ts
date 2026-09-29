@@ -21,6 +21,7 @@ describe("modelLabel", () => {
     expect(modelLabel("claude-opus-4-8", claude)).toBe("Opus 4.8");
     expect(modelLabel("claude-opus-4-8-20251101", claude)).toBe("Opus 4.8");
     expect(modelLabel("claude-sonnet-5", claude)).toBe("Sonnet 5");
+    expect(modelLabel("claude-sonnet-5-5", claude)).toBe("Sonnet 5.5");
     expect(modelLabel("claude-fable-5", claude)).toBe("Fable 5");
     // The pinned 5.1 id must not be shadowed by the shorter `claude-fable-5`
     // reading, and must not drag the plain 5 id up to it either.
@@ -39,6 +40,7 @@ describe("modelLabel", () => {
   it("marks the 1M-context variant as a distinct run mode", () => {
     expect(modelLabel("claude-opus-5[1m]", claude)).toBe("Opus 5 (1M)");
     expect(modelLabel("claude-opus-5-5[1m]", claude)).toBe("Opus 5.5 (1M)");
+    expect(modelLabel("claude-sonnet-5-5[1m]", claude)).toBe("Sonnet 5.5 (1M)");
     expect(modelLabel("claude-sonnet-4-6[1m]", claude)).toBe("Sonnet 4.6 (1M)");
   });
 

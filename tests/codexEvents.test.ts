@@ -203,6 +203,14 @@ describe("codex cost estimation", () => {
     expect(estimateCostUsd("gpt-6-astra", usage)).not.toBeCloseTo(estimateCostUsd("gpt-5.6-sol", usage), 10);
   });
 
+  it("prices the GPT-6 Sol and Luna rows apart from each other and from Astra", () => {
+    // 6.1 Sol $2/$0.10/$10, 6 Sol $2/$0.20/$10, 6 Luna $0.10/$0.01/$0.50 per 1M.
+    // "gpt-6-sol" is not a prefix of "gpt-6.1-sol", so each needs its own row.
+    expect(estimateCostUsd("gpt-6.1-sol", usage)).toBeCloseTo(2.24, 10); // 1.2 + 0.04 + 1.0
+    expect(estimateCostUsd("gpt-6-sol", usage)).toBeCloseTo(2.28, 10); // 1.2 + 0.08 + 1.0
+    expect(estimateCostUsd("gpt-6-luna", usage)).toBeCloseTo(0.114, 10); // 0.06 + 0.004 + 0.05
+  });
+
   it("has a real price row for every model the picker offers", () => {
     // Guards against a new picker entry with no row of its own falling through
     // to the bare "gpt-5" catch-all and pricing at the wrong rate instead of
