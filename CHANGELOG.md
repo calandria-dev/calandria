@@ -8,6 +8,19 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.20.0](https://github.com/calandria-dev/calandria/compare/v0.19.0...v0.20.0) (2026-09-29)
+
+
+### Features
+
+* **ui:** single-key task navigation (j/k/enter/t/d/n) ([#454](https://github.com/calandria-dev/calandria/issues/454)) ([ed7bba4](https://github.com/calandria-dev/calandria/commit/ed7bba4745b32260e6f495ab717ac8c71ef88d3e))
+
+
+### Bug Fixes
+
+* **a11y:** replace bare outline:none with the handoff focus outline ([#452](https://github.com/calandria-dev/calandria/issues/452)) ([5d9076c](https://github.com/calandria-dev/calandria/commit/5d9076c5fa8b4db613e9112df2478b6082ff5a6c))
+* offer Sonnet 5.5 and GPT-6.1 Sol in the model pickers ([#455](https://github.com/calandria-dev/calandria/issues/455)) ([33437c0](https://github.com/calandria-dev/calandria/commit/33437c0812e04ced243966bb4eed8c04b286b40a))
+
 ## [0.19.0](https://github.com/calandria-dev/calandria/compare/v0.18.0...v0.19.0) (2026-09-23)
 
 
