@@ -87,7 +87,7 @@ function TaskCard({ task, agents, selected, running, blockedBy, onSelect, picked
           content inside a <button> is invalid. Same shape and same reason as
           the board's BoardCard. Keeping them inside lets the card run the
           column's full width without reserving side gutters. */}
-      <article className={`task ${selected ? "sel" : ""} ${awaiting ? "awaiting" : ""}`} role="button" tabIndex={0}
+      <article className={`task ${selected ? "sel" : ""} ${awaiting ? "awaiting" : ""}`} role="button" tabIndex={0} data-task-id={task.id}
         onClick={onSelect}
         onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) { e.preventDefault(); onSelect(); } }}>
       <div className="task-top">

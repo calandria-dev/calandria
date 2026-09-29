@@ -560,7 +560,7 @@ function useStableAsync<A extends unknown[], R>(fn: (...args: A) => Promise<R>):
   return useCallback((...args: A) => ref.current(...args), []);
 }
 
-export function SessionView({ project, task, tagsById, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSandbox, onSetSendContext, onSetAutoStart, onSnooze, onUnsnooze, onQueueStart, onCancelQueuedStart, onResolveWithAI, onFixCi, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand }: {
+export function SessionView({ project, task, tagsById, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSandbox, onSetSendContext, onSetAutoStart, onSnooze, onUnsnooze, onQueueStart, onCancelQueuedStart, onResolveWithAI, onFixCi, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand, diffRequest }: {
   project: ProjectRow; task: TaskRow; tagsById: Map<string, TagRow>; agents: AgentsBundle; messages: Msg[]; running: boolean; blockedBy?: string[]; transcriptLoading?: boolean;
   onSend: (t: string) => void; onStart: () => void; onStop: () => void; onClear: () => void; onEdit: () => void;
   clearConfirming?: boolean; onConfirmClear?: () => void; onCancelClear?: () => void;
@@ -591,6 +591,9 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   onBack?: () => void; mobile?: boolean;
   railW: number; onRailWidth: (w: number) => void; onRailReset: () => void;
   railCollapsed: boolean; onRailCollapse: () => void; onRailExpand: () => void;
+  // Bumped by the shell's `d` key to bring the diff forward, the same move the
+  // sync banner's "Review" makes. A value already set at mount is ignored.
+  diffRequest?: number;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [statusOpen, setStatusOpen] = useState(false);
@@ -620,6 +623,12 @@ export function SessionView({ project, task, tagsById, agents, messages, running
     if (railCollapsed) onRailExpand();
     setDiffFocus((n) => n + 1);
   }, [mobile, railCollapsed, onRailExpand]);
+  const seenDiffRequest = useRef(diffRequest);
+  useEffect(() => {
+    if (diffRequest === seenDiffRequest.current) return;
+    seenDiffRequest.current = diffRequest;
+    onReview();
+  }, [diffRequest, onReview]);
   const [clearEstimate, setClearEstimate] = useState<InternalUsageEstimate | null>(null);
   const sessions = useMemo(() => buildSessions(messages), [messages]);
   const hasSession = task.started === 1 || messages.length > 0;

@@ -974,6 +974,25 @@ can poke at a task's changes without leaving the app.
 
 See [Managed services](SERVICES.md) for setup and security details.
 
+## Keyboard shortcuts
+
+**What it is:** single-key navigation through a project's tasks on desktop, in both the list and
+the board.
+
+| Key | Action |
+|-|-|
+| `j` / `k` | Move to the next or previous task card, in on-screen order. In the list this also opens the task. |
+| `enter` | Open the focused or selected task. On the board this opens the slide-over session panel. |
+| `t` | Open the terminal drawer. |
+| `d` | Open the focused or selected task on its **DIFF** tab, expanding the side rail if it is hidden. |
+| `n` | Open the New task dialog. |
+| `⌘K` / `Ctrl+K` | Open the command palette (behind the `omniSearch` feature flag). |
+| `⌘⇧B` / `Ctrl+Shift+B` | Toggle list and board. |
+| `Escape` | Close the board's session panel. |
+
+The single keys do nothing while you type in a text field, the prompt composer, a document editor
+or the terminal, while a modifier key is held, or while a dialog or the command palette is open.
+
 ## Transparent usage
 
 **What it is:** token and cost accounting for every task and every background job.
