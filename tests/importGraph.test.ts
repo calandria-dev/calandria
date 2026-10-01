@@ -36,6 +36,7 @@ const PINNED = [
   "lib/agents/detect.ts", //      host CLI and config-directory detection; fs + child_process only
   "lib/agentEnv.ts", //          the main-turn process env (issue #102); types-only, no driving
   "lib/agents/codex/catalog.ts", // ~/.codex models_cache.json + config.toml; node:fs only, and ./capabilities.ts reads it on the request path
+  "lib/agents/gemini/catalog.ts", // cached agy models discovery shared by capability and provider reads
   "lib/agents/codex/provider.ts", // the override → codex config.toml mapping; pure data, tested without the SDK
   "lib/agents/codex/providerCheck.ts", // proves that mapping took by asking the CLI; subprocess + store, no SDK
   "lib/agents/codex/sandbox.ts", // the bubblewrap health verdict; classifier + a throwaway app-server spawn, no SDK

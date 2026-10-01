@@ -10,6 +10,7 @@ import { ensureClaudeModelIds } from "@/lib/agents/claude/modelProbe";
 import { claudeCapabilities } from "@/lib/agents/claude/capabilities";
 import { gatewayModelCatalog } from "@/lib/gatewayModels";
 import { geminiGatewayModelCheck, lastGeminiGatewayModelCheck } from "@/lib/agents/gemini/gatewayCheck";
+import { geminiModelCatalog } from "@/lib/agents/gemini/catalog";
 import { detectAgentInstallation } from "@/lib/agents/detect";
 import { listProviders } from "@/lib/providers/store";
 import { presentProvider } from "@/lib/providers/present";
@@ -51,6 +52,8 @@ export async function GET() {
   // route. Cheap after the first time: at most one `claude --version` per
   // minute, and none once this CLI's answer is cached.
   ensureClaudeModelIds();
+  // Warm the shared catalog for synchronous capability and model validation reads.
+  void geminiModelCatalog();
   // The gateway's own model catalog, same reason: not awaited, so a slow proxy
   // never slows this route down, and it's what claudeCapabilities()'s gateway
   // branch and lib/gatewayPricing.ts's rate table read on their next call.

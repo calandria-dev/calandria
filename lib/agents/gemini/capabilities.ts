@@ -4,6 +4,8 @@
 // the same separation lib/agents/capabilities.ts requires of every driver.
 
 import type { AgentCapabilities } from "../types";
+import { placeModel } from "../../providers/families";
+import { lastGeminiModelCatalog } from "./catalog";
 
 // The key-shape placeholder is owned here instead of read off ./auth, so this
 // module stays a leaf. auth.ts pulls in lib/store, which reaches back to
@@ -22,7 +24,7 @@ const CLAUDE_CTX = 200_000;
 const OSS_CTX = 128_000;
 
 /**
- * The model list, taken verbatim from `agy models` on a signed-in host. Two
+ * The fallback model list, taken from `agy models` on a signed-in host. Two
  * things about it drive the rest of this file:
  *
  *  - Reasoning effort is part of the slug. There is no bare `gemini-3.8-flash`;
@@ -33,8 +35,7 @@ const OSS_CTX = 128_000;
  *    Anthropic and open-weights models. They are listed because they genuinely
  *    run; their cost is estimated the same way everything else here is.
  *
- * Re-check with `agy models` when bumping the pinned CLI; a slug retired
- * upstream fails the whole turn.
+ * A successful catalog probe replaces this list with the CLI's current models.
  */
 const MODELS: AgentCapabilities["models"] = [
   { value: "gemini-3.8-flash-high", label: "Gemini 3.8 Flash (High)", sub: "newest flash model, deepest reasoning (default)", contextWindow: GEMINI_CTX, group: "Gemini 3.8" },
@@ -134,3 +135,23 @@ export const GEMINI_CAPABILITIES: AgentCapabilities = {
     "daemon. Use an API key there (GEMINI_API_KEY, or the tab above), which bills Google's API " +
     "rather than your subscription.",
 };
+
+/** Read the latest CLI catalog without starting a subprocess. */
+export function geminiCapabilities(): AgentCapabilities {
+  const catalog = lastGeminiModelCatalog();
+  if (!catalog) return GEMINI_CAPABILITIES;
+  const known = new Map(MODELS.map((model) => [model.value, model]));
+  return {
+    ...GEMINI_CAPABILITIES,
+    models: catalog.map(({ slug, label }) => {
+      const fallback = known.get(slug);
+      return {
+        value: slug,
+        label,
+        sub: fallback?.sub ?? "",
+        contextWindow: fallback?.contextWindow ?? placeModel(slug, "google").ctx,
+        group: fallback?.group ?? (slug.startsWith("gemini-") ? "Gemini" : "Other providers"),
+      };
+    }),
+  };
+}

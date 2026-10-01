@@ -2,7 +2,8 @@ import type { AgentModelOption } from "../agents/types";
 import { claudeCapabilities } from "../agents/claude/capabilities";
 import { clearCodexCatalogCache, codexLocalCatalog } from "../agents/codex/catalog";
 import { codexCapabilities } from "../agents/codex/capabilities";
-import { GEMINI_CAPABILITIES } from "../agents/gemini/capabilities";
+import { geminiCapabilities } from "../agents/gemini/capabilities";
+import { invalidateGeminiCatalogCache, geminiModelCatalog } from "../agents/gemini/catalog";
 import { MODEL_PROBE_MS } from "../config";
 import {
   clearGatewayModelCache,
@@ -229,7 +230,8 @@ export async function providerCatalog(
         : fromCapabilities(codexCapabilities().models);
     }
     case "google":
-      return fromCapabilities(GEMINI_CAPABILITIES.models);
+      await geminiModelCatalog();
+      return fromCapabilities(geminiCapabilities().models);
     case "litellm":
       return gatewayCatalog(provider, agent);
     case "ollama":
@@ -315,6 +317,7 @@ export function invalidateProviderCatalog(provider: ModelProvider): void {
     clearEndpointProbeCache();
   }
   if (provider.type === "openai") clearCodexCatalogCache();
+  if (provider.type === "google") invalidateGeminiCatalogCache();
   if (provider.type === "openai_key" || provider.type === "gemini_key") clearVendorModelCache(provider.id);
 }
 

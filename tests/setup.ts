@@ -45,6 +45,9 @@ process.env.CALANDRIA_PROJECTS_DIR = path.join(root, "projects");
 // value instead of deleting the var, or later files fall back to the real one.
 process.env.CODEX_HOME = path.join(root, "codex-home");
 fs.mkdirSync(process.env.CODEX_HOME, { recursive: true });
+// Catalog reads must never spawn a contributor's signed-in Antigravity CLI.
+// Probe tests mock execFile or supply their own fixture binary.
+process.env.AGY_CLI_PATH = path.join(root, "missing-agy");
 
 // Hermetic agent credentials: a developer's real API key exported in their shell
 // would otherwise leak into the suite. hasApiKey()/hasOpenAiKey() are env-aware
