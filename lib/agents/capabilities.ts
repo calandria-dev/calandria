@@ -16,19 +16,16 @@ import type { AgentCapabilities } from "./types";
 import { contextWindowFor } from "@/lib/contextWindow";
 import { claudeCapabilities } from "./claude/capabilities";
 import { codexCapabilities } from "./codex/capabilities";
-import { GEMINI_CAPABILITIES } from "./gemini/capabilities";
+import { geminiCapabilities } from "./gemini/capabilities";
 import { MOCK_CAPABILITIES } from "./mock/capabilities";
 
 export const DEFAULT_AGENT = "claude";
 
-// These are thunks, not constants. Claude's descriptor depends on which
-// backend the instance routes through (lib/agents/claude/provider.ts), and
-// Codex's on the account catalog and config.toml under ~/.codex; both are read
-// from disk at run time. Agents whose descriptor is static just return theirs.
+// Read current backend settings and cached CLI catalogs on each lookup.
 const CAPABILITIES: Record<string, () => AgentCapabilities> = {
   claude: () => claudeCapabilities(),
   codex: () => codexCapabilities(),
-  gemini: () => GEMINI_CAPABILITIES,
+  gemini: () => geminiCapabilities(),
 };
 
 // The deterministic e2e agent, under the same env gate registry.ts uses. This

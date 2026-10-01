@@ -275,6 +275,11 @@ from **Providers**, the endpoints, credentials and model policies that supply mo
 Signing in to an environment adds its bundled provider. You can add LiteLLM, Ollama,
 LM Studio, and custom providers separately.
 
+Antigravity's bundled provider reads the available models from `agy models`.
+New models appear when the CLI reports them. Use Refresh in the provider's Models tab
+to reload the catalog. If the CLI cannot report its models, Calandria uses the last
+successful catalog or its built-in fallback.
+
 [Agent support, permissions, and usage details](docs/AGENTS.md)
 
 ### Local models

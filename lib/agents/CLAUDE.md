@@ -501,9 +501,11 @@ code (0) or run status (the same denial has ended a run both `CANCELED` and `SUC
 reads stderr for the denial line. The descriptor offers no ask-style permission mode for the same
 reason: the CLI's default mode can't complete a single tool call headlessly.
 
-**Reasoning effort is part of the model slug** (e.g. `gemini-3.8-flash-high`), so
-`reasoningOptions` is empty and `--effort` is never sent. The catalog also serves Anthropic and
-open-weights models.
+**The model catalog comes from `agy models`** (`gemini/catalog.ts`): the provider picker refreshes
+it on request, and `gemini/capabilities.ts` reads the cached result synchronously for task model
+validation and capability consumers. The capability descriptor keeps a static fallback for a
+missing or signed-out CLI. Reasoning effort is part of each model slug, so `reasoningOptions` is
+empty and `--effort` is never sent. The catalog also serves Anthropic and open-weights models.
 
 **Login drives a pty.** The headless flow hard-times out at 61s, and the authorization code is
 bound to that child's PKCE verifier, so respawning invalidates the code the user is holding.

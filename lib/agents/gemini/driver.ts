@@ -20,7 +20,7 @@
 import { spawn } from "node:child_process";
 import type { Project, Task, StreamEvent, TurnUsage } from "../../types";
 import type { AgentDriver, AgentEnvironmentInput, OneShotResult, TurnHooks } from "../types";
-import { GEMINI_CAPABILITIES } from "./capabilities";
+import { geminiCapabilities } from "./capabilities";
 import { getSetting, getThreadUsageCum, setThreadUsageCum } from "../../store";
 import { AGY_CLI_PATH, AGY_PRINT_TIMEOUT } from "../../config";
 import { buildProjectContext } from "../shared";
@@ -344,7 +344,7 @@ async function summarizeProjectRecap(project: Project, digest: string): Promise<
 export const geminiDriver: AgentDriver = {
   id: "gemini",
   label: "Antigravity",
-  capabilities: GEMINI_CAPABILITIES,
+  get capabilities() { return geminiCapabilities(); },
   runTurn,
   summarizeTranscript,
   draftProjectContext,
