@@ -234,6 +234,9 @@ already queued. The transcript records that it was sent.
 - **A complete workspace:** chat, terminal, managed services, live logs, and
   token and usage insights in one place, including a live session/week
   plan-usage meter for a Claude Pro/Max or ChatGPT login.
+- **External MCP endpoint:** let agents outside Calandria file and edit tasks
+  over MCP with a bearer token; see
+  [External MCP endpoint](docs/FEATURES.md#external-mcp-endpoint).
 - **Update notifications:** a titlebar pill when a newer release exists, with
   the release notes behind it and the upgrade steps for how this instance was
   installed. The server does the checking, six-hourly, so no browser tab calls

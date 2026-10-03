@@ -146,7 +146,7 @@ export function listProvidersForAgent(): AgentProviderInfo[] {
  * can be deleted while a turn runs.
  */
 export function resolveTargetProject(
-  current: Project,
+  current: Project | null,
   ref?: string,
   /**
    * How the refusal ends. Every caller has to say that nothing happened, and
@@ -161,6 +161,11 @@ export function resolveTargetProject(
   const names = () => projects.map((p) => `"${p.name}"`).join(", ") || "(none)";
 
   if (!wanted) {
+    // No calling project: the external MCP endpoint (lib/externalMcp.ts) has
+    // no session to default to, so `project` is required there.
+    if (!current) {
+      return { error: `\`project\` is required: pass a project id or exact name. Call list_projects for them. ${nothingHappened}` };
+    }
     const fresh = getProject(current.id);
     return fresh ? { project: fresh } : { error: `The project this session belongs to no longer exists.` };
   }
@@ -1356,7 +1361,7 @@ export function withdrawSuggestionForAgent(
  * the project the task no longer belongs to.
  */
 export async function moveTasksForAgent(
-  caller: Task,
+  caller: AgentEditActor,
   refs: string[],
   projectRef: string
 ): Promise<{ ok: boolean; moved: Task[]; text: string }> {
@@ -1370,15 +1375,13 @@ export async function moveTasksForAgent(
   if (ids.length === 0)
     return fail(`move_task needs at least one task id in \`tasks\`. Call list_tasks for them. Nothing was moved.`);
 
-  const current = getProject(caller.project_id);
-  if (!current) return fail(`Could not move: the project this session belongs to no longer exists.`);
   const wanted = projectRef?.trim() ?? "";
   if (!wanted)
     return fail(
       `move_task needs a destination: pass \`project\` as the id or exact name of the project to move into. ` +
         `Call list_projects for them. Nothing was moved.`
     );
-  const target = resolveTargetProject(current, wanted, "Nothing was moved.");
+  const target = resolveTargetProject(null, wanted, "Nothing was moved.");
   if ("error" in target) return fail(target.error);
 
   // Read every row BEFORE the move: afterwards they all name the destination,

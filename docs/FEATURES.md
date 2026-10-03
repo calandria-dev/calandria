@@ -1003,6 +1003,61 @@ see an API-price equivalent for context, not a bill.
 
 See [Insights and usage](INSIGHTS.md) for how to read the numbers.
 
+## External MCP endpoint
+
+**What it is:** an MCP server at `<instance base URL>/api/mcp` that gives agents running
+outside Calandria (a Claude Code session in another repo, a script, another machine) the
+same task tools Calandria's own sessions use. It speaks MCP Streamable HTTP, stateless, with
+JSON responses. It is off until you set `CALANDRIA_MCP_TOKEN`.
+
+**How to use it:** set the token as described in
+[Exposing the MCP endpoint](SELF_HOSTING.md#exposing-the-mcp-endpoint), then register the
+endpoint with your client. Every request sends `Authorization: Bearer <token>`.
+
+Claude Code:
+
+```bash
+claude mcp add --transport http calandria https://calandria.example.com/api/mcp \
+  --header "Authorization: Bearer $CALANDRIA_MCP_TOKEN"
+```
+
+Generic `.mcp.json`:
+
+```json
+{"mcpServers":{"calandria":{"type":"http","url":"https://calandria.example.com/api/mcp","headers":{"Authorization":"Bearer <token>"}}}}
+```
+
+Codex, in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.calandria]
+url = "https://calandria.example.com/api/mcp"
+bearer_token_env_var = "CALANDRIA_MCP_TOKEN"
+```
+
+The endpoint serves these tools:
+
+| Tool | Required parameters |
+|-|-|
+| `list_projects`, `list_providers` | none |
+| `list_tasks`, `list_tags`, `list_runbooks` | `project` |
+| `get_task`, `update_task` | `task` |
+| `suggest_task` | `project`, `title`, `description` |
+| `update_tag` | `project`, `tag` |
+| `create_runbook` | `project`, `name`, `description`, `prompt` |
+| `update_runbook` | `runbook` |
+| `withdraw_suggestion` | `task`, `reason` |
+| `move_task` | `tasks`, `project` |
+
+An external client has no project or task of its own, so every `project` parameter is
+required and an omitted one is refused. `attachments` is not available. The tools that act
+on a running session (`ask_user`, `expose_service`, `create_pr`, `set_base_branch`,
+`report_base_rewrite`, `report_issue`, and the environment-setting tools) are not offered.
+
+Writes are attributed to "External MCP client". A suggestion lands in the target project's
+Suggested tray. An edit to a task you already accepted shows the same "Changed by agent"
+chip and per-edit Revert as an edit from inside a session.
+
 ## Agent connections
 
 **What it is:** Settings → Models separates coding environments from model providers.

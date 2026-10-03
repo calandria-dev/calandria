@@ -266,7 +266,7 @@ export interface UpdateRunbookToolInput {
  * reason leaves the agent nothing to tell the user and nothing to try instead.
  */
 export function updateRunbookForAgent(
-  _current: Project,
+  _current: Project | null,
   runbookRef: string,
   fields: UpdateRunbookToolInput
 ): { runbook: Runbook | null; text: string } {
