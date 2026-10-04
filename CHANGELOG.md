@@ -8,6 +8,19 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.21.0](https://github.com/calandria-dev/calandria/compare/v0.20.0...v0.21.0) (2026-10-04)
+
+
+### Features
+
+* **mcp:** serve the task tools to external agents at /api/mcp ([#473](https://github.com/calandria-dev/calandria/issues/473)) ([edf3588](https://github.com/calandria-dev/calandria/commit/edf35886fd94321a3b86df8c4a1de0de1ee81182))
+
+
+### Bug Fixes
+
+* **docker:** bump gh apt pin to 2.102.0 ([#474](https://github.com/calandria-dev/calandria/issues/474)) ([d01085f](https://github.com/calandria-dev/calandria/commit/d01085ff5a920e6954a9e91db9abaec7b841105d))
+* **gemini:** discover models from the Antigravity CLI ([#463](https://github.com/calandria-dev/calandria/issues/463)) ([c05af0e](https://github.com/calandria-dev/calandria/commit/c05af0eaeba618f4a043d2733cf6de92249f91e0))
+
 ## [0.20.0](https://github.com/calandria-dev/calandria/compare/v0.19.0...v0.20.0) (2026-09-29)
 
 
