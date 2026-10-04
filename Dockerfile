@@ -26,7 +26,7 @@
 # Node's cadence, so between rebuilds this layer holds packages Debian has
 # already fixed. The runtime stage runs `apt-get upgrade` for that reason; the
 # note at that line carries the reasoning.
-FROM node:26-bookworm-slim@sha256:cd9f682fa2885cd1056e830424764158570061c59736a1da836bc3d73df095ae AS build
+FROM node:26-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS build
 WORKDIR /app
 
 # The toolchain is a fallback for node-pty, which fetches a per-ABI Linux
@@ -63,7 +63,7 @@ RUN npm prune --omit=dev && node scripts/fix-pty.js
 
 # ---- runtime stage -----------------------------------------------------------
 # Same digest as the build stage above.
-FROM node:26-bookworm-slim@sha256:cd9f682fa2885cd1056e830424764158570061c59736a1da836bc3d73df095ae
+FROM node:26-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2
 
 # git: project repos and per-task worktrees. openssh-client: git over ssh.
 # tini: PID 1, reaps the pty shells' orphans. procps: ps for debugging shells.
