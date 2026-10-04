@@ -145,7 +145,7 @@ RUN npm install -g npm@12.0.2 && npm --version
 # desktop skip and uncached image workflows against the exact branch head. It
 # verifies that head before enabling squash auto-merge, and GitHub merges only
 # after every required check passes.
-ARG CLAUDE_CODE_VERSION=2.1.284
+ARG CLAUDE_CODE_VERSION=2.1.289
 ARG CODEX_VERSION=0.159.0
 ARG AGY_VERSION=1.2.16
 
