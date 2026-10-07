@@ -146,7 +146,7 @@ RUN npm install -g npm@12.0.2 && npm --version
 # verifies that head before enabling squash auto-merge, and GitHub merges only
 # after every required check passes.
 ARG CLAUDE_CODE_VERSION=2.1.289
-ARG CODEX_VERSION=0.159.0
+ARG CODEX_VERSION=0.160.0
 ARG AGY_VERSION=1.2.17
 
 # The `claude` CLI: the Agent SDK spawns it, and login state lives in
