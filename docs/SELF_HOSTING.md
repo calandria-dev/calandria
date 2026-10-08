@@ -438,6 +438,26 @@ learning each one's private `SERVICE_TOKEN`. It is not accepted on the
 mutating internal agent-tool endpoints. Unset (the default), it grants
 nothing.
 
+### Exposing the MCP endpoint
+
+`CALANDRIA_MCP_TOKEN` turns on `<base URL>/api/mcp`, an MCP endpoint that serves Calandria's
+task tools to agents running outside Calandria. Unset (the default), the path answers 404.
+See [External MCP endpoint](FEATURES.md#external-mcp-endpoint) for the tools and client
+configuration.
+
+1. Generate a token: `openssl rand -hex 32`.
+2. Set it as `CALANDRIA_MCP_TOKEN` and restart.
+3. Point the client at `<base URL>/api/mcp` with the header `Authorization: Bearer <token>`.
+
+The token is separate from `SERVICE_TOKEN`; `SERVICE_TOKEN` and Access JWTs do not work on
+this path. `middleware.ts` checks the bearer token before the browser-origin rules in both
+modes, so a client on another host works without adding its `Host` to
+`CALANDRIA_ALLOWED_ORIGINS`. A wrong or missing token gets a 401.
+
+In Access mode, the Cloudflare edge in front of your tunnel still applies its own policy to
+`/api/mcp`. Give the client a path that Access lets through, such as an Access service token
+or a bypass policy for `/api/mcp`, or have it reach the instance directly on the LAN.
+
 ## Connecting the desktop app
 
 The desktop app ([`docs/DESKTOP_APP.md`](DESKTOP_APP.md)) keeps a list of
@@ -585,6 +605,7 @@ input.
 | `CF_ACCESS_AUD` | *(empty)* | The Access application's `aud` tag the JWT must carry (comma-separable) |
 | `SERVICE_TOKEN` | *(empty)* | Shared secret for the health/version/usage/metrics routes and the in-container callers (health probe, service restore, agent-tool bridge); see above. The image mints a per-boot one under Access if empty |
 | `CALANDRIA_FLEET_TOKEN` | *(empty)* | Optional fleet-wide read token for the same read-only routes (`/api/version`, `/api/instance/usage`, `/api/instance/metrics`, `GET /api/instance/scheduler`), so one dashboard can scrape many instances with one secret. Never accepted on mutating endpoints |
+| `CALANDRIA_MCP_TOKEN` | *(empty)* | Turns on the external MCP endpoint at `/api/mcp`; every request must send it as `Authorization: Bearer <token>`. Separate from `SERVICE_TOKEN`. Unset, the endpoint answers 404. See "Exposing the MCP endpoint" above |
 | `CALANDRIA_DB_DIR` | `~/.calandria` | Directory holding `calandria.db` (SQLite app data). Absolute path; created on first run |
 | `CALANDRIA_DB_LOCK` | `on` | The single-instance boot lock. `off` lets a second process start against a database another one already owns; unsupported, and exactly the corruption the lock exists to prevent. See **One process per database** below |
 | `CALANDRIA_DB_LOCK_WAIT_MS` | `10000` | How long boot retries the lock before giving up. Covers a predecessor that is still shutting down; a crashed one releases instantly |

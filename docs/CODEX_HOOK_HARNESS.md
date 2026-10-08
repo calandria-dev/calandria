@@ -300,6 +300,31 @@ Full evidence, including the controls and what was not measured, is in the notes
 repo: `measurements/2026-09-17-codex-nested-code-mode-hook-interception.md` at
 https://github.com/calandria-dev/calandria-notes.
 
+### Nested shell commands
+
+`tests/codexCodeModeExecCommand.test.ts` measures `tools.exec_command` calls made
+inside code mode against codex-cli 0.159.0. Run it explicitly:
+
+```bash
+CALANDRIA_CODEX_HOOK_HARNESS=1 npx vitest run tests/codexCodeModeExecCommand.test.ts
+```
+
+The four turns pair identical sequential and concurrent scripts under allow and
+deny policies. Each command writes a marker under the harness workspace. Both
+markers in an allow run and neither in a deny run, paired with two hook denials
+and two rejected promises, establish whether the commands ran.
+
+The hook sees `tool_name: "Bash"`, `tool_input: { command: <shell command> }`,
+and `tool_use_id: "exec-<uuid>"`. The id matches the allowed tool event. The
+hook input omits `yield_time_ms` and `max_output_tokens`. Each turn records two
+hook-start notices, followed by two passed notices on allow or two blocked
+notices on deny. The harness task uses `bypassPermissions`, because AppArmor on
+this host denies bwrap user namespaces required by the other permission modes.
+
+Per-case `evidence.json` files and aggregate `matrix.json` are written under
+`$CALANDRIA_CODEX_HARNESS_DIR/exec-command-matrix/`, or under
+`~/.calandria/codex-hook-harness/exec-command-matrix/` by default.
+
 ## Relationship to the fake app-server
 
 `tests/fixtures/codex/fake-app-server.mjs` has `hooks`,

@@ -13,6 +13,8 @@ import {
   originAuthEnabled,
   serviceTokenOk,
   instanceServiceTokenOk,
+  externalMcpEnabled,
+  externalMcpTokenOk,
   verifyOriginRequest,
 } from "@/lib/auth/origin.mjs";
 import {
@@ -67,8 +69,26 @@ function isAgentToolPath(pathname: string): boolean {
   return pathname.startsWith(AGENT_TOOLS_PREFIX);
 }
 
+// The external MCP endpoint (app/api/mcp): agents running outside Calandria
+// call the task tools here. Its caller is a remote process with no browser
+// headers, no Access JWT and an unknowable Host, so it is gated by its own
+// bearer token (CALANDRIA_MCP_TOKEN) in both modes and skips the browser-origin
+// rules below. A browser cannot attach the Authorization header cross-origin
+// without a CORS preflight this endpoint never answers. Unset token = 404.
+const MCP_PATH = "/api/mcp";
+
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
+
+  if (pathname === MCP_PATH) {
+    if (!externalMcpEnabled()) return new NextResponse("Not found.\n", { status: 404, headers: { "content-type": "text/plain" } });
+    return externalMcpTokenOk(req.headers.get("authorization"))
+      ? NextResponse.next()
+      : new NextResponse("Unauthorized.\n", {
+          status: 401,
+          headers: { "content-type": "text/plain", "www-authenticate": 'Bearer realm="calandria-mcp"' },
+        });
+  }
 
   // Local mode has no login, but it is not an unbounded browser trust zone:
   // restrict Host to loopback/configured origins (DNS-rebinding defense),
