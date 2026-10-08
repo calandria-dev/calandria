@@ -28,6 +28,7 @@ const sessionDiagnostics = new WeakMap<WebSocket, SessionDiagnostics>();
 
 type SessionDiagnostics = {
   phase: string;
+  exitReceived: boolean;
   rawInbound: Buffer[];
   rawInboundBytes: number;
   upgradeHeaders: Record<string, string | string[] | undefined> | null;
@@ -57,6 +58,7 @@ function openSession(phase = "session"): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const diagnostics: SessionDiagnostics = {
       phase,
+      exitReceived: false,
       rawInbound: [],
       rawInboundBytes: 0,
       upgradeHeaders: null,
@@ -95,18 +97,68 @@ function openSession(phase = "session"): Promise<WebSocket> {
       if (isBinary) return;
       let msg: { type?: string };
       try { msg = JSON.parse(raw.toString()); } catch { return; }
+      if (msg.type === "exit") diagnostics.exitReceived = true;
       if (msg.type === "ready") { settled = true; clearTimeout(timer); resolve(ws); }
     });
     ws.on("error", (err) => fail(err));
   });
 }
 
-/** Close a session and wait for it, so the sidecar reaps the pty child. */
+/** Exit the shell and wait for node-pty's onExit barrier before the next open. */
 function closeSession(ws: WebSocket): Promise<void> {
-  return new Promise((resolve) => {
-    if (ws.readyState === WebSocket.CLOSED) return resolve();
-    ws.once("close", () => resolve());
-    try { ws.close(); } catch { resolve(); }
+  return new Promise((resolve, reject) => {
+    const diagnostics = sessionDiagnostics.get(ws);
+    const failImmediate = (error: Error) => reject(diagnostics ? diagnosticError(error, diagnostics) : error);
+    if (ws.readyState === WebSocket.CLOSED) {
+      if (diagnostics?.exitReceived) return resolve();
+      return failImmediate(new Error("pty WebSocket closed before exit frame"));
+    }
+    const fail = (error: Error) => {
+      clearTimeout(timer);
+      ws.off("message", onMessage);
+      ws.off("error", onError);
+      ws.off("close", onClose);
+      ws.terminate();
+      reject(diagnostics ? diagnosticError(error, diagnostics) : error);
+    };
+    const timer = setTimeout(() => {
+      fail(new Error("pty session did not finish cleanup within 10 seconds"));
+    }, 10_000);
+    let sawExit = diagnostics?.exitReceived ?? false;
+    const onMessage = (raw: Buffer, isBinary: boolean) => {
+      if (isBinary) return;
+      let msg: { type?: string };
+      try { msg = JSON.parse(raw.toString()); } catch { return; }
+      if (msg.type === "exit") {
+        sawExit = true;
+        if (diagnostics) diagnostics.exitReceived = true;
+      }
+    };
+    const onError = (error: Error) => fail(error);
+    const onClose = (code: number, reason: Buffer) => {
+      clearTimeout(timer);
+      ws.off("message", onMessage);
+      ws.off("error", onError);
+      if (!sawExit) {
+        const error = new Error(`pty WebSocket closed before exit frame (code=${code}, reason=${reason.toString() || "(none)"})`);
+        reject(diagnostics ? diagnosticError(error, diagnostics) : error);
+        return;
+      }
+      resolve();
+    };
+
+    ws.on("message", onMessage);
+    ws.once("error", onError);
+    ws.once("close", onClose);
+    if (ws.readyState === WebSocket.OPEN && !sawExit) {
+      try {
+        ws.send(JSON.stringify({ type: "input", data: "exit\r" }));
+      } catch (error) {
+        fail(error instanceof Error ? error : new Error(String(error)));
+      }
+    } else if (ws.readyState !== WebSocket.OPEN && ws.readyState !== WebSocket.CLOSING) {
+      fail(new Error(`cannot clean up pty session in WebSocket state ${ws.readyState}`));
+    }
   });
 }
 
