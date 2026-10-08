@@ -252,7 +252,8 @@ describe("pty sidecar frame handling", () => {
   it("still delivers a well-formed input frame to the shell", async () => {
     const ws = await openSession("happy-path");
     const output = collectOutput(ws, 1_500);
-    ws.send(JSON.stringify({ type: "input", data: "echo calandria-pty-alive\n" }));
+    // CR matches xterm Enter and executes this command before graceful cleanup.
+    ws.send(JSON.stringify({ type: "input", data: "echo calandria-pty-alive\r" }));
     const seen = await output;
     await closeSession(ws);
     expect(seen).toContain("calandria-pty-alive");
