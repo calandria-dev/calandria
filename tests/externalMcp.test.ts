@@ -107,6 +107,40 @@ describe("external MCP: tools", () => {
     await client.close();
   });
 
+  it("lists annotations for every external tool", async () => {
+    const expected: Record<string, [readOnlyHint: boolean, destructiveHint: boolean, idempotentHint: boolean]> = {
+      list_projects: [true, false, true],
+      list_providers: [true, false, true],
+      list_tasks: [true, false, true],
+      get_task: [true, false, true],
+      list_tags: [true, false, true],
+      list_runbooks: [true, false, true],
+      suggest_task: [false, false, false],
+      create_runbook: [false, false, false],
+      update_task: [false, true, true],
+      withdraw_suggestion: [false, true, true],
+      move_task: [false, true, true],
+      update_tag: [false, true, true],
+      update_runbook: [false, true, false],
+    };
+    const client = await connect();
+    try {
+      const { tools } = await client.listTools();
+      expect(tools.map((tool) => tool.name).sort()).toEqual(Object.keys(expected).sort());
+      for (const tool of tools) {
+        const [readOnlyHint, destructiveHint, idempotentHint] = expected[tool.name];
+        expect(tool.annotations).toEqual({
+          readOnlyHint,
+          destructiveHint,
+          idempotentHint,
+          openWorldHint: false,
+        });
+      }
+    } finally {
+      await client.close();
+    }
+  });
+
   it("files a suggestion into a named project and refuses an unknown one", async () => {
     const project = createProject({ name: `Ext-Suggest-${uid()}` });
     const client = await connect();

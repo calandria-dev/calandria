@@ -22,6 +22,7 @@
 // (`onBlockerCleared`), the same split the internal agent-tools routes make
 // with updateTaskForAgent's `autoStartDependents` flag.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import {
   CREATE_RUNBOOK,
@@ -126,7 +127,13 @@ export function buildExternalMcpServer(hooks: ExternalMcpHooks): McpServer {
   // handler type is loosened here and the schemas stay checked at each call site.
   const register = <S extends z.ZodRawShape>(
     name: string,
-    config: { description: string; inputSchema: S },
+    config: {
+      description: string;
+      inputSchema: S;
+      annotations: Required<
+        Pick<ToolAnnotations, "readOnlyHint" | "destructiveHint" | "openWorldHint" | "idempotentHint">
+      >;
+    },
     handler: (args: z.infer<z.ZodObject<S>>) => Promise<ToolResult>
   ) => {
     const guarded = guardToolHandler(name, handler, {
@@ -137,11 +144,19 @@ export function buildExternalMcpServer(hooks: ExternalMcpHooks): McpServer {
     (server.registerTool as any)(name, config, guarded);
   };
 
-  register(LIST_PROJECTS.name, { description: LIST_PROJECTS.description, inputSchema: {} }, async () =>
+  register(LIST_PROJECTS.name, {
+    description: LIST_PROJECTS.description,
+    inputSchema: {},
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+  }, async () =>
     json(listProjectsForAgent(""))
   );
 
-  register(LIST_PROVIDERS.name, { description: LIST_PROVIDERS.description, inputSchema: {} }, async () =>
+  register(LIST_PROVIDERS.name, {
+    description: LIST_PROVIDERS.description,
+    inputSchema: {},
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+  }, async () =>
     json(listProvidersForAgent())
   );
 
@@ -149,6 +164,7 @@ export function buildExternalMcpServer(hooks: ExternalMcpHooks): McpServer {
     LIST_TASKS.name,
     {
       description: LIST_TASKS.description,
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
       inputSchema: {
         project: z.string().describe(PROJECT_REQUIRED),
         include_done: z.boolean().optional().describe(LIST_TASKS.params.include_done),
@@ -171,7 +187,11 @@ export function buildExternalMcpServer(hooks: ExternalMcpHooks): McpServer {
 
   register(
     GET_TASK.name,
-    { description: GET_TASK.description, inputSchema: { task: z.string().describe(TASK_REQUIRED) } },
+    {
+      description: GET_TASK.description,
+      inputSchema: { task: z.string().describe(TASK_REQUIRED) },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+    },
     async ({ task }) => {
       const id = task.trim();
       const detail = id ? getTaskForAgent(id, "") : null;
@@ -181,7 +201,11 @@ export function buildExternalMcpServer(hooks: ExternalMcpHooks): McpServer {
 
   register(
     LIST_TAGS.name,
-    { description: LIST_TAGS.description, inputSchema: { project: z.string().describe(PROJECT_REQUIRED) } },
+    {
+      description: LIST_TAGS.description,
+      inputSchema: { project: z.string().describe(PROJECT_REQUIRED) },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+    },
     async ({ project }) => {
       const target = resolveTargetProject(null, project, "Nothing was listed.");
       if ("error" in target) return refused(target.error);
@@ -193,6 +217,7 @@ export function buildExternalMcpServer(hooks: ExternalMcpHooks): McpServer {
     SUGGEST_TASK.name,
     {
       description: SUGGEST_TASK.description,
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       inputSchema: {
         title: z.string().describe(SUGGEST_TASK.params.title),
         description: z.string().describe(SUGGEST_TASK.params.description),
@@ -238,6 +263,7 @@ export function buildExternalMcpServer(hooks: ExternalMcpHooks): McpServer {
     UPDATE_TASK.name,
     {
       description: UPDATE_TASK.description,
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false, idempotentHint: true },
       inputSchema: {
         task: z.string().describe(TASK_REQUIRED),
         title: z.string().optional().describe(UPDATE_TASK.params.title),
@@ -263,6 +289,7 @@ export function buildExternalMcpServer(hooks: ExternalMcpHooks): McpServer {
     WITHDRAW_SUGGESTION.name,
     {
       description: WITHDRAW_SUGGESTION.description,
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false, idempotentHint: true },
       inputSchema: {
         task: z.string().describe(WITHDRAW_SUGGESTION.params.task),
         reason: z.string().describe(WITHDRAW_SUGGESTION.params.reason),
@@ -280,6 +307,7 @@ export function buildExternalMcpServer(hooks: ExternalMcpHooks): McpServer {
     MOVE_TASK.name,
     {
       description: MOVE_TASK.description,
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false, idempotentHint: true },
       inputSchema: {
         tasks: z.array(z.string()).describe(MOVE_TASK.params.tasks),
         project: z.string().describe(MOVE_TASK.params.project),
@@ -295,6 +323,7 @@ export function buildExternalMcpServer(hooks: ExternalMcpHooks): McpServer {
     UPDATE_TAG.name,
     {
       description: UPDATE_TAG.description,
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false, idempotentHint: true },
       inputSchema: {
         project: z.string().describe(PROJECT_REQUIRED),
         tag: z.string().describe(UPDATE_TAG.params.tag),
@@ -316,6 +345,7 @@ export function buildExternalMcpServer(hooks: ExternalMcpHooks): McpServer {
     CREATE_RUNBOOK.name,
     {
       description: CREATE_RUNBOOK.description,
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       inputSchema: {
         name: z.string().describe(CREATE_RUNBOOK.params.name),
         description: z.string().describe(CREATE_RUNBOOK.params.description),
@@ -342,7 +372,11 @@ export function buildExternalMcpServer(hooks: ExternalMcpHooks): McpServer {
 
   register(
     LIST_RUNBOOKS.name,
-    { description: LIST_RUNBOOKS.description, inputSchema: { project: z.string().describe(PROJECT_REQUIRED) } },
+    {
+      description: LIST_RUNBOOKS.description,
+      inputSchema: { project: z.string().describe(PROJECT_REQUIRED) },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+    },
     async ({ project }) => {
       const target = resolveTargetProject(null, project, "Nothing was listed.");
       if ("error" in target) return refused(target.error);
@@ -355,6 +389,8 @@ export function buildExternalMcpServer(hooks: ExternalMcpHooks): McpServer {
     UPDATE_RUNBOOK.name,
     {
       description: UPDATE_RUNBOOK.description,
+      // Each nonempty patch stamps updated_at, so repeating a call has an additional effect.
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false, idempotentHint: false },
       inputSchema: {
         runbook: z.string().describe(UPDATE_RUNBOOK.params.runbook),
         name: z.string().optional().describe(UPDATE_RUNBOOK.params.name),
