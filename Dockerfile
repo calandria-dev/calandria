@@ -145,9 +145,9 @@ RUN npm install -g npm@12.0.2 && npm --version
 # desktop skip and uncached image workflows against the exact branch head. It
 # verifies that head before enabling squash auto-merge, and GitHub merges only
 # after every required check passes.
-ARG CLAUDE_CODE_VERSION=2.1.289
-ARG CODEX_VERSION=0.159.0
-ARG AGY_VERSION=1.2.17
+ARG CLAUDE_CODE_VERSION=2.1.296
+ARG CODEX_VERSION=0.162.1
+ARG AGY_VERSION=1.3.3
 
 # The `claude` CLI: the Agent SDK spawns it, and login state lives in
 # ~/.claude on the volume. Pinned location via CLAUDE_CLI_PATH; updates ship as
@@ -203,8 +203,8 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 # The binary self-updates in the background by default, which would replace
 # this pin mid-turn. AGY_CLI_DISABLE_AUTO_UPDATE below turns that off
 # image-wide, and the driver sets it on every spawn as a second guard.
-ARG AGY_SHA512_AMD64=d0ebe612f7cfc21c8de9e7a7a62964b2245d89ddb570d5e27e83e61a2cc76cb38e80b6eb3bdd71bef683eba027c4a97dcce4ced81f47f827763234d0cd3ec592
-ARG AGY_SHA512_ARM64=a2316f5b02ed8e354c9229525f7a3239c1e249f33a1d0442867c68a39b2453654e8d0c48c36bf97b2a3fcef4afc07a7f79eea2a8950b5710abb8777d1a3d3756
+ARG AGY_SHA512_AMD64=abe3ddf5cf30d3adaa586acf505221aa19702f5ca71af3c8b1f9b1a5976bd8e5c151c41ea33b39c41675d25843462a3e8c382c054f580e9d7e1688919d3b5110
+ARG AGY_SHA512_ARM64=1bfd3503576219a102176c13579665a2f39e84ac86a904b117d3b33f3dd751f194a862496bad6ffe914ad46d2c877ba12b6c07e6db07128b706d238262fe430c
 RUN set -eu; \
     case "$(dpkg --print-architecture)" in \
       amd64) manifest=linux_amd64; sha="${AGY_SHA512_AMD64}" ;; \
