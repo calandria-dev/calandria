@@ -18,6 +18,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { createProject, createTask, getTask, getTaskDeps, listAgentEdits, setTaskDeps, updateTask } from "@/lib/store";
 import { createSuggestedTask, moveTasksForAgent } from "@/lib/agentTools";
+import { withTaskLock } from "@/lib/taskLock";
 import { ensureWorktree } from "@/lib/git";
 import { POST as moveTaskEp } from "@/app/api/internal/agent-tools/move-task/route";
 import { POST as agentEditsPost } from "@/app/api/tasks/[id]/agent-edits/route";
@@ -218,6 +219,32 @@ describe("move_task", () => {
     expect((await undo.json()).error).toContain("a started task can't be moved");
     expect(getTask(task.id)!.project_id).toBe(there.id);
     expect(listAgentEdits(task.id)[0].reverted_at).toBe(0);
+  });
+
+  it("rechecks queued launch settings under the task lock before moving", async () => {
+    const { here, there, caller } = board();
+    const task = accepted(here, "Queued");
+    let release!: () => void;
+    let acquired!: () => void;
+    const held = new Promise<void>((resolve) => (acquired = resolve));
+    const gate = new Promise<void>((resolve) => (release = resolve));
+
+    const lockHolder = withTaskLock(task.id, async () => {
+      acquired();
+      await gate;
+      updateTask(task.id, { auto_start: 1 });
+    });
+    await held;
+
+    const pendingMove = moveTasksForAgent({ ...caller, external: true }, [task.id], there.id);
+    release();
+    await lockHolder;
+    const result = await pendingMove;
+
+    expect(result.ok).toBe(true);
+    expect(result.moved).toEqual([]);
+    expect(result.text).toContain("auto-start or a scheduled start is enabled");
+    expect(getTask(task.id)!.project_id).toBe(here.id);
   });
 });
 

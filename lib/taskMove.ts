@@ -42,6 +42,8 @@ export interface TaskMoveOutcome extends TaskMoveBatch {
 }
 
 export interface MoveOptions {
+  /** Refuse the whole move if any queued task can launch unattended. */
+  refuseAutomaticStart?: boolean;
   /**
    * The ids whose worktree + branch may be torn down so a started task can
    * move, the caller's acknowledgement that those checkouts are being thrown
@@ -104,6 +106,29 @@ export async function moveTasksToProject(
 ): Promise<TaskMoveOutcome | null> {
   return withTaskLocks(ids, async () => {
     if (!getProject(projectId)) return null;
+    if (opts.refuseAutomaticStart) {
+      const launchEnabled = ids
+        .map((id) => getTask(id))
+        .find((task) => task && task.project_id !== projectId && (task.auto_start === 1 || task.start_at > 0));
+      if (launchEnabled) {
+        return {
+          moved: [],
+          from_project_ids: [],
+          unchanged: [],
+          skipped: [
+            {
+              id: launchEnabled.id,
+              reason: "auto-start or a scheduled start is enabled; a human must clear those launch settings before moving it",
+            },
+          ],
+          dropped: [],
+          kept: [],
+          untagged: [],
+          carried: [],
+          discarded: [],
+        };
+      }
+    }
     // Only tasks that would actually change project are screened for liveness.
     // Re-filing a task under the project it already sits in is an
     // unconditional no-op with nothing to refuse, so a live turn on one of

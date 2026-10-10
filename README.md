@@ -194,7 +194,8 @@ already queued. The transcript records that it was sent.
 - **Runbooks:** save a task you run often ("push everything unpushed and
   babysit CI", "sweep my Jiras and report") as a named recipe and dispatch it
   in one click. Each run creates a fresh task, with a box for this-run-only
-  instructions.
+  instructions. Agent edits show a before/after diff with Revert. Agent-written
+  recipes require confirmation of the current version before their first dispatch.
 - **Scheduled tasks:** run a saved prompt on a recurring day and time in its
   own timezone, with nobody logged in, or **once** on a date you pick, for
   the "there's a release overnight, check on it at 04:00" job. Each firing
@@ -236,7 +237,8 @@ already queued. The transcript records that it was sent.
   plan-usage meter for a Claude Pro/Max or ChatGPT login.
 - **External MCP endpoint:** let agents outside Calandria file and edit tasks
   over MCP with a bearer token. Tool annotations identify reads, writes,
-  destructive effects and retry safety for MCP clients; see
+  destructive effects and retry safety for MCP clients. External edits cannot
+  release auto-start dependents or rewrite prompts queued for automatic start; see
   [External MCP endpoint](docs/FEATURES.md#external-mcp-endpoint).
 - **Update notifications:** a titlebar pill when a newer release exists, with
   the release notes behind it and the upgrade steps for how this instance was

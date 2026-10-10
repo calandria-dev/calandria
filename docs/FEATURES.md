@@ -1058,6 +1058,21 @@ Writes are attributed to "External MCP client". A suggestion lands in the target
 Suggested tray. An edit to a task you already accepted shows the same "Changed by agent"
 chip and per-edit Revert as an edit from inside a session.
 
+External clients cannot change a task's title, description, tags, or blockers while
+automatic start is enabled through a dependency or a deferred start time. Those tasks
+cannot be moved externally while queued for automatic launch. Tag names
+and descriptions cannot change externally while a member has automatic start enabled.
+Completing or withdrawing a blocker through external MCP clears its dependents'
+auto-start flags and deferred start times, and records those changes for review. Start those tasks manually or restore the flags after reviewing their prompts.
+External runbooks use `default` or `plan` permission mode. External clients cannot change
+a tag's base branch.
+
+Agent edits to runbooks show the same diff and Revert controls. The first dispatch after
+an agent edit requires confirmation of the current recipe. Agent-created recipes also
+require confirmation before their first dispatch. Acknowledging the edit clears
+the chip and keeps that confirmation requirement. Scheduled dispatch refuses an unreviewed
+agent recipe.
+
 ## Agent connections
 
 **What it is:** Settings → Models separates coding environments from model providers.

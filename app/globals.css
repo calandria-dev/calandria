@@ -2221,6 +2221,11 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .rb-desc{font-size:12.5px;color:var(--ink-2);}
 .rb-meta{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:11.5px;color:var(--ink-3);}
 .rb-head .spacer{flex:1;}
+.rb-agent-confirm{padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-sm);}
+.rb-agent-confirm label{display:flex;align-items:flex-start;gap:9px;color:var(--ink-2);font-size:13px;line-height:1.45;cursor:pointer;}
+.rb-agent-confirm input{margin-top:3px;flex:0 0 auto;}
+.rb-agent-confirm .hlp{margin:6px 0 0 24px;}
+.rb-agent-edited{flex:0 1 auto;}
 
 /* Narrow desktops / tablets. The shell already hands both side columns their
    30px spine well above this width (AUTO_COLLAPSE_BELOW in app/shell/types.ts),
