@@ -32,6 +32,9 @@ import {
   listTags,
   listProjectsPlain,
   listTasks,
+  listAutoStartCandidates,
+  listScheduledStartDependents,
+  withStoreTransaction,
   recordAgentEdit,
   resolveTag,
   sameDepSet,
@@ -816,6 +819,36 @@ function tagsPhrase(tags: Tag[]): string {
   return tags.length ? `, tagged ${tags.map((t) => `"${t.name}"`).join(", ")}` : ", untagged";
 }
 
+function disableExternalAutoStartDependents(blockerId: string, actor: AgentEditActor): void {
+  const rows = new Map<string, Task>();
+  for (const task of listAutoStartCandidates(blockerId)) rows.set(task.id, task);
+  for (const task of listScheduledStartDependents(blockerId)) rows.set(task.id, task);
+  for (const dependent of rows.values()) {
+    const changes: AgentEditChange[] = [];
+    const patch: Partial<Task> = {};
+    if (dependent.auto_start === 1) {
+      patch.auto_start = 0;
+      changes.push({ field: "auto_start", before: "on", after: "off", before_value: 1, after_value: 0 });
+    }
+    if (dependent.start_at > 0) {
+      patch.start_at = 0;
+      changes.push({ field: "start_at", before: new Date(dependent.start_at).toISOString(), after: "cleared", before_value: dependent.start_at, after_value: 0 });
+    }
+    if (!changes.length) continue;
+    const disabled = updateTask(dependent.id, patch);
+    if (!disabled) continue;
+    recordAgentEdit({
+      task_id: dependent.id,
+      project_id: dependent.project_id,
+      actor_task_id: actor.id,
+      actor_title: actor.title,
+      actor_agent: actor.agent,
+      changes,
+    });
+    publishGlobal(dependent.id, { type: "task_edited" });
+  }
+}
+
 // "cancelled" is absent, for a reason that holds whichever row is being
 // written. On the caller's OWN row it's self-destruction: PATCH
 // /api/tasks/[id] calls abortTurn() on cancel, which would tear down the very
@@ -894,7 +927,7 @@ export function isInertSuggestion(t: Task): boolean {
  * The three fields below are all any of this ever reads off the caller;
  * widening the type is what keeps the job from having to fake the other thirty.
  */
-export type AgentEditActor = Pick<Task, "id" | "title" | "agent">;
+export type AgentEditActor = Pick<Task, "id" | "title" | "agent"> & { external?: boolean };
 
 export async function updateTaskForAgent(
   caller: AgentEditActor,
@@ -952,6 +985,11 @@ export async function updateTaskForAgent(
     const title = input.title.trim();
     if (!title) return fail(`Could not update ${what}: \`title\` was empty. Nothing was changed.`);
     if (title !== cur.title) {
+      if (caller.external && (cur.auto_start === 1 || cur.start_at > 0))
+        return fail(
+          `Could not update ${what}: external clients cannot change the title of a task with auto-start or a scheduled start enabled. ` +
+            `The title is included in its opening context. Have a human clear those launch settings first. Nothing was changed.`
+        );
       patch.title = title;
       changed.push(`title → "${title}"`);
       changes.push({ field: "title", before: cur.title, after: title, before_value: cur.title });
@@ -984,6 +1022,11 @@ export async function updateTaskForAgent(
     const kept = [...cut.attachments, ...given.attachments, ...staged].filter((a) => !seen.has(a.path) && seen.add(a.path));
     const description = joinAttachmentText(given.text, kept);
     if (description !== cur.description) {
+      if (caller.external && (cur.auto_start === 1 || cur.start_at > 0))
+        return fail(
+          `Could not update ${what}: external clients cannot change the opening prompt or attachments of a task with auto-start ` +
+            `or a scheduled start enabled. Have a human clear those launch settings first. Nothing was changed.`
+        );
       patch.description = description;
       if (given.text !== cut.text) changed.push("description rewritten");
       if (staged.length) changed.push(`${staged.length} file${staged.length === 1 ? "" : "s"} attached`);
@@ -1048,6 +1091,11 @@ export async function updateTaskForAgent(
     const before = getTaskTags(cur.id);
     const same = before.length === hit.tags.length && before.every((t, i) => t.id === hit.tags[i].id);
     if (!same) {
+      if (caller.external && (cur.auto_start === 1 || cur.start_at > 0))
+        return fail(
+          `Could not update ${what}: external clients cannot change tags on a task with auto-start or a scheduled start enabled. ` +
+            `Tag names and descriptions are included in its opening context. Nothing was changed.`
+        );
       nextTags = hit.tags;
       changed.push(hit.tags.length ? `tags → ${hit.tags.map((t) => `"${t.name}"`).join(", ")}` : "no longer tagged");
       changes.push({
@@ -1108,6 +1156,11 @@ export async function updateTaskForAgent(
       );
     const depsBefore = getTaskDeps(cur.id);
     if (!sameDepSet(depsBefore, wanted)) {
+      if (caller.external && (cur.auto_start === 1 || cur.start_at > 0))
+        return fail(
+          `Could not update ${what}: external clients cannot change blockers on a task with auto-start or a scheduled start enabled. ` +
+            `A human can change the launch settings or dependencies. Nothing was changed.`
+        );
       nextDeps = wanted;
       changed.push(wanted.length ? `blocked by ${wanted.length} task(s)` : "no longer blocked by anything");
       // The complete id list, not a rendered count: Revert has to be able to
@@ -1151,6 +1204,25 @@ export async function updateTaskForAgent(
       );
   }
 
+  // The done check awaits git, so re-read before any writes. An external caller
+  // must never apply a prompt built from a row whose launch policy changed
+  // while that check was running.
+  const fresh = getTask(cur.id);
+  if (!fresh) return fail(`Could not update ${what}: its row no longer exists. Nothing was changed.`);
+  if (
+    fresh.running !== cur.running ||
+    fresh.status !== cur.status ||
+    fresh.description !== cur.description ||
+    fresh.auto_start !== cur.auto_start ||
+    fresh.start_at !== cur.start_at
+  )
+    return fail(`Could not update ${what}: its prompt or launch state changed while this edit was being checked. Read it again and retry. Nothing was changed.`);
+
+  // An external terminal edit must not release unattended work. Clear direct
+  // auto-start dependents before the blocker write and audit each change so a
+  // later scheduler sweep cannot launch them and the user can review/revert.
+  const externallyCleared = caller.external && patch.status && TERMINAL.includes(patch.status);
+
   // Edges before fields, so the two writes can't half-land. setTaskDeps runs its
   // cycle guard BEFORE it opens its transaction, so a rejection here has touched
   // nothing at all, whereas patching the row first and then throwing would
@@ -1178,7 +1250,11 @@ export async function updateTaskForAgent(
   // The attachment copies, now that nothing below can refuse: the row patch
   // names these paths, so they exist before it lands.
   for (const c of copies) copyIntoTaskUploads(c.from, c.to);
-  const updated = updateTask(cur.id, patch);
+  let updated: Task | undefined;
+  withStoreTransaction(() => {
+    updated = updateTask(cur.id, patch);
+    if (externallyCleared) disableExternalAutoStartDependents(cur.id, caller);
+  });
   if (!updated) return fail(`Could not update ${what}: its row no longer exists.`);
 
   // Record the edit when it's not the caller's own row and not an unreviewed
@@ -1222,13 +1298,17 @@ export async function updateTaskForAgent(
     task,
     text:
       `Updated "${task.title}": ${changed.join(", ")}.` +
-      (done ? " Any task set to start when unblocked by this one will now launch." : "") +
+      (done && caller.external
+        ? " Tasks configured to launch when unblocked were paused for human review."
+        : done
+          ? " Any task set to start when unblocked by this one will now launch."
+          : "") +
       // An agent should know the edit is visible, not silent: it landed on a
       // row the user already reviewed and accepted as their own backlog item.
       (wasAccepted && changes.length
         ? " The user already accepted this task, so it's now flagged as changed on their board with a diff and a revert button."
         : ""),
-    autoStartDependents: done,
+    autoStartDependents: done && !caller.external,
   };
 }
 
@@ -1298,7 +1378,11 @@ export function withdrawSuggestionForAgent(
   // suggested stays 1: that flag is what keeps the row in the tray.
   // awaiting_input for the same reason update_task settles it on a status write:
   // a terminal row must not keep counting toward the project's "needs you" pill.
-  const updated = updateTask(cur.id, { status: "cancelled", withdrawn_reason: why, awaiting_input: 0 });
+  let updated: Task | undefined;
+  withStoreTransaction(() => {
+    updated = updateTask(cur.id, { status: "cancelled", withdrawn_reason: why, awaiting_input: 0 });
+    if (updated && caller.external) disableExternalAutoStartDependents(cur.id, caller);
+  });
   if (!updated) return fail(`Could not withdraw "${cur.title}": its row no longer exists.`);
 
   // task_edited, not task_updated: withdrawn_reason is a field the coarse
@@ -1313,7 +1397,7 @@ export function withdrawSuggestionForAgent(
       `so they can revive it or dismiss it for good.`,
     // Cancelling is a blocker clearing. Anything auto-starting behind this
     // suggestion is now unblocked and must actually launch, or it waits forever.
-    autoStartDependents: true,
+    autoStartDependents: !caller.external,
   };
 }
 
@@ -1388,6 +1472,16 @@ export async function moveTasksForAgent(
   // and the report has to say where each one came from, what it was called if
   // it turned out not to exist, and whether it was a row the user had accepted.
   const before = new Map(ids.map((id) => [id, getTask(id)] as const));
+  if (caller.external) {
+    const launchEnabled = [...before.values()].find(
+      (task) => task && task.project_id !== target.project.id && (task.auto_start === 1 || task.start_at > 0)
+    );
+    if (launchEnabled)
+      return fail(
+        `Could not move tasks: "${launchEnabled.title}" has auto-start or a scheduled start enabled. Moving it would change ` +
+          `the project context used by its unattended launch. Have a human clear those launch settings first. Nothing was moved.`
+      );
+  }
   // Falls through to a live read because a DROPPED edge names the task at its
   // OTHER end, which by definition is one that didn't move and so was never
   // captured above. A bare id there would be the least readable half of the
@@ -1397,6 +1491,7 @@ export async function moveTasksForAgent(
   const result = await moveTasksToProject(ids, target.project.id, {
     // Empty: see the block comment above. A started task is refused here,
     // not acknowledged away.
+    refuseAutomaticStart: caller.external,
   });
   if (!result) return fail(`Project "${target.project.name}" no longer exists. Nothing was moved.`);
 
@@ -1635,7 +1730,8 @@ export async function reportBaseRewriteForAgent(
 export function updateTagForAgent(
   project: Project,
   tagRef: string,
-  input: { name?: string; description?: string; color?: string; base_branch?: string }
+  input: { name?: string; description?: string; color?: string; base_branch?: string },
+  actor?: AgentEditActor
 ): { tag: Tag | null; text: string } {
   const fail = (text: string) => ({ tag: null, text });
   const ref = tagRef?.trim() ?? "";
@@ -1686,6 +1782,17 @@ export function updateTagForAgent(
       tag: cur,
       text: `No change: "${cur.name}" already matches what you passed${cur.base_branch ? ` (based on ${cur.base_branch})` : ""}.`,
     };
+
+  if (actor?.external && (fields.name !== undefined || fields.description !== undefined)) {
+    const launchEnabledMember = listTasks(project.id).find(
+      (task) => task.tag_ids.includes(cur.id) && (task.auto_start === 1 || task.start_at > 0)
+    );
+    if (launchEnabledMember)
+      return fail(
+        `Could not update "${cur.name}": its name or description is included in the opening context of "${launchEnabledMember.title}", ` +
+          `which has auto-start or a scheduled start enabled. Have a human clear those launch settings first. Nothing was changed.`
+      );
+  }
 
   let updated: Tag | undefined;
   try {

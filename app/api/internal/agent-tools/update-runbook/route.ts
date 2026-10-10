@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
     permission_mode: body.permission_mode,
     provider: body.provider,
     model: body.model,
-  });
+  }, { id: caller.id, title: caller.title, agent: caller.agent });
   // 400: the caller exists, so this is either an unknown runbook or one this
   // tool may not touch. The reason travels; a bare refusal leaves the agent
   // nothing to tell the user.

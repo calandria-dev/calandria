@@ -17,10 +17,8 @@
 //   worktree.
 //
 // Every handler answers through lib/agentToolGuard.mjs, like every other
-// Calandria tool. Pinned SDK-free in tests/importGraph.test.ts, so the
-// auto-start sweep a cleared blocker triggers is injected by the route
-// (`onBlockerCleared`), the same split the internal agent-tools routes make
-// with updateTaskForAgent's `autoStartDependents` flag.
+// Calandria tool. Pinned SDK-free in tests/importGraph.test.ts. External
+// terminal edits pause automatic launches for review in the shared policy.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
@@ -66,6 +64,7 @@ export const EXTERNAL_ACTOR: AgentEditActor = {
   id: "external-mcp",
   title: "External MCP client",
   agent: "external",
+  external: true,
 };
 
 /** The tools this endpoint serves, in registration order. */
@@ -110,16 +109,11 @@ const text = (t: string): ToolResult => ({ content: [{ type: "text", text: t }] 
 const refused = (t: string): ToolResult => ({ content: [{ type: "text", text: t }], isError: true });
 const json = (v: unknown): ToolResult => text(JSON.stringify(v, null, 2));
 
-export interface ExternalMcpHooks {
-  /** A write moved this task to a terminal status; its auto_start dependents may now launch. */
-  onBlockerCleared: (taskId: string) => void;
-}
-
 /**
  * A fresh server with every external tool registered. Built per request: the
  * route runs the transport stateless, so nothing here outlives one call.
  */
-export function buildExternalMcpServer(hooks: ExternalMcpHooks): McpServer {
+export function buildExternalMcpServer(): McpServer {
   const server = new McpServer({ name: "calandria", version: "1.0.0" }, { instructions: INSTRUCTIONS });
 
   // The guard wrap and the arrival log, applied to every tool registered below.
@@ -278,9 +272,8 @@ export function buildExternalMcpServer(hooks: ExternalMcpHooks): McpServer {
       // An empty ref would make updateTaskForAgent target the caller's own
       // row, and this caller has none.
       if (!task.trim()) return refused(`\`task\` is required. ${TASK_REQUIRED} Nothing was changed.`);
-      const { task: updated, text: out, autoStartDependents: sweep } = await updateTaskForAgent(EXTERNAL_ACTOR, task, fields);
+      const { task: updated, text: out } = await updateTaskForAgent(EXTERNAL_ACTOR, task, fields);
       if (!updated) return refused(out);
-      if (sweep) hooks.onBlockerCleared(updated.id);
       return text(out);
     }
   );
@@ -296,9 +289,8 @@ export function buildExternalMcpServer(hooks: ExternalMcpHooks): McpServer {
       },
     },
     async ({ task, reason }) => {
-      const { task: updated, text: out, autoStartDependents: sweep } = withdrawSuggestionForAgent(EXTERNAL_ACTOR, task, reason);
+      const { task: updated, text: out } = withdrawSuggestionForAgent(EXTERNAL_ACTOR, task, reason);
       if (!updated) return refused(out);
-      if (sweep) hooks.onBlockerCleared(updated.id);
       return text(out);
     }
   );
@@ -334,9 +326,11 @@ export function buildExternalMcpServer(hooks: ExternalMcpHooks): McpServer {
       },
     },
     async ({ project, tag, ...fields }) => {
+      if (fields.base_branch !== undefined)
+        return refused("External clients cannot change a tag's base branch. Ask a human to make this edit.");
       const target = resolveTargetProject(null, project, "Nothing was changed.");
       if ("error" in target) return refused(target.error);
-      const { tag: updated, text: out } = updateTagForAgent(target.project, tag, fields);
+      const { tag: updated, text: out } = updateTagForAgent(target.project, tag, fields, EXTERNAL_ACTOR);
       return updated ? text(out) : refused(out);
     }
   );
@@ -351,7 +345,7 @@ export function buildExternalMcpServer(hooks: ExternalMcpHooks): McpServer {
         description: z.string().describe(CREATE_RUNBOOK.params.description),
         prompt: z.string().describe(CREATE_RUNBOOK.params.prompt),
         priority: z.enum(PRIORITIES).optional().describe(CREATE_RUNBOOK.params.priority),
-        permission_mode: z.string().optional().describe(CREATE_RUNBOOK.params.permission_mode),
+        permission_mode: z.enum(["default", "plan"]).optional().describe(CREATE_RUNBOOK.params.permission_mode),
         project: z.string().describe(PROJECT_REQUIRED),
         environment: z.string().optional().describe(CREATE_RUNBOOK.params.environment),
         provider: z.string().optional().describe(CREATE_RUNBOOK.params.provider),
@@ -363,7 +357,11 @@ export function buildExternalMcpServer(hooks: ExternalMcpHooks): McpServer {
       if ("error" in target) return refused(target.error);
       // The resolved project is passed as the "current" one, so the runbook
       // lands there; created_by records the external actor.
-      const { runbook, text: out } = createRunbookForAgent(target.project, input, EXTERNAL_ACTOR.agent);
+      const { runbook, text: out } = createRunbookForAgent(
+        target.project,
+        { ...input, permission_mode: input.permission_mode ?? "default" },
+        EXTERNAL_ACTOR.agent
+      );
       if (!runbook) return refused(out);
       publishGlobal("", { type: "runbooks_changed", projectId: runbook.project_id });
       return text(out);
@@ -397,14 +395,14 @@ export function buildExternalMcpServer(hooks: ExternalMcpHooks): McpServer {
         description: z.string().optional().describe(UPDATE_RUNBOOK.params.description),
         prompt: z.string().optional().describe(UPDATE_RUNBOOK.params.prompt),
         priority: z.enum(PRIORITIES).optional().describe(UPDATE_RUNBOOK.params.priority),
-        permission_mode: z.string().optional().describe(UPDATE_RUNBOOK.params.permission_mode),
+        permission_mode: z.enum(["default", "plan"]).optional().describe(UPDATE_RUNBOOK.params.permission_mode),
         provider: z.string().optional().describe(UPDATE_RUNBOOK.params.provider),
         model: z.string().optional().describe(UPDATE_RUNBOOK.params.model),
       },
     },
     async ({ runbook, ...fields }) => {
       // Runbook ids are global, so no project is needed to find one.
-      const { runbook: updated, text: out } = updateRunbookForAgent(null, runbook, fields);
+      const { runbook: updated, text: out } = updateRunbookForAgent(null, runbook, fields, EXTERNAL_ACTOR);
       if (!updated) return refused(out);
       publishGlobal("", { type: "runbooks_changed", projectId: updated.project_id });
       return text(out);

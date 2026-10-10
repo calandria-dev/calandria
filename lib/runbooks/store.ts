@@ -4,7 +4,7 @@
 
 import { nanoid } from "nanoid";
 import { getDb } from "@/lib/db";
-import type { Priority, Runbook, Task } from "@/lib/types";
+import type { Priority, Runbook, RunbookAgentEdit, RunbookAgentEditChange, Task } from "@/lib/types";
 
 export function getRunbook(id: string): Runbook | null {
   return (getDb().prepare("SELECT * FROM runbooks WHERE id = ?").get(id) as Runbook) ?? null;
@@ -39,18 +39,24 @@ export function createRunbook(input: CreateRunbookInput): Runbook {
   const position = (
     getDb().prepare("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM runbooks WHERE project_id = ?").get(input.project_id) as { n: number }
   ).n;
-  getDb()
-    .prepare(
+  const db = getDb();
+  db.transaction(() => {
+    db.prepare(
       `INSERT INTO runbooks (id, project_id, name, description, prompt, agent, permission_mode,
                              send_context, priority, position, created_by, provider_id, model, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
+    ).run(
       id, input.project_id, input.name, input.description ?? "", input.prompt,
       input.agent || "claude", input.permission_mode ?? null,
       input.send_context === false ? 0 : 1, input.priority ?? "med",
       position, input.created_by ?? "", input.provider_id ?? null, input.model ?? null, now, now
     );
+    if (input.created_by) {
+      // Agent-created recipes are inert but need the same human confirmation
+      // before their first dispatch as an agent-edited recipe.
+      db.prepare("UPDATE runbooks SET recipe_revision = 1, agent_edit_revision = 1 WHERE id = ?").run(id);
+    }
+  })();
   return getRunbook(id)!;
 }
 
@@ -62,9 +68,85 @@ export function updateRunbook(
   const entries = Object.entries(fields).filter(([, v]) => v !== undefined);
   if (!entries.length) return getRunbook(id);
   getDb()
-    .prepare(`UPDATE runbooks SET ${entries.map(([k]) => `${k} = ?`).join(", ")}, updated_at = ? WHERE id = ?`)
+    .prepare(`UPDATE runbooks SET ${entries.map(([k]) => `${k} = ?`).join(", ")}, recipe_revision = recipe_revision + 1, updated_at = ? WHERE id = ?`)
     .run(...entries.map(([, v]) => v as string | number | null), Date.now(), id);
   return getRunbook(id)!;
+}
+
+export interface RunbookEditActor {
+  id: string;
+  title: string;
+  agent: string;
+}
+
+/** Atomically write an agent recipe change, its audit row and its review revision. */
+export function updateRunbookWithAgentEdit(
+  id: string,
+  fields: Partial<Pick<Runbook, "name" | "description" | "prompt" | "permission_mode" | "priority" | "provider_id" | "model" | "send_context">>,
+  actor: RunbookEditActor,
+  changes: RunbookAgentEditChange[]
+): Runbook | null {
+  const db = getDb();
+  const entries = Object.entries(fields).filter(([, value]) => value !== undefined);
+  if (!entries.length || !changes.length) return getRunbook(id);
+  const editId = nanoid();
+  const now = Date.now();
+  db.transaction(() => {
+    const current = getRunbook(id);
+    if (!current) throw new Error("runbook no longer exists");
+    db.prepare(
+      `UPDATE runbooks SET ${entries.map(([key]) => `${key} = ?`).join(", ")},
+         recipe_revision = recipe_revision + 1, agent_edit_revision = agent_edit_revision + 1,
+         agent_edited_at = ?, updated_at = ? WHERE id = ?`
+    ).run(...entries.map(([, value]) => value as string | number | null), now, now, id);
+    const updated = getRunbook(id)!;
+    db.prepare(
+      `INSERT INTO runbook_agent_edits (id, runbook_id, project_id, actor_task_id, actor_title, actor_agent, changes, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(editId, id, updated.project_id, actor.id, actor.title, actor.agent, JSON.stringify(changes), now);
+  })();
+  return getRunbook(id);
+}
+
+function parseRunbookEdit(row: Omit<RunbookAgentEdit, "changes"> & { changes: string }): RunbookAgentEdit {
+  let changes: RunbookAgentEditChange[] = [];
+  try { changes = JSON.parse(row.changes); } catch { /* Keep a readable empty audit row if stored JSON is corrupt. */ }
+  return { ...row, changes };
+}
+
+export function listRunbookAgentEdits(runbookId: string): RunbookAgentEdit[] {
+  const rows = getDb().prepare("SELECT * FROM runbook_agent_edits WHERE runbook_id = ? ORDER BY created_at DESC, rowid DESC").all(runbookId);
+  return (rows as (Omit<RunbookAgentEdit, "changes"> & { changes: string })[]).map(parseRunbookEdit);
+}
+
+export function getRunbookAgentEdit(id: string): RunbookAgentEdit | undefined {
+  const row = getDb().prepare("SELECT * FROM runbook_agent_edits WHERE id = ?").get(id) as (Omit<RunbookAgentEdit, "changes"> & { changes: string }) | undefined;
+  return row ? parseRunbookEdit(row) : undefined;
+}
+
+export function markRunbookAgentEditReverted(id: string): void {
+  getDb().prepare("UPDATE runbook_agent_edits SET reverted_at = ? WHERE id = ?").run(Date.now(), id);
+}
+
+export function hasOutstandingRunbookAgentEdits(runbookId: string): boolean {
+  return !!getDb().prepare("SELECT 1 FROM runbook_agent_edits WHERE runbook_id = ? AND reverted_at = 0 AND acknowledged_at = 0 LIMIT 1").get(runbookId);
+}
+
+export function acknowledgeRunbookAgentEdits(runbookId: string): void {
+  const db = getDb();
+  db.transaction(() => {
+    db.prepare("UPDATE runbook_agent_edits SET acknowledged_at = ? WHERE runbook_id = ? AND reverted_at = 0 AND acknowledged_at = 0").run(Date.now(), runbookId);
+    db.prepare("UPDATE runbooks SET agent_edited_at = 0 WHERE id = ?").run(runbookId);
+  })();
+}
+
+/** Mark only the exact agent recipe revision that the confirmed dispatch used. */
+export function markRunbookRecipeReviewed(id: string, recipeRevision: number, agentEditRevision: number): boolean {
+  const result = getDb().prepare(
+    `UPDATE runbooks SET reviewed_agent_edit_revision = ?
+      WHERE id = ? AND recipe_revision = ? AND agent_edit_revision = ?`
+  ).run(agentEditRevision, id, recipeRevision, agentEditRevision);
+  return result.changes === 1;
 }
 
 /**
@@ -105,7 +187,7 @@ export function deleteRunbook(id: string): void {
 export function copyRunbook(id: string, targetProjectId: string): Runbook | null {
   const src = getRunbook(id);
   if (!src) return null;
-  return createRunbook({
+  const copy = createRunbook({
     project_id: targetProjectId,
     name: src.name,
     description: src.description,
@@ -120,6 +202,21 @@ export function copyRunbook(id: string, targetProjectId: string): Runbook | null
     // pressed Copy, not by the original's author.
     created_by: "",
   });
+  if (src.agent_edit_revision > src.reviewed_agent_edit_revision) {
+    const db = getDb();
+    db.transaction(() => {
+      db.prepare("UPDATE runbooks SET recipe_revision = 1, agent_edit_revision = 1 WHERE id = ?").run(copy.id);
+      const outstanding = listRunbookAgentEdits(id).filter((edit) => edit.reverted_at === 0 && edit.acknowledged_at === 0);
+      for (const edit of outstanding) {
+        db.prepare(
+          `INSERT INTO runbook_agent_edits (id, runbook_id, project_id, actor_task_id, actor_title, actor_agent, changes, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(nanoid(), copy.id, targetProjectId, edit.actor_task_id, edit.actor_title, edit.actor_agent, JSON.stringify(edit.changes), edit.created_at);
+      }
+      if (outstanding.length) db.prepare("UPDATE runbooks SET agent_edited_at = ? WHERE id = ?").run(Date.now(), copy.id);
+    })();
+  }
+  return getRunbook(copy.id);
 }
 
 /**

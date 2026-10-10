@@ -1,7 +1,6 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { externalMcpEnabled, externalMcpTokenOk } from "@/lib/auth/origin.mjs";
 import { buildExternalMcpServer } from "@/lib/externalMcp";
-import { maybeAutoStartDependents } from "@/lib/autoStart";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +19,7 @@ async function handle(req: Request): Promise<Response> {
   if (!externalMcpTokenOk(req.headers.get("authorization"))) {
     return new Response("Unauthorized.\n", { status: 401, headers: { "www-authenticate": 'Bearer realm="calandria-mcp"' } });
   }
-  const server = buildExternalMcpServer({ onBlockerCleared: maybeAutoStartDependents });
+  const server = buildExternalMcpServer();
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   await server.connect(transport);
   try {

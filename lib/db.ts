@@ -506,11 +506,29 @@ export function init(db: Database.Database) {
       -- create_runbook. Provenance only: a runbook is inert until someone
       -- presses Run, so an agent-created one needs no review tray.
       created_by      TEXT NOT NULL DEFAULT '',
+      recipe_revision INTEGER NOT NULL DEFAULT 0,
+      agent_edit_revision INTEGER NOT NULL DEFAULT 0,
+      reviewed_agent_edit_revision INTEGER NOT NULL DEFAULT 0,
+      agent_edited_at INTEGER NOT NULL DEFAULT 0,
       created_at      INTEGER NOT NULL,
       updated_at      INTEGER NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_runbooks_project ON runbooks(project_id);
+
+    CREATE TABLE IF NOT EXISTS runbook_agent_edits (
+      id            TEXT PRIMARY KEY,
+      runbook_id    TEXT NOT NULL REFERENCES runbooks(id) ON DELETE CASCADE,
+      project_id    TEXT NOT NULL,
+      actor_task_id TEXT NOT NULL DEFAULT '',
+      actor_title   TEXT NOT NULL DEFAULT '',
+      actor_agent   TEXT NOT NULL DEFAULT '',
+      changes       TEXT NOT NULL,
+      created_at    INTEGER NOT NULL,
+      reverted_at   INTEGER NOT NULL DEFAULT 0,
+      acknowledged_at INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_runbook_agent_edits_runbook ON runbook_agent_edits(runbook_id, created_at DESC);
 
     -- A named, project-scoped label a task can carry: the noun a multi-task
     -- feature was missing (docs/FEATURES.md;
@@ -1179,6 +1197,10 @@ export function migrate(db: Database.Database, options: { seedProviders?: boolea
     db.exec("ALTER TABLE runbooks ADD COLUMN provider_id TEXT REFERENCES model_providers(id) ON DELETE SET NULL");
   }
   if (!runbookCols.includes("model")) db.exec("ALTER TABLE runbooks ADD COLUMN model TEXT");
+  if (!runbookCols.includes("recipe_revision")) db.exec("ALTER TABLE runbooks ADD COLUMN recipe_revision INTEGER NOT NULL DEFAULT 0");
+  if (!runbookCols.includes("agent_edit_revision")) db.exec("ALTER TABLE runbooks ADD COLUMN agent_edit_revision INTEGER NOT NULL DEFAULT 0");
+  if (!runbookCols.includes("reviewed_agent_edit_revision")) db.exec("ALTER TABLE runbooks ADD COLUMN reviewed_agent_edit_revision INTEGER NOT NULL DEFAULT 0");
+  if (!runbookCols.includes("agent_edited_at")) db.exec("ALTER TABLE runbooks ADD COLUMN agent_edited_at INTEGER NOT NULL DEFAULT 0");
   // A tag's default base branch: where a whole plan's tasks are cut from,
   // set once instead of N times (docs/FEATURES.md). Same '' = inherit
   // convention as tasks.base_branch, so every existing row keeps behaving as
