@@ -98,6 +98,23 @@ describe("a schedule that fires a runbook", () => {
     expect(started).toHaveLength(0);
   });
 
+  it("refuses a linked runbook with unconfirmed agent edits", async () => {
+    const p = await projectWithRepo();
+    const rb = createRunbook({ project_id: p.id, name: "Needs review", prompt: "Agent recipe" });
+    getDb().prepare("UPDATE runbooks SET agent_edit_revision = 1 WHERE id = ?").run(rb.id);
+    const s = createSchedule({
+      project_id: p.id, name: "Morning", prompt: "Fallback",
+      days_mask: 127, time_of_day: "08:30", timezone: "America/Los_Angeles",
+    });
+    link(s.id, rb.id);
+    due(s.id);
+    await tickSchedules(Date.now());
+    expect(lastRun(s.id)!.status).toBe("failed");
+    expect(lastRun(s.id)!.detail).toMatch(/confirmation/);
+    expect(started).toHaveLength(0);
+    expect(listTasks(p.id)).toHaveLength(0);
+  });
+
   it("an unlinked schedule is completely unaffected", async () => {
     const p = await projectWithRepo();
     const provider = createProvider({ type: "lmstudio", config: { base_url: "http://localhost:1234" } });

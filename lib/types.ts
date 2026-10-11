@@ -179,7 +179,7 @@ export interface Task {
  * `moveTasksToProject`) instead of writing the column directly (see
  * app/api/tasks/[id]/agent-edits/route.ts).
  */
-export type AgentEditField = "title" | "description" | "priority" | "status" | "tags" | "blocked_by" | "base_branch" | "project";
+export type AgentEditField = "title" | "description" | "priority" | "status" | "tags" | "blocked_by" | "base_branch" | "project" | "auto_start" | "start_at";
 
 /** One field's before/after inside a recorded agent edit. */
 export interface AgentEditChange {
@@ -193,7 +193,7 @@ export interface AgentEditChange {
    * separate from `before` because the readable form is lossy: a tag name
    * can't be written back, and "2 tasks" names no ids.
    */
-  before_value: string | string[] | null;
+  before_value: string | string[] | number | null;
   /**
    * What the edit left the field holding, in the same shape. Revert compares
    * this against the live row before writing `before_value` back, so it can
@@ -202,7 +202,7 @@ export interface AgentEditChange {
    * for those the scalar fields compare through `after` instead, and tags and
    * blocked_by are reverted unchecked.
    */
-  after_value?: string | string[] | null;
+  after_value?: string | string[] | number | null;
 }
 
 /**
@@ -1068,8 +1068,39 @@ export interface Runbook {
   provider_id: string | null;
   /** The model that task starts on; null = the project's default. */
   model: string | null;
+  /** Monotonic revision of dispatch-relevant recipe fields. */
+  recipe_revision: number;
+  /** Revision of the most recent agent-written recipe. */
+  agent_edit_revision: number;
+  /** Agent edit revision reviewed by a successful, explicitly confirmed run. */
+  reviewed_agent_edit_revision: number;
+  /** Timestamp of the latest outstanding agent edit, or 0. */
+  agent_edited_at: number;
   created_at: number;
   updated_at: number;
+}
+
+export type RunbookAgentEditField = "name" | "description" | "prompt" | "permission_mode" | "priority" | "provider_id" | "model" | "send_context";
+
+export interface RunbookAgentEditChange {
+  field: RunbookAgentEditField;
+  before: string;
+  after: string;
+  before_value: string | number | null;
+  after_value: string | number | null;
+}
+
+export interface RunbookAgentEdit {
+  id: string;
+  runbook_id: string;
+  project_id: string;
+  actor_task_id: string;
+  actor_title: string;
+  actor_agent: string;
+  changes: RunbookAgentEditChange[];
+  created_at: number;
+  reverted_at: number;
+  acknowledged_at: number;
 }
 
 /**

@@ -9,6 +9,7 @@ import { relTime } from "./format";
 import { ErrNote } from "./shared";
 import { Modal, PrioritySeg } from "./Modal";
 import { ProjectTargetList } from "./modals";
+import { RunbookAgentEditedChip } from "./RunbookAgentEdits";
 import type { Priority } from "@/lib/types";
 import { INHERIT_LABEL } from "./types";
 import type { AgentsBundle, ProjectRow, RunbookRow, RunbooksResponse } from "./types";
@@ -222,18 +223,23 @@ function RunbookForm({
  * box for anything extra. Everything else is already decided by the runbook,
  * which is the point of having saved it.
  */
-function RunSheet({ runbook, agents, onCancel, onRan }: {
+function RunSheet({ runbook, agents, onCancel, onRan, onRefresh }: {
   runbook: RunbookRow;
   agents: AgentsBundle;
   onCancel: () => void;
   onRan: (taskId: string) => void;
+  onRefresh: () => void;
 }) {
   const uid = useId();
   const [title, setTitle] = useState(() => defaultRunTitle(runbook.name));
   const [extra, setExtra] = useState("");
   const [start, setStart] = useState(true);
+  const [confirmedRevision, setConfirmedRevision] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState("");
+  const needsAgentReview = runbook.agent_edit_revision > runbook.reviewed_agent_edit_revision;
+  const confirmedCurrentRevision = confirmedRevision === runbook.recipe_revision;
+  useEffect(() => { setConfirmedRevision(null); }, [runbook.recipe_revision]);
 
   const go = async () => {
     // A double-click is two tasks and two live turns, so the button latches for
@@ -242,11 +248,15 @@ function RunSheet({ runbook, agents, onCancel, onRan }: {
     setRunning(true);
     setErr("");
     try {
-      const { task } = await jsend<{ task: { id: string } }>(`/api/runbooks/${runbook.id}/run`, "POST", { title, extra, start });
+      const { task } = await jsend<{ task: { id: string } }>(`/api/runbooks/${runbook.id}/run`, "POST", {
+        title, extra, start,
+        ...(needsAgentReview && confirmedCurrentRevision ? { confirmed_recipe_revision: confirmedRevision } : {}),
+      });
       onRan(task.id);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       setRunning(false);
+      onRefresh();
     }
   };
 
@@ -261,7 +271,7 @@ function RunSheet({ runbook, agents, onCancel, onRan }: {
         </label>
         <span className="spacer" />
         <button className="btn btn-ghost" onClick={onCancel} disabled={running}>Cancel</button>
-        <button className="btn btn-accent" onClick={go} disabled={running}>
+        <button className="btn btn-accent" onClick={go} disabled={running || (needsAgentReview && !confirmedCurrentRevision)}>
           {Icon.play()} {running ? "Dispatching…" : "Run"}
         </button>
       </>}
@@ -274,6 +284,13 @@ function RunSheet({ runbook, agents, onCancel, onRan }: {
         <label className="lab">Sends</label>
         <pre className="rb-preview">{runbook.prompt}</pre>
       </div>
+      {needsAgentReview && <div className="rb-agent-confirm">
+        <label>
+          <input type="checkbox" checked={confirmedCurrentRevision} onChange={(e) => setConfirmedRevision(e.target.checked ? runbook.recipe_revision : null)} />
+          I reviewed this agent-edited runbook and want to run its current prompt and settings.
+        </label>
+        <div className="hlp">This confirmation applies to the recipe shown here. If it changes before dispatch, review the updated runbook and confirm again.</div>
+      </div>}
       <div className="field">
         <label className="lab" htmlFor={`${uid}-extra`}>Instructions for this run <span className="opt">(optional)</span></label>
         <textarea id={`${uid}-extra`} value={extra} placeholder="e.g. focus on CEAP-1234, and skip the flaky suite"
@@ -471,6 +488,7 @@ export function Runbooks({ project, projects, agents, onOpenTask }: {
             <div className="rb-head">
               <strong>{r.name}</strong>
               {r.created_by ? <span className="rb-badge">added by {agentLabel(agents, r.created_by)}</span> : null}
+              <RunbookAgentEditedChip runbook={r} />
               <span className="spacer" />
               <button className="btn btn-accent btn-sm" disabled={busy === r.id} onClick={() => setRunningId(r.id)}>
                 {Icon.play()} Run
@@ -516,6 +534,7 @@ export function Runbooks({ project, projects, agents, onOpenTask }: {
           agents={agents}
           onCancel={() => setRunningId(null)}
           onRan={(taskId) => { setRunningId(null); void load(); onOpenTask(taskId); }}
+          onRefresh={() => { void load(); }}
         />
       )}
       {copyTarget && (

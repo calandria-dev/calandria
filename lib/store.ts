@@ -468,6 +468,11 @@ export function getTaskDeps(taskId: string): string[] {
   ).map((r) => r.depends_on_id);
 }
 
+/** Run a synchronous group of store writes in one SQLite transaction. */
+export function withStoreTransaction<T>(work: () => T): T {
+  return getDb().transaction(work)();
+}
+
 // Tasks that opted into auto-start and are blocked by the given task: the
 // candidates to launch when it's marked done (lib/autoStart.ts re-checks each
 // one's other blockers before starting it). Only a never-started, non-suggested
@@ -479,6 +484,17 @@ export function listAutoStartCandidates(dependsOnId: string): Task[] {
       `SELECT t.* FROM tasks t JOIN task_dependencies td ON td.task_id = t.id
        WHERE td.depends_on_id = ? AND t.auto_start = 1 AND t.started = 0
          AND t.suggested = 0 AND t.status = 'not_started'`
+    )
+    .all(dependsOnId) as Task[];
+}
+
+/** Unstarted accepted tasks whose deferred start is directly blocked by a task. */
+export function listScheduledStartDependents(dependsOnId: string): Task[] {
+  return getDb()
+    .prepare(
+      `SELECT t.* FROM tasks t JOIN task_dependencies td ON td.task_id = t.id
+       WHERE td.depends_on_id = ? AND t.start_at > 0 AND t.started = 0
+         AND t.suggested = 0 AND t.status NOT IN ('done', 'cancelled')`
     )
     .all(dependsOnId) as Task[];
 }

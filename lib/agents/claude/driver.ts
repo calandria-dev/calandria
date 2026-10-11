@@ -677,7 +677,7 @@ function calandriaServer(
           model: z.string().optional().describe(UPDATE_RUNBOOK.params.model),
         },
         async (args: { runbook: string; name?: string; description?: string; prompt?: string; priority?: "hi" | "med" | "lo"; permission_mode?: string; provider?: string; model?: string }) => {
-          const { runbook: updated, text } = updateRunbookForAgent(project, args.runbook, args);
+          const { runbook: updated, text } = updateRunbookForAgent(project, args.runbook, args, { id: task.id, title: task.title, agent: task.agent });
           if (updated) publishGlobal("", { type: "runbooks_changed", projectId: updated.project_id });
           return { content: [{ type: "text", text }], ...(updated ? {} : { isError: true }) };
         }

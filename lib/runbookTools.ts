@@ -26,9 +26,9 @@ import { resolveTargetProject } from "@/lib/agentTools";
 import { resolveConnectedAgent } from "@/lib/agents/connections";
 import { getCapabilities, listAgentIds } from "@/lib/agents/capabilities";
 import {
-  createRunbook, getRunbook, listRunbooks, schedulesUsing, updateRunbook,
+  createRunbook, getRunbook, listRunbooks, schedulesUsing, updateRunbookWithAgentEdit, type RunbookEditActor,
 } from "@/lib/runbooks/store";
-import type { Priority, Project, Runbook } from "@/lib/types";
+import type { Priority, Project, Runbook, RunbookAgentEditChange } from "@/lib/types";
 import { checkEnvironmentModel, resolveEnvironmentRef } from "@/lib/agents/environmentRef";
 import { checkProviderModel, resolveProviderRef } from "@/lib/providers/agentRef";
 import { getProvider } from "@/lib/providers/store";
@@ -268,7 +268,8 @@ export interface UpdateRunbookToolInput {
 export function updateRunbookForAgent(
   _current: Project | null,
   runbookRef: string,
-  fields: UpdateRunbookToolInput
+  fields: UpdateRunbookToolInput,
+  actor: RunbookEditActor = { id: "", title: "An agent", agent: "agent" }
 ): { runbook: Runbook | null; text: string } {
   const cur = getRunbook(runbookRef);
   if (!cur) {
@@ -288,7 +289,7 @@ export function updateRunbookForAgent(
 
   // Validated BEFORE any write, so a blank name in a two-field call can't land
   // half of it and then report a refusal.
-  const patch: Parameters<typeof updateRunbook>[1] = {};
+  const patch: Partial<Pick<Runbook, "name" | "description" | "prompt" | "permission_mode" | "priority" | "provider_id" | "model">> = {};
   if (fields.name !== undefined) {
     if (!fields.name.trim()) return { runbook: null, text: "A runbook's name cannot be blank. Nothing was changed." };
     patch.name = fields.name.trim();
@@ -340,7 +341,19 @@ export function updateRunbookForAgent(
     patch.model = model;
   }
 
-  const runbook = updateRunbook(cur.id, patch)!;
+  const changes = Object.entries(patch).flatMap(([field, value]) => {
+    const beforeValue = cur[field as keyof Runbook];
+    if (beforeValue === value) return [];
+    const display = (v: unknown) => v === null || v === undefined || v === "" ? "" : String(v);
+    return [{
+      field,
+      before: display(beforeValue),
+      after: display(value),
+      before_value: typeof beforeValue === "number" || typeof beforeValue === "string" ? beforeValue : null,
+      after_value: typeof value === "number" || typeof value === "string" ? value : null,
+    } as RunbookAgentEditChange];
+  });
+  const runbook = changes.length ? updateRunbookWithAgentEdit(cur.id, patch, actor, changes)! : cur;
   const project = getProject(runbook.project_id);
   return { runbook, text: `Updated runbook "${runbook.name}"${project ? ` in ${project.name}` : ""}.` };
 }
