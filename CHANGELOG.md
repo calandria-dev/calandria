@@ -8,6 +8,14 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.21.1](https://github.com/calandria-dev/calandria/compare/v0.21.0...v0.21.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **mcp:** annotate external tools for client confirmations ([#482](https://github.com/calandria-dev/calandria/issues/482)) ([4e141a7](https://github.com/calandria-dev/calandria/commit/4e141a733722e72ddb896a929a45d6732946529f))
+* **security:** prevent external MCP from releasing unattended work ([#492](https://github.com/calandria-dev/calandria/issues/492)) ([ca55bcf](https://github.com/calandria-dev/calandria/commit/ca55bcf2f700b7482f41a32cf51e472912c829ef))
+
 ## [0.21.0](https://github.com/calandria-dev/calandria/compare/v0.20.0...v0.21.0) (2026-10-04)
 
 
