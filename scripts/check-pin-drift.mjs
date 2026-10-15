@@ -20,7 +20,10 @@
 // this run already fetched. `--update-npm` records stale Claude Code and Codex
 // CLI versions for the same bot pull request. All related pins move together
 // or none of them move, malformed upstream data is refused, and automated
-// findings drop out of the issue report. The workflow dispatches the complete
+// findings drop out of the issue report. A Codex bump also rewrites
+// DEFAULT_CODEX_MODEL in lib/agents/codex/pricing.ts, and only when the new
+// default already has a PRICES row of its own; otherwise the Codex pin is held
+// and the issue asks a person for the price. The workflow dispatches the complete
 // test, desktop and image check set against the exact bot-branch head before
 // enabling auto-merge.
 //
@@ -32,6 +35,7 @@
 //        --codex-default-latest-bin <path>
 //        [--update-agy] [--agy-summary <path>] [--apply-agy <path>]
 //        [--update-npm] [--npm-summary <path>] [--apply-npm <path>]
+//        [--codex-embedded-default <path>] [--codex-pricing <path>]
 // Exit codes: 0 = current, 1 = drift found (report written), 2 = check itself failed.
 
 import { spawn } from "node:child_process";
@@ -141,6 +145,7 @@ function parseArgs(argv) {
     npmSummary: null,
     applyNpm: null,
     codexEmbeddedDefault: CODEX_EMBEDDED_DEFAULT_JSON,
+    codexPricing: CODEX_PRICING_TS,
     pinnedClaude: null,
     latestClaude: null,
     pinnedCodex: null,
@@ -155,6 +160,7 @@ function parseArgs(argv) {
     "--npm-summary": "npmSummary",
     "--apply-npm": "applyNpm",
     "--codex-embedded-default": "codexEmbeddedDefault",
+    "--codex-pricing": "codexPricing",
     "--claude-alias-pinned-bin": "pinnedClaude",
     "--claude-alias-latest-bin": "latestClaude",
     "--codex-default-pinned-bin": "pinnedCodex",
@@ -512,6 +518,74 @@ export function applyCodexEmbeddedDefault(
   }
   const next = { ...json, codexVersion, model: codexModel };
   return { source: `${JSON.stringify(next, null, 2)}\n`, changed: true };
+}
+
+/** The source file holding DEFAULT_CODEX_MODEL and the Codex price table. */
+export const CODEX_PRICING_TS = "lib/agents/codex/pricing.ts";
+
+const DEFAULT_CODEX_MODEL_RE = /^(export const DEFAULT_CODEX_MODEL = ")([^"]*)(";)$/m;
+
+/** The `prefix` of every row in pricing.ts's PRICES table, in table order. */
+export function codexPricePrefixes(source, filePath = CODEX_PRICING_TS) {
+  const start = source.indexOf("const PRICES");
+  const end = start === -1 ? -1 : source.indexOf("];", start);
+  if (start === -1 || end === -1) {
+    throw new Error(`could not find the PRICES table in ${filePath}`);
+  }
+  const prefixes = [...source.slice(start, end).matchAll(/\{\s*prefix:\s*"([^"]+)"/g)].map(
+    (m) => m[1],
+  );
+  if (!prefixes.length) throw new Error(`the PRICES table in ${filePath} has no rows`);
+  return prefixes;
+}
+
+/**
+ * The PRICES row a model id is billed at, by the same first-prefix match
+ * estimateCostUsd() uses, or null when the model has a row of its own nowhere.
+ * A model counts as priced only when it IS a row's prefix or extends one with a
+ * dated suffix (`gpt-5.4-mini-2026-03-01`). A family catch-all such as `gpt-5`
+ * does not price `gpt-5.7`, because those rates were published for another
+ * model, so a new default under a catch-all is a pricing decision for a human.
+ */
+export function codexPricedPrefix(model, prefixes) {
+  const row = prefixes.find((prefix) => model.startsWith(prefix));
+  if (row === undefined) return null;
+  const rest = model.slice(row.length);
+  return rest === "" || /^-\d[\d-]*$/.test(rest) ? row : null;
+}
+
+/**
+ * Splits a Codex bump the price table cannot follow off the npm plan. The
+ * returned plan keeps every other pin; `unpriced` names the version and model
+ * held back so the drift issue can ask for the price row.
+ */
+export function holdUnpricedCodexBump(plan, prefixes) {
+  if (plan?.codexVersion === undefined) return { plan, unpriced: null };
+  if (codexPricedPrefix(plan.codexModel, prefixes) !== null) return { plan, unpriced: null };
+  const { codexVersion, codexModel, ...rest } = plan;
+  return {
+    plan: Object.keys(rest).length ? rest : null,
+    unpriced: { version: codexVersion, model: codexModel },
+  };
+}
+
+/**
+ * Rewrite DEFAULT_CODEX_MODEL in pricing.ts to the model a Codex bump carries.
+ * Refuses a model with no price row of its own, so the bump can never land a
+ * default that estimateCostUsd() would price at another model's rates.
+ */
+export function applyDefaultCodexModel(source, plan, filePath = CODEX_PRICING_TS) {
+  if (plan?.codexVersion === undefined) return { source, changed: false };
+  const model = plan.codexModel;
+  const match = DEFAULT_CODEX_MODEL_RE.exec(source);
+  if (!match) {
+    throw new Error(`could not find \`export const DEFAULT_CODEX_MODEL\` in ${filePath}`);
+  }
+  if (codexPricedPrefix(model, codexPricePrefixes(source, filePath)) === null) {
+    throw new Error(`${model} has no row in the PRICES table in ${filePath}`);
+  }
+  if (match[2] === model) return { source, changed: false };
+  return { source: source.replace(DEFAULT_CODEX_MODEL_RE, `$1${model}$3`), changed: true };
 }
 
 /**
@@ -1125,6 +1199,7 @@ async function collectFindings(
     latestClaude,
     pinnedCodex,
     latestCodex,
+    codexPricePrefixes: pricePrefixes = [],
   } = {},
 ) {
   const findings = [];
@@ -1227,9 +1302,16 @@ async function collectFindings(
     await probeCodexEmbeddedDefault(pinnedCodex),
     latestCodexDefault,
   );
-  const npmBumps = updateNpm
-    ? withCodexEmbeddedDefault(npmBumpPlan(pins, npm, stale), latestCodexDefault)
-    : null;
+  // A Codex bump moves DEFAULT_CODEX_MODEL with it, and that constant prices
+  // every turn on an account with no catalog. A new default with no price row
+  // of its own stays out of the bot PR and lands in the issue instead.
+  const held = updateNpm
+    ? holdUnpricedCodexBump(
+        withCodexEmbeddedDefault(npmBumpPlan(pins, npm, stale), latestCodexDefault),
+        pricePrefixes,
+      )
+    : { plan: null, unpriced: null };
+  const npmBumps = held.plan;
   const bumpedPackages = new Set(
     npmBumps
       ? CLI_NPM_PLAN.filter(({ pin }) => npmBumps[pin]).map(({ pkg }) => pkg)
@@ -1238,7 +1320,9 @@ async function collectFindings(
   return {
     findings,
     aliasDrift,
-    codexDefaultDrift,
+    // The bot PR carries a priced default change, so the issue drops it.
+    codexDefaultDrift: npmBumps?.codexVersion === undefined ? codexDefaultDrift : [],
+    codexUnpriced: held.unpriced,
     stale: updateNpm
       ? stale.filter(({ pkg }) => !bumpedPackages.has(pkg))
       : stale,
@@ -1274,13 +1358,29 @@ const BUMP_CHECKLIST = [
 ];
 
 function buildReport(
-  { findings, aliasDrift, codexDefaultDrift, stale, entries, observed },
+  { findings, aliasDrift, codexDefaultDrift, codexUnpriced, stale, entries, observed },
   pins,
   agyNote,
 ) {
   const lines = [];
 
   if (agyNote) lines.push(agyNote, "");
+
+  if (codexUnpriced) {
+    lines.push(
+      "## Codex bump held: the new default model has no price",
+      "",
+      `\`@openai/codex\` ${codexUnpriced.version} defaults to \`${codexUnpriced.model}\`,`,
+      "and the `PRICES` table in `lib/agents/codex/pricing.ts` has no row of its",
+      "own for that model. The bot PR moves `DEFAULT_CODEX_MODEL` with every Codex",
+      "bump, and that constant prices every default turn, so the Codex pin stays",
+      "where it is until a person decides the price.",
+      "",
+      "Add a `PRICES` row for the model from OpenAI's published API prices, merge",
+      "it, and the next `Pin drift` run opens the Codex bump on its own.",
+      "",
+    );
+  }
 
   if (findings.length) {
     lines.push(
@@ -1459,9 +1559,18 @@ async function applySavedNpmBump(opts) {
   if (defaultApplied.changed) {
     await writeFile(opts.codexEmbeddedDefault, defaultApplied.source, "utf8");
   }
+  const modelApplied = applyDefaultCodexModel(
+    await readFile(opts.codexPricing, "utf8"),
+    plan,
+    opts.codexPricing,
+  );
+  if (modelApplied.changed) {
+    await writeFile(opts.codexPricing, modelApplied.source, "utf8");
+  }
   const also = [
     packageApplied.changed && opts.packageJson,
     defaultApplied.changed && opts.codexEmbeddedDefault,
+    modelApplied.changed && opts.codexPricing,
   ].filter(Boolean);
   console.log(
     `Applied npm CLI pins to ${opts.dockerfile}` +
@@ -1487,6 +1596,9 @@ async function main() {
     latestClaude: opts.latestClaude,
     pinnedCodex: opts.pinnedCodex,
     latestCodex: opts.latestCodex,
+    codexPricePrefixes: opts.updateNpm
+      ? codexPricePrefixes(await readFile(opts.codexPricing, "utf8"), opts.codexPricing)
+      : [],
   });
 
   if (opts.updateNpm && opts.npmSummary) {
@@ -1540,6 +1652,7 @@ async function main() {
   }
 
   const total =
+    (result.codexUnpriced ? 1 : 0) +
     result.findings.length +
     result.aliasDrift.length +
     result.codexDefaultDrift.length +

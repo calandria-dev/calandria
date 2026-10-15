@@ -21,7 +21,13 @@ import {
   withCodexEmbeddedDefault,
   applyCodexEmbeddedDefault,
   CODEX_EMBEDDED_DEFAULT_JSON,
+  CODEX_PRICING_TS,
+  codexPricePrefixes,
+  codexPricedPrefix,
+  holdUnpricedCodexBump,
+  applyDefaultCodexModel,
 } from "../scripts/check-pin-drift.mjs";
+import { codexPriceRow, DEFAULT_CODEX_MODEL } from "../lib/agents/codex/pricing";
 
 const ROOT = path.join(__dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
@@ -395,6 +401,84 @@ describe("Codex embedded default on a bump", () => {
     const workflow = readFileSync(PIN_WORKFLOW, "utf8");
     expect(workflow).toMatch(/git add [^\n]*lib\/agents\/codex\/embeddedDefault\.json/);
     expect(workflow).toMatch(/git diff --quiet -- [^\n]*lib\/agents\/codex\/embeddedDefault\.json/);
+  });
+
+  it("commits the rewritten default model in pricing.ts too", () => {
+    const workflow = readFileSync(PIN_WORKFLOW, "utf8");
+    expect(workflow).toMatch(/git add [^\n]*lib\/agents\/codex\/pricing\.ts/);
+    expect(workflow).toMatch(/git diff --quiet -- [^\n]*lib\/agents\/codex\/pricing\.ts/);
+  });
+});
+
+describe("Codex default model and pricing on a bump", () => {
+  const pricingSource = readFileSync(path.join(ROOT, CODEX_PRICING_TS), "utf8");
+  const realPrefixes = codexPricePrefixes(pricingSource);
+  const synthetic = ["gpt-6.1-sol", "gpt-5.4-mini", "gpt-5.4", "gpt-5"];
+
+  it("parses the same prefixes the TS table holds", () => {
+    expect(realPrefixes.length).toBeGreaterThan(0);
+    for (const p of realPrefixes) expect(codexPriceRow(p)?.prefix).toBe(p);
+  });
+
+  it("prices an exact row id and a dated suffix, not a catch-all or an unknown", () => {
+    expect(codexPricedPrefix("gpt-6.1-sol", synthetic)).toBe("gpt-6.1-sol");
+    expect(codexPricedPrefix("gpt-5.4-mini-2026-03-01", synthetic)).toBe("gpt-5.4-mini");
+    expect(codexPricedPrefix("gpt-5.7", synthetic)).toBeNull();
+    expect(codexPricedPrefix("gpt-9-nova", synthetic)).toBeNull();
+    expect(codexPricedPrefix(DEFAULT_CODEX_MODEL, realPrefixes)).not.toBeNull();
+  });
+
+  it("passes a priced bump through and holds an unpriced one", () => {
+    const priced = { codexVersion: "1.0.0", codexModel: "gpt-6.1-sol" };
+    expect(holdUnpricedCodexBump(priced, synthetic)).toEqual({ plan: priced, unpriced: null });
+
+    const unpriced = { codexVersion: "1.0.0", codexModel: "gpt-9-nova" };
+    expect(holdUnpricedCodexBump(unpriced, synthetic)).toEqual({
+      plan: null,
+      unpriced: { version: "1.0.0", model: "gpt-9-nova" },
+    });
+    expect(holdUnpricedCodexBump({ ...unpriced, claudeCode: "2.0.0" }, synthetic)).toEqual({
+      plan: { claudeCode: "2.0.0" },
+      unpriced: { version: "1.0.0", model: "gpt-9-nova" },
+    });
+    expect(holdUnpricedCodexBump(null, synthetic)).toEqual({ plan: null, unpriced: null });
+    const noCodex = { claudeCode: "2.0.0" };
+    expect(holdUnpricedCodexBump(noCodex, synthetic)).toEqual({ plan: noCodex, unpriced: null });
+  });
+
+  it("rewrites DEFAULT_CODEX_MODEL to another priced model and touches one line", () => {
+    const other = realPrefixes.find((p) => p !== DEFAULT_CODEX_MODEL)!;
+    const out = applyDefaultCodexModel(pricingSource, { codexVersion: "1.0.0", codexModel: other });
+    expect(out.changed).toBe(true);
+    expect(out.source).toContain(`export const DEFAULT_CODEX_MODEL = "${other}";`);
+    const before = pricingSource.split("\n");
+    const after: string[] = out.source.split("\n");
+    expect(after).toHaveLength(before.length);
+    expect(after.filter((line, i) => line !== before[i])).toHaveLength(1);
+  });
+
+  it("leaves the source alone when the model is unchanged or the plan has no Codex bump", () => {
+    const same = applyDefaultCodexModel(pricingSource, {
+      codexVersion: "1.0.0",
+      codexModel: DEFAULT_CODEX_MODEL,
+    });
+    expect(same).toEqual({ source: pricingSource, changed: false });
+    expect(applyDefaultCodexModel(pricingSource, { claudeCode: "2.0.0" })).toEqual({
+      source: pricingSource,
+      changed: false,
+    });
+  });
+
+  it("refuses an unpriced model and a source without the constant", () => {
+    expect(() =>
+      applyDefaultCodexModel(pricingSource, { codexVersion: "1.0.0", codexModel: "gpt-9-nova" }),
+    ).toThrow(/no row in the PRICES table/);
+    expect(() =>
+      applyDefaultCodexModel("const PRICES = [];\n", {
+        codexVersion: "1.0.0",
+        codexModel: "gpt-6.1-sol",
+      }),
+    ).toThrow(/DEFAULT_CODEX_MODEL/);
   });
 });
 
