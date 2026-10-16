@@ -161,6 +161,9 @@
 # shape pin-drift.yml uses, so a dependency bump reads the same in the log
 # whichever bot opened it. `build` is the type release-please-config.json files
 # under "Dependencies" with a patch bump; `ci` stays hidden.
+# .github/workflows/dependabot-automerge.yml queues squash auto-merge for the
+# grouped patch and minor updates below. Majors and security PRs stay with a
+# person, including every root security PR that needs `npm run fix-lockfile`.
 version: 2
 updates:
   - package-ecosystem: github-actions
