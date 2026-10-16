@@ -176,12 +176,22 @@ export function stripAnsi(s: string): string {
     .replace(/[()][A-B0]/g, "");
 }
 
+/** An OSC 8 hyperlink opener with its terminator: ESC ] 8 ; params ; target (BEL | ESC \). */
+const OSC8_TARGET = /\x1b\]8;[^;\x07\x1b]*;([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+
 /**
- * Pull the authorize URL out of the CLI's terminal output. The TUI prints it
- * twice, once plain and once inside an OSC 8 hyperlink, and wraps it across
- * lines, so the longest match is the intact one.
+ * Pull the authorize URL out of the CLI's terminal output. The TUI hard-wraps
+ * the visible URL at the terminal width, so the plain text only ever holds
+ * fragments of it, each missing later parameters (redirect_uri, state) that
+ * Google rejects as "Error 400: invalid_request". The intact URL is the target
+ * of the OSC 8 hyperlink wrapping each fragment, which `stripAnsi` deletes, so
+ * those targets are read first. The longest plain-text match is the fallback
+ * for a CLI that prints no hyperlinks.
  */
 export function findAuthUrl(text: string): string | null {
+  const exact = new RegExp(`^${AUTH_URL.source}$`);
+  const linked = [...text.matchAll(OSC8_TARGET)].map((m) => m[1]).filter((u) => exact.test(u));
+  if (linked.length) return linked.sort((a, b) => b.length - a.length)[0];
   const clean = stripAnsi(text);
   const hits = clean.match(new RegExp(AUTH_URL.source, "g"));
   if (!hits?.length) return null;
@@ -264,7 +274,9 @@ export async function startGeminiLogin(): Promise<AgentLoginSession> {
     st.buf = (st.buf + data).slice(-40_000);
     const clean = stripAnsi(st.buf);
     session.log = trimTail(clean);
-    if (!session.url) {
+    // Re-read on every chunk until a code is submitted: a chunk can end inside
+    // the URL, so the first match is not always the whole one.
+    if (session.status === "starting" || session.status === "awaiting") {
       const url = findAuthUrl(st.buf);
       if (url) {
         session.url = url;
