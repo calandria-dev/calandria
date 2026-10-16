@@ -2,7 +2,12 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { extractPins } from "../scripts/check-pin-drift.mjs";
+import {
+  extractPins,
+  CODEX_PRICING_TS,
+  codexPricePrefixes,
+  codexPricedPrefix,
+} from "../scripts/check-pin-drift.mjs";
 import { DEFAULT_CODEX_MODEL } from "../lib/agents/codex/pricing";
 
 const ROOT = path.join(__dirname, "..");
@@ -92,7 +97,8 @@ describe("Codex CLI pins", () => {
    *   node -e 'import("./scripts/check-pin-drift.mjs").then(async m =>
    *     console.log(await m.probeCodexEmbeddedDefault("<prefix>/node_modules/.bin/codex")))'
    *
-   * then update both fields, and DEFAULT_CODEX_MODEL if the model moved.
+   * then update both fields. The Pin drift bot rewrites DEFAULT_CODEX_MODEL
+   * too, and holds the bump when the new model has no price row.
    */
   const recorded = read("lib/agents/codex/embeddedDefault.json");
 
@@ -108,6 +114,16 @@ describe("Codex CLI pins", () => {
       DEFAULT_CODEX_MODEL,
       "the pinned CLI's embedded default moved: update DEFAULT_CODEX_MODEL and check its pricing",
     ).toBe(recorded.model);
+  });
+
+  it("prices DEFAULT_CODEX_MODEL from a PRICES row of its own", () => {
+    const prefixes = codexPricePrefixes(
+      readFileSync(path.join(ROOT, CODEX_PRICING_TS), "utf8"),
+    );
+    expect(
+      codexPricedPrefix(DEFAULT_CODEX_MODEL, prefixes),
+      "DEFAULT_CODEX_MODEL has no PRICES row of its own: add one in lib/agents/codex/pricing.ts",
+    ).not.toBeNull();
   });
 });
 
