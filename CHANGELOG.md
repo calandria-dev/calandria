@@ -8,6 +8,13 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.21.2](https://github.com/calandria-dev/calandria/compare/v0.21.1...v0.21.2) (2026-10-16)
+
+
+### Bug Fixes
+
+* **gemini:** hand out the whole Google sign-in URL for Antigravity login ([#497](https://github.com/calandria-dev/calandria/issues/497)) ([0f708f8](https://github.com/calandria-dev/calandria/commit/0f708f876b0b9e43ef2e5862e93d5e4d377e3972))
+
 ## [0.21.1](https://github.com/calandria-dev/calandria/compare/v0.21.0...v0.21.1) (2026-10-12)
 
 
