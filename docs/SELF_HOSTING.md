@@ -452,7 +452,9 @@ configuration.
 The token is separate from `SERVICE_TOKEN`; `SERVICE_TOKEN` and Access JWTs do not work on
 this path. `middleware.ts` checks the bearer token before the browser-origin rules in both
 modes, so a client on another host works without adding its `Host` to
-`CALANDRIA_ALLOWED_ORIGINS`. A wrong or missing token gets a 401.
+`CALANDRIA_ALLOWED_ORIGINS`. A wrong or missing token gets a 401 whose body names the reason: no
+`Authorization` header, an empty bearer token, or a token that does not match. The server logs the
+same reason as `[mcp] refused /api/mcp request with 401: ...`, at most once a minute per reason.
 
 In Access mode, the Cloudflare edge in front of your tunnel still applies its own policy to
 `/api/mcp`. Give the client a path that Access lets through, such as an Access service token

@@ -1,5 +1,5 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { externalMcpEnabled, externalMcpTokenOk } from "@/lib/auth/origin.mjs";
+import { externalMcpEnabled, externalMcpRefusal, logExternalMcpRefusal } from "@/lib/auth/origin.mjs";
 import { buildExternalMcpServer } from "@/lib/externalMcp";
 
 export const dynamic = "force-dynamic";
@@ -16,8 +16,10 @@ export const dynamic = "force-dynamic";
 // instead of an SSE stream, since every tool answers in one reply.
 async function handle(req: Request): Promise<Response> {
   if (!externalMcpEnabled()) return new Response("Not found.\n", { status: 404 });
-  if (!externalMcpTokenOk(req.headers.get("authorization"))) {
-    return new Response("Unauthorized.\n", { status: 401, headers: { "www-authenticate": 'Bearer realm="calandria-mcp"' } });
+  const refusal = externalMcpRefusal(req.headers.get("authorization"));
+  if (refusal) {
+    logExternalMcpRefusal(refusal);
+    return new Response(`Unauthorized: ${refusal}.\n`, { status: 401, headers: { "www-authenticate": 'Bearer realm="calandria-mcp"' } });
   }
   const server = buildExternalMcpServer();
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
