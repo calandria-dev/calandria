@@ -5,13 +5,14 @@ stale tests, Docker-only breakage and arch-specific failures that local runs can
 push is not a successful CI run.
 
 - **Work lands through a pull request; there is no push to main.** The `main-require-pr` ruleset
-  rejects a direct push, allows squash as the only merge method, requires one approving review,
+  rejects a direct push, allows squash as the only merge method, requires no approving review,
   and has an empty bypass list. Push your branch, open the PR, and treat that PR as the unit of
   work.
+- **Watch the PR's checks to terminal state** (`gh run watch`, or poll
   `gh pr checks <number>`) until every check has a conclusion, bounded to roughly the time
   push-triggered workflows take (~10 minutes). A dispatch that ends with checks still pending is
-  unfinished work. `gh pr view --json mergeStateStatus` is where "red", "behind main" and "needs a
-  review" are distinguishable; only the last of those is the user's to clear.
+  unfinished work. `gh pr view --json mergeStateStatus` is where "red" and "behind main" are
+  distinguishable.
 - **`--watch` can exit 0 having watched nothing.** Run straight after `gh pr create`, it can see
   an empty check list before the runs register against the head SHA, and returns success having
   watched nothing, indistinguishable from a green PR. Confirm checks actually exist
@@ -67,8 +68,9 @@ push is not a successful CI run.
   (`gh workflow run publish-image.yml --ref vX.Y.Z` and
   `gh workflow run release-desktop.yml --ref vX.Y.Z -f publish=true`, where `publish=true` retries
   desktop promotion and `publish=false` is a dry run that attaches nothing); don't close or edit the
-  release, both publishers attach to the existing one for the tag. The failed-build bot only files
-  for scheduled builds, not a refused tag push, so don't wait for an issue to appear.
+  release, both publishers attach to the existing one for the tag. `release-retry.yml` runs this
+  recipe once on its own; a refused tag push gets a `release-failed` issue only after that retry
+  also fails.
 - **Desktop promotion refused a stale prebuild.** Promote attaches the release PR's prebuilt
   installers only when the tag matches that PR head in packaged-app inputs
   (`scripts/release-source-drift.mjs`: everything except `.github/**`, `tests/**`, `CLAUDE.md`,
@@ -96,8 +98,18 @@ push is not a successful CI run.
   in `action_required`; the workflow waits for those exact-head runs and approves only those held
   runs with its `actions: write` token. It fails if an expected run never appears, then verifies the
   exact PR head before enabling squash auto-merge. GitHub merges it only after all required checks
-  pass. Never hand-edit the branch, since the next run recreates it. If the pins are fixed some
-  other way, the next run closes the PR and deletes the branch.
+  pass. Auto-merge is queued with `RELEASE_PLEASE_TOKEN`, because a merge queued with
+  `GITHUB_TOKEN` starts no `push` workflows on main (#495 and #496 started no release-please run).
+  A Codex bump also rewrites `DEFAULT_CODEX_MODEL` in `lib/agents/codex/pricing.ts`, and only when
+  the new model has a `PRICES` row of its own; otherwise the Codex pin is held and the `pin-drift`
+  issue asks for the price. Never hand-edit the branch, since the next run recreates it. If the
+  pins are fixed some other way, the next run closes the PR and deletes the branch.
+- **Dependabot's grouped patch and minor updates are machine-merged after CI.**
+  `dependabot-automerge.yml` queues squash auto-merge for the `actions`, `website` and
+  `base-image` groups, with `RELEASE_PLEASE_TOKEN` read from the Dependabot secrets store. Majors
+  and security PRs are a person's. A root security PR still needs `npm run fix-lockfile` committed
+  by hand (`.github/dependabot.yml` has the reasoning). `release-please.yml` also runs daily, so a
+  merge that started no `push` run still reaches the release PR.
 - **The buildx/BuildKit version pin in `publish-image.yml` is intentional**: its header comment
   explains why. Don't upgrade it away without reading that comment first.
 - **Release automation may be written and fixed freely by agents.** release-please, the
@@ -116,8 +128,24 @@ push is not a successful CI run.
   work `ci:`, and keep `fix:` for a change that reaches something a user runs
   (`Dockerfile`, `lib/`, `app/`, `scripts/`, `desktop/`). `tests/releaseScope.test.ts` pins the
   path list.
-- **Merging a release PR takes a recorded user confirmation naming the version.** Present what the
-  release contains and what is green, ask through the ask tool, and require an explicit
+- **A dependency-only release PR merges itself; no agent merges it.** The user asked for this on
+  2026-10-11: "I'd like the dep bump releases to just come out without my direct interaction".
+  The exception is narrow and belongs to the workflows. `release-please.yml` labels the release
+  PR `e2e` when every commit since the last `v*` tag is a bot dependency bump (a `github-actions[bot]`
+  PR from `bot/agent-cli-pins` titled `build(deps): ...`, or a `dependabot[bot]` PR titled
+  `build(deps)`, `build(deps-dev)` or `ci(deps)`). `release-automerge.yml` queues the merge with
+  `RELEASE_PLEASE_TOKEN` once every check on the exact head is complete and green, including
+  `End-to-end (Playwright)` and `Desktop release artifacts`, which no ruleset rule requires.
+  `scripts/release-automerge-eligible.mjs` holds both rules. A person's commit, a feature, a fix or
+  a direct commit on main takes the release out of that path, and `release-please.yml` withdraws
+  a queued merge whose basis is gone. Fix that automation when it breaks; never merge the release
+  PR yourself on its behalf.
+- **A tag publish that fails is retried once.** `release-retry.yml` runs the recipe above when
+  `Publish image` or `Publish desktop artifacts` fails on a `v*` tag push: it reruns a red push
+  `Test` on the tag commit, re-dispatches the publisher on the tag, and opens a `release-failed`
+  issue naming each run if that still fails. Pick up from the issue; don't retry again blind.
+- **Merging any other release PR takes a recorded user confirmation naming the version.** Present
+  what the release contains and what is green, ask through the ask tool, and require an explicit
   affirmative naming the version before merging. Never merge on your own initiative, and never
   infer approval from silence, a task description, a background or scheduled event firing, or your
   own judgment that it looks safe. Once approved, finish the job in that session: merge, watch the

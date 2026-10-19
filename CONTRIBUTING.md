@@ -63,11 +63,12 @@ See [Pull requests](#pull-requests) for why the title matters.
 to `main`, with no bypass list, so this applies to maintainers and to agents as much as to
 first-time contributors. A branch that is "just a docs fix" still opens a PR.
 
-The ruleset also fixes two things about how a PR lands:
+The ruleset also fixes how a PR lands:
 
 - **Squash merge only.** Merge commits and rebase merges are refused. Your branch becomes
   exactly one commit on `main`, however many commits you pushed to it.
-- **One approving review** is required before the merge button works.
+- **Required checks gate the merge.** The ruleset requires no approving review, so a PR
+  with every required check green can merge, or auto-merge, as soon as it is queued.
 
 ### Your PR title becomes the commit message
 
@@ -91,7 +92,8 @@ So the title has to be a [Conventional Commit](https://www.conventionalcommits.o
 | `feat` | Minor bump; listed under **Features** |
 | `fix` | Patch bump; listed under **Bug Fixes** |
 | `perf`, `revert` | Listed in the changelog, no bump |
-| `docs`, `style`, `chore`, `refactor`, `test`, `build`, `ci` | Recorded, hidden from the changelog |
+| `build` | Patch bump; listed under **Dependencies** (`build(deps): ...` from the dependency bots) |
+| `docs`, `style`, `chore`, `refactor`, `test`, `ci` | Recorded, hidden from the changelog |
 
 Those eleven are the whole list. A type outside it (`update:`, `chores:`) parses as a
 commit and is then dropped by the changelog writer, the same silent loss as no type at
@@ -131,6 +133,25 @@ branch has one commit or twenty. Write Conventional subjects on the branch too: 
 what the squash commit's body preserves, and they're the fallback if that setting ever
 drifts back to `COMMIT_OR_PR_TITLE`, which takes a single-commit branch's own subject
 instead.
+
+### Dependency bumps release themselves
+
+Two bots open dependency PRs, and both merge themselves once the required checks pass:
+
+- `.github/workflows/pin-drift.yml` owns the Claude Code, Codex and Antigravity CLI pins
+  in the `Dockerfile`. A Codex bump also moves `DEFAULT_CODEX_MODEL` in
+  `lib/agents/codex/pricing.ts`, and only when the new model already has a `PRICES` row.
+  Otherwise the pin waits on a `pin-drift` issue asking for the price.
+- Dependabot (`.github/dependabot.yml`) bumps actions, the website and the base image.
+  `.github/workflows/dependabot-automerge.yml` queues the grouped patch and minor updates.
+  Majors and security PRs wait for a person.
+
+When every commit since the last tag is one of those bumps, the release PR merges itself
+too. `release-please.yml` labels it `e2e`, and `release-automerge.yml` queues the merge
+once every check on its head is green, the end-to-end and desktop lanes included. Any
+other commit leaves the release for a maintainer to merge. A tag publish that fails is
+retried once by `release-retry.yml`, which opens a `release-failed` issue if the retry
+fails too.
 
 ## Before starting
 
