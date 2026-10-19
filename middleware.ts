@@ -14,7 +14,8 @@ import {
   serviceTokenOk,
   instanceServiceTokenOk,
   externalMcpEnabled,
-  externalMcpTokenOk,
+  externalMcpRefusal,
+  logExternalMcpRefusal,
   verifyOriginRequest,
 } from "@/lib/auth/origin.mjs";
 import {
@@ -82,12 +83,13 @@ export async function middleware(req: NextRequest) {
 
   if (pathname === MCP_PATH) {
     if (!externalMcpEnabled()) return new NextResponse("Not found.\n", { status: 404, headers: { "content-type": "text/plain" } });
-    return externalMcpTokenOk(req.headers.get("authorization"))
-      ? NextResponse.next()
-      : new NextResponse("Unauthorized.\n", {
-          status: 401,
-          headers: { "content-type": "text/plain", "www-authenticate": 'Bearer realm="calandria-mcp"' },
-        });
+    const refusal = externalMcpRefusal(req.headers.get("authorization"));
+    if (!refusal) return NextResponse.next();
+    logExternalMcpRefusal(refusal);
+    return new NextResponse(`Unauthorized: ${refusal}.\n`, {
+      status: 401,
+      headers: { "content-type": "text/plain", "www-authenticate": 'Bearer realm="calandria-mcp"' },
+    });
   }
 
   // Local mode has no login, but it is not an unbounded browser trust zone:

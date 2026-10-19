@@ -2,7 +2,7 @@
 // CALANDRIA_MCP_TOKEN, bearer-gated in both auth modes ahead of the browser-origin
 // rules, and serving the task tools with no calling task behind them. Tool calls
 // run over the real SDK client against the real route handler and assert on the DB.
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -76,6 +76,26 @@ describe("external MCP: auth", () => {
     expect((await rawPost({ authorization: "Bearer nope" })).status).toBe(401);
     expect((await rawPost({ authorization: TOKEN })).status).toBe(401);
     expect((await rawPost({ authorization: `Bearer ${TOKEN}` })).status).toBe(200);
+  });
+
+  it("names why a 401 refused the request, an empty bearer apart from a stale token, without echoing it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      (globalThis as { __calandriaMcpRefusalLog?: Map<string, number> }).__calandriaMcpRefusalLog?.clear();
+      const body = async (headers: Record<string, string>) => (await rawPost(headers)).text();
+      expect(await body({})).toMatch(/no Authorization header/);
+      expect(await body({ authorization: "Bearer " })).toMatch(/carries no bearer token/);
+      expect(await body({ authorization: "Bearer stale-token" })).toMatch(/does not match CALANDRIA_MCP_TOKEN/);
+      const mw = await middleware(new NextRequest(URL_, { method: "POST", headers: { authorization: "Bearer " } }));
+      expect(mw.status).toBe(401);
+      expect(await mw.text()).toMatch(/carries no bearer token/);
+      expect(await body({ authorization: "Bearer stale-token" })).not.toContain("stale-token");
+      // One log line per reason; repeats inside the throttle window are dropped.
+      expect(warn).toHaveBeenCalledTimes(3);
+      expect(warn.mock.calls.map((c) => String(c[0])).join("\n")).not.toContain(TOKEN);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("middleware admits the bearer token from a foreign Host in local mode, which the origin rules would refuse", async () => {

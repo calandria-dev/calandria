@@ -1021,6 +1021,21 @@ claude mcp add --transport http calandria https://calandria.example.com/api/mcp 
   --header "Authorization: Bearer $CALANDRIA_MCP_TOKEN"
 ```
 
+To keep the token out of `~/.claude.json`, point the server's `headersHelper` at a script that
+prints `{"Authorization":"Bearer <token>"}`. Claude Code runs the helper through `/bin/sh` with a
+scrubbed environment on every connection attempt, so the script cannot rely on variables your
+login shell exports (a 1Password `OP_SERVICE_ACCOUNT_TOKEN`, for example) or on your `PATH`. Read
+the token from a file the helper can reach, and exit non-zero when it finds none. A helper that
+prints an empty `Bearer ` instead connects as a 401 on every session start:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+tok="$(sed -n 's/^CALANDRIA_MCP_TOKEN=//p' "$HOME/.config/calandria/mcp.env")"
+[ -n "$tok" ] || { echo "no CALANDRIA_MCP_TOKEN" >&2; exit 1; }
+printf '{"Authorization":"Bearer %s"}' "$tok"
+```
+
 Generic `.mcp.json`:
 
 ```json
