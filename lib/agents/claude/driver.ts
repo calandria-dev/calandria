@@ -9,6 +9,7 @@
 
 import { query, createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { BackgroundTaskSummary, CanUseTool, PermissionMode, PermissionResult, SDKUserMessage, SessionCronSummary, SettingSource } from "@anthropic-ai/claude-agent-sdk";
+import { ClaudeExecutionTracker } from "./executionObserver";
 import { planSessionCrons, cronThatWoke, lingerNote, describeCron, cancelledCronsNotice, wakeTimeLabel, type PlannedCron } from "./sessionCrons";
 import { z } from "zod";
 import type {
@@ -1005,6 +1006,15 @@ async function* runTurn(
   // housekeeping tasks).
   let pendingBg: BackgroundTaskSummary[] = [];
   let pendingCrons: SessionCronSummary[] = [];
+  // What the Work Center reads: the CLI's native background-task events folded
+  // into one observation, pushed whenever it changes (including while a
+  // foreground ask is parked, since the events keep arriving). See
+  // ./executionObserver.ts.
+  const exec = new ClaudeExecutionTracker();
+  const emitExec = () => {
+    const o = exec.changed();
+    if (o) queue.push(o);
+  };
   // The crons the current linger is holding the session open for (a subset of
   // pendingCrons on a bounded instance), so a wake init can say which fired.
   let lingerCrons: PlannedCron[] = [];
@@ -1109,6 +1119,8 @@ async function* runTurn(
     // background": the runner drops the flag on its side and this stops the
     // pump reading the injected turn's `init` as a scheduled wakeup firing.
     lingering = false;
+    exec.setForeground("executing");
+    emitExec();
     // The user is demonstrably watching, so the deadline (bounded instances
     // only) starts over instead of counting a wait the user just ended: clear
     // the armed timer and drop the anchor so the next linger re-anchors from
@@ -1321,6 +1333,8 @@ async function* runTurn(
                 const i = input as { background_tasks?: BackgroundTaskSummary[]; session_crons?: SessionCronSummary[] };
                 pendingBg = i.background_tasks ?? [];
                 pendingCrons = i.session_crons ?? [];
+                exec.stopSnapshot(pendingBg);
+                emitExec();
                 return {};
               },
             ],
@@ -1344,6 +1358,8 @@ async function* runTurn(
     try {
       for await (const message of response) {
         if (message.type === "system" && message.subtype === "init") {
+          // Any init, first, injected or a wake, is the model working again.
+          exec.setForeground("executing");
           // A wakeup firing mid-linger arrives as exactly this: a second init
           // on the same session, with no user message and no
           // task_notification, so this is the cron wake signal. Only claimed
@@ -1369,6 +1385,7 @@ async function* runTurn(
           }
           sessionId = message.session_id;
           queue.push({ type: "session", sessionId });
+          emitExec();
           // The composer's "/" menu can't discover MCP prompt commands on its
           // own: they exist only on this message, and getting them any other
           // way means spawning the user's whole MCP fleet on a keystroke
@@ -1538,7 +1555,16 @@ async function* runTurn(
               }
             }
           }
+        } else if (message.type === "system" && message.subtype === "task_started") {
+          exec.taskStarted(message, Date.now());
+          emitExec();
+        } else if (message.type === "system" && message.subtype === "task_updated") {
+          exec.taskUpdated(message);
+          emitExec();
         } else if (message.type === "system" && message.subtype === "task_notification") {
+          exec.taskNotification(message.task_id);
+          if (lingering) exec.setForeground("executing");
+          emitExec();
           // A background task settled. While lingering this is the wake signal:
           // the CLI re-invokes the model with no user message and the new turn
           // streams through this same pump, so surface the transition so the
@@ -1607,6 +1633,9 @@ async function* runTurn(
               lingering = true;
               lingerSince ||= now;
               lingerCrons = plan.linger;
+              exec.setWakeups(plan.linger);
+              exec.setForeground("finished");
+              emitExec();
               // A wakeup that won't be waited for is dead the moment this
               // linger ends, and nothing later will re-plan it (the deadline
               // is fixed from first entry), so say so now, beside the wait.
@@ -1622,6 +1651,12 @@ async function* runTurn(
               });
               armLingerDeadline();
             } else {
+              // Nothing is being waited for: the session closes, and whatever
+              // the CLI still had registered dies with it.
+              exec.stopSnapshot([]);
+              exec.setWakeups([]);
+              exec.setForeground("finished");
+              emitExec();
               endTurn(
                 !BACKGROUND_LINGER_ENABLED
                   ? "lingering is off on this instance (CALANDRIA_BACKGROUND_LINGER), so the session closed at the end of the turn"

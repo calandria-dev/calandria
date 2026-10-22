@@ -21,6 +21,10 @@ const FORBIDDEN = ["@anthropic-ai/claude-agent-sdk", "@openai/codex-sdk"];
 
 // Modules that must stay SDK-free, and why:
 const PINNED = [
+  "lib/workCenter/types.ts", //  Work Center wire types; type-only
+  "lib/workCenter/classify.ts", // the pure execution classifier and recent-result paging
+  "lib/workCenter/execution.ts", // live execution registry + model-turn identity; store + abort + asks only, and the runner imports it
+  "lib/agents/claude/executionObserver.ts", // folds native background events into an observation; pure
   "lib/codexSandbox.ts", // shared sandbox values for settings validation and the browser
   "lib/store.ts", //     imported by nearly everything, so it must stay SDK-free
   "lib/services.ts", //  behind sync-compiled routes (grant, services-restore)

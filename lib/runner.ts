@@ -55,6 +55,8 @@ import { appliedAppEnvironment } from "@/lib/advanced-env/bootstrap.mjs";
 import type { Task, Project, PermissionOutcome, ToolData, LedgerUsage, TurnUsage } from "@/lib/types";
 import { createLogger } from "@/lib/log.mjs";
 import { countTurnFinished, countTurnStarted } from "@/lib/metrics";
+import { activeModelTurn, beginExecution, endExecution, finishModelTurn, leaseOf, noteSession, observeExecution, startModelTurn, touchExecution } from "@/lib/workCenter/execution";
+import type { TurnFailureCode } from "@/lib/workCenter/types";
 
 // Every line this module prints, tagged with this component so
 // `CALANDRIA_LOG_FORMAT=json` turns the whole file into parseable output
@@ -136,6 +138,12 @@ export function startTurn(
   // token from an outgoing turn can never authorize a mutation the
   // successor's turn didn't ask for.
   const capabilityToken = mintTurnCapability(task.id, project.id);
+  // The live-session lease and the first model turn's id, both server-owned
+  // and minted before the driver can emit anything (lib/workCenter/
+  // execution.ts). A queue handoff or resume re-enters here and gets its own,
+  // which makes the outgoing session's lease stale.
+  const lease = beginExecution(task.id, task.generation);
+  startModelTurn(task.id, lease);
   // A turn is what a queued start (tasks.start_at, lib/deferredStart.ts) was
   // waiting to produce, so any launch consumes the deadline: the sweep's own,
   // a Start-session click, or a follow-up sent by hand. If left set, a task
@@ -155,7 +163,7 @@ export function startTurn(
   // unhandled rejection and, under Node's default policy, crash the whole
   // server, taking down every other tenant's turn. Catch and log so one
   // deleted task can't do that.
-  run(task, project, userText, syncNote, abortController, runContext, hooks, capabilityToken).catch((err) => {
+  run(task, project, userText, syncNote, abortController, runContext, hooks, capabilityToken, lease).catch((err) => {
     log.error("turn crashed after its finally settled", { task: task.id, err });
     // Best-effort settle so this last-resort path can't wedge the task in a
     // running-forever state. unregisterTurn is identity-checked, so a newer
@@ -204,6 +212,15 @@ export function startTurn(
       revokeTurnCapability(task.id, capabilityToken);
     } catch (capErr) {
       log.error("could not revoke turn capability after crash", { task: task.id, err: capErr });
+    }
+    // The same last-resort settle for the Work Center: a crash that skipped
+    // run()'s finally would otherwise leave this session reading as live.
+    // Lease-checked, so a successor's session is untouched.
+    try {
+      finishModelTurn(task.id, lease, { outcome: "failed", failureCode: "execution", scheduleRunId: runContext?.scheduleRunId ?? null });
+      endExecution(task.id, lease);
+    } catch (wcErr) {
+      log.error("could not settle execution state after crash", { task: task.id, err: wcErr });
     }
   });
 }
@@ -263,6 +280,10 @@ function recordSentMessage(taskId: string, gen: number, text: string): void {
   // state that stream re-reads. `running` stays 1: it never dropped, this
   // turn is the same turn continuing.
   updateTask(taskId, { background_pending: 0, background_note: "" });
+  // A message accepted into the open session starts a new model turn with its
+  // own id; the previous one was finalized when the model finished.
+  const lease = leaseOf(taskId);
+  if (lease && !activeModelTurn(taskId, lease)) startModelTurn(taskId, lease);
   try {
     const m = addMessage(taskId, gen, "user", text);
     publish(taskId, { type: "user", content: m.content, msgId: m.id, generation: gen, ts: m.created_at });
@@ -453,9 +474,14 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
  * finally still runs, this just stops waiting for it) or to be cut off by
  * the process exit that follows.
  */
+let shuttingDown = false;
+
 export async function drainActiveTurns(timeoutMs: number = SHUTDOWN_GRACE_MS): Promise<{ total: number; settled: number }> {
   const ids = activeTurnIds();
   if (ids.length === 0) return { total: 0, settled: 0 };
+  // Tells each unwinding turn its abort is the process going down, so it
+  // records `interrupted` instead of `stopped` (a person pressing Stop).
+  shuttingDown = true;
   const pending = new Set(ids);
   let resolveDone: () => void;
   const done = new Promise<void>((resolve) => { resolveDone = resolve; });
@@ -518,7 +544,7 @@ export async function drainActiveTurns(timeoutMs: number = SHUTDOWN_GRACE_MS): P
  * durable channel: it survives SSE reconnects because the snapshot replays
  * from SQLite.
  */
-export function publishTurnError(id: string, gen: number, errText: string): void {
+export function publishTurnError(id: string, gen: number, errText: string): string | null {
   const notice = isPromptTooLong(errText)
     ? CONTEXT_OVERFLOW_NOTICE
     : isAuthFailure(errText)
@@ -551,9 +577,18 @@ export function publishTurnError(id: string, gen: number, errText: string): void
   } catch {
     // in-memory pub/sub; ignore
   }
+  return msgId ?? null;
 }
 
-async function run(task: Task, project: Project, userText: string, syncNote: string, abortController: AbortController, runContext: RunContext | undefined, hooks: TurnHooks | undefined, capabilityToken: string): Promise<void> {
+/** The failure class a finalized turn records, from the same predicates that choose the recovery notice. */
+function failureCodeOf(errText: string): TurnFailureCode {
+  if (isPromptTooLong(errText)) return "context_limit";
+  if (isAuthFailure(errText)) return "auth";
+  if (isApprovalBlocked(errText)) return "approval";
+  return "execution";
+}
+
+async function run(task: Task, project: Project, userText: string, syncNote: string, abortController: AbortController, runContext: RunContext | undefined, hooks: TurnHooks | undefined, capabilityToken: string, lease: string): Promise<void> {
   const id = task.id;
   const gen = task.generation;
   let sessionId: string | null = task.session_id;
@@ -612,6 +647,12 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // person reading a diff.
   let settingsBlocked = false;
   const startedAt = Date.now();
+  // The newest transcript row that reads as this turn's last word (an
+  // assistant reply, or the failure line), recorded on the finalized result
+  // so a result label can link to the exact message.
+  let terminalMessageId: string | null = null;
+  // The class of the most recent failure, for the finalized turn's result.
+  let failureCode: TurnFailureCode | null = null;
   // What this turn spent, accumulated from the same `usage` events that
   // write task_usage, so the lifecycle line in the finally can report
   // tokens without re-reading the DB it just wrote. A turn can report usage
@@ -678,7 +719,8 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // with its own reason text, so the banner doesn't tell someone to
   // reconnect a login that never broke.
   const failTurn = (text: string): "auth" | "budget" | false => {
-    publishTurnError(id, gen, text);
+    terminalMessageId = publishTurnError(id, gen, text) ?? terminalMessageId;
+    failureCode = failureCodeOf(text);
     if (isAuthFailure(text)) {
       if (markAgentAuthBroken(task.agent, text, Date.now())) {
         publish(id, { type: "agent_auth", agent: task.agent, broken: true, reason: text });
@@ -864,6 +906,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       // gaps between these writes are the signal the idle mark is derived
       // from (lib/turnActivity.ts).
       markTurnActivity(id);
+      touchExecution(id, lease);
       // Persist first, then publish enriched with the DB message id, so a
       // snapshot taken at any instant plus the live tail never loses an
       // event, and clients can upsert by id instead of appending duplicates.
@@ -880,14 +923,22 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         updateTask(id, { started: 1, status: "in_progress", unread_run_at: 0 });
         // Persist this generation's agent session id for the project view.
         recordSession({ project_id: project.id, task_id: id, generation: gen, claude_session_id: sessionId });
+        // The session row exists now, so the open model turn can name it.
+        noteSession(id, lease);
         publish(id, ev);
       } else if (ev.type === "model") {
         // Persist the model the SDK actually ran so the badge survives reloads.
         updateTask(id, { resolved_model: ev.model });
         resolvedModel = ev.model;
         publish(id, ev);
+      } else if (ev.type === "execution_observation") {
+        // Structured driver state for the Work Center. Held in the live
+        // registry under this session's lease and never persisted or
+        // streamed: it describes the process, not the conversation.
+        observeExecution(id, lease, ev);
       } else if (ev.type === "assistant") {
         const m = addMessage(id, gen, "assistant", ev.content);
+        terminalMessageId = m.id;
         publish(id, { ...ev, msgId: m.id, generation: gen, ts: m.created_at });
       } else if (ev.type === "assistant_delta") {
         // The one event that is published without being persisted. The
@@ -1067,6 +1118,15 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         // the row rather than holding the event. Persisted before
         // publishing, like every state the global stream re-reads.
         updateTask(id, { background_pending: 1, background_note: ev.note });
+        // The model finished its response; the session stays open. Its turn
+        // is final now, not when the linger ends, and a repeated linger
+        // event finalizes nothing (the turn is already closed).
+        finishModelTurn(id, lease, {
+          outcome: turnError ? "failed" : "ok",
+          failureCode: turnError ? failureCode ?? "execution" : null,
+          terminalMessageId,
+          scheduleRunId: runContext?.scheduleRunId ?? null,
+        });
         publish(id, ev);
         // The composer told the user a follow-up parked mid-turn would be
         // "sent at turn end", and the model's turn has ended: a linger is
@@ -1097,6 +1157,10 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         // explains the unprompted output; without it the transcript shows
         // the model talking to nobody.
         updateTask(id, { background_pending: 0, background_note: "" });
+        // A settled background task or a wakeup firing starts a new model
+        // turn on the open session. The driver already drops a duplicate init
+        // (and an injected message's init), so one event is one turn.
+        if (!activeModelTurn(id, lease)) startModelTurn(id, lease);
         const note = `⏵ ${ev.summary || `Background task ${ev.status}`}`;
         const m = addMessage(id, gen, "system", note);
         publish(id, { ...ev, msgId: m.id, generation: gen, ts: m.created_at });
@@ -1329,6 +1393,27 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // this feature exists to make impossible, so it raises its hand like
     // any other failure.
     const scheduledOk = runContext?.origin === "schedule" && !turnError && !stopped && !unattendedDeny;
+
+    // Close the live model turn and release this session's execution state
+    // before anything below can launch a successor. Both are lease-checked: a
+    // Stop that let a successor claim the slot already replaced this lease, so
+    // a late cleanup here changes nothing and can never overwrite the newer
+    // turn's result. A lingering session whose model turn already finalized has
+    // no open turn left, so it adds no second result.
+    {
+      const outcome = stopped
+        ? shuttingDown ? "interrupted" : "stopped"
+        : turnError || unattendedDeny || settingsBlocked
+          ? "failed"
+          : opened ? "ok" : "interrupted";
+      finishModelTurn(id, lease, {
+        outcome,
+        failureCode: outcome === "failed" ? failureCode ?? (unattendedDeny ? "approval" : turnError ? "execution" : null) : null,
+        terminalMessageId,
+        scheduleRunId: runContext?.scheduleRunId ?? null,
+      });
+      endExecution(id, lease);
+    }
 
     // Whatever the turn spent inside a segment that never produced a full
     // report (a Stop, a driver error, a crash of the agent process) is here

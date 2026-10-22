@@ -1,3 +1,4 @@
+import type { ExecutionObservation } from "./workCenter/types";
 export type Priority = "hi" | "med" | "lo";
 /** The full set of legal `priority` values. No CHECK constraint backs the column, so this array is the source of truth. */
 export const PRIORITIES: Priority[] = ["hi", "med", "lo"];
@@ -116,6 +117,24 @@ export interface Task {
   awaiting_input: number; // 1 when it's your turn: Claude's turn ended mid-task, or it's parked on an AskUserQuestion
   background_pending: number; // 1 while the turn lingers on background work (model turn ended, run_in_background tasks still running; the turn resumes when they settle). running stays 1 the whole time
   background_note: string; // what the linger is waiting on, phrased for the activity line ("waiting to wake at 12:00"); "" whenever background_pending is 0
+  // Model-turn identity and latest-result metadata (lib/workCenter/execution.ts).
+  // NULL on a row that predates them: unknown, never a guessed outcome. Written
+  // only by the dedicated store helpers, never through updateTask().
+  active_turn_id: string | null; // the model turn in progress; cleared when it finalizes
+  active_turn_session_id: string | null;
+  active_turn_started_at: number | null;
+  active_turn_generation: number | null;
+  latest_turn_id: string | null; // newest finalized model turn
+  latest_turn_session_id: string | null;
+  latest_turn_generation: number | null;
+  latest_turn_started_at: number | null;
+  latest_turn_ended_at: number | null;
+  latest_turn_outcome: "ok" | "failed" | "stopped" | "interrupted" | "unknown" | null;
+  latest_turn_terminal_message_id: string | null;
+  latest_turn_schedule_run_id: string | null;
+  latest_turn_failure_code: "context_limit" | "auth" | "approval" | "execution" | null;
+  latest_turn_failure_resolved_at: number | null; // NULL until recovery succeeds or a generic failure is acknowledged
+  completed_at: number | null; // the actual transition into done; cleared on reopen; NULL on old rows
   schedule_id: string | null; // the schedule that minted this task (lib/scheduler.ts); null = created by hand
   runbook_id: string | null; // the runbook that dispatched this task (lib/dispatch.ts); null = not from one
   // When a snooze ends (ms epoch; 0 = never snoozed / indicator cleared). Ahead
@@ -805,6 +824,11 @@ export type StreamEvent =
   // one that never learns a reset time simply doesn't arm the queued resume,
   // and the notice keeps saying the limit has to reset first.
   | { type: "error"; content: string; resetAt?: number }
+  // What the driver can see of the live session: foreground phase, active
+  // background operations, pending wakeups. Emitted on every change and once
+  // for the initial state. The runner attaches the task, generation and turn
+  // id; the registry in lib/workCenter/execution.ts keeps the latest one.
+  | ExecutionObservation
   | { type: "done"; sessionId: string | null };
 
 // Events as delivered over the task event bus and the GET /messages SSE tail.
