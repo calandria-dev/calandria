@@ -1157,6 +1157,13 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
       // normalized, not trusted (docs/AGENTS.md, LiteLLM section).
       n.gateway_mcp == null ? null : serializeGatewayMcp(n.gateway_mcp),
       n.updated_at, id);
+  // completed_at records the actual transition into done and nothing else:
+  // set when the status moves into it, cleared when a done task is reopened.
+  // Written beside the status so no caller can move one without the other.
+  if (cur.status !== n.status) {
+    if (n.status === "done") getDb().prepare("UPDATE tasks SET completed_at = ? WHERE id = ?").run(n.updated_at, id);
+    else if (cur.status === "done") getDb().prepare("UPDATE tasks SET completed_at = NULL WHERE id = ?").run(id);
+  }
   return getTask(id);
 }
 
@@ -2042,6 +2049,127 @@ export function endSession(taskId: string, generation: number): void {
   getDb()
     .prepare("UPDATE sessions SET ended_at = ? WHERE task_id = ? AND generation = ?")
     .run(Date.now(), taskId, generation);
+}
+
+// ---- Model-turn identity and latest result (lib/workCenter/execution.ts) ----
+//
+// Raw queries only. A "model turn" is one response by the model: a driver
+// session can hold several (the opening prompt, a message injected into a
+// lingering session, a wakeup firing). These write the active_turn_* and
+// latest_turn_* columns directly and never through updateTask(), which would
+// stamp `updated_at` (the board's sort key and retention's clock) for a fact
+// nobody edited.
+
+const ACTIVE_TURN_CLEAR = "active_turn_id = NULL, active_turn_session_id = NULL, active_turn_started_at = NULL, active_turn_generation = NULL";
+
+export type TurnResultInput = {
+  outcome: "ok" | "failed" | "stopped" | "interrupted";
+  endedAt: number;
+  terminalMessageId?: string | null;
+  scheduleRunId?: string | null;
+  failureCode?: "context_limit" | "auth" | "approval" | "execution" | null;
+};
+
+// The Calandria session row (one per task generation) a turn belongs to. Null
+// before the driver has reported its first session event.
+export function sessionRowId(taskId: string, generation: number): string | null {
+  const row = getDb().prepare("SELECT id FROM sessions WHERE task_id = ? AND generation = ?").get(taskId, generation) as { id: string } | undefined;
+  return row?.id ?? null;
+}
+
+function writeFinalizedTurn(taskId: string, r: TurnResultInput): boolean {
+  const info = getDb()
+    .prepare(
+      `UPDATE tasks SET
+         latest_turn_id = active_turn_id, latest_turn_session_id = active_turn_session_id,
+         latest_turn_generation = active_turn_generation, latest_turn_started_at = active_turn_started_at,
+         latest_turn_ended_at = ?, latest_turn_outcome = ?, latest_turn_terminal_message_id = ?,
+         latest_turn_schedule_run_id = ?, latest_turn_failure_code = ?, latest_turn_failure_resolved_at = NULL,
+         ${ACTIVE_TURN_CLEAR}
+       WHERE id = ? AND active_turn_id IS NOT NULL
+         AND (latest_turn_ended_at IS NULL OR latest_turn_ended_at <= ?)`
+    )
+    .run(r.endedAt, r.outcome, r.terminalMessageId ?? null, r.scheduleRunId ?? null, r.failureCode ?? null, taskId, r.endedAt);
+  if (info.changes > 0) return true;
+  // An older end time never displaces a newer recorded result, but the turn
+  // is over either way, so the active group still clears.
+  getDb().prepare(`UPDATE tasks SET ${ACTIVE_TURN_CLEAR} WHERE id = ?`).run(taskId);
+  return false;
+}
+
+/**
+ * Record the start of a model turn. A turn still marked active under another
+ * id never finalized (its owner died or was replaced), so it is closed as
+ * interrupted first and its result is not lost.
+ */
+export function beginTurnRecord(taskId: string, t: { turnId: string; sessionId: string | null; generation: number; startedAt: number }): void {
+  const db = getDb();
+  db.transaction(() => {
+    const cur = db.prepare("SELECT active_turn_id FROM tasks WHERE id = ?").get(taskId) as { active_turn_id: string | null } | undefined;
+    if (!cur) return;
+    if (cur.active_turn_id && cur.active_turn_id !== t.turnId) writeFinalizedTurn(taskId, { outcome: "interrupted", endedAt: t.startedAt });
+    db.prepare(
+      "UPDATE tasks SET active_turn_id = ?, active_turn_session_id = ?, active_turn_started_at = ?, active_turn_generation = ? WHERE id = ?"
+    ).run(t.turnId, t.sessionId, t.startedAt, t.generation, taskId);
+  })();
+}
+
+/** Fill in the session row once the driver has announced it. */
+export function setActiveTurnSession(taskId: string, turnId: string, sessionId: string): void {
+  getDb().prepare("UPDATE tasks SET active_turn_session_id = ? WHERE id = ? AND active_turn_id = ? AND active_turn_session_id IS NULL").run(sessionId, taskId, turnId);
+}
+
+/**
+ * Finalize one model turn. Idempotent per turn id: only the turn that is
+ * currently active can finalize, so a repeated end event, or a late cleanup
+ * from an outgoing turn after its successor launched, changes nothing and
+ * returns false.
+ */
+export function finalizeTurnRecord(taskId: string, turnId: string, r: TurnResultInput): boolean {
+  const db = getDb();
+  return db.transaction(() => {
+    const cur = db.prepare("SELECT active_turn_id FROM tasks WHERE id = ?").get(taskId) as { active_turn_id: string | null } | undefined;
+    if (!cur || cur.active_turn_id !== turnId) return false;
+    return writeFinalizedTurn(taskId, r);
+  })();
+}
+
+/** Raw rows behind the recent-result list: the latest finalized turn, or for a
+ *  row that has none the newest historical `sessions.ended_at`. */
+export type RecentResultRow = {
+  id: string;
+  project_id: string;
+  generation: number;
+  completed_at: number | null;
+  latest_turn_id: string | null;
+  latest_turn_session_id: string | null;
+  latest_turn_generation: number | null;
+  latest_turn_started_at: number | null;
+  latest_turn_ended_at: number | null;
+  latest_turn_outcome: string | null;
+  latest_turn_terminal_message_id: string | null;
+  latest_turn_schedule_run_id: string | null;
+  latest_turn_failure_code: string | null;
+  latest_turn_failure_resolved_at: number | null;
+  historical_ended_at: number | null;
+  result_ended_at: number;
+};
+
+export function listRecentResultRows(since: number, projectId?: string | null): RecentResultRow[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM (
+         SELECT t.id, t.project_id, t.generation, t.completed_at,
+                t.latest_turn_id, t.latest_turn_session_id, t.latest_turn_generation, t.latest_turn_started_at,
+                t.latest_turn_ended_at, t.latest_turn_outcome, t.latest_turn_terminal_message_id,
+                t.latest_turn_schedule_run_id, t.latest_turn_failure_code, t.latest_turn_failure_resolved_at,
+                CASE WHEN t.latest_turn_ended_at IS NULL
+                     THEN (SELECT MAX(s.ended_at) FROM sessions s WHERE s.task_id = t.id) END AS historical_ended_at,
+                COALESCE(t.latest_turn_ended_at, (SELECT MAX(s.ended_at) FROM sessions s WHERE s.task_id = t.id)) AS result_ended_at
+           FROM tasks t WHERE t.suggested = 0 AND (@project IS NULL OR t.project_id = @project)
+       ) WHERE result_ended_at >= @since`
+    )
+    .all({ since, project: projectId ?? null }) as RecentResultRow[];
 }
 
 // The agent thread's last reported cumulative token counters

@@ -774,6 +774,13 @@ function recoverFromCrash(db: Database.Database) {
     // CLI child just like running is, so it resets in the same statement:
     // the work it described died with that process.
     db.prepare("UPDATE tasks SET running = 0, background_pending = 0, background_note = '' WHERE running = 1 OR background_pending = 1").run();
+    // A model turn still marked active never finished: finalize it as
+    // interrupted before clearing it, so the Work Center reads a result
+    // instead of a turn that is live forever. A lingering session whose model
+    // turn already finished has no active turn, so process loss adds no second
+    // result, and a known last successful result is replaced only by a turn
+    // that actually ended after it.
+    finalizeActiveTurnsAsInterrupted(db);
     // Drop any queued follow-ups: the turns they were lined up behind died
     // with the previous process, so there is nothing left to dequeue them into.
     db.prepare("DELETE FROM pending_messages").run();
@@ -781,6 +788,32 @@ function recoverFromCrash(db: Database.Database) {
 
     reapInFlightScheduleRuns(db);
   })();
+}
+
+/**
+ * Finalizes every persisted active model turn as `interrupted` and clears the
+ * active group. Same-turn idempotence holds: only rows with an active turn
+ * are touched, and an already-finalized turn has none.
+ */
+export function finalizeActiveTurnsAsInterrupted(db: Database.Database, now: number = Date.now()): number {
+  return db
+    .prepare(
+      `UPDATE tasks SET
+         latest_turn_id = active_turn_id,
+         latest_turn_session_id = active_turn_session_id,
+         latest_turn_generation = active_turn_generation,
+         latest_turn_started_at = active_turn_started_at,
+         latest_turn_ended_at = MAX(?, COALESCE(active_turn_started_at, 0)),
+         latest_turn_outcome = 'interrupted',
+         latest_turn_terminal_message_id = NULL,
+         latest_turn_schedule_run_id = NULL,
+         latest_turn_failure_code = NULL,
+         latest_turn_failure_resolved_at = NULL,
+         active_turn_id = NULL, active_turn_session_id = NULL,
+         active_turn_started_at = NULL, active_turn_generation = NULL
+       WHERE active_turn_id IS NOT NULL`
+    )
+    .run(now).changes;
 }
 
 /**
@@ -1081,6 +1114,33 @@ export function migrate(db: Database.Database, options: { seedProviders?: boolea
   // Queued-to-start deadline (see the CREATE TABLE note). 0 on every existing
   // row is right for the same reason as snoozed_until: nothing was queued.
   if (!taskCols.includes("start_at")) db.exec("ALTER TABLE tasks ADD COLUMN start_at INTEGER NOT NULL DEFAULT 0");
+  // Model-turn identity and latest-result metadata (lib/workCenter/execution.ts).
+  // All nullable with no default: an old row has no recorded turn, and reads
+  // back as unknown instead of a guessed outcome. The active_* group is the
+  // model turn in progress and is cleared when it is finalized, so a crash
+  // finds exactly the turns that never finished. The latest_* group is the
+  // newest finalized turn. completed_at is the moment of an actual transition
+  // into done; it is never backfilled from updated_at.
+  const turnCols: Array<[string, string]> = [
+    ["active_turn_id", "TEXT"],
+    ["active_turn_session_id", "TEXT"],
+    ["active_turn_started_at", "INTEGER"],
+    ["active_turn_generation", "INTEGER"],
+    ["latest_turn_id", "TEXT"],
+    ["latest_turn_session_id", "TEXT"],
+    ["latest_turn_generation", "INTEGER"],
+    ["latest_turn_started_at", "INTEGER"],
+    ["latest_turn_ended_at", "INTEGER"],
+    ["latest_turn_outcome", "TEXT CHECK (latest_turn_outcome IS NULL OR latest_turn_outcome IN ('ok','failed','stopped','interrupted','unknown'))"],
+    ["latest_turn_terminal_message_id", "TEXT"],
+    ["latest_turn_schedule_run_id", "TEXT"],
+    ["latest_turn_failure_code", "TEXT CHECK (latest_turn_failure_code IS NULL OR latest_turn_failure_code IN ('context_limit','auth','approval','execution'))"],
+    ["latest_turn_failure_resolved_at", "INTEGER"],
+    ["completed_at", "INTEGER"],
+  ];
+  for (const [col, def] of turnCols) {
+    if (!taskCols.includes(col)) db.exec(`ALTER TABLE tasks ADD COLUMN ${col} ${def}`);
+  }
   // The task's own LiteLLM virtual key (docs/AGENTS.md, LiteLLM section),
   // minted on its first gateway turn when CALANDRIA_LITELLM_ADMIN_KEY is set;
   // '' means "use the instance key". Never surfaced by getTask()/listTasks():
