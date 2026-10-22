@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
-import { listNeedsYou } from "@/lib/store";
+import { needsYouRows } from "@/lib/workCenter/compat";
 
 export const dynamic = "force-dynamic";
 
+// A compatibility adapter over the Work Center snapshot (lib/workCenter/compat.ts):
+// same response shape, rows derived from the visible (unsnoozed) attention counts.
 // Powers the titlebar "N need you" dropdown: the actual awaiting tasks across all
 // active projects (not just per-project counts), so the menu can list them with a
 // project label and a "waiting for <duration>" age. Fetched fresh each open.
 export async function GET() {
-  return NextResponse.json({ tasks: listNeedsYou() });
+  return NextResponse.json({ tasks: needsYouRows() });
 }

@@ -123,7 +123,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // trail (task_agent_edits) always outlives it, so "I've seen this" and
     // "undo this" stay two separate actions even though both can clear the
     // badge.
-    acknowledgeAgentEdits(id);
+    // A Work Center client names the newest edit it showed (`edit_id`); only
+    // edits up to it are acknowledged, so one that landed since stays visible.
+    if (typeof body.edit_id === "string" && body.edit_id) {
+      if (!acknowledgeAgentEdits(id, body.edit_id)) return NextResponse.json({ error: "no such edit on this task" }, { status: 404 });
+    } else {
+      acknowledgeAgentEdits(id);
+    }
     publishGlobal(id, { type: "task_edited" });
     return NextResponse.json({ task: getTask(id) });
   }

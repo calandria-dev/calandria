@@ -8,6 +8,7 @@ import { homeDir } from "./homeDir.mjs";
 import { findInDirs, findOnPath, type BinLookupOptions } from "./binPath";
 import { gitErrorDetail } from "./git";
 import type { IssueMatch, LandingMode } from "./types";
+import { coherent, evidenceComplete, type CheckEvidence } from "./workCenter/ciEvidence";
 
 const run = promisify(execFile);
 
@@ -878,6 +879,103 @@ export async function fetchPrState(cwd: string, number: number): Promise<PrState
       failing: failingChecks(raw.statusCheckRollup),
     },
   };
+}
+
+/** What `fetchCheckEvidence` reads: the head and the structured checks behind it. */
+export type CheckEvidenceResult =
+  | { ok: true; headSha: string; repositoryId: string; checks: CheckEvidence[]; complete: boolean }
+  | { ok: false; error: string };
+
+async function ghJson(cwd: string, args: string[]): Promise<unknown> {
+  const { stdout } = await run(resolveGhBin(), args, {
+    cwd,
+    timeout: 30_000,
+    maxBuffer: 20 * 1024 * 1024,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GH_PROMPT_DISABLED: "1", GH_NO_UPDATE_NOTIFIER: "1" },
+  });
+  return JSON.parse(stdout || "null");
+}
+
+const ms = (iso: unknown): number | null => {
+  const t = typeof iso === "string" ? Date.parse(iso) : NaN;
+  return Number.isFinite(t) ? t : null;
+};
+
+/**
+ * The structured check evidence behind a PR's CI episode (Work Center). The
+ * head is read before AND after the paginated check and status collection; a
+ * head that moved, a check row naming another commit, or a page count that
+ * disagrees with the provider's total is a torn read and comes back
+ * `complete: false` so the caller never settles a red episode from it. Rows
+ * with no stable provider identity are kept but make the observation
+ * incomplete. Best-effort like every call in this file: never throws.
+ */
+export async function fetchCheckEvidence(cwd: string, number: number): Promise<CheckEvidenceResult> {
+  if (!number) return { ok: false, error: "no PR number" };
+  const st = await ghStatus();
+  if (!st.installed) return { ok: false, error: ghMissingMessage() };
+  if (!st.authenticated) return { ok: false, error: "gh is not logged in to GitHub" };
+  try {
+    const head = async () => String((await ghJson(cwd, ["pr", "view", String(number), "--json", "headRefOid"]) as { headRefOid?: string } | null)?.headRefOid || "");
+    const before = await head();
+    if (!before) return { ok: false, error: "gh did not report the PR head" };
+    const repo = (await ghJson(cwd, ["api", "repos/{owner}/{repo}"])) as { id?: number } | null;
+    const repositoryId = repo?.id ? String(repo.id) : "";
+    const runPages = (await ghJson(cwd, ["api", "--paginate", "--slurp", `repos/{owner}/{repo}/commits/${before}/check-runs?per_page=100`])) as Array<{ total_count?: number; check_runs?: Array<Record<string, any>> }>;
+    const statusPages = (await ghJson(cwd, ["api", "--paginate", "--slurp", `repos/{owner}/{repo}/commits/${before}/statuses?per_page=100`])) as Array<Array<Record<string, any>>>;
+    const after = await head();
+
+    const runs = (runPages ?? []).flatMap((p) => p.check_runs ?? []);
+    const total = runPages?.[0]?.total_count;
+    let complete = typeof total === "number" ? runs.length === total : false;
+    const checks: CheckEvidence[] = [];
+    for (const r of runs) {
+      const url = typeof r.details_url === "string" ? r.details_url : typeof r.html_url === "string" ? r.html_url : null;
+      const wf = url ? /\/actions\/runs\/(\d+)/.exec(url) : null;
+      checks.push({
+        kind: "check_run",
+        id: String(r.node_id ?? r.id),
+        headSha: String(r.head_sha ?? ""),
+        name: String(r.name ?? ""),
+        workflowRunId: wf ? wf[1] : null,
+        attempt: null,
+        status: String(r.status ?? ""),
+        conclusion: r.conclusion == null ? null : String(r.conclusion),
+        url,
+        startedAt: ms(r.started_at),
+        completedAt: ms(r.completed_at),
+        providerAppId: r.app?.id != null ? String(r.app.id) : null,
+        workflowId: null,
+        checkSuiteId: r.check_suite?.id != null ? String(r.check_suite.id) : null,
+        context: String(r.name ?? ""),
+        sortId: String(r.id ?? ""),
+      });
+    }
+    for (const r of (statusPages ?? []).flat()) {
+      checks.push({
+        kind: "status",
+        id: String(r.node_id ?? r.id),
+        headSha: before,
+        name: String(r.context ?? ""),
+        workflowRunId: null,
+        attempt: null,
+        status: String(r.state ?? ""),
+        conclusion: null,
+        url: typeof r.target_url === "string" ? r.target_url : null,
+        startedAt: ms(r.created_at),
+        completedAt: ms(r.updated_at),
+        providerAppId: null,
+        workflowId: null,
+        checkSuiteId: null,
+        context: String(r.context ?? ""),
+        sortId: String(r.id ?? ""),
+      });
+    }
+    complete = complete && !!repositoryId && coherent(before, after, checks) && checks.every(evidenceComplete);
+    return { ok: true, headSha: before, repositoryId, checks, complete };
+  } catch (e) {
+    return { ok: false, error: cliErrorMessage(e, "gh api errored") };
+  }
 }
 
 // A CheckRun's detailsUrl: …/actions/runs/<runId>/job/<jobId>. Both halves are

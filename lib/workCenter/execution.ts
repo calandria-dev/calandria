@@ -55,7 +55,7 @@ type Entry = {
 
 type Listener = () => void;
 
-type Registry = { entries: Map<string, Entry>; sequence: number; listeners: Set<Listener> };
+type Registry = { entries: Map<string, Entry>; sequence: number; listeners: Set<Listener>; epoch?: string };
 
 declare global {
   // eslint-disable-next-line no-var
@@ -73,6 +73,21 @@ function registry(): Registry {
  *  snapshot assembled afterward is never older than the sequence it reports. */
 export function workCenterSequence(): number {
   return registry().sequence;
+}
+
+/**
+ * The process's epoch: a random id minted once per process (on globalThis, so
+ * dev HMR keeps it). A client that sees it change knows every sequence it
+ * holds is void and refetches in full.
+ */
+export function workCenterEpoch(): string {
+  const r = registry();
+  return (r.epoch ??= nanoid());
+}
+
+/** A source outside this registry changed (request settled, edit acknowledged, PR refreshed, snooze). */
+export function bumpWorkCenter(): void {
+  changed();
 }
 
 /** Called after each registry change. Returns the unsubscribe. */

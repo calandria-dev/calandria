@@ -25,6 +25,7 @@ import { promptPermission, type PromptContext } from "../permissionPrompt";
 import { createVariable, deleteVariable, getEnvironmentRow, patchVariable, savedRows, type MutationResult } from "./store";
 import { findDuplicateRow, lookupDescriptor, validateNameForScope, validateValue } from "./catalog.mjs";
 import type { EnvScope, PresentedVariable } from "./types";
+import { registerProposal, settleProposal } from "../workCenter/proposals";
 
 /** Same shape lib/permissionPrompt.ts's promptPermission() takes: the turn's
  * event queue and stop signal. A proposal is one more thing that queue can
@@ -223,23 +224,40 @@ export async function proposeEnvironmentMutation(ctx: ProposalContext, input: Pr
   const needsPrivateName = input.operation !== "delete" && secret;
   const { title, detail, description } = proposalCard(input, scope, existing);
 
-  const decision = await promptPermission(ctx, {
-    id,
-    tool: "change_environment_setting",
-    input: { operation: input.operation, scope, id: input.operation === "delete" ? input.id : input.operation === "patch" ? input.id : undefined },
-    title,
-    detail,
-    description,
-    mandatory: true,
-    kind: "environment",
-    // valueRequired: a new secret has no value to keep, so the card must
-    // collect one before Allow once can be pressed. A patch may leave the
-    // field blank to keep the stored value.
-    privateInput:
-      needsPrivateValue || needsPrivateName
-        ? { name: needsPrivateName, value: needsPrivateValue, ...(input.operation === "create" ? { valueRequired: true } : {}) }
-        : undefined,
+  // Register the Work Center's SDK-free metadata before the card is published
+  // and drop it when the card settles by any path (including a throw).
+  registerProposal({
+    taskId: ctx.taskId,
+    sessionId: null, // joined from the persisted card at snapshot time
+    messageId: null,
+    requestId: id,
+    expectedRevision: input.operation === "create" ? null : String(input.expectedRevision),
+    operation: input.operation === "create" ? "create" : input.operation === "delete" ? "delete" : "update",
+    label: "Environment setting change",
+    createdAt: Date.now(),
   });
+  let decision: Awaited<ReturnType<typeof promptPermission>>;
+  try {
+    decision = await promptPermission(ctx, {
+      id,
+      tool: "change_environment_setting",
+      input: { operation: input.operation, scope, id: input.operation === "delete" ? input.id : input.operation === "patch" ? input.id : undefined },
+      title,
+      detail,
+      description,
+      mandatory: true,
+      kind: "environment",
+      // valueRequired: a new secret has no value to keep, so the card must
+      // collect one before Allow once can be pressed. A patch may leave the
+      // field blank to keep the stored value.
+      privateInput:
+        needsPrivateValue || needsPrivateName
+          ? { name: needsPrivateName, value: needsPrivateValue, ...(input.operation === "create" ? { valueRequired: true } : {}) }
+          : undefined,
+    });
+  } finally {
+    settleProposal(id);
+  }
 
   if (decision.kind === "deny") {
     discardPrivateInput(ctx.taskId, id);

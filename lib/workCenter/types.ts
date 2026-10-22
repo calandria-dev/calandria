@@ -22,6 +22,10 @@ export type Summary = {
   needsYouTaskCount: Count;
   attentionItemCount: Count;
   snoozedNeedsYouTaskCount: Count;
+  // Amendment 1: needs-you minus snoozed. Every displayed needs-you number
+  // uses these; the unsubtracted fields above are for tests and diagnostics.
+  visibleNeedsYouTaskCount: Count;
+  visibleAttentionItemCount: Count;
   suggestedTaskCount: number;
 };
 
@@ -52,6 +56,9 @@ export type Attention = {
   freshness: Freshness;
   snoozedUntil: Ms | null;
   recoveryActionId: Id | null;
+  // Amendment 1: "allow_once_or_deny" only for a live, scope-free,
+  // non-settings-drift Claude permission request; null for every other item.
+  inlineDecision: "allow_once_or_deny" | null;
 };
 
 export type WaitingReason =

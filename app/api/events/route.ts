@@ -1,7 +1,9 @@
-import { getTask, countAwaiting } from "@/lib/store";
+import { getTask } from "@/lib/store";
+import { awaitingCountFor } from "@/lib/workCenter/compat";
 import { turnIdleSince } from "@/lib/turnActivity";
 import { subscribeGlobal, type BusEvent, type GlobalTaskWireEvent, type GlobalWireEvent } from "@/lib/events";
 import { ensureNotifier } from "@/lib/notifications/dispatcher";
+import { ensureWorkCenterBridge, workCenterTransport } from "@/lib/workCenter/bridge";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -79,6 +81,7 @@ export async function GET(req: Request) {
   // The bus subscriber that mints notifications. Idempotent, so every tab's
   // stream calls it and only the first one subscribes.
   ensureNotifier();
+  ensureWorkCenterBridge();
   const encoder = new TextEncoder();
   let cleanup = () => {};
   const stream = new ReadableStream({
@@ -90,7 +93,15 @@ export async function GET(req: Request) {
           cleanup();
         }
       };
+      // Hydration for the Work Center: the transport identity a reconnecting
+      // client compares with what it holds (epoch change or a sequence gap
+      // means refetch). Sent once per connection, before any live event.
+      send({ type: "work_center_changed", ...workCenterTransport() });
       const unsub = subscribeGlobal((taskId, ev) => {
+        if (ev.type === "work_center_changed") {
+          send({ type: "work_center_changed", version: 1, instanceId: ev.instanceId, instanceEpoch: ev.instanceEpoch, sequence: ev.sequence });
+          return;
+        }
         // An agent's login died (or started working again). Task-keyed on the bus
         // because that's where it was detected, but instance-wide in meaning:
         // one login per agent, shared by every task. It relays verbatim, so
@@ -184,7 +195,7 @@ export async function GET(req: Request) {
           // Carried on every task payload, not just the turn_idle one, so any
           // event a client receives re-settles the mark.
           idle_since: turnIdleSince(taskId),
-          awaiting_count: countAwaiting(t.project_id),
+          awaiting_count: awaitingCountFor(t.project_id),
           // A suggestion can be filed into a project other than the one the
           // turn runs in, and then every field above describes the WRONG
           // project as far as the tray is concerned. Carry the target too.

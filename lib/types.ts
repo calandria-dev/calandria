@@ -135,6 +135,21 @@ export interface Task {
   latest_turn_failure_code: "context_limit" | "auth" | "approval" | "execution" | null;
   latest_turn_failure_resolved_at: number | null; // NULL until recovery succeeds or a generic failure is acknowledged
   completed_at: number | null; // the actual transition into done; cleared on reopen; NULL on old rows
+  // Work Center source identity (lib/workCenter/); NULL on rows that predate it.
+  failure_ack_turn_id: string | null; // the generic-failure turn a person acknowledged
+  base_rewrite_episode_id: string | null; // episode of the flag in base_rewritten_at
+  base_rewrite_message_id: string | null;
+  base_rewrite_base_sha: string | null;
+  pr_head_sha: string | null; // head the stored check evidence was read against
+  pr_repository_id: string | null;
+  pr_ci_episode_id: string | null; // current failing-CI episode; NULL when not failing
+  pr_ci_episode_fingerprint: string | null;
+  pr_ci_snapshot_json: string | null; // structured check evidence (lib/workCenter/ciEvidence.ts)
+  pr_ci_episode_started_at: number | null;
+  pr_refresh_attempted_at: number | null; // last refresh attempt, successful or not
+  pr_refresh_error: string | null; // why the last attempt failed; NULL after a success
+  ci_recovery_episode_id: string | null; // episode an authorized Fix CI run owns
+  ci_recovery_turn_id: string | null;
   schedule_id: string | null; // the schedule that minted this task (lib/scheduler.ts); null = created by hand
   runbook_id: string | null; // the runbook that dispatched this task (lib/dispatch.ts); null = not from one
   // When a snooze ends (ms epoch; 0 = never snoozed / indicator cleared). Ahead
