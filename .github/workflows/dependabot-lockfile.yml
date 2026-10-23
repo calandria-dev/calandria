@@ -1,0 +1,97 @@
+# Re-adds `"gypfile": false` to package-lock.json on Dependabot npm PRs.
+# npm drops that field from the `node_modules/better-sqlite3` entry every time
+# it regenerates the lockfile, which fails `tests/lockfileGypfile.test.ts` and
+# `npm ci` on Windows (.github/dependabot.yml has the full mechanism). This job
+# is `npm run fix-lockfile` run for the person.
+#
+# Trust boundary. `pull_request_target` runs this workflow file and checks out
+# the BASE branch, so `scripts/fix-lockfile-gypfile.mjs` is the reviewed copy
+# on main. The PR contributes exactly one blob, package-lock.json, read with
+# `git show` and handled as data: nothing from the PR is installed, built or
+# executed, and the PR branch is never checked out. The write goes back through
+# the contents API against the blob SHA that was read, so a branch that moved
+# in between is refused (409) instead of overwritten.
+#
+# The write uses RELEASE_PLEASE_TOKEN, read here from the DEPENDABOT secrets
+# store (a Dependabot-triggered run sees no Actions secrets). A push made with
+# GITHUB_TOKEN starts no workflow runs, so `Windows (types + unit)` would stay
+# at its old red result; a push by the PAT's user does start them. Add the
+# secret with `gh secret set RELEASE_PLEASE_TOKEN --app dependabot`. Without it
+# the job fails and the fix stays manual.
+#
+# Dependabot stops rebasing a PR once someone else has committed to it. If a
+# later bump needs a fresh lockfile, close the PR and let Dependabot reopen it
+# (`@dependabot recreate`), which this job fixes again.
+name: Dependabot lockfile fix
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+    paths:
+      - package-lock.json
+
+permissions: {}
+
+concurrency:
+  group: dependabot-lockfile-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  fix-lockfile:
+    name: Fix lockfile gypfile
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.actor == 'dependabot[bot]' &&
+      startsWith(github.event.pull_request.head.ref, 'dependabot/npm_and_yarn/') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the base branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Repair the PR's package-lock.json
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::RELEASE_PLEASE_TOKEN is absent from the Dependabot secrets; run 'npm run fix-lockfile' on the branch by hand"
+            exit 1
+          fi
+
+          # Read the PR's lockfile as a blob. The branch is never checked out.
+          git -c credential.helper= fetch --no-tags --depth=1 \
+            "https://github.com/$REPO.git" "$HEAD_SHA"
+          work="$(mktemp -d)"
+          git show "$HEAD_SHA:package-lock.json" > "$work/package-lock.json"
+          blob_sha="$(git rev-parse "$HEAD_SHA:package-lock.json")"
+
+          if node scripts/fix-lockfile-gypfile.mjs --check "$work/package-lock.json"; then
+            echo "Lockfile already carries the field; nothing to commit."
+            exit 0
+          fi
+
+          node scripts/fix-lockfile-gypfile.mjs "$work/package-lock.json"
+          node scripts/fix-lockfile-gypfile.mjs --check "$work/package-lock.json"
+
+          jq -n \
+            --arg message "build(deps): re-add gypfile: false to package-lock.json" \
+            --arg branch "$BRANCH" \
+            --arg sha "$blob_sha" \
+            --rawfile content <(base64 -w0 "$work/package-lock.json") \
+            '{message: $message, branch: $branch, sha: $sha, content: ($content | rtrimstr("\n"))}' \
+            > "$work/body.json"
+          gh api --method PUT "repos/$REPO/contents/package-lock.json" --input "$work/body.json" \
+            --jq '"Committed " + .commit.sha + " to '"$BRANCH"'"'
