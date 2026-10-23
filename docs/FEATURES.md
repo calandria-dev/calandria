@@ -18,9 +18,9 @@ terminals, or transcripts.
 
 1. Create a task from a project. Calandria cuts a fresh worktree and branch for it before the
    first turn starts.
-2. Watch the **Needs you** indicator for any task, in any project, that is waiting on you: the
-   titlebar pill, its dropdown, the project badge, and the board's **Needs input** column all
-   show it.
+2. Watch the **Work Center** pill for any task, in any project, that is waiting on you: the
+   titlebar pill, the Work Center list it opens, the project badge, and the board's **Needs input**
+   column all show it.
 3. Send a message to a task while its turn is still running. It queues and sends once the
    current turn ends.
 4. Reload the page, close the tab, or let your laptop sleep. Turns run on the server and every
@@ -502,7 +502,7 @@ changing its status.
 3. Click the sun button on a parked task to wake it immediately.
 
 While parked, a task moves to the **Snoozed** group or column, shows when it comes back, and
-drops out of the "needs you" pill, its dropdown, and the project badge. When the deadline passes,
+drops out of the Work Center list, the pill count, and the project badge. When the deadline passes,
 you wake it by hand, or you drag its card out of the column, it returns to exactly the group it
 came from, marked **Was snoozed**; opening the task clears that marker.
 
@@ -1134,3 +1134,28 @@ A Claude Code project can bill gateway turns to a shared key or forward its subs
 Codex and Antigravity gateway turns always use the gateway key.
 
 See [Supported agents](AGENTS.md#litellm-gateway) for setup and current provider coverage.
+
+## Work Center
+
+The titlebar pill shows two counts: tasks that are working (a ripple icon) and tasks that need you
+(a speech bubble). Click it, or press Enter on it, to open the Work Center. A task appears once:
+**Needs you** wins over **Working**, and **Working** wins over **Waiting**. **Recently finished**
+lists the last results, four at a time.
+
+| What you see | Meaning |
+|-|-|
+| `—` | The first snapshot has not arrived. |
+| `3+` | Three are known and the total is unknown, because a source could not be read. |
+| `0` | A real zero. |
+| Dashed border with a clock | The numbers are the last good ones; the last fetch failed or the live feed is down. |
+
+A row shows one chip per reason it needs you (permission, question, turn failed, base rewritten, CI
+failing, settings proposal, agent edit). A chip opens the exact card in the task's session, and Back
+returns to the Work Center on the same row. On desktop a permission request that offers only Allow
+once and Deny has both buttons inline, an agent edit has Acknowledge, and every row has Snooze (1
+hour, until tomorrow, or until Monday). A snoozed task leaves the list and every count until its
+deadline. On a phone, **Work** is the fourth tab (Board, Services, Terminals, Work, Insights) with a
+needs-you badge, and each row's menu opens an action sheet.
+
+Keyboard: ↑ and ↓ move between rows, Enter opens a row's card, → walks its chips and buttons, S opens
+Snooze, and Esc closes the menu, then the popover, and returns focus to the pill.

@@ -139,7 +139,9 @@ already queued. The transcript records that it was sent.
   ends before the agent starts. Unattended and scheduled runs always decline.
 - **Web-based and self-hostable:** run Calandria on your own machine or
   server and reach the same workspace from desktop or mobile.
-- **One "Needs you" inbox:** jump to any session waiting for an answer.
+- **Work Center:** a titlebar pill shows how many tasks are working and how many need you. It opens a list
+  of everything that needs a decision, is working, or is waiting, across every project, with Allow once, Deny,
+  Acknowledge and Snooze inline. On a phone it is the Work tab.
 
   ![The Needs you inbox listing sessions waiting on an answer across projects](docs/images/inbox.png)
 

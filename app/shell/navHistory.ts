@@ -101,3 +101,37 @@ export function closeOneLevel(sel: NavSel): NavSel {
   if (sel.proj) return { ...sel, proj: null, home: false };
   return sel;
 }
+
+// ---------- Work Center destinations (desktop) ----------
+//
+// Opening a destination from the Work Center is the one place the desktop shell
+// pushes a history entry: the entry being left is stamped with where to come
+// back to, then one new entry is pushed for the destination. Browser Back pops to
+// the stamped entry, and the shell restores the popover, the selected row, the
+// scroll position and the selection the person left. Everything else on desktop
+// only replaces history (reconcileHistory), so this adds exactly one entry per
+// opened destination. The phone uses the trap above and never pushes this.
+
+export interface WcReturn {
+  /** The project and task that were selected before the destination opened. */
+  proj: string | null;
+  task: string | null;
+  /** The row to select and focus again. */
+  rowId: string | null;
+  scrollTop: number;
+  popoverOpen: boolean;
+}
+
+export const wcReturnOf = (state: unknown): WcReturn | null => {
+  const r = state && typeof state === "object" ? (state as { wcReturn?: unknown }).wcReturn : null;
+  return r && typeof r === "object" ? (r as WcReturn) : null;
+};
+
+export function pushWorkCenterDestination(h: HistoryLike, url: string, ret: WcReturn): void {
+  const cur = h.state && typeof h.state === "object" ? (h.state as Record<string, unknown>) : {};
+  h.replaceState({ ...cur, wcReturn: ret }, "", url);
+  h.pushState({ wcDest: true }, "", url);
+}
+
+/** The selection a Work Center Back restores. */
+export const wcReturnSelection = (r: WcReturn): NavSel => ({ proj: r.proj, task: r.task, home: false, view: "workspace" });

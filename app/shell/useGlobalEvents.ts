@@ -4,6 +4,7 @@ import { useEffect, useRef, type MutableRefObject } from "react";
 import type { GlobalWireEvent } from "@/lib/events";
 import type { NotificationPayload } from "@/lib/notifications/types";
 import { jget } from "./api";
+import { WC_EVENT, WC_STREAM_EVENT } from "./useWorkCenter";
 import { invalidateModelPickerData } from "./ModelPicker";
 import type { ProjectRow, TaskRow } from "./types";
 
@@ -105,6 +106,12 @@ export function useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProje
     // state changes for it: the badges and spinners ride the task events
     // below, so it goes straight to the channel.
     if (ev.type === "notification") { onNotification(ev.payload); return; }
+    // A Work Center source changed. Only the transport identity rides the feed;
+    // useWorkCenter compares it with the snapshot it holds and refetches.
+    if (ev.type === "work_center_changed") {
+      window.dispatchEvent(new CustomEvent(WC_EVENT, { detail: { instanceEpoch: ev.instanceEpoch, sequence: ev.sequence } }));
+      return;
+    }
     if (ev.type !== "task") return;
     setTaskRunning(ev.taskId, ev.running);
     setTasks((prev) => prev.map((t) => {
@@ -157,6 +164,7 @@ export function useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProje
     const es = new EventSource("/api/events");
     let opens = 0;
     es.onopen = () => {
+      window.dispatchEvent(new CustomEvent(WC_STREAM_EVENT, { detail: { up: true } }));
       // This stream is a live tail with no snapshot: anything published while
       // disconnected (laptop sleep, tunnel drop) is gone. On every reconnect,
       // refetch the authoritative lists once to catch up. The first open is
@@ -177,6 +185,9 @@ export function useGlobalEvents({ selProjRef, setTaskRunning, setTasks, setProje
       // refetch it too.
       invalidateModelPickerData();
       void refreshAgents();
+    };
+    es.onerror = () => {
+      window.dispatchEvent(new CustomEvent(WC_STREAM_EVENT, { detail: { up: false } }));
     };
     es.onmessage = (e) => {
       try { handleRef.current(JSON.parse(e.data) as GlobalWireEvent); } catch {}

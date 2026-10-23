@@ -154,24 +154,6 @@ export interface TaskAgentEdit {
   acknowledged_at: number;
 }
 
-// A single row in the titlebar "need you" dropdown: an awaiting task plus enough
-// of its project to label and color it. Mirrors lib/store.ts listNeedsYou().
-export interface NeedsYouRow {
-  id: string;
-  project_id: string;
-  title: string;
-  project_name: string;
-  project_color: string;
-  project_icon: string;
-  waiting_since: number;
-  // Which arm of the server's NEEDS_YOU predicate put this row in the list:
-  // "input" = a turn parked on a question, "ci" = an open PR whose checks are
-  // failing. They get different sublines: a red PR has no "waiting for" age,
-  // only a PR to name (lib/store.ts listNeedsYou).
-  reason: "input" | "ci";
-  pr_number: number;
-  pr_url: string;
-}
 // A row in the ⌘K palette's session search: any real task across the active
 // projects plus enough of its project to label it. Mirrors lib/store.ts
 // listAllTasksLite().
