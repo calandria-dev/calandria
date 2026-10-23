@@ -852,7 +852,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
             {wcOpen && !isMobile && (
               <>
                 <div className="wc-scrim-all" onClick={() => closeWc()} />
-                <div className="wc-pop-wrap" onClick={(e) => e.stopPropagation()}>
+                <div className="wc-pop-wrap" data-wc-pop onClick={(e) => e.stopPropagation()}>
                   <WorkCenterSurface
                     kind="pop"
                     data={wc}
