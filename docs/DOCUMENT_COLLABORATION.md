@@ -164,7 +164,8 @@ While you type in the **EDIT** tab, the render follows the source after a
 short pause. When the source does not parse, the last diagram that did stays
 on screen, dimmed, with the parser's message underneath.
 
-The transcript keeps showing a mermaid fence as code.
+The transcript renders a mermaid fence the same way once a message is complete.
+While the agent is still typing a message, its fence shows as code.
 
 Diagrams render under mermaid's `strict` security level and the drawn SVG is
 sanitized before it reaches the page, because the source is whatever the agent
