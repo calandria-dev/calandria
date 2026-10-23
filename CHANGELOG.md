@@ -8,6 +8,23 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.21.3](https://github.com/calandria-dev/calandria/compare/v0.21.2...v0.21.3) (2026-10-23)
+
+
+### Bug Fixes
+
+* **security:** bump dompurify, next, MCP SDK, gh and Antigravity pins to clear the audit and image gates ([#523](https://github.com/calandria-dev/calandria/issues/523)) ([d74f6b9](https://github.com/calandria-dev/calandria/commit/d74f6b9c8fc663bbc89ad15f22b9847bcc866c83))
+
+
+### Dependencies
+
+* **deps-dev:** bump electron from 44.0.0 to 44.5.0 in /desktop ([#529](https://github.com/calandria-dev/calandria/issues/529)) ([5d974ba](https://github.com/calandria-dev/calandria/commit/5d974ba36a09588a71f84957d585cade43dcd44c))
+* **deps-dev:** bump vite from 6.4.3 to 6.4.5 ([#526](https://github.com/calandria-dev/calandria/issues/526)) ([98156b2](https://github.com/calandria-dev/calandria/commit/98156b22e37301f62cb3e05be93c2ee6a09fbe25))
+* **deps:** bump Codex CLI and SDK to 0.164.0 ([#459](https://github.com/calandria-dev/calandria/issues/459)) ([#524](https://github.com/calandria-dev/calandria/issues/524)) ([69db5fe](https://github.com/calandria-dev/calandria/commit/69db5fe2eb9614f21573e9aac76972e23e28783a))
+* **deps:** bump hono, ip-address and vitest with the lockfile gypfile fix ([#528](https://github.com/calandria-dev/calandria/issues/528)) ([146ce8d](https://github.com/calandria-dev/calandria/commit/146ce8d0ffc24f01e39bd2536237291aa3dcc50c))
+* **deps:** bump zod from 4.4.3 to 4.6.7 ([#531](https://github.com/calandria-dev/calandria/issues/531)) ([ac74f0d](https://github.com/calandria-dev/calandria/commit/ac74f0d66fdf71cfb2f00393efcebe75c6caed58))
+* **deps:** refresh agent CLI pins ([#511](https://github.com/calandria-dev/calandria/issues/511)) ([587ebc3](https://github.com/calandria-dev/calandria/commit/587ebc3d4fc2e4b87f14fcb059c6dbe3fc685547))
+
 ## [0.21.2](https://github.com/calandria-dev/calandria/compare/v0.21.1...v0.21.2) (2026-10-20)
 
 
