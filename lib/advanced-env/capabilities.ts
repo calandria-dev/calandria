@@ -181,6 +181,17 @@ export function hasMandatoryDecision(taskId: string, id: string): boolean {
   return mandatory().has(key(taskId, id));
 }
 
+/** Ids of the mandatory decisions parked for a task (Advanced Settings proposals). */
+export function mandatoryDecisionIds(taskId: string): string[] {
+  const prefix = `${taskId}:`;
+  return [...mandatory().keys()].filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length));
+}
+
+/** Tasks with a mandatory decision parked. */
+export function tasksWithMandatoryDecisions(): string[] {
+  return [...new Set([...mandatory().keys()].map((k) => k.slice(0, k.indexOf(":"))))];
+}
+
 /** The `waiter` lib/permissions.ts's waitForPermission() takes for a mandatory prompt. */
 export const mandatoryDecisionWaiter = {
   park: parkMandatoryDecision,

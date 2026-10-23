@@ -24,6 +24,13 @@ const PINNED = [
   "lib/workCenter/types.ts", //  Work Center wire types; type-only
   "lib/workCenter/classify.ts", // the pure execution classifier and recent-result paging
   "lib/workCenter/execution.ts", // live execution registry + model-turn identity; store + abort + asks only, and the runner imports it
+  "lib/workCenter/ids.ts", // attention source identities; pure
+  "lib/workCenter/counts.ts", // visible counts and inlineDecision; pure
+  "lib/workCenter/ciEvidence.ts", // CI check grouping and episode identity; pure, node:crypto only
+  "lib/workCenter/proposals.ts", // SDK-free Advanced Settings proposal metadata; lib/advanced-env/proposals.ts registers into it
+  "lib/workCenter/bridge.ts", // global-bus to sequence/work_center_changed relay; events + store only
+  "lib/workCenter/snapshot.ts", // the attention adapters and snapshot assembly; store, asks, abort and registries only
+  "lib/workCenter/compat.ts", // /api/needs-you and project-badge adapters over the snapshot
   "lib/agents/claude/executionObserver.ts", // folds native background events into an observation; pure
   "lib/codexSandbox.ts", // shared sandbox values for settings validation and the browser
   "lib/store.ts", //     imported by nearly everything, so it must stay SDK-free

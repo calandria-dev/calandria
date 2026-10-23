@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { getTask, getProject, updateTask, deleteTask, listMessages, getTaskUsage, getTaskContext, getTaskDeps, setTaskDeps, sameDepSet, countAwaiting, getTag, getTaskTagIds, setTaskTags } from "@/lib/store";
+import { awaitingCountFor } from "@/lib/workCenter/compat";
+import { bumpWorkCenter } from "@/lib/workCenter/execution";
+import { getTask, getProject, updateTask, deleteTask, listMessages, getTaskUsage, getTaskContext, getTaskDeps, setTaskDeps, sameDepSet, getTag, getTaskTagIds, setTaskTags } from "@/lib/store";
 import { removeWorktree } from "@/lib/git";
 import { removeTaskUploads } from "@/lib/uploads";
 import { abortTurn } from "@/lib/abort";
@@ -306,7 +308,9 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     // recomputed awaiting count. The row is gone, so /api/events' usual
     // re-read-the-task enrichment would drop the event and freeze the
     // project's badge in every other tab until the next SSE reconnect.
-    if (task) publishGlobal(id, { type: "task_deleted", projectId: task.project_id, awaiting_count: countAwaiting(task.project_id) });
+    // The row is gone: move the sequence so the count below is not read from a cached snapshot that still has it.
+    bumpWorkCenter();
+    if (task) publishGlobal(id, { type: "task_deleted", projectId: task.project_id, awaiting_count: awaitingCountFor(task.project_id) });
   });
   return NextResponse.json({ ok: true });
 }

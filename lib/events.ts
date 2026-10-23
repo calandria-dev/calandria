@@ -67,6 +67,7 @@ export type TaskMutationEvent =
   | { type: "tags_changed"; projectId: string }
   | { type: "updates_changed" }
   | { type: "environment_changed" }
+  | { type: "work_center_changed"; version: 1; instanceId: string; instanceEpoch: string; sequence: number }
   | { type: "notification"; payload: NotificationPayload };
 
 /** Everything a global listener can see: turn events plus route mutations. */
@@ -136,6 +137,18 @@ export type UpdatesChangedWireEvent = {
 export type EnvironmentChangedWireEvent = {
   type: "environment_changed";
 };
+/**
+ * A Work Center source changed (lib/workCenter/bridge.ts). Carries only the
+ * transport identity: a client compares the epoch and sequence with what it
+ * holds and refetches GET /api/work-center, so no source detail rides the bus.
+ */
+export type WorkCenterChangedWireEvent = {
+  type: "work_center_changed";
+  version: 1;
+  instanceId: string;
+  instanceEpoch: string;
+  sequence: number;
+};
 /** A composed, ready-to-render notification. See lib/notifications/. */
 export type NotificationWireEvent = { type: "notification"; payload: NotificationPayload };
 export type GlobalWireEvent =
@@ -146,6 +159,7 @@ export type GlobalWireEvent =
   | TagsChangedWireEvent
   | UpdatesChangedWireEvent
   | EnvironmentChangedWireEvent
+  | WorkCenterChangedWireEvent
   | NotificationWireEvent
   | AgentAuthEvent;
 

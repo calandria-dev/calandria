@@ -781,6 +781,8 @@ function recoverFromCrash(db: Database.Database) {
     // result, and a known last successful result is replaced only by a turn
     // that actually ended after it.
     finalizeActiveTurnsAsInterrupted(db);
+    // A Fix CI run died with the process; the episode is actionable again.
+    db.prepare("UPDATE tasks SET ci_recovery_episode_id = NULL, ci_recovery_turn_id = NULL").run();
     // Drop any queued follow-ups: the turns they were lined up behind died
     // with the previous process, so there is nothing left to dequeue them into.
     db.prepare("DELETE FROM pending_messages").run();
@@ -1139,6 +1141,33 @@ export function migrate(db: Database.Database, options: { seedProviders?: boolea
     ["completed_at", "INTEGER"],
   ];
   for (const [col, def] of turnCols) {
+    if (!taskCols.includes(col)) db.exec(`ALTER TABLE tasks ADD COLUMN ${col} ${def}`);
+  }
+  // Work Center source identity (lib/workCenter/). All nullable: an old row
+  // reads back as "no episode recorded", never a guessed one.
+  //  - failure_ack_turn_id: the failed turn a person acknowledged.
+  //  - base_rewrite_*: the episode stamped beside base_rewritten_at.
+  //  - pr_*: the head and structured check evidence behind a CI episode.
+  //    pr_synced_at stays the last SUCCESSFUL coherent observation;
+  //    pr_refresh_attempted_at / pr_refresh_error record a failed refresh.
+  //  - ci_recovery_*: the CI episode an authorized Fix CI run owns.
+  const wcCols: Array<[string, string]> = [
+    ["failure_ack_turn_id", "TEXT"],
+    ["base_rewrite_episode_id", "TEXT"],
+    ["base_rewrite_message_id", "TEXT"],
+    ["base_rewrite_base_sha", "TEXT"],
+    ["pr_head_sha", "TEXT"],
+    ["pr_repository_id", "TEXT"],
+    ["pr_ci_episode_id", "TEXT"],
+    ["pr_ci_episode_fingerprint", "TEXT"],
+    ["pr_ci_snapshot_json", "TEXT"],
+    ["pr_ci_episode_started_at", "INTEGER"],
+    ["pr_refresh_attempted_at", "INTEGER"],
+    ["pr_refresh_error", "TEXT"],
+    ["ci_recovery_episode_id", "TEXT"],
+    ["ci_recovery_turn_id", "TEXT"],
+  ];
+  for (const [col, def] of wcCols) {
     if (!taskCols.includes(col)) db.exec(`ALTER TABLE tasks ADD COLUMN ${col} ${def}`);
   }
   // The task's own LiteLLM virtual key (docs/AGENTS.md, LiteLLM section),

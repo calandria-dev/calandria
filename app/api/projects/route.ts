@@ -1,12 +1,20 @@
 import { NextResponse } from "next/server";
 import { listProjects, createProject } from "@/lib/store";
+import { awaitingCounts } from "@/lib/workCenter/compat";
 import { resolvedTaskProvider } from "@/lib/providers/resolve";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  // The badge is the Work Center's visible needs-you count (unsnoozed tasks
+  // with an unresolved item), the same number the title-bar pill sums.
+  const awaiting = awaitingCounts();
   return NextResponse.json(
-    listProjects().map((project) => ({ ...project, provider: resolvedTaskProvider(project, null, project.default_agent) })),
+    listProjects().map((project) => ({
+      ...project,
+      awaiting_count: awaiting.get(project.id) ?? 0,
+      provider: resolvedTaskProvider(project, null, project.default_agent),
+    })),
   );
 }
 

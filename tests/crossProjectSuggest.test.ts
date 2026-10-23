@@ -299,7 +299,11 @@ describe("cross-project suggestion fan-out", () => {
         if (idx >= 0) {
           const frame = buf.slice(0, idx);
           buf = buf.slice(idx + 2);
-          if (frame.startsWith("data: ")) return JSON.parse(frame.slice(6));
+          if (frame.startsWith("data: ")) {
+            const data = JSON.parse(frame.slice(6));
+            if (data.type === "work_center_changed") continue; // Work Center transport frames
+            return data;
+          }
           continue;
         }
         const { value, done } = await reader.read();

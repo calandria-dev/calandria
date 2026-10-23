@@ -101,6 +101,16 @@ export function hasOpenAsk(taskId: string): boolean {
   return (registry().get(taskId)?.size ?? 0) > 0;
 }
 
+/** Ids of every ask or permission card parked on the user for this task, oldest first. */
+export function openAskIds(taskId: string): string[] {
+  return [...(registry().get(taskId)?.keys() ?? [])];
+}
+
+/** Tasks that have at least one parked ask or permission card right now. */
+export function tasksWithOpenAsks(): string[] {
+  return [...registry().keys()];
+}
+
 /**
  * Settle a parked ask without an answer: the waiter's promise rejects with
  * `reason` and the entry is removed, so a late submitAnswer reports nothing
