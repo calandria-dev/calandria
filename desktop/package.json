@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "@electron/notarize": "^2.5.0",
-    "electron": "^44.0.0",
+    "electron": "^44.5.0",
     "electron-builder": "^26.15.3"
   },
   "author": "Calandria contributors",
