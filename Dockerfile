@@ -114,7 +114,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list \
   && apt-get update \
-  && apt-get install -y --no-install-recommends gh=2.103.0 \
+  && apt-get install -y --no-install-recommends gh=2.103.1 \
   && rm -rf /var/lib/apt/lists/* \
   && gh --version
 
@@ -145,9 +145,9 @@ RUN npm install -g npm@12.0.2 && npm --version
 # desktop skip and uncached image workflows against the exact branch head. It
 # verifies that head before enabling squash auto-merge, and GitHub merges only
 # after every required check passes.
-ARG CLAUDE_CODE_VERSION=2.1.303
-ARG CODEX_VERSION=0.162.1
-ARG AGY_VERSION=1.4.5
+ARG CLAUDE_CODE_VERSION=2.1.309
+ARG CODEX_VERSION=0.164.0
+ARG AGY_VERSION=1.4.6
 
 # The `claude` CLI: the Agent SDK spawns it, and login state lives in
 # ~/.claude on the volume. Pinned location via CLAUDE_CLI_PATH; updates ship as
@@ -203,8 +203,8 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 # The binary self-updates in the background by default, which would replace
 # this pin mid-turn. AGY_CLI_DISABLE_AUTO_UPDATE below turns that off
 # image-wide, and the driver sets it on every spawn as a second guard.
-ARG AGY_SHA512_AMD64=fd30e8d256e28c4a6d0f5fddaa0f74b47c8c5a8e9fa2285cb03f85093e90eca0406f1c2fa57a0386bb820e21ed427e27c2315a01453dfda401c2223b2639ab30
-ARG AGY_SHA512_ARM64=cf60004b48015a2737dcb56ce11227fef3a722f2e9329c13318e290951e350c395118bd8680c1042b2fdee9d2ead05fb84bb2596fa2d0012a44bc068655d34eb
+ARG AGY_SHA512_AMD64=4e1244b8b8c1280552f59c1b24b76a9245db9c80032aec6db28fb86033d6088abc30a90dad432d2b246c28fdd87d82abb48727d5ff88ba1d5d4ec76b33348e7d
+ARG AGY_SHA512_ARM64=0daa84244922bd648f940d44dfc33ace8c26217cd710ff116902eb8708829a0cfe70640f0d6b480243442881c9aeb4a905a9aa7887dd8a70159aa0f1a4f98a8f
 RUN set -eu; \
     case "$(dpkg --print-architecture)" in \
       amd64) manifest=linux_amd64; sha="${AGY_SHA512_AMD64}" ;; \
