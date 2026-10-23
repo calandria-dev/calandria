@@ -9,10 +9,9 @@
 # update type and counts as a patch. Everything else is left alone:
 #
 # - A major update, which can change behavior and wants a reading.
-# - A security update. Those are ungrouped, and one that touches the root
-#   package-lock.json needs `npm run fix-lockfile` committed by hand before
-#   `Windows (types + unit)` can pass (dependabot.yml has the reasoning). A push
-#   made here with GITHUB_TOKEN would start no CI, so that fix stays manual.
+# - A security update. Those are ungrouped and stay with a person. A root
+#   one that touches package-lock.json gets its `npm run fix-lockfile` commit
+#   from dependabot-lockfile.yml.
 #
 # The merge is queued with RELEASE_PLEASE_TOKEN, read here from the DEPENDABOT
 # secrets store (a Dependabot-triggered run sees no Actions secrets). A merge
