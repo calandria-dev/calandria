@@ -107,8 +107,11 @@ push is not a successful CI run.
 - **Dependabot's grouped patch and minor updates are machine-merged after CI.**
   `dependabot-automerge.yml` queues squash auto-merge for the `actions`, `website` and
   `base-image` groups, with `RELEASE_PLEASE_TOKEN` read from the Dependabot secrets store. Majors
-  and security PRs are a person's. A root security PR still needs `npm run fix-lockfile` committed
-  by hand (`.github/dependabot.yml` has the reasoning). `release-please.yml` also runs daily, so a
+  and security PRs are a person's. `dependabot-lockfile.yml` runs `scripts/fix-lockfile-gypfile.mjs`
+  from the base branch on every Dependabot root npm PR and commits the one-line lockfile fix with
+  `RELEASE_PLEASE_TOKEN`, so the push starts CI (`.github/dependabot.yml` has the reasoning). A red
+  `Fix lockfile gypfile` job with "RELEASE_PLEASE_TOKEN is absent" means the Dependabot secret is
+  missing; run `npm run fix-lockfile` on the branch by hand. `release-please.yml` also runs daily, so a
   merge that started no `push` run still reaches the release PR.
 - **The buildx/BuildKit version pin in `publish-image.yml` is intentional**: its header comment
   explains why. Don't upgrade it away without reading that comment first.
