@@ -48,6 +48,12 @@ function foldScalarChange(patch: Partial<Task>, change: AgentEditChange): void {
     case "status":
       patch.status = change.before_value as Status;
       break;
+    case "start_at":
+      patch.start_at = typeof change.before_value === "number" ? change.before_value : 0;
+      break;
+    case "auto_start":
+      patch.auto_start = change.before_value === 1 ? 1 : 0;
+      break;
     case "tags":
     case "blocked_by":
     case "base_branch":
@@ -73,6 +79,12 @@ function staleFields(task: Task, changes: AgentEditChange[]): string[] {
       case "priority":
       case "status":
         if (task[c.field] !== c.after) out.push(`${c.field} is now "${task[c.field]}"`);
+        break;
+      case "start_at":
+        if (task.start_at !== c.after_value) out.push("start_at has changed");
+        break;
+      case "auto_start":
+        if (task.auto_start !== c.after_value) out.push("auto_start has changed");
         break;
       case "tags":
         if (Array.isArray(c.after_value) && !sameSet(getTaskTagIds(task.id), c.after_value)) out.push("tags have changed");

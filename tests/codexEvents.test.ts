@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { ThreadEvent } from "@openai/codex-sdk";
 import { mapThreadEvent, newState } from "@/lib/agents/codex/events";
-import { estimateCostUsd, resolveCodexModel, DEFAULT_CODEX_MODEL } from "@/lib/agents/codex/pricing";
+import { estimateCostUsd, resolveCodexModel, codexPriceRow, DEFAULT_CODEX_MODEL } from "@/lib/agents/codex/pricing";
 import { codexCapabilities } from "@/lib/agents/codex/capabilities";
 import type { StreamEvent } from "@/lib/types";
 
@@ -77,8 +77,8 @@ describe("codex event mapping", () => {
     // prompt including the 30848 cached reads; the buckets are kept disjoint, so
     // input_tokens carries fresh prompt only and the total doesn't double-count
     // the cache. Reasoning folds into output. cost_usd is ESTIMATED from the
-    // token counts at the default model's published API prices
-    // (8764×$10.00 + 30848×$1.00 + 119×$50, per 1M).
+    // token counts at the default model's published API prices: the rates come
+    // from DEFAULT_CODEX_MODEL's PRICES row, per 1M tokens.
     const usage = byType(evs, "usage") as Extract<StreamEvent, { type: "usage" }>[];
     expect(usage).toHaveLength(1);
     expect(usage[0].usage).toMatchObject({
@@ -87,7 +87,11 @@ describe("codex event mapping", () => {
       cache_read_tokens: 30848,
       cache_creation_tokens: 0,
     });
-    expect(usage[0].usage.cost_usd).toBeCloseTo(0.124438, 6);
+    const p = codexPriceRow(DEFAULT_CODEX_MODEL)!;
+    expect(usage[0].usage.cost_usd).toBeCloseTo(
+      (8764 * p.input + 30848 * p.cachedInput + 119 * p.output) / 1e6,
+      7,
+    );
 
     // No EMPTY sentinel leaks through, and every tool id is emitted at most once.
     expect(evs.some((e) => e.type === "notice")).toBe(false);

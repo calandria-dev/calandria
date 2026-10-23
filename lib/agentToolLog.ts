@@ -10,7 +10,7 @@ import { createLogger } from "./log.mjs";
 
 const log = createLogger("agent-tools");
 
-export type AgentToolTransport = "in-process" | "bridge";
+export type AgentToolTransport = "in-process" | "bridge" | "external";
 /** The guard's word for how a call settled (guardToolHandler's onSettle). */
 export type AgentToolOutcome = "ok" | "error" | "timeout" | "blank";
 

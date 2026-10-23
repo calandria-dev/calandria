@@ -1003,6 +1003,91 @@ see an API-price equivalent for context, not a bill.
 
 See [Insights and usage](INSIGHTS.md) for how to read the numbers.
 
+## External MCP endpoint
+
+**What it is:** an MCP server at `<instance base URL>/api/mcp` that gives agents running
+outside Calandria (a Claude Code session in another repo, a script, another machine) the
+same task tools Calandria's own sessions use. It speaks MCP Streamable HTTP, stateless, with
+JSON responses. It is off until you set `CALANDRIA_MCP_TOKEN`.
+
+**How to use it:** set the token as described in
+[Exposing the MCP endpoint](SELF_HOSTING.md#exposing-the-mcp-endpoint), then register the
+endpoint with your client. Every request sends `Authorization: Bearer <token>`.
+
+Claude Code:
+
+```bash
+claude mcp add --transport http calandria https://calandria.example.com/api/mcp \
+  --header "Authorization: Bearer $CALANDRIA_MCP_TOKEN"
+```
+
+To keep the token out of `~/.claude.json`, point the server's `headersHelper` at a script that
+prints `{"Authorization":"Bearer <token>"}`. Claude Code runs the helper through `/bin/sh` with a
+scrubbed environment on every connection attempt, so the script cannot rely on variables your
+login shell exports (a 1Password `OP_SERVICE_ACCOUNT_TOKEN`, for example) or on your `PATH`. Read
+the token from a file the helper can reach, and exit non-zero when it finds none. A helper that
+prints an empty `Bearer ` instead connects as a 401 on every session start:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+tok="$(sed -n 's/^CALANDRIA_MCP_TOKEN=//p' "$HOME/.config/calandria/mcp.env")"
+[ -n "$tok" ] || { echo "no CALANDRIA_MCP_TOKEN" >&2; exit 1; }
+printf '{"Authorization":"Bearer %s"}' "$tok"
+```
+
+Generic `.mcp.json`:
+
+```json
+{"mcpServers":{"calandria":{"type":"http","url":"https://calandria.example.com/api/mcp","headers":{"Authorization":"Bearer <token>"}}}}
+```
+
+Codex, in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.calandria]
+url = "https://calandria.example.com/api/mcp"
+bearer_token_env_var = "CALANDRIA_MCP_TOKEN"
+```
+
+The endpoint serves these tools:
+
+| Tool | Required parameters |
+|-|-|
+| `list_projects`, `list_providers` | none |
+| `list_tasks`, `list_tags`, `list_runbooks` | `project` |
+| `get_task`, `update_task` | `task` |
+| `suggest_task` | `project`, `title`, `description` |
+| `update_tag` | `project`, `tag` |
+| `create_runbook` | `project`, `name`, `description`, `prompt` |
+| `update_runbook` | `runbook` |
+| `withdraw_suggestion` | `task`, `reason` |
+| `move_task` | `tasks`, `project` |
+
+An external client has no project or task of its own, so every `project` parameter is
+required and an omitted one is refused. `attachments` is not available. The tools that act
+on a running session (`ask_user`, `expose_service`, `create_pr`, `set_base_branch`,
+`report_base_rewrite`, `report_issue`, and the environment-setting tools) are not offered.
+
+Writes are attributed to "External MCP client". A suggestion lands in the target project's
+Suggested tray. An edit to a task you already accepted shows the same "Changed by agent"
+chip and per-edit Revert as an edit from inside a session.
+
+External clients cannot change a task's title, description, tags, or blockers while
+automatic start is enabled through a dependency or a deferred start time. Those tasks
+cannot be moved externally while queued for automatic launch. Tag names
+and descriptions cannot change externally while a member has automatic start enabled.
+Completing or withdrawing a blocker through external MCP clears its dependents'
+auto-start flags and deferred start times, and records those changes for review. Start those tasks manually or restore the flags after reviewing their prompts.
+External runbooks use `default` or `plan` permission mode. External clients cannot change
+a tag's base branch.
+
+Agent edits to runbooks show the same diff and Revert controls. The first dispatch after
+an agent edit requires confirmation of the current recipe. Agent-created recipes also
+require confirmation before their first dispatch. Acknowledging the edit clears
+the chip and keeps that confirmation requirement. Scheduled dispatch refuses an unreviewed
+agent recipe.
+
 ## Agent connections
 
 **What it is:** Settings → Models separates coding environments from model providers.

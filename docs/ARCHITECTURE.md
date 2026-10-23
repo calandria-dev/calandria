@@ -313,7 +313,17 @@ The tool roster is the same across drivers: `suggest_task`, `list_tasks`, `get_t
   `list-projects`, `list-runbooks`, `list-tags`, `list-tasks`, `move-task`,
   `set-base-branch`, `suggest-task`, `update-runbook`, `update-tag`, `update-task`,
   `withdraw-suggestion`), gated by `SERVICE_TOKEN` in `middleware.ts`.
-- Both paths share the same logic in `lib/agentTools.ts` and the same tool definitions in
+- A third transport serves callers outside Calandria: `app/api/mcp/route.ts` runs MCP Streamable
+  HTTP, stateless with JSON responses, and builds a fresh `McpServer` per request through
+  `lib/externalMcp.ts`. That module calls the same policy functions directly and answers through
+  `lib/agentToolGuard.mjs`. It serves the project-scoped tools and omits the session-bound ones
+  and `attachments`. `resolveTargetProject(null, …)` refuses an omitted `project`, since no
+  calling project exists. Writes carry `EXTERNAL_ACTOR` (agent `external`), a synthetic actor
+  whose id matches no task row, so accepted-task edits get the same agent-edit chip and Revert.
+  `lib/externalMcp.ts` is pinned SDK-free, so the route injects `maybeAutoStartDependents` as
+  `onBlockerCleared`. `middleware.ts` gates `/api/mcp` on `CALANDRIA_MCP_TOKEN` (404 when unset,
+  401 on a bad bearer) ahead of the origin rules in both auth modes; the route repeats the check.
+- Both in-session paths share the same logic in `lib/agentTools.ts` and the same tool definitions in
   `lib/agentToolDefs.mjs`, so the two paths cannot drift.
 - `ask_user` is asynchronous: the endpoint persists and publishes the same interactive
   question card the Claude hook produces, parks a detached waiter on the answer, and the

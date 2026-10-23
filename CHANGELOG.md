@@ -8,6 +8,46 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.21.2](https://github.com/calandria-dev/calandria/compare/v0.21.1...v0.21.2) (2026-10-20)
+
+
+### Bug Fixes
+
+* **gemini:** hand out the whole Google sign-in URL for Antigravity login ([#497](https://github.com/calandria-dev/calandria/issues/497)) ([0f708f8](https://github.com/calandria-dev/calandria/commit/0f708f876b0b9e43ef2e5862e93d5e4d377e3972))
+* **mcp:** name the reason a /api/mcp request was refused ([#506](https://github.com/calandria-dev/calandria/issues/506)) ([48d23be](https://github.com/calandria-dev/calandria/commit/48d23bef534b200c3cae9863be1a4db3b69ede5d))
+
+
+### Dependencies
+
+* **deps:** bump Antigravity CLI to 1.3.4 ([#495](https://github.com/calandria-dev/calandria/issues/495)) ([99130fe](https://github.com/calandria-dev/calandria/commit/99130feaea6bbb429d123f2b36a7082e56fb7c4e))
+* **deps:** bump Antigravity CLI to 1.3.5 ([#496](https://github.com/calandria-dev/calandria/issues/496)) ([6a568fe](https://github.com/calandria-dev/calandria/commit/6a568feaf51fbb5c0bd0dca9bcd2fa8f66370c09))
+* **deps:** bump Antigravity CLI to 1.4.0 ([#500](https://github.com/calandria-dev/calandria/issues/500)) ([35f329a](https://github.com/calandria-dev/calandria/commit/35f329a4aa7a5157bb7c4e214c7e711822766941))
+* **deps:** bump Antigravity CLI to 1.4.2 ([#503](https://github.com/calandria-dev/calandria/issues/503)) ([311e2a7](https://github.com/calandria-dev/calandria/commit/311e2a7baeacc13e50d9d7fc18e253734b695338))
+* **deps:** bump Antigravity CLI to 1.4.3 ([#507](https://github.com/calandria-dev/calandria/issues/507)) ([a5dd3ae](https://github.com/calandria-dev/calandria/commit/a5dd3aeb0054967c32f9da0f3837a42bd4bb22b0))
+* **deps:** bump Claude Code CLI to 2.1.303 ([#505](https://github.com/calandria-dev/calandria/issues/505)) ([a1eb26b](https://github.com/calandria-dev/calandria/commit/a1eb26b1865141609a3d1f85977a54d07fff4512))
+* **deps:** bump node from `662933c` to `2989926` in the base-image group across 1 directory ([#504](https://github.com/calandria-dev/calandria/issues/504)) ([a6e6980](https://github.com/calandria-dev/calandria/commit/a6e698068550feb47dd939ee900ae3f9ce4cb033))
+
+## [0.21.1](https://github.com/calandria-dev/calandria/compare/v0.21.0...v0.21.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **mcp:** annotate external tools for client confirmations ([#482](https://github.com/calandria-dev/calandria/issues/482)) ([4e141a7](https://github.com/calandria-dev/calandria/commit/4e141a733722e72ddb896a929a45d6732946529f))
+* **security:** prevent external MCP from releasing unattended work ([#492](https://github.com/calandria-dev/calandria/issues/492)) ([ca55bcf](https://github.com/calandria-dev/calandria/commit/ca55bcf2f700b7482f41a32cf51e472912c829ef))
+
+## [0.21.0](https://github.com/calandria-dev/calandria/compare/v0.20.0...v0.21.0) (2026-10-04)
+
+
+### Features
+
+* **mcp:** serve the task tools to external agents at /api/mcp ([#473](https://github.com/calandria-dev/calandria/issues/473)) ([edf3588](https://github.com/calandria-dev/calandria/commit/edf35886fd94321a3b86df8c4a1de0de1ee81182))
+
+
+### Bug Fixes
+
+* **docker:** bump gh apt pin to 2.102.0 ([#474](https://github.com/calandria-dev/calandria/issues/474)) ([d01085f](https://github.com/calandria-dev/calandria/commit/d01085ff5a920e6954a9e91db9abaec7b841105d))
+* **gemini:** discover models from the Antigravity CLI ([#463](https://github.com/calandria-dev/calandria/issues/463)) ([c05af0e](https://github.com/calandria-dev/calandria/commit/c05af0eaeba618f4a043d2733cf6de92249f91e0))
+
 ## [0.20.0](https://github.com/calandria-dev/calandria/compare/v0.19.0...v0.20.0) (2026-09-29)
 
 

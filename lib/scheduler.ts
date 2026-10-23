@@ -250,6 +250,9 @@ export function resolveScheduleRecipe(schedule: Schedule): { recipe: ScheduleRec
   if (rb.project_id !== schedule.project_id) {
     return { error: `the runbook "${rb.name}" belongs to a different project, so this schedule cannot fire it` };
   }
+  if (rb.agent_edit_revision > rb.reviewed_agent_edit_revision) {
+    return { error: `the runbook "${rb.name}" has agent edits that need confirmation from Runbooks before a schedule can fire it` };
+  }
   return { recipe: rb };
 }
 

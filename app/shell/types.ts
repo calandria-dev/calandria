@@ -125,7 +125,7 @@ export interface TaskRow {
 /** The task field an agent tool changed: `update_task`'s, plus the base branch
  *  `set_base_branch` retargets and the project `move_task` re-parents into
  *  (whose Reverts re-run the operation, not a column write). */
-export type AgentEditField = "title" | "description" | "priority" | "status" | "tags" | "blocked_by" | "base_branch" | "project";
+export type AgentEditField = "title" | "description" | "priority" | "status" | "tags" | "blocked_by" | "base_branch" | "project" | "auto_start" | "start_at";
 
 /** One field's before/after within an edit: `before`/`after` are already the
  *  readable rendering ("(none)", "3 tasks", a title, a priority); `before_value`
@@ -828,6 +828,13 @@ export interface RunbookRow {
   priority: Priority;
   /** '' = the user wrote it; otherwise the agent id that filed it. */
   created_by: string;
+  /** Recipe version changes whenever a saved launch setting changes. */
+  recipe_revision: number;
+  /** Current agent-authored edit sequence and the sequence the user reviewed. */
+  agent_edit_revision: number;
+  reviewed_agent_edit_revision: number;
+  /** Timestamp of the newest agent edit that still needs review, or zero. */
+  agent_edited_at: number;
   /** The model provider a dispatch carries into the task it mints; null = the project's default. */
   provider_id: string | null;
   /** The model that task starts on; null = the project's default. */

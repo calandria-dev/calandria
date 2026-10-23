@@ -1,16 +1,18 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 
 const started: { taskId: string; text: string }[] = [];
+const validation = vi.hoisted(() => ({ validate: vi.fn(async () => ({ ok: true as const })) }));
 vi.mock("@/lib/runner", () => ({
   startTurn: (task: { id: string }, _p: unknown, userText: string) => {
     started.push({ taskId: task.id, text: userText });
   },
 }));
-vi.mock("@/lib/schedule/commands", () => ({ validatePrompt: async () => ({ ok: true }) }));
+vi.mock("@/lib/schedule/commands", () => ({ validatePrompt: validation.validate }));
 
 import { createProject, getTask, listTasks } from "@/lib/store";
 import { getDb } from "@/lib/db";
-import { createRunbook, getRunbook, listRunbooks, composeRunbookPrompt } from "@/lib/runbooks/store";
+import { createRunbook, getRunbook, listRunbooks, composeRunbookPrompt, listRunbookAgentEdits } from "@/lib/runbooks/store";
+import { updateRunbookForAgent } from "@/lib/runbookTools";
 import { createProvider } from "@/lib/providers/store";
 import { setAgentConnection } from "@/lib/agents/connections";
 import { makeRepo } from "./helpers";
@@ -19,6 +21,7 @@ import { GET as listRoute, POST as createRoute } from "@/app/api/projects/[id]/r
 import { PATCH as patchRoute, DELETE as deleteRoute } from "@/app/api/runbooks/[id]/route";
 import { POST as runRoute } from "@/app/api/runbooks/[id]/run/route";
 import { POST as copyRoute } from "@/app/api/runbooks/[id]/copy/route";
+import { GET as editsGet, POST as editsPost } from "@/app/api/runbooks/[id]/agent-edits/route";
 
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 const post = (body: unknown) => new Request("http://localhost/x", { method: "POST", body: JSON.stringify(body) });
@@ -31,6 +34,7 @@ async function projectWithRepo() {
 describe("runbook API", () => {
   beforeEach(() => {
     started.length = 0;
+    validation.validate.mockReset().mockResolvedValue({ ok: true });
     getDb().prepare("DELETE FROM runbooks").run();
     setAgentConnection("claude", { method: "subscription", email: null, plan: null });
   });
@@ -85,6 +89,115 @@ describe("runbook API", () => {
     expect(started[0].text).toBe(composeRunbookPrompt("/sweep", "focus on CEAP-1234"));
     expect(started[0].text).toContain("/sweep");
     expect(started[0].text).toContain("CEAP-1234");
+  });
+
+  it("audits agent recipe edits and requires a revision-bound first-run confirmation", async () => {
+    const p = await projectWithRepo();
+    const rb = createRunbook({ project_id: p.id, name: "Sweep", prompt: "/sweep" });
+    const actor = { id: "agent-task", title: "Planning", agent: "codex" };
+    const edited = updateRunbookForAgent(null, rb.id, { prompt: "/injected", permission_mode: "plan" }, actor).runbook!;
+    expect(edited.agent_edit_revision).toBe(1);
+    expect(edited.reviewed_agent_edit_revision).toBe(0);
+    expect(edited.agent_edited_at).toBeGreaterThan(0);
+
+    const history = await (await editsGet(new Request("http://localhost/x"), params(rb.id))).json();
+    expect(history.edits).toHaveLength(1);
+    expect(history.edits[0]).toMatchObject({ actor_task_id: actor.id, actor_title: actor.title, actor_agent: actor.agent });
+    expect(history.edits[0].changes.map((c: { field: string }) => c.field)).toEqual(["prompt", "permission_mode"]);
+
+    const firstAttempt = await runRoute(post({}), params(rb.id));
+    expect(firstAttempt.status).toBe(409);
+    const challenge = await firstAttempt.json();
+    expect(challenge.requires_confirmation).toBe(true);
+    expect(challenge.recipe_revision).toBe(edited.recipe_revision);
+    expect(started).toHaveLength(0);
+
+    // Acknowledging the chip is not approval to dispatch the recipe.
+    await editsPost(post({ action: "ack" }), params(rb.id));
+    expect(getRunbook(rb.id)?.reviewed_agent_edit_revision).toBe(0);
+    expect((await runRoute(post({}), params(rb.id))).status).toBe(409);
+
+    const confirmed = await runRoute(post({ confirmed_recipe_revision: challenge.recipe_revision }), params(rb.id));
+    expect(confirmed.status).toBe(201);
+    expect(started[0].text).toBe("/injected");
+    expect(getRunbook(rb.id)?.reviewed_agent_edit_revision).toBe(1);
+    expect(listRunbookAgentEdits(rb.id)[0].acknowledged_at).toBeGreaterThan(0);
+  });
+
+  it("rejects a stale confirmation and leaves a newer agent edit unreviewed", async () => {
+    const p = await projectWithRepo();
+    const rb = createRunbook({ project_id: p.id, name: "Sweep", prompt: "/first" });
+    updateRunbookForAgent(null, rb.id, { prompt: "/second" }, { id: "a", title: "A", agent: "claude" });
+    const revision = getRunbook(rb.id)!.recipe_revision;
+    updateRunbookForAgent(null, rb.id, { prompt: "/third" }, { id: "b", title: "B", agent: "codex" });
+    const res = await runRoute(post({ confirmed_recipe_revision: revision }), params(rb.id));
+    expect(res.status).toBe(409);
+    expect((await res.json()).recipe_revision).toBeGreaterThan(revision);
+    expect(started).toHaveLength(0);
+    expect(getRunbook(rb.id)?.reviewed_agent_edit_revision).toBe(0);
+  });
+
+  it("uses the confirmed snapshot across async validation and never reviews a later edit", async () => {
+    const p = await projectWithRepo();
+    const rb = createRunbook({ project_id: p.id, name: "Sweep", prompt: "/approved" });
+    updateRunbookForAgent(null, rb.id, { prompt: "/approved-agent-edit" }, { id: "a", title: "A", agent: "claude" });
+    const confirmedRevision = getRunbook(rb.id)!.recipe_revision;
+    let release!: (value: { ok: true }) => void;
+    let entered!: () => void;
+    const waiting = new Promise<void>((resolve) => { entered = resolve; });
+    validation.validate.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; entered(); }));
+
+    const dispatch = runRoute(post({ confirmed_recipe_revision: confirmedRevision }), params(rb.id));
+    await waiting;
+    updateRunbookForAgent(null, rb.id, { prompt: "/later-edit" }, { id: "b", title: "B", agent: "codex" });
+    release({ ok: true });
+    expect((await dispatch).status).toBe(201);
+    expect(started[0].text).toBe("/approved-agent-edit");
+    expect(getRunbook(rb.id)?.reviewed_agent_edit_revision).toBe(0);
+    expect(getRunbook(rb.id)?.agent_edit_revision).toBe(2);
+  });
+
+  it("human recipe edits invalidate old confirmation tokens and no-op agent edits create no audit", async () => {
+    const p = await projectWithRepo();
+    const rb = createRunbook({ project_id: p.id, name: "Sweep", prompt: "/agent" });
+    const noOp = updateRunbookForAgent(null, rb.id, { prompt: "/agent" }, { id: "a", title: "A", agent: "claude" });
+    expect(noOp.runbook?.recipe_revision).toBe(rb.recipe_revision);
+    expect(listRunbookAgentEdits(rb.id)).toHaveLength(0);
+
+    updateRunbookForAgent(null, rb.id, { prompt: "/agent-edit" }, { id: "a", title: "A", agent: "claude" });
+    const token = getRunbook(rb.id)!.recipe_revision;
+    await patchRoute(new Request("http://localhost/x", { method: "PATCH", body: JSON.stringify({ name: "Human revision" }) }), params(rb.id));
+    const stale = await runRoute(post({ confirmed_recipe_revision: token }), params(rb.id));
+    expect(stale.status).toBe(409);
+    expect((await stale.json()).recipe_revision).toBeGreaterThan(token);
+  });
+
+  it("does not consume review when a confirmed dispatch fails preflight", async () => {
+    const p = createProject({ name: `agent-rb-no-repo-${Math.random().toString(36).slice(2)}` });
+    const rb = createRunbook({ project_id: p.id, name: "Agent recipe", prompt: "/agent", created_by: "external" });
+    expect(rb.agent_edit_revision).toBe(1);
+    const res = await runRoute(post({ confirmed_recipe_revision: rb.recipe_revision }), params(rb.id));
+    expect(res.status).toBe(400);
+    expect(getRunbook(rb.id)?.reviewed_agent_edit_revision).toBe(0);
+  });
+
+  it("reverts only when the recorded after values are still live", async () => {
+    const p = await projectWithRepo();
+    const rb = createRunbook({ project_id: p.id, name: "Sweep", prompt: "/old" });
+    updateRunbookForAgent(null, rb.id, { prompt: "/new" }, { id: "a", title: "A", agent: "claude" });
+    const edits = listRunbookAgentEdits(rb.id);
+    const reverted = await editsPost(post({ action: "revert", edit_id: edits[0].id }), params(rb.id));
+    expect(reverted.status).toBe(200);
+    expect(getRunbook(rb.id)?.prompt).toBe("/old");
+    expect(getRunbook(rb.id)?.agent_edited_at).toBe(0);
+    expect(listRunbookAgentEdits(rb.id)[0].reverted_at).toBeGreaterThan(0);
+
+    updateRunbookForAgent(null, rb.id, { prompt: "/later" }, { id: "b", title: "B", agent: "codex" });
+    updateRunbookForAgent(null, rb.id, { prompt: "/latest" }, { id: "c", title: "C", agent: "claude" });
+    const newestFirst = listRunbookAgentEdits(rb.id);
+    const stale = await editsPost(post({ action: "revert", edit_id: newestFirst[1].id }), params(rb.id));
+    expect(stale.status).toBe(409);
+    expect(getRunbook(rb.id)?.prompt).toBe("/latest");
   });
 
   it("running with start=false creates the task without launching a turn", async () => {

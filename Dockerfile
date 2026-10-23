@@ -26,7 +26,7 @@
 # Node's cadence, so between rebuilds this layer holds packages Debian has
 # already fixed. The runtime stage runs `apt-get upgrade` for that reason; the
 # note at that line carries the reasoning.
-FROM node:26-bookworm-slim@sha256:cd9f682fa2885cd1056e830424764158570061c59736a1da836bc3d73df095ae AS build
+FROM node:26-bookworm-slim@sha256:298992629d69bbd5b2b03ad57094d8e4fcb3a8eeb7c4e25d29de656519568913 AS build
 WORKDIR /app
 
 # The toolchain is a fallback for node-pty, which fetches a per-ABI Linux
@@ -63,7 +63,7 @@ RUN npm prune --omit=dev && node scripts/fix-pty.js
 
 # ---- runtime stage -----------------------------------------------------------
 # Same digest as the build stage above.
-FROM node:26-bookworm-slim@sha256:cd9f682fa2885cd1056e830424764158570061c59736a1da836bc3d73df095ae
+FROM node:26-bookworm-slim@sha256:298992629d69bbd5b2b03ad57094d8e4fcb3a8eeb7c4e25d29de656519568913
 
 # git: project repos and per-task worktrees. openssh-client: git over ssh.
 # tini: PID 1, reaps the pty shells' orphans. procps: ps for debugging shells.
@@ -145,9 +145,9 @@ RUN npm install -g npm@12.0.2 && npm --version
 # desktop skip and uncached image workflows against the exact branch head. It
 # verifies that head before enabling squash auto-merge, and GitHub merges only
 # after every required check passes.
-ARG CLAUDE_CODE_VERSION=2.1.284
-ARG CODEX_VERSION=0.159.0
-ARG AGY_VERSION=1.2.14
+ARG CLAUDE_CODE_VERSION=2.1.303
+ARG CODEX_VERSION=0.162.1
+ARG AGY_VERSION=1.4.3
 
 # The `claude` CLI: the Agent SDK spawns it, and login state lives in
 # ~/.claude on the volume. Pinned location via CLAUDE_CLI_PATH; updates ship as
@@ -203,8 +203,8 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 # The binary self-updates in the background by default, which would replace
 # this pin mid-turn. AGY_CLI_DISABLE_AUTO_UPDATE below turns that off
 # image-wide, and the driver sets it on every spawn as a second guard.
-ARG AGY_SHA512_AMD64=fd771dfc74ddd07b61c8b0a6fd7a238f53a3a098a51052583a01d97ab84ee60db741ce5f041e87a9da3c1a9aabe95b053113374437df1e231773552781edaf09
-ARG AGY_SHA512_ARM64=d96a67d6952a8ec1da16c8b6515f1393ed0260658cf104d9b57b8d13c92c591322ed5e08a62894842be81888116da0f5f80def7971c913d1f462300103426954
+ARG AGY_SHA512_AMD64=9b726b86280a56e8ffa84b3b3a1c00d19972833a1f6c0b21d85c5fc6e408af6492e4c61353cad9b500bee599af264c92cfc2ead1f5048ab9525328e1e4199c40
+ARG AGY_SHA512_ARM64=a906ef290e077871b333cb6f13d4d76ccdfc03ad15f012d6b745c02fa471edc27c10bc3059b87142bf6de0bacd64328f62e608d5736655524b97e8d4b4a0882a
 RUN set -eu; \
     case "$(dpkg --print-architecture)" in \
       amd64) manifest=linux_amd64; sha="${AGY_SHA512_AMD64}" ;; \

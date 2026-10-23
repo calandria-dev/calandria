@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { composeRunbookPrompt, getRunbook } from "@/lib/runbooks/store";
+import { composeRunbookPrompt, getRunbook, markRunbookRecipeReviewed } from "@/lib/runbooks/store";
 import { createTask } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
@@ -24,14 +24,25 @@ function defaultTitle(name: string): string {
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const runbook = getRunbook(id);
-  if (!runbook) return NextResponse.json({ error: "no such runbook" }, { status: 404 });
-
-  let body: { title?: string; extra?: string; start?: boolean } = {};
+  let body: { title?: string; extra?: string; start?: boolean; confirmed_recipe_revision?: number } = {};
   try {
     body = await req.json();
   } catch {
     // An empty body is a legitimate "run it as saved"; the ⌘K path sends one.
+  }
+  // Snapshot and token validation are adjacent synchronous reads. Every field
+  // below comes from this same row, so a later edit cannot change what this
+  // confirmation launches.
+  const runbook = getRunbook(id);
+  if (!runbook) return NextResponse.json({ error: "no such runbook" }, { status: 404 });
+  const needsReview = runbook.agent_edit_revision > runbook.reviewed_agent_edit_revision;
+  if (needsReview && body.confirmed_recipe_revision !== runbook.recipe_revision) {
+    return NextResponse.json({
+      error: "This runbook contains an agent-written recipe that needs your review before its first run.",
+      requires_confirmation: true,
+      recipe_revision: runbook.recipe_revision,
+      agent_edit_revision: runbook.agent_edit_revision,
+    }, { status: 409 });
   }
   const title = typeof body.title === "string" && body.title.trim() ? body.title.trim() : defaultTitle(runbook.name);
   const prompt = composeRunbookPrompt(runbook.prompt, typeof body.extra === "string" ? body.extra : "");
@@ -56,6 +67,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       permission_mode: runbook.permission_mode,
       runbook_id: runbook.id,
     });
+    if (needsReview) markRunbookRecipeReviewed(id, runbook.recipe_revision, runbook.agent_edit_revision);
     return NextResponse.json({ task }, { status: 201 });
   }
 
@@ -83,5 +95,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // leaving it stranded in the tray with no explanation.
     return NextResponse.json({ error: result.error, task: result.task ?? null }, { status: 400 });
   }
+  if (needsReview) markRunbookRecipeReviewed(id, runbook.recipe_revision, runbook.agent_edit_revision);
   return NextResponse.json({ task: result.task }, { status: 201 });
 }

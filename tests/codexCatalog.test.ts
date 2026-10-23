@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { codexContextWindow, codexDefaultModel, codexLocalCatalog, resetCodexCatalogStateForTests } from "@/lib/agents/codex/catalog";
 import { codexCapabilities } from "@/lib/agents/codex/capabilities";
-import { DEFAULT_CODEX_MODEL, resolveCodexModel, estimateCostUsd } from "@/lib/agents/codex/pricing";
+import { DEFAULT_CODEX_MODEL, resolveCodexModel, estimateCostUsd, codexPriceRow } from "@/lib/agents/codex/pricing";
 
 // tests/setup.ts gives the run its own tmp dirs, but CODEX_HOME is this
 // module's own concern: point it at a scratch dir so a developer's real
@@ -172,7 +172,7 @@ describe("codex catalog: the default model", () => {
     // price table has never seen, and the estimate must not become NaN.
     writeCache([entry("gpt-9-nova", { priority: 1 })]);
     const usage = { input_tokens: 1_000_000, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 };
-    expect(estimateCostUsd("also-unheard-of", usage)).toBeCloseTo(10, 6); // DEFAULT_CODEX_MODEL's input rate
+    expect(estimateCostUsd("also-unheard-of", usage)).toBeCloseTo(codexPriceRow(DEFAULT_CODEX_MODEL)!.input, 6); // DEFAULT_CODEX_MODEL's input rate
   });
 
   it("skips hidden entries when ranking", () => {

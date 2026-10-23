@@ -65,6 +65,14 @@ on:
   # rather than opening a second one, so a dispatch against an already-correct
   # main is a no-op.
   workflow_dispatch:
+  # A merge GitHub performs for an auto-merge queued with GITHUB_TOKEN starts no
+  # `push` workflows. #495 and #496 landed that way with no release-please run
+  # behind them, so their bumps reached no release PR. pin-drift.yml and
+  # dependabot-automerge.yml now queue with RELEASE_PLEASE_TOKEN, and this
+  # daily pass covers a merge queued while that secret was missing. 13:41 UTC
+  # leaves the 08:11 pin check and its dispatched CI time to merge first.
+  schedule:
+    - cron: "41 13 * * *"
 
 permissions:
   contents: write
@@ -154,3 +162,80 @@ jobs:
           else
             echo "::warning::RELEASE_PLEASE_TOKEN is absent. Run gh pr update-branch ${pr} to start a fresh prebuild."
           fi
+
+  # The unattended release path, step one. When every commit since the last
+  # tag is a bot dependency bump (scripts/release-automerge-eligible.mjs), the
+  # release PR gets the `e2e` label, so its `Test` run adds the e2e, desktop and
+  # Windows lanes that no required check covers. The label is written with
+  # RELEASE_PLEASE_TOKEN because a GITHUB_TOKEN label starts no `labeled` run.
+  # release-automerge.yml queues the merge once that head is fully green.
+  #
+  # This job also withdraws a queued auto-merge whose basis is gone: a person's
+  # commit landed on main, or the head moved and its checks are not complete
+  # and green again. Every other release PR is the user's to merge
+  # (.github/CLAUDE.md).
+  release-pr-automerge:
+    needs: [release-please, release-pr-freshness]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+      statuses: read
+    env:
+      RELEASE_BRANCH: release-please--branches--main--components--calandria
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Label an eligible release PR for e2e, withdraw a stale auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PAT: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --force origin "+refs/tags/v*:refs/tags/v*"
+          pull=$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&base=main&head=${GITHUB_REPOSITORY_OWNER}:${RELEASE_BRANCH}" \
+            --jq '[.[] | select(.head.repo.full_name == env.GITHUB_REPOSITORY)] | first // empty')
+          if [ -z "$pull" ]; then
+            echo "No open release PR."
+            exit 0
+          fi
+          pr=$(printf '%s' "$pull" | jq -r .number)
+          head_sha=$(printf '%s' "$pull" | jq -r .head.sha)
+          queued=$(gh pr view "$pr" --json autoMergeRequest --jq '.autoMergeRequest != null')
+          labels=$(printf '%s' "$pull" | jq -r '[.labels[].name] | join(",")')
+
+          eligible=true
+          node scripts/release-automerge-eligible.mjs --base HEAD || eligible=false
+          ready=true
+          node scripts/release-automerge-eligible.mjs --ready "$head_sha" || ready=false
+
+          if [ "$queued" = "true" ] && { [ "$eligible" != "true" ] || [ "$ready" != "true" ]; }; then
+            if [ -z "$PAT" ]; then
+              echo "::error::release PR ${pr} has a stale auto-merge and RELEASE_PLEASE_TOKEN is absent to withdraw it"
+              exit 1
+            fi
+            GH_TOKEN="$PAT" gh pr merge "$pr" --disable-auto
+            echo "Withdrew auto-merge on release PR ${pr}: eligible=${eligible} ready=${ready}."
+          fi
+
+          if [ "$eligible" != "true" ]; then
+            echo "Release PR ${pr} carries work beyond bot dependency bumps; it is the user's to merge."
+            exit 0
+          fi
+          case ",${labels}," in
+            *,e2e,*) echo "Release PR ${pr} already carries the e2e label." ;;
+            *)
+              if [ -z "$PAT" ]; then
+                echo "::warning::RELEASE_PLEASE_TOKEN is absent, so release PR ${pr} cannot be labeled for e2e; it stays manual."
+                exit 0
+              fi
+              GH_TOKEN="$PAT" gh pr edit "$pr" --add-label e2e
+              echo "Labeled release PR ${pr} for e2e."
+              ;;
+          esac

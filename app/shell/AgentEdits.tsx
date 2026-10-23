@@ -23,6 +23,8 @@ const FIELD_LABEL: Record<AgentEditField, string> = {
   blocked_by: "Blocked by",
   base_branch: "Base branch",
   project: "Project",
+  auto_start: "Start when unblocked",
+  start_at: "Scheduled start",
 };
 
 // The chip itself is a leaf: it owns whether its own modal is open rather than

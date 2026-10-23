@@ -1,0 +1,31 @@
+[>q[c[?2026$p[?2027$p]11;?[>4m[?1049h[?25l[?5W[?2004h[>4;2m[>1u[?u[H[2J
+[6G[38;5;179m▄[38;5;208;48;5;208m▀[38;5;203;48;5;209m▀[49m▄[m
+[5G[38;5;149;48;5;113m▀[38;5;143;48;5;107m▀[38;5;173;48;5;173m▀[38;5;209;48;5;209m▀[38;5;203;48;5;167m▀▀[m
+[4G[38;5;107;48;5;113m▀[38;5;71;48;5;72m▀[38;5;72;48;5;68m▀[38;5;67;49m▀[38;5;103m▀[38;5;98;48;5;68m▀[38;5;97;48;5;62m▀[38;5;132;48;5;97m▀[m
+  [38;5;78m▄[48;5;74m▀[38;5;73m▀[m    [38;5;68;48;5;69m▀▀[49m▄[m
+ [38;5;75m▄[38;5;79;48;5;75m▀[38;5;75;49m▀[m      [38;5;69m▀[48;5;69m▀[49m▄[m
+
+ Welcome to the [38;5;69mAntigravity CLI[m. You are currently not signed in.
+
+ Select login method:
+ > 1. Google OAuth
+[4G2. Use a Google Cloud project
+
+[4G[94;1m↑/↓[90;22m Navigate · [94;1menter[90;22m Select[m[8;2HYour browser should open automatically. If not:[K
+
+ [34;4m]8;id=jk803cbf03;https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com&code_challenge=exnJwar63qlvzdlVI3MN9h0iI9U3jpFzJ9tpfdRdrvU&code_challenge_method=S256&prompt=consent&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.profile+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcclog+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fexperimentsandconfigs+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Faicode+openid&state=FfWoGniKQRwtGhIopUVAMAhttps://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com&code_challenge=exnJwar63qlvzdlVI3MN9h0iI9U3jpFzJ9tpf[m]8;;
+ [34;4m]8;id=jk803cbf03;https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com&code_challenge=exnJwar63qlvzdlVI3MN9h0iI9U3jpFzJ9tpfdRdrvU&code_challenge_method=S256&prompt=consent&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.profile+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcclog+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fexperimentsandconfigs+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Faicode+openid&state=FfWoGniKQRwtGhIopUVAMAdRdrvU&code_challenge_method=S256&prompt=consent&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform+http[m]8;;
+ [34;4m]8;id=jk803cbf03;https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com&code_challenge=exnJwar63qlvzdlVI3MN9h0iI9U3jpFzJ9tpfdRdrvU&code_challenge_method=S256&prompt=consent&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.profile+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcclog+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fexperimentsandconfigs+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Faicode+openid&state=FfWoGniKQRwtGhIopUVAMAs%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.profile+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcclog+https%3A%2F%2Fwww.googleapis.com%2Faut[m]8;;
+ [34;4m]8;id=jk803cbf03;https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com&code_challenge=exnJwar63qlvzdlVI3MN9h0iI9U3jpFzJ9tpfdRdrvU&code_challenge_method=S256&prompt=consent&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.profile+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcclog+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fexperimentsandconfigs+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Faicode+openid&state=FfWoGniKQRwtGhIopUVAMAh%2Fexperimentsandconfigs+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Faicode+openid&state=FfWoGniKQRwtGhIopUVAMA[m                                                                                        ]8;;
+[K
+ [90mCopy and paste the URL or click on the link below:[m
+ [90m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[m
+ [34;1;4m]8;id=jk803cbf03;https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com&code_challenge=exnJwar63qlvzdlVI3MN9h0iI9U3jpFzJ9tpfdRdrvU&code_challenge_method=S256&prompt=consent&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.profile+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcclog+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fexperimentsandconfigs+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Faicode+openid&state=FfWoGniKQRwtGhIopUVAMA→[22m [1mClick[22m [1mhere[22m [1mto[22m [1mauthenticate[m]8;;
+ [90m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[m
+
+ If you aren't automatically redirected, paste the authorization code below:
+
+ [37;7ma[38;5;240;27muthorization code...[m
+
+
+  [94;1mshift+up/down[90;22m Navigate[m

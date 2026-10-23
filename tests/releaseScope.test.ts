@@ -21,6 +21,13 @@
 //   .claude  - this repository's own development tooling, which is never
 //              installed into a user's project (skills/ is, and is not here).
 //
+// `changelog-sections` replaces release-please's default table, so it lists
+// every type. `build` is the one visible change from the defaults: a
+// dependency bump (`build(deps): ...` from pin-drift.yml and Dependabot) cuts
+// a patch release and is listed under "Dependencies". release-please opens a
+// release PR only for commits in a visible section, so a hidden `build` left
+// a dependency-only merge with no release at all.
+//
 // tests/desktopRelease.test.ts pins the rest of release-please-config.json.
 
 import fs from "node:fs";
@@ -30,6 +37,7 @@ import { describe, expect, it } from "vitest";
 const ROOT = path.resolve(__dirname, "..");
 
 const config = JSON.parse(fs.readFileSync(path.join(ROOT, "release-please-config.json"), "utf8")) as {
+  "changelog-sections"?: { type: string; section: string; hidden?: boolean }[];
   packages: Record<string, { "exclude-paths"?: string[] }>;
 };
 
@@ -51,5 +59,15 @@ describe("release scope", () => {
     // skills/ is installed into users' projects by scripts/install-skills.sh,
     // so a change there is a product change and stays releasable.
     expect(excluded).not.toContain("skills");
+  });
+
+  it("releases dependency bumps and keeps CI, tooling and chores hidden", () => {
+    const sections = config["changelog-sections"] ?? [];
+    const visible = sections.filter((s) => !s.hidden).map((s) => s.type).sort();
+    expect(visible).toEqual(["build", "feat", "feature", "fix", "perf", "revert"]);
+    expect(sections.find((s) => s.type === "build")?.section).toBe("Dependencies");
+    for (const type of ["ci", "chore", "docs", "refactor", "style", "test"]) {
+      expect(sections.find((s) => s.type === type)?.hidden, type).toBe(true);
+    }
   });
 });

@@ -32,6 +32,12 @@
 # `CODEX_VERSION` — is repaired in the bump job with npm's lockfile writer and
 # remains guarded by `tests/cliPins.test.ts`.
 #
+# A Codex bump also moves DEFAULT_CODEX_MODEL in lib/agents/codex/pricing.ts to
+# the new CLI's embedded default, since that constant prices every default turn
+# and tests/cliPins.test.ts holds it equal to embeddedDefault.json. When the new
+# model has no PRICES row of its own the script holds the Codex pin back and the
+# drift issue asks for the price instead.
+#
 # THE AGENT CLI PINS ARE A PULL REQUEST, NOT AN ISSUE PARAGRAPH. The AGY vendor
 # manifests and npm's exact CLI versions are sufficient to produce the change:
 # the vendor's manifest is the whole source of truth, it carries the version and
@@ -50,8 +56,9 @@
 # reasons recorded at length in dependabot.yml. Both of those are third-party
 # bots that would have to be trusted with write access to this repo and given a
 # credential that outlives any one run. The `bump` job is neither: it is forty
-# lines in this repo, it runs on the built-in `GITHUB_TOKEN`, and there is no
-# standing PAT or GitHub App behind it. `gh=` stays a notice because the apt
+# lines in this repo, and it runs on the built-in `GITHUB_TOKEN` except for the
+# one call that queues auto-merge, which uses RELEASE_PLEASE_TOKEN so the merge
+# starts release-please (see that step). `gh=` stays a notice because the apt
 # index carries no checksum to write. The Agent SDK remains an issue because it
 # changes the turn contract and needs its own behavioral review.
 #
@@ -417,7 +424,7 @@ jobs:
             npm run fix-lockfile
           fi
 
-          if git diff --quiet -- Dockerfile package.json package-lock.json lib/agents/codex/embeddedDefault.json; then
+          if git diff --quiet -- Dockerfile package.json package-lock.json lib/agents/codex/embeddedDefault.json lib/agents/codex/pricing.ts; then
             echo "::error::the bump applied nothing; the base already carries the reported pins"
             exit 1
           fi
@@ -437,7 +444,7 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Dockerfile package.json package-lock.json lib/agents/codex/embeddedDefault.json
+          git add Dockerfile package.json package-lock.json lib/agents/codex/embeddedDefault.json lib/agents/codex/pricing.ts
           {
             echo "$title"
             echo
@@ -449,7 +456,8 @@ jobs:
               echo "Claude Code: $CLAUDE_VERSION."
             fi
             if [ -n "$CODEX_VERSION" ]; then
-              echo "Codex CLI and SDK: $CODEX_VERSION."
+              echo "Codex CLI and SDK: $CODEX_VERSION, with DEFAULT_CODEX_MODEL and"
+              echo "lib/agents/codex/embeddedDefault.json moved to the CLI's embedded default."
             fi
             echo
             echo "Opened by .github/workflows/pin-drift.yml."
@@ -591,6 +599,8 @@ jobs:
               echo "The Dockerfile CLI pins were refreshed from npm's latest versions."
               if [ -n "$CODEX_VERSION" ]; then
                 echo "Codex's SDK dependency and package lock were regenerated at the same version."
+                echo "\`DEFAULT_CODEX_MODEL\` and \`lib/agents/codex/embeddedDefault.json\` follow the"
+                echo "new CLI's embedded default model, which already has a \`PRICES\` row."
               fi
               echo
             fi
@@ -684,13 +694,23 @@ jobs:
 
           echo "All expected pull_request workflow runs exist for exact head $SHA."
 
+      # Auto-merge is queued with RELEASE_PLEASE_TOKEN. The merge GitHub
+      # performs later runs as whoever enabled it, and a merge enabled with
+      # GITHUB_TOKEN pushes to main with no `push` workflow runs at all: no
+      # release-please, so the bump never reaches a release PR, and no push
+      # `Test`. #495 and #496 merged that way and neither started a run. The
+      # PAT is used for this one call; every other step keeps GITHUB_TOKEN.
       - name: Queue auto-merge after verifying the PR head
         if: (env.AGY_CHANGED == 'true' || env.NPM_CHANGED == 'true') && env.DRY_RUN != 'true'
         env:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           SHA: ${{ steps.branch.outputs.head_sha }}
+          MERGE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
         run: |
           set -euo pipefail
+          if [ -z "$MERGE_TOKEN" ]; then
+            echo "::warning::RELEASE_PLEASE_TOKEN is unset, so this merge starts no push workflows; the daily release-please run picks it up"
+          fi
           read -r state draft head queued < <(
             gh pr view "$PR_NUMBER" --json state,isDraft,headRefOid,autoMergeRequest \
               --jq '[.state, (.isDraft | tostring), .headRefOid, ((.autoMergeRequest != null) | tostring)] | @tsv'
@@ -702,8 +722,9 @@ jobs:
           if [ "$queued" = "true" ]; then
             echo "Auto-merge is already queued for PR #$PR_NUMBER."
           else
-            gh pr merge "$PR_NUMBER" --auto --squash --delete-branch \
-              --match-head-commit "$SHA"
+            GH_TOKEN="${MERGE_TOKEN:-$GH_TOKEN}" \
+              gh pr merge "$PR_NUMBER" --auto --squash --delete-branch \
+                --match-head-commit "$SHA"
           fi
 
       # Informational, and not a gate. Check runs appear on a

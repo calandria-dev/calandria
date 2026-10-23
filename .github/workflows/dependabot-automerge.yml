@@ -1,0 +1,81 @@
+# Queues squash auto-merge on Dependabot's grouped patch and minor updates, so
+# a green bump lands with no one clicking Merge. The required checks in the
+# `main-require-pr` ruleset stay the merge gate: auto-merge waits for every one
+# of them, and a red check leaves the PR open for a person.
+#
+# Eligible: a PR opened by dependabot[bot] for one of the three groups in
+# .github/dependabot.yml (`actions`, `website`, `base-image`) whose highest
+# update type is a patch or a minor. A docker digest refresh reports no semver
+# update type and counts as a patch. Everything else is left alone:
+#
+# - A major update, which can change behavior and wants a reading.
+# - A security update. Those are ungrouped, and one that touches the root
+#   package-lock.json needs `npm run fix-lockfile` committed by hand before
+#   `Windows (types + unit)` can pass (dependabot.yml has the reasoning). A push
+#   made here with GITHUB_TOKEN would start no CI, so that fix stays manual.
+#
+# The merge is queued with RELEASE_PLEASE_TOKEN, read here from the DEPENDABOT
+# secrets store (a Dependabot-triggered run sees no Actions secrets). A merge
+# queued with GITHUB_TOKEN starts no `push` workflows on main, so release-please
+# would never see the bump; release-please.yml's daily schedule is the fallback
+# when that secret is absent. Add it with
+# `gh secret set RELEASE_PLEASE_TOKEN --app dependabot`. Dependabot-triggered
+# `pull_request` runs get a read-only GITHUB_TOKEN unless the workflow asks for
+# more, hence the explicit scopes below.
+name: Dependabot auto-merge
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions: {}
+
+jobs:
+  automerge:
+    name: Queue auto-merge
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Read the update metadata
+        id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Queue squash auto-merge for an eligible update
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GROUP: ${{ steps.meta.outputs.dependency-group }}
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
+        run: |
+          set -euo pipefail
+          echo "group=${GROUP:-none} update-type=${UPDATE_TYPE:-none} ecosystem=${ECOSYSTEM:-none}"
+          case "$GROUP" in
+            actions|website|base-image) ;;
+            *)
+              echo "Not one of the grouped updates; leaving $PR_URL for a person."
+              exit 0
+              ;;
+          esac
+          case "$UPDATE_TYPE" in
+            version-update:semver-patch|version-update:semver-minor) ;;
+            "")
+              if [ "$ECOSYSTEM" != "docker" ]; then
+                echo "No semver update type on a $ECOSYSTEM update; leaving $PR_URL for a person."
+                exit 0
+              fi
+              ;;
+            *)
+              echo "A $UPDATE_TYPE update needs a reading; leaving $PR_URL for a person."
+              exit 0
+              ;;
+          esac
+          gh pr merge "$PR_URL" --auto --squash --match-head-commit "$HEAD_SHA"
+          echo "Queued squash auto-merge for $PR_URL at $HEAD_SHA."

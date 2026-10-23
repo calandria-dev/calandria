@@ -1,0 +1,174 @@
+# Retries a failed tag publish once, then files an issue.
+#
+# `Publish image` and `Publish desktop artifacts` run on the `vX.Y.Z` tag push.
+# A red one is nearly always a flake: the image gate
+# (.github/actions/require-green-test-run) refuses the tag when the push-event
+# `Test` run on the release commit failed in a push-only lane, and promotion can
+# hit a transient registry or upload error. This runs the recovery recipe from
+# .github/CLAUDE.md once, unattended:
+#
+# 1. For `Publish image`, find the push-event `Test` run on the tag commit. If
+#    it failed, rerun its failed jobs and wait for the verdict.
+# 2. Dispatch the publisher on the tag (`publish-image.yml --ref vX.Y.Z`, or
+#    `release-desktop.yml --ref vX.Y.Z -f publish=true`) and wait for it.
+# 3. If either still fails, open an issue naming every run involved.
+#
+# Only a failed `push` run reaches step 1, so the dispatched retry finishing red
+# fires this workflow again and stops at the `if:` below. One retry per tag and
+# publisher, by construction. Both publishers failing on one tag queue behind
+# the per-tag concurrency group, so the second finds `Test` already rerun.
+name: Release retry
+
+on:
+  workflow_run:
+    workflows: ["Publish image", "Publish desktop artifacts"]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: release-retry-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  retry:
+    name: Retry the tag publish once
+    if: >-
+      github.event.workflow_run.conclusion == 'failure'
+      && github.event.workflow_run.event == 'push'
+      && startsWith(github.event.workflow_run.head_branch, 'v')
+    runs-on: ubuntu-24.04
+    # Publish image takes about an hour cold, and a Test rerun with its e2e and
+    # desktop lanes about as long again.
+    timeout-minutes: 300
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.event.workflow_run.head_branch }}
+      SHA: ${{ github.event.workflow_run.head_sha }}
+      FAILED_URL: ${{ github.event.workflow_run.html_url }}
+      WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+      WORKFLOW_PATH: ${{ github.event.workflow_run.path }}
+    steps:
+      - name: Rerun a failed Test run on the tag commit
+        id: test
+        if: github.event.workflow_run.name == 'Publish image'
+        run: |
+          set -euo pipefail
+          latest() {
+            gh api "repos/$GH_REPO/actions/workflows/test.yml/runs?head_sha=$SHA&event=push&per_page=1" \
+              --jq '.workflow_runs[0] // empty | [.id, .status, (.conclusion // ""), .html_url] | @tsv'
+          }
+          IFS=$'\t' read -r id status conclusion url < <(latest) || true
+          if [ -z "${id:-}" ]; then
+            echo "::error::no push-event Test run exists for $SHA"
+            echo "outcome=absent" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          if [ "$status" = "completed" ] && [ "$conclusion" != "success" ]; then
+            echo "Test run $url concluded $conclusion; rerunning its failed jobs."
+            gh run rerun "$id" --failed
+            sleep 30
+          fi
+          for _ in $(seq 1 180); do
+            IFS=$'\t' read -r id status conclusion url < <(latest) || true
+            [ "$status" = "completed" ] && break
+            sleep 60
+          done
+          echo "Test run $url: $status $conclusion"
+          echo "outcome=${conclusion:-$status}" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch the publisher on the tag
+        id: retry
+        if: steps.test.outcome == 'skipped' || steps.test.outputs.outcome == 'success'
+        run: |
+          set -euo pipefail
+          workflow="$(basename "$WORKFLOW_PATH")"
+          since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          if [ "$workflow" = "release-desktop.yml" ]; then
+            gh workflow run "$workflow" --ref "$TAG" -f publish=true
+          else
+            gh workflow run "$workflow" --ref "$TAG"
+          fi
+          run_id=""
+          for _ in $(seq 1 24); do
+            sleep 5
+            run_id="$(gh run list --workflow "$workflow" --event workflow_dispatch \
+              --branch "$TAG" --limit 10 --json databaseId,createdAt \
+              --jq "[.[] | select(.createdAt >= \"$since\")] | .[0].databaseId // empty")"
+            [ -n "$run_id" ] && break
+          done
+          if [ -z "$run_id" ]; then
+            echo "::error::the $workflow dispatch on $TAG produced no run"
+            echo "outcome=absent" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          url="$(gh run view "$run_id" --json url --jq .url)"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Retry: $url"
+          for _ in $(seq 1 240); do
+            status="$(gh run view "$run_id" --json status --jq .status)"
+            [ "$status" = "completed" ] && break
+            sleep 60
+          done
+          conclusion="$(gh run view "$run_id" --json conclusion --jq '.conclusion // ""')"
+          echo "Retry concluded: ${conclusion:-$status}"
+          echo "outcome=${conclusion:-$status}" >> "$GITHUB_OUTPUT"
+
+      - name: Open an issue when the retry did not publish
+        if: always() && steps.retry.outputs.outcome != 'success'
+        env:
+          TEST_URL: ${{ steps.test.outputs.url }}
+          TEST_OUTCOME: ${{ steps.test.outputs.outcome }}
+          RETRY_URL: ${{ steps.retry.outputs.url }}
+          RETRY_OUTCOME: ${{ steps.retry.outputs.outcome }}
+        run: |
+          set -euo pipefail
+          gh label create release-failed \
+            --description "A tag publish failed after its automatic retry" \
+            --color b60205 >/dev/null 2>&1 || true
+          title="$TAG: $WORKFLOW_NAME failed after one automatic retry"
+          {
+            echo "\`$WORKFLOW_NAME\` failed on the \`$TAG\` tag push, and the automatic retry"
+            echo "did not publish it."
+            echo
+            echo "| Run | Result |"
+            echo "|-|-|"
+            echo "| Tag push | $FAILED_URL |"
+            if [ -n "$TEST_URL" ]; then
+              echo "| Push \`Test\` on \`$SHA\` | $TEST_URL (${TEST_OUTCOME:-unknown}) |"
+            fi
+            if [ -n "$RETRY_URL" ]; then
+              echo "| Retry dispatch | $RETRY_URL (${RETRY_OUTCOME:-unknown}) |"
+            else
+              echo "| Retry dispatch | not started |"
+            fi
+            echo
+            echo "Read the failing job before rerunning anything. A real failure needs a fix"
+            echo "and a new release commit. For a flake, follow the recipe in"
+            echo "\`.github/CLAUDE.md\` (\"A publisher refused the tag\"):"
+            echo
+            echo '```sh'
+            echo "gh run rerun <test-run-id> --failed"
+            echo "gh workflow run publish-image.yml --ref $TAG"
+            echo "gh workflow run release-desktop.yml --ref $TAG -f publish=true"
+            echo '```'
+            echo
+            echo "A desktop promotion that reports \`The release tag differs from the prebuilt"
+            echo "source\` needs the rebuild instead:"
+            echo "\`gh workflow run release-desktop.yml --ref main -f publish=true -f rebuild=true -f release_tag=$TAG\`."
+            echo
+            echo "Filed by \`.github/workflows/release-retry.yml\`."
+          } > "$RUNNER_TEMP/issue.md"
+          existing="$(gh issue list --label release-failed --state open --search "$title in:title" \
+            --json number,title --jq "[.[] | select(.title == \"$title\")] | .[0].number // empty")"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file "$RUNNER_TEMP/issue.md"
+          else
+            gh issue create --title "$title" --label release-failed --body-file "$RUNNER_TEMP/issue.md"
+          fi

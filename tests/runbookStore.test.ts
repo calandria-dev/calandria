@@ -4,7 +4,7 @@ import { createProject, createTask } from "@/lib/store";
 import { createSchedule, getSchedule } from "@/lib/schedule/store";
 import {
   createRunbook, getRunbook, listRunbooks, updateRunbook, deleteRunbook,
-  copyRunbook, lastRunOf, schedulesUsing,
+  copyRunbook, lastRunOf, schedulesUsing, updateRunbookWithAgentEdit, listRunbookAgentEdits,
 } from "@/lib/runbooks/store";
 
 const project = (name = `rb-${Math.random().toString(36).slice(2)}`) => createProject({ name }).id;
@@ -64,6 +64,18 @@ describe("runbook store", () => {
     // Editing the copy must not touch the original.
     updateRunbook(copy.id, { prompt: "changed" });
     expect(getRunbook(rb.id)!.prompt).toBe("/push-and-watch");
+  });
+
+  it("preserves pending agent review when copying a recipe", () => {
+    const rb = runbook(pid, { prompt: "/agent-edited" });
+    updateRunbookWithAgentEdit(rb.id, { prompt: "/agent-edited" }, { id: "agent-task", title: "Plan", agent: "codex" }, [
+      { field: "prompt", before: "/old", after: "/agent-edited", before_value: "/old", after_value: "/agent-edited" },
+    ]);
+    const copy = copyRunbook(rb.id, project())!;
+    expect(copy.agent_edit_revision).toBeGreaterThan(copy.reviewed_agent_edit_revision);
+    expect(copy.agent_edited_at).toBeGreaterThan(0);
+    expect(listRunbookAgentEdits(copy.id)).toHaveLength(1);
+    expect(listRunbookAgentEdits(copy.id)[0].actor_task_id).toBe("agent-task");
   });
 
   it("reports the schedules that link it", () => {

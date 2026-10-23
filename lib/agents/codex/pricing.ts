@@ -64,9 +64,12 @@ const PRICES: { prefix: string; input: number; cachedInput: number; output: numb
 // instead of guessing. What stays here is the value for an account that has
 // fetched no catalog: the top-priority entry of the fallback catalog embedded
 // in the CLI the Dockerfile's `ARG CODEX_VERSION` pins. ./embeddedDefault.json
-// records that version and model, and the Pin drift bot rewrites it on every
-// Codex bump. tests/cliPins.test.ts fails when either the pin or this constant
-// disagrees with the file.
+// records that version and model. The Pin drift bot rewrites that file and
+// this constant together on every Codex bump, and holds the bump when the new
+// model has no PRICES row of its own (scripts/check-pin-drift.mjs reads the
+// table and the constant from this file's text, so keep both literal).
+// tests/cliPins.test.ts fails when either the pin or this constant disagrees
+// with the file.
 //
 // To re-check the embedded half, offline and with no login: the binary embeds
 // that fallback catalog as readable JSON. Find `{\n  "models": [`, brace-match
@@ -74,7 +77,7 @@ const PRICES: { prefix: string; input: number; cachedInput: number; output: numb
 // binary is one the fallback has never heard of. probeCodexEmbeddedDefault()
 // in scripts/check-pin-drift.mjs does exactly this for an installed shim.
 
-export const DEFAULT_CODEX_MODEL = "gpt-6-astra";
+export const DEFAULT_CODEX_MODEL = "gpt-6.1-sol";
 
 /**
  * The model a codex turn effectively runs: the task's choice, else whatever the
@@ -84,6 +87,11 @@ export const DEFAULT_CODEX_MODEL = "gpt-6-astra";
  */
 export function resolveCodexModel(taskModel: string | null | undefined): string {
   return taskModel || codexDefaultModel(DEFAULT_CODEX_MODEL);
+}
+
+/** The PRICES row a model id bills at by first prefix match, or undefined. */
+export function codexPriceRow(model: string): { prefix: string; input: number; cachedInput: number; output: number } | undefined {
+  return PRICES.find((r) => model.startsWith(r.prefix));
 }
 
 /**
@@ -104,10 +112,7 @@ export function estimateCostUsd(
   // may name a model this table has no row for. The constant is the last resort
   // and always matches, so the assertion below holds.
   const fallbackModel = resolveCodexModel(null);
-  const p =
-    PRICES.find((r) => model.startsWith(r.prefix)) ??
-    PRICES.find((r) => fallbackModel.startsWith(r.prefix)) ??
-    PRICES.find((r) => DEFAULT_CODEX_MODEL.startsWith(r.prefix))!;
+  const p = codexPriceRow(model) ?? codexPriceRow(fallbackModel) ?? codexPriceRow(DEFAULT_CODEX_MODEL)!;
   const fresh = Math.max(0, usage.input_tokens) + Math.max(0, usage.cache_creation_tokens);
   return (fresh * p.input + Math.max(0, usage.cache_read_tokens) * p.cachedInput + usage.output_tokens * p.output) / 1_000_000;
 }
