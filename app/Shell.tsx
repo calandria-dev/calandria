@@ -28,7 +28,7 @@ import { AgentNudge, AgentAuthBanner } from "./shell/AgentConnect";
 import { WelcomeCoach, WelcomeNudge } from "./shell/Welcome";
 import { WorkCenterPill, WorkCenterSurface, newWcViewState, type WcOpen } from "./shell/WorkCenter";
 import { useWorkCenter } from "./shell/useWorkCenter";
-import { countView, isStale } from "./shell/workCenter";
+import { countView, isStale } from "./shell/workCenterModel";
 import { pushWorkCenterDestination, type WcReturn } from "./shell/navHistory";
 import { PlanUsagePill } from "./shell/PlanUsage";
 import { CommandPalette, type PaletteCommand } from "./shell/CommandPalette";

@@ -10,7 +10,7 @@ import {
   ACTION_IND, ACTION_OK, ACTION_PENDING, KINDS, OUTCOME_LABEL, ago, chipMeta, failText, groupRows, headline, inlineActionsFor,
   isStale, isStaleItem, lifecycleLabel, liveItems, partialSources, sheetActionsFor, waitingText,
   type ActionKey, type CountView, type InlineAction,
-} from "./workCenter";
+} from "./workCenterModel";
 
 // The Work Center (design release work-center-design-release/1): the persistent
 // two-count pill and the surface it opens. `pop` is the desktop and narrow-window

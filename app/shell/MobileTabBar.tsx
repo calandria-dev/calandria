@@ -1,7 +1,7 @@
 "use client";
 
 import { Icon } from "../icons";
-import type { CountView } from "./workCenter";
+import type { CountView } from "./workCenterModel";
 
 export type MobileTabId = "board" | "services" | "terminals" | "work" | "insights";
 

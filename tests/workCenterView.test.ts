@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Attention, Snapshot, Summary, WorkRow } from "@/lib/workCenter/types";
 import {
   chipMeta, countView, failText, groupRows, headline, inlineActionsFor, isStale, lifecycleLabel, liveItems, sheetActionsFor, waitingText,
-} from "@/app/shell/workCenter";
+} from "@/app/shell/workCenterModel";
 import { snoozeChoices } from "@/app/shell/WorkCenter";
 import { backoffDelay } from "@/app/shell/useWorkCenter";
 import { pushWorkCenterDestination, wcReturnOf, type HistoryLike } from "@/app/shell/navHistory";
