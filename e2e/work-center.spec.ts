@@ -104,6 +104,35 @@ test("a chip opens the exact card and Back restores the popover on the same row"
   await expect(rowOf(page, "Anchor question")).toBeFocused();
 });
 
+test("Recover on a context-limit failure focuses the notice and does not report it gone", async ({ page, request }) => {
+  const task = await createTask(request, { projectId, title: "Overflow failure", description: "e2e:fail=prompt is too long: 210000 tokens > 200000 maximum" });
+  await sendMessage(request, task.id);
+  await expect
+    .poll(async () => {
+      const snap = await snapshot(request);
+      const row = snap.tasks.find((r: { taskId: string }) => r.taskId === task.id);
+      return row?.attention.find((a: { kind: string }) => a.kind === "turn_failure")?.destination.messageId ?? null;
+    }, { timeout: 20_000, message: "the failed turn never reached the Work Center" })
+    .not.toBeNull();
+  const snap = await snapshot(request);
+  const item = snap.tasks.find((r: { taskId: string }) => r.taskId === task.id).attention.find((a: { kind: string }) => a.kind === "turn_failure");
+  expect(item.title).toBe("Context limit reached");
+
+  await gotoApp(page);
+  await pill(page).click();
+  await rowOf(page, "Overflow failure").getByRole("button", { name: /^Turn failed:/ }).click();
+  const notice = page.locator(`[data-message-id="${item.destination.messageId}"]`);
+  await expect(notice).toHaveClass(/overflow/);
+  await expect(notice).toBeFocused();
+
+  // The anchor gives up after 6s; past that window the row must not say the request is gone.
+  await page.waitForTimeout(6_500);
+  await page.goBack();
+  await expect(popover(page)).toBeVisible();
+  await expect(rowOf(page, "Overflow failure")).not.toHaveClass(/ghost/);
+  await expect(popover(page).getByText("That request is no longer there")).toHaveCount(0);
+});
+
 test("a permission request is allowed once inline and the turn resumes", async ({ page, request }) => {
   const task = await parkOn(request, "Inline permission", "e2e:permission=npm run lint");
   const snap = await snapshot(request);
