@@ -1187,5 +1187,12 @@ needs-you badge, and each row's menu opens an action sheet.
   the same number. When every open item is snoozed the count is `0`. If a source cannot be read
   while some items are snoozed, the count shows `N+` for the items that are known and visible.
 
+**Reviews:** an agent can submit its code or one Markdown document for your decision. The row shows a
+"decide review" chip and the task gets a REVIEW tab. You accept, request changes with feedback the agent
+receives as its next message, or waive a required review with a reason. Accept does not merge: land it
+from the Diff tab, after which the task can be completed. A required review blocks marking the task done,
+even while it is snoozed. Creation is off until `CALANDRIA_REVIEW_REQUESTS=1`; see
+[Review submissions](REVIEWS.md) for enabling, backup and rollback.
+
 Keyboard: ↑ and ↓ move between rows, Enter opens a row's card, → walks its chips and buttons, S opens
 Snooze, and Esc closes the menu, then the popover, and returns focus to the pill.

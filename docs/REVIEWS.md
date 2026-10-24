@@ -17,7 +17,14 @@ Set `CALANDRIA_REVIEW_REQUESTS=1` (see `.env.example`). With it unset, an agent 
 - Replaying an earlier submission by its idempotency key.
 - The required-review guards and the retention protection of review history.
 
-Keep the flag off for real work until the decision routes, the completion guards and the review screen have all shipped. A review that exists without them cannot be resolved from the UI.
+The decision routes, the completion guards and the Review tab ship in the same build as the flag, so a review opened with the flag on can be resolved from the UI. Work Center itself has no flag. With creation off you get the whole Work Center, and nothing in it depends on a review existing.
+
+### Enable it
+
+1. Back up first (see [Backup and rollback](#backup-and-rollback)). Enabling is the point after which you cannot go back to an older build.
+2. Set `CALANDRIA_REVIEW_REQUESTS=1` in the instance's environment and restart. The flag is read at boot.
+3. Open a task and ask the agent to submit its work for review, or have it call `submit_review`. The task gets a REVIEW tab and a "decide review" item in the Work Center.
+4. To disable creation again, unset the variable and restart. Existing reviews stay readable and decidable.
 
 ## What is stored
 
@@ -180,10 +187,28 @@ Schema version 10 adds the tables above and `tasks.review_content_epoch` (defaul
 
 - Review history and its pinned refs stay for as long as the owner task exists. No automatic prune ships.
 - Review tables use `RESTRICT` foreign keys and copy the owner task and session ids into their own columns, so session and message retention cannot remove them.
-- Deleting a task that owns reviews needs an explicit disposition for each review and the cleanup journal in `review_cleanup_jobs`. That deletion path ships with the decision work.
+- Deleting a task that owns reviews needs an explicit disposition for each review and the cleanup journal in `review_cleanup_jobs`. The `?review_disposition=waive_and_delete` path described under Completion safeguards implements it.
 
 ## Backup and rollback
 
 - A database backup alone cannot restore code reviews. The pinned objects live in the Git repositories. Back up each repository that has review refs together with the database, and keep the marker file.
 - Once any review exists, do not roll back to a build that predates review guards. That build would complete or delete tasks whose required review is unresolved, and the boot gate refuses a database stamped with a newer schema version.
 - Turning the flag off does not authorize a rollback. Keep the current build while the existing requests are resolved or waived, or restore a database and repository backup taken together and accept the loss of later work.
+
+### Procedure
+
+Take the backup:
+
+1. Stop the instance, or take the database backup with `npm run backup` (see [Self-hosting](SELF_HOSTING.md#backup--restore)).
+2. For each project repository that has review refs, copy the repository including its Git common directory. The pins are under `refs/calandria/reviews/` and the marker is `calandria-review-repository-id`.
+3. Record the database backup and the repository copies as one set. They are only valid together.
+
+Roll back to a build that predates reviews (only before any review exists, or accepting the loss of later work):
+
+1. Stop the instance.
+2. Restore the database backup and the repository copies from the same set. The older build refuses a database stamped with a newer schema version, so a database from after the upgrade cannot be reused.
+3. Start the older build. Review requests and everything decided since the backup are gone.
+
+Roll back to an earlier build that still has the review guards: stop, deploy that build, start. The schema stays at its current version and nothing is lost.
+
+If you cannot restore a backup, do not start an older build against the current database. Resolve or waive each required review in the Review tab first, then move forward only.

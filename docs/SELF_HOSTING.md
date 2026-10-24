@@ -322,6 +322,7 @@ A rollback costs three things:
 - **Everything since the backup is gone**, including turns that ran on the
   new version. Task branches survive in your project repos, so committed
   work outlives the rollback; the task rows describing it don't.
+- **Review pins live in your repositories.** If you use [review submissions](REVIEWS.md), back up each project repo with the database as one set; the database alone cannot restore code reviews.
 - **Worktrees are not rolled back** (they aren't in the default backup). A
   task whose row came back but whose checkout moved on gets a fresh one cut
   from its branch on the next turn.
@@ -618,6 +619,7 @@ input.
 | `CALANDRIA_SERVICE_PORT_BASE` | `4300` | Base of the deterministic per-project port block. Each project is assigned `base + slot` at creation, injected as `PORT` into its supervised services and PTY |
 | `CALANDRIA_SERVICE_LOG_LINES` | `1500` | Per-service in-memory log ring buffer (lines) kept for the Services drawer |
 | `CALANDRIA_SERVICE_HOSTS` | *(off)* | Set `1` to serve each service on a public hostname `<slug>--<appHost>` with per-service visibility (private / shared link / public). Also needs `PUBLIC_BASE_URL` plus wildcard DNS/TLS |
+| `CALANDRIA_REVIEW_REQUESTS` | *(off)* | Set `1` to let agents open review requests. Gates creation only; the Work Center, stored reviews and the completion guards are always active. See [Review submissions](REVIEWS.md) before enabling, because it limits how far you can roll back |
 | `CALANDRIA_FEATURE_SERVICES` | `1` (on) | The managed-services feature (Services drawer, supervisor, persisted registry with boot auto-restart plus orphan reaping). Set `0` to disable |
 | `CLAUDE_CLI_PATH` | `~/.local/bin/claude` | Path to the logged-in `claude` CLI (pinned since Next's server may run with a trimmed `PATH`). On Windows: `%USERPROFILE%\.local\bin\claude.exe`, then `PATH` (point at a real `.exe`, not an npm `.cmd` shim) |
 | `CALANDRIA_LOCAL_MODEL_BASE_URL` | `http://localhost:11434` | First-boot seed for one local provider row. Port `11434` creates an Ollama row, port `1234` creates an LM Studio row, and any other port creates a custom OpenAI-compatible row. Leaving the variable unset creates no row. A Docker instance reaches the host's Ollama at `http://host.docker.internal:11434`. See [Local models](AGENTS.md#local-models) |
