@@ -37,6 +37,10 @@ const PINNED = [
   "lib/reviews/read.ts", //  review read models and exact artifact reads
   "lib/reviews/submit.ts", // the submission service; task and repo locks, no runner or agent registry
   "lib/reviews/http.ts", //  review route error shaping
+  "lib/reviews/guard.ts", // the required-review eligibility guard; db and review types only
+  "lib/reviews/gate.ts", // async guard over the live checkout; review read model only
+  "lib/reviews/withdraw.ts", // agent withdrawal; task lock and db only
+  "lib/reviews/tool.ts", // agent-tool policy for submit/get/withdraw review
   "lib/workCenter/notifyReceipts.ts", // notification claim/receipt tables; db only
   "lib/workCenter/compat.ts", // /api/needs-you and project-badge adapters over the snapshot
   "lib/agents/claude/executionObserver.ts", // folds native background events into an observation; pure

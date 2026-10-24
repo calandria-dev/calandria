@@ -7,6 +7,7 @@
 // watch, and disconnects never touch the turn. Stopping is only ever
 // explicit, via lib/abort.ts (/abort route).
 
+import { bumpEpochIfReviewed } from "@/lib/reviews/guard";
 import fs from "node:fs";
 import { updateTask, addMessage, updateMessage, getMessage, recordSession, endSession, addUsage, getTask, getProject, addPendingMessage, popPendingMessage, listPendingMessages, deletePendingMessage, clearPendingMessages, getSetting, setSetting } from "@/lib/store";
 import { isSuggestTaskTool } from "@/lib/suggestionCard";
@@ -126,6 +127,9 @@ export function startTurn(
     publish(task.id, { type: "queued", msgId: pm.id, content: userText, generation: task.generation, ts: pm.created_at });
     return;
   }
+  // A new turn may change the source, so any review captured before it stops
+  // being current (lib/reviews/guard.ts). A task with no review rows is untouched.
+  bumpEpochIfReviewed(task.id);
   // Records why this turn is running for its whole life. The permission gate
   // reads this instead of guessing from open tabs, and the finally below uses
   // it to settle the schedule run. Registered here rather than inside run()

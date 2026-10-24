@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { reviewRefusal } from "@/lib/reviews/gate";
+import { ReviewError } from "@/lib/reviews/types";
 import { awaitingCountFor } from "@/lib/workCenter/compat";
 import { bumpWorkCenter } from "@/lib/workCenter/execution";
 import { getTask, getProject, updateTask, deleteTask, listMessages, getTaskUsage, getTaskContext, getTaskDeps, setTaskDeps, sameDepSet, getTag, getTaskTagIds, setTaskTags } from "@/lib/store";
@@ -184,6 +186,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   // and the mark's only way out is a status write, so clearing it alone
   // would drop the task back into the undifferentiated "In progress" pile it
   // was pulled out of (issue #28).
+  if (typeof allowed.status === "string" && allowed.status !== current.status && isTerminal(allowed.status)) {
+    // Done and cancelled never bypass an unsatisfied required review.
+    const refusal = await reviewRefusal(id);
+    if (refusal) return NextResponse.json({ error: refusal, code: "review_required" }, { status: 409 });
+  }
   if ("status" in allowed) {
     allowed.awaiting_input = 0;
     allowed.unread_run_at = 0;
@@ -231,7 +238,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     tagsChanged = before.length !== nextTagIds.length || before.some((t, i) => t !== nextTagIds![i]);
     if (tagsChanged) setTaskTags([id], nextTagIds);
   }
-  const task = updateTask(id, allowed);
+  let task: Task | undefined;
+  try {
+    task = updateTask(id, allowed);
+  } catch (e) {
+    // The store re-checks synchronously with the write, closing the race with a review operation.
+    if (e instanceof ReviewError) return NextResponse.json({ error: e.message, code: e.code }, { status: e.status });
+    throw e;
+  }
   if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
   // Announces the write so every other tab refreshes the row instead of
   // rendering a stale one until reload (the tab that made the edit already
@@ -285,8 +299,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   });
 }
 
-export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  // Explicit human disposition for required reviews: only this exact value
+  // waives them. Anything else leaves the delete refused while one is open.
+  const reviewDisposition = new URL(req.url).searchParams.get("review_disposition") === "waive_and_delete" ? "waive_and_delete" as const : undefined;
+  if (!reviewDisposition && getTask(id)) {
+    const refusal = await reviewRefusal(id);
+    if (refusal) return NextResponse.json({ error: refusal, code: "review_required" }, { status: 409 });
+  }
   // Uses the same per-task lock the merge/sync/turn-launch paths hold.
   // Those paths re-read the task and then insert rows keyed on it
   // (task_merges, messages), so a delete landing between their re-read and
@@ -303,7 +324,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
       if (project?.repo_path) await removeWorktree(project.repo_path, task.worktree_path, task.work_branch);
     }
     removeTaskUploads(id);
-    deleteTask(id);
+    deleteTask(id, { reviewDisposition });
     // Publishes after the hard delete, carrying the project id and its
     // recomputed awaiting count. The row is gone, so /api/events' usual
     // re-read-the-task enrichment would drop the event and freeze the

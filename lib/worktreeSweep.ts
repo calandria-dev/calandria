@@ -76,6 +76,7 @@ import { withTaskLock } from "@/lib/taskLock";
 import { withRepoLock } from "@/lib/repoLock";
 import { heldHandleHint } from "@/lib/paths";
 import { hasTurn } from "@/lib/abort";
+import { reviewRefusal } from "@/lib/reviews/gate";
 import { removeTaskUploads, taskUploadsDir } from "@/lib/uploads";
 
 /** One reclaimed checkout. `bytes` is what it was costing before removal: the
@@ -135,6 +136,11 @@ export async function sweepWorktrees(
       // `running`, so this is the belt to its braces.
       if (hasTurn(id)) {
         result.skipped.push({ taskId: id, reason: "a turn is currently running" });
+        return;
+      }
+      const reviewBlock = await reviewRefusal(id);
+      if (reviewBlock) {
+        result.skipped.push({ taskId: id, reason: reviewBlock });
         return;
       }
       const project = getProject(task.project_id);

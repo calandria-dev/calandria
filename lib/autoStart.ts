@@ -41,6 +41,8 @@ import type { TurnHooks } from "@/lib/agents/types";
 import { schedulePrRefresh, startPrPolling } from "@/lib/prState";
 import { deleteTaskGatewayKey } from "@/lib/gatewayKeys";
 import type { Task } from "@/lib/types";
+import { reviewBlockerSync } from "@/lib/reviews/guard";
+import { taskReviewBlocker } from "@/lib/reviews/gate";
 
 // Is this dependency still blocking? Mirrors the client's blockerTitles():
 // done AND cancelled are terminal: a cancelled blocker will never finish, so
@@ -50,7 +52,10 @@ import type { Task } from "@/lib/types";
 // disagree about what "blocked" means.
 export function blocks(depId: string): boolean {
   const dep = getTask(depId);
-  return !!dep && dep.status !== "done" && dep.status !== "cancelled";
+  if (!dep) return false;
+  if (dep.status !== "done" && dep.status !== "cancelled") return true;
+  // A terminal blocker with an unsatisfied required review still blocks.
+  return reviewBlockerSync(depId) !== null;
 }
 
 /**
@@ -169,6 +174,9 @@ export async function launchInitialTurn(taskId: string, note: string, admit: (fr
       const fresh = getTask(taskId);
       if (!fresh || fresh.started || fresh.suggested || !admit(fresh)) return;
       if (getTaskDeps(taskId).some(blocks)) return;
+      // Full revalidation of every blocker's required reviews against its
+      // checkout, so an acceptance of a since-changed revision cannot release it.
+      for (const depId of getTaskDeps(taskId)) if (await taskReviewBlocker(depId)) return;
       const userText = INITIAL_TASK_PROMPT;
       const gen = fresh.generation;
       claimedGen = gen;

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { bumpEpochIfReviewed } from "@/lib/reviews/guard";
 import { getTask, getProject, updateTask } from "@/lib/store";
 import {
   worktreeSyncStatus, fastForwardWorktree, prepareWorktreeMerge, syncCommitMessage, fetchBase, remoteBaseStatus,
@@ -151,7 +152,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // a merge lands.
     if (action === "rebase-continue") {
       const res = await continueWorktreeRebase(task.worktree_path);
-      if (res.done && status.baseTip) updateTask(id, { base_sha: status.baseTip });
+      if (res.done && status.baseTip) {
+        // Catching up to the base changes the diff a review covered.
+        bumpEpochIfReviewed(id);
+        updateTask(id, { base_sha: status.baseTip });
+      }
       if (res.done) clearBaseRewriteFlag(id);
       if (!res.ok) return NextResponse.json(res, { status: 409 });
       return NextResponse.json(
@@ -219,7 +224,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // are all in the base now, so there is nothing task-specific to show.
     if (status.canFastForward) {
       const ok = await fastForwardWorktree(task.worktree_path, baseBranch);
-      if (ok && status.baseTip) updateTask(id, { base_sha: status.baseTip });
+      if (ok && status.baseTip) {
+        // Catching up to the base changes the diff a review covered.
+        bumpEpochIfReviewed(id);
+        updateTask(id, { base_sha: status.baseTip });
+      }
       return NextResponse.json(
         { ok, fastForwarded: ok, behind: status.behind, ...(ok ? {} : { error: "fast-forward failed" }) },
         { status: ok ? 200 : 409 }
@@ -243,7 +252,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // Merge committed cleanly: base tip is now an ancestor of HEAD, so advance the
       // diff base to it. The Changes view then shows only the task's own work on top
       // of main, not all of main's intervening commits.
-      if (status.baseTip) updateTask(id, { base_sha: status.baseTip });
+      if (status.baseTip) {
+        // Catching up to the base changes the diff a review covered.
+        bumpEpochIfReviewed(id);
+        updateTask(id, { base_sha: status.baseTip });
+      }
       return NextResponse.json({ ok: true, synced: true, behind: status.behind });
     }
 

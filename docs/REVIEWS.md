@@ -57,7 +57,40 @@ A document submission accepts `.md` and `.markdown` files inside the task's work
 
 Every path segment is checked against its parent, and an unknown or mismatched id is a 404. Errors have the shape `{error:{code,message,retryable},current?}`. Messages never contain host paths.
 
-The submission service is `submitReview()` in `lib/reviews/submit.ts`. The agent tool transports and the decision routes call it and the store; they are separate tasks of the Work Center plan.
+The submission service is `submitReview()` in `lib/reviews/submit.ts`. The decision routes call it and the store; they are a separate task of the Work Center plan.
+
+## Agent tools
+
+An agent submits, reads and withdraws through three tools, mounted in process for Claude and over the stdio bridge for every other agent (`lib/reviews/tool.ts`, `app/api/internal/agent-tools/{submit,get,withdraw}-review/`). The submitter is always the calling task. The tools cannot accept, waive, merge or complete anything.
+
+| Tool | Parameters |
+|-|-|
+| `submit_review` | `requestId`, `expectedVersion`, `expectedSubmissionId`, `outputKey`, `kind`, `required`, `summary`, `requestedDecision`, `evidence`, `validation`, `idempotencyKey`, `artifact` |
+| `get_review` | `requestId?`, `limit?`, `cursor?` |
+| `withdraw_review` | `requestId`, `expectedVersion`, `idempotencyKey`, `reason` |
+
+First submission for an output key:
+
+```json
+{"requestId":null,"expectedVersion":0,"expectedSubmissionId":null,"outputKey":"implementation","kind":"code","required":true,"summary":"Adds the guard","requestedDecision":"Accept or request changes","evidence":[],"validation":[{"command":"npm test","result":"passed"}],"idempotencyKey":"impl-1","artifact":{"kind":"code"}}
+```
+
+To revise, pass the request id, its current `version` and its current submission id. A withdrawal retires the agent's ask and leaves a required condition unsatisfied.
+
+## Completion safeguards
+
+A task that owns a required review is held by one rule, `requiredReviewBlocker()` in `lib/reviews/guard.ts`: every required request must be accepted for an artifact that is still current, landed or retired, or be waived. A task with no required request is unaffected, and an optional review never blocks. A synchronous check inside `updateTask()` and the delete helpers enforces the rule at the point of the write, and an async check against the live checkout runs first on the paths that already await git.
+
+| Path | Behavior while a required review is unsatisfied |
+|-|-|
+| `updateTask()` to `done` or `cancelled` (task PATCH, `update_task`, agent-edit revert) | Refused with `review_required` (409 from routes) |
+| Dependency `blocks()`, auto-start, deferred start, first turn | A terminal blocker keeps blocking; launch revalidates each blocker against its checkout |
+| `merge`, `merge/prepare`, `merge/complete`, `pr/merge` | Refused with 409 `review_required` |
+| `reclaimTask`, `maybeAutoReclaim`, worktree sweep, retention prune | The task and its checkout are skipped |
+| `deleteTask`, `deleteProject` | Refused; `?review_disposition=waive_and_delete` waives each request in place, then deletes |
+| `moveTasks` | Refused unless the task is named in the reset set, which waives and advances the epoch |
+
+A new turn, reopening a terminal task, retargeting the base branch and catching the checkout up to the base each advance the task's content epoch, so an earlier acceptance has to be resubmitted. Review acceptance alone never starts a dependent.
 
 ## Integrity checks to know about
 

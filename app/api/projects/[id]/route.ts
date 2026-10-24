@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { reviewRefusal } from "@/lib/reviews/gate";
 import { getProject, updateProject, deleteProject, listTasks, listTags, type TaskWithUsage } from "@/lib/store";
 import { removeWorktree, taskDiffStat } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
@@ -96,11 +97,20 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   });
 }
 
-export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const project = getProject(id);
   if (!project) return NextResponse.json({ error: "not found" }, { status: 404 });
   const tasks = listTasks(id);
+  // Same disposition as a task delete: the preview names the blocked tasks and
+  // nothing is torn down until a person passes review_disposition=waive_and_delete.
+  const reviewDisposition = new URL(req.url).searchParams.get("review_disposition") === "waive_and_delete" ? "waive_and_delete" as const : undefined;
+  if (!reviewDisposition) {
+    for (const t of tasks) {
+      const refusal = await reviewRefusal(t.id);
+      if (refusal) return NextResponse.json({ error: `${t.title}: ${refusal}`, code: "review_required", taskId: t.id }, { status: 409 });
+    }
+  }
   // Stop any in-flight turns BEFORE the cascade drops their task rows. A live
   // turn keeps writing to SQLite (addMessage, updateTask); once its row is gone
   // those writes hit a FOREIGN KEY error, and the second such throw (from the
@@ -120,6 +130,6 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   // children leak (holding the project's port) and the public <slug>--<host>
   // router keeps routing to a now-deleted project until the server restarts.
   removeProjectServices(id);
-  deleteProject(id);
+  deleteProject(id, { reviewDisposition });
   return NextResponse.json({ ok: true });
 }
