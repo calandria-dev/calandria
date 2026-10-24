@@ -11,7 +11,7 @@ import { nanoid } from "nanoid";
 
 import { getDb } from "../db";
 import { taskHasPendingOperation } from "./store";
-import { LOCAL_OWNER_ACTOR, ReviewError, canonicalJson, sha256Hex, type ActionResponse, type ReviewApplicabilityState, type ReviewState } from "./types";
+import { ReviewError, canonicalJson, sha256Hex, type ActionResponse, type ReviewApplicabilityState, type ReviewState } from "./types";
 
 export interface GateRequest {
   id: string;
@@ -163,14 +163,16 @@ export type WaiveReason = "waive_and_delete" | "move_reset";
  * `waive` action per request so the history names who released the work and
  * why. Refused with `operation_pending` while any action on the task's
  * requests is still pending or indeterminate, since that effect (a merge in
- * flight, an undelivered feedback) would otherwise lose its record.
+ * flight, an undelivered feedback) would otherwise lose its record. The actor
+ * is the server-resolved person; with none and something to waive, the call refuses.
  */
-export function waiveRequired(ownerTaskId: string, reason: WaiveReason, actorId: string = LOCAL_OWNER_ACTOR): void {
+export function waiveRequired(ownerTaskId: string, reason: WaiveReason, actorId?: string | null): void {
   if (taskHasPendingOperation(ownerTaskId)) {
     throw new ReviewError("operation_pending", "a review decision on this task has not settled; resolve it before waiving");
   }
   const b = reviewBlockerSync(ownerTaskId);
   if (!b) return;
+  if (!actorId) throw new ReviewError("human_required", "a person has to give this disposition from the browser");
   const db = getDb();
   const now = Date.now();
   const run = db.transaction(() => {

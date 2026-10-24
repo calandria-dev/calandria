@@ -280,7 +280,7 @@ describe("human-only boundary", () => {
     expect(await resolveHumanActor(req())).toEqual({ id: "instance-owner" });
   });
 
-  it.each([["x-service-token", "secret"], ["authorization", "Bearer abc"], ["x-calandria-capability", "t"]])("refuses a %s request as human authority", async (h, v) => {
+  it.each([["x-service-token", "secret"], ["authorization", "Bearer abc"], ["x-calandria-capability", "t"], ["x-calandria-turn-capability", "t"]])("refuses a %s request as human authority", async (h, v) => {
     await expect(resolveHumanActor(req({ [h]: v }))).rejects.toMatchObject({ code: "human_required", status: 403 });
   });
 

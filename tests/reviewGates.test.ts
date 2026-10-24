@@ -87,6 +87,13 @@ describe("completion paths", () => {
     expect(getTask(f.taskId)!.status).toBe("in_progress");
   });
 
+  it("a snoozed task's required review still blocks completion", async () => {
+    const f = await withReview();
+    updateTask(f.taskId, { snoozed_until: Date.now() + 3_600_000 });
+    expectReviewRequired(() => updateTask(f.taskId, { status: "done" }));
+    expect(reviewBlockerSync(f.taskId)).not.toBeNull();
+  });
+
   it("does not let an optional review block completion", async () => {
     const f = await withReview(false);
     expect(updateTask(f.taskId, { status: "done" })?.status).toBe("done");
@@ -169,7 +176,7 @@ describe("delete and move paths", () => {
     expectReviewRequired(() => deleteTask(f.taskId));
     expectReviewRequired(() => deleteProject(f.project.id));
     expect(getTask(f.taskId)).toBeTruthy();
-    deleteTask(f.taskId, { reviewDisposition: "waive_and_delete" });
+    deleteTask(f.taskId, { reviewDisposition: "waive_and_delete", reviewActor: "instance-owner" });
     expect(getTask(f.taskId)).toBeUndefined();
     // History survives the row, now waived.
     expect(getDb().prepare("SELECT state FROM review_requests WHERE id = ?").get(f.requestId)).toMatchObject({ state: "waived" });
@@ -181,7 +188,7 @@ describe("delete and move paths", () => {
     const out = moveTasks([f.taskId], dest.id);
     expect(out.moved).toEqual([]);
     expect(out.skipped[0].reason).toMatch(/required review/);
-    const forced = moveTasks([f.taskId], dest.id, { resetCheckout: new Set([f.taskId]) });
+    const forced = moveTasks([f.taskId], dest.id, { resetCheckout: new Set([f.taskId]), reviewActor: "instance-owner" });
     expect(forced.moved).toHaveLength(1);
     expect(getDb().prepare("SELECT state FROM review_requests WHERE id = ?").get(f.requestId)).toMatchObject({ state: "waived" });
   });
