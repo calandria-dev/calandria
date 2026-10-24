@@ -8,6 +8,13 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.21.4](https://github.com/calandria-dev/calandria/compare/v0.21.3...v0.21.4) (2026-10-23)
+
+
+### Bug Fixes
+
+* **docker:** bump gh apt pin to 2.103.2 ([#534](https://github.com/calandria-dev/calandria/issues/534)) ([b24b866](https://github.com/calandria-dev/calandria/commit/b24b8665bfd3c51f23aef769b302f972bdc27997))
+
 ## [0.21.3](https://github.com/calandria-dev/calandria/compare/v0.21.2...v0.21.3) (2026-10-23)
 
 

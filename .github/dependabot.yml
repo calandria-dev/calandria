@@ -43,15 +43,16 @@
 #   MODERATE and below, which security updates raise a PR for but the job's
 #   --audit-level does not fail on.
 #
-#   MANUAL STEP, ONE COMMAND, on any Dependabot PR that touches the root
-#   lockfile: npm strips `"gypfile": false` from the
-#   `node_modules/better-sqlite3` entry every time it regenerates
-#   package-lock.json, so every such PR needs that field re-added before it
-#   can go green. On the PR branch, run `npm run fix-lockfile` and commit the
-#   one-line change; `npm run fix-lockfile -- --check` reports without
-#   writing. The script is `scripts/fix-lockfile-gypfile.mjs`, and its
-#   detection mirrors the test below, so a future package with the same shape
-#   is repaired by the same command.
+#   AUTOMATED by .github/workflows/dependabot-lockfile.yml: npm strips
+#   `"gypfile": false` from the `node_modules/better-sqlite3` entry every time
+#   it regenerates package-lock.json, so every Dependabot PR that touches the
+#   root lockfile needs that field re-added before it can go green. The
+#   workflow runs `scripts/fix-lockfile-gypfile.mjs` from the base branch on
+#   the PR's lockfile and commits the result to the PR branch. By hand, `npm
+#   run fix-lockfile` on the branch does the same and `npm run fix-lockfile --
+#   --check` reports without writing. The script's detection mirrors the test
+#   below, so a future package with the same shape is repaired by the same
+#   command.
 #   The `Windows (types + unit)` job runs `npm ci` before any test, and a
 #   missing field fails the install itself with `gyp ERR! find VS`, so no
 #   test-side repair and no root `postinstall` runs early enough to prevent
@@ -60,18 +61,15 @@
 #   ci` exits 0 and only Windows would have failed. Its header comment has
 #   the full mechanism.
 #
-#   NOT AUTOMATED, decided 2026-09-09. A bot that re-adds the field on a
-#   Dependabot PR has to push to that PR's branch, and the push has to re-run
-#   the check it is fixing. A push made with GITHUB_TOKEN triggers no
-#   workflow run, so `Windows (types + unit)` would sit at its old red result
-#   and a human would rerun it by hand, which is the step the automation was
-#   supposed to remove. Making the push retrigger CI needs a repo-scoped PAT
-#   held as a secret and exposed to a `pull_request_target` job that runs
-#   against a branch a bot writes. That is a standing repo-write credential
-#   on an automated code path, bought for roughly one PR per advisory (zero
-#   between the 0.11.0 release and 2026-09-09, then one), on a PR a human
-#   reviews and merges either way. The one-command script above collects the
-#   part of the value that does not need the credential.
+#   The workflow is a `pull_request_target` job that holds a repo-write
+#   credential, so it treats the PR as untrusted: it checks out the base
+#   branch, reads only package-lock.json from the PR head as data, runs
+#   nothing the PR can modify, and commits through the contents API. The push
+#   uses RELEASE_PLEASE_TOKEN from the Dependabot secrets store, because a push
+#   made with GITHUB_TOKEN triggers no workflow run and
+#   `Windows (types + unit)` would stay at its old red result. Once the job
+#   has committed, Dependabot stops rebasing that PR; `@dependabot recreate`
+#   starts over and the job fixes the new lockfile.
 #
 #   RETIRED WHEN npm SHIPS THE FIX. npm/cli#9837 tracks this exact defect and
 #   npm/cli#9859 is the fix, open and unmerged as of 2026-09-09. arborist's
@@ -163,7 +161,7 @@
 # under "Dependencies" with a patch bump; `ci` stays hidden.
 # .github/workflows/dependabot-automerge.yml queues squash auto-merge for the
 # grouped patch and minor updates below. Majors and security PRs stay with a
-# person, including every root security PR that needs `npm run fix-lockfile`.
+# person. dependabot-lockfile.yml commits `npm run fix-lockfile` on root npm PRs.
 version: 2
 updates:
   - package-ecosystem: github-actions

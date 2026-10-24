@@ -26,7 +26,10 @@ import { NewTaskModal, EditTaskModal, MoveTasksModal, TagTasksModal, ContextModa
 import { OnboardingWizard } from "./shell/OnboardingWizard";
 import { AgentNudge, AgentAuthBanner } from "./shell/AgentConnect";
 import { WelcomeCoach, WelcomeNudge } from "./shell/Welcome";
-import { NeedsYouMenu } from "./shell/NeedsYouMenu";
+import { WorkCenterPill, WorkCenterSurface, newWcViewState, type WcOpen } from "./shell/WorkCenter";
+import { useWorkCenter } from "./shell/useWorkCenter";
+import { countView, isStale } from "./shell/workCenterModel";
+import { pushWorkCenterDestination, type WcReturn } from "./shell/navHistory";
 import { PlanUsagePill } from "./shell/PlanUsage";
 import { CommandPalette, type PaletteCommand } from "./shell/CommandPalette";
 import { MobileTabBar, type MobileTabId } from "./shell/MobileTabBar";
@@ -239,14 +242,28 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
         : "light"
       : o.appearance.mode;
   const isDark = resolvedMode !== "light";
-  const [needsYouOpen, setNeedsYouOpen] = useState(false);
+  // Work Center: one snapshot reader for the pill, the popover, the phone Work
+  // tab, the tab badge and the project badges. Its view state (selected row,
+  // scroll, rows whose destination vanished) lives here so Back can restore it.
+  const wc = useWorkCenter();
+  const [wcOpen, setWcOpen] = useState(false);
+  const wcView = useRef(newWcViewState());
+  const pillRef = useRef<HTMLButtonElement>(null);
+  const wcStale = isStale({ loading: wc.loading, error: wc.error, disconnected: wc.disconnected }, wc.snap);
   // Which Settings section to land on when opened programmatically (e.g. the
   // "connect another agent" nudge deep-links to Agents). undefined = default.
   const [settingsSection, setSettingsSection] = useState<string | undefined>();
   const openSettings = (sect?: string) => { setSettingsSection(sect); o.setView("settings"); };
-  // Drop the open flag if the pill itself disappears (count reaches 0), so it
-  // doesn't re-open when a task next starts waiting.
-  useEffect(() => { if (o.needsYouTotal === 0) setNeedsYouOpen(false); }, [o.needsYouTotal]);
+  const closeWc = useCallback((restoreFocus = true) => {
+    setWcOpen(false);
+    if (restoreFocus) requestAnimationFrame(() => pillRef.current?.focus());
+  }, []);
+  // Per-project needs-you badges come from the snapshot's canonical visible totals.
+  const projectBadges = useMemo(() => {
+    const m: Record<string, { value: number | null; known: number }> = {};
+    for (const p of wc.snap?.projects ?? []) m[p.projectId] = p.summary.visibleNeedsYouTaskCount;
+    return m;
+  }, [wc.snap]);
 
   // Tab title names the selected project so parallel Calandria tabs are
   // tellable apart; bare "Calandria" (the SSR title) when none is selected.
@@ -414,7 +431,17 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
     if (isMobile && o.navEpoch > 0) setMobileTab("board");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMobile, o.navEpoch]);
+  // True while a session was opened from the phone Work tab: Back then returns
+  // to that tab (with its row selected and scroll restored) instead of the board.
+  const wcPhoneReturn = useRef(false);
+  useEffect(() => {
+    if (isMobile && !selTask && wcPhoneReturn.current) {
+      wcPhoneReturn.current = false;
+      setMobileTab("work");
+    }
+  }, [isMobile, selTask]);
   const selectMobileTab = (t: MobileTabId) => {
+    wcPhoneReturn.current = false;
     // Re-tapping the ACTIVE Board tab from inside a task pops back to the
     // board root (the project's task list), the way a native tab bar pops
     // its stack. Deselecting is enough: mobile skips the desktop
@@ -431,11 +458,58 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
     if (t === "terminals") o.setTermMounted(true);
   };
 
+  // Opening a Work Center destination: select the task's session, then scroll
+  // the exact card into view and focus it. The transcript loads over its own
+  // stream, so the card is looked up until it shows. A card that never appears
+  // is gone ("resolved under you"): the row says so and the snapshot refetches.
+  const anchorTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const anchorTo = useCallback((taskId: string, messageId: string) => {
+    if (anchorTimer.current) clearInterval(anchorTimer.current);
+    const started = Date.now();
+    anchorTimer.current = setInterval(() => {
+      const el = document.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`);
+      if (el) {
+        clearInterval(anchorTimer.current!);
+        anchorTimer.current = null;
+        el.scrollIntoView({ block: "center" });
+        el.focus({ preventScroll: true });
+      } else if (Date.now() - started > 6000) {
+        clearInterval(anchorTimer.current!);
+        anchorTimer.current = null;
+        wcView.current.resolved.add(taskId);
+        wc.refresh();
+      }
+    }, 150);
+  }, [wc]);
+  useEffect(() => () => { if (anchorTimer.current) clearInterval(anchorTimer.current); }, []);
+  const openFromWc = useCallback((t: WcOpen) => {
+    if (isMobile) {
+      wcPhoneReturn.current = true;
+    } else {
+      const ret: WcReturn = { proj: selProj, task: selTask, rowId: t.rowId, scrollTop: wcView.current.scrollTop, popoverOpen: true };
+      pushWorkCenterDestination(window.history, window.location.href, ret);
+      setWcOpen(false);
+    }
+    o.goToTask(t.projectId, t.taskId);
+    if (t.messageId && t.surface !== "transcript_end") anchorTo(t.taskId, t.messageId);
+  }, [isMobile, selProj, selTask, o, anchorTo]);
+  // Browser Back from a destination (usePrefs restored the selection): reopen the popover on the same row.
+  useEffect(() => {
+    const onBack = (e: Event) => {
+      const r = (e as CustomEvent<WcReturn>).detail;
+      wcView.current.selected = r.rowId;
+      wcView.current.scrollTop = r.scrollTop;
+      if (r.popoverOpen) setWcOpen(true);
+    };
+    window.addEventListener("calandria:wc-back", onBack);
+    return () => window.removeEventListener("calandria:wc-back", onBack);
+  }, []);
+
   const projectsColumn = (
     <ProjectsColumn
       mobile={isMobile}
       width={layout.projW} onCollapse={() => setCollapsed("proj", true)}
-      projects={o.activeProjects} deprecated={o.deprecatedProjects} agents={o.agents.agents} selId={selProj} running={o.running}
+      projects={o.activeProjects} deprecated={o.deprecatedProjects} agents={o.agents.agents} selId={selProj} running={o.running} badges={projectBadges}
       onSelect={o.selectProject} onNew={() => o.setModal("project")} onOpenAppearance={() => o.setAppearanceOpen((t) => !t)}
       onReorder={o.reorderProjects} onRestore={(id) => o.setDeprecated(id, false)}
       settingsActive={o.view === "settings"} onOpenSettings={() => openSettings()}
@@ -703,6 +777,12 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
     </div>
   );
 
+  const workColumn = (
+    <div className="col wc-col" style={{ flex: 1 }}>
+      <WorkCenterSurface kind="phone" data={wc} projects={o.projects} viewState={wcView} onOpen={openFromWc} />
+    </div>
+  );
+
   const insightsColumn = (
     <InsightsView agents={o.agents} onClose={() => o.setView("workspace")} onOpenSettings={openSettings} />
   );
@@ -762,24 +842,29 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
         <div className="tb-right">
           <UpdatePill updates={updates} isMobile={isMobile} />
           <PlanUsagePill agents={o.agents} appDefaults={o.appDefaults} />
-          {o.needsYouTotal > 0 && (
-            <div style={{ position: "relative" }}>
-              <button
-                className="needs-you-pill"
-                onClick={(e) => { e.stopPropagation(); setNeedsYouOpen((v) => !v); }}
-                title="Pick a task waiting on your input"
-              >
-                <span className="ny-dot" />
-                {o.needsYouTotal} NEED YOU
-              </button>
-              {needsYouOpen && (
-                <NeedsYouMenu
-                  onJump={(projectId, taskId) => o.goToTask(projectId, taskId)}
-                  onClose={() => setNeedsYouOpen(false)}
-                />
-              )}
-            </div>
-          )}
+          <div className="wc-anchor">
+            <WorkCenterPill tall={isMobile}
+              data={wc}
+              open={wcOpen}
+              pillRef={pillRef}
+              onClick={() => { if (isMobile) selectMobileTab("work"); else setWcOpen((v) => !v); }}
+            />
+            {wcOpen && !isMobile && (
+              <>
+                <div className="wc-scrim-all" onClick={() => closeWc()} />
+                <div className="wc-pop-wrap" data-wc-pop onClick={(e) => e.stopPropagation()}>
+                  <WorkCenterSurface
+                    kind="pop"
+                    data={wc}
+                    projects={o.projects}
+                    viewState={wcView}
+                    onOpen={openFromWc}
+                    onClose={() => closeWc()}
+                  />
+                </div>
+              </>
+            )}
+          </div>
           {isMobile && project && (
             <button
               className={`tb-icon${o.termOpen ? " on" : ""}`}
@@ -848,6 +933,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
           o.view === "settings" ? settingsColumn
             : mobileTab === "insights" ? insightsColumn
             : mobileTab === "services" ? servicesColumn
+            : mobileTab === "work" ? workColumn
             : mobileTab === "terminals" ? null /* the full-screen terminal sheet below covers this pane */
             : mobilePane === "projects" ? projectsColumn
             : mobilePane === "tasks" ? tasksColumn
@@ -911,7 +997,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
       </div>
 
       {isMobile && o.booted && !o.bootError && (
-        <MobileTabBar active={o.view === "settings" ? null : mobileTab} onSelect={selectMobileTab} services={features.services} />
+        <MobileTabBar active={o.view === "settings" ? null : mobileTab} onSelect={selectMobileTab} services={features.services} workBadge={countView(wc.snap?.summary.visibleNeedsYouTaskCount)} workStale={wcStale} />
       )}
 
       {o.modal === "task" && project && <NewTaskModal project={project} agents={o.agents} tasks={o.tasks} tags={o.tags} onClose={() => o.setModal(null)} onCreate={o.createTask} onCreateTag={o.createTag} onOpenSetup={o.rerunOnboarding} />}

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import { LS, loadPersist, selectionToPersist, type StoredSel } from "./persist";
-import { reconcileHistory, closeOneLevel, backOneLevel, type NavSel } from "./navHistory";
+import { reconcileHistory, closeOneLevel, backOneLevel, wcReturnOf, wcReturnSelection, type NavSel } from "./navHistory";
 import {
   DEFAULT_APPEARANCE, DEFAULT_SETTINGS, DEFAULT_LAYOUT, TEXT_WIDTH, MONO_FONTS, PROMPT_FONTS,
   type Appearance, type Settings, type Layout, type View, type TaskView,
@@ -143,7 +143,18 @@ export function usePrefs({ selProj, selTask, projectHome, selectionReady, urlSel
     setView(next.view);
   }, [setSelProj, setSelTask, setProjectHome]);
   useEffect(() => {
-    const onPop = () => applySel(closeOneLevel(selRef.current));
+    const onPop = (e: PopStateEvent) => {
+      // Back from a Work Center destination: restore where the person was and
+      // let the shell reopen the popover (WcReturn, navHistory.ts), instead of
+      // closing a pane level.
+      const ret = wcReturnOf(e.state);
+      if (ret) {
+        applySel(wcReturnSelection(ret));
+        window.dispatchEvent(new CustomEvent("calandria:wc-back", { detail: ret }));
+        return;
+      }
+      applySel(closeOneLevel(selRef.current));
+    };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, [applySel]);

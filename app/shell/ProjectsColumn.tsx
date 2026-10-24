@@ -18,11 +18,13 @@ function agentAuthLine(agents: AgentInfo[]): string {
   return parts.length ? parts.join(", ") : "No agent connected";
 }
 
-export function ProjectsColumn({ projects, deprecated, agents, selId, running, width, onSelect, onNew, onOpenAppearance, onReorder, onRestore, onCollapse, settingsActive, onOpenSettings, mobile }: {
+export function ProjectsColumn({ projects, deprecated, agents, selId, running, width, onSelect, onNew, onOpenAppearance, onReorder, onRestore, onCollapse, settingsActive, onOpenSettings, mobile, badges }: {
   projects: ProjectRow[]; deprecated: ProjectRow[]; agents: AgentInfo[]; selId: string | null; running: Set<string>; width: number;
   onSelect: (id: string) => void; onNew: () => void; onOpenAppearance: () => void;
   onReorder: (ids: string[]) => void; onRestore: (id: string) => void; onCollapse: () => void;
   settingsActive: boolean; onOpenSettings: () => void; mobile?: boolean;
+  /** Per-project visible needs-you counts from the Work Center snapshot; a project without an entry falls back to its list-row count. */
+  badges?: Record<string, { value: number | null; known: number }>;
 }) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
@@ -71,9 +73,12 @@ export function ProjectsColumn({ projects, deprecated, agents, selId, running, w
             >
               <div className="pic" style={{ background: p.color }}>
                 {p.name[0]}
-                {p.awaiting_count > 0 && (
-                  <span className="proj-await" title={`${p.awaiting_count} task${p.awaiting_count !== 1 ? "s" : ""} waiting on your input`}>{p.awaiting_count}</span>
-                )}
+                {(() => {
+                  const c = badges?.[p.id] ?? { value: p.awaiting_count, known: p.awaiting_count };
+                  if (c.value === null) return <span className="proj-await wc-unk" title={`${c.known} known · total unknown`}>{c.known}+</span>;
+                  if (c.value === 0) return null;
+                  return <span className="proj-await" title={`${c.value} task${c.value !== 1 ? "s" : ""} waiting on you`}>{c.value}</span>;
+                })()}
               </div>
               <div className="pmeta">
                 <div className="pname">{p.name}</div>

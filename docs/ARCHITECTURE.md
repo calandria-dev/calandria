@@ -74,8 +74,9 @@ persists across generations; only the context window resets.
 
 `GET /api/events` is one always-open `EventSource` per browser tab
 (`app/shell/useGlobalEvents.ts`), broadcasting coarse lifecycle events for every task across
-every project. This drives spinners, project badges, and the "N need you" pill without any
-task-list polling. Only the selected task also opens a transcript stream.
+every project. This drives spinners and the live task rows without any task-list polling. The
+Work Center pill, list and project badges read the `work_center_changed` event and refetch
+`GET /api/work-center`. Only the selected task also opens a transcript stream.
 
 Current event types: `turn_started`, `awaiting_input`, `ask_answered`, `suggested`,
 `turn_end`, `task_updated`, `task_edited`, `turn_idle`, `background`, `agent_auth`,
