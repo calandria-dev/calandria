@@ -8,6 +8,25 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.22.0](https://github.com/calandria-dev/calandria/compare/v0.21.4...v0.22.0) (2026-10-24)
+
+
+### Features
+
+* **transcript:** render mermaid diagrams in chat messages ([#545](https://github.com/calandria-dev/calandria/issues/545)) ([b9212f5](https://github.com/calandria-dev/calandria/commit/b9212f575841c9b2281dbabbdbfc2bedb5192d54))
+
+
+### Bug Fixes
+
+* **security:** bump body-parser to 2.4.0 for GHSA-27r3-jxmh-p828 ([#541](https://github.com/calandria-dev/calandria/issues/541)) ([29c5921](https://github.com/calandria-dev/calandria/commit/29c59214e3b0d525eb07c0c2a1d64b4f11f44536))
+
+
+### Dependencies
+
+* **deps-dev:** bump electron from 44.5.0 to 44.9.1 in /desktop ([#539](https://github.com/calandria-dev/calandria/issues/539)) ([5a57dac](https://github.com/calandria-dev/calandria/commit/5a57dace3436b24271411c2d3a169b104e4ba7ab))
+* **deps-dev:** bump fast-uri from 3.1.8 to 3.1.9 in /desktop ([#537](https://github.com/calandria-dev/calandria/issues/537)) ([11444ea](https://github.com/calandria-dev/calandria/commit/11444eaba93812dd623fdcb065a960161ca337a3))
+* **deps-dev:** bump undici from 6.29.0 to 6.29.1 in /desktop ([#543](https://github.com/calandria-dev/calandria/issues/543)) ([d2267fa](https://github.com/calandria-dev/calandria/commit/d2267fa4513fbd473c26fe1096f29b919dfb60fe))
+
 ## [0.21.4](https://github.com/calandria-dev/calandria/compare/v0.21.3...v0.21.4) (2026-10-23)
 
 
