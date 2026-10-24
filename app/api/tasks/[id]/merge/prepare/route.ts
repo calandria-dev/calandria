@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { reviewRefusal } from "@/lib/reviews/gate";
 import { getTask, getProject, updateTask } from "@/lib/store";
 import { prepareWorktreeMerge, completeWorktreeMerge, taskCommitMessage } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
@@ -28,6 +29,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "this task has no isolated branch to merge" }, { status: 400 });
     const project = getProject(task.project_id);
     if (!project) return NextResponse.json({ error: "no project" }, { status: 400 });
+    // Required reviews must be accepted for the exact artifact before it lands.
+    const reviewRefusal409 = await reviewRefusal(id);
+    if (reviewRefusal409) return NextResponse.json({ error: reviewRefusal409, code: "review_required" }, { status: 409 });
 
     const message = taskCommitMessage(task);
     const baseBranch = resolveBaseBranch(task, project);

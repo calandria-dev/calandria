@@ -10,6 +10,7 @@ import { getProviderRow } from "./providers/rows";
 // the note in that file).
 import { modelContextWindow } from "./agents/capabilities";
 import { SERVICE_PORT_BASE } from "./config";
+import { assertReviewsSatisfiedSync, bumpEpochIfReviewed, reviewBlockerSync, isTerminalStatus, projectReviewBlockers, waiveRequired } from "./reviews/guard";
 import type { Project, Task, Tag, Message, PendingMessage, TaskComment, TaskDocComment, TaskDocDraft, Summary, Session, Priority, Status, MsgRole, LedgerUsage, UsageTotals, PermissionRule, PermissionMatchKind, AgentEditChange, TaskAgentEdit, SettingsSnapshot, IssueReport, ToolData } from "./types";
 import { isLandingMode, type LandingMode } from "./types";
 export { addInternalUsage, type InternalJob } from "./internalUsage";
@@ -274,7 +275,12 @@ export function reorderProjects(ids: string[]) {
   db.transaction((list: string[]) => list.forEach((id, i) => stmt.run(i, id)))(ids);
 }
 
-export function deleteProject(id: string) {
+export function deleteProject(id: string, opts: { reviewDisposition?: "waive_and_delete" } = {}) {
+  // Deleting a project is deleting each of its tasks: same guard, same disposition.
+  for (const { taskId } of projectReviewBlockers(id)) {
+    if (opts.reviewDisposition === "waive_and_delete") waiveRequired(taskId);
+    else assertReviewsSatisfiedSync(taskId);
+  }
   // Cascades to the project's tasks, messages and summaries (FK ON DELETE CASCADE).
   getDb().prepare("DELETE FROM projects WHERE id = ?").run(id);
 }
@@ -815,6 +821,10 @@ export function createTask(input: {
 // way, because a worktree an agent is writing into must not be deleted.
 export function moveTaskBlockedReason(task: Task, opts: { resetCheckout?: boolean } = {}): string | null {
   if (task.running === 1) return "a task with a running turn can't be moved";
+  // A move changes which repository the work belongs to, so it is refused while a
+  // required review is unsatisfied unless the caller named this task in
+  // resetCheckout, the explicit disposition (moveTasks then waives and bumps the epoch).
+  if (!opts.resetCheckout && reviewBlockerSync(task.id)) return "a task with an unsatisfied required review can't be moved";
   if (opts.resetCheckout) return null;
   if (task.started === 1 || task.worktree_path || task.work_branch || task.base_sha)
     return "a started task can't be moved. Its git worktree belongs to the current project's repo";
@@ -1000,6 +1010,13 @@ export function moveTasks(
   const now = Date.now();
 
   db.transaction(() => {
+    // The explicit disposition for a source-changing move: waive what is open
+    // (history kept) and invalidate any earlier acceptance.
+    for (const t of movers) {
+      if (!opts.resetCheckout?.has(t.id)) continue;
+      waiveRequired(t.id);
+      bumpEpochIfReviewed(t.id);
+    }
     const unlink = db.prepare("DELETE FROM task_dependencies WHERE task_id = ? AND depends_on_id = ?");
     for (const e of dropped) unlink.run(e.task_id, e.depends_on_id);
     // Re-key the carried tags first, so nothing in between reads a member in
@@ -1171,6 +1188,14 @@ export function moveTask(taskId: string, projectId: string): TaskMove {
 export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   const cur = getTask(id);
   if (!cur) return undefined;
+  // Required-review guard (lib/reviews/guard.ts): every terminal transition
+  // funnels through here, so a caller cannot complete or cancel a task past an
+  // unsatisfied required review. A task with no review rows pays one indexed read.
+  if (patch.status && patch.status !== cur.status && isTerminalStatus(patch.status)) assertReviewsSatisfiedSync(id);
+  // Reopening is a source-changing event: an earlier acceptance stops being current.
+  if (patch.status && isTerminalStatus(cur.status) && !isTerminalStatus(patch.status)) bumpEpochIfReviewed(id);
+  // So is retargeting the base: the diff an acceptance covered no longer exists.
+  if (patch.base_branch !== undefined && patch.base_branch !== (cur.base_branch ?? "")) bumpEpochIfReviewed(id);
   const n = { ...cur, ...patch, updated_at: Date.now() };
   getDb()
     .prepare(
@@ -1307,7 +1332,14 @@ export function openAutoReclaimPrTaskCount(): number {
   return row.n;
 }
 
-export function deleteTask(id: string) {
+/**
+ * Hard delete. A task holding an unsatisfied required review is refused unless
+ * the caller passes the explicit human disposition `waive_and_delete`, which
+ * waives each request in place before the row goes.
+ */
+export function deleteTask(id: string, opts: { reviewDisposition?: "waive_and_delete" } = {}) {
+  if (opts.reviewDisposition === "waive_and_delete") waiveRequired(id);
+  else assertReviewsSatisfiedSync(id);
   getDb().prepare("DELETE FROM tasks WHERE id = ?").run(id);
 }
 

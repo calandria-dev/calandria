@@ -125,6 +125,7 @@ describe("calandria-mcp stdio bridge", () => {
         "change_environment_setting",
         "create_runbook",
         "expose_service",
+        "get_review",
         "get_task",
         "list_environment_settings",
         "list_projects",
@@ -135,10 +136,12 @@ describe("calandria-mcp stdio bridge", () => {
         "move_task",
         "report_base_rewrite",
         "set_base_branch",
+        "submit_review",
         "suggest_task",
         "update_runbook",
         "update_tag",
         "update_task",
+        "withdraw_review",
         "withdraw_suggestion",
       ]);
       // No delete_runbook: delete is hard delete with no undo, so retiring a
@@ -199,6 +202,7 @@ describe("calandria-mcp stdio bridge", () => {
         "change_environment_setting",
         "create_runbook",
         "expose_service",
+        "get_review",
         "get_task",
         "list_environment_settings",
         "list_projects",
@@ -209,10 +213,12 @@ describe("calandria-mcp stdio bridge", () => {
         "move_task",
         "report_base_rewrite",
         "set_base_branch",
+        "submit_review",
         "suggest_task",
         "update_runbook",
         "update_tag",
         "update_task",
+        "withdraw_review",
         "withdraw_suggestion",
       ]);
     } finally {

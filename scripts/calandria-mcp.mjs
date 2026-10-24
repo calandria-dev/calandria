@@ -37,7 +37,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_PROVIDERS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, REPORT_BASE_REWRITE, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK, REPORT_ISSUE, LIST_ENVIRONMENT_SETTINGS, CHANGE_ENVIRONMENT_SETTING } from "../lib/agentToolDefs.mjs";
+import { SUGGEST_TASK, EXPOSE_SERVICE, ASK_USER, LIST_PROJECTS, LIST_PROVIDERS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, REPORT_BASE_REWRITE, CREATE_PR, WITHDRAW_SUGGESTION, SUBMIT_REVIEW, GET_REVIEW, WITHDRAW_REVIEW, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK, REPORT_ISSUE, LIST_ENVIRONMENT_SETTINGS, CHANGE_ENVIRONMENT_SETTING } from "../lib/agentToolDefs.mjs";
 import { guardToolHandler, watchToolCancellation, DEFAULT_AGENT_TOOL_TIMEOUT_MS } from "../lib/agentToolGuard.mjs";
 
 const TASK_ID = process.env.CALANDRIA_TASK_ID || "";
@@ -366,6 +366,66 @@ server.registerTool(
     // no policy here either. The endpoint decides whether that target is an
     // inert tray suggestion, against CALANDRIA_TASK_ID as the trusted caller identity.
     const data = await callInternal("withdraw-suggestion", { task, reason });
+    return { content: [{ type: "text", text: data.text }] };
+  }
+);
+
+server.registerTool(
+  SUBMIT_REVIEW.name,
+  {
+    description: SUBMIT_REVIEW.description,
+    inputSchema: {
+          requestId: z.string().nullable().describe(SUBMIT_REVIEW.params.requestId),
+          expectedVersion: z.number().int().describe(SUBMIT_REVIEW.params.expectedVersion),
+          expectedSubmissionId: z.string().nullable().describe(SUBMIT_REVIEW.params.expectedSubmissionId),
+          outputKey: z.string().describe(SUBMIT_REVIEW.params.outputKey),
+          kind: z.enum(["code", "document"]).describe(SUBMIT_REVIEW.params.kind),
+          required: z.boolean().describe(SUBMIT_REVIEW.params.required),
+          summary: z.string().describe(SUBMIT_REVIEW.params.summary),
+          requestedDecision: z.string().describe(SUBMIT_REVIEW.params.requestedDecision),
+          evidence: z.array(z.object({ url: z.string(), label: z.string() })).describe(SUBMIT_REVIEW.params.evidence),
+          validation: z.array(z.object({ command: z.string(), result: z.string() })).describe(SUBMIT_REVIEW.params.validation),
+          idempotencyKey: z.string().describe(SUBMIT_REVIEW.params.idempotencyKey),
+          artifact: z.union([z.object({ kind: z.literal("code") }), z.object({ kind: z.literal("document"), path: z.string() })]).describe(SUBMIT_REVIEW.params.artifact),
+        },
+  },
+  async (args) => {
+    // The submitter is CALANDRIA_TASK_ID, injected by the driver; the endpoint
+    // derives session, generation, agent and model from that task row.
+    const data = await callInternal("submit-review", args);
+    return { content: [{ type: "text", text: data.text }] };
+  }
+);
+
+server.registerTool(
+  GET_REVIEW.name,
+  {
+    description: GET_REVIEW.description,
+    inputSchema: {
+      requestId: z.string().optional().describe(GET_REVIEW.params.requestId),
+      limit: z.number().int().optional().describe(GET_REVIEW.params.limit),
+      cursor: z.string().optional().describe(GET_REVIEW.params.cursor),
+    },
+  },
+  async (args) => {
+    const data = await callInternal("get-review", args);
+    return { content: [{ type: "text", text: data.text }] };
+  }
+);
+
+server.registerTool(
+  WITHDRAW_REVIEW.name,
+  {
+    description: WITHDRAW_REVIEW.description,
+    inputSchema: {
+      requestId: z.string().describe(WITHDRAW_REVIEW.params.requestId),
+      expectedVersion: z.number().int().describe(WITHDRAW_REVIEW.params.expectedVersion),
+      idempotencyKey: z.string().describe(WITHDRAW_REVIEW.params.idempotencyKey),
+      reason: z.string().describe(WITHDRAW_REVIEW.params.reason),
+    },
+  },
+  async (args) => {
+    const data = await callInternal("withdraw-review", args);
     return { content: [{ type: "text", text: data.text }] };
   }
 );

@@ -48,7 +48,8 @@ import {
   listEnvironmentSettingsForAgent,
   changeEnvironmentSettingForAgent,
 } from "../../agentTools";
-import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_PROVIDERS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, REPORT_BASE_REWRITE, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK, REPORT_ISSUE, LIST_ENVIRONMENT_SETTINGS, CHANGE_ENVIRONMENT_SETTING } from "../../agentToolDefs.mjs";
+import { submitReviewForAgent, getReviewForAgent, withdrawReviewForAgent } from "../../reviews/tool";
+import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_PROVIDERS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, REPORT_BASE_REWRITE, CREATE_PR, WITHDRAW_SUGGESTION, SUBMIT_REVIEW, GET_REVIEW, WITHDRAW_REVIEW, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK, REPORT_ISSUE, LIST_ENVIRONMENT_SETTINGS, CHANGE_ENVIRONMENT_SETTING } from "../../agentToolDefs.mjs";
 import type { ProposalInput } from "../../advanced-env/proposals";
 import type { EnvScope } from "../../advanced-env/types";
 import { createPrForAgent } from "../../prTools";
@@ -539,6 +540,58 @@ function calandriaServer(
           // checkout can only be destroyed with the user's per-task answer,
           // which they give from the board.
           const { ok, text } = await moveTasksForAgent(task, args.tasks, args.project);
+          return { content: [{ type: "text", text }], ...(ok ? {} : { isError: true }) };
+        }
+      ),
+      // Review tools: the closed-over `task` is the submitter (the server's word);
+      // the review service derives session, generation, agent and model from its
+      // row. None can accept, waive, merge or complete anything.
+      tool(
+        SUBMIT_REVIEW.name,
+        SUBMIT_REVIEW.description,
+        {
+          requestId: z.string().nullable().describe(SUBMIT_REVIEW.params.requestId),
+          expectedVersion: z.number().int().describe(SUBMIT_REVIEW.params.expectedVersion),
+          expectedSubmissionId: z.string().nullable().describe(SUBMIT_REVIEW.params.expectedSubmissionId),
+          outputKey: z.string().describe(SUBMIT_REVIEW.params.outputKey),
+          kind: z.enum(["code", "document"]).describe(SUBMIT_REVIEW.params.kind),
+          required: z.boolean().describe(SUBMIT_REVIEW.params.required),
+          summary: z.string().describe(SUBMIT_REVIEW.params.summary),
+          requestedDecision: z.string().describe(SUBMIT_REVIEW.params.requestedDecision),
+          evidence: z.array(z.object({ url: z.string(), label: z.string() })).describe(SUBMIT_REVIEW.params.evidence),
+          validation: z.array(z.object({ command: z.string(), result: z.string() })).describe(SUBMIT_REVIEW.params.validation),
+          idempotencyKey: z.string().describe(SUBMIT_REVIEW.params.idempotencyKey),
+          artifact: z.union([z.object({ kind: z.literal("code") }), z.object({ kind: z.literal("document"), path: z.string() })]).describe(SUBMIT_REVIEW.params.artifact),
+        },
+        async (args: Record<string, unknown>) => {
+          const { ok, text } = await submitReviewForAgent(task.id, args);
+          return { content: [{ type: "text", text }], ...(ok ? {} : { isError: true }) };
+        }
+      ),
+      tool(
+        GET_REVIEW.name,
+        GET_REVIEW.description,
+        {
+          requestId: z.string().optional().describe(GET_REVIEW.params.requestId),
+          limit: z.number().int().optional().describe(GET_REVIEW.params.limit),
+          cursor: z.string().optional().describe(GET_REVIEW.params.cursor),
+        },
+        async (args: { requestId?: string; limit?: number; cursor?: string }) => {
+          const { ok, text } = await getReviewForAgent(task.id, args);
+          return { content: [{ type: "text", text }], ...(ok ? {} : { isError: true }) };
+        }
+      ),
+      tool(
+        WITHDRAW_REVIEW.name,
+        WITHDRAW_REVIEW.description,
+        {
+          requestId: z.string().describe(WITHDRAW_REVIEW.params.requestId),
+          expectedVersion: z.number().int().describe(WITHDRAW_REVIEW.params.expectedVersion),
+          idempotencyKey: z.string().describe(WITHDRAW_REVIEW.params.idempotencyKey),
+          reason: z.string().describe(WITHDRAW_REVIEW.params.reason),
+        },
+        async (args: { requestId: string; expectedVersion: number; idempotencyKey: string; reason: string }) => {
+          const { ok, text } = await withdrawReviewForAgent(task.id, args);
           return { content: [{ type: "text", text }], ...(ok ? {} : { isError: true }) };
         }
       ),

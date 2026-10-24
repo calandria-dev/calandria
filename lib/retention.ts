@@ -68,6 +68,17 @@ const FINISHED_WITH = `status IN (${TERMINAL_STATUSES})
     AND id NOT IN (
       SELECT task_id FROM schedule_runs
        WHERE task_id IS NOT NULL AND status IN ('claimed','running')
+    )
+    AND id NOT IN (
+      SELECT r.owner_task_id FROM review_requests r
+        LEFT JOIN review_submissions s ON s.id = r.current_submission_id
+       WHERE r.required = 1
+         AND (
+           EXISTS (SELECT 1 FROM review_actions a WHERE a.request_id = r.id AND a.state IN ('pending','indeterminate'))
+           OR (r.state != 'waived'
+               AND NOT (r.state = 'accepted'
+                        AND s.content_epoch = (SELECT t.review_content_epoch FROM tasks t WHERE t.id = r.owner_task_id)))
+         )
     )`;
 
 /** Per-table row counts a sweep removed, for the log line and the tests. */

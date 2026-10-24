@@ -59,6 +59,7 @@ import { refNameSafe } from "./git";
 // The done gate: whether a task's checkout still holds the only copy of its
 // work. SDK-free and pinned that way, like this module.
 import { strandedWorkReason } from "./strandedWork";
+import { reviewRefusal } from "./reviews/gate";
 import { withTaskLock } from "./taskLock";
 // The re-parenting operation itself, shared with POST /api/tasks/[id]/move and
 // POST /api/tasks/move. SDK-free and pinned that way, like this module.
@@ -1202,6 +1203,10 @@ export async function updateTaskForAgent(
       return fail(
         `Could not update ${what}: ${stranded}. The user can still mark it done from the board. Nothing was changed.`
       );
+    // A required review is only satisfied by a person; submitting one never
+    // completes the task, and the agent has no way to waive it.
+    const blocked = await reviewRefusal(cur.id);
+    if (blocked) return fail(`Could not update ${what}: ${blocked} Nothing was changed.`);
   }
 
   // The done check awaits git, so re-read before any writes. An external caller
