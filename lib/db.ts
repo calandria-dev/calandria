@@ -611,6 +611,116 @@ export function init(db: Database.Database) {
       last_error      TEXT NOT NULL DEFAULT ''
     );
 
+    -- Work Center review history (contract work-center/1, lib/reviews/). The
+    -- review-owned tables use RESTRICT foreign keys and copy the owner task and
+    -- session identity into TEXT columns, so ordinary task/session retention can
+    -- never remove review history. requests.task_id is the live link only and goes
+    -- NULL when the task row is deleted. Submissions, artifacts and actions are
+    -- immutable once written; supersession is current_submission_id plus revision
+    -- order.
+    CREATE TABLE IF NOT EXISTS review_repositories (
+      id         TEXT PRIMARY KEY,
+      common_dir TEXT NOT NULL UNIQUE,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS review_artifacts (
+      id             TEXT PRIMARY KEY,
+      kind           TEXT NOT NULL CHECK(kind IN ('code','document')),
+      manifest_json  TEXT NOT NULL,
+      manifest_sha256 TEXT NOT NULL,
+      document_bytes BLOB,
+      created_at     INTEGER NOT NULL,
+      CHECK((kind = 'document' AND document_bytes IS NOT NULL) OR (kind = 'code' AND document_bytes IS NULL))
+    );
+    CREATE TABLE IF NOT EXISTS review_requests (
+      id                    TEXT PRIMARY KEY,
+      task_id               TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+      owner_task_id         TEXT NOT NULL,
+      owner_session_id      TEXT NOT NULL,
+      generation            INTEGER NOT NULL,
+      submitter_agent       TEXT NOT NULL,
+      kind                  TEXT NOT NULL CHECK(kind IN ('code','document')),
+      output_key            TEXT NOT NULL CHECK(length(output_key) BETWEEN 1 AND 200),
+      required              INTEGER NOT NULL CHECK(required IN (0,1)),
+      current_submission_id TEXT REFERENCES review_submissions(id) DEFERRABLE INITIALLY DEFERRED,
+      state                 TEXT NOT NULL CHECK(state IN ('pending','changes_requested','accepted','withdrawn','waived')),
+      version               INTEGER NOT NULL CHECK(version >= 1),
+      created_at            INTEGER NOT NULL,
+      updated_at            INTEGER NOT NULL,
+      UNIQUE (owner_task_id, output_key)
+    );
+    CREATE TABLE IF NOT EXISTS review_submissions (
+      id                   TEXT PRIMARY KEY,
+      request_id           TEXT NOT NULL REFERENCES review_requests(id) ON DELETE RESTRICT,
+      revision             INTEGER NOT NULL CHECK(revision >= 1),
+      submitter_session_id TEXT NOT NULL,
+      submitter_generation INTEGER NOT NULL,
+      submitter_agent      TEXT NOT NULL,
+      submitter_model      TEXT,
+      summary              TEXT NOT NULL,
+      requested_decision   TEXT NOT NULL,
+      evidence_json        TEXT NOT NULL,
+      validation_json      TEXT NOT NULL,
+      artifact_id          TEXT NOT NULL UNIQUE REFERENCES review_artifacts(id) ON DELETE RESTRICT,
+      content_epoch        INTEGER NOT NULL,
+      idempotency_key      TEXT NOT NULL,
+      payload_sha256       TEXT NOT NULL,
+      receipt_http_status  INTEGER NOT NULL,
+      receipt_json         TEXT NOT NULL,
+      created_at           INTEGER NOT NULL,
+      UNIQUE (request_id, revision),
+      UNIQUE (request_id, idempotency_key)
+    );
+    CREATE TABLE IF NOT EXISTS review_actions (
+      id                  TEXT PRIMARY KEY,
+      request_id          TEXT NOT NULL REFERENCES review_requests(id) ON DELETE RESTRICT,
+      submission_id       TEXT NOT NULL REFERENCES review_submissions(id) ON DELETE RESTRICT,
+      expected_version    INTEGER NOT NULL,
+      action              TEXT NOT NULL CHECK(action IN ('accept','request_changes','withdraw','waive','merge','retry_feedback')),
+      actor_kind          TEXT NOT NULL CHECK(actor_kind IN ('human','agent')),
+      actor_id            TEXT NOT NULL,
+      reason              TEXT,
+      idempotency_key     TEXT NOT NULL,
+      payload_sha256      TEXT NOT NULL,
+      state               TEXT NOT NULL CHECK(state IN ('pending','succeeded','failed','indeterminate')),
+      decision_applied    INTEGER NOT NULL CHECK(decision_applied IN (0,1)),
+      error_code          TEXT,
+      operation_json      TEXT,
+      receipt_http_status INTEGER NOT NULL,
+      receipt_json        TEXT NOT NULL,
+      created_at          INTEGER NOT NULL,
+      updated_at          INTEGER NOT NULL,
+      UNIQUE (request_id, idempotency_key)
+    );
+    CREATE TABLE IF NOT EXISTS review_applicability_receipts (
+      id            TEXT PRIMARY KEY,
+      submission_id TEXT NOT NULL REFERENCES review_submissions(id) ON DELETE RESTRICT,
+      owner_task_id TEXT NOT NULL,
+      content_epoch INTEGER NOT NULL,
+      kind          TEXT NOT NULL CHECK(kind IN ('landed','retired')),
+      evidence_json TEXT NOT NULL,
+      created_at    INTEGER NOT NULL,
+      UNIQUE (submission_id, content_epoch, kind)
+    );
+    -- Deliberately no foreign keys: a cleanup journal must outlive the task and
+    -- review rows it deletes.
+    CREATE TABLE IF NOT EXISTS review_cleanup_jobs (
+      id                  TEXT PRIMARY KEY,
+      owner_task_ids_json TEXT NOT NULL,
+      disposition_json    TEXT NOT NULL,
+      expected_refs_json  TEXT NOT NULL,
+      progress_json       TEXT NOT NULL,
+      phase               TEXT NOT NULL CHECK(phase IN ('prepared','pins_staged','database_committed','succeeded')),
+      error_code          TEXT,
+      created_at          INTEGER NOT NULL,
+      updated_at          INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_review_requests_task ON review_requests(task_id, required, state);
+    CREATE INDEX IF NOT EXISTS idx_review_requests_updated ON review_requests(updated_at, id);
+    CREATE INDEX IF NOT EXISTS idx_review_submissions_request ON review_submissions(request_id, revision DESC);
+    CREATE INDEX IF NOT EXISTS idx_review_actions_state ON review_actions(state, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_review_actions_submission ON review_actions(submission_id, created_at);
+
     -- Work Center notification dedupe (contract work-center/1, lib/workCenter/
     -- notifyReceipts.ts). One active high-water row per (instance, source,
     -- revision, channel, recipient) records that the source's initial
@@ -1199,6 +1309,10 @@ export function migrate(db: Database.Database, options: { seedProviders?: boolea
     ["pr_refresh_error", "TEXT"],
     ["ci_recovery_episode_id", "TEXT"],
     ["ci_recovery_turn_id", "TEXT"],
+    // Server-owned counter a review submission captures as its content_epoch;
+    // bumped by every operation that can change the reviewed source
+    // (lib/reviews/store.ts bumpReviewContentEpoch).
+    ["review_content_epoch", "INTEGER NOT NULL DEFAULT 0"],
   ];
   for (const [col, def] of wcCols) {
     if (!taskCols.includes(col)) db.exec(`ALTER TABLE tasks ADD COLUMN ${col} ${def}`);

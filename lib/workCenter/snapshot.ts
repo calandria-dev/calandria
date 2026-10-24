@@ -35,6 +35,7 @@ import { resultNeedsAttention } from "./classify";
 import { ensureWorkCenterBridge } from "./bridge";
 import { legacyEpisodeId, sourceId } from "./ids";
 import { getProposal } from "./proposals";
+import { reviewAttention } from "./reviewAdapter";
 import type { Attention, Coverage, Destination, Execution, Freshness, Id, Ms, Snapshot, Summary, WorkRow } from "./types";
 
 export class SnapshotBusy extends Error {
@@ -322,7 +323,8 @@ function assembleOnce(opts: SnapshotOptions, now: Ms): Snapshot {
   for (const source of ["question", "permission", "settings_proposal", "agent_edit", "turn_failure"] as const) {
     coverage.push({ source, taskId: null, state: "complete", reason: null });
   }
-  coverage.push({ source: "review", taskId: null, state: "not_applicable", reason: "review requests are not enabled in this release" });
+  for (const a of reviewAttention(rows, now)) add(a.destination.taskId, [a]);
+  coverage.push({ source: "review", taskId: null, state: "complete", reason: null });
 
   // ---- execution and rows
   const liveIds = new Set(activeTurnIds());

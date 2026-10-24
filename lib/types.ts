@@ -150,6 +150,7 @@ export interface Task {
   pr_refresh_error: string | null; // why the last attempt failed; NULL after a success
   ci_recovery_episode_id: string | null; // episode an authorized Fix CI run owns
   ci_recovery_turn_id: string | null;
+  review_content_epoch: number; // bumped by every operation that can change reviewed source (lib/reviews/)
   schedule_id: string | null; // the schedule that minted this task (lib/scheduler.ts); null = created by hand
   runbook_id: string | null; // the runbook that dispatched this task (lib/dispatch.ts); null = not from one
   // When a snooze ends (ms epoch; 0 = never snoozed / indicator cleared). Ahead

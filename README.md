@@ -142,6 +142,8 @@ already queued. The transcript records that it was sent.
 - **Work Center:** a titlebar pill shows how many tasks are working and how many need you. It opens a list
   of everything that needs a decision, is working, or is waiting, across every project, with Allow once, Deny,
   Acknowledge and Snooze inline. On a phone it is the Work tab.
+  An agent can also file a review of its code or a Markdown document; a pending review shows up as one item
+  to decide. Review requests are off by default ([Review submissions](docs/REVIEWS.md)).
 
   ![The Needs you inbox listing sessions waiting on an answer across projects](docs/images/inbox.png)
 
@@ -472,6 +474,7 @@ either reader is current.
 - [Agents](docs/AGENTS.md)
 - [Insights and usage](docs/INSIGHTS.md)
 - [Managed services](docs/SERVICES.md)
+- [Review submissions](docs/REVIEWS.md)
 - [Bundled agent skills](skills/README.md)
 - [Self-hosting](docs/SELF_HOSTING.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
