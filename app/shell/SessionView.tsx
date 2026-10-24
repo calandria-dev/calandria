@@ -968,7 +968,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
           </div>
         </div>
       )}
-      <Composer task={task} agentLabel={agentLabel(agents, task.agent)} disabled={task.started !== 1} running={running} onSend={onSend} onStop={onStop} onClear={onClear} focusSignal={composerFocus} />
+      <Composer task={task} agentLabel={agentLabel(agents, task.agent)} disabled={task.started !== 1} running={running} onSend={onSend} onStop={onStop} onClear={onClear} focusSignal={composerFocus} onFocusConsumed={() => setComposerFocus(0)} />
     </>
   );
 

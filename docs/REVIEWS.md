@@ -97,7 +97,7 @@ A failed merge leaves the review `accepted` with a separate `failed` action (`me
 
 ### Landed receipts
 
-The review merge, `merge`, `merge/prepare`, `merge/complete` and `pr/merge` each mint a `landed` receipt after a verified landing of the accepted head, and the PR poll mints one when a merged PR's head equals it. The evidence is `{repositoryId, submittedHeadSha, targetRef, baseBeforeSha, resultCommitSha, mode, prNumber, observedAt}`. For a PR landing GitHub does not report the base tip before the merge, so `baseBeforeSha` is the base tip the review was captured against. A landing of any other head mints nothing, and the task stays blocked.
+The review merge, `merge`, `merge/prepare`, `merge/complete` and `pr/merge` each mint a `landed` receipt after a verified landing of the accepted head, and the PR poll mints one when a merged PR's head equals it. The evidence is `{repositoryId, submittedHeadSha, targetRef, baseBeforeSha, resultCommitSha, mode, prNumber, observedAt}`. For a PR landing GitHub does not report the base tip before the merge, so `baseBeforeSha` is the base tip the review was captured against. A landing of any other head mints nothing, and the task stays blocked. Every local landing route (`merge`, `merge/prepare`, `merge/complete`) passes the accepted head and base tip to `mergeTask` as pins, so it merges the pinned commit, commits nothing on the way, and refuses with nothing written if the branch or the base moved.
 
 ## The Review tab
 

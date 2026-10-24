@@ -17,7 +17,7 @@ function cookie(header: string | null, name: string): string | undefined {
 
 export async function resolveHumanActor(req: Request): Promise<HumanActor> {
   const h = req.headers;
-  if (h.get("x-service-token") || h.get("authorization") || h.get("x-calandria-capability")) {
+  if (h.get("x-service-token") || h.get("authorization") || h.get("x-calandria-capability") || h.get("x-calandria-turn-capability")) {
     throw new ReviewError("human_required", "a person has to make this decision from the browser");
   }
   if (!originAuthEnabled()) return { id: LOCAL_OWNER_ACTOR };

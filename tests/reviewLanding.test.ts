@@ -127,4 +127,21 @@ describe("receipts from the PR path", () => {
     await refreshPrState(f.taskId, { force: true });
     expect(listReceipts(f.submissionId)).toHaveLength(1);
   });
+
+  it("the PR poll records the merge commit when GitHub reported one and null when it did not", async () => {
+    const f = await acceptedCode();
+    updateTask(f.taskId, { pr_url: "https://github.com/o/r/pull/9", pr_number: 9 });
+    fetchPrStateMock.mockResolvedValue({ ok: true, snapshot: { ...snap(f.head, true), mergeCommitSha: "" } });
+    await refreshPrState(f.taskId, { force: true });
+    const receipts = listReceipts(f.submissionId).filter((r) => r.kind === "landed");
+    expect(receipts).toHaveLength(1);
+    expect(JSON.parse(receipts[0].evidence_json).resultCommitSha).toBeNull();
+
+    const g = await acceptedCode();
+    updateTask(g.taskId, { pr_url: "https://github.com/o/r/pull/9", pr_number: 9 });
+    fetchPrStateMock.mockResolvedValue({ ok: true, snapshot: snap(g.head, true) });
+    await refreshPrState(g.taskId, { force: true });
+    const withSha = listReceipts(g.submissionId).filter((r) => r.kind === "landed");
+    expect(JSON.parse(withSha[0].evidence_json).resultCommitSha).toBe("b".repeat(40));
+  });
 });

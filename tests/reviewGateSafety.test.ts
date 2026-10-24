@@ -316,7 +316,7 @@ describe("move disposition", () => {
     expect(getTask(f.taskId)!.project_id).toBe(f.project.id);
     expect(fs.existsSync(f.wt.path)).toBe(true);
 
-    const moved = await moveTasksToProject([f.taskId], dest.id, { discardWorktree: [f.taskId], discardUnsafe: [f.taskId] });
+    const moved = await moveTasksToProject([f.taskId], dest.id, { discardWorktree: [f.taskId], discardUnsafe: [f.taskId], reviewActor: "instance-owner" });
     expect(moved?.moved.map((t) => t.id)).toEqual([f.taskId]);
     expect(getTask(f.taskId)!.project_id).toBe(dest.id);
     expect(getDb().prepare("SELECT state FROM review_requests WHERE id = ?").get(r.body.requestId)).toMatchObject({ state: "waived" });

@@ -10,6 +10,7 @@ For the final policy and concurrency verification of the Work Center review deci
 | A service-token, bearer or capability request is refused as human authority (403 `human_required`) | `resolveHumanActor` | `reviewActions`: human-only boundary |
 | No agent transport can accept, waive, merge or retry | Only `POST .../actions` carries those actions; the three agent tools are submit, get and withdraw | `reviewTools` |
 | Accept, merge and waive each re-check applicability under the task lock | `lib/reviews/actions.ts` | `reviewActions`: accept, merge |
+| Disposition waivers (delete, move reset) require a server-resolved human actor and refuse a bearer or service-token request | `waiveRequired`, the task and project DELETE routes, `discardCheckout` | `reviewRecovery`: destructive dispositions |
 
 ## Atomicity and replay
 
@@ -38,6 +39,7 @@ For the final policy and concurrency verification of the Work Center review deci
 |-|-|-|
 | A PR merge passes the accepted head to GitHub (`--match-head-commit`), including on the squash fallback | `mergeTaskPr` | `reviewRecovery`, `reviewLanding` |
 | A local merge refuses if the branch or base tip moved since capture, and commits nothing on the way | `mergeTask` `expectedHeadSha` and `expectedBaseSha` | `reviewActions`: branch moved |
+| Every local landing route (`/merge`, `/merge/prepare`, `/merge/complete`) passes the accepted head and base pins to `mergeTask`, which merges the pinned commit and commits nothing on the way | `acceptedCodePins`, the three routes, `completeWorktreeMerge` | `reviewLandingPins` |
 | After a timeout or restart the PR or target is read before any retry; a landing found is recorded, not repeated | `reconcileMerges`, `observedPrLanding` | `reviewRecovery` |
 | A success with no verifiable landing stays indeterminate (`merge_unverified`, `landing_unverified`) | `landPr`, `succeedLocal` | `reviewRecovery` |
 | A `landed` receipt is minted only for the accepted head, from the review merge, `merge`, `merge/prepare`, `merge/complete`, `pr/merge` and the PR poll | `lib/reviews/landing.ts` | `reviewLanding` |

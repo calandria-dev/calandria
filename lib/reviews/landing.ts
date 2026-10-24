@@ -25,7 +25,8 @@ export interface Landing {
   targetRef: string;
   /** The base tip before the landing; the reviewed base tip when the pre-merge tip was not observable (PR). */
   baseBeforeSha: string | null;
-  resultCommitSha: string;
+  /** The commit the target now points at (local), or GitHub's merge commit when it reported one (PR); null when unknown. */
+  resultCommitSha: string | null;
   /** The head that landed: the work branch tip (local) or GitHub's merged PR head (PR). */
   landedHeadSha: string;
   prNumber: number | null;
@@ -59,7 +60,7 @@ export async function mintLandedReceipts(landing: Landing): Promise<string[]> {
     const project = getProject(getTask(landing.taskId)?.project_id ?? "");
     for (const m of matchingSubmissions(landing.taskId, landing.landedHeadSha)) {
       if (landing.mode === "local") {
-        if (!project?.repo_path) continue;
+        if (!project?.repo_path || !landing.resultCommitSha) continue;
         if (!(await isAncestorCommit(project.repo_path, m.manifest.headCommitSha, landing.resultCommitSha))) continue;
       }
       try {
@@ -90,11 +91,12 @@ export async function mintLandedReceipts(landing: Landing): Promise<string[]> {
 }
 
 /**
- * The head a person accepted for this task's code review, when there is one at
- * the current epoch. A PR merge passes it to GitHub as the head to match, so a
- * landing can never carry a commit nobody reviewed.
+ * The head and base tip a person accepted for this task's code review, when
+ * there is one at the current epoch. A landing passes them on so it can never
+ * carry a commit nobody reviewed: a PR merge hands GitHub the head to match,
+ * and a local merge refuses when the branch or the base has moved.
  */
-export function acceptedCodeHead(taskId: string): string | null {
+export function acceptedCodePins(taskId: string): { headCommitSha: string; baseTipSha: string } | null {
   const task = getTask(taskId);
   if (!task) return null;
   for (const req of listRequestsForOwner(taskId)) {
@@ -102,9 +104,14 @@ export function acceptedCodeHead(taskId: string): string | null {
     const sub = getSubmission(req.current_submission_id);
     const art = sub && getArtifact(sub.artifact_id);
     if (!sub || !art || sub.content_epoch !== task.review_content_epoch) continue;
-    return (JSON.parse(art.manifest_json) as CodeManifest).headCommitSha;
+    const manifest = JSON.parse(art.manifest_json) as CodeManifest;
+    return { headCommitSha: manifest.headCommitSha, baseTipSha: manifest.baseTipSha };
   }
   return null;
+}
+
+export function acceptedCodeHead(taskId: string): string | null {
+  return acceptedCodePins(taskId)?.headCommitSha ?? null;
 }
 
 /** The base tip a local landing is about to move, read before the merge. "" when it does not resolve. */
@@ -162,7 +169,7 @@ export async function onPrSettled(taskId: string, outcome: PrOutcome): Promise<v
         mode: "pr",
         targetRef: `refs/heads/${outcome.baseRef || task.base_branch || ""}`,
         baseBeforeSha: null,
-        resultCommitSha: outcome.mergeCommitSha || outcome.headSha,
+        resultCommitSha: outcome.mergeCommitSha || null,
         landedHeadSha: outcome.headSha,
         prNumber: task.pr_number,
       });
