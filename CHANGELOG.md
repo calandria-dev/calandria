@@ -8,6 +8,14 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.22.1](https://github.com/calandria-dev/calandria/compare/v0.22.0...v0.22.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **composer:** attach files on a phone and keep them across rotation ([#549](https://github.com/calandria-dev/calandria/issues/549)) ([f33754f](https://github.com/calandria-dev/calandria/commit/f33754fc0225edc21a1bafd1acfb2eda56eca48a))
+* **docker:** bump agy CLI pin to 1.4.7 ([#554](https://github.com/calandria-dev/calandria/issues/554)) ([9e2786c](https://github.com/calandria-dev/calandria/commit/9e2786cddd30b71ad656d75eca472727307bec61))
+
 ## [0.22.0](https://github.com/calandria-dev/calandria/compare/v0.21.4...v0.22.0) (2026-10-24)
 
 
