@@ -764,7 +764,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     // the durable, reconnect-safe channel written by lib/runner.ts.
     if (m.content.includes(CONTEXT_OVERFLOW_NOTICE)) {
       return (
-        <div className="msg system overflow">
+        <div className="msg system overflow" data-message-id={m.id} tabIndex={-1}>
           <div className="msg-body">
             {m.content}
             {onClear && (
@@ -784,7 +784,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     // the in-context copy for whoever is reading the failed task.
     if (m.content.includes(AUTH_EXPIRED_NOTICE)) {
       return (
-        <div className="msg system overflow">
+        <div className="msg system overflow" data-message-id={m.id} tabIndex={-1}>
           <div className="msg-body">
             {m.content}
             {onReconnect && (
@@ -806,7 +806,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     // the same slot says so and offers Cancel.
     if (m.content.includes(USAGE_LIMIT_NOTICE)) {
       return (
-        <div className="msg system overflow">
+        <div className="msg system overflow" data-message-id={m.id} tabIndex={-1}>
           <div className="msg-body">
             {m.content}
             {limitResume && limitResume.queuedAt > 0 && (
@@ -833,7 +833,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     // Agents shows (see lib/budgetFailure.ts).
     if (m.content.includes(BUDGET_EXCEEDED_NOTICE)) {
       return (
-        <div className="msg system overflow">
+        <div className="msg system overflow" data-message-id={m.id} tabIndex={-1}>
           <div className="msg-body">
             {m.content}
             {onRetry && (
@@ -854,7 +854,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     // resending the failed message is the recovery (see lib/approvalFailure.ts).
     if (m.content.includes(APPROVAL_BLOCKED_NOTICE)) {
       return (
-        <div className="msg system overflow">
+        <div className="msg system overflow" data-message-id={m.id} tabIndex={-1}>
           <div className="msg-body">
             {m.content}
             {onRetry && (
@@ -879,7 +879,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     // explanation without this notice, and fall through to the plain ⚠ line.
     if (m.content.includes(WORKTREE_REPAIR_NOTICE)) {
       return (
-        <div className="msg system overflow">
+        <div className="msg system overflow" data-message-id={m.id} tabIndex={-1}>
           <div className="msg-body">
             {m.content}
             {onRepairWorktree && <RepairWorktree msgId={m.id} running={running} onRepair={onRepairWorktree} />}
