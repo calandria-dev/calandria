@@ -143,7 +143,8 @@ already queued. The transcript records that it was sent.
   of everything that needs a decision, is working, or is waiting, across every project, with Allow once, Deny,
   Acknowledge and Snooze inline. On a phone it is the Work tab.
   An agent can also file a review of its code or a Markdown document; a pending review shows up as one item
-  to decide. Review requests are off by default ([Review submissions](docs/REVIEWS.md)).
+  to decide, and the task gets a REVIEW tab (a Review segment on a phone) showing the exact diff or document
+  the agent submitted. Review requests are off by default ([Review submissions](docs/REVIEWS.md)).
 
   ![The Needs you inbox listing sessions waiting on an answer across projects](docs/images/inbox.png)
 

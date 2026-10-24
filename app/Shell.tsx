@@ -348,6 +348,9 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
   // it moves, since a list row's selection is the open session. Desktop
   // workspace only, and never while a modal or the palette is up.
   const [diffRequest, setDiffRequest] = useState(0);
+  // A Work Center review chip: SessionView brings the REVIEW tab (Review segment on phone) forward on this submission.
+  const [reviewRequest, setReviewRequest] = useState<{ taskId: string; requestId: string | null; submissionId: string | null; n: number } | null>(null);
+  useEffect(() => { setReviewRequest((r) => (r && r.taskId !== selTask ? null : r)); }, [selTask]);
   useEffect(() => {
     if (isMobile || o.view !== "workspace" || !project) return;
     if (o.modal || o.editId || paletteOpen || bulkMoveIds || bulkTagIds) return;
@@ -491,6 +494,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
       setWcOpen(false);
     }
     o.goToTask(t.projectId, t.taskId);
+    if (t.surface === "review") setReviewRequest((r) => ({ taskId: t.taskId, requestId: t.reviewRequestId ?? null, submissionId: t.submissionId ?? null, n: (r?.n ?? 0) + 1 }));
     if (t.messageId && t.surface !== "transcript_end") anchorTo(t.taskId, t.messageId);
   }, [isMobile, selProj, selTask, o, anchorTo]);
   // Browser Back from a destination (usePrefs restored the selection): reopen the popover on the same row.
@@ -571,6 +575,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
             onRailCollapse={() => setCollapsed("rail", true)}
             onRailExpand={() => setCollapsed("rail", false)}
             diffRequest={diffRequest}
+            reviewRequest={reviewRequest}
           />
         ) : project ? (
           <ProjectLanding
@@ -683,6 +688,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
                 onRailCollapse={() => setCollapsed("rail", true)}
                 onRailExpand={() => setCollapsed("rail", false)}
                 diffRequest={diffRequest}
+                reviewRequest={reviewRequest}
               />
             </div>
           </div>
