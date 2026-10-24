@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import { Icon } from "../icons";
 import { displayFileName, isImageExt, maxUploadBytes, uploadExtension } from "@/lib/uploadTypes";
 import type { MsgAttachment } from "./format";
@@ -28,23 +28,53 @@ export function stagedAttachment(a: MsgAttachment, key: string): Attachment {
   return { key, kind: a.kind, name: displayFileName(a.name), preview: a.kind === "image" ? a.url : "", path: a.path, status: "ready" };
 }
 
+// Drafts keyed by `persistKey` live here instead of in component state, so a
+// remount keeps them: the shell renders the session in a different tree on
+// each side of the mobile breakpoint, and rotating a phone across it remounts
+// the composer. An upload that settles while no composer is mounted still
+// lands its result here. Held per tab in memory only, since a blob preview URL
+// dies with the document.
+const drafts = new Map<string, Attachment[]>();
+const draftListeners = new Set<() => void>();
+const EMPTY: Attachment[] = [];
+const subscribeDrafts = (fn: () => void) => { draftListeners.add(fn); return () => { draftListeners.delete(fn); }; };
+function writeDraft(key: string, next: Attachment[]) {
+  if (next.length) drafts.set(key, next); else drafts.delete(key);
+  draftListeners.forEach((fn) => fn());
+}
+
 /**
  * The attach-on-drop/paste/pick state machine, shared by the composer and the
  * task dialogs so the three can't drift on what a chip is. `upload` is the
  * only thing that differs: which route the bytes go to.
  */
-export function useAttachments({ upload, disabled = false, initial }: {
+export function useAttachments({ upload, disabled = false, initial, persistKey }: {
   upload: (file: File, name: string) => Promise<{ path: string }>;
   disabled?: boolean;
   initial?: Attachment[];
+  /** Keeps the chips across a remount (see `drafts`). */
+  persistKey?: string;
 }) {
-  const [atts, setAtts] = useState<Attachment[]>(initial ?? []);
+  const [local, setLocal] = useState<Attachment[]>(initial ?? []);
+  const stored = useSyncExternalStore(
+    subscribeDrafts,
+    () => (persistKey ? drafts.get(persistKey) ?? EMPTY : EMPTY),
+    () => EMPTY,
+  );
+  const atts = persistKey ? stored : local;
+  const setAtts = useCallback((fn: (prev: Attachment[]) => Attachment[]) => {
+    if (persistKey) writeDraft(persistKey, fn(drafts.get(persistKey) ?? EMPTY));
+    else setLocal(fn);
+  }, [persistKey]);
   const [dragging, setDragging] = useState(false);
   // dragenter/dragleave fire per child element, so depth-count to know when the
   // pointer has really left the drop zone.
   const dragDepth = useRef(0);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Keys stay unique across remounts, since a persisted draft outlives this
+  // hook instance's counter.
   const seq = useRef(0);
+  const nextKey = () => `att-${Date.now().toString(36)}-${++seq.current}`;
 
   const addFiles = (files: File[]) => {
     if (disabled) return;
@@ -53,7 +83,7 @@ export function useAttachments({ upload, disabled = false, initial }: {
       // Extension-first, matching the server (lib/uploadTypes.ts): a dragged
       // .png whose MIME the OS didn't fill in is still a picture.
       const isImage = f.type.startsWith("image/") || isImageExt(uploadExtension(f.name || "", f.type || ""));
-      const key = `att-${++seq.current}`;
+      const key = nextKey();
       const kind = isImage ? "image" : "file";
       const name = f.name || (isImage ? "image" : "attachment");
       // Only images get a local object-URL thumbnail; file chips render a label.
@@ -81,7 +111,7 @@ export function useAttachments({ upload, disabled = false, initial }: {
   };
   const clear = () => {
     atts.forEach((a) => { if (a.preview.startsWith("blob:")) URL.revokeObjectURL(a.preview); });
-    setAtts([]);
+    setAtts(() => []);
   };
   const hasFileDrag = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
   const dropProps = {
