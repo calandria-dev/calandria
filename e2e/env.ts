@@ -106,6 +106,9 @@ export const SERVER_ENV: Record<string, string> = {
   // Registers the deterministic mock agent (lib/agents/mock/driver.ts) so
   // onboarding and turns run without any real agent CLI or login.
   CALANDRIA_E2E_MOCK_AGENT: "1",
+  // Opening a review request is opt-in (lib/features.ts). e2e/work-center-reviews.spec.ts
+  // submits through the internal agent-tools route, the same path the stdio bridge uses.
+  CALANDRIA_REVIEW_REQUESTS: "1",
   // The idle mark inside a test's patience (lib/turnActivity.ts; 20 minutes in
   // production). 8s clears the longest incidental silence any other spec
   // creates (15-collab-doc's `e2e:sleep=4000`), so no spec but 23's grows an

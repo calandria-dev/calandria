@@ -34,6 +34,9 @@ export type WcOpen = {
   taskId: string;
   sessionId: string | null;
   messageId: string | null;
+  /** Set for a review item: the Review tab anchors this request and submission. */
+  reviewRequestId?: string | null;
+  submissionId?: string | null;
   surface: Attention["destination"]["surface"] | "transcript_end";
   rowId: string;
 };
@@ -278,6 +281,8 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
       taskId: row.taskId,
       sessionId: item?.destination.sessionId ?? null,
       messageId: item?.destination.messageId ?? null,
+      reviewRequestId: item?.destination.reviewRequestId ?? null,
+      submissionId: item?.destination.submissionId ?? null,
       surface: item?.destination.surface ?? "transcript",
       rowId: row.taskId,
     });

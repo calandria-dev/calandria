@@ -59,6 +59,23 @@ Every path segment is checked against its parent, and an unknown or mismatched i
 
 The submission service is `submitReview()` in `lib/reviews/submit.ts`. The decision routes call it and the store; they are a separate task of the Work Center plan.
 
+## The Review tab
+
+A task with at least one review request shows a REVIEW tab after CONTEXT in the session rail (DIFF, PREVIEW when enabled, CONTEXT, REVIEW). On a phone the Chat and Changes control gains a third Review segment. A task with no review request shows neither. A dot on the tab means a request is waiting for a decision.
+
+The tab shows what the agent explicitly submitted, read from the stored manifest and the review-owned refs. It never reads the task branch or an open editor for the artifact itself.
+
+| Part | Shows |
+|-|-|
+| Summary | Revision, kind, pinned `base → head` (code) or path and SHA-256 (document), the required tag, whether the task still matches, the agent's summary, evidence links, and the agent's validation claims marked as unverified |
+| Artifact | A code diff preview, labelled `PREVIEW TRUNCATED` when it hit the size or path limit, or the document's exact bytes with the digest and a download of the raw bytes |
+| Decision | The state for accepted, accepted then changed, changes requested, unknown delivery, waived, withdrawn and superseded. The decision buttons render disabled until the decision routes ship |
+| Revisions | Every revision, newest first. Selecting an older one shows it as superseded, with a link back to the current revision |
+
+When a request's checkout no longer matches the captured revision, the links that open the Diff tab or the document editor are disabled and say why, because both show the live branch or file. The captured text on screen stays the submitted version.
+
+A Work Center review chip opens the task on this tab, selects the chip's request and revision, and moves focus to the summary heading. The destination carries `reviewRequestId` and `submissionId` from the attention item.
+
 ## Agent tools
 
 An agent submits, reads and withdraws through three tools, mounted in process for Claude and over the stdio bridge for every other agent (`lib/reviews/tool.ts`, `app/api/internal/agent-tools/{submit,get,withdraw}-review/`). The submitter is always the calling task. The tools cannot accept, waive, merge or complete anything.
