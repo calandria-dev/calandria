@@ -498,6 +498,19 @@ describe("agent edits", () => {
       expect(bad.status).toBe(404);
     });
   });
+
+  it("an outstanding edit on a done or cancelled task is not attention", () => {
+    const { project, task } = fresh();
+    const actor = task("Actor");
+    for (const status of ["done", "cancelled"] as const) {
+      const target = task(`Closed ${status}`);
+      recordAgentEdit({ task_id: target.id, project_id: project.id, actor_task_id: actor.id, actor_title: "Actor", actor_agent: "claude", changes: [{ field: "title", before: "a", after: "b" } as never] });
+      expect(rowOf(assembleSnapshot({ projectId: project.id }), target.id)!.attention.map((i) => i.kind)).toEqual(["agent_edit"]);
+      updateTask(target.id, { status });
+      expect(listOutstandingAgentEdits().some((e) => e.task_id === target.id)).toBe(true);
+      expect(rowOf(assembleSnapshot({ projectId: project.id }), target.id)?.attention ?? []).toEqual([]);
+    }
+  });
 });
 
 describe("turn failure source and acknowledgement", () => {

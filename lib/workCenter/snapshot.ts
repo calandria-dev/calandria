@@ -35,7 +35,7 @@ import { resultNeedsAttention } from "./classify";
 import { ensureWorkCenterBridge } from "./bridge";
 import { legacyEpisodeId, sourceId } from "./ids";
 import { getProposal } from "./proposals";
-import { reviewRequiredTaskIds } from "@/lib/reviews/guard";
+import { isTerminalStatus, reviewRequiredTaskIds } from "@/lib/reviews/guard";
 import { reviewAttention } from "./reviewAdapter";
 import type { Attention, Coverage, Destination, Execution, Freshness, Id, Ms, Snapshot, Summary, WorkRow } from "./types";
 
@@ -286,7 +286,8 @@ function assembleOnce(opts: SnapshotOptions, now: Ms): Snapshot {
   const edits = listOutstandingAgentEdits();
   for (const e of edits) {
     const row = rows.get(e.task_id);
-    if (!row) continue;
+    // A closed task's edits stay on its board card for review and revert; they are not attention.
+    if (!row || isTerminalStatus(row.status)) continue;
     add(row.id, [
       {
         id: sourceId("agent_edit", [row.id, e.id]),
