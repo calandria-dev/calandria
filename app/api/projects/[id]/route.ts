@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { reviewRefusal } from "@/lib/reviews/gate";
+import { resolveHumanActor } from "@/lib/reviews/actor";
+import { taskHasPendingOperation } from "@/lib/reviews/store";
 import { getProject, updateProject, deleteProject, listTasks, listTags, type TaskWithUsage } from "@/lib/store";
 import { removeWorktree, taskDiffStat } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
@@ -111,6 +113,14 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       if (refusal) return NextResponse.json({ error: `${t.title}: ${refusal}`, code: "review_required", taskId: t.id }, { status: 409 });
     }
   }
+  if (reviewDisposition) {
+    for (const t of tasks) {
+      if (taskHasPendingOperation(t.id)) {
+        return NextResponse.json({ error: `${t.title}: a review decision has not settled; resolve it before deleting`, code: "operation_pending", taskId: t.id }, { status: 409 });
+      }
+    }
+  }
+  const reviewActor = reviewDisposition ? (await resolveHumanActor(req).catch(() => null))?.id : undefined;
   // Stop any in-flight turns BEFORE the cascade drops their task rows. A live
   // turn keeps writing to SQLite (addMessage, updateTask); once its row is gone
   // those writes hit a FOREIGN KEY error, and the second such throw (from the
@@ -130,6 +140,6 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   // children leak (holding the project's port) and the public <slug>--<host>
   // router keeps routing to a now-deleted project until the server restarts.
   removeProjectServices(id);
-  deleteProject(id, { reviewDisposition });
+  deleteProject(id, { reviewDisposition, reviewActor });
   return NextResponse.json({ ok: true });
 }

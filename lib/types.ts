@@ -151,6 +151,7 @@ export interface Task {
   ci_recovery_episode_id: string | null; // episode an authorized Fix CI run owns
   ci_recovery_turn_id: string | null;
   review_content_epoch: number; // bumped by every operation that can change reviewed source (lib/reviews/)
+  active_review_action_id: string | null; // the one feedback dispatch that currently owns this task's input (lib/reviews/feedback.ts)
   schedule_id: string | null; // the schedule that minted this task (lib/scheduler.ts); null = created by hand
   runbook_id: string | null; // the runbook that dispatched this task (lib/dispatch.ts); null = not from one
   // When a snooze ends (ms epoch; 0 = never snoozed / indicator cleared). Ahead
@@ -273,6 +274,8 @@ export interface Message {
   role: MsgRole;
   content: string;
   created_at: number;
+  /** The review action whose feedback this row delivered, when it did (lib/reviews/feedback.ts). */
+  review_action_id?: string | null;
 }
 
 export interface Summary {
@@ -293,6 +296,8 @@ export interface PendingMessage {
   generation: number;
   content: string;
   created_at: number;
+  /** The review action this parked follow-up carries (lib/reviews/feedback.ts). */
+  review_action_id?: string | null;
 }
 
 // A review comment left on a task's diff (Changes tab), anchored to a file,

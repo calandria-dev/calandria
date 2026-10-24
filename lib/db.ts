@@ -929,10 +929,33 @@ function recoverFromCrash(db: Database.Database) {
     // Drop any queued follow-ups: the turns they were lined up behind died
     // with the previous process, so there is nothing left to dequeue them into.
     db.prepare("DELETE FROM pending_messages").run();
+    settleReviewEffects(db);
     settleOpenCards(db);
 
     reapInFlightScheduleRuns(db);
   })();
+}
+
+/**
+ * Review effects the dead process left in flight (lib/reviews/). Feedback whose
+ * dispatch intent was recorded without proof of acceptance may or may not have
+ * reached the agent, and a merge that was running may or may not have landed:
+ * both become `indeterminate`, which only a person's explicit retry resolves
+ * (a merge retry reads the actual git or PR state first, never resends blind).
+ * Feedback that was still `queued` never recorded intent, so it is left for the
+ * reconciler to deliver once. The parked-queue wipe above is why: the row that
+ * held it is gone, the action row is not.
+ */
+export function settleReviewEffects(db: Database.Database, now: number = Date.now()): void {
+  db.prepare("UPDATE tasks SET active_review_action_id = NULL WHERE active_review_action_id IS NOT NULL").run();
+  db.prepare(
+    `UPDATE review_actions
+        SET state = 'indeterminate', error_code = 'restart_during_dispatch',
+            operation_json = json_set(operation_json, '$.delivery', 'indeterminate'), updated_at = ?
+      WHERE action IN ('request_changes','retry_feedback') AND state = 'pending'
+        AND json_extract(operation_json, '$.delivery') = 'dispatching'`,
+  ).run(now);
+  db.prepare("UPDATE review_actions SET state = 'indeterminate', error_code = 'restart_during_merge', updated_at = ? WHERE action = 'merge' AND state = 'pending'").run(now);
 }
 
 /**
@@ -1316,6 +1339,18 @@ export function migrate(db: Database.Database, options: { seedProviders?: boolea
   ];
   for (const [col, def] of wcCols) {
     if (!taskCols.includes(col)) db.exec(`ALTER TABLE tasks ADD COLUMN ${col} ${def}`);
+  }
+  // Review decision ownership (lib/reviews/actions.ts, feedback.ts). The
+  // action id a transcript row or parked follow-up carries is what correlates a
+  // human's request-changes feedback with the exact message that delivered it;
+  // the partial unique indexes make a second insertion for one action
+  // impossible. tasks.active_review_action_id names the one feedback dispatch
+  // that currently owns the task's input.
+  if (!taskCols.includes("active_review_action_id")) db.exec("ALTER TABLE tasks ADD COLUMN active_review_action_id TEXT");
+  for (const table of ["messages", "pending_messages"]) {
+    const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+    if (!cols.includes("review_action_id")) db.exec(`ALTER TABLE ${table} ADD COLUMN review_action_id TEXT`);
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_${table}_review_action ON ${table}(review_action_id) WHERE review_action_id IS NOT NULL`);
   }
   // The task's own LiteLLM virtual key (docs/AGENTS.md, LiteLLM section),
   // minted on its first gateway turn when CALANDRIA_LITELLM_ADMIN_KEY is set;

@@ -43,6 +43,16 @@ async function git(repoPath: string, args: string[]): Promise<string> {
   return stdout.trim();
 }
 
+/** The commit a ref resolves to, or "" when it does not resolve. Read-only. */
+export async function resolveCommit(repoPath: string, ref: string): Promise<string> {
+  return git(repoPath, ["rev-parse", "--verify", `${ref}^{commit}`]).catch(() => "");
+}
+
+/** Is `ancestor` reachable from `descendant`? False on any git error. */
+export async function isAncestorCommit(repoPath: string, ancestor: string, descendant: string): Promise<boolean> {
+  return git(repoPath, ["merge-base", "--is-ancestor", ancestor, descendant]).then(() => true).catch(() => false);
+}
+
 // Run `fn` over `items` with at most `limit` in flight. Spawning a git
 // subprocess costs 10-40ms before it does any work, so per-file work needs to
 // overlap those spawns, but an unbounded Promise.all over a large diff would
@@ -2109,21 +2119,42 @@ export async function mergeTask(input: {
   message: string;
   baseSha?: string;
   stashDirty?: string[];
+  /**
+   * A reviewed landing: the exact commit the branch must still point at, and
+   * the exact base tip it was reviewed against. Nothing is committed on the
+   * way (an uncommitted tree is a different artifact), and either pin moving
+   * refuses the merge with nothing written.
+   */
+  expectedHeadSha?: string;
+  expectedBaseSha?: string;
 }): Promise<MergeResult> {
-  const { repoPath, worktreePath, workBranch, baseBranch, message, baseSha, stashDirty } = input;
+  const { repoPath, worktreePath, workBranch, baseBranch, message, baseSha, stashDirty, expectedHeadSha, expectedBaseSha } = input;
 
   let committed = false;
-  try {
-    committed = await commitWorktree(worktreePath, message);
-  } catch (e) {
-    return { ok: false, targetBranch: baseBranch, committed, error: `commit failed: ${msgOf(e)}` };
+  if (!expectedHeadSha) {
+    try {
+      committed = await commitWorktree(worktreePath, message);
+    } catch (e) {
+      return { ok: false, targetBranch: baseBranch, committed, error: `commit failed: ${msgOf(e)}` };
+    }
   }
 
   // The branch tip now holds all of the task's work; this becomes the next
   // diff base so a subsequent round shows only changes made after this merge.
   const mergedSha = (await git(repoPath, ["rev-parse", workBranch]).catch(() => "")) || undefined;
+  if (expectedHeadSha && mergedSha !== expectedHeadSha) {
+    return { ok: false, targetBranch: baseBranch, committed, error: "the task branch moved since the review was captured" };
+  }
 
   return withRepoLock(repoPath, async () => {
+    if (expectedHeadSha) {
+      const head = await git(repoPath, ["rev-parse", workBranch]).catch(() => "");
+      if (head !== expectedHeadSha) return { ok: false, targetBranch: baseBranch, committed, error: "the task branch moved since the review was captured" };
+    }
+    if (expectedBaseSha) {
+      const tip = await git(repoPath, ["rev-parse", "--verify", `refs/heads/${baseBranch}^{commit}`]).catch(() => "");
+      if (tip !== expectedBaseSha) return { ok: false, targetBranch: baseBranch, committed, error: "the base branch moved since the review was captured" };
+    }
     // Recover a repo stranded mid-merge by a prior crash: an unfinished
     // merge in the main tree leaves MERGE_HEAD set and the tree "dirty",
     // which would otherwise block every future merge on the dirty check

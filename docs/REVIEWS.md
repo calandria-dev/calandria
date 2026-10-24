@@ -54,10 +54,50 @@ A document submission accepts `.md` and `.markdown` files inside the task's work
 | `GET /api/tasks/{id}/reviews` | Current requests and one page of history. `request_id`, `limit` (1 to 100, default 50) and `cursor` are optional. |
 | `GET /api/tasks/{id}/reviews/{requestId}/submissions/{submissionId}/artifact` | The exact manifest, plus a diff preview (code) or the document text. The code preview stops at 2 MiB or 1,000 changed paths and says so in `truncated` and `reason`. |
 | `.../artifact/raw` | The stored document bytes as `text/markdown;charset=utf-8` with the SHA-256 as the `ETag`. Code artifacts answer 422. |
+| `POST /api/tasks/{id}/reviews/{requestId}/actions` | A person's decision. See [Decisions](#decisions). |
 
 Every path segment is checked against its parent, and an unknown or mismatched id is a 404. Errors have the shape `{error:{code,message,retryable},current?}`. Messages never contain host paths.
 
-The submission service is `submitReview()` in `lib/reviews/submit.ts`. The decision routes call it and the store; they are a separate task of the Work Center plan.
+The submission service is `submitReview()` in `lib/reviews/submit.ts`. The decision service is `performReviewAction()` in `lib/reviews/actions.ts`.
+
+## Decisions
+
+`POST /api/tasks/{id}/reviews/{requestId}/actions` takes `{submissionId, expectedVersion, action, idempotencyKey, reason?}` and returns `{requestId, submissionId, version, state, action:{id, state, decisionApplied, errorCode, operation}}`. The browser sends an action; no agent tool can. The actor is set by the server: `instance-owner` in local mode and the verified Access subject otherwise. A request that carries a service token or a bearer credential is refused with 403 `human_required`, and a body that names an actor is a 400.
+
+| Action | Effect |
+|-|-|
+| `accept` | `pending` to `accepted`, when the artifact is still current and its pins resolve. It writes nothing else: no merge, no completion, no reclaim, no dependent launch. |
+| `request_changes` | `pending` to `changes_requested` and a feedback delivery to the submitting task. Needs a reason. Returns 202. |
+| `withdraw` | `pending` or `changes_requested` to `withdrawn`. Needs a reason. A required review stays unsatisfied. |
+| `waive` | A required review to `waived` for this submission only. Needs a reason. A resubmission restores the requirement. |
+| `merge` | A separate operation on an accepted, current code review. Local merges use the accepted head and base tip as pins. PR merges pass the accepted head to GitHub with `--match-head-commit`, so a push after the last read fails the merge. Every project landing rule still applies. |
+| `retry_feedback` | Resends feedback left `failed` or `indeterminate`. The reason records that the agent may receive it twice. It creates a new action that links the earlier one. |
+
+Competing decisions are resolved by compare-and-swap on the request version. A repeated idempotency key with the same payload returns the stored status and body, even after the version has moved. The same key with a different payload is 409 `idempotency_conflict`. A stale `expectedVersion` is 409 `version_conflict` with the `current` version and state, and a newer revision is 409 `revision_changed`. Accepting from `changes_requested` is refused; the agent resubmits first.
+
+Every action row is stored as `pending` before any external effect, so a crash leaves a row to read instead of a silent success.
+
+### Feedback delivery
+
+A request for changes is delivered to the task and generation that submitted the work. The delivery state lives in the action's `operation` and moves only forward:
+
+| `delivery` | Meaning |
+|-|-|
+| `queued` | Stored, nothing sent. Parked behind a live turn, or waiting for a free task. Safe to retry. |
+| `dispatching` | Intent is recorded and the text went to the task. Never resent automatically. |
+| `delivered` | A model output followed the input in the turn that received it. `acceptedAt` and `acceptanceEvidence` are set. |
+| `failed` | Nothing reached the agent. `errorCode` is `generation_changed`, `task_deleted`, `launch_blocked` or `launch_failed`. |
+| `indeterminate` | The text may have reached the agent without proof, for example after a restart or a turn that ended with no output. Only `retry_feedback` resolves it. |
+
+`recordedAt` is the transcript insertion time and never proves delivery. The delivery turn runs through the normal launcher, so it advances the content epoch and the agent's resubmission captures the new one. A `/clear` between the decision and the delivery fails the delivery with `generation_changed`; feedback is never sent to the newest session.
+
+### Merge outcomes
+
+A failed merge leaves the review `accepted` with a separate `failed` action (`merge_conflict`, `merge_dirty_checkout`, `merge_head_moved`, `merge_base_moved`, `merge_failed`). After a timeout or restart the action is `indeterminate` (`merge_unverified`, `restart_during_merge`). A retry reads the target branch or the PR before it does anything: a landing it finds is recorded and never repeated. An armed auto-merge returns 202 `pending` and the PR poll settles it. Success is reported only with a `landed` receipt for the accepted head.
+
+### Landed receipts
+
+The review merge, `merge`, `merge/prepare`, `merge/complete` and `pr/merge` each mint a `landed` receipt after a verified landing of the accepted head, and the PR poll mints one when a merged PR's head equals it. The evidence is `{repositoryId, submittedHeadSha, targetRef, baseBeforeSha, resultCommitSha, mode, prNumber, observedAt}`. For a PR landing GitHub does not report the base tip before the merge, so `baseBeforeSha` is the base tip the review was captured against. A landing of any other head mints nothing, and the task stays blocked.
 
 ## The Review tab
 
@@ -104,7 +144,7 @@ A task that owns a required review is held by one rule, `requiredReviewBlocker()
 | Dependency `blocks()`, auto-start, deferred start, first turn | A terminal blocker keeps blocking; an automatic launch and the first turn of a dependent each revalidate every blocker against its checkout |
 | `merge`, `merge/prepare`, `merge/complete`, `pr/merge` | Refused with 409 `review_required` |
 | `reclaimTask`, `maybeAutoReclaim`, worktree sweep, retention prune | The task and its checkout are skipped |
-| `deleteTask`, `deleteProject` | Refused; `?review_disposition=waive_and_delete` waives each request in place, then deletes |
+| `deleteTask`, `deleteProject` | Refused; `?review_disposition=waive_and_delete` waives each request in place with one `waive` action per request, then deletes. Refused with `operation_pending` while any action on the task's requests is pending or indeterminate |
 | `moveTasks` | Refused unless the task is named in the reset set, which waives and advances the epoch. The move preview names the review, and the move routes demand the unsafe-discard acknowledgement for that task before waiving it |
 
 A new turn, a message accepted into a lingering session, reopening a terminal task, retargeting the base branch, catching the checkout up to the base and a worktree repair that re-cuts the checkout each advance the task's content epoch, so an earlier acceptance has to be resubmitted. Review acceptance alone never starts a dependent.
@@ -113,12 +153,12 @@ A new turn, a message accepted into a lingering session, reopening a terminal ta
 
 - Each repository gets a random marker file, `calandria-review-repository-id`, in its Git common directory. The database must agree with it on every artifact read. A missing or different marker makes the artifacts for that repository unavailable. A clone that carries a marker the database does not know is not adopted automatically.
 - Document and code applicability is `current`, `landed`, `retired`, `changed` or `unavailable`. A change of the task's content epoch, branch head, base tip, document digest or resolved path is `changed`. Historical acceptance is never edited.
-- A `landed` receipt records that the accepted head reached the base. The landing moves the base, so a landed code artifact is compared on the task branch alone: a commit past the landed head is `changed`, and a checkout that is gone or detached leaves it `landed`. A `retired` receipt passes without a checkout. Receipts are written by the landing and cleanup operations that ship with the decision routes; until then a merge made from the existing merge buttons leaves an accepted code review `changed`, because the base moved and nothing recorded why.
+- A `landed` receipt records that the accepted head reached the base. The landing moves the base, so a landed code artifact is compared on the task branch alone: a commit past the landed head is `changed`, and a checkout that is gone or detached leaves it `landed`. A `retired` receipt passes without a checkout. `landed` receipts are written by the landing paths listed under Decisions. `retired` receipts need a succeeded cleanup journal, and no journal writer exists yet, so none are minted.
 - External processes ignore Calandria's locks. Capture detects changes it can observe by reading twice; it cannot rule out a write that lands after the final read.
 
 ## Migration
 
-Schema version 10 adds the tables above and `tasks.review_content_epoch` (default 0). The migration is additive and idempotent: running it again changes nothing, and existing rows are untouched. `tests/reviewMigration.test.ts` upgrades a version-9 database twice and compares rows, tables and indexes.
+Schema version 10 adds the tables above and `tasks.review_content_epoch` (default 0). Version 11 adds `messages.review_action_id`, `pending_messages.review_action_id` (both unique where set) and `tasks.active_review_action_id`. The migrations are additive and idempotent: running them again changes nothing, and existing rows are untouched. `tests/reviewMigration.test.ts` upgrades a version-9 database twice and compares rows, tables and indexes.
 
 ## Retention
 

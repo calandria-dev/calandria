@@ -100,6 +100,9 @@ export function actionView(a: ActionRow): ActionView {
 /** Advisory only: the action endpoint revalidates against the live request. */
 function allowedActions(req: RequestRow, applicability: ReviewApplicabilityState, last: ActionRow | undefined): ReviewActionName[] {
   const out: ReviewActionName[] = [];
+  // Nothing is offered while a decision effect is still in flight; the action
+  // endpoint refuses with operation_pending either way.
+  if (last?.state === "pending") return out;
   const open = req.state === "pending" || req.state === "changes_requested";
   if (req.state === "pending") {
     if (applicability === "current") out.push("accept");
@@ -108,7 +111,7 @@ function allowedActions(req: RequestRow, applicability: ReviewApplicabilityState
   if (open) out.push("withdraw");
   if (req.required === 1 && req.state !== "waived") out.push("waive");
   if (req.state === "accepted" && req.kind === "code" && applicability === "current") out.push("merge");
-  if (req.state === "changes_requested" && last && last.action === "request_changes" && (last.state === "failed" || last.state === "indeterminate")) out.push("retry_feedback");
+  if (req.state === "changes_requested" && last && (last.action === "request_changes" || last.action === "retry_feedback") && (last.state === "failed" || last.state === "indeterminate")) out.push("retry_feedback");
   return out;
 }
 

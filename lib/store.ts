@@ -10,6 +10,7 @@ import { getProviderRow } from "./providers/rows";
 // the note in that file).
 import { modelContextWindow } from "./agents/capabilities";
 import { SERVICE_PORT_BASE } from "./config";
+import { recordFeedbackInsertion } from "./reviews/feedbackStore";
 import { assertReviewsSatisfiedSync, bumpEpochIfReviewed, reviewBlockerSync, isTerminalStatus, projectReviewBlockers, waiveRequired } from "./reviews/guard";
 import type { Project, Task, Tag, Message, PendingMessage, TaskComment, TaskDocComment, TaskDocDraft, Summary, Session, Priority, Status, MsgRole, LedgerUsage, UsageTotals, PermissionRule, PermissionMatchKind, AgentEditChange, TaskAgentEdit, SettingsSnapshot, IssueReport, ToolData } from "./types";
 import { isLandingMode, type LandingMode } from "./types";
@@ -275,10 +276,10 @@ export function reorderProjects(ids: string[]) {
   db.transaction((list: string[]) => list.forEach((id, i) => stmt.run(i, id)))(ids);
 }
 
-export function deleteProject(id: string, opts: { reviewDisposition?: "waive_and_delete" } = {}) {
+export function deleteProject(id: string, opts: { reviewDisposition?: "waive_and_delete"; reviewActor?: string } = {}) {
   // Deleting a project is deleting each of its tasks: same guard, same disposition.
   for (const { taskId } of projectReviewBlockers(id)) {
-    if (opts.reviewDisposition === "waive_and_delete") waiveRequired(taskId);
+    if (opts.reviewDisposition === "waive_and_delete") waiveRequired(taskId, "waive_and_delete", opts.reviewActor);
     else assertReviewsSatisfiedSync(taskId);
   }
   // Cascades to the project's tasks, messages and summaries (FK ON DELETE CASCADE).
@@ -932,7 +933,7 @@ export interface MovedTag {
 export function moveTasks(
   ids: string[],
   projectId: string,
-  opts: { resetCheckout?: ReadonlySet<string> } = {}
+  opts: { resetCheckout?: ReadonlySet<string>; reviewActor?: string } = {}
 ): TaskMoveBatch {
   const db = getDb();
   const dest = getProject(projectId);
@@ -1014,7 +1015,7 @@ export function moveTasks(
     // (history kept) and invalidate any earlier acceptance.
     for (const t of movers) {
       if (!opts.resetCheckout?.has(t.id)) continue;
-      waiveRequired(t.id);
+      waiveRequired(t.id, "move_reset", opts.reviewActor);
       bumpEpochIfReviewed(t.id);
     }
     const unlink = db.prepare("DELETE FROM task_dependencies WHERE task_id = ? AND depends_on_id = ?");
@@ -1337,8 +1338,8 @@ export function openAutoReclaimPrTaskCount(): number {
  * the caller passes the explicit human disposition `waive_and_delete`, which
  * waives each request in place before the row goes.
  */
-export function deleteTask(id: string, opts: { reviewDisposition?: "waive_and_delete" } = {}) {
-  if (opts.reviewDisposition === "waive_and_delete") waiveRequired(id);
+export function deleteTask(id: string, opts: { reviewDisposition?: "waive_and_delete"; reviewActor?: string } = {}) {
+  if (opts.reviewDisposition === "waive_and_delete") waiveRequired(id, "waive_and_delete", opts.reviewActor);
   else assertReviewsSatisfiedSync(id);
   getDb().prepare("DELETE FROM tasks WHERE id = ?").run(id);
 }
@@ -1835,13 +1836,22 @@ export function listMessages(taskId: string): Message[] {
     .all(taskId) as Message[];
 }
 
-export function addMessage(taskId: string, generation: number, role: MsgRole, content: string): Message {
+export function addMessage(taskId: string, generation: number, role: MsgRole, content: string, reviewActionId?: string): Message {
   const id = nanoid();
   const now = Date.now();
-  getDb()
-    .prepare("INSERT INTO messages (id, task_id, generation, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(id, taskId, generation, role, content, now);
-  return { id, task_id: taskId, generation, role, content, created_at: now };
+  const db = getDb();
+  if (!reviewActionId) {
+    db.prepare("INSERT INTO messages (id, task_id, generation, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, taskId, generation, role, content, now);
+    return { id, task_id: taskId, generation, role, content, created_at: now };
+  }
+  // Review feedback: the transcript row and the action's `recordedAt` land in
+  // one transaction. The insertion proves the text is on the transcript and
+  // never that the agent received it (lib/reviews/feedback.ts).
+  db.transaction(() => {
+    db.prepare("INSERT INTO messages (id, task_id, generation, role, content, created_at, review_action_id) VALUES (?, ?, ?, ?, ?, ?, ?)").run(id, taskId, generation, role, content, now, reviewActionId);
+    recordFeedbackInsertion(reviewActionId, now);
+  })();
+  return { id, task_id: taskId, generation, role, content, created_at: now, review_action_id: reviewActionId };
 }
 
 /**
@@ -1878,13 +1888,13 @@ export function listPendingMessages(taskId: string): PendingMessage[] {
 }
 
 // Park a follow-up to run after the current turn ends.
-export function addPendingMessage(taskId: string, generation: number, content: string): PendingMessage {
+export function addPendingMessage(taskId: string, generation: number, content: string, reviewActionId?: string): PendingMessage {
   const id = nanoid();
   const now = Date.now();
   getDb()
-    .prepare("INSERT INTO pending_messages (id, task_id, generation, content, created_at) VALUES (?, ?, ?, ?, ?)")
-    .run(id, taskId, generation, content, now);
-  return { id, task_id: taskId, generation, content, created_at: now };
+    .prepare("INSERT INTO pending_messages (id, task_id, generation, content, created_at, review_action_id) VALUES (?, ?, ?, ?, ?, ?)")
+    .run(id, taskId, generation, content, now, reviewActionId ?? null);
+  return { id, task_id: taskId, generation, content, created_at: now, ...(reviewActionId ? { review_action_id: reviewActionId } : {}) };
 }
 
 // Claim and remove the oldest parked follow-up for a task (FIFO). Returns

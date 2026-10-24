@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getProject, getTask, getTaskDeps } from "@/lib/store";
 import { moveTasksToProject, previewDiscard, UNSAFE_DISCARD_REASON } from "@/lib/taskMove";
+import { resolveHumanActor } from "@/lib/reviews/actor";
 
 export const dynamic = "force-dynamic";
 
@@ -66,7 +67,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // The operation takes the acknowledgements per id, since a selection can
   // answer for some of its tasks and not others; one task's answer is that
   // list with one entry in it.
+  const reviewActor = (await resolveHumanActor(req).catch(() => null))?.id;
   const result = await moveTasksToProject([id], projectId, {
+    reviewActor,
     discardWorktree: body?.discard_worktree === true ? [id] : [],
     // Only meaningful alongside the first acknowledgement, and the
     // operation reads it that way, but the two are never inferred from each

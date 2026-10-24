@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { reviewRefusal } from "@/lib/reviews/gate";
+import { baseTipBefore, recordLocalLanding } from "@/lib/reviews/landing";
 import { getTask, getProject, updateTask, recordTaskMerge } from "@/lib/store";
 import { completeWorktreeMerge, taskCommitMessage } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
@@ -41,11 +42,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const reviewRefusal409 = await reviewRefusal(id);
     if (reviewRefusal409) return NextResponse.json({ error: reviewRefusal409, code: "review_required" }, { status: 409 });
 
+    const baseBranch = resolveBaseBranch(task, project);
+    const baseBeforeSha = await baseTipBefore(project.repo_path, baseBranch);
     const result = await completeWorktreeMerge({
       repoPath: project.repo_path,
       worktreePath: task.worktree_path,
       workBranch: task.work_branch,
-      baseBranch: resolveBaseBranch(task, project),
+      baseBranch,
       message: taskCommitMessage(task),
       stashDirty,
       resolveOnly,
@@ -55,6 +58,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // so nothing is merged and no insight row is owed. Recording either would put
     // a merge on the board that the base branch has never seen.
     if (result.ok && !resolveOnly) {
+      await recordLocalLanding({ taskId: id, repoPath: project.repo_path, baseBranch, baseBeforeSha, mergedSha: result.mergedSha });
       // Record the merge and advance the diff base. Status remains user-owned
       // when auto_reclaim is off. An opted-in project closes the landed task
       // through maybeAutoReclaim below.

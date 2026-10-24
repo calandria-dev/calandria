@@ -408,18 +408,29 @@ export interface CodePreview {
 }
 
 /**
- * The bounded diff of a code artifact, read from its own pinned objects rather
- * than the task branch. Verifies the registered repository, then that each pin
- * still resolves to the manifest's commit. An over-limit diff is returned
- * truncated and labelled, never as complete.
+ * Check that the registered repository still holds this artifact's three pins
+ * at exactly the manifest's OIDs. Returns the repository's git dir; throws
+ * `artifact_unavailable` otherwise. Accept and merge run this before acting, so
+ * a decision never rests on objects that were pruned or rewritten.
  */
-export async function readCodePreview(artifactId: string, manifest: CodeManifest): Promise<CodePreview> {
+export async function verifyPins(artifactId: string, manifest: CodeManifest): Promise<string> {
   const dir = repositoryDir(manifest.repositoryId);
   const expected: Record<RefSide, string> = { base: manifest.baseCommitSha, head: manifest.headCommitSha, target: manifest.baseTipSha };
   for (const side of REF_SIDES) {
     const got = await runGit(dir, ["--git-dir", dir, "rev-parse", "--verify", `${reviewRef(artifactId, side)}^{commit}`]);
     if (got.code !== 0 || got.stdout.trim() !== expected[side]) throw new ReviewError("artifact_unavailable", "the pinned review objects are not available");
   }
+  return dir;
+}
+
+/**
+ * The bounded diff of a code artifact, read from its own pinned objects rather
+ * than the task branch. Verifies the registered repository, then that each pin
+ * still resolves to the manifest's commit. An over-limit diff is returned
+ * truncated and labelled, never as complete.
+ */
+export async function readCodePreview(artifactId: string, manifest: CodeManifest): Promise<CodePreview> {
+  const dir = await verifyPins(artifactId, manifest);
   const base = reviewRef(artifactId, "base");
   const head = reviewRef(artifactId, "head");
   const names = await runGit(dir, ["--git-dir", dir, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", base, head]);
