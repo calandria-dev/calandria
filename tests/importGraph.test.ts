@@ -30,6 +30,13 @@ const PINNED = [
   "lib/workCenter/proposals.ts", // SDK-free Advanced Settings proposal metadata; lib/advanced-env/proposals.ts registers into it
   "lib/workCenter/bridge.ts", // global-bus to sequence/work_center_changed relay; events + store only
   "lib/workCenter/snapshot.ts", // the attention adapters and snapshot assembly; store, asks, abort and registries only
+  "lib/workCenter/reviewAdapter.ts", // the review attention source; review store only
+  "lib/reviews/types.ts", //  review wire types, limits and canonical JSON; pure
+  "lib/reviews/store.ts", //  review persistence and the submission transaction; db only
+  "lib/reviews/artifacts.ts", // code pins and exact document capture; git, fs and db only
+  "lib/reviews/read.ts", //  review read models and exact artifact reads
+  "lib/reviews/submit.ts", // the submission service; task and repo locks, no runner or agent registry
+  "lib/reviews/http.ts", //  review route error shaping
   "lib/workCenter/notifyReceipts.ts", // notification claim/receipt tables; db only
   "lib/workCenter/compat.ts", // /api/needs-you and project-badge adapters over the snapshot
   "lib/agents/claude/executionObserver.ts", // folds native background events into an observation; pure
