@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getProject } from "@/lib/store";
 import { moveTasksToProject, previewDiscards } from "@/lib/taskMove";
+import { resolveHumanActor } from "@/lib/reviews/actor";
 
 export const dynamic = "force-dynamic";
 
@@ -75,7 +76,9 @@ export async function POST(req: Request) {
 
   // Null means the destination was deleted while this request queued for
   // the task locks.
+  const reviewActor = (await resolveHumanActor(req).catch(() => null))?.id;
   const result = await moveTasksToProject(ids, projectId, {
+    reviewActor,
     discardWorktree: idList(body?.discard_worktree),
     discardUnsafe: idList(body?.discard_unsafe),
   });

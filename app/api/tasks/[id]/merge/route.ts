@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { reviewRefusal } from "@/lib/reviews/gate";
+import { baseTipBefore, recordLocalLanding } from "@/lib/reviews/landing";
 import { getTask, getProject, updateTask, recordTaskMerge } from "@/lib/store";
 import { mergeTask, taskCommitMessage } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
@@ -40,11 +41,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const reviewRefusal409 = await reviewRefusal(id);
     if (reviewRefusal409) return NextResponse.json({ error: reviewRefusal409, code: "review_required" }, { status: 409 });
 
+    const baseBranch = resolveBaseBranch(task, project);
+    const baseBeforeSha = await baseTipBefore(project.repo_path, baseBranch);
     const result = await mergeTask({
       repoPath: project.repo_path,
       worktreePath: task.worktree_path,
       workBranch: task.work_branch,
-      baseBranch: resolveBaseBranch(task, project),
+      baseBranch,
       message: taskCommitMessage(task),
       // Allows the merge to fast-forward the base past any remote commits the
       // task was cut from, so the merge commit holds only the task's own work.
@@ -53,6 +56,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
 
     if (result.ok) {
+      // The accepted head is now in the base: record it so the task keeps
+      // passing the required-review guard (lib/reviews/landing.ts).
+      await recordLocalLanding({ taskId: id, repoPath: project.repo_path, baseBranch, baseBeforeSha, mergedSha: result.mergedSha });
       // Record the merge and advance the diff base to the merged tip so a later
       // round in the same task shows only changes made after this merge. Status
       // remains user-owned when auto_reclaim is off. An opted-in project closes

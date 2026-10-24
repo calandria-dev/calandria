@@ -200,6 +200,14 @@ export async function tickSchedules(now = Date.now()): Promise<number> {
     } catch (err) {
       console.error("[notifications] reconcile failed:", err);
     }
+    // Review feedback whose dispatch never started (its parked copy dies with
+    // a restart or a Stop). Intent was never recorded for these, so delivering
+    // them here is their first attempt (lib/reviews/feedback.ts).
+    try {
+      await (await import("./reviews/feedback")).reconcileFeedback();
+    } catch (err) {
+      console.error("[review-feedback] reconcile failed:", err);
+    }
     s.lastTickAt = Date.now();
   } finally {
     s.ticking = false;

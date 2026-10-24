@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { reviewRefusal } from "@/lib/reviews/gate";
+import { baseTipBefore, recordLocalLanding } from "@/lib/reviews/landing";
 import { getTask, getProject, updateTask } from "@/lib/store";
 import { prepareWorktreeMerge, completeWorktreeMerge, taskCommitMessage } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
@@ -46,6 +47,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
     // Clean trial merge, nothing to resolve, so land it now.
     if (prep.clean) {
+      const baseBeforeSha = await baseTipBefore(project.repo_path, baseBranch);
       const result = await completeWorktreeMerge({
         repoPath: project.repo_path,
         worktreePath: task.worktree_path,
@@ -54,6 +56,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         message,
       });
       if (result.ok) {
+        await recordLocalLanding({ taskId: id, repoPath: project.repo_path, baseBranch, baseBeforeSha, mergedSha: result.mergedSha });
         // Record the merge and advance the diff base. Status remains user-owned
         // when auto_reclaim is off. An opted-in project closes the landed task
         // through maybeAutoReclaim below.

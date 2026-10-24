@@ -7,8 +7,11 @@
 // This module imports only the database and the review types, so lib/store.ts
 // can call it without a cycle and it stays out of the SDK graph.
 
+import { nanoid } from "nanoid";
+
 import { getDb } from "../db";
-import { ReviewError, type ReviewApplicabilityState, type ReviewState } from "./types";
+import { taskHasPendingOperation } from "./store";
+import { LOCAL_OWNER_ACTOR, ReviewError, canonicalJson, sha256Hex, type ActionResponse, type ReviewApplicabilityState, type ReviewState } from "./types";
 
 export interface GateRequest {
   id: string;
@@ -119,18 +122,50 @@ export function projectReviewBlockers(projectId: string): { taskId: string; bloc
   return out;
 }
 
+/** Why a person waived requests outside the decision endpoint. */
+export type WaiveReason = "waive_and_delete" | "move_reset";
+
 /**
- * Explicit human disposition for a delete: waives each unsatisfied required
- * request in place so the history records why the work was released.
+ * Explicit human disposition for a delete or a source-changing move: waives
+ * each unsatisfied required request in place, and records one succeeded
+ * `waive` action per request so the history names who released the work and
+ * why. Refused with `operation_pending` while any action on the task's
+ * requests is still pending or indeterminate, since that effect (a merge in
+ * flight, an undelivered feedback) would otherwise lose its record.
  */
-export function waiveRequired(ownerTaskId: string): void {
+export function waiveRequired(ownerTaskId: string, reason: WaiveReason, actorId: string = LOCAL_OWNER_ACTOR): void {
+  if (taskHasPendingOperation(ownerTaskId)) {
+    throw new ReviewError("operation_pending", "a review decision on this task has not settled; resolve it before waiving");
+  }
   const b = reviewBlockerSync(ownerTaskId);
   if (!b) return;
   const db = getDb();
   const now = Date.now();
-  for (const id of b.requestIds) {
-    db.prepare("UPDATE review_requests SET state = 'waived', version = version + 1, updated_at = ? WHERE id = ?").run(now, id);
-  }
+  const run = db.transaction(() => {
+    for (const id of b.requestIds) {
+      const req = db.prepare("SELECT id, version, current_submission_id FROM review_requests WHERE id = ?").get(id) as
+        | { id: string; version: number; current_submission_id: string | null }
+        | undefined;
+      if (!req?.current_submission_id) continue;
+      const version = req.version + 1;
+      db.prepare("UPDATE review_requests SET state = 'waived', version = ?, updated_at = ? WHERE id = ?").run(version, now, id);
+      const actionId = nanoid();
+      const response: ActionResponse = {
+        requestId: id,
+        submissionId: req.current_submission_id,
+        version,
+        state: "waived",
+        action: { id: actionId, state: "succeeded", decisionApplied: true, errorCode: null, operation: null },
+      };
+      const key = `disposition:${reason}:${id}:${req.version}`;
+      db.prepare(
+        `INSERT INTO review_actions (id, request_id, submission_id, expected_version, action, actor_kind, actor_id, reason, idempotency_key, payload_sha256,
+           state, decision_applied, error_code, operation_json, receipt_http_status, receipt_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'waive', 'human', ?, ?, ?, ?, 'succeeded', 1, NULL, NULL, 200, ?, ?, ?)`,
+      ).run(actionId, id, req.current_submission_id, req.version, actorId, reason, key, sha256Hex(canonicalJson({ action: "waive", reason, requestId: id, version: req.version })), canonicalJson(response), now, now);
+    }
+  });
+  run.immediate();
 }
 
 /**

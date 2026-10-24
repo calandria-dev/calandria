@@ -15,6 +15,7 @@ import fs from "node:fs";
 import { getProject, getTask, moveTaskBlockedReason, moveTasks, type TaskMoveBatch } from "./store";
 import { removeWorktree, worktreePruneSafety } from "./git";
 import { taskReviewBlocker } from "./reviews/gate";
+import { taskHasPendingOperation } from "./reviews/store";
 import { resolveBaseBranch } from "./baseBranch";
 import { withTaskLocks } from "./taskLock";
 import { withRepoLock } from "./repoLock";
@@ -43,6 +44,8 @@ export interface TaskMoveOutcome extends TaskMoveBatch {
 }
 
 export interface MoveOptions {
+  /** The server-resolved person behind a discard, recorded on each waive action the reset writes. */
+  reviewActor?: string;
   /** Refuse the whole move if any queued task can launch unattended. */
   refuseAutomaticStart?: boolean;
   /**
@@ -162,7 +165,7 @@ export async function moveTasksToProject(
     // crash.
     if (discarded.length > 0 && !getProject(projectId)) return null;
 
-    const result = moveTasks(candidates, projectId, { resetCheckout: discardIds });
+    const result = moveTasks(candidates, projectId, { resetCheckout: discardIds, reviewActor: opts.reviewActor });
     const skipped = [
       ...result.skipped,
       ...refused,
@@ -234,6 +237,10 @@ async function discardCheckout(
     // A required review the move would waive is named and acknowledged the
     // same way: the store's reset waives it in place, which is a disposition a
     // person has to give for exactly this task, never implied by the batch.
+    // A decision effect still in flight (a merge, an undelivered feedback)
+    // would lose its record when the reset waives the request; refuse before
+    // anything is torn down.
+    if (taskHasPendingOperation(id)) return { reason: "operation_pending: a review decision on this task has not settled" };
     const review = await taskReviewBlocker(id);
     if (review && !opts.discardUnsafe) return { reason: `${UNSAFE_DISCARD_REASON}: ${reviewDiscardReason(review.reason)}` };
 

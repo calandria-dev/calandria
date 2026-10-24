@@ -1,0 +1,635 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "name": "accept.ok",
+      "request": {
+        "submissionId": "<submissionId>",
+        "expectedVersion": 1,
+        "action": "accept",
+        "idempotencyKey": "<idempotencyKey>"
+      },
+      "status": 200,
+      "body": {
+        "requestId": "<requestId>",
+        "submissionId": "<submissionId>",
+        "version": 2,
+        "state": "accepted",
+        "action": {
+          "id": "<actionId>",
+          "state": "succeeded",
+          "decisionApplied": true,
+          "errorCode": null,
+          "operation": null
+        }
+      }
+    },
+    {
+      "name": "accept.replay_same_key",
+      "request": {
+        "submissionId": "<submissionId>",
+        "expectedVersion": 1,
+        "action": "accept",
+        "idempotencyKey": "<idempotencyKey>"
+      },
+      "status": 200,
+      "body": {
+        "action": {
+          "decisionApplied": true,
+          "errorCode": null,
+          "id": "<actionId>",
+          "operation": null,
+          "state": "succeeded"
+        },
+        "requestId": "<requestId>",
+        "state": "accepted",
+        "submissionId": "<submissionId>",
+        "version": 2
+      }
+    },
+    {
+      "name": "error.idempotency_conflict",
+      "request": {
+        "submissionId": "<submissionId>",
+        "expectedVersion": 1,
+        "action": "waive",
+        "idempotencyKey": "<idempotencyKey>",
+        "reason": "different content"
+      },
+      "status": 409,
+      "body": {
+        "error": {
+          "code": "idempotency_conflict",
+          "message": "this idempotency key was used with different content",
+          "retryable": false
+        },
+        "current": {
+          "version": 2,
+          "state": "accepted",
+          "submissionId": "<submissionId>"
+        }
+      }
+    },
+    {
+      "name": "error.version_conflict",
+      "request": {
+        "submissionId": "<submissionId>",
+        "expectedVersion": 1,
+        "action": "accept",
+        "idempotencyKey": "<idempotencyKey>"
+      },
+      "status": 409,
+      "body": {
+        "error": {
+          "code": "version_conflict",
+          "message": "the review changed since you read it",
+          "retryable": true
+        },
+        "current": {
+          "version": 2,
+          "state": "accepted",
+          "submissionId": "<submissionId>"
+        }
+      }
+    },
+    {
+      "name": "error.not_found_submission",
+      "request": {
+        "submissionId": "other-submission",
+        "expectedVersion": 1,
+        "action": "accept",
+        "idempotencyKey": "<idempotencyKey>"
+      },
+      "status": 404,
+      "body": {
+        "error": {
+          "code": "not_found",
+          "message": "submission not found",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "error.bad_request_reason_required",
+      "request": {
+        "submissionId": "<submissionId>",
+        "expectedVersion": 2,
+        "action": "waive",
+        "idempotencyKey": "<idempotencyKey>"
+      },
+      "status": 400,
+      "body": {
+        "error": {
+          "code": "bad_request",
+          "message": "a reason is required to waive",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "error.human_required",
+      "status": 403,
+      "body": {
+        "error": {
+          "code": "human_required",
+          "message": "a person has to make this decision from the browser",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "error.source_changed",
+      "request": {
+        "submissionId": "<submissionId>",
+        "expectedVersion": 1,
+        "action": "accept",
+        "idempotencyKey": "<idempotencyKey>"
+      },
+      "status": 409,
+      "body": {
+        "error": {
+          "code": "source_changed",
+          "message": "the document bytes changed since submission",
+          "retryable": false
+        },
+        "current": {
+          "version": 1,
+          "state": "pending",
+          "submissionId": "<submissionId>"
+        }
+      }
+    },
+    {
+      "name": "error.revision_changed",
+      "request": {
+        "submissionId": "<submissionId>",
+        "expectedVersion": 1,
+        "action": "accept",
+        "idempotencyKey": "<idempotencyKey>"
+      },
+      "status": 409,
+      "body": {
+        "error": {
+          "code": "revision_changed",
+          "message": "a newer revision was submitted",
+          "retryable": false
+        },
+        "current": {
+          "version": 2,
+          "state": "pending",
+          "submissionId": "<newSubmissionId>"
+        }
+      }
+    },
+    {
+      "name": "error.artifact_unavailable",
+      "request": {
+        "submissionId": "<submissionId>",
+        "expectedVersion": 1,
+        "action": "accept",
+        "idempotencyKey": "<idempotencyKey>"
+      },
+      "status": 409,
+      "body": {
+        "error": {
+          "code": "artifact_unavailable",
+          "message": "the pinned review objects are not available",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "request_changes.accepted_202",
+      "request": {
+        "submissionId": "<submissionId>",
+        "expectedVersion": 1,
+        "action": "request_changes",
+        "idempotencyKey": "<idempotencyKey>",
+        "reason": "Tighten section two."
+      },
+      "status": 202,
+      "body": {
+        "requestId": "<requestId>",
+        "submissionId": "<submissionId>",
+        "version": 2,
+        "state": "changes_requested",
+        "action": {
+          "id": "<actionId>",
+          "state": "pending",
+          "decisionApplied": true,
+          "errorCode": null,
+          "operation": {
+            "kind": "feedback",
+            "recordedAt": null,
+            "delivery": "queued",
+            "acceptedAt": null,
+            "acceptanceEvidence": null,
+            "taskId": "<taskId>",
+            "expectedGeneration": 1,
+            "sourceSessionId": "<sessionId>",
+            "messageCorrelationId": "<actionId>",
+            "targetTurnId": null,
+            "priorActionId": null
+          }
+        }
+      }
+    },
+    {
+      "name": "feedback.dispatching",
+      "status": 200,
+      "body": {
+        "id": "<actionId>",
+        "submissionId": "<submissionId>",
+        "action": "request_changes",
+        "state": "pending",
+        "decisionApplied": true,
+        "errorCode": null,
+        "operation": {
+          "acceptanceEvidence": null,
+          "acceptedAt": null,
+          "delivery": "dispatching",
+          "expectedGeneration": 1,
+          "kind": "feedback",
+          "messageCorrelationId": "<actionId>",
+          "priorActionId": null,
+          "recordedAt": "<ms>",
+          "sourceSessionId": "<sessionId>",
+          "targetTurnId": null,
+          "taskId": "<taskId>"
+        },
+        "createdAt": "<ms>",
+        "updatedAt": "<ms>"
+      }
+    },
+    {
+      "name": "error.operation_pending",
+      "request": {
+        "submissionId": "<submissionId>",
+        "expectedVersion": 2,
+        "action": "withdraw",
+        "idempotencyKey": "<idempotencyKey>",
+        "reason": "no longer needed"
+      },
+      "status": 409,
+      "body": {
+        "error": {
+          "code": "operation_pending",
+          "message": "a decision on this review has not settled",
+          "retryable": false
+        },
+        "current": {
+          "version": 2,
+          "state": "changes_requested",
+          "submissionId": "<submissionId>"
+        }
+      }
+    },
+    {
+      "name": "feedback.delivered",
+      "status": 200,
+      "body": {
+        "id": "<actionId>",
+        "submissionId": "<submissionId>",
+        "action": "request_changes",
+        "state": "succeeded",
+        "decisionApplied": true,
+        "errorCode": null,
+        "operation": {
+          "acceptanceEvidence": "correlated_provider_event",
+          "acceptedAt": "<ms>",
+          "delivery": "delivered",
+          "expectedGeneration": 1,
+          "kind": "feedback",
+          "messageCorrelationId": "<actionId>",
+          "priorActionId": null,
+          "recordedAt": "<ms>",
+          "sourceSessionId": "<sessionId>",
+          "targetTurnId": "<turnId>",
+          "taskId": "<taskId>"
+        },
+        "createdAt": "<ms>",
+        "updatedAt": "<ms>"
+      }
+    },
+    {
+      "name": "feedback.failed_generation_changed",
+      "status": 200,
+      "body": {
+        "id": "<actionId>",
+        "submissionId": "<submissionId>",
+        "action": "request_changes",
+        "state": "failed",
+        "decisionApplied": true,
+        "errorCode": "generation_changed",
+        "operation": {
+          "acceptanceEvidence": null,
+          "acceptedAt": null,
+          "delivery": "failed",
+          "expectedGeneration": 1,
+          "kind": "feedback",
+          "messageCorrelationId": "<actionId>",
+          "priorActionId": null,
+          "recordedAt": null,
+          "sourceSessionId": "<sessionId>",
+          "targetTurnId": null,
+          "taskId": "<taskId>"
+        },
+        "createdAt": "<ms>",
+        "updatedAt": "<ms>"
+      }
+    },
+    {
+      "name": "feedback.indeterminate",
+      "status": 200,
+      "body": {
+        "id": "<priorActionId>",
+        "submissionId": "<submissionId>",
+        "action": "request_changes",
+        "state": "indeterminate",
+        "decisionApplied": true,
+        "errorCode": "no_correlated_event",
+        "operation": {
+          "acceptanceEvidence": null,
+          "acceptedAt": null,
+          "delivery": "indeterminate",
+          "expectedGeneration": 1,
+          "kind": "feedback",
+          "messageCorrelationId": "<priorActionId>",
+          "priorActionId": null,
+          "recordedAt": "<ms>",
+          "sourceSessionId": "<sessionId>",
+          "targetTurnId": null,
+          "taskId": "<taskId>"
+        },
+        "createdAt": "<ms>",
+        "updatedAt": "<ms>"
+      }
+    },
+    {
+      "name": "retry_feedback.accepted_202",
+      "request": {
+        "submissionId": "<submissionId>",
+        "expectedVersion": 2,
+        "action": "retry_feedback",
+        "idempotencyKey": "<idempotencyKey>",
+        "reason": "Retry acknowledged: the agent may receive this feedback twice."
+      },
+      "status": 202,
+      "body": {
+        "requestId": "<requestId>",
+        "submissionId": "<submissionId>",
+        "version": 3,
+        "state": "changes_requested",
+        "action": {
+          "id": "<actionId>",
+          "state": "pending",
+          "decisionApplied": false,
+          "errorCode": null,
+          "operation": {
+            "kind": "feedback",
+            "recordedAt": null,
+            "delivery": "queued",
+            "acceptedAt": null,
+            "acceptanceEvidence": null,
+            "taskId": "<taskId>",
+            "expectedGeneration": 1,
+            "sourceSessionId": "<sessionId>",
+            "messageCorrelationId": "<actionId>",
+            "targetTurnId": null,
+            "priorActionId": "<priorActionId>"
+          }
+        }
+      }
+    },
+    {
+      "name": "feedback.delivered_after_retry",
+      "status": 200,
+      "body": {
+        "id": "<actionId>",
+        "submissionId": "<submissionId>",
+        "action": "retry_feedback",
+        "state": "succeeded",
+        "decisionApplied": false,
+        "errorCode": null,
+        "operation": {
+          "acceptanceEvidence": "correlated_provider_event",
+          "acceptedAt": "<ms>",
+          "delivery": "delivered",
+          "expectedGeneration": 1,
+          "kind": "feedback",
+          "messageCorrelationId": "<actionId>",
+          "priorActionId": "<priorActionId>",
+          "recordedAt": "<ms>",
+          "sourceSessionId": "<sessionId>",
+          "targetTurnId": "<turnId>",
+          "taskId": "<taskId>"
+        },
+        "createdAt": "<ms>",
+        "updatedAt": "<ms>"
+      }
+    },
+    {
+      "name": "feedback.queued_behind_running_turn",
+      "status": 200,
+      "body": {
+        "id": "<actionId>",
+        "submissionId": "<submissionId>",
+        "action": "request_changes",
+        "state": "pending",
+        "decisionApplied": true,
+        "errorCode": null,
+        "operation": {
+          "acceptanceEvidence": null,
+          "acceptedAt": null,
+          "delivery": "queued",
+          "expectedGeneration": 1,
+          "kind": "feedback",
+          "messageCorrelationId": "<actionId>",
+          "priorActionId": null,
+          "recordedAt": null,
+          "sourceSessionId": "<sessionId>",
+          "targetTurnId": null,
+          "taskId": "<taskId>"
+        },
+        "createdAt": "<ms>",
+        "updatedAt": "<ms>"
+      }
+    },
+    {
+      "name": "waive.ok",
+      "request": {
+        "submissionId": "<submissionId>",
+        "expectedVersion": 1,
+        "action": "waive",
+        "idempotencyKey": "<idempotencyKey>",
+        "reason": "Reviewed out of band."
+      },
+      "status": 200,
+      "body": {
+        "requestId": "<requestId>",
+        "submissionId": "<submissionId>",
+        "version": 2,
+        "state": "waived",
+        "action": {
+          "id": "<actionId>",
+          "state": "succeeded",
+          "decisionApplied": true,
+          "errorCode": null,
+          "operation": null
+        }
+      }
+    },
+    {
+      "name": "withdraw.ok",
+      "request": {
+        "submissionId": "<submissionId>",
+        "expectedVersion": 1,
+        "action": "withdraw",
+        "idempotencyKey": "<idempotencyKey>",
+        "reason": "Wrong approach."
+      },
+      "status": 200,
+      "body": {
+        "requestId": "<requestId>",
+        "submissionId": "<submissionId>",
+        "version": 2,
+        "state": "withdrawn",
+        "action": {
+          "id": "<actionId>",
+          "state": "succeeded",
+          "decisionApplied": true,
+          "errorCode": null,
+          "operation": null
+        }
+      }
+    },
+    {
+      "name": "merge.succeeded_local",
+      "request": {
+        "submissionId": "<submissionId>",
+        "expectedVersion": 2,
+        "action": "merge",
+        "idempotencyKey": "<idempotencyKey>"
+      },
+      "status": 200,
+      "body": {
+        "requestId": "<requestId>",
+        "submissionId": "<submissionId>",
+        "version": 3,
+        "state": "accepted",
+        "action": {
+          "id": "<actionId>",
+          "state": "succeeded",
+          "decisionApplied": false,
+          "errorCode": null,
+          "operation": {
+            "kind": "merge",
+            "mode": "local",
+            "expectedHeadSha": "<sha>",
+            "expectedBaseSha": "<sha>",
+            "repositoryId": "<repositoryId>",
+            "prNumber": null,
+            "resultCommitSha": "<sha>",
+            "resultUrl": null
+          }
+        }
+      }
+    },
+    {
+      "name": "merge.failed_dirty_checkout",
+      "request": {
+        "submissionId": "<submissionId>",
+        "expectedVersion": 2,
+        "action": "merge",
+        "idempotencyKey": "<idempotencyKey>"
+      },
+      "status": 200,
+      "body": {
+        "requestId": "<requestId>",
+        "submissionId": "<submissionId>",
+        "version": 3,
+        "state": "accepted",
+        "action": {
+          "id": "<actionId>",
+          "state": "failed",
+          "decisionApplied": false,
+          "errorCode": "merge_dirty_checkout",
+          "operation": {
+            "kind": "merge",
+            "mode": "local",
+            "expectedHeadSha": "<sha>",
+            "expectedBaseSha": "<sha>",
+            "repositoryId": "<repositoryId>",
+            "prNumber": null,
+            "resultCommitSha": null,
+            "resultUrl": null
+          }
+        }
+      }
+    },
+    {
+      "name": "merge.pending_auto_merge_202",
+      "request": {
+        "submissionId": "<submissionId>",
+        "expectedVersion": 2,
+        "action": "merge",
+        "idempotencyKey": "<idempotencyKey>"
+      },
+      "status": 202,
+      "body": {
+        "requestId": "<requestId>",
+        "submissionId": "<submissionId>",
+        "version": 3,
+        "state": "accepted",
+        "action": {
+          "id": "<actionId>",
+          "state": "pending",
+          "decisionApplied": false,
+          "errorCode": null,
+          "operation": {
+            "kind": "merge",
+            "mode": "pr",
+            "expectedHeadSha": "<sha>",
+            "expectedBaseSha": "<sha>",
+            "repositoryId": "<repositoryId>",
+            "prNumber": 7,
+            "resultCommitSha": null,
+            "resultUrl": null
+          }
+        }
+      }
+    },
+    {
+      "name": "merge.indeterminate_lost_reply",
+      "request": {
+        "submissionId": "<submissionId>",
+        "expectedVersion": 2,
+        "action": "merge",
+        "idempotencyKey": "<idempotencyKey>"
+      },
+      "status": 200,
+      "body": {
+        "requestId": "<requestId>",
+        "submissionId": "<submissionId>",
+        "version": 3,
+        "state": "accepted",
+        "action": {
+          "id": "<actionId>",
+          "state": "indeterminate",
+          "decisionApplied": false,
+          "errorCode": "merge_unverified",
+          "operation": {
+            "kind": "merge",
+            "mode": "pr",
+            "expectedHeadSha": "<sha>",
+            "expectedBaseSha": "<sha>",
+            "repositoryId": "<repositoryId>",
+            "prNumber": 8,
+            "resultCommitSha": null,
+            "resultUrl": null
+          }
+        }
+      }
+    }
+  ]
+}

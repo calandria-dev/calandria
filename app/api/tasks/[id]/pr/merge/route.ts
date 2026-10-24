@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { reviewRefusal } from "@/lib/reviews/gate";
+import { acceptedCodeHead } from "@/lib/reviews/landing";
 import { getTask, getProject } from "@/lib/store";
 import { mergeTaskPr } from "@/lib/github";
 import { prMergeBlocker } from "@/lib/prMerge";
@@ -72,7 +73,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     const blocked = prMergeBlocker(fresh);
     if (blocked) return NextResponse.json({ ok: false, error: blocked, pr: prView(fresh) }, { status: 409 });
 
-    const result = await mergeTaskPr({ repoPath: cwd, number: fresh.pr_number });
+    // With an accepted code review, GitHub merges only that exact head: a push
+    // after the last read makes the merge fail instead of landing unreviewed work.
+    const result = await mergeTaskPr({ repoPath: cwd, number: fresh.pr_number, expectedHeadSha: acceptedCodeHead(id) ?? undefined });
     if (!result.ok) return NextResponse.json({ ...result, pr: prView(fresh) }, { status: 409 });
 
     // The handoff. An immediate merge is worth waiting one `gh pr view` for,

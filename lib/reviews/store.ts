@@ -10,6 +10,7 @@ import {
   ReviewError,
   canonicalJson,
   sha256Hex,
+  type ActionOperation,
   type ArtifactManifest,
   type ReviewActionName,
   type ReviewActionState,
@@ -126,7 +127,15 @@ export function getArtifact(id: string): ArtifactRow | undefined {
 }
 
 export function latestAction(requestId: string): ActionRow | undefined {
-  return getDb().prepare("SELECT * FROM review_actions WHERE request_id = ? ORDER BY created_at DESC, id DESC LIMIT 1").get(requestId) as ActionRow | undefined;
+  return getDb().prepare("SELECT * FROM review_actions WHERE request_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(requestId) as ActionRow | undefined;
+}
+
+export function getAction(id: string): ActionRow | undefined {
+  return getDb().prepare("SELECT * FROM review_actions WHERE id = ?").get(id) as ActionRow | undefined;
+}
+
+export function getActionByKey(requestId: string, idempotencyKey: string): ActionRow | undefined {
+  return getDb().prepare("SELECT * FROM review_actions WHERE request_id = ? AND idempotency_key = ?").get(requestId, idempotencyKey) as ActionRow | undefined;
 }
 
 export function listReceipts(submissionId: string): ReceiptRow[] {
@@ -144,8 +153,28 @@ export function listRequestsInState(state: ReviewState): RequestRow[] {
 }
 
 /** A decision effect that has not settled. Blocks resubmission and cleanup. */
-export function hasUnsettledAction(requestId: string): boolean {
-  return !!getDb().prepare("SELECT 1 FROM review_actions WHERE request_id = ? AND state IN ('pending','indeterminate') LIMIT 1").get(requestId);
+export function hasUnsettledAction(requestId: string, opts: { ignoreIndeterminateFeedback?: boolean } = {}): boolean {
+  // A pending action always blocks. An indeterminate one blocks only while it is
+  // the request's latest action: a later explicit retry supersedes it, so the
+  // old row can never wedge the request once a person has resolved it.
+  const db = getDb();
+  if (db.prepare("SELECT 1 FROM review_actions WHERE request_id = ? AND state = 'pending' LIMIT 1").get(requestId)) return true;
+  const last = latestAction(requestId);
+  if (!last || last.state !== "indeterminate") return false;
+  // For a person withdrawing or waiving, an uncertain feedback delivery is no
+  // reason to keep the request: they are abandoning the feedback.
+  if (opts.ignoreIndeterminateFeedback && (last.action === "request_changes" || last.action === "retry_feedback")) return false;
+  return true;
+}
+
+/** True while any request the task owns has an effect that has not settled, feedback included. */
+export function taskHasPendingOperation(ownerTaskId: string): boolean {
+  return !!getDb()
+    .prepare(
+      `SELECT 1 FROM review_actions a JOIN review_requests r ON r.id = a.request_id
+        WHERE r.owner_task_id = ? AND a.state IN ('pending','indeterminate') LIMIT 1`,
+    )
+    .get(ownerTaskId);
 }
 
 /** Actions that need a person to recover them: failed or indeterminate, newest per request. */
@@ -364,4 +393,31 @@ export function insertApplicabilityReceipt(input: {
     "INSERT OR IGNORE INTO review_applicability_receipts (id, submission_id, owner_task_id, content_epoch, kind, evidence_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
   ).run(id, sub.id, req.owner_task_id, sub.content_epoch, input.kind, canonicalJson(input.evidence), now);
   return db.prepare("SELECT * FROM review_applicability_receipts WHERE submission_id = ? AND content_epoch = ? AND kind = ?").get(sub.id, sub.content_epoch, input.kind) as ReceiptRow;
+}
+
+// ---------- action outcomes
+
+/** Merge actions a task owns that no one has settled yet (pending or indeterminate), oldest first. */
+export function listUnsettledMerges(ownerTaskId: string): ActionRow[] {
+  return getDb()
+    .prepare(
+      `SELECT a.* FROM review_actions a JOIN review_requests r ON r.id = a.request_id
+        WHERE r.owner_task_id = ? AND a.action = 'merge' AND a.state IN ('pending','indeterminate')
+        ORDER BY a.created_at ASC, a.rowid ASC`,
+    )
+    .all(ownerTaskId) as ActionRow[];
+}
+
+/**
+ * Settle an action's durable outcome. The stored receipt is never touched:
+ * it is what the original POST returned, and a replay returns it verbatim.
+ * `GET` reads these columns for the current state.
+ */
+export function updateActionOutcome(
+  actionId: string,
+  patch: { state: ReviewActionState; errorCode: string | null; operation: ActionOperation | null; now?: number },
+): void {
+  getDb()
+    .prepare("UPDATE review_actions SET state = ?, error_code = ?, operation_json = ?, updated_at = ? WHERE id = ?")
+    .run(patch.state, patch.errorCode, patch.operation ? canonicalJson(patch.operation) : null, patch.now ?? Date.now(), actionId);
 }

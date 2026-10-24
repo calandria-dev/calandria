@@ -88,7 +88,7 @@ export type ReviewErrorCode =
   | "revision_changed" | "terminal_task" | "review_required" | "dirty_worktree"
   | "unstable_capture" | "generation_changed" | "operation_pending"
   | "payload_too_large" | "document_too_large" | "unsupported_artifact" | "artifact_unavailable"
-  | "snapshot_busy";
+  | "snapshot_busy" | "human_required";
 
 const STATUS: Record<ReviewErrorCode, number> = {
   bad_request: 400, invalid_utf8: 400, creation_disabled: 403, not_found: 404, artifact_not_found: 404,
@@ -96,6 +96,7 @@ const STATUS: Record<ReviewErrorCode, number> = {
   revision_changed: 409, terminal_task: 409, review_required: 409, dirty_worktree: 409,
   unstable_capture: 409, generation_changed: 409, operation_pending: 409, artifact_unavailable: 409,
   payload_too_large: 413, document_too_large: 413, unsupported_artifact: 422, snapshot_busy: 503,
+  human_required: 403,
 };
 const RETRYABLE = new Set<ReviewErrorCode>(["unstable_capture", "snapshot_busy", "version_conflict", "dirty_worktree"]);
 
@@ -298,4 +299,90 @@ export interface SubmitReceipt {
   version: number;
   state: "pending";
   artifactId: string;
+}
+
+// ---- decision actions (contract work-center/1, "Decisions, effects, and recovery")
+
+export type FeedbackDeliveryState = "queued" | "dispatching" | "delivered" | "failed" | "indeterminate";
+export type AcceptanceEvidence = "app_server_ack" | "driver_input_ack" | "correlated_provider_event";
+
+/**
+ * `recordedAt` is the transcript insertion time and never proves delivery;
+ * `acceptedAt` and `acceptanceEvidence` are set only by a correlated provider
+ * acceptance, the one thing that makes `delivery` "delivered".
+ */
+export interface FeedbackOperation {
+  kind: "feedback";
+  recordedAt: number | null;
+  delivery: FeedbackDeliveryState;
+  acceptedAt: number | null;
+  acceptanceEvidence: AcceptanceEvidence | null;
+  taskId: string;
+  expectedGeneration: number;
+  sourceSessionId: string;
+  messageCorrelationId: string;
+  targetTurnId: string | null;
+  priorActionId: string | null;
+}
+
+export interface MergeOperation {
+  kind: "merge";
+  mode: "local" | "pr";
+  expectedHeadSha: string;
+  expectedBaseSha: string;
+  repositoryId: string;
+  prNumber: number | null;
+  resultCommitSha: string | null;
+  resultUrl: string | null;
+}
+
+export type ActionOperation = FeedbackOperation | MergeOperation;
+
+/** The public response of POST .../actions, stored verbatim as the replay receipt. */
+export interface ActionResponse {
+  requestId: string;
+  submissionId: string;
+  version: number;
+  state: ReviewState;
+  action: { id: string; state: ReviewActionState; decisionApplied: boolean; errorCode: string | null; operation: ActionOperation | null };
+}
+
+export interface ActionBody {
+  submissionId: string;
+  expectedVersion: number;
+  action: ReviewActionName;
+  idempotencyKey: string;
+  reason: string | null;
+}
+
+/** Actions whose reason must be a nonblank sentence from the person. */
+export const REASON_REQUIRED: readonly ReviewActionName[] = ["request_changes", "withdraw", "waive", "retry_feedback"];
+
+/** The actor id of the one person in the no-login local mode. */
+export const LOCAL_OWNER_ACTOR = "instance-owner";
+
+/** The server-resolved human behind a decision. Never read from a request body. */
+export interface HumanActor { id: string }
+
+export function parseActionBody(body: unknown): ActionBody {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) throw new ReviewError("bad_request", "body must be a JSON object");
+  const o = body as Record<string, unknown>;
+  const allowed = ["submissionId", "expectedVersion", "action", "idempotencyKey", "reason"];
+  for (const k of Object.keys(o)) if (!allowed.includes(k)) throw new ReviewError("bad_request", `unknown field ${k}`);
+  const action = o.action;
+  const names: ReviewActionName[] = ["accept", "request_changes", "withdraw", "waive", "merge", "retry_feedback"];
+  if (typeof action !== "string" || !names.includes(action as ReviewActionName)) throw new ReviewError("bad_request", "action is not recognized");
+  if (typeof o.submissionId !== "string" || !o.submissionId || o.submissionId.length > 200) throw new ReviewError("bad_request", "submissionId must be a string");
+  if (!Number.isInteger(o.expectedVersion) || (o.expectedVersion as number) < 1) throw new ReviewError("bad_request", "expectedVersion must be a positive integer");
+  if (typeof o.idempotencyKey !== "string" || !/^[\x20-\x7e]{1,128}$/.test(o.idempotencyKey)) {
+    throw new ReviewError("bad_request", "idempotencyKey must be 1..128 printable ASCII characters");
+  }
+  let reason: string | null = null;
+  if (o.reason !== undefined && o.reason !== null) {
+    if (typeof o.reason !== "string") throw new ReviewError("bad_request", "reason must be a string");
+    if ([...o.reason].length > REVIEW_LIMITS.reason) throw new ReviewError("bad_request", "reason is too long");
+    reason = o.reason.trim() || null;
+  }
+  if (REASON_REQUIRED.includes(action as ReviewActionName) && !reason) throw new ReviewError("bad_request", `a reason is required to ${(action as string).replace("_", " ")}`);
+  return { submissionId: o.submissionId, expectedVersion: o.expectedVersion as number, action: action as ReviewActionName, idempotencyKey: o.idempotencyKey, reason };
 }

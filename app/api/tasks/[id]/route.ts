@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { reviewRefusal } from "@/lib/reviews/gate";
 import { ReviewError } from "@/lib/reviews/types";
+import { resolveHumanActor } from "@/lib/reviews/actor";
+import { taskHasPendingOperation } from "@/lib/reviews/store";
 import { awaitingCountFor } from "@/lib/workCenter/compat";
 import { bumpWorkCenter } from "@/lib/workCenter/execution";
 import { getTask, getProject, updateTask, deleteTask, listMessages, getTaskUsage, getTaskContext, getTaskDeps, setTaskDeps, sameDepSet, getTag, getTaskTagIds, setTaskTags } from "@/lib/store";
@@ -314,6 +316,10 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   // their insert would throw a foreign key error in a route that already
   // validated the row. Locking closes that window; the cascade then removes
   // whatever they committed first.
+  if (reviewDisposition && taskHasPendingOperation(id)) {
+    return NextResponse.json({ error: "a review decision on this task has not settled; resolve it before deleting", code: "operation_pending" }, { status: 409 });
+  }
+  const reviewActor = reviewDisposition ? (await resolveHumanActor(req).catch(() => null))?.id : undefined;
   await withTaskLock(id, async () => {
     const task = getTask(id);
     // Stop any in-flight turn before tearing down its worktree, so the runner
@@ -324,7 +330,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       if (project?.repo_path) await removeWorktree(project.repo_path, task.worktree_path, task.work_branch);
     }
     removeTaskUploads(id);
-    deleteTask(id, { reviewDisposition });
+    deleteTask(id, { reviewDisposition, reviewActor });
     // Publishes after the hard delete, carrying the project id and its
     // recomputed awaiting count. The row is gone, so /api/events' usual
     // re-read-the-task enrichment would drop the event and freeze the

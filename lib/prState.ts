@@ -11,6 +11,7 @@
 import { getProject, getTask, setTaskPrState, setTaskPrEvidence, setTaskPrAttempt, stalePrTasks, openPrTaskCount, openAutoReclaimPrTaskCount } from "./store";
 import { fetchPrState, fetchCheckEvidence, type PrFailingCheck, type PrSnapshot } from "./github";
 import { maybeAutoReclaim } from "./reclaim";
+import { onPrSettled } from "./reviews/landing";
 import { publishGlobal, watcherCount } from "./events";
 import { PR_POLL_BATCH, PR_POLL_MS, PR_STALE_MS } from "./config";
 import type { Task } from "./types";
@@ -157,6 +158,12 @@ export async function refreshPrState(taskId: string, opts: { force?: boolean } =
       merge_state: snap.mergeState,
       failing: serializeFailing(snap),
     });
+    // A merged PR whose head is the head a person accepted proves that landing;
+    // a closed one fails any review merge still waiting on it. Awaited so the
+    // receipt exists before reclaim (below) asks whether the task may complete.
+    if (snap.state === "merged" || snap.state === "closed") {
+      await onPrSettled(taskId, { state: snap.state, headSha: snap.headSha ?? "", mergeCommitSha: snap.mergeCommitSha ?? "", baseRef: snap.baseRef ?? "" });
+    }
     // task_edited tells listeners to re-read the row, since the coarse wire
     // payload can't carry pr_state or a check rollup. Published only on a
     // real change (see changed()).

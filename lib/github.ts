@@ -671,6 +671,12 @@ export interface PrSnapshot {
   draft: boolean;
   /** The red entries behind `checks: "failing"`, empty for every other rollup. */
   failing: PrFailingCheck[];
+  /** gh's headRefOid: the PR branch tip, which for a merged PR is the head that merged. "" when unknown. */
+  headSha?: string;
+  /** The merge commit on the base branch once merged, "" otherwise. */
+  mergeCommitSha?: string;
+  /** The PR's base branch name, "" when unknown. */
+  baseRef?: string;
 }
 
 // One entry of gh's statusCheckRollup: a GitHub Actions CheckRun (status +
@@ -832,7 +838,7 @@ export async function fetchPrState(cwd: string, number: number): Promise<PrState
   try {
     ({ stdout } = await run(
       resolveGhBin(),
-      ["pr", "view", String(number), "--json", "state,mergedAt,statusCheckRollup,mergeStateStatus,reviewDecision,isDraft"],
+      ["pr", "view", String(number), "--json", "state,mergedAt,statusCheckRollup,mergeStateStatus,reviewDecision,isDraft,headRefOid,mergeCommit,baseRefName"],
       {
         cwd,
         timeout: 30_000,
@@ -855,6 +861,9 @@ export async function fetchPrState(cwd: string, number: number): Promise<PrState
     mergeStateStatus?: string | null;
     reviewDecision?: string | null;
     isDraft?: boolean | null;
+    headRefOid?: string | null;
+    mergeCommit?: { oid?: string | null } | null;
+    baseRefName?: string | null;
   };
   try {
     raw = JSON.parse(stdout || "{}");
@@ -877,6 +886,9 @@ export async function fetchPrState(cwd: string, number: number): Promise<PrState
       mergeState: String(raw.mergeStateStatus || ""),
       draft: raw.isDraft === true,
       failing: failingChecks(raw.statusCheckRollup),
+      headSha: String(raw.headRefOid || ""),
+      mergeCommitSha: String(raw.mergeCommit?.oid || ""),
+      baseRef: String(raw.baseRefName || ""),
     },
   };
 }
@@ -1101,7 +1113,7 @@ export function autoMergeRefused(stderr: string): boolean {
  *
  * Never throws: every failure comes back as `{ ok: false, error }`.
  */
-export async function mergeTaskPr(input: { repoPath: string; number: number }): Promise<MergePrResult> {
+export async function mergeTaskPr(input: { repoPath: string; number: number; expectedHeadSha?: string }): Promise<MergePrResult> {
   if (!input.number) return { ok: false, error: "this task has no pull request to merge" };
   const st = await ghStatus();
   if (!st.installed) return { ok: false, error: ghMissingMessage() };
@@ -1121,7 +1133,14 @@ export async function mergeTaskPr(input: { repoPath: string; number: number }): 
     .then((r) => r.stdout.trim())
     .catch(() => "");
   const slug = repoSlug(remote);
-  const target = ["pr", "merge", String(input.number), ...(slug ? ["--repo", slug] : [])];
+  // A reviewed landing pins the exact head GitHub merges: the pin is checked
+  // by GitHub in the merge call itself, so a push after the last read cannot
+  // slip in. Never dropped on the fallback path below.
+  const target = [
+    "pr", "merge", String(input.number),
+    ...(slug ? ["--repo", slug] : []),
+    ...(input.expectedHeadSha ? ["--match-head-commit", input.expectedHeadSha] : []),
+  ];
 
   // A plain --squash from here is still gh's own merge: same strategy, same
   // branch cleanup, just without waiting for requirements that this repo has

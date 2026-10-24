@@ -41,6 +41,9 @@ const PINNED = [
   "lib/reviews/gate.ts", // async guard over the live checkout; review read model only
   "lib/reviews/withdraw.ts", // agent withdrawal; task lock and db only
   "lib/reviews/tool.ts", // agent-tool policy for submit/get/withdraw review
+  "lib/reviews/actor.ts", // human actor resolution for decision routes; auth helpers only
+  "lib/reviews/feedbackStore.ts", // durable feedback delivery state; db only, imported by lib/store.ts
+  "lib/reviews/landing.ts", // landed-receipt minting for the landing routes and the PR poll; store and git only
   "lib/workCenter/notifyReceipts.ts", // notification claim/receipt tables; db only
   "lib/workCenter/compat.ts", // /api/needs-you and project-badge adapters over the snapshot
   "lib/agents/claude/executionObserver.ts", // folds native background events into an observation; pure
@@ -183,6 +186,12 @@ const DYNAMIC_ONLY = [
   // routes depend on is that nothing here is statically async, which is
   // exactly what this list pins.
   "lib/prState.ts",
+  // Request-changes feedback launches a turn on the submitting task. The
+  // decision service imports it statically and it reaches the runner (and the
+  // auto-start hooks) only through await import(), so the route entries that
+  // import actions.ts stay sync-compiled.
+  "lib/reviews/feedback.ts",
+  "lib/reviews/actions.ts",
 ];
 
 // The other half of the same rule, in the other direction: nothing the driver

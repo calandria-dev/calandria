@@ -40,6 +40,12 @@ export interface RunContext {
    * stopped short of the job, and the run must not read as a success.
    */
   deniedInteractions?: number;
+  /**
+   * The review action whose feedback opened this turn. The runner settles it
+   * `delivered` on the turn's first model output, or `indeterminate` if the
+   * turn ends without one (lib/reviews/feedback.ts).
+   */
+  reviewActionId?: string;
 }
 
 /** What a scheduled firing runs under. */

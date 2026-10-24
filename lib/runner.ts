@@ -56,8 +56,9 @@ import { appliedAppEnvironment } from "@/lib/advanced-env/bootstrap.mjs";
 import type { Task, Project, PermissionOutcome, ToolData, LedgerUsage, TurnUsage } from "@/lib/types";
 import { createLogger } from "@/lib/log.mjs";
 import { countTurnFinished, countTurnStarted } from "@/lib/metrics";
-import { activeModelTurn, beginExecution, endExecution, finishModelTurn, leaseOf, noteSession, observeExecution, startModelTurn, touchExecution } from "@/lib/workCenter/execution";
+import { activeModelTurn, beginExecution, bumpWorkCenter, endExecution, finishModelTurn, leaseOf, noteSession, observeExecution, startModelTurn, touchExecution } from "@/lib/workCenter/execution";
 import type { TurnFailureCode } from "@/lib/workCenter/types";
+import { acceptFeedback, failFeedback, markFeedbackDispatching, markFeedbackIndeterminate, revertFeedbackDispatching } from "@/lib/reviews/feedbackStore";
 
 // Every line this module prints, tagged with this component so
 // `CALANDRIA_LOG_FORMAT=json` turns the whole file into parseable output
@@ -84,6 +85,48 @@ function isEmptyUsage(u: TurnUsage): boolean {
 export const SCHEDULE_UNATTENDED_DETAIL =
   "the agent needed approval and nobody was watching, so it was declined automatically. " +
   "The run may have stopped with the job half done. Use the agent's never-asks permission mode, or start this one by hand.";
+
+// Review feedback handed to a task's live session whose delivery has not been
+// proven yet, keyed by task id (lib/reviews/feedback.ts). The action settles
+// `delivered` on the first model output of the turn that received it (a
+// correlated provider event) and `indeterminate` if the turn ends without
+// one: a transcript row or a local handoff proves neither. On globalThis so it
+// survives HMR like the other live registries.
+//
+// Entries carry the session lease they were handed to, so a turn that is still
+// unwinding after a Stop never settles feedback a successor turn received.
+const awaiting = ((globalThis as { __calandriaFeedbackAwaiting?: Map<string, Map<string, string>> }).__calandriaFeedbackAwaiting ??= new Map());
+
+function awaitFeedbackAcceptance(taskId: string, actionId: string, lease: string): void {
+  const m = awaiting.get(taskId) ?? new Map<string, string>();
+  m.set(actionId, lease);
+  awaiting.set(taskId, m);
+}
+
+/** Remove and return the actions awaiting acceptance under this lease. */
+function takeAwaiting(taskId: string, lease: string): string[] {
+  const m = awaiting.get(taskId);
+  if (!m?.size) return [];
+  const mine = [...m].filter(([, l]) => l === lease).map(([a]) => a);
+  for (const a of mine) m.delete(a);
+  if (!m.size) awaiting.delete(taskId);
+  return mine;
+}
+
+function settleFeedbackAccepted(taskId: string, lease: string): void {
+  const mine = takeAwaiting(taskId, lease);
+  if (!mine.length) return;
+  const turnId = activeModelTurn(taskId, lease);
+  for (const actionId of mine) acceptFeedback(actionId, { turnId, evidence: "correlated_provider_event" });
+  bumpWorkCenter();
+}
+
+function settleFeedbackUnconfirmed(taskId: string, lease: string): void {
+  const mine = takeAwaiting(taskId, lease);
+  if (!mine.length) return;
+  for (const actionId of mine) markFeedbackIndeterminate(actionId, "no_correlated_event");
+  bumpWorkCenter();
+}
 
 /**
  * Kick off one user turn in the background. Returns immediately; the caller
@@ -148,6 +191,8 @@ export function startTurn(
   // which makes the outgoing session's lease stale.
   const lease = beginExecution(task.id, task.generation);
   startModelTurn(task.id, lease);
+  // Feedback that opened this turn is proven by the turn's own first output.
+  if (runContext?.reviewActionId) awaitFeedbackAcceptance(task.id, runContext.reviewActionId, lease);
   // A turn is what a queued start (tasks.start_at, lib/deferredStart.ts) was
   // waiting to produce, so any launch consumes the deadline: the sweep's own,
   // a Start-session click, or a follow-up sent by hand. If left set, a task
@@ -254,7 +299,7 @@ export function startTurn(
  * channel), so nothing can interleave between the CLI accepting the message
  * and the transcript recording it.
  */
-export function sendToLingeringTurn(taskId: string, text: string): boolean {
+export function sendToLingeringTurn(taskId: string, text: string, reviewActionId?: string): boolean {
   // Re-read: the caller's snapshot predates its own `await req.json()`, and a
   // /clear could have bumped the generation since. A message persisted under
   // a stale generation renders in the wrong session's transcript.
@@ -268,7 +313,7 @@ export function sendToLingeringTurn(taskId: string, text: string): boolean {
   // (see the background_pending branch in run()).
   if (listPendingMessages(taskId).length > 0) return false;
   if (!sendTurnInput(taskId, text)) return false;
-  recordSentMessage(taskId, task.generation, text);
+  recordSentMessage(taskId, task.generation, text, reviewActionId);
   return true;
 }
 
@@ -276,7 +321,7 @@ export function sendToLingeringTurn(taskId: string, text: string): boolean {
  *  user message it is. Shared by both ways one gets in: the user sending
  *  during a linger, and the linger-entry drain of an already-parked
  *  follow-up. */
-function recordSentMessage(taskId: string, gen: number, text: string): void {
+function recordSentMessage(taskId: string, gen: number, text: string, reviewActionId?: string): void {
   // The linger is over the instant the CLI takes the message: a real model
   // turn is starting, so "working in background" would be inaccurate on
   // every surface that reads the row (the activity line, the status dot, the
@@ -292,9 +337,16 @@ function recordSentMessage(taskId: string, gen: number, text: string): void {
   const lease = leaseOf(taskId);
   if (lease && !activeModelTurn(taskId, lease)) startModelTurn(taskId, lease);
   try {
-    const m = addMessage(taskId, gen, "user", text);
+    const m = addMessage(taskId, gen, "user", text, reviewActionId);
     publish(taskId, { type: "user", content: m.content, msgId: m.id, generation: gen, ts: m.created_at });
+    if (reviewActionId) {
+      // Handed to the open session: the next model output under this lease is the evidence.
+      const sessionLease = leaseOf(taskId);
+      if (sessionLease) awaitFeedbackAcceptance(taskId, reviewActionId, sessionLease);
+      else markFeedbackIndeterminate(reviewActionId, "no_session");
+    }
   } catch (err) {
+    if (reviewActionId) markFeedbackIndeterminate(reviewActionId, "record_failed");
     // The row went away between the two synchronous steps above (a delete
     // racing this send): the CLI has the message and the task doesn't exist
     // to show it. Nothing left to do but log it; the turn dies with the task.
@@ -311,7 +363,7 @@ function recordSentMessage(taskId: string, gen: number, text: string): void {
  * route does inline for the very first turn; the initial turn stays in the
  * route since it also persists the generic opening prompt.
  */
-export async function startResumeTurn(task: Task, project: Project, userText: string, controller?: AbortController, hooks?: TurnHooks): Promise<void> {
+export async function startResumeTurn(task: Task, project: Project, userText: string, controller?: AbortController, hooks?: TurnHooks, reviewActionId?: string): Promise<void> {
   const id = task.id;
   const gen = task.generation;
   // Claim the task's turn slot before the awaits below. The claim is atomic
@@ -440,10 +492,13 @@ export async function startResumeTurn(task: Task, project: Project, userText: st
         // skip the catch-up
       }
     }
-    const userMsg = addMessage(id, gen, "user", userText);
+    const userMsg = addMessage(id, gen, "user", userText, reviewActionId);
     updateTask(id, { running: 1, suggested: 0, awaiting_input: 0, background_pending: 0, background_note: "" });
     publish(id, { type: "user", content: userMsg.content, msgId: userMsg.id, generation: gen, ts: userMsg.created_at });
-    startTurn(task, project, userText, syncNote, abortController, undefined, hooks);
+    // The action id rides in the run context, which registers the turn's lease
+    // for the acceptance check. An ordinary resume keeps no context at all.
+    const feedbackContext: RunContext | undefined = reviewActionId ? { origin: "user", interactionPolicy: "interactive", reviewActionId } : undefined;
+    startTurn(task, project, userText, syncNote, abortController, feedbackContext, hooks);
   } catch (err) {
     // The turn never launched (e.g. the task row vanished mid-await). Release
     // the claim, or the task would read "running" forever and every future
@@ -914,6 +969,10 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       // from (lib/turnActivity.ts).
       markTurnActivity(id);
       touchExecution(id, lease);
+      // The first model output after review feedback went in is the correlated
+      // provider event that proves the agent processed it. A bare session
+      // start, usage report or transcript row is not (lib/reviews/feedback.ts).
+      if (ev.type === "assistant" || ev.type === "assistant_delta" || ev.type === "tool") settleFeedbackAccepted(id, lease);
       // Persist first, then publish enriched with the DB message id, so a
       // snapshot taken at any instant plus the live tail never loses an
       // event, and clients can upsert by id instead of appending duplicates.
@@ -1150,12 +1209,17 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         // is careful never to do. Generation-guarded like every other write
         // in this loop.
         const parked = listPendingMessages(id)[0];
-        if (parked && parked.generation === gen && sendTurnInput(id, parked.content)) {
+        // Review feedback records its dispatch intent before the send; a
+        // refused send withdraws it, since nothing left the process.
+        const feedbackIntent = parked?.review_action_id ? markFeedbackDispatching(parked.review_action_id) : true;
+        if (parked && feedbackIntent && parked.generation === gen && sendTurnInput(id, parked.content)) {
           deletePendingMessage(parked.id, id);
           // Drop its queued bubble: recordSentMessage re-echoes it as the
           // ordinary user message it has now become.
           publish(id, { type: "dequeued", msgId: parked.id });
-          recordSentMessage(id, gen, parked.content);
+          recordSentMessage(id, gen, parked.content, parked.review_action_id ?? undefined);
+        } else if (parked?.review_action_id && feedbackIntent) {
+          revertFeedbackDispatching(parked.review_action_id);
         }
       } else if (ev.type === "background_resumed") {
         // A lingered-on task settled and its notification woke the model: a
@@ -1323,6 +1387,9 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
     // reported a reset" case as a driver that reports none at all.
     else if (isUsageLimit(turnError)) usageLimitFailure = turnError;
   } finally {
+    // Review feedback this turn received but never answered: handed off with
+    // no correlated model output, so delivery cannot be proven. Never resent.
+    settleFeedbackUnconfirmed(id, lease);
     // This whole block is synchronous (better-sqlite3, in-memory pub/sub),
     // so nothing can interleave with it: the registry slot is either handed
     // off or released below, never left in a half-state a POST could race.
@@ -1715,6 +1782,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
             // the unregister is a defensive no-op then.)
             if (!cur || cur.generation !== gen) {
               unregisterTurn(id, nextController);
+              if (next.review_action_id) failFeedback(next.review_action_id, cur ? "generation_changed" : "task_deleted");
               return;
             }
             // Re-read the project too: it was already refreshed at dequeue
@@ -1724,6 +1792,7 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
             const curProject = getProject(cur.project_id);
             if (!curProject) {
               unregisterTurn(id, nextController);
+              if (next.review_action_id) failFeedback(next.review_action_id, "launch_blocked");
               publishTurnError(id, gen, "Project was deleted; queued follow-up cancelled.");
               publish(id, { type: "turn_end" });
               return;
@@ -1736,13 +1805,24 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
               // successor, settle the UI with the turn_end the handoff had
               // deferred; a live successor emits its own.
               if (!hasTurn(id)) publish(id, { type: "turn_end" });
+              // The press discarded the queue the feedback sat in; it stays
+              // queued and the reconciler delivers it once, later.
+              return;
+            }
+            // Review feedback records its dispatch intent before anything is sent.
+            if (next.review_action_id && !markFeedbackDispatching(next.review_action_id)) {
+              // Another dispatch owns the task's input; this one stays queued
+              // for the reconciler. Settle the task as the failsafe below does.
+              unregisterTurn(id, nextController);
+              updateTask(id, { running: 0, background_pending: 0, background_note: "", awaiting_input: opened ? 1 : 0 });
+              publish(id, { type: "turn_end" });
               return;
             }
             // Same hooks the turn being finished ran under: a drained
             // follow-up is the same session continuing, so its tool calls
             // must reach the same launcher (nobody re-supplies them from
             // outside).
-            await startResumeTurn(cur, curProject, next.content, nextController, hooks);
+            await startResumeTurn(cur, curProject, next.content, nextController, hooks, next.review_action_id ?? undefined);
           }).catch((err) => {
             // Failsafe: if launching the queued turn fails, release its
             // slot, surface the error, and settle the task so it doesn't
