@@ -8,6 +8,13 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.22.2](https://github.com/calandria-dev/calandria/compare/v0.22.1...v0.22.2) (2026-10-24)
+
+
+### Bug Fixes
+
+* **docker:** stop agy and gh pins from breaking image builds ([#555](https://github.com/calandria-dev/calandria/issues/555)) ([e1a6a7d](https://github.com/calandria-dev/calandria/commit/e1a6a7dd2de3429a3132f92fe9771e7246651cab))
+
 ## [0.22.1](https://github.com/calandria-dev/calandria/compare/v0.22.0...v0.22.1) (2026-10-24)
 
 
