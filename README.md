@@ -144,7 +144,9 @@ already queued. The transcript records that it was sent.
   Acknowledge and Snooze inline. On a phone it is the Work tab.
   An agent can also file a review of its code or a Markdown document; a pending review shows up as one item
   to decide, and the task gets a REVIEW tab (a Review segment on a phone) showing the exact diff or document
-  the agent submitted. Review requests are off by default ([Review submissions](docs/REVIEWS.md)).
+  the agent submitted. You accept it, request changes with feedback the agent receives as its next message,
+  or waive a required review with a reason. Accept never merges: merging stays in the landing controls.
+  Review requests are off by default ([Review submissions](docs/REVIEWS.md)).
 
   ![The Needs you inbox listing sessions waiting on an answer across projects](docs/images/inbox.png)
 

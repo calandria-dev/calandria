@@ -97,6 +97,38 @@ export function reviewBlockerSync(ownerTaskId: string): ReviewBlocker | null {
   return requests.length === 0 ? null : requiredReviewBlocker(requests, applicability);
 }
 
+/**
+ * True when the owner holds an unsatisfied required review that no pending
+ * decision item already covers. A request still in `pending` is a needs-you
+ * attention row, so it is excluded; a withdrawn request, a request awaiting
+ * changes, and an accepted one whose content changed since are not.
+ */
+export function reviewRequiredWithoutItemSync(ownerTaskId: string): boolean {
+  const { requests, applicability } = loadGateRequests(ownerTaskId);
+  if (requests.length === 0) return false;
+  const b = requiredReviewBlocker(requests, applicability);
+  if (!b) return false;
+  const state = new Map(requests.map((r) => [r.id, r.state]));
+  return b.requestIds.some((id) => state.get(id) !== "pending");
+}
+
+/**
+ * Task ids that hold an unsatisfied required review with no pending item.
+ * One grouped read finds the unfinished owners that have a required request
+ * neither pending nor waived, and only those owners pay for the per-task verdict.
+ */
+export function reviewRequiredTaskIds(): Set<string> {
+  const ids = getDb()
+    .prepare(
+      "SELECT DISTINCT r.owner_task_id AS id FROM review_requests r JOIN tasks t ON t.id = r.owner_task_id " +
+        "WHERE r.required = 1 AND r.state NOT IN ('pending', 'waived') AND t.status NOT IN ('done', 'cancelled')",
+    )
+    .all() as { id: string }[];
+  const out = new Set<string>();
+  for (const { id } of ids) if (reviewRequiredWithoutItemSync(id)) out.add(id);
+  return out;
+}
+
 export function reviewRequiredError(b: ReviewBlocker): ReviewError {
   return new ReviewError("review_required", `${b.reason}. A person has to accept or waive it first.`);
 }

@@ -34,6 +34,8 @@ export type ClassifyInput = {
   queuedStart: Execution["queuedStart"];
   queuedFollowupCount: number;
   blockerTaskIds: Id[];
+  /** A required review is unsatisfied and no pending decision item covers it (for example, withdrawn). */
+  reviewRequired: boolean;
   lastActivityAt: Ms | null;
 };
 
@@ -77,6 +79,7 @@ export function classifyExecution(i: ClassifyInput): Execution {
   if (externalWait) reasons.push("external");
   if (i.queuedStart || i.queuedFollowupCount > 0) reasons.push("queued");
   if (i.blockerTaskIds.length > 0) reasons.push("dependency");
+  if (i.reviewRequired) reasons.push("review_required");
   if (i.lifecycle === "on_hold") reasons.push("on_hold");
   if (i.lifecycle === "in_progress" && !live) reasons.push("no_live_turn");
   if (live && (backgroundCoverage === "unavailable" || foreground === "unknown")) reasons.push("detail_unavailable");

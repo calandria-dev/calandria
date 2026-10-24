@@ -1,15 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import type { ReviewView } from "@/lib/reviews/types";
 import type { Attention, WorkRow } from "@/lib/workCenter/types";
 import { Icon } from "../icons";
+import {
+  DECISION_IND, DECISION_OK, DECISION_PENDING, decisionFailText, newIdempotencyKey, postReviewAction, type ReviewIntent,
+} from "./reviewActions";
 import { snoozePresets } from "./snooze";
 import type { ProjectRow } from "./types";
 import type { WorkCenterData } from "./useWorkCenter";
 import {
   ACTION_IND, ACTION_OK, ACTION_PENDING, KINDS, OUTCOME_LABEL, ago, chipMeta, failText, groupRows, headline, inlineActionsFor,
-  isStale, isStaleItem, lifecycleLabel, liveItems, partialSources, sheetActionsFor, waitingText,
-  type ActionKey, type CountView, type InlineAction,
+  isDecidableReview, isStale, isStaleItem, lifecycleLabel, liveItems, partialSources, sheetActionsFor, waitingText,
+  type ActionKey, type CountView, type InlineAction, type ReviewFacts,
 } from "./workCenterModel";
 
 // The Work Center (design release work-center-design-release/1): the persistent
@@ -151,7 +155,8 @@ function SnoozeMenu({ onPick, onClose }: { onPick: (c: SnoozeChoice) => void; on
 // ---------- outcome strip ----------
 
 type RowOutcome = {
-  type: "pending" | "ok" | "fail" | "ind" | "gone";
+  /** `conflict`: a review decision the server refused because the review moved; Dismiss refetches. */
+  type: "pending" | "ok" | "fail" | "ind" | "gone" | "conflict";
   msg: string;
   sub?: string;
   key?: ActionKey;
@@ -180,7 +185,69 @@ function OutcomeStrip({ o, onRetry, onDismiss, onAck }: { o: RowOutcome; onRetry
       </div>
     );
   }
+  if (o.type === "conflict") {
+    return <div className="wc-out fail" role="status"><Warn /><span>{o.msg}</span><span className="wc-out-a"><button className="wc-act sm ghost" onClick={onDismiss}>Dismiss</button></span></div>;
+  }
   return <div className="wc-out gone" role="status">{Icon.clock()}<span>{o.msg}</span><span className="wc-out-a"><button className="wc-act sm ghost" onClick={onDismiss}>OK</button></span></div>;
+}
+
+// ---------- waive popover ----------
+
+function WaiveMenu({ rev, onWaive, onClose }: { rev: number; onWaive: (reason: string) => void; onClose: () => void }) {
+  const [val, setVal] = useState("");
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => { ref.current?.focus(); }, []);
+  return (
+    <div
+      className="wc-menu wc-waive"
+      role="dialog"
+      aria-label={`Waive required review, rev ${rev}`}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Escape") { e.preventDefault(); onClose(); } }}
+    >
+      <div className="wc-menu-h">Waive required review · rev {rev}</div>
+      <textarea ref={ref} className="wc-waive-text" placeholder="Reason (required)" aria-label="Reason for waiving" rows={3} value={val} onChange={(e) => setVal(e.target.value)} />
+      <div className="wc-waive-fine">Waives this submission only. A resubmission restores the requirement. Nothing merges.</div>
+      <div className="wc-waive-a">
+        <button className="wc-act" onClick={onClose}>Cancel</button>
+        <button className="wc-act pri" disabled={!val.trim()} onClick={() => onWaive(val.trim())}>Waive</button>
+      </div>
+    </div>
+  );
+}
+
+/** Reads the request behind each decidable review item, once per item version. */
+function useReviewFacts(items: { taskId: string; item: Attention }[]): Record<string, ReviewFacts | "gone"> {
+  const [facts, setFacts] = useState<Record<string, ReviewFacts | "gone">>({});
+  const asked = useRef(new Set<string>());
+  const want = items.map(({ taskId, item }) => ({ taskId, item, key: `${item.id}:${item.sourceRevision}` }));
+  const sig = want.map((w) => w.key).join("|");
+  useEffect(() => {
+    for (const { taskId, item, key } of want) {
+      if (asked.current.has(key)) continue;
+      asked.current.add(key);
+      const rid = item.destination.reviewRequestId;
+      if (!rid) continue;
+      void fetch(`/api/tasks/${encodeURIComponent(taskId)}/reviews?request_id=${encodeURIComponent(rid)}&limit=1`, { cache: "no-store" })
+        .then(async (res) => {
+          if (!res.ok) { asked.current.delete(key); return; }
+          const j = (await res.json()) as { requests?: ReviewView[] };
+          const v = j.requests?.find((r) => r.id === rid);
+          const f: ReviewFacts | "gone" = !v ? "gone" : {
+            revision: v.currentSubmission.revision,
+            required: v.required,
+            canAccept: v.allowedActions.includes("accept"),
+            canWaive: v.allowedActions.includes("waive"),
+            // The exact artifact the item names: same submission, same version.
+            matches: v.state === "pending" && v.currentSubmission.id === item.destination.submissionId && String(v.version) === item.sourceRevision,
+          };
+          setFacts((m) => ({ ...m, [key]: f }));
+        })
+        .catch(() => { asked.current.delete(key); });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sig]);
+  return facts;
 }
 
 // ---------- the surface ----------
@@ -206,6 +273,7 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
   const [cleared, setCleared] = useState<Set<string>>(() => new Set());
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
   const [menu, setMenu] = useState<{ taskId: string } | null>(null);
+  const [waive, setWaive] = useState<{ taskId: string } | null>(null);
   const [sheet, setSheet] = useState<{ taskId: string; snooze: boolean } | null>(null);
   const [moreRecent, setMoreRecent] = useState(false);
   const [selected, setSelected] = useState<string | null>(viewState.current.selected);
@@ -240,6 +308,20 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
   const groups = useMemo(() => (snap ? groupRows(snap.tasks, now, cleared, hidden) : null), [snap, now, cleared, hidden]);
   const recent = useMemo(() => (snap ? snap.recentlyFinished.rows.filter((r) => !hidden.has(r.taskId)) : []), [snap, hidden]);
   const partial = partialSources(snap);
+
+  // Review items that lead their row: their request is read before Accept or Waive is offered.
+  const leadReviews = useMemo(() => (groups?.need ?? []).flatMap((r) => {
+    const first = liveItems(r, now, cleared)[0];
+    return first && isDecidableReview(first) ? [{ taskId: r.taskId, item: first }] : [];
+  }), [groups, now, cleared]);
+  const facts = useReviewFacts(leadReviews);
+  const factsFor = (item: Attention | undefined): ReviewFacts | null => {
+    const f = item ? facts[`${item.id}:${item.sourceRevision}`] : undefined;
+    return f && f !== "gone" ? f : null;
+  };
+  // A request that moved past what the item names (decided in another tab, resubmitted) refetches the list.
+  const moved = Object.values(facts).some((f) => f === "gone" || !f.matches);
+  useEffect(() => { if (moved) data.refresh(); }, [moved]); // eslint-disable-line react-hooks/exhaustive-deps
   const itemsAreKnown = h.need.kind === "unknown";
 
   // ----- focus on open: selected row, else first Needs-you row, else first row, else the heading -----
@@ -356,6 +438,44 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
     });
   };
 
+  // Review decisions: one idempotency key per click, reused by Retry, so a lost reply replays instead of repeating.
+  const decideReview = (row: WorkRow, item: Attention, decision: "accept" | "waive", reason: string | null) => {
+    const rid = item.destination.reviewRequestId;
+    const sid = item.destination.submissionId;
+    const version = Number(item.sourceRevision);
+    if (!rid || !sid || !Number.isInteger(version)) return;
+    setWaive(null);
+    const intent: ReviewIntent = { decision, requestId: rid, submissionId: sid, expectedVersion: version, reason, idempotencyKey: newIdempotencyKey() };
+    const taskId = row.taskId;
+    const attempt = async () => {
+      setOutcome(taskId, { type: "pending", msg: DECISION_PENDING[decision] });
+      const res = await postReviewAction(taskId, intent);
+      if (res.kind === "ok") {
+        const [msg, sub] = DECISION_OK[decision];
+        setCleared((c) => new Set(c).add(item.id));
+        setOutcome(taskId, { type: "ok", msg, sub });
+        clearTimeout(clearTimers.current[taskId]);
+        clearTimers.current[taskId] = setTimeout(() => setOutcome(taskId, null), 2500);
+        data.refresh();
+      } else if (res.kind === "conflict") {
+        const m = res.message;
+        setOutcome(taskId, { type: "conflict", msg: `${m[0].toUpperCase()}${m.slice(1)}${/[.!?]$/.test(m) ? "" : "."}` });
+      } else if (res.kind === "fail") {
+        setOutcome(taskId, { type: "fail", msg: decisionFailText(decision, res.status) });
+      } else {
+        setOutcome(taskId, { type: "ind", msg: DECISION_IND[decision], ack: false });
+      }
+    };
+    retryRef.current[taskId] = () => void attempt();
+    void attempt();
+  };
+  const closeWaive = () => {
+    setWaive(null);
+    const opener = menuOpenerRef.current;
+    menuOpenerRef.current = null;
+    requestAnimationFrame(() => opener?.focus());
+  };
+
   const closeMenu = () => {
     setMenu(null);
     const opener = menuOpenerRef.current;
@@ -368,7 +488,8 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
     if (a === "allow") decide(row, item, "allow_once");
     else if (a === "deny") decide(row, item, "deny");
     else if (a === "ack") acknowledge(row, item);
-    else openTarget(row, item);
+    else if (a === "accept") decideReview(row, item, "accept", null);
+    else if (a !== "waive") openTarget(row, item);
   };
 
   // ----- keyboard -----
@@ -378,7 +499,7 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
       if (!phone) { e.preventDefault(); e.stopPropagation(); onClose?.(); }
       return;
     }
-    if (menu || sheet) return;
+    if (menu || sheet || waive) return;
     const t = e.target as HTMLElement;
     const navEl = t.closest<HTMLElement>("[data-wc-nav]");
     if (!navEl) return;
@@ -412,7 +533,7 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
 
   // Keep Tab inside the popover (it sits over live columns).
   const onTrap = (e: KeyboardEvent<Element>) => {
-    if (phone || e.key !== "Tab" || menu || sheet) return;
+    if (phone || e.key !== "Tab" || menu || sheet || waive) return;
     const focusable = [...((e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>("button:not([disabled]), [tabindex='0'], input:not([disabled])"))];
     if (!focusable.length) return;
     const first = focusable[0], last = focusable[focusable.length - 1];
@@ -445,7 +566,8 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
     else if (row.execution.foreground === "executing" && !waits.length) sub.push(<span key="ex" className="wc-bg"><i />Turn executing</span>);
     sub.push(<span key="age" className="wc-age" title="Last activity">{row.execution.lastActivityAt ? `${ago(now, row.execution.lastActivityAt)} ago` : "no activity yet"}</span>);
     const joined = sub.flatMap((n, i) => (i ? [<span key={`s${i}`} className="wc-sep">·</span>, n] : [n]));
-    const acts = phone || !first ? [] : inlineActionsFor(first);
+    const firstFacts = factsFor(first);
+    const acts = phone || !first ? [] : inlineActionsFor(first, firstFacts);
     const aria = `${row.title}, ${row.projectName}${items.length ? `, ${items.length} item${items.length === 1 ? "" : "s"}` : ""}`;
     return (
       <div
@@ -494,8 +616,21 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
           ) : (
             <div className="wc-acts">
               {first && acts.map((a) => (
-                <button key={a} className={`wc-act${a === "allow" ? " pri" : ""}`} onClick={(e) => { e.stopPropagation(); doInline(row, first, a); }}>
-                  {a === "allow" ? "Allow once" : a === "deny" ? "Deny" : a === "ack" ? "Acknowledge" : a === "open" && first.kind === "agent_edit" ? "Revert…" : KINDS[first.kind].verb}
+                <button
+                  key={a}
+                  className={`wc-act${a === "allow" || a === "accept" ? " pri" : ""}`}
+                  disabled={o?.type === "pending"}
+                  aria-haspopup={a === "waive" ? "dialog" : undefined}
+                  aria-expanded={a === "waive" ? waive?.taskId === row.taskId : undefined}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (a === "waive") { menuOpenerRef.current = e.currentTarget; setWaive({ taskId: row.taskId }); return; }
+                    doInline(row, first, a);
+                  }}
+                >
+                  {a === "allow" ? "Allow once" : a === "deny" ? "Deny" : a === "ack" ? "Acknowledge"
+                    : a === "accept" ? `Accept rev ${firstFacts?.revision ?? ""}` : a === "waive" ? "Waive…"
+                    : a === "open" && first.kind === "agent_edit" ? "Revert…" : KINDS[first.kind].verb}
                   {a === "open" && first.kind !== "agent_edit" && Icon.chevRight()}
                 </button>
               ))}
@@ -512,11 +647,14 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
           <OutcomeStrip
             o={o}
             onRetry={() => retryRef.current[row.taskId]?.()}
-            onDismiss={() => { viewState.current.resolved.delete(row.taskId); setOutcome(row.taskId, null); }}
+            onDismiss={() => { viewState.current.resolved.delete(row.taskId); setOutcome(row.taskId, null); if (o.type === "conflict" || o.type === "ind") data.refresh(); }}
             onAck={(v) => setOutcome(row.taskId, { ...o, ack: v })}
           />
         )}
         {menu?.taskId === row.taskId && !phone && <SnoozeMenu onPick={(c) => snooze(row, c)} onClose={closeMenu} />}
+        {waive?.taskId === row.taskId && !phone && first && firstFacts && (
+          <WaiveMenu rev={firstFacts.revision} onWaive={(reason) => decideReview(row, first, "waive", reason)} onClose={closeWaive} />
+        )}
       </div>
     );
   };
@@ -661,11 +799,13 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
         <ActionSheet
           row={sheetRow}
           item={liveItems(sheetRow, now, cleared)[0]}
+          facts={factsFor(liveItems(sheetRow, now, cleared)[0])}
           snoozeStep={sheet.snooze}
           onClose={() => setSheet(null)}
           onOpenSnooze={() => setSheet({ taskId: sheet.taskId, snooze: true })}
           onOpen={(item) => { setSheet(null); openTarget(sheetRow, item ?? null); }}
           onAck={(item) => { setSheet(null); acknowledge(sheetRow, item); }}
+          onAccept={(item) => { setSheet(null); decideReview(sheetRow, item, "accept", null); }}
           onSnooze={(c) => snooze(sheetRow, c)}
         />
       )}
@@ -675,14 +815,15 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
 
 // ---------- phone action sheet ----------
 
-function ActionSheet({ row, item, snoozeStep, onClose, onOpenSnooze, onOpen, onAck, onSnooze }: {
-  row: WorkRow; item: Attention | undefined; snoozeStep: boolean;
-  onClose: () => void; onOpenSnooze: () => void; onOpen: (item: Attention | undefined) => void; onAck: (item: Attention) => void; onSnooze: (c: SnoozeChoice) => void;
+function ActionSheet({ row, item, facts, snoozeStep, onClose, onOpenSnooze, onOpen, onAck, onAccept, onSnooze }: {
+  row: WorkRow; item: Attention | undefined; facts: ReviewFacts | null; snoozeStep: boolean;
+  onClose: () => void; onOpenSnooze: () => void; onOpen: (item: Attention | undefined) => void; onAck: (item: Attention) => void;
+  onAccept: (item: Attention) => void; onSnooze: (c: SnoozeChoice) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const choices = useMemo(() => snoozeChoices(Date.now()), []);
   useEffect(() => { ref.current?.querySelector<HTMLButtonElement>("button.wc-opt")?.focus(); }, [snoozeStep]);
-  const acts = sheetActionsFor(item);
+  const acts = sheetActionsFor(item, facts);
   return (
     <>
       <div className="wc-scrim" onClick={onClose} />
@@ -699,6 +840,7 @@ function ActionSheet({ row, item, snoozeStep, onClose, onOpenSnooze, onOpen, onA
           <>
             {acts.includes("open") && <button className="wc-opt" onClick={() => onOpen(item)}>{item ? `${KINDS[item.kind].verb} in session` : "Open in session"}<small>{item ? KINDS[item.kind].label : ""}</small></button>}
             {item && acts.includes("ack") && <button className="wc-opt" onClick={() => onAck(item)}>Acknowledge<small>no options</small></button>}
+            {item && facts && acts.includes("accept") && <button className="wc-opt" onClick={() => onAccept(item)}>Accept rev {facts.revision}<small>does not merge</small></button>}
             <button className="wc-opt" onClick={onOpenSnooze}>Snooze<small>hide until later</small></button>
           </>
         ) : (

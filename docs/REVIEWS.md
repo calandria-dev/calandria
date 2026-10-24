@@ -109,12 +109,28 @@ The tab shows what the agent explicitly submitted, read from the stored manifest
 |-|-|
 | Summary | Revision, kind, pinned `base → head` (code) or path and SHA-256 (document), the required tag, whether the task still matches, the agent's summary, evidence links, and the agent's validation claims marked as unverified |
 | Artifact | A code diff preview, labelled `PREVIEW TRUNCATED` when it hit the size or path limit, or the document's exact bytes with the digest and a download of the raw bytes |
-| Decision | The state for accepted, accepted then changed, changes requested, unknown delivery, waived, withdrawn and superseded. The decision buttons render disabled until the decision routes ship |
+| Decision | Accept, Request changes and, on a required review, Waive with a reason, plus the state for accepted, accepted then changed, changes requested, unknown or failed delivery, waived, withdrawn and superseded |
 | Revisions | Every revision, newest first. Selecting an older one shows it as superseded, with a link back to the current revision |
 
 When a request's checkout no longer matches the captured revision, the links that open the Diff tab or the document editor are disabled and say why, because both show the live branch or file. The captured text on screen stays the submitted version.
 
 A Work Center review chip opens the task on this tab, selects the chip's request and revision, and moves focus to the summary heading. The destination carries `reviewRequestId` and `submissionId` from the attention item.
+
+### Decision controls
+
+Each click mints one idempotency key, and Retry reuses it, so a retry after a lost reply replays the stored receipt and never applies twice. The buttons offered follow the request's `allowedActions`.
+
+| Control | Behavior |
+|-|-|
+| Accept rev N | Posts `accept` for the current revision and version. It records approval only. The Accepted state links to the landing controls in the DIFF tab, where a merge and its failure are shown. |
+| Request changes | Opens a feedback field. Send posts `request_changes`; the strip then follows the delivery state (`queued` or `dispatching`, delivered, failed, indeterminate). |
+| Waive… | Opens a reason field. Waive posts `waive` with that reason. |
+| Retry delivery | On failed or unknown delivery, enabled once "The agent may receive this twice" is ticked. Posts `retry_feedback` with the fixed reason `Retry acknowledged: the agent may receive this feedback twice.` and the agent receives the original feedback again. |
+| Ask agent to resubmit | On an acceptance whose revision changed. Focuses the transcript composer, empty, on the Chat segment on a phone. No review operation. |
+
+A reply that never arrives shows "Unknown result" with Retry held until "May duplicate" is ticked. A refusal with 5xx or 4xx other than a conflict shows the status and keeps Retry. A 404 or 409 that means the review moved (`version_conflict`, `revision_changed`, `source_changed`, `request_expired`, `idempotency_conflict`) shows the server's message with Dismiss only, and Dismiss refetches. Feedback that was not recorded stays in the field. A resubmission replaces the old revision's controls and any open form.
+
+The Work Center row offers Accept rev N and Waive… inline when a pending review is the row's first live item. It reads the request first and offers neither unless the request's current submission and version still match the item. The phone action sheet offers Accept. A task whose required review was withdrawn, sent back, or accepted and then changed carries the waiting reason "Required review unsatisfied".
 
 ## Agent tools
 

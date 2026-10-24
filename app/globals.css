@@ -3132,7 +3132,8 @@ button.gbadge.more:hover,button.gbadge.more[aria-expanded="true"]{color:var(--in
 /* inline actions */
 .wc-act{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 9px;border-radius:7px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:12px;font-weight:600;white-space:nowrap;font-family:var(--font-body);cursor:pointer;}
 .wc-act:hover{border-color:var(--accent);}
-.wc-act.pri{background:var(--accent);color:var(--bg);border-color:var(--accent);}
+/* `.pri` is also the priority badge; reset the badge type styles it would otherwise lend this button. */
+.wc-act.pri{background:var(--accent);color:var(--bg);border-color:var(--accent);text-transform:none;letter-spacing:normal;line-height:normal;}
 .wc-act.pri:hover{filter:brightness(1.08);}
 .wc-act.ghost{color:var(--dim);}
 .wc-act[disabled]{opacity:.5;cursor:default;}
@@ -3252,8 +3253,8 @@ button.gbadge.more:hover,button.gbadge.more[aria-expanded="true"]{color:var(--in
 .wc-rv-dec{display:flex;flex-direction:column;gap:8px;border:1px solid var(--line);border-radius:10px;padding:13px 15px;background:var(--panel);}
 .wc-rv-ttl{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);font-weight:600;}
 .wc-rv-btns{display:flex;gap:var(--wc-rv-gap,8px);flex-wrap:wrap;flex-direction:var(--wc-rv-dir,row);}
-.wc-act.wc-rv-act{height:32px;padding:0 12px;font-size:13px;}
-.wc-rv-act small{display:none;font-weight:400;color:inherit;opacity:.75;font-family:var(--font-mono);font-size:11px;}
+.wc-act.wc-rv-act{height:32px;padding:0 12px;font-size:13px;max-width:100%;overflow:hidden;}
+.wc-rv-act small{min-width:0;overflow:hidden;text-overflow:ellipsis;display:none;font-weight:400;color:inherit;opacity:.75;font-family:var(--font-mono);font-size:11px;}
 .wc-rv-fine{font-size:11.5px;color:var(--dim);line-height:1.45;}
 .wc-rv-fine b{color:var(--ink);font-weight:500;}
 .wc-rv-out{display:flex;gap:8px;align-items:center;font-size:12px;padding:6px 10px;border-radius:7px;line-height:1.4;flex-wrap:wrap;}
@@ -3285,3 +3286,28 @@ button.gbadge.more:hover,button.gbadge.more[aria-expanded="true"]{color:var(--in
   .wc-rv-act small{display:inline;}
 }
 @media (prefers-reduced-motion:reduce){.wc-rv .wc-spin{animation:none;}}
+/* Decision states (WC-17): strip controls stay one row in every layout; only the decision buttons stack. */
+.wc-rv-dec .wc-rv-btns.wc-rv-row{flex-direction:row;align-items:center;gap:8px;}
+.wc-rv-dec .wc-rv-row .wc-act.wc-rv-act{width:auto;justify-content:center;}
+.wc-rv-dec .wc-rv-pair .wc-act.wc-rv-act{flex:1;}
+.wc-rv-end{margin-left:auto;}
+.wc-rv-off{opacity:.5;pointer-events:none;}
+.wc-rv-sub2{opacity:.8;}
+.wc-rv-dup{display:inline-flex;gap:6px;align-items:center;font-size:12.5px;color:var(--ink);}
+.wc-rv-dup input{accent-color:var(--accent);}
+.wc-rv-text{background:var(--term);border:1px solid var(--line);border-radius:8px;color:var(--ink);font:13px var(--font-body);padding:9px 11px;resize:vertical;min-height:72px;}
+.wc-rv-text:focus{outline:none;border-color:var(--accent);}
+.wc-rv-text[readonly]{color:var(--dim);resize:none;}
+.wc-rv-fhead{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--dim);}
+.wc-rv-fhead b{color:var(--ink);font-weight:600;}
+.wc-rv-mono{font-family:var(--font-mono);font-size:11px;}
+/* Phone: the feedback field and its Cancel and Send pair pin to the bottom of the scrolling pane, above the keyboard inset. */
+.wc-rv-stack .wc-rv-pinned{position:sticky;bottom:0;z-index:3;box-shadow:0 -10px 24px -16px rgba(0,0,0,.6);padding-bottom:calc(13px + env(safe-area-inset-bottom));}
+.wc-rv-text-phone{font-size:15px;min-height:64px;resize:none;}
+.wc-rv-stack .wc-rv-row .wc-act.wc-rv-act{height:44px;}
+/* Work Center row: the waive reason popover. */
+.wc-waive{min-width:280px;gap:6px;padding:9px;}
+.wc-waive-text{resize:none;background:var(--term);border:1px solid var(--line);border-radius:7px;color:var(--ink);font:13px var(--font-body);padding:8px 10px;}
+.wc-waive-fine{font-size:11.5px;color:var(--dim);padding:0 2px;line-height:1.4;}
+.wc-waive-a{display:flex;gap:6px;justify-content:flex-end;}
+.wc-menu .wc-waive-a button{justify-content:center;}

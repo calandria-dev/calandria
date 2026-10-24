@@ -2,7 +2,7 @@
 // REVIEW rail tab, the phone Review segment, the Work Center review chip and the
 // artifact an agent captured. Reviews are opened through the internal
 // submit-review route (the stdio bridge's endpoint) because no browser route
-// creates one. Decision controls stay disabled in this release.
+// creates one. The decision controls post to the review action route.
 //
 // WC_SHOTS=<dir> writes one screenshot per state and viewport for design review.
 
@@ -75,6 +75,21 @@ const openTask = async (page: Page, taskId: string) => {
 };
 const tabs = (page: Page) => page.locator(".rail-tabs .rail-tab");
 const pane = (page: Page) => page.locator("[data-wc-review]");
+const decision = (page: Page) => pane(page).getByRole("region", { name: "Decision" });
+const outStrip = (page: Page) => pane(page).locator(".wc-rv-out");
+const ACTIONS_URL = /\/api\/tasks\/[^/]+\/reviews\/[^/]+\/actions$/;
+
+async function openReview(page: Page, taskId: string) {
+  await openTask(page, taskId);
+  await tabs(page).filter({ hasText: "REVIEW" }).click();
+  await expect(pane(page)).toBeVisible();
+}
+
+async function reviewsOf(request: APIRequestContext, taskId: string) {
+  const res = await request.get(`/api/tasks/${taskId}/reviews`);
+  expect(res.ok()).toBeTruthy();
+  return (await res.json()).requests as any[];
+}
 
 test("a task with no review request has no REVIEW tab", async ({ page, request }) => {
   const t = await createTask(request, { projectId, title: `No reviews ${uid()}` });
@@ -129,16 +144,20 @@ test.describe("desktop", () => {
     void sub;
   });
 
-  test("decision controls are disabled and Accept anyway does not exist", async ({ page, request }) => {
-    const t = await taskWithPlan(request, `Disabled ${uid()}`);
+  test("decision controls are live and there is no Accept anyway", async ({ page, request }) => {
+    const t = await taskWithPlan(request, `Live ${uid()}`);
     await submitDoc(request, t.id);
-    await openTask(page, t.id);
-    await tabs(page).filter({ hasText: "REVIEW" }).click();
-    const dec = pane(page).getByRole("region", { name: "Decision" });
-    await expect(dec.getByRole("button", { name: /^Accept rev 1/ })).toBeDisabled();
-    await expect(dec.getByRole("button", { name: /^Request changes/ })).toBeDisabled();
-    await expect(dec.getByRole("button", { name: /^Waive/ })).toBeDisabled();
+    await openReview(page, t.id);
+    const dec = decision(page);
+    await expect(dec.getByRole("button", { name: /^Accept rev 1/ })).toBeEnabled();
+    await expect(dec.getByRole("button", { name: /^Request changes/ })).toBeEnabled();
+    await expect(dec.getByRole("button", { name: /^Waive/ })).toBeEnabled();
     await expect(pane(page).getByText(/anyway/i)).toHaveCount(0);
+    await expect(pane(page).getByText(/still possible if you change your mind/i)).toHaveCount(0);
+    await dec.getByRole("button", { name: /^Request changes/ }).click();
+    await expect(pane(page).getByText(/anyway/i)).toHaveCount(0);
+    await expect(pane(page).getByText(/still possible if you change your mind/i)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /anyway/i })).toHaveCount(0);
   });
 
   test("two requests, a resubmission, and a superseded revision", async ({ page, request }) => {
@@ -205,6 +224,7 @@ test.describe("desktop", () => {
     await expect(btns).toHaveCSS("flex-direction", "row");
     await page.evaluate(() => { (document.querySelector("[data-wc-review]") as HTMLElement).style.width = "340px"; });
     await expect(btns).toHaveCSS("flex-direction", "column");
+    await shot(page, "desktop-review-narrow-rail");
   });
 
   test("withdrawn and unavailable artifacts render a state, not a blank", async ({ page, request }) => {
@@ -221,6 +241,308 @@ test.describe("desktop", () => {
     await expect(p.getByText("No decision is offered on a withdrawn submission.")).toBeVisible();
     await expect(tabs(page).nth(2).locator(".wc-rv-tabdot")).toHaveCount(0);
     void getTask;
+  });
+
+  test("accept from the Review tab records approval and does not merge", async ({ page, request }) => {
+    const t = await taskWithPlan(request, `Accept ${uid()}`);
+    commitChange(t.worktree, { "src/acc.ts": "export const acc = 1;\n" });
+    await submitCode(request, t.id);
+    await openReview(page, t.id);
+    await decision(page).getByRole("button", { name: /^Accept rev 1/ }).click();
+    await expect(outStrip(page).filter({ hasText: "Revision accepted." })).toBeVisible();
+    await shot(page, "desktop-review-accepted-ok");
+    await expect(pane(page)).toHaveAttribute("data-wc-review-state", "accepted");
+    await expect(pane(page).locator(".wc-rv-tag", { hasText: "Accepted" })).toBeVisible();
+    const merge = decision(page).getByRole("button", { name: /^Merge from landing controls/ });
+    await expect(merge).toBeVisible();
+
+    const task = await getTask(request, t.id);
+    expect(task.status).not.toBe("done");
+    expect(task.merged_at ?? 0).toBeFalsy();
+    expect(fs.existsSync(t.worktree)).toBe(true);
+    expect((await reviewsOf(request, t.id))[0].state).toBe("accepted");
+
+    await merge.click();
+    await expect(tabs(page).first()).toHaveClass(/\bon\b/);
+    await expect(tabs(page).first()).toHaveText(/DIFF/);
+  });
+
+  test("request changes: feedback needs text, is sent, and a resubmission supersedes the old controls", async ({ page, request }) => {
+    const t = await taskWithPlan(request, `Feedback ${uid()}`);
+    const r1 = await submitDoc(request, t.id);
+    await openReview(page, t.id);
+    await decision(page).getByRole("button", { name: /^Request changes/ }).click();
+    const send = decision(page).getByRole("button", { name: "Send feedback" });
+    await expect(send).toBeDisabled();
+    await decision(page).getByLabel("Feedback for the agent").fill("Please cover the retry path.");
+    await shot(page, "desktop-review-compose");
+    await expect(send).toBeEnabled();
+    await send.click();
+    await expect(decision(page).getByText(/Changes requested · delivered to the agent\.|Feedback recorded · delivering to the agent…/)).toBeVisible({ timeout: 30_000 });
+    await expect(decision(page).getByText("Changes requested · delivered to the agent.")).toBeVisible({ timeout: 30_000 });
+    await waitForIdle(request, t.id);
+
+    const cur = (await reviewsOf(request, t.id))[0];
+    fs.writeFileSync(path.join(t.worktree, "docs", "plan.md"), DOC + "Retry path covered.\n");
+    await submitDoc(request, t.id, { requestId: r1.requestId, expectedVersion: cur.version, expectedSubmissionId: cur.currentSubmission.id });
+    await expect(decision(page).getByRole("button", { name: /^Accept rev 2/ })).toBeVisible({ timeout: 30_000 });
+    await expect(decision(page).getByRole("button", { name: /^Accept rev 1/ })).toHaveCount(0);
+  });
+
+  test("waive needs a reason, Escape closes the form and returns focus, then a waiver is recorded", async ({ page, request }) => {
+    const t = await taskWithPlan(request, `Waive ${uid()}`);
+    await submitDoc(request, t.id);
+    await openReview(page, t.id);
+    const opener = decision(page).getByRole("button", { name: /^Waive…/ });
+    await opener.click();
+    await expect(decision(page).getByText("Waive required review · rev 1")).toBeVisible();
+    await shot(page, "desktop-review-waive-form");
+    const waive = decision(page).getByRole("button", { name: "Waive", exact: true });
+    await expect(waive).toBeDisabled();
+    await decision(page).getByLabel("Reason for waiving").fill("   ");
+    await expect(waive).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await expect(decision(page).getByText("Waive required review · rev 1")).toHaveCount(0);
+
+    await opener.click();
+    await decision(page).getByLabel("Reason for waiving").fill("Covered by the design review.");
+    await expect(waive).toBeEnabled();
+    await waive.click();
+    await expect(outStrip(page).filter({ hasText: /Requirement waived for this submission\.|Waived for this submission\./ })).toBeVisible();
+    await expect(decision(page).getByText("Waived for this submission.")).toBeVisible({ timeout: 10_000 });
+    expect((await reviewsOf(request, t.id))[0].state).toBe("waived");
+  });
+
+  test("a failed accept offers Retry and replays under the same idempotency key", async ({ page, request }) => {
+    const t = await taskWithPlan(request, `Retry ${uid()}`);
+    await submitDoc(request, t.id);
+    await openReview(page, t.id);
+    const bodies: any[] = [];
+    await page.route(ACTIONS_URL, async (route) => {
+      bodies.push(route.request().postDataJSON());
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "snapshot_busy", message: "busy", retryable: true } }) });
+    });
+    await decision(page).getByRole("button", { name: /^Accept rev 1/ }).click();
+    await expect(outStrip(page).filter({ hasText: "Acceptance not recorded (503)." })).toBeVisible();
+    await shot(page, "desktop-review-accept-fail");
+    await expect(decision(page).getByRole("button", { name: "Retry" })).toBeVisible();
+    await expect(decision(page).getByRole("button", { name: "Dismiss" })).toBeVisible();
+    await page.unroute(ACTIONS_URL);
+    const second: any[] = [];
+    page.on("request", (r) => { if (ACTIONS_URL.test(r.url()) && r.method() === "POST") second.push(r.postDataJSON()); });
+    await decision(page).getByRole("button", { name: "Retry" }).click();
+    await expect(outStrip(page).filter({ hasText: "Revision accepted." })).toBeVisible();
+    expect(bodies).toHaveLength(1);
+    expect(second).toHaveLength(1);
+    expect(second[0].idempotencyKey).toBeTruthy();
+    expect(second[0].idempotencyKey).toBe(bodies[0].idempotencyKey);
+    expect((await reviewsOf(request, t.id))[0].state).toBe("accepted");
+  });
+
+  test("an accept with no reply is an unknown result and Retry waits for May duplicate", async ({ page, request }) => {
+    const t = await taskWithPlan(request, `Unknown ${uid()}`);
+    await submitDoc(request, t.id);
+    await openReview(page, t.id);
+    await page.route(ACTIONS_URL, (route) => route.abort());
+    await decision(page).getByRole("button", { name: /^Accept rev 1/ }).click();
+    await expect(outStrip(page).filter({ hasText: "Unknown result." })).toBeVisible();
+    await shot(page, "desktop-review-accept-unknown");
+    const retry = decision(page).getByRole("button", { name: "Retry" });
+    await expect(retry).toBeDisabled();
+    await expect(decision(page).getByRole("button", { name: "Leave as is" })).toBeVisible();
+    await decision(page).getByLabel("May duplicate").check();
+    await expect(retry).toBeEnabled();
+  });
+
+  test("feedback that was not recorded keeps its text and Dismiss makes it editable again", async ({ page, request }) => {
+    const t = await taskWithPlan(request, `Unrecorded ${uid()}`);
+    await submitDoc(request, t.id);
+    await openReview(page, t.id);
+    await page.route(ACTIONS_URL, (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: { code: "internal", message: "boom" } }) }));
+    await decision(page).getByRole("button", { name: /^Request changes/ }).click();
+    await decision(page).getByLabel("Feedback for the agent").fill("Tighten the intro.");
+    await decision(page).getByRole("button", { name: "Send feedback" }).click();
+    await expect(outStrip(page).filter({ hasText: "Feedback not recorded (500)." })).toBeVisible();
+    await shot(page, "desktop-review-feedback-not-recorded");
+    const ro = decision(page).getByLabel("Your feedback");
+    await expect(ro).toHaveValue("Tighten the intro.");
+    await expect(ro).not.toBeEditable();
+    await decision(page).getByRole("button", { name: "Dismiss" }).click();
+    const field = decision(page).getByLabel("Feedback for the agent");
+    await expect(field).toBeEditable();
+    await expect(field).toHaveValue("Tighten the intro.");
+  });
+
+  test("two tabs: the winning accept refuses the other tab's feedback", async ({ page, context, request }) => {
+    const t = await taskWithPlan(request, `Race ${uid()}`);
+    await submitDoc(request, t.id);
+    const pageB = await context.newPage();
+    await pageB.setViewportSize({ width: 1280, height: 860 });
+    await openReview(page, t.id);
+    await openReview(pageB, t.id);
+    await decision(pageB).getByRole("button", { name: /^Request changes/ }).click();
+    await decision(pageB).getByLabel("Feedback for the agent").fill("Late feedback from tab B.");
+
+    await decision(page).getByRole("button", { name: /^Accept rev 1/ }).click();
+    await expect(outStrip(page).filter({ hasText: "Revision accepted." })).toBeVisible();
+    await expect.poll(async () => (await reviewsOf(request, t.id))[0].state).toBe("accepted");
+
+    await decision(pageB).getByRole("button", { name: "Send feedback" }).click();
+    const fail = pageB.locator(".wc-rv-out.fail");
+    await expect(fail).toBeVisible();
+    await expect(fail).toContainText(/changed|version|accepted|moved/i);
+    await decision(pageB).getByRole("button", { name: "Dismiss" }).click();
+    await expect(pane(pageB)).toHaveAttribute("data-wc-review-state", "accepted");
+
+    // The request's history page carries every action on it: one acceptance, and the refused feedback left no row.
+    const res = await request.get(`/api/tasks/${t.id}/reviews?request_id=${(await reviewsOf(request, t.id))[0].id}&limit=100`);
+    const j = await res.json();
+    expect(j.requests[0].state).toBe("accepted");
+    const actions = j.history.actions as Array<{ action: string }>;
+    expect(actions.filter((a) => a.action === "accept")).toHaveLength(1);
+    expect(actions.filter((a) => a.action === "request_changes")).toHaveLength(0);
+  });
+
+  // Closing the waive form returns focus to its opener, which remounts when the form closes.
+  test("Escape in the waive form returns focus to the Waive… button", async ({ page, request }) => {
+    const t = await taskWithPlan(request, `Waive focus ${uid()}`);
+    await submitDoc(request, t.id);
+    await openReview(page, t.id);
+    await decision(page).getByRole("button", { name: /^Waive…/ }).click();
+    await expect(decision(page).getByLabel("Reason for waiving")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(decision(page).getByRole("button", { name: /^Waive…/ })).toBeFocused();
+  });
+
+  // A refused feedback send, once dismissed, closes the form and shows the winning decision.
+  test("after a refused send is dismissed the other tab shows Accepted, not the feedback form", async ({ page, context, request }) => {
+    const t = await taskWithPlan(request, `Race form ${uid()}`);
+    await submitDoc(request, t.id);
+    const pageB = await context.newPage();
+    await pageB.setViewportSize({ width: 1280, height: 860 });
+    await openReview(page, t.id);
+    await openReview(pageB, t.id);
+    await decision(pageB).getByRole("button", { name: /^Request changes/ }).click();
+    await decision(pageB).getByLabel("Feedback for the agent").fill("Late feedback from tab B.");
+    await decision(page).getByRole("button", { name: /^Accept rev 1/ }).click();
+    await expect.poll(async () => (await reviewsOf(request, t.id))[0].state).toBe("accepted");
+    await decision(pageB).getByRole("button", { name: "Send feedback" }).click();
+    await expect(pageB.locator(".wc-rv-out.fail")).toBeVisible();
+    await shot(pageB, "desktop-review-conflict");
+    await decision(pageB).getByRole("button", { name: "Dismiss" }).click();
+    await expect(pageB.getByRole("button", { name: /^Merge from landing controls/ })).toBeVisible();
+  });
+
+  test("a failed feedback delivery offers Retry delivery after the duplicate acknowledgement", async ({ page, request }) => {
+    const t = await taskWithPlan(request, `Redeliver ${uid()}`);
+    await submitDoc(request, t.id);
+    // The pane refetches on focus and on every Work Center event, so a refetch can still be in
+    // flight when the test ends; the patch gives up quietly once the page is gone.
+    await page.route((u) => /\/api\/tasks\/[^/]+\/reviews$/.test(u.pathname), async (route) => {
+      const res = await route.fetch().catch(() => null);
+      const j = res ? await res.json().catch(() => null) : null;
+      if (!res || !j) return route.abort().catch(() => {});
+      const r = j.requests[0];
+      r.state = "changes_requested";
+      r.latestAction = { ...(r.latestAction ?? {}), id: "act-e2e-failed", action: "request_changes", state: "failed" };
+      r.allowedActions = ["retry_feedback", "withdraw", "waive"];
+      await route.fulfill({ response: res, json: j }).catch(() => {});
+    });
+    await openReview(page, t.id);
+    await expect(outStrip(page).filter({ hasText: "Feedback not delivered." })).toBeVisible();
+    const retry = decision(page).getByRole("button", { name: "Retry delivery" });
+    await shot(page, "desktop-review-retry-delivery");
+    await expect(retry).toBeDisabled();
+    const posts: any[] = [];
+    await page.route(ACTIONS_URL, async (route) => {
+      posts.push(route.request().postDataJSON());
+      await route.fulfill({ status: 202, contentType: "application/json", body: JSON.stringify({ requestId: "r", action: { id: "act-e2e-retry", state: "pending" } }) });
+    });
+    await decision(page).getByLabel("The agent may receive this twice").check();
+    await expect(retry).toBeEnabled();
+    await retry.click();
+    await expect.poll(() => posts.length).toBe(1);
+    expect(posts[0].action).toBe("retry_feedback");
+    expect(posts[0].reason).toBe("Retry acknowledged: the agent may receive this feedback twice.");
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+  });
+
+  test("accepted, then changed: the pane asks for a resubmission and focuses an empty composer", async ({ page, request }) => {
+    const t = await taskWithPlan(request, `Changed ${uid()}`);
+    commitChange(t.worktree, { "src/one.ts": "export const one = 1;\n" });
+    await submitCode(request, t.id);
+    await openReview(page, t.id);
+    await decision(page).getByRole("button", { name: /^Accept rev 1/ }).click();
+    await expect(pane(page)).toHaveAttribute("data-wc-review-state", "accepted");
+    commitChange(t.worktree, { "src/two.ts": "export const two = 2;\n" });
+    await page.reload();
+    await tabs(page).filter({ hasText: "REVIEW" }).click();
+    await expect(outStrip(page).filter({ hasText: "Rev 1 was accepted, then it changed." })).toBeVisible();
+    const ask = decision(page).getByRole("button", { name: "Ask agent to resubmit" });
+    await shot(page, "desktop-review-accepted-changed");
+    await ask.click();
+    await expect.poll(() => page.evaluate(() => document.activeElement?.classList.contains("comp-input") ?? false)).toBe(true);
+    await expect(page.locator(".comp-input")).toHaveText("");
+  });
+
+  test("Work Center row: Accept and Waive act on the leading review item", async ({ page, request }) => {
+    const t = await taskWithPlan(request, `Row ${uid()}`);
+    await submitDoc(request, t.id);
+    await gotoApp(page);
+    await page.getByRole("button", { name: /^Work Center:/ }).click();
+    const row = page.locator("[data-wc-row]").filter({ hasText: t.title });
+    const accept = row.getByRole("button", { name: /^Accept rev 1/ });
+    const waive = row.getByRole("button", { name: /^Waive…/ });
+    await expect(accept).toBeVisible();
+    await expect(waive).toBeVisible();
+
+    await waive.click();
+    const dlg = page.getByRole("dialog", { name: "Waive required review, rev 1" });
+    await expect(dlg).toBeVisible();
+    await expect(dlg.getByText("Waive required review · rev 1")).toBeVisible();
+    await shot(page, "desktop-wc-waive-popover");
+    const go = dlg.getByRole("button", { name: "Waive", exact: true });
+    await expect(go).toBeDisabled();
+    await dlg.getByLabel("Reason for waiving").fill("because");
+    await expect(go).toBeEnabled();
+    await page.keyboard.press("Escape");
+    await expect(dlg).toHaveCount(0);
+    await expect(waive).toBeFocused();
+
+    await accept.click();
+    await expect(row.locator(".wc-out.ok")).toContainText("Revision accepted.");
+    await shot(page, "desktop-wc-accept-ok");
+    await expect(row.getByRole("button", { name: /^Review:/ })).toHaveCount(0);
+  });
+
+  test("a code review states the manifest digest and the full base and head", async ({ page, request }) => {
+    const t = await taskWithPlan(request, `Digest ${uid()}`);
+    commitChange(t.worktree, { "src/d.ts": "export const d = 1;\n" });
+    await submitCode(request, t.id);
+    await openReview(page, t.id);
+    const code = pane(page).locator("[data-wc-artifact=code]");
+    await expect(code.getByText(/^manifest sha256 [0-9a-f]{64}$/)).toBeVisible();
+    await expect(code.getByText(/^base [0-9a-f]{40}$/)).toBeVisible();
+    await expect(code.getByText(/^head [0-9a-f]{40}$/)).toBeVisible();
+  });
+
+  test("a diff over the size limit names the reason", async ({ page, request }) => {
+    const t = await taskWithPlan(request, `Big ${uid()}`);
+    commitChange(t.worktree, { "big/blob.txt": `${"x".repeat(79)}\n`.repeat(40_000) });
+    await submitCode(request, t.id);
+    await openReview(page, t.id);
+    const code = pane(page).locator("[data-wc-artifact=code]");
+    await expect(code.locator(".wc-rv-trunc")).toContainText("PREVIEW TRUNCATED · the diff is larger than the 2 MiB preview limit");
+  });
+
+  test("a review whose checkout is gone shows the unavailable state", async ({ page, request }) => {
+    const t = await taskWithPlan(request, `Gone checkout ${uid()}`);
+    commitChange(t.worktree, { "src/g.ts": "export const g = 1;\n" });
+    await submitCode(request, t.id);
+    fs.rmSync(t.worktree, { recursive: true, force: true });
+    await openReview(page, t.id);
+    await expect(pane(page).locator(".wc-rv-tag", { hasText: "Unavailable" })).toBeVisible();
+    await expect(pane(page).getByText("This revision cannot be checked against the task.")).toBeVisible();
   });
 });
 
@@ -244,7 +566,23 @@ test.describe("phone", () => {
     const p = pane(page);
     await expect(p.locator(".wc-rv-doc")).toHaveText(DOC);
     await expect(p.locator(".wc-rv-btns").first()).toHaveCSS("flex-direction", "column");
-    await expect(p.getByRole("button", { name: /^Accept rev 1/ })).toBeDisabled();
+    await expect(p.getByRole("button", { name: /^Accept rev 1/ })).toBeEnabled();
     await shot(page, "phone-review");
+    await p.getByRole("button", { name: /^Request changes/ }).click();
+    await expect(p.getByLabel("Feedback for the agent")).toBeFocused();
+    await shot(page, "phone-review-compose");
+  });
+
+  test("the Work tab action sheet offers Accept and Snooze for a pending review", async ({ page, request }) => {
+    const t = await taskWithPlan(request, `Phone sheet ${uid()}`);
+    await submitDoc(request, t.id);
+    await gotoApp(page);
+    await page.locator(".mtabbar-item").nth(3).click();
+    const row = page.locator("[data-wc-row]").filter({ hasText: t.title });
+    await row.getByRole("button", { name: `Actions for ${t.title}` }).click();
+    const sheet = page.getByRole("dialog", { name: "Actions" });
+    await expect(sheet.getByRole("button", { name: /^Accept rev 1/ })).toBeVisible();
+    await expect(sheet.getByRole("button", { name: /^Snooze/ })).toBeVisible();
+    await shot(page, "phone-wc-sheet");
   });
 });

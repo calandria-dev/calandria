@@ -128,7 +128,7 @@ function ContextPane({ task, sessions, running, onClear, reportsContext }: { tas
   );
 }
 
-export function SessionRail({ project, task, sessions, running, reportsContext = true, onResolveWithAI, onMerged, onPrCreated, onSyncChanged, focusDiff, refreshChanges, onClear, onCollapse, onSwitchToChat, onSend, reviews, reviewFocus, onOpenDocument }: {
+export function SessionRail({ project, task, sessions, running, reportsContext = true, onResolveWithAI, onMerged, onPrCreated, onSyncChanged, focusDiff, refreshChanges, onClear, onCollapse, onSwitchToChat, onSend, reviews, reviewFocus, onOpenDocument, onAskResubmit, onReviewChanged }: {
   project: ProjectRow; task: TaskRow; sessions: Session[]; running: boolean;
   reportsContext?: boolean; // the task's agent measures context occupancy (capabilities.reportsContext); decides how an estimate is explained
   onResolveWithAI: (taskId: string) => Promise<ResolveResult>;
@@ -147,6 +147,8 @@ export function SessionRail({ project, task, sessions, running, reportsContext =
   reviews?: ReviewView[];
   reviewFocus?: ReviewFocus | null;
   onOpenDocument?: (path: string) => void;
+  onAskResubmit?: () => void;
+  onReviewChanged?: () => void;
 }) {
   // PREVIEW (project live-URL view) rides on the remote-execution backend, which
   // isn't real yet, so it stays behind a flag (default off) until the live URL
@@ -181,7 +183,7 @@ export function SessionRail({ project, task, sessions, running, reportsContext =
         )}
         {tab === "preview" && showPreview && <PreviewPane project={project} />}
         {tab === "review" && hasReview && (
-          <ReviewPane taskId={task.id} reviews={reviews!} focus={reviewFocus ?? null} mobile={false} onOpenDiff={() => setTab("diff")} onOpenDocument={(f) => onOpenDocument?.(f)} />
+          <ReviewPane taskId={task.id} reviews={reviews!} focus={reviewFocus ?? null} mobile={false} onOpenDiff={() => setTab("diff")} onOpenDocument={(f) => onOpenDocument?.(f)} onAskResubmit={() => onAskResubmit?.()} onChanged={() => onReviewChanged?.()} />
         )}
         {tab === "context" && <ContextPane task={task} sessions={sessions} running={running} onClear={onClear} reportsContext={reportsContext} />}
       </div>

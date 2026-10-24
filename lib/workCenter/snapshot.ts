@@ -35,6 +35,7 @@ import { resultNeedsAttention } from "./classify";
 import { ensureWorkCenterBridge } from "./bridge";
 import { legacyEpisodeId, sourceId } from "./ids";
 import { getProposal } from "./proposals";
+import { reviewRequiredTaskIds } from "@/lib/reviews/guard";
 import { reviewAttention } from "./reviewAdapter";
 import type { Attention, Coverage, Destination, Execution, Freshness, Id, Ms, Snapshot, Summary, WorkRow } from "./types";
 
@@ -329,6 +330,7 @@ function assembleOnce(opts: SnapshotOptions, now: Ms): Snapshot {
   // ---- execution and rows
   const liveIds = new Set(activeTurnIds());
   const executions = new Map<string, Execution>();
+  const reviewRequiredIds = reviewRequiredTaskIds();
   const candidates: WorkCenterTaskRow[] = [];
   for (const row of scoped) {
     const operational =
@@ -338,7 +340,7 @@ function assembleOnce(opts: SnapshotOptions, now: Ms): Snapshot {
       items.has(row.id) ||
       (row.status === "not_started" && (row.start_at > 0 || pendingCount(row.id) > 0));
     if (!operational && row.status !== "not_started") continue;
-    const ex = executionOf(row.id);
+    const ex = executionOf(row.id, reviewRequiredIds.has(row.id));
     if (!ex) continue;
     executions.set(row.id, ex);
     const blocked = ex.blockerTaskIds.length > 0 && row.status === "not_started";
@@ -398,7 +400,7 @@ function assembleOnce(opts: SnapshotOptions, now: Ms): Snapshot {
   for (const r of recent.rows) {
     const row = rows.get(r.taskId);
     if (!row || !inScopeProject(row.project_id, row.project_deprecated) || snoozeOf(row, now)) continue;
-    const ex = executions.get(row.id) ?? executionOf(row.id);
+    const ex = executions.get(row.id) ?? executionOf(row.id, reviewRequiredIds.has(row.id));
     if (!ex) continue;
     const w = workRow(row, ex, items.get(row.id) ?? [], now);
     w.latestResult = r.result;

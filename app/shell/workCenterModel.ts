@@ -170,19 +170,40 @@ export const isStaleItem = (a: Attention) => a.freshness.state !== "fresh";
 
 // ---------- inline actions ----------
 
-export type InlineAction = "allow" | "deny" | "ack" | "open";
+export type InlineAction = "allow" | "deny" | "ack" | "open" | "accept" | "waive";
 
-/** Which inline buttons the first live item gets on desktop (release section 4). Snooze is always added by the row. */
-export function inlineActionsFor(a: Attention | undefined): InlineAction[] {
+/**
+ * What the review route says about a review item's request, read before its
+ * inline buttons are offered. `matches` is false when the request moved past
+ * the revision and version the item names, so nothing may be decided from it.
+ */
+export type ReviewFacts = { revision: number; required: boolean; canAccept: boolean; canWaive: boolean; matches: boolean };
+
+/** A review item a person can decide from the row: a pending request, not a failed effect to recover. */
+export const isDecidableReview = (a: Attention | undefined) => a?.kind === "review" && a.action === "decide_review";
+
+/**
+ * Which inline buttons the first live item gets on desktop (release section 4). Snooze is always added by the row.
+ * A review gets Accept and Waive only once its facts are read and still match the item; Request changes navigates.
+ */
+export function inlineActionsFor(a: Attention | undefined, facts?: ReviewFacts | null): InlineAction[] {
   if (!a) return [];
   if (a.kind === "permission" && a.inlineDecision === "allow_once_or_deny") return ["allow", "deny"];
   if (a.kind === "agent_edit") return ["ack", "open"];
+  if (isDecidableReview(a) && facts?.matches) {
+    const out: InlineAction[] = [];
+    if (facts.canAccept) out.push("accept");
+    if (facts.required && facts.canWaive) out.push("waive");
+    return out.length ? out : ["open"];
+  }
   return ["open"];
 }
 
-/** Phone action sheet entries for an item, ahead of Snooze. */
-export function sheetActionsFor(a: Attention | undefined): InlineAction[] {
-  return a?.kind === "agent_edit" ? ["open", "ack"] : ["open"];
+/** Phone action sheet entries for an item, ahead of Snooze. A review offers Accept (release section 4). */
+export function sheetActionsFor(a: Attention | undefined, facts?: ReviewFacts | null): InlineAction[] {
+  if (a?.kind === "agent_edit") return ["open", "ack"];
+  if (isDecidableReview(a) && facts?.matches && facts.canAccept) return ["open", "accept"];
+  return ["open"];
 }
 
 // ---------- action text (maps from the design: MSG, FAIL, IND) ----------
