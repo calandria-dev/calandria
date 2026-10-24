@@ -9,9 +9,18 @@
 // fetch only, pinned by tests/importGraph.test.ts.
 
 import { publishGlobal } from "@/lib/events";
-import { pushNotificationDetached } from "@/lib/push/send";
+import { pushNotificationDetached, type PushGate } from "@/lib/push/send";
 import { interactionDenied } from "@/lib/runContext";
 import { getProject, getSetting, getTask, taskAwaitingInput } from "@/lib/store";
+import { sourceId } from "@/lib/workCenter/ids";
+import {
+  claimInitial,
+  claimReminder,
+  finishReceipt,
+  type Channel,
+} from "@/lib/workCenter/notifyReceipts";
+import { assembleSnapshot } from "@/lib/workCenter/snapshot";
+import type { Attention } from "@/lib/workCenter/types";
 import type { NotificationKind, NotificationPayload } from "./types";
 
 // Per-kind opt-outs. All default on: a notification feature that ships off
@@ -78,14 +87,94 @@ function firstLine(text: string, max = 140): string {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
+/**
+ * The Work Center source a notification reports. `reminderDeadline` marks a
+ * snooze-expiry reminder (the persisted deadline); without it the source is
+ * announced once, on its first actionable transition.
+ */
+export interface NotifySource {
+  sourceId: string;
+  sourceRevision: string;
+  reminderDeadline?: number;
+}
+
+// The browser tabs and the desktop wrapper both listen to the one bus event,
+// so they share a single `browser` receipt per source; Web Push is claimed
+// per subscription.
+const LOCAL_RECIPIENT = "local";
+
+function claimFor(s: NotifySource, channel: Channel, recipientKey: string): string | null {
+  const key = { sourceId: s.sourceId, sourceRevision: s.sourceRevision, channel, recipientKey };
+  return s.reminderDeadline !== undefined ? claimReminder(key, s.reminderDeadline) : claimInitial(key);
+}
+
+/** Claim every source for one recipient; the ids of the claims this caller won. */
+function claimAll(sources: NotifySource[], channel: Channel, recipientKey: string): string[] {
+  const won: string[] = [];
+  for (const s of sources) {
+    const id = claimFor(s, channel, recipientKey);
+    if (id) won.push(id);
+  }
+  return won;
+}
+
+function settleAll(ids: string[], state: "sent" | "failed" | "indeterminate", code: string | null = null): void {
+  for (const id of ids) {
+    try {
+      finishReceipt(id, state, code);
+    } catch (err) {
+      console.error("[notifications] receipt update failed:", err);
+    }
+  }
+}
+
 // The single exit. Every emitter below composes a payload and hands it here so
 // the master switch, the dedupe and the publish can't be forgotten by one path.
-function deliver(payload: NotificationPayload, dedupe = true): NotificationPayload | null {
+function deliver(payload: NotificationPayload, dedupe = true, sources: NotifySource[] = []): NotificationPayload | null {
   if (!notificationsEnabled()) return null;
   if (dedupe && deduped(payload.id, payload.ts)) return null;
+  // Durable dedupe: send only when this caller wins the claim for at least
+  // one source. A store failure fails open, since a missed alert costs more
+  // than a repeated one.
+  let browserReceipts: string[] = [];
+  let gated = sources.length > 0;
+  if (gated) {
+    try {
+      browserReceipts = claimAll(sources, "browser", LOCAL_RECIPIENT);
+    } catch (err) {
+      console.error("[notifications] receipt claim failed:", err);
+      gated = false;
+    }
+  }
+  const pushGate: PushGate | undefined = gated
+    ? (subId) => {
+        let ids: string[];
+        try {
+          ids = claimAll(sources, "push", subId);
+        } catch {
+          return () => {};
+        }
+        if (ids.length === 0) return null;
+        return (result) => {
+          if (result === null) settleAll(ids, "indeterminate", "outcome_unknown");
+          else if (result.ok) settleAll(ids, "sent");
+          // Status 0 is a timeout or network failure: the push service may have accepted it.
+          else settleAll(ids, result.status === 0 ? "indeterminate" : "failed", result.status ? String(result.status) : "network");
+        };
+      }
+    : undefined;
+  // Nothing new for the local channel. Push is still offered to subscriptions
+  // that have not been told (a device added since), through the same gate.
+  const localDue = !gated || browserReceipts.length > 0;
+  if (!localDue) {
+    pushNotificationDetached(payload, pushGate);
+    return null;
+  }
   try {
     publishGlobal(payload.taskId, { type: "notification", payload });
+    settleAll(browserReceipts, "sent");
   } catch (err) {
+    settleAll(browserReceipts, "failed", "publish_failed");
     // In-process pub/sub. A dead subscriber must never take down the turn
     // that triggered this.
     console.error("[notifications] publish failed:", err);
@@ -98,7 +187,7 @@ function deliver(payload: NotificationPayload, dedupe = true): NotificationPaylo
   // twice on paper and once on screen: the worker uses the payload id as the
   // notification tag, exactly as useNotifications.ts does, so the two
   // collapse.
-  pushNotificationDetached(payload);
+  pushNotificationDetached(payload, pushGate);
   return payload;
 }
 
@@ -106,6 +195,26 @@ function deliver(payload: NotificationPayload, dedupe = true): NotificationPaylo
 function projectSuffix(projectId: string): string {
   const project = getProject(projectId);
   return project ? ` · ${project.name}` : "";
+}
+
+const toSource = (a: Pick<Attention, "id" | "sourceRevision">): NotifySource => ({ sourceId: a.id, sourceRevision: a.sourceRevision });
+
+/**
+ * The Work Center items a "waiting for input" toast reports: the task's
+ * question, permission and decision items. A parked turn with no such item
+ * (a finished turn awaiting the next message) is keyed on its turn instead, so
+ * it still announces once per turn.
+ */
+export function awaitingSources(taskId: string): NotifySource[] {
+  try {
+    const row = assembleSnapshot({ recentLimit: 1 }).tasks.find((t) => t.taskId === taskId);
+    const items = (row?.attention ?? []).filter((a) => a.kind !== "ci" && a.kind !== "turn_failure");
+    if (items.length) return items.map(toSource);
+  } catch (err) {
+    console.error("[notifications] snapshot read failed:", err);
+  }
+  const t = getTask(taskId);
+  return [{ sourceId: `awaiting:${taskId}`, sourceRevision: t?.active_turn_id ?? t?.latest_turn_id ?? "0" }];
 }
 
 /** A task is parked on a question, a permission card, or a finished turn. */
@@ -147,7 +256,34 @@ export function emitAwaitingInput(taskId: string): NotificationPayload | null {
     title: "Waiting for input",
     body: `${task.title}${projectSuffix(task.project_id)}`,
     ts: Date.now(),
-  });
+  }, true, awaitingSources(taskId));
+}
+
+/**
+ * A snooze reached its deadline with the item still unresolved: one reminder
+ * per recipient, episode and deadline. Skips the 10s id window (the reminder
+ * is a different moment) but keeps the master and per-kind switches.
+ */
+export function emitSnoozeReminder(taskId: string, sources: NotifySource[]): NotificationPayload | null {
+  if (!kindEnabled("awaiting_input") || sources.length === 0) return null;
+  const task = getTask(taskId);
+  if (!task || task.suggested) return null;
+  return deliver({
+    id: `awaiting_input:${taskId}`,
+    kind: "awaiting_input",
+    taskId,
+    projectId: task.project_id,
+    title: "Snooze ended",
+    body: `${task.title}${projectSuffix(task.project_id)}`,
+    ts: Date.now(),
+  }, false, sources);
+}
+
+// The same identity the snapshot's turn_failure item carries (the error event
+// fires while the turn is still active; it finalizes under the same id).
+function turnFailureSource(task: { id: string; active_turn_id: string | null; latest_turn_id: string | null }): NotifySource {
+  const turn = task.active_turn_id ?? task.latest_turn_id ?? "0";
+  return { sourceId: sourceId("turn_failure", [task.id, turn]), sourceRevision: turn };
 }
 
 /**
@@ -180,7 +316,7 @@ export function emitTurnFailed(taskId: string, content: string): NotificationPay
     title: "Turn failed",
     body: `${task.title}${projectSuffix(task.project_id)}${detail ? `\n${detail}` : ""}`,
     ts: Date.now(),
-  });
+  }, true, [turnFailureSource(task)]);
 }
 
 /**

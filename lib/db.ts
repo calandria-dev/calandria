@@ -611,6 +611,39 @@ export function init(db: Database.Database) {
       last_error      TEXT NOT NULL DEFAULT ''
     );
 
+    -- Work Center notification dedupe (contract work-center/1, lib/workCenter/
+    -- notifyReceipts.ts). One active high-water row per (instance, source,
+    -- revision, channel, recipient) records that the source's initial
+    -- notification was claimed and the highest snooze deadline already
+    -- reminded; the receipts table is the history of attempts, one per
+    -- transition. recipient_key is an opaque delivery-target id, never an
+    -- endpoint or credential.
+    CREATE TABLE IF NOT EXISTS work_center_notification_active (
+      instance_id              TEXT NOT NULL,
+      source_id                TEXT NOT NULL,
+      source_revision          TEXT NOT NULL,
+      channel                  TEXT NOT NULL,
+      recipient_key            TEXT NOT NULL,
+      initial_claimed          INTEGER NOT NULL DEFAULT 0 CHECK(initial_claimed IN (0,1)),
+      latest_reminder_deadline INTEGER,
+      source_resolved_at       INTEGER,
+      PRIMARY KEY (instance_id, source_id, source_revision, channel, recipient_key)
+    );
+    CREATE TABLE IF NOT EXISTS work_center_notification_receipts (
+      id              TEXT PRIMARY KEY,
+      instance_id     TEXT NOT NULL,
+      source_id       TEXT NOT NULL,
+      source_revision TEXT NOT NULL,
+      transition      TEXT NOT NULL,
+      channel         TEXT NOT NULL,
+      recipient_key   TEXT NOT NULL,
+      state           TEXT NOT NULL,
+      claimed_at      INTEGER NOT NULL,
+      finished_at     INTEGER,
+      error_code      TEXT,
+      UNIQUE (instance_id, source_id, source_revision, transition, channel, recipient_key)
+    );
+
     -- Persisted service registry (lib/services.ts writes through to this).
     -- Processes never survive a restart; these rows do, so a managed dev server
     -- (desired_state='running') is auto-restarted on boot and its public URL

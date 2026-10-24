@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { listProjects, createProject } from "@/lib/store";
-import { awaitingCounts } from "@/lib/workCenter/compat";
+import { awaitingCounts, inexactProjectIds } from "@/lib/workCenter/compat";
 import { resolvedTaskProvider } from "@/lib/providers/resolve";
 
 export const dynamic = "force-dynamic";
@@ -9,10 +9,13 @@ export async function GET() {
   // The badge is the Work Center's visible needs-you count (unsnoozed tasks
   // with an unresolved item), the same number the title-bar pill sums.
   const awaiting = awaitingCounts();
+  const inexact = inexactProjectIds();
   return NextResponse.json(
     listProjects().map((project) => ({
       ...project,
       awaiting_count: awaiting.get(project.id) ?? 0,
+      // false = the count is a lower bound; the desktop badge keeps its last known figure.
+      awaiting_count_exact: !inexact.has(project.id),
       provider: resolvedTaskProvider(project, null, project.default_agent),
     })),
   );

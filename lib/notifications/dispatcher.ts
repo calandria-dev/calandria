@@ -10,6 +10,7 @@
 
 import { subscribeGlobal, type BusEvent } from "@/lib/events";
 import { emitAwaitingInput, emitTurnFailed } from "./notify";
+import { bootNotifications } from "./reminders";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -55,6 +56,8 @@ function handle(taskId: string, ev: BusEvent): void {
  */
 export function ensureNotifier(): void {
   if (global.__calandriaNotifier) return;
+  // Seed what is already open before the first event can announce it again.
+  bootNotifications();
   global.__calandriaNotifier = subscribeGlobal((taskId, ev) => {
     try {
       handle(taskId, ev);

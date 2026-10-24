@@ -2627,6 +2627,12 @@ function rebuildTrayMenu() {
  * the window on screen would go quiet the moment you switched away from the
  * instance that needed attention.
  */
+/** True when any subscribed instance's stream is down, so its count is the last known one. */
+function anySubscriberOffline() {
+  for (const sub of subscribers.values()) if (sub.connected === false) return true;
+  return false;
+}
+
 function totalNeedsYou() {
   let n = 0;
   for (const sub of subscribers.values()) n += sub.needsYou.total;
@@ -2656,7 +2662,7 @@ function applyBadge() {
   } else {
     app.setBadgeCount(needsYouCount);
   }
-  tray?.setToolTip(trayTooltip(needsYouCount));
+  tray?.setToolTip(trayTooltip(needsYouCount, anySubscriberOffline()));
   rebuildTrayMenu();
 }
 
@@ -2730,7 +2736,7 @@ function startSubscriber(inst, origin) {
   // showing, so it arms its own headers rather than relying on the active
   // instance's attach having done it.
   armAuthHeaders(inst);
-  const sub = { id: inst.id, name: inst.name, origin, needsYou: new NeedsYou(), events: null };
+  const sub = { id: inst.id, name: inst.name, origin, needsYou: new NeedsYou(), events: null, connected: null };
   sub.events = new AppEvents({
     origin,
     // The local server's token, and only for the local instance (see
@@ -2756,6 +2762,12 @@ function startSubscriber(inst, origin) {
         headers: { ...(authHeadersFor(inst) || {}), ...(init?.headers || {}) },
       }),
     onLog: (line) => console.log(line),
+    onStatus: (status) => {
+      const up = status === "connected";
+      if (sub.connected === up) return;
+      sub.connected = up;
+      applyBadge();
+    },
     onProjects: (projects) => {
       sub.needsYou.seed(projects);
       applyBadge();

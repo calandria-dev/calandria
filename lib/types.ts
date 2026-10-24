@@ -918,6 +918,8 @@ export type GlobalTaskEvent = {
   idle_since: number;
   /** In-progress tasks awaiting the user across this task's project. */
   awaiting_count: number;
+  /** False when awaiting_count is only a lower bound (the visible count is unavailable). */
+  awaiting_count_exact?: boolean;
   /**
    * On a "suggested" event only: the project the new task was filed into.
    * Usually the same as `projectId`, but suggest_task can target any project;
