@@ -27,8 +27,8 @@ export type ReviewActionResult =
   | { kind: "ok"; status: number; body: ActionResponse }
   /** Refused and not worth repeating: the review moved. Dismiss refetches. */
   | { kind: "conflict"; status: number; code: string; message: string; current: { version: number; state: ReviewState; submissionId: string | null } | null }
-  /** Not recorded. Retry with the same key. */
-  | { kind: "fail"; status: number; code: string | null; message: string | null }
+  /** Not recorded. `retryable` says whether resending under the same key can change the outcome. */
+  | { kind: "fail"; status: number; code: string | null; message: string | null; retryable: boolean }
   /** The request left and no answer came back: it may or may not have applied. */
   | { kind: "ind" };
 
@@ -46,11 +46,18 @@ export function classifyReviewReply(status: number, body: unknown): ReviewAction
   const b = body as { error?: { code?: unknown; message?: unknown }; current?: unknown } | null;
   if (status >= 200 && status < 300) {
     const ok = body as ActionResponse | null;
-    if (ok && typeof ok.requestId === "string" && ok.action && typeof ok.action.id === "string") return { kind: "ok", status, body: ok };
+    if (!ok || typeof ok.requestId !== "string" || !ok.action || typeof ok.action.id !== "string") return { kind: "ind" };
+    // A settled receipt is success only when the effect succeeded or is still in flight.
+    if (ok.action.state === "succeeded" || ok.action.state === "pending") return { kind: "ok", status, body: ok };
+    if (ok.action.state === "failed") {
+      const errorCode = typeof ok.action.errorCode === "string" ? ok.action.errorCode : null;
+      return { kind: "fail", status, code: errorCode, message: null, retryable: false };
+    }
     return { kind: "ind" };
   }
-  const code = typeof b?.error?.code === "string" ? b.error.code : null;
-  const message = typeof b?.error?.message === "string" ? b.error.message : null;
+  const err = b?.error as { code?: unknown; message?: unknown; retryable?: unknown } | undefined;
+  const code = typeof err?.code === "string" ? err.code : null;
+  const message = typeof err?.message === "string" ? err.message : null;
   if (CONFLICT_STATUS.has(status) && code !== "operation_pending") {
     const cur = b?.current as { version?: unknown; state?: unknown; submissionId?: unknown } | undefined;
     const current = cur && typeof cur.version === "number"
@@ -58,7 +65,12 @@ export function classifyReviewReply(status: number, body: unknown): ReviewAction
       : null;
     return { kind: "conflict", status, code: code ?? "conflict", message: message ?? `The review changed (${status}).`, current };
   }
-  return { kind: "fail", status, code, message };
+  // 4xx other than 409/404 (400, 403, 413, 422) will not change on a resend. 409 operation_pending is the one that will.
+  const pending = status === 409 && code === "operation_pending";
+  const fallback = pending || status < 400 || status >= 500;
+  // The server marks operation_pending non-retryable because it never retries on its own; a person's Retry under the same key is what settles it.
+  const retryable = pending || (typeof err?.retryable === "boolean" ? err.retryable : fallback);
+  return { kind: "fail", status, code, message, retryable };
 }
 
 /** Sends one decision. A timeout or a dropped connection after sending is indeterminate. */
@@ -103,14 +115,27 @@ const DECISION_FAIL: Record<"accept" | "waive", string> = {
   accept: "Acceptance not recorded",
   waive: "Waiver not recorded",
 };
+/** The feedback strip's FAIL text, worded like `decisionFailText`. */
+export const feedbackFailText = (status: number, code?: string | null) => {
+  if (status === 409 && code === "operation_pending") return "Feedback not recorded: an earlier decision has not settled.";
+  if (status >= 200 && status < 300) return `Feedback not recorded (${code ?? "failed"}).`;
+  return `Feedback not recorded (${status}).`;
+};
 export const DECISION_IND: Record<"accept" | "waive" | "request_changes", string> = {
   accept: "Acceptance may have been recorded. Retrying is safe: acceptance of the same revision is idempotent.",
   waive: "The waiver may have been recorded.",
   request_changes: "The feedback may have been recorded.",
 };
 
-/** A FAIL message always carries the real HTTP status in parentheses. */
-export const decisionFailText = (d: "accept" | "waive", status: number) => `${DECISION_FAIL[d]} (${status}).`;
+/**
+ * A FAIL message carries the real HTTP status in parentheses. A 2xx whose action failed carries the
+ * server's errorCode instead, and a 409 operation_pending says the earlier decision has not settled.
+ */
+export const decisionFailText = (d: "accept" | "waive", status: number, code?: string | null) => {
+  if (status === 409 && code === "operation_pending") return `${DECISION_FAIL[d]}: an earlier decision has not settled.`;
+  if (status >= 200 && status < 300) return `${DECISION_FAIL[d]} (${code ?? "failed"}).`;
+  return `${DECISION_FAIL[d]} (${status}).`;
+};
 
 // ---------- the person's feedback text, kept in this browser ----------
 

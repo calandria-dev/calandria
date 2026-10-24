@@ -162,6 +162,8 @@ type RowOutcome = {
   key?: ActionKey;
   /** Indeterminate only: the person ticked "May duplicate". */
   ack?: boolean;
+  /** Fail only: a resend cannot change the outcome, so only Dismiss is offered. */
+  noRetry?: boolean;
 };
 
 function OutcomeStrip({ o, onRetry, onDismiss, onAck }: { o: RowOutcome; onRetry: () => void; onDismiss: () => void; onAck: (v: boolean) => void }) {
@@ -170,7 +172,7 @@ function OutcomeStrip({ o, onRetry, onDismiss, onAck }: { o: RowOutcome; onRetry
   if (o.type === "fail") {
     return (
       <div className="wc-out fail" role="status"><Warn /><span>{o.msg}</span>
-        <span className="wc-out-a"><button className="wc-act sm" onClick={onRetry}>Retry</button><button className="wc-act sm ghost" onClick={onDismiss}>Dismiss</button></span>
+        <span className="wc-out-a">{!o.noRetry && <button className="wc-act sm" onClick={onRetry}>Retry</button>}<button className="wc-act sm ghost" onClick={onDismiss}>Dismiss</button></span>
       </div>
     );
   }
@@ -216,21 +218,23 @@ function WaiveMenu({ rev, onWaive, onClose }: { rev: number; onWaive: (reason: s
   );
 }
 
-/** Reads the request behind each decidable review item, once per item version. */
-function useReviewFacts(items: { taskId: string; item: Attention }[]): Record<string, ReviewFacts | "gone"> {
+/** Reads the request behind each decidable review item, once per item version and again whenever the snapshot sequence moves. */
+function useReviewFacts(items: { taskId: string; item: Attention }[], sequence: number | null): Record<string, ReviewFacts | "gone"> {
   const [facts, setFacts] = useState<Record<string, ReviewFacts | "gone">>({});
   const asked = useRef(new Set<string>());
   const want = items.map(({ taskId, item }) => ({ taskId, item, key: `${item.id}:${item.sourceRevision}` }));
-  const sig = want.map((w) => w.key).join("|");
+  const sig = `${sequence ?? ""}#${want.map((w) => w.key).join("|")}`;
   useEffect(() => {
     for (const { taskId, item, key } of want) {
-      if (asked.current.has(key)) continue;
-      asked.current.add(key);
+      // A moved sequence may have dropped allowedActions, so the read is repeated per sequence.
+      const askKey = `${key}@${sequence ?? ""}`;
+      if (asked.current.has(askKey)) continue;
+      asked.current.add(askKey);
       const rid = item.destination.reviewRequestId;
       if (!rid) continue;
       void fetch(`/api/tasks/${encodeURIComponent(taskId)}/reviews?request_id=${encodeURIComponent(rid)}&limit=1`, { cache: "no-store" })
         .then(async (res) => {
-          if (!res.ok) { asked.current.delete(key); return; }
+          if (!res.ok) { asked.current.delete(askKey); return; }
           const j = (await res.json()) as { requests?: ReviewView[] };
           const v = j.requests?.find((r) => r.id === rid);
           const f: ReviewFacts | "gone" = !v ? "gone" : {
@@ -243,7 +247,7 @@ function useReviewFacts(items: { taskId: string; item: Attention }[]): Record<st
           };
           setFacts((m) => ({ ...m, [key]: f }));
         })
-        .catch(() => { asked.current.delete(key); });
+        .catch(() => { asked.current.delete(askKey); });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig]);
@@ -314,7 +318,7 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
     const first = liveItems(r, now, cleared)[0];
     return first && isDecidableReview(first) ? [{ taskId: r.taskId, item: first }] : [];
   }), [groups, now, cleared]);
-  const facts = useReviewFacts(leadReviews);
+  const facts = useReviewFacts(leadReviews, snap?.sequence ?? null);
   const factsFor = (item: Attention | undefined): ReviewFacts | null => {
     const f = item ? facts[`${item.id}:${item.sourceRevision}`] : undefined;
     return f && f !== "gone" ? f : null;
@@ -391,6 +395,12 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
       }
       let body: { resolved?: boolean; error?: { code?: string } } | null = null;
       try { body = await res.clone().json(); } catch { /* no body */ }
+      if (res.ok && (!body || typeof body !== "object")) {
+        // A 2xx with nothing to read cannot say whether the action applied.
+        setOutcome(taskId, { type: "ind", msg: ACTION_IND[key], key, ack: false });
+        data.refresh();
+        return;
+      }
       if (res.ok && body?.resolved !== false) {
         const [msg, sub] = ACTION_OK[key];
         if (item) setCleared((c) => new Set(c).add(item.id));
@@ -461,7 +471,7 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
         const m = res.message;
         setOutcome(taskId, { type: "conflict", msg: `${m[0].toUpperCase()}${m.slice(1)}${/[.!?]$/.test(m) ? "" : "."}` });
       } else if (res.kind === "fail") {
-        setOutcome(taskId, { type: "fail", msg: decisionFailText(decision, res.status) });
+        setOutcome(taskId, { type: "fail", msg: decisionFailText(decision, res.status, res.code), noRetry: !res.retryable });
       } else {
         setOutcome(taskId, { type: "ind", msg: DECISION_IND[decision], ack: false });
       }

@@ -34,14 +34,32 @@ describe("classifyReviewReply over the recorded fixtures", () => {
     }
   });
 
-  it("an unsettled earlier action and every other refusal fail with the real status, retryable under the same key", () => {
-    for (const n of ["error.operation_pending", "error.bad_request_reason_required", "error.human_required"]) {
+  it("only operation_pending offers Retry among the 4xx refusals; the others offer Dismiss alone", () => {
+    const pending = classifyReviewReply(entry("error.operation_pending").status, entry("error.operation_pending").body);
+    expect(pending).toMatchObject({ kind: "fail", status: 409, code: "operation_pending", retryable: true });
+    for (const n of ["error.bad_request_reason_required", "error.human_required"]) {
       const e = entry(n);
-      const r = classifyReviewReply(e.status, e.body);
-      expect(r.kind, n).toBe("fail");
-      if (r.kind === "fail") expect(r.status).toBe(e.status);
+      expect(classifyReviewReply(e.status, e.body), n).toMatchObject({ kind: "fail", status: e.status, retryable: false });
     }
-    expect(classifyReviewReply(503, null)).toMatchObject({ kind: "fail", status: 503 });
+    for (const status of [400, 403, 413, 422]) expect(classifyReviewReply(status, null), String(status)).toMatchObject({ kind: "fail", retryable: false });
+    expect(classifyReviewReply(503, null)).toMatchObject({ kind: "fail", status: 503, retryable: true });
+  });
+
+  it("an error.retryable the server sends wins over the status default", () => {
+    expect(classifyReviewReply(503, { error: { code: "x", retryable: false } })).toMatchObject({ kind: "fail", retryable: false });
+    expect(classifyReviewReply(422, { error: { code: "x", retryable: true } })).toMatchObject({ kind: "fail", retryable: true });
+  });
+
+  it("a 2xx is ok only when the action succeeded or is pending", () => {
+    const base = (state: string, errorCode: string | null = null) => ({ requestId: "r", submissionId: "s", version: 3, state: "accepted", action: { id: "a", state, decisionApplied: true, errorCode, operation: null } });
+    expect(classifyReviewReply(200, base("succeeded")).kind).toBe("ok");
+    expect(classifyReviewReply(202, base("pending")).kind).toBe("ok");
+    expect(classifyReviewReply(200, base("failed", "dirty_checkout"))).toMatchObject({ kind: "fail", status: 200, code: "dirty_checkout", retryable: false });
+    expect(classifyReviewReply(200, base("indeterminate")).kind).toBe("ind");
+    for (const n of ["merge.failed_dirty_checkout", "merge.indeterminate_lost_reply"]) {
+      const e = entry(n);
+      expect(classifyReviewReply(e.status, e.body).kind, n).not.toBe("ok");
+    }
   });
 
   it("a 2xx without a usable body is indeterminate, never success", () => {
@@ -52,6 +70,12 @@ describe("classifyReviewReply over the recorded fixtures", () => {
   it("FAIL text names the HTTP status", () => {
     expect(decisionFailText("accept", 409)).toBe("Acceptance not recorded (409).");
     expect(decisionFailText("waive", 503)).toBe("Waiver not recorded (503).");
+    expect(decisionFailText("accept", 400)).toBe("Acceptance not recorded (400).");
+  });
+
+  it("an unsettled earlier decision is worded as such, and a failed 2xx carries the server's errorCode", () => {
+    expect(decisionFailText("accept", 409, "operation_pending")).toBe("Acceptance not recorded: an earlier decision has not settled.");
+    expect(decisionFailText("waive", 200, "dirty_checkout")).toBe("Waiver not recorded (dirty_checkout).");
   });
 
   it("idempotency keys are unique and fit the contract's 1 to 128 printable ASCII", () => {
