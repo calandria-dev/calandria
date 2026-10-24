@@ -364,7 +364,8 @@ Then ask a task in that project whether it's ready to run five at a time.
 ## Run locally
 
 You need Node 22.12+ on macOS, Linux, or Windows, and at least one supported
-agent CLI.
+agent CLI. Mermaid diagrams require a modern browser, including Safari 17.4 or
+newer.
 
 ```bash
 npm install

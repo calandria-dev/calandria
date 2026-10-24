@@ -48,6 +48,8 @@ export function Mermaid({ source }: { source: string }) {
         mermaid.initialize({
           startOnLoad: false,
           securityLevel: "strict",
+          layout: "dagre",
+          look: "classic",
           theme: document.documentElement.dataset.mode === "light" ? "default" : "dark",
         });
         // parse() first: a failed render() can leave its error element in the
