@@ -138,8 +138,8 @@ instead.
 
 Two bots open dependency PRs, and both merge themselves once the required checks pass:
 
-- `.github/workflows/pin-drift.yml` owns the Claude Code, Codex and Antigravity CLI pins
-  in the `Dockerfile`. A Codex bump also moves `DEFAULT_CODEX_MODEL` in
+- `.github/workflows/pin-drift.yml` runs hourly and owns the Claude Code and Codex CLI pins
+  in the `Dockerfile` and both agent SDK versions. A Codex bump also moves `DEFAULT_CODEX_MODEL` in
   `lib/agents/codex/pricing.ts`, and only when the new model already has a `PRICES` row.
   Otherwise the pin waits on a `pin-drift` issue asking for the price.
 - Dependabot (`.github/dependabot.yml`) bumps actions, the website and the base image.
