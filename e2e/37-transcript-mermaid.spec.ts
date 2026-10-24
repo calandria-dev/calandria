@@ -5,7 +5,7 @@
 import { expect, test } from "@playwright/test";
 import { ensureOnboarded, gotoApp, runTaskToCompletion, sendMessage, uid, waitForIdle } from "./helpers";
 
-const MESSAGE = ["Here is the flow:", "", "```mermaid", "flowchart LR", "  Alpha --> Beta", "```"].join("\n");
+const MESSAGE = ["Here is the flow:", "", "```mermaid", "flowchart LR", "  Alpha --> Beta", "  Beta --> Formula[\"$$x^2$$\"]", "```"].join("\n");
 
 let projectId: string;
 let taskId: string;
@@ -32,5 +32,8 @@ test("a mermaid fence in a message renders as a diagram", async ({ page }) => {
   await expect(svg).toBeVisible({ timeout: 15_000 });
   await expect(svg).toContainText("Alpha");
   await expect(svg).toContainText("Beta");
+  const math = svg.locator(".katex");
+  await expect(math).toBeVisible();
+  await expect(math).toContainText("x");
   await expect(diagram.locator(".md-mermaid-err")).toHaveCount(0);
 });
