@@ -120,7 +120,14 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       }
     }
   }
-  const reviewActor = reviewDisposition ? (await resolveHumanActor(req).catch(() => null))?.id : undefined;
+  let reviewActor: string | undefined;
+  if (reviewDisposition) {
+    try {
+      reviewActor = (await resolveHumanActor(req)).id;
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : String(e), code: "human_required" }, { status: 403 });
+    }
+  }
   // Stop any in-flight turns BEFORE the cascade drops their task rows. A live
   // turn keeps writing to SQLite (addMessage, updateTask); once its row is gone
   // those writes hit a FOREIGN KEY error, and the second such throw (from the

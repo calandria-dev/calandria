@@ -27,7 +27,9 @@ vi.mock("@/lib/github", async (importOriginal) => ({
 import { claimTurn, unregisterTurn } from "../lib/abort";
 import { getDb, settleReviewEffects } from "../lib/db";
 import { subscribe } from "../lib/events";
+import { DELETE as deleteTaskRoute } from "../app/api/tasks/[id]/route";
 import { performReviewAction, reconcileMerges } from "../lib/reviews/actions";
+import { waiveRequired } from "../lib/reviews/guard";
 import { reconcileFeedback } from "../lib/reviews/feedback";
 import { bumpReviewContentEpoch, getAction, getRequest, listReceipts } from "../lib/reviews/store";
 import { submitReview } from "../lib/reviews/submit";
@@ -392,5 +394,28 @@ describe("destructive dispositions", () => {
     expect(waives).toHaveLength(1);
     expect(waives[0]).toMatchObject({ actor_kind: "human", actor_id: "access:alice@example.com", reason: "waive_and_delete", state: "succeeded", decision_applied: 1 });
     expect(getRequest(f.requestId)!.state).toBe("waived");
+  });
+
+  it("a disposition with no resolved person is refused and waives nothing", async () => {
+    const f = await docReview();
+    expect(() => waiveRequired(f.taskId, "waive_and_delete", undefined)).toThrow(ReviewError);
+    try {
+      waiveRequired(f.taskId, "waive_and_delete", undefined);
+    } catch (e) {
+      expect((e as ReviewError).code).toBe("human_required");
+    }
+    expect(getRequest(f.requestId)!.state).toBe("pending");
+
+    const res = await deleteTaskRoute(
+      new Request(`http://x/api/tasks/${f.taskId}?review_disposition=waive_and_delete`, { method: "DELETE", headers: { authorization: "Bearer x" } }),
+      { params: Promise.resolve({ id: f.taskId }) },
+    );
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("human_required");
+    expect(getTask(f.taskId)).toBeTruthy();
+    expect(getRequest(f.requestId)!.state).toBe("pending");
+
+    const plain = await reviewTask();
+    expect(() => waiveRequired(plain.taskId, "move_reset", undefined)).not.toThrow();
   });
 });

@@ -585,4 +585,28 @@ test.describe("phone", () => {
     await expect(sheet.getByRole("button", { name: /^Snooze/ })).toBeVisible();
     await shot(page, "phone-wc-sheet");
   });
+
+  test("Ask agent to resubmit focuses the composer once; returning to Chat later does not refocus it", async ({ page, request }) => {
+    const t = await taskWithPlan(request, `Phone resubmit ${uid()}`);
+    commitChange(t.worktree, { "src/one.ts": "export const one = 1;\n" });
+    await submitCode(request, t.id);
+    await openTask(page, t.id);
+    await page.locator(".viewseg-btn", { hasText: "Review" }).click();
+    await decision(page).getByRole("button", { name: /^Accept rev 1/ }).click();
+    await expect(pane(page)).toHaveAttribute("data-wc-review-state", "accepted");
+    commitChange(t.worktree, { "src/two.ts": "export const two = 2;\n" });
+    await page.reload();
+    await page.locator(".viewseg-btn", { hasText: "Review" }).click();
+    await expect(outStrip(page).filter({ hasText: "Rev 1 was accepted, then it changed." })).toBeVisible();
+    const composerFocused = () => page.evaluate(() => document.activeElement?.classList.contains("comp-input") ?? false);
+
+    await decision(page).getByRole("button", { name: "Ask agent to resubmit" }).click();
+    await expect(page.locator(".viewseg-btn", { hasText: "Chat" })).toHaveClass(/\bon\b/);
+    await expect.poll(composerFocused).toBe(true);
+
+    await page.locator(".viewseg-btn", { hasText: "Changes" }).click();
+    await page.locator(".viewseg-btn", { hasText: "Chat" }).click();
+    await expect(page.locator(".viewseg-btn", { hasText: "Chat" })).toHaveClass(/\bon\b/);
+    await expect.poll(composerFocused).toBe(false);
+  });
 });

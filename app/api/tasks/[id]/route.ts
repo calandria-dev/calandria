@@ -319,7 +319,14 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   if (reviewDisposition && taskHasPendingOperation(id)) {
     return NextResponse.json({ error: "a review decision on this task has not settled; resolve it before deleting", code: "operation_pending" }, { status: 409 });
   }
-  const reviewActor = reviewDisposition ? (await resolveHumanActor(req).catch(() => null))?.id : undefined;
+  let reviewActor: string | undefined;
+  if (reviewDisposition) {
+    try {
+      reviewActor = (await resolveHumanActor(req)).id;
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : String(e), code: "human_required" }, { status: 403 });
+    }
+  }
   await withTaskLock(id, async () => {
     const task = getTask(id);
     // Stop any in-flight turn before tearing down its worktree, so the runner

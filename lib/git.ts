@@ -2037,6 +2037,7 @@ async function mergeViaTree(input: {
 async function mergeIntoTargetWorktree(input: {
   repoPath: string;
   target: string;
+  /** A branch name, or the pinned commit of a reviewed landing. */
   workBranch: string;
   message: string;
   committed: boolean;
@@ -2155,6 +2156,9 @@ export async function mergeTask(input: {
       const tip = await git(repoPath, ["rev-parse", "--verify", `refs/heads/${baseBranch}^{commit}`]).catch(() => "");
       if (tip !== expectedBaseSha) return { ok: false, targetBranch: baseBranch, committed, error: "the base branch moved since the review was captured" };
     }
+    // A reviewed landing merges the pinned commit. Git re-resolves a branch
+    // name at merge time, so the name is never the merge input once a pin is given.
+    const mergeRef = expectedHeadSha ?? workBranch;
     // Recover a repo stranded mid-merge by a prior crash: an unfinished
     // merge in the main tree leaves MERGE_HEAD set and the tree "dirty",
     // which would otherwise block every future merge on the dirty check
@@ -2191,7 +2195,7 @@ export async function mergeTask(input: {
     // (baseSha is an ancestor of the work branch, which the target already
     // contains).
     try {
-      const ahead = parseInt(await git(repoPath, ["rev-list", "--count", `${target}..${workBranch}`]), 10) || 0;
+      const ahead = parseInt(await git(repoPath, ["rev-list", "--count", `${target}..${mergeRef}`]), 10) || 0;
       if (ahead === 0) return { ok: true, targetBranch: target, committed, alreadyMerged: true, mergedSha };
     } catch {}
 
@@ -2233,7 +2237,7 @@ export async function mergeTask(input: {
       // branch, dirty checkout, a linked worktree holding the branch) is one
       // the plain merge handles anyway.
       if (baseSha) {
-        const onWorkBranch = await git(repoPath, ["merge-base", "--is-ancestor", baseSha, workBranch])
+        const onWorkBranch = await git(repoPath, ["merge-base", "--is-ancestor", baseSha, mergeRef])
           .then(() => true)
           .catch(() => false);
         if (onWorkBranch) await advanceBaseBranchLocked(repoPath, target, baseSha);
@@ -2242,14 +2246,14 @@ export async function mergeTask(input: {
       // Base branch isn't the main checkout: merge in a throwaway worktree
       // so the user's working tree (and its uncommitted edits) are never touched.
       if (target !== current) {
-        return mergeIntoTargetWorktree({ repoPath, target, workBranch, message, committed, mergedSha });
+        return mergeIntoTargetWorktree({ repoPath, target, workBranch: mergeRef, message, committed, mergedSha });
       }
 
       // Base branch is the main checkout: merge in place, in a tree the gate
       // above guaranteed clean. A failed merge is aborted so the user is
       // never left mid-merge, and so a stash can be restored onto a sane tree.
       try {
-        await git(repoPath, ["merge", "--no-ff", "-m", message, workBranch]);
+        await git(repoPath, ["merge", "--no-ff", "-m", message, mergeRef]);
       } catch (e) {
         const conflicts = (await git(repoPath, ["diff", "--name-only", "--diff-filter=U"]).catch(() => ""))
           .split("\n")
@@ -3187,8 +3191,11 @@ export async function completeWorktreeMerge(input: {
   // sync merge is to make the branch contain the base; landing it locally is
   // the thing that can't be pushed afterwards.
   resolveOnly?: boolean;
+  // The accepted pins of a reviewed landing, forwarded to `mergeTask`.
+  expectedHeadSha?: string;
+  expectedBaseSha?: string;
 }): Promise<MergeResult> {
-  const { repoPath, worktreePath, workBranch, baseBranch, message, stashDirty, resolveOnly } = input;
+  const { repoPath, worktreePath, workBranch, baseBranch, message, stashDirty, resolveOnly, expectedHeadSha, expectedBaseSha } = input;
   const { mergeInProgress } = await worktreeMergeStatus(worktreePath);
 
   // Editing a conflicted file leaves it "unmerged" until staged; stage first
@@ -3220,7 +3227,7 @@ export async function completeWorktreeMerge(input: {
     return { ok: true, targetBranch: workBranch, committed: mergeInProgress, resolveOnly: true };
   }
 
-  const result = await mergeTask({ repoPath, worktreePath, workBranch, baseBranch, message, stashDirty });
+  const result = await mergeTask({ repoPath, worktreePath, workBranch, baseBranch, message, stashDirty, expectedHeadSha, expectedBaseSha });
   // The resolution merge has landed; its pre-merge marker is spent. Drop it
   // so a subsequent "discard merge" doesn't try to unwind an already-merged commit.
   if (result.ok) await clearMergeAbortMarker(worktreePath);

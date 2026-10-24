@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { reviewRefusal } from "@/lib/reviews/gate";
-import { baseTipBefore, recordLocalLanding } from "@/lib/reviews/landing";
+import { acceptedCodePins, baseTipBefore, recordLocalLanding } from "@/lib/reviews/landing";
 import { getTask, getProject, updateTask, recordTaskMerge } from "@/lib/store";
 import { mergeTask, taskCommitMessage } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
@@ -43,6 +43,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     const baseBranch = resolveBaseBranch(task, project);
     const baseBeforeSha = await baseTipBefore(project.repo_path, baseBranch);
+    // An accepted code review pins the landing to the commit a person approved;
+    // mergeTask then commits nothing on the way and refuses with nothing written
+    // if the branch or the base moved. A task without an accepted review passes no pins.
+    const pins = acceptedCodePins(id);
     const result = await mergeTask({
       repoPath: project.repo_path,
       worktreePath: task.worktree_path,
@@ -53,6 +57,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // task was cut from, so the merge commit holds only the task's own work.
       baseSha: task.base_sha,
       stashDirty,
+      expectedHeadSha: pins?.headCommitSha,
+      expectedBaseSha: pins?.baseTipSha,
     });
 
     if (result.ok) {

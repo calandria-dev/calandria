@@ -149,7 +149,7 @@ export async function moveTasksToProject(
     const refused: { id: string; reason: string }[] = [];
     for (const id of candidates) {
       if (!discardIds.has(id)) continue;
-      const outcome = await discardCheckout(id, projectId, { discardUnsafe: unsafeIds.has(id) });
+      const outcome = await discardCheckout(id, projectId, { discardUnsafe: unsafeIds.has(id), reviewActor: opts.reviewActor });
       if (!outcome) continue;
       if ("reason" in outcome) refused.push({ id, reason: outcome.reason });
       else discarded.push(outcome);
@@ -202,7 +202,7 @@ export async function moveTasksToProject(
 async function discardCheckout(
   id: string,
   projectId: string,
-  opts: { discardUnsafe: boolean }
+  opts: { discardUnsafe: boolean; reviewActor?: string }
 ): Promise<WorktreeDiscard | { reason: string } | null> {
   const task = getTask(id);
   if (!task || task.project_id === projectId) return null;
@@ -243,6 +243,7 @@ async function discardCheckout(
     if (taskHasPendingOperation(id)) return { reason: "operation_pending: a review decision on this task has not settled" };
     const review = await taskReviewBlocker(id);
     if (review && !opts.discardUnsafe) return { reason: `${UNSAFE_DISCARD_REASON}: ${reviewDiscardReason(review.reason)}` };
+    if (review && !opts.reviewActor) return { reason: "human_required: a person has to waive this review from the browser" };
 
     await removeWorktree(project.repo_path, task.worktree_path, task.work_branch);
     // removeWorktree is best-effort and never throws, and a surviving directory
