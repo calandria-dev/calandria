@@ -453,6 +453,15 @@ test.describe("desktop", () => {
     const retry = decision(page).getByRole("button", { name: "Retry delivery" });
     await shot(page, "desktop-review-retry-delivery");
     await expect(retry).toBeDisabled();
+    // One acknowledgement per attempt: a dismissed failed retry asks again.
+    await page.route(ACTIONS_URL, (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "snapshot_busy", message: "busy", retryable: true } }) }));
+    await decision(page).getByLabel("The agent may receive this twice").check();
+    await retry.click();
+    await expect(outStrip(page).filter({ hasText: "Feedback not recorded (503)." })).toBeVisible();
+    await decision(page).getByRole("button", { name: "Dismiss" }).click();
+    await expect(decision(page).getByLabel("The agent may receive this twice")).not.toBeChecked();
+    await expect(retry).toBeDisabled();
+    await page.unroute(ACTIONS_URL);
     const posts: any[] = [];
     await page.route(ACTIONS_URL, async (route) => {
       posts.push(route.request().postDataJSON());
@@ -513,6 +522,55 @@ test.describe("desktop", () => {
     await expect(row.locator(".wc-out.ok")).toContainText("Revision accepted.");
     await shot(page, "desktop-wc-accept-ok");
     await expect(row.getByRole("button", { name: /^Review:/ })).toHaveCount(0);
+  });
+
+  test("Work Center row: a refused, failed or unanswered decision shows its own strip", async ({ page, request }) => {
+    const t = await taskWithPlan(request, `RowFail ${uid()}`);
+    await submitDoc(request, t.id);
+    await gotoApp(page);
+    await page.getByRole("button", { name: /^Work Center:/ }).click();
+    const row = page.locator("[data-wc-row]").filter({ hasText: t.title });
+    const accept = row.getByRole("button", { name: /^Accept rev 1/ });
+    const reply = (status: number, body: unknown) => page.route(ACTIONS_URL, (route) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) }));
+    const out = row.locator(".wc-out");
+
+    // The review moved: Dismiss only.
+    await reply(409, { error: { code: "version_conflict", message: "the review changed since you read it", retryable: true }, current: { version: 9, state: "accepted", submissionId: null } });
+    await accept.click();
+    await expect(out).toContainText("The review changed since you read it.");
+    await expect(out.getByRole("button", { name: "Retry" })).toHaveCount(0);
+    await out.getByRole("button", { name: "Dismiss" }).click();
+    await page.unroute(ACTIONS_URL);
+
+    // A 4xx that a resend cannot fix: Dismiss only.
+    await reply(403, { error: { code: "human_required", message: "a person has to decide", retryable: false } });
+    await accept.click();
+    await expect(out).toContainText("Acceptance not recorded (403).");
+    await expect(out.getByRole("button", { name: "Retry" })).toHaveCount(0);
+    await out.getByRole("button", { name: "Dismiss" }).click();
+    await page.unroute(ACTIONS_URL);
+
+    // A transient failure offers Retry.
+    await reply(503, { error: { code: "snapshot_busy", message: "busy", retryable: true } });
+    await accept.click();
+    await expect(out).toContainText("Acceptance not recorded (503).");
+    await expect(out.getByRole("button", { name: "Retry" })).toBeVisible();
+    await out.getByRole("button", { name: "Dismiss" }).click();
+    await page.unroute(ACTIONS_URL);
+
+    // A 2xx whose action failed is a failure, never a success.
+    await reply(200, { requestId: "r", submissionId: "s", version: 2, state: "accepted", action: { id: "a", state: "failed", decisionApplied: true, errorCode: "dirty_checkout", operation: null } });
+    await accept.click();
+    await expect(out).toContainText("Acceptance not recorded (dirty_checkout).");
+    await out.getByRole("button", { name: "Dismiss" }).click();
+    await page.unroute(ACTIONS_URL);
+
+    // No answer: unknown result, and the row stays decidable.
+    await page.route(ACTIONS_URL, (route) => route.abort());
+    await accept.click();
+    await expect(out).toContainText("Unknown result.");
+    await expect(out.getByRole("button", { name: "Retry" })).toBeDisabled();
+    await page.unrouteAll({ behavior: "ignoreErrors" });
   });
 
   test("a code review states the manifest digest and the full base and head", async ({ page, request }) => {

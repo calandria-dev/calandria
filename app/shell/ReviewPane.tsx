@@ -8,7 +8,7 @@ import {
   type ReviewDisplay,
 } from "./reviewModel";
 import {
-  DECISION_IND, DECISION_OK, DECISION_PENDING, RETRY_FEEDBACK_REASON, decisionFailText, newIdempotencyKey, postReviewAction, recallFeedback, rememberFeedback,
+  DECISION_IND, DECISION_OK, DECISION_PENDING, RETRY_FEEDBACK_REASON, decisionFailText, feedbackFailText, newIdempotencyKey, postReviewAction, recallFeedback, rememberFeedback,
   type ReviewDecision, type ReviewIntent,
 } from "./reviewActions";
 import { useArtifact, useRequestHistory, type ArtifactRead } from "./useTaskReviews";
@@ -217,7 +217,7 @@ type Local =
   | { t: "idle" }
   | { t: "pending"; intent: ReviewIntent }
   | { t: "ok"; decision: "accept" | "waive" }
-  | { t: "fail"; intent: ReviewIntent; status: number }
+  | { t: "fail"; intent: ReviewIntent; status: number; code: string | null; retryable: boolean }
   | { t: "ind"; intent: ReviewIntent; ack: boolean }
   | { t: "conflict"; message: string };
 
@@ -231,8 +231,8 @@ function DecisionStrip({ local, onRetry, onDismiss, onAck }: {
   if (local.t === "fail") {
     return (
       <>
-        <Strip tone="fail" icon={Icon.x()}>{decisionFailText(d, local.status)}</Strip>
-        <div className="wc-rv-btns wc-rv-row"><button className="wc-act wc-rv-act" onClick={onRetry}>Retry</button><button className="wc-act ghost wc-rv-act" onClick={onDismiss}>Dismiss</button></div>
+        <Strip tone="fail" icon={Icon.x()}>{decisionFailText(d, local.status, local.code)}</Strip>
+        <div className="wc-rv-btns wc-rv-row">{local.retryable && <button className="wc-act wc-rv-act" onClick={onRetry}>Retry</button>}<button className="wc-act ghost wc-rv-act" onClick={onDismiss}>Dismiss</button></div>
       </>
     );
   }
@@ -305,7 +305,7 @@ function Decision({ taskId, view, sub, d, mobile, onOpenDiff, onGoCurrent, onAsk
       return;
     }
     if (res.kind === "conflict") { setLocal({ t: "conflict", message: res.message }); return; }
-    if (res.kind === "fail") { setLocal({ t: "fail", intent, status: res.status }); return; }
+    if (res.kind === "fail") { setLocal({ t: "fail", intent, status: res.status, code: res.code, retryable: res.retryable }); return; }
     setLocal({ t: "ind", intent, ack: false });
   };
 
@@ -313,7 +313,7 @@ function Decision({ taskId, view, sub, d, mobile, onOpenDiff, onGoCurrent, onAsk
     decision, requestId: view.id, submissionId: view.currentSubmission.id, expectedVersion: view.version, reason, idempotencyKey: key,
   });
   // A refusal means the review moved: the form closes (its text is kept) and the stored state renders.
-  const dismiss = () => { setLocal({ t: "idle" }); setForm("none"); onChanged(); };
+  const dismiss = () => { setDupAck(false); setLocal({ t: "idle" }); setForm("none"); onChanged(); };
 
   const fine = <div className="wc-rv-fine"><b>Accept</b> records approval of rev {n} only. <b>Merge</b> is a separate landing action. <b>Completing</b> the task is separate again and is what releases dependents.</div>;
   const wrap = (children: ReactNode, title: ReactNode = "Decision") => (
@@ -348,13 +348,13 @@ function Decision({ taskId, view, sub, d, mobile, onOpenDiff, onGoCurrent, onAsk
     const failed = local.t === "fail";
     return wrap(<>
       {failed
-        ? <Strip tone="fail" icon={Icon.x()}>Feedback not recorded ({local.status}).</Strip>
+        ? <Strip tone="fail" icon={Icon.x()}>{feedbackFailText(local.status, local.code)}</Strip>
         : <Strip tone="ind" icon={Icon.clock()}><b>Unknown result.</b> {DECISION_IND.request_changes}</Strip>}
       <textarea className="wc-rv-text" readOnly value={local.intent.reason ?? ""} aria-label="Your feedback" />
       <div className="wc-rv-btns wc-rv-row">
         {!failed && <label className="wc-rv-dup"><input type="checkbox" checked={local.ack} onChange={(e) => setLocal({ ...local, ack: e.target.checked })} /> May duplicate</label>}
-        <button className="wc-act wc-rv-act" disabled={!failed && !local.ack} onClick={() => void send(local.intent)}>Retry</button>
-        <button className="wc-act ghost wc-rv-act" onClick={() => { setLocal({ t: "idle" }); openForm("compose"); onChanged(); }}>{failed ? "Dismiss" : "Leave as is"}</button>
+        {(!failed || local.retryable) && <button className="wc-act wc-rv-act" disabled={!failed && !local.ack} onClick={() => void send(local.intent)}>Retry</button>}
+        <button className="wc-act ghost wc-rv-act" onClick={() => { setDupAck(false); setLocal({ t: "idle" }); openForm("compose"); onChanged(); }}>{failed ? "Dismiss" : "Leave as is"}</button>
       </div>
     </>, <>Request changes on rev {n}</>);
   }
@@ -362,11 +362,11 @@ function Decision({ taskId, view, sub, d, mobile, onOpenDiff, onGoCurrent, onAsk
     const failed = local.t === "fail";
     return wrap(<>
       {failed
-        ? <Strip tone="fail" icon={Icon.x()}>Feedback not recorded ({local.status}).</Strip>
+        ? <Strip tone="fail" icon={Icon.x()}>{feedbackFailText(local.status, local.code)}</Strip>
         : <Strip tone="ind" icon={Icon.clock()}><b>Unknown result.</b> {DECISION_IND.request_changes}</Strip>}
       <div className="wc-rv-btns wc-rv-row">
         {!failed && <label className="wc-rv-dup"><input type="checkbox" checked={local.ack} onChange={(e) => setLocal({ ...local, ack: e.target.checked })} /> May duplicate</label>}
-        <button className="wc-act wc-rv-act" disabled={!failed && !local.ack} onClick={() => void send(local.intent)}>Retry</button>
+        {(!failed || local.retryable) && <button className="wc-act wc-rv-act" disabled={!failed && !local.ack} onClick={() => void send(local.intent)}>Retry</button>}
         <button className="wc-act ghost wc-rv-act" onClick={dismiss}>{failed ? "Dismiss" : "Leave as is"}</button>
       </div>
     </>);
@@ -464,6 +464,7 @@ function Decision({ taskId, view, sub, d, mobile, onOpenDiff, onGoCurrent, onAsk
         if (!last) return;
         // One key per resend intent: a second click after a lost reply replays it.
         if (!retryKey.current || retryKey.current.prior !== last.id) retryKey.current = { prior: last.id, key: newIdempotencyKey() };
+        setDupAck(false);
         void send(intentFor("retry_feedback", RETRY_FEEDBACK_REASON, retryKey.current.key));
       };
       return wrap(<>
@@ -472,7 +473,7 @@ function Decision({ taskId, view, sub, d, mobile, onOpenDiff, onGoCurrent, onAsk
         <div className="wc-rv-btns wc-rv-row">
           <label className="wc-rv-dup"><input type="checkbox" checked={dupAck} disabled={!canRetry} onChange={(e) => setDupAck(e.target.checked)} /> The agent may receive this twice</label>
           <button className="wc-act wc-rv-act wc-rv-end" disabled={!dupAck || !canRetry} onClick={retry}>Retry delivery</button>
-          <button className="wc-act ghost wc-rv-act" onClick={() => setLeft(last?.id ?? null)}>Leave as is</button>
+          <button className="wc-act ghost wc-rv-act" onClick={() => { setDupAck(false); setLeft(last?.id ?? null); }}>Leave as is</button>
         </div>
         <div className="wc-rv-fine">Retry re-sends the same feedback. It is never retried automatically.</div>
       </>);
