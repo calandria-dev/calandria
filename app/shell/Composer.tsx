@@ -73,10 +73,12 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
   const menuRef = useRef<HTMLDivElement>(null);
   const [stopping, setStopping] = useState(false);
   // Attachments on the draft (./attachments.tsx): any file type, uploaded on
-  // attach, appended to the message as marker lines on send. Not persisted
-  // with the draft: object URLs don't survive a remount, and an unsent upload
-  // is an orphaned file the task's hard delete removes.
-  const files = useAttachments({ upload: uploadToTask(task.id), disabled });
+  // attach, appended to the message as marker lines on send. Kept per task in
+  // memory across a remount (rotating a phone across the mobile breakpoint
+  // remounts this component), never in localStorage: object URLs die with the
+  // page, and an unsent upload is an orphaned file the task's hard delete
+  // removes.
+  const files = useAttachments({ upload: uploadToTask(task.id), disabled, persistKey: `composer:${task.id}` });
   const { atts, ready, uploading, dragging } = files;
   // Reset the stopping state once the turn actually ends.
   useEffect(() => { if (!running) setStopping(false); }, [running]);
@@ -234,7 +236,12 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
         )}
         <div className={`comp-box${dragging ? " dropping" : ""}`} {...files.dropProps}>
           <AttachmentChips atts={atts} onRemove={files.remove} />
+          {files.fileInput}
           <div className="comp-area">
+            {/* Shown on a phone only, where .comp-foot and its attach hint are hidden. */}
+            {!disabled && (
+              <button className="comp-attach" title="Attach a file" aria-label="Attach a file" onMouseDown={keepFocus} onClick={files.openPicker}>{Icon.clip()}</button>
+            )}
             <div
               ref={ref}
               className="comp-input"
@@ -350,7 +357,6 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
               </>
             )}
             <span className="spacer" />
-            {files.fileInput}
             {!disabled && (
               <button className="hint" style={{ cursor: "pointer" }} title="Attach a file, or drag, drop, or paste one. It's saved to disk for the agent to open, not inlined into the prompt." onMouseDown={(e) => { e.preventDefault(); files.openPicker(); }}>{Icon.clip()} attach</button>
             )}

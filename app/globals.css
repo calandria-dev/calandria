@@ -1769,6 +1769,8 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .send.stop{background:var(--red);}
 .send.stop svg{fill:currentColor;width:15px;height:15px;}
 /* mid-turn: queue button + stop button sit side by side */
+.comp-attach{display:none;width:34px;height:34px;flex:0 0 auto;border-radius:9px;place-items:center;color:var(--ink-3);}
+.comp-attach svg{width:18px;height:18px;}
 .send-group{display:flex;align-items:flex-end;gap:8px;flex:0 0 auto;}
 .send svg{width:17px;height:17px;}
 .comp-foot{display:flex;align-items:center;gap:10px;padding:9px 14px;border-top:1px solid var(--line-2);background:var(--surface-2);}
@@ -2338,6 +2340,7 @@ button.tpeek-more:hover{color:var(--accent-ink);}
      line against the 40px send button (see .comp-area's comment). */
   .app.mobile .comp-area .comp-input{font-size:16px;padding:8px 0;}
   .app.mobile .comp-foot{display:none;}
+  .app.mobile .comp-attach{display:grid;width:40px;height:40px;margin-left:-6px;}
   .app.mobile .send{width:40px;height:40px;}
 
   /* Ask card options are tap targets: give them room. */
