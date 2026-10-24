@@ -225,3 +225,71 @@ test.describe("narrow window", () => {
     await shot(page, "narrow-popover");
   });
 });
+
+// Stage 1 acceptance (WC-11): the release must render in every palette/mode
+// the product ships, at each of the three layouts, and pick up changes after a
+// device resume without a reload.
+const THEMES = [
+  "cherenkov-dark", "cherenkov-light", "heavywater-dark", "heavywater-light",
+  "denoche-dark", "denoche-light", "basic-dark", "basic-light",
+];
+const LAYOUTS = [
+  { name: "desktop", viewport: { width: 1280, height: 800 }, phone: false },
+  { name: "narrow", viewport: { width: 820, height: 800 }, phone: false },
+  { name: "phone", viewport: { width: 390, height: 780 }, phone: true },
+] as const;
+
+const luminance = (rgb: number[]) => {
+  const [r, g, b] = rgb.map((v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const contrast = (a: number[], b: number[]) => {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+};
+
+for (const layout of LAYOUTS) {
+  test.describe(`themes at ${layout.name}`, () => {
+    test.use({ viewport: layout.viewport, hasTouch: layout.phone });
+
+    test("every palette/mode renders the list with readable row text", async ({ page, request }) => {
+      await parkOn(request, `Theme ${layout.name}`, "e2e:ask=Theme|Which?|A,B");
+      await gotoApp(page);
+      if (layout.phone) await page.locator(".mtabbar-item").nth(3).click();
+      else await pill(page).click();
+      for (const theme of THEMES) {
+        await page.evaluate((t) => {
+          document.documentElement.setAttribute("data-theme", t);
+          document.documentElement.setAttribute("data-mode", t.endsWith("light") ? "light" : "dark");
+        }, theme);
+        const row = rowOf(page, `Theme ${layout.name}`);
+        await expect(row).toBeVisible();
+        const ratio = await row.locator(".wc-t > span").first().evaluate((el) => {
+          const parse = (s: string) => (s.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+          let bg = el as HTMLElement | null;
+          let bgc = [0, 0, 0, 0];
+          while (bg) {
+            const m = (getComputedStyle(bg).backgroundColor.match(/[\d.]+/g) ?? []).map(Number);
+            if (m.length >= 3 && (m[3] === undefined || m[3] > 0.5)) { bgc = m; break; }
+            bg = bg.parentElement;
+          }
+          return { fg: parse(getComputedStyle(el).color), bg: bgc.slice(0, 3) };
+        });
+        expect(contrast(ratio.fg, ratio.bg), `${theme} ${layout.name}`).toBeGreaterThanOrEqual(4.5);
+        await shot(page, `${layout.name}-${theme}`);
+      }
+    });
+  });
+}
+
+test("a device resume brings the pill current without a reload", async ({ page, request }) => {
+  await gotoApp(page);
+  await expect(pill(page)).toBeVisible();
+  const before = (await snapshot(request)).summary.visibleNeedsYouTaskCount.value as number;
+  // The device sleeps: the page cannot reach the live feed or the snapshot while work lands server-side.
+  await page.route(/\/api\/(events|work-center)(\?|$)/, (r) => r.abort());
+  await parkOn(request, "Resume question", "e2e:ask=Resume|Which?|A,B");
+  await page.unroute(/\/api\/(events|work-center)(\?|$)/);
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(pill(page)).toHaveAttribute("aria-label", new RegExp(`${before + 1} need you`), { timeout: 20_000 });
+});
