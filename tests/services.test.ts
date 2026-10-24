@@ -41,6 +41,15 @@ const APP_HOST = "ishan.calandria.example.com";
 // cmd.exe understands (see docs/SERVICES.md on Windows command syntax).
 const SLEEP_COMMAND = `node -e "setTimeout(()=>{},30000)"`;
 
+// A boot restore that finds a live orphan runs the whole reap path:
+// confirmTreeCommand (up to a 60s budget, each win32 command-line probe bounded
+// by SLOW_EXEC_TIMEOUT_MS), killTreeAndWait (5s), then the respawn's 2s port
+// wait (lib/services.ts reapOrphan, restoreServices). A win32 process query
+// can take 10s or more on its own, so a test that restores over a live
+// process gets the code's own worst case plus headroom instead of vitest's 30s
+// default.
+const REAP_RESTORE_TIMEOUT_MS = 90_000;
+
 // The registry lives on globalThis (survives HMR by design); tests reset it to
 // simulate a server restart without recycling the process.
 type Reg = { services: Map<string, unknown>; listeners: Map<string, unknown>; restored?: boolean; gateSecret?: string };
@@ -188,7 +197,7 @@ describe("service registry persistence", () => {
     const stopped = listServices(project).find((s) => s.name === "dev");
     expect(stopped!.status).toBe("stopped");
     stopService(project.id, "dev");
-  });
+  }, REAP_RESTORE_TIMEOUT_MS);
 
   it("reaps the orphaned process group a dead server left behind before respawning", async () => {
     withPublicHost();
@@ -229,7 +238,7 @@ describe("service registry persistence", () => {
     expect(restored!.status).toBe("running");
     expect(restored!.pid).not.toBe(oldPid);
     stopService(project.id, "dev");
-  });
+  }, REAP_RESTORE_TIMEOUT_MS);
 
   it("surfaces a readable error when the configured port is already taken", async () => {
     withPublicHost();

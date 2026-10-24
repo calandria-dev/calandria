@@ -31,7 +31,7 @@
 # --- PRUNED 2026-09-15 ---
 # CVE-2026-56864 and CVE-2026-56865, golang.org/x/mod compiled into
 # /usr/bin/gh, were listed here from 2026-08-23. They were blocked on cli/cli's
-# own go.mod reaching x/mod v0.40.0. The `gh=` pin is now 2.101.0 and a scan of
+# own go.mod reaching x/mod v0.40.0. `GH_VERSION` in the Dockerfile was 2.101.0 and a scan of
 # a locally built image with no ignore file reports /usr/bin/gh with no
 # findings, so both are gone.
 

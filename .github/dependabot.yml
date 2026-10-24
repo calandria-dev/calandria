@@ -120,8 +120,8 @@
 #      managerFilePatterns was already one breaking migration.)
 #   2. The Dockerfile ARGs are a trap, not a bonus. CODEX_VERSION has to move
 #      in step with @openai/codex-sdk in package-lock.json, and the Claude Code
-#      CLI must remain compatible with the driver. `Pin drift` owns all three
-#      agent CLI ARGs. It force-pushes one bot branch from main, updates the
+#      CLI must remain compatible with the driver. `Pin drift` owns the Claude
+#      Code and Codex CLI ARGs and both agent SDK versions. It force-pushes one bot branch from main, updates the
 #      Dockerfile and the Codex lockfile coupling as needed, and opens one
 #      conventional-commit pull request. It dispatches the required test,
 #      desktop skip and uncached image workflows against the exact branch head.
@@ -131,10 +131,10 @@
 #      image build verifies the installed binaries. A real login is not needed
 #      to decide whether these pinned packages install and pass the repository
 #      checks.
-#      AGY_VERSION and both SHA-512 values remain in the same PR. The vendor
-#      manifests carry the version and checksums, and the Dockerfile guard
-#      rejects values that do not match what upstream serves. The workflow
-#      still dispatches both architecture image builds with the cache disabled.
+#      The Antigravity CLI (agy) is not pinned: the image installs the newest
+#      build the vendor manifest serves and verifies the manifest's SHA-512.
+#      The workflow still dispatches both architecture image builds with the
+#      cache disabled.
 #      All writes use the built-in GITHUB_TOKEN. No standing PAT or third-party
 #      app has write access.
 #   3. The coverage bought is one image that is already recorded (versions plus
@@ -150,7 +150,7 @@
 # manual merges, which reintroduce the staleness the pin was meant to remove.
 #
 # Re-open only if: Renovate is adopted for repo-wide coverage anyway. In that
-# case it takes everything except the agent CLI ARGs that `Pin drift` owns.
+# case it takes everything except the agent CLI ARGs and SDK versions that `Pin drift` owns.
 # Those pins must stay excluded from any regex manager because one pin must have
 # exactly one owner, and two bots on the same SHA is the real failure mode;
 # deterministic builder identity becomes a compliance requirement; or

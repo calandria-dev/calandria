@@ -90,8 +90,10 @@ push is not a successful CI run.
   recurring flake, a misconfiguration, or a red main all warrant one, with the run URL and the
   failing step's output. Never leave main silently red.
 - **The `bot/agent-cli-pins` PR is machine-opened and machine-merged after CI.** `pin-drift.yml`
-  owns the Claude Code, Codex and Antigravity CLI pins in the Dockerfile: it force-pushes that
-  branch from main when an upstream pin moves, refreshes one conventional-commit PR, and dispatches
+  runs hourly and owns the Claude Code and Codex CLI pins in the Dockerfile plus the
+  `@anthropic-ai/claude-agent-sdk` and `@openai/codex-sdk` versions in `package.json` and the
+  lockfile. Any new upstream release of one of them makes it force-push that branch from main, refresh
+  one conventional-commit PR, and dispatch
   `test.yml`, `release-desktop.yml` (`check_only=true`) and `publish-image.yml` (`publish=false`,
   `no_cache=true`) against the branch head so the PR has every required check. A PR opened by the
   built-in `GITHUB_TOKEN` can also create `PR title`, `Test` and `Publish image` `pull_request` runs
