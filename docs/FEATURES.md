@@ -28,6 +28,8 @@ terminals, or transcripts.
 5. Hover a fenced code block anywhere a message renders and click the copy button in its top
    right corner to put the block's source on your clipboard. The button is reachable from the
    keyboard, and stays visible on a touch screen that has no hover.
+6. A ` ```mermaid ` fence in a message renders as a diagram once the message is complete. While
+   the agent is still typing it, the fence shows as code.
 
 ## Project context and long conversations
 

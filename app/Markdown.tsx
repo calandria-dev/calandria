@@ -21,10 +21,11 @@ import { Icon } from "./icons";
 // the whole markdown parse and highlight on transcript re-renders.
 //
 // `diagrams` swaps a ```mermaid fence for the rendered diagram. Opt-in
-// because the transcript renders a message on every streamed token: a
-// half-written diagram would fail to parse on each one, and the mermaid
-// chunk would load for every session that mentions a flowchart. The
-// collaboration modal turns it on, since a document there is read whole.
+// because a caller that re-renders text on every streamed token would hand
+// mermaid a half-written diagram that fails to parse on each one. The
+// collaboration modal and the transcript's persisted messages turn it on,
+// since their text is complete; the live-typing bubble leaves it off. The
+// mermaid chunk loads only when a fence actually renders (app/Mermaid.tsx).
 //
 // `links` makes a link that names a file in the task's checkout open in the
 // app: text in the collaboration modal through `onOpen`, an image or other
