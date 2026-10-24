@@ -902,6 +902,8 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     // agent writes it, dropped the instant the persisted message lands under
     // it. Reasoning gets the same collapsed, quiet treatment the "🧠 Thinking"
     // tool row it becomes has, so the summary doesn't read as the answer.
+    // A ```mermaid fence stays a code block here: the text grows on every
+    // fragment, so the diagram renders once the persisted message replaces it.
     const thinking = m.streaming === "reasoning";
     return (
       <div className={`msg assistant streaming${thinking ? " thinking" : ""}`}>
@@ -930,7 +932,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
       )}
       <div className="msg-body">
         {initial && <div className="initial-tag">{Icon.spark()} sent with project context</div>}
-        {text && <Markdown links={links}>{text}</Markdown>}
+        {text && <Markdown diagrams links={links}>{text}</Markdown>}
         <AttachmentStrip items={attachments} />
       </div>
     </div>

@@ -1,6 +1,6 @@
 {
   "name": "calandria-desktop",
-  "version": "0.21.4",
+  "version": "0.22.0",
   "private": true,
   "description": "Calandria: run many coding-agent sessions in parallel from one screen.",
   "main": "main.js",
@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "@electron/notarize": "^2.5.0",
-    "electron": "^44.5.0",
+    "electron": "^44.9.1",
     "electron-builder": "^26.15.3"
   },
   "author": "Calandria contributors",
