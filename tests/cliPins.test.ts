@@ -143,7 +143,7 @@ describe("Claude CLI pin", () => {
     // `lib/agents/claude/driver.ts`, `tests/lingerInject.test.ts`,
     // `tests/sessionCrons.test.ts`). Those claims only mean something if the
     // version is a fact somebody chose. Exact makes a bump an edit, on the PR
-    // that re-measures it.
+    // that re-measures it. The Pin drift bot makes that edit on every release.
     expect(pkg.dependencies["@anthropic-ai/claude-agent-sdk"]).toMatch(
       /^\d+\.\d+\.\d+$/,
     );
