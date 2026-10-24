@@ -8,7 +8,10 @@ import { init, migrate } from "../lib/db";
 import { createProject, createTask, updateTask } from "@/lib/store";
 import { assembleSnapshot } from "@/lib/workCenter/snapshot";
 import { awaitingCountFor, needsYouRows } from "@/lib/workCenter/compat";
-import { parkAsk } from "./helpers";
+import { commitFile, parkAsk } from "./helpers";
+import { docBody, reviewTask } from "./reviewFixture";
+import { submitReview } from "@/lib/reviews/submit";
+import { withdrawReview } from "@/lib/reviews/withdraw";
 
 const WC_COLUMNS = [
   "active_turn_id", "latest_turn_id", "latest_turn_outcome", "latest_turn_failure_code",
@@ -87,5 +90,28 @@ describe("project count freshness", () => {
     // The desktop badge reads this through /api/projects after each event. A
     // count reused for a second stayed at 0 until an unrelated event arrived.
     expect(awaitingCountFor(p.id)).toBe(1);
+  });
+});
+
+describe("required review waiting reason", () => {
+  it("a withdrawn required review shows review_required with no attention item, and a pending one does not", async () => {
+    process.env.CALANDRIA_REVIEW_REQUESTS = "1";
+    try {
+      const f = await reviewTask();
+      await commitFile(f.wt.path, "docs/plan.md", "# Plan\n", "add plan");
+      const r = await submitReview(f.ctx, docBody());
+      const rowOf = () => assembleSnapshot({ projectId: f.project.id }).tasks.find((t) => t.taskId === f.taskId);
+
+      // Pending: the decision is already a needs-you item, so the reason is withheld.
+      expect(rowOf()?.attention.length).toBeGreaterThan(0);
+      expect(rowOf()?.execution.waitingReasons).not.toContain("review_required");
+
+      await withdrawReview(f.taskId, { requestId: r.body.requestId, expectedVersion: 1, idempotencyKey: "w", reason: "wrong file" });
+      const row = rowOf();
+      expect(row?.attention).toEqual([]);
+      expect(row?.execution.waitingReasons).toContain("review_required");
+    } finally {
+      delete process.env.CALANDRIA_REVIEW_REQUESTS;
+    }
   });
 });

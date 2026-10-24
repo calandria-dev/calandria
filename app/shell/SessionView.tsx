@@ -614,6 +614,12 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   // The REVIEW tab and the Review segment exist only for a task with at least one review request.
   const reviewsLoad = useTaskReviews(task.id, task.updated_at ?? 0);
   const reviews = reviewsLoad.data?.requests ?? [];
+  // C3: "Ask agent to resubmit" opens the transcript composer, focused and empty (the Chat segment on phone).
+  const [composerFocus, setComposerFocus] = useState(0);
+  const askResubmit = useCallback(() => {
+    if (mobile) setView("chat");
+    setComposerFocus((n) => n + 1);
+  }, [mobile]);
   const hasReview = reviews.length > 0;
   useEffect(() => { if (view === "review" && !hasReview) setView("chat"); }, [view, hasReview]);
   useEffect(() => {
@@ -962,7 +968,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
           </div>
         </div>
       )}
-      <Composer task={task} agentLabel={agentLabel(agents, task.agent)} disabled={task.started !== 1} running={running} onSend={onSend} onStop={onStop} onClear={onClear} />
+      <Composer task={task} agentLabel={agentLabel(agents, task.agent)} disabled={task.started !== 1} running={running} onSend={onSend} onStop={onStop} onClear={onClear} focusSignal={composerFocus} />
     </>
   );
 
@@ -1309,13 +1315,13 @@ export function SessionView({ project, task, tagsById, agents, messages, running
               />
               <SessionRail
                 project={project} task={task} sessions={sessions} running={running} reportsContext={caps?.reportsContext !== false}
-                onResolveWithAI={onResolveWithAI} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} focusDiff={diffFocus} refreshChanges={changesTick} reviews={reviews} reviewFocus={reviewRequest ?? null} onOpenDocument={setCollab} onClear={onClear} onCollapse={onRailCollapse} onSwitchToChat={() => { /* desktop transcript is always visible */ }}
+                onResolveWithAI={onResolveWithAI} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} focusDiff={diffFocus} refreshChanges={changesTick} reviews={reviews} reviewFocus={reviewRequest ?? null} onOpenDocument={setCollab} onAskResubmit={askResubmit} onReviewChanged={reviewsLoad.reload} onClear={onClear} onCollapse={onRailCollapse} onSwitchToChat={() => { /* desktop transcript is always visible */ }}
                 onSend={onSend}
               />
             </div>
           )
         ) : view === "review" && hasReview ? (
-          <ReviewPane taskId={task.id} reviews={reviews} focus={reviewRequest ?? null} mobile onOpenDiff={() => setView("changes")} onOpenDocument={setCollab} />
+          <ReviewPane taskId={task.id} reviews={reviews} focus={reviewRequest ?? null} mobile onOpenDiff={() => setView("changes")} onOpenDocument={setCollab} onAskResubmit={askResubmit} onChanged={reviewsLoad.reload} />
         ) : view === "changes" ? (
           <TaskChanges taskId={task.id} taskTitle={task.title} projectId={project.id} running={running} pr={task} landingMode={project.landing_mode} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} refresh={changesTick} onSend={onSend} onResolveWithAI={async (id) => {
             const res = await onResolveWithAI(id);

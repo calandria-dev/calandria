@@ -346,6 +346,10 @@ describe("feedback that cannot be delivered or confirmed", () => {
     expect(getAction(retry.body.action.id)!.state).toBe("succeeded");
     expect(getAction(r.body.action.id)!.state).toBe("indeterminate");
     expect(runTurnMock).toHaveBeenCalledTimes(2);
+    // The resend carries the person's original feedback, never the acknowledgement sentence.
+    const resent = String(runTurnMock.mock.calls[1][2]);
+    expect(resent).toContain("Revise.");
+    expect(resent).not.toContain("Retry acknowledged");
   });
 
   it("refuses a retry when the last feedback is not failed or uncertain", async () => {

@@ -31,6 +31,7 @@ import {
   setActiveTurnSession,
   type TurnResultInput,
 } from "@/lib/store";
+import { reviewRequiredWithoutItemSync } from "@/lib/reviews/guard";
 import {
   classifyExecution,
   decodeRecentCursor,
@@ -269,9 +270,10 @@ export function liveExecution(taskId: string): { turnId: string | null; sessionI
  * persisted `running` flag can be stale after a restart and is never read.
  * The queued start is the row's `start_at`; the store keeps no record of why
  * it was queued, so its reason is always `scheduled` rather than a guess.
- * Blockers are the task's unfinished dependencies.
+ * Blockers are the task's unfinished dependencies. `reviewRequired` lets a
+ * batch caller pass a precomputed answer; omitted, it is read for this task.
  */
-export function executionOf(taskId: string): Execution | null {
+export function executionOf(taskId: string, reviewRequired?: boolean): Execution | null {
   const task = getTask(taskId);
   if (!task) return null;
   const live = hasTurn(taskId);
@@ -290,6 +292,7 @@ export function executionOf(taskId: string): Execution | null {
     queuedStart: task.start_at ? { at: task.start_at, reason: "scheduled" } : null,
     queuedFollowupCount: listPendingMessages(taskId).length,
     blockerTaskIds,
+    reviewRequired: reviewRequired ?? reviewRequiredWithoutItemSync(taskId),
     lastActivityAt: entry?.lastActivityAt ?? null,
   });
 }

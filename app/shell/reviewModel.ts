@@ -29,7 +29,7 @@ export function reviewDisplay(view: ReviewView, viewing: SubmissionView): Review
   }
   if (view.state === "waived") return "waived";
   if (view.state === "changes_requested") {
-    if (last && last.action === "request_changes") {
+    if (last && (last.action === "request_changes" || last.action === "retry_feedback")) {
       if (last.state === "pending") return "feedback_pending";
       if (last.state === "indeterminate") return "delivery_unknown";
       if (last.state === "failed") return "feedback_failed";
@@ -107,6 +107,7 @@ export type HistoryRow = { submission: SubmissionView; outcome: string | null; t
 const OUTCOME: Partial<Record<ActionView["action"], [string, "acc" | "chg"]>> = {
   accept: ["accepted", "acc"],
   request_changes: ["changes requested", "chg"],
+  retry_feedback: ["changes requested", "chg"],
   waive: ["waived", "acc"],
   withdraw: ["withdrawn by agent", "chg"],
 };

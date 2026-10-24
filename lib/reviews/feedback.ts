@@ -39,12 +39,27 @@ export function feedbackText(input: { outputKey: string; revision: number; reque
   ].join("\n");
 }
 
+/**
+ * The person's feedback for a delivery. A `retry_feedback` action's own reason
+ * is the duplicate acknowledgement, so its text is the reason of the
+ * `request_changes` action its `priorActionId` chain starts from.
+ */
+export function feedbackReasonFor(actionId: string): string | null {
+  let action = getAction(actionId);
+  for (let hops = 0; action && action.action === "retry_feedback" && hops < 64; hops++) {
+    const prior = readFeedbackOperation(action)?.priorActionId;
+    action = prior ? getAction(prior) : undefined;
+  }
+  return action && action.action === "request_changes" ? action.reason : null;
+}
+
 function textFor(actionId: string): string | null {
   const action = getAction(actionId);
   const req = action && getRequest(action.request_id);
   const sub = action && getSubmission(action.submission_id);
-  if (!action || !req || !sub || !action.reason) return null;
-  return feedbackText({ outputKey: req.output_key, revision: sub.revision, requestId: req.id, version: req.version, submissionId: sub.id, reason: action.reason });
+  const reason = feedbackReasonFor(actionId);
+  if (!action || !req || !sub || !reason) return null;
+  return feedbackText({ outputKey: req.output_key, revision: sub.revision, requestId: req.id, version: req.version, submissionId: sub.id, reason });
 }
 
 /**

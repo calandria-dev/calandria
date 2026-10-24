@@ -58,6 +58,7 @@ function input(over: Partial<ClassifyInput> = {}): ClassifyInput {
     queuedStart: null,
     queuedFollowupCount: 0,
     blockerTaskIds: [],
+    reviewRequired: false,
     lastActivityAt: 1000,
     ...over,
   };
@@ -145,6 +146,12 @@ describe("classifyExecution", () => {
   it("keeps a terminal task's live work visible", () => {
     const e = classifyExecution(input({ lifecycle: "done" }));
     expect(e.isWorking).toBe(true);
+  });
+
+  it("reports an unsatisfied required review that has no pending item", () => {
+    const e = classifyExecution(input({ live: false, reviewRequired: true }));
+    expect(e.waitingReasons).toContain("review_required");
+    expect(classifyExecution(input({ live: false })).waitingReasons).not.toContain("review_required");
   });
 
   it("reports an external wait as its own reason", () => {
