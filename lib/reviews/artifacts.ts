@@ -481,3 +481,20 @@ export async function checkManifestCurrent(input: {
     return { state: "unavailable", reason: "the source could not be read" };
   }
 }
+
+/**
+ * Whether the task branch still ends at the submitted head. A landed artifact
+ * has moved the base by definition, so only the task branch is compared: a
+ * commit past the accepted head is work the landing never covered. Null when
+ * the checkout cannot answer (gone, detached, unreadable), which a landed
+ * receipt tolerates, since the checkout may legitimately have been retired.
+ */
+export async function headMovedSince(worktree: string, taskId: string, manifest: CodeManifest): Promise<boolean | null> {
+  if (!worktree || !fs.existsSync(worktree)) return null;
+  const sym = await runGit(worktree, ["symbolic-ref", "--short", "-q", "HEAD"]);
+  const head = await runGit(worktree, ["rev-parse", "--verify", "HEAD^{commit}"]);
+  if (sym.code !== 0 || head.code !== 0) return null;
+  const branch = sym.stdout.trim();
+  if (branch !== branchForTask(taskId) && branch !== legacyBranchForTask(taskId)) return true;
+  return head.stdout.trim() !== manifest.headCommitSha;
+}

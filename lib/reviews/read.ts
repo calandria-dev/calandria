@@ -4,7 +4,7 @@
 // never the task branch or an editor draft.
 
 import { getTask } from "../store";
-import { checkManifestCurrent, readCodePreview, type CodePreview } from "./artifacts";
+import { checkManifestCurrent, headMovedSince, readCodePreview, type CodePreview } from "./artifacts";
 import {
   getArtifact,
   getRequest,
@@ -45,9 +45,18 @@ export async function evaluateApplicability(
   const receipts = listReceipts(sub.id).filter((r) => r.content_epoch === sub.content_epoch);
   if (receipts.some((r) => r.kind === "retired")) return out("retired", null);
   if (receipts.some((r) => r.kind === "landed")) {
+    // The landing moved the base by definition, so a landed code artifact is
+    // compared on the task branch alone: a commit past the accepted head is
+    // work the landing never covered. A document keeps the full comparison.
     if (task.worktree_path) {
-      const v = await checkManifestCurrent({ taskId: task.id, worktree: task.worktree_path, manifest, kind: artifact.kind });
-      if (v.state === "changed") return out("changed", v.reason);
+      if (artifact.kind === "code") {
+        if (await headMovedSince(task.worktree_path, task.id, manifest as CodeManifest)) {
+          return out("changed", "the task branch moved past the landed head");
+        }
+      } else {
+        const v = await checkManifestCurrent({ taskId: task.id, worktree: task.worktree_path, manifest, kind: artifact.kind });
+        if (v.state === "changed") return out("changed", v.reason);
+      }
     }
     return out("landed", null);
   }

@@ -14,6 +14,7 @@
 import fs from "node:fs";
 import { getProject, getTask, moveTaskBlockedReason, moveTasks, type TaskMoveBatch } from "./store";
 import { removeWorktree, worktreePruneSafety } from "./git";
+import { taskReviewBlocker } from "./reviews/gate";
 import { resolveBaseBranch } from "./baseBranch";
 import { withTaskLocks } from "./taskLock";
 import { withRepoLock } from "./repoLock";
@@ -230,6 +231,11 @@ async function discardCheckout(
     // was shown, so nothing uncommitted is ever discarded without having been
     // named first.
     if (!safety.safe && !opts.discardUnsafe) return { reason: `${UNSAFE_DISCARD_REASON}: ${safety.reason}` };
+    // A required review the move would waive is named and acknowledged the
+    // same way: the store's reset waives it in place, which is a disposition a
+    // person has to give for exactly this task, never implied by the batch.
+    const review = await taskReviewBlocker(id);
+    if (review && !opts.discardUnsafe) return { reason: `${UNSAFE_DISCARD_REASON}: ${reviewDiscardReason(review.reason)}` };
 
     await removeWorktree(project.repo_path, task.worktree_path, task.work_branch);
     // removeWorktree is best-effort and never throws, and a surviving directory
@@ -301,12 +307,21 @@ export async function previewDiscard(taskId: string): Promise<DiscardPreview | n
     workBranch: task.work_branch,
     baseBranch: resolveBaseBranch(task, project),
   });
+  // The review the move would waive is part of the cost shown before the box
+  // is ticked, so the stronger acknowledgement is asked for it by name.
+  const review = await taskReviewBlocker(taskId);
+  const reasons = [safety.reason ?? null, review ? reviewDiscardReason(review.reason) : null].filter((r): r is string => !!r);
   return {
     has_worktree: true,
-    safe: safety.safe,
+    safe: safety.safe && !review,
     dirty: safety.isDirty,
     ahead: safety.ahead,
-    reason: safety.reason ?? null,
+    reason: reasons.length ? reasons.join("; ") : null,
     branch: task.work_branch,
   };
+}
+
+/** The review half of a discard reason, in the words the preview and the teardown share. */
+function reviewDiscardReason(blockerReason: string): string {
+  return `${blockerReason}, and moving the task waives it`;
 }

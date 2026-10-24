@@ -7,6 +7,7 @@ import { withTaskLock } from "@/lib/taskLock";
 import { jsonGuard } from "@/lib/apiGuard";
 import { worktreePrepNotice, classifyWorktreePrep } from "@/lib/worktreeFailure";
 import { resolveBaseBranch } from "@/lib/baseBranch";
+import { bumpEpochIfReviewed } from "@/lib/reviews/guard";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -47,6 +48,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       // would move the work it's meant to be restoring.
       const { actions, worktree } = await repairWorktree(project.repo_path, id, resolveBaseBranch(task, project));
       if (worktree) {
+        // A re-cut checkout is a new source: a review captured before it stops
+        // being current (lib/reviews/guard.ts).
+        bumpEpochIfReviewed(id);
         updateTask(id, {
           worktree_path: worktree.path, work_branch: worktree.branch, base_sha: worktree.baseSha,
           // Pin the base at the cut, exactly as the launch paths do

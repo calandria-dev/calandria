@@ -101,18 +101,19 @@ A task that owns a required review is held by one rule, `requiredReviewBlocker()
 | Path | Behavior while a required review is unsatisfied |
 |-|-|
 | `updateTask()` to `done` or `cancelled` (task PATCH, `update_task`, agent-edit revert) | Refused with `review_required` (409 from routes) |
-| Dependency `blocks()`, auto-start, deferred start, first turn | A terminal blocker keeps blocking; launch revalidates each blocker against its checkout |
+| Dependency `blocks()`, auto-start, deferred start, first turn | A terminal blocker keeps blocking; an automatic launch and the first turn of a dependent each revalidate every blocker against its checkout |
 | `merge`, `merge/prepare`, `merge/complete`, `pr/merge` | Refused with 409 `review_required` |
 | `reclaimTask`, `maybeAutoReclaim`, worktree sweep, retention prune | The task and its checkout are skipped |
 | `deleteTask`, `deleteProject` | Refused; `?review_disposition=waive_and_delete` waives each request in place, then deletes |
-| `moveTasks` | Refused unless the task is named in the reset set, which waives and advances the epoch |
+| `moveTasks` | Refused unless the task is named in the reset set, which waives and advances the epoch. The move preview names the review, and the move routes demand the unsafe-discard acknowledgement for that task before waiving it |
 
-A new turn, reopening a terminal task, retargeting the base branch and catching the checkout up to the base each advance the task's content epoch, so an earlier acceptance has to be resubmitted. Review acceptance alone never starts a dependent.
+A new turn, a message accepted into a lingering session, reopening a terminal task, retargeting the base branch, catching the checkout up to the base and a worktree repair that re-cuts the checkout each advance the task's content epoch, so an earlier acceptance has to be resubmitted. Review acceptance alone never starts a dependent.
 
 ## Integrity checks to know about
 
 - Each repository gets a random marker file, `calandria-review-repository-id`, in its Git common directory. The database must agree with it on every artifact read. A missing or different marker makes the artifacts for that repository unavailable. A clone that carries a marker the database does not know is not adopted automatically.
 - Document and code applicability is `current`, `landed`, `retired`, `changed` or `unavailable`. A change of the task's content epoch, branch head, base tip, document digest or resolved path is `changed`. Historical acceptance is never edited.
+- A `landed` receipt records that the accepted head reached the base. The landing moves the base, so a landed code artifact is compared on the task branch alone: a commit past the landed head is `changed`, and a checkout that is gone or detached leaves it `landed`. A `retired` receipt passes without a checkout. Receipts are written by the landing and cleanup operations that ship with the decision routes; until then a merge made from the existing merge buttons leaves an accepted code review `changed`, because the base moved and nothing recorded why.
 - External processes ignore Calandria's locks. Capture detects changes it can observe by reading twice; it cannot rule out a write that lands after the final read.
 
 ## Migration

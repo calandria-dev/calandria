@@ -6,6 +6,7 @@ import { startTurn, startResumeTurn, sendToLingeringTurn } from "@/lib/runner";
 // lib/autoStart has no static path to an agent SDK, so it can't make this
 // route entry async.
 import { AUTO_START_HOOKS, blocks } from "@/lib/autoStart";
+import { taskReviewBlocker } from "@/lib/reviews/gate";
 import { claimTurn, hasTurn, isClearing, unregisterTurn } from "@/lib/abort";
 import { withTaskLock } from "@/lib/taskLock";
 import { subscribe, publish } from "@/lib/events";
@@ -147,6 +148,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             JSON.stringify({
               error: `Blocked until ${titles.join(", ")} ${titles.length === 1 ? "is" : "are"} done. Edit the task to change its dependencies.`,
               blockedBy: blockerIds,
+            }),
+            { status: 409 }
+          );
+        }
+        // blocks() reads a blocker's review state and epoch. A done blocker
+        // whose accepted artifact no longer matches its checkout still blocks,
+        // the same revalidation lib/autoStart.ts runs before an automatic
+        // launch; a blocker with no review rows answers without touching git.
+        for (const depId of getTaskDeps(fresh.id)) {
+          const review = await taskReviewBlocker(depId);
+          if (!review) continue;
+          const title = getTask(depId)?.title || depId;
+          return new Response(
+            JSON.stringify({
+              error: `Blocked until the required review on ${title} is accepted for its current revision or waived.`,
+              blockedBy: [depId],
             }),
             { status: 409 }
           );

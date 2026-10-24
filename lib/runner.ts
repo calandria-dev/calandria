@@ -284,6 +284,9 @@ function recordSentMessage(taskId: string, gen: number, text: string): void {
   // state that stream re-reads. `running` stays 1: it never dropped, this
   // turn is the same turn continuing.
   updateTask(taskId, { background_pending: 0, background_note: "" });
+  // The model is about to work again inside the same turn, so a review captured
+  // before this message is no longer current (lib/reviews/guard.ts).
+  bumpEpochIfReviewed(taskId);
   // A message accepted into the open session starts a new model turn with its
   // own id; the previous one was finalized when the model finished.
   const lease = leaseOf(taskId);
