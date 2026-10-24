@@ -8,12 +8,14 @@
 // tests/importGraph.test.ts): a merged PR reaches the runner via
 // lib/reclaim.ts's `await import()`.
 
-import { getProject, getTask, setTaskPrState, stalePrTasks, openPrTaskCount, openAutoReclaimPrTaskCount } from "./store";
-import { fetchPrState, type PrFailingCheck, type PrSnapshot } from "./github";
+import { getProject, getTask, setTaskPrState, setTaskPrEvidence, setTaskPrAttempt, stalePrTasks, openPrTaskCount, openAutoReclaimPrTaskCount } from "./store";
+import { fetchPrState, fetchCheckEvidence, type PrFailingCheck, type PrSnapshot } from "./github";
 import { maybeAutoReclaim } from "./reclaim";
+import { onPrSettled } from "./reviews/landing";
 import { publishGlobal, watcherCount } from "./events";
 import { PR_POLL_BATCH, PR_POLL_MS, PR_STALE_MS } from "./config";
 import type { Task } from "./types";
+import { canonicalJson, selectLatest, stepEpisode } from "./workCenter/ciEvidence";
 
 // Tracks refreshes running in this process, so a double click, a remount and
 // the sweep landing on the same task at once share one subprocess. Module
@@ -132,25 +134,20 @@ export async function refreshPrState(taskId: string, opts: { force?: boolean } =
     const res = await fetchPrState(cwd, task.pr_number);
     const now = Date.now();
     if (!res.ok) {
-      // Stamp the clock even on failure, so a repo GitHub can't answer for (no
-      // network, a deleted PR) backs off to the sweep interval instead of
-      // being retried on every tick. The last good snapshot is left intact: a
-      // failed ask is not the same as a changed PR.
-      setTaskPrState(taskId, {
-        state: task.pr_state,
-        checks: task.pr_checks,
-        review: task.pr_review,
-        merged_at: task.pr_merged_at,
-        synced_at: now,
-        draft: task.pr_draft,
-        merge_state: task.pr_merge_state,
-        failing: task.pr_failing,
-      });
+      // A failed ask is not a changed PR: the last coherent snapshot stays,
+      // and pr_synced_at stays the last SUCCESSFUL observation. The attempt
+      // and its error are recorded separately, which backs a repo GitHub
+      // can't answer for off to the sweep interval (stalePrTasks reads the
+      // attempt stamp) and marks the Work Center's CI freshness stale at once.
+      setTaskPrAttempt(taskId, now, res.error.slice(0, 500));
+      if (task.pr_refresh_error !== res.error.slice(0, 500)) publishGlobal(taskId, { type: "task_edited" });
       return { ok: false, reason: "failed", error: res.error };
     }
 
     const snap = res.snapshot;
     const moved = changed(task, snap);
+    const evidenceMoved = await recordCiEvidence(task, cwd, snap.checks, now);
+    setTaskPrAttempt(taskId, now, null);
     const row = setTaskPrState(taskId, {
       state: snap.state,
       checks: snap.checks,
@@ -161,10 +158,16 @@ export async function refreshPrState(taskId: string, opts: { force?: boolean } =
       merge_state: snap.mergeState,
       failing: serializeFailing(snap),
     });
+    // A merged PR whose head is the head a person accepted proves that landing;
+    // a closed one fails any review merge still waiting on it. Awaited so the
+    // receipt exists before reclaim (below) asks whether the task may complete.
+    if (snap.state === "merged" || snap.state === "closed") {
+      await onPrSettled(taskId, { state: snap.state, headSha: snap.headSha ?? "", mergeCommitSha: snap.mergeCommitSha ?? "", baseRef: snap.baseRef ?? "" });
+    }
     // task_edited tells listeners to re-read the row, since the coarse wire
     // payload can't carry pr_state or a check rollup. Published only on a
     // real change (see changed()).
-    if (moved) publishGlobal(taskId, { type: "task_edited" });
+    if (moved || evidenceMoved || task.pr_refresh_error) publishGlobal(taskId, { type: "task_edited" });
     // A PR reporting `merged` signals that this task's checkout is disposable
     // (lib/reclaim.ts). Fire-and-forget and a no-op unless the project opted
     // in. Guarded on the snapshot, so a forced refresh of an already-merged
@@ -175,6 +178,39 @@ export async function refreshPrState(taskId: string, opts: { force?: boolean } =
   } finally {
     inFlight.delete(taskId);
   }
+}
+
+/**
+ * Persist the structured check evidence and step the CI episode (Work Center).
+ * A rollup that is not failing settles the episode outright. A failing one
+ * reads the structured checks; a read that fails or is incomplete keeps
+ * whatever episode was stored, because a torn response must never clear a red
+ * episode. Returns whether the stored episode identity moved.
+ */
+async function recordCiEvidence(task: Task, cwd: string, checks: string, now: number): Promise<boolean> {
+  const prev = { episodeId: task.pr_ci_episode_id, fingerprint: task.pr_ci_episode_fingerprint, startedAt: task.pr_ci_episode_started_at };
+  if (checks !== "failing") {
+    if (!prev.episodeId) return false;
+    setTaskPrEvidence(task.id, { head_sha: task.pr_head_sha, repository_id: task.pr_repository_id, episode_id: null, episode_fingerprint: null, snapshot_json: null, episode_started_at: null });
+    return true;
+  }
+  const ev = await fetchCheckEvidence(cwd, task.pr_number);
+  if (!ev.ok) return false;
+  const step = stepEpisode(prev, { headSha: ev.headSha, checks: ev.checks, complete: ev.complete }, now);
+  if (!step.authoritative) {
+    // Keep the episode, learn the head.
+    if (ev.headSha !== task.pr_head_sha) setTaskPrEvidence(task.id, { head_sha: ev.headSha, repository_id: ev.repositoryId || task.pr_repository_id, episode_id: prev.episodeId, episode_fingerprint: prev.fingerprint, snapshot_json: task.pr_ci_snapshot_json, episode_started_at: prev.startedAt });
+    return false;
+  }
+  setTaskPrEvidence(task.id, {
+    head_sha: ev.headSha,
+    repository_id: ev.repositoryId,
+    episode_id: step.episodeId,
+    episode_fingerprint: step.fingerprint,
+    snapshot_json: canonicalJson(selectLatest(ev.checks)),
+    episode_started_at: step.startedAt,
+  });
+  return step.episodeId !== prev.episodeId;
 }
 
 /**

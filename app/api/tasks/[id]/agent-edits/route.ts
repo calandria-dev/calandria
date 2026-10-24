@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { ReviewError } from "@/lib/reviews/types";
+import { reviewRefusal } from "@/lib/reviews/gate";
 import { getProject, getTask, getTaskDeps, getTag, getTaskTagIds, setTaskTags, listAgentEdits, getAgentEdit, markAgentEditReverted, hasOutstandingAgentEdits, clearAgentEditFlag, acknowledgeAgentEdits, updateTask, setTaskDeps } from "@/lib/store";
 import { setTaskBaseBranch } from "@/lib/baseBranch";
 import { moveTasksToProject } from "@/lib/taskMove";
@@ -123,7 +125,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // trail (task_agent_edits) always outlives it, so "I've seen this" and
     // "undo this" stay two separate actions even though both can clear the
     // badge.
-    acknowledgeAgentEdits(id);
+    // A Work Center client names the newest edit it showed (`edit_id`); only
+    // edits up to it are acknowledged, so one that landed since stays visible.
+    if (typeof body.edit_id === "string" && body.edit_id) {
+      if (!acknowledgeAgentEdits(id, body.edit_id)) return NextResponse.json({ error: "no such edit on this task" }, { status: 404 });
+    } else {
+      acknowledgeAgentEdits(id);
+    }
     publishGlobal(id, { type: "task_edited" });
     return NextResponse.json({ task: getTask(id) });
   }
@@ -159,6 +167,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // started since the move can't be moved back without destroying its
     // checkout, and that answer still belongs to the user, from the board's
     // Move dialog rather than an undo button.
+    // Restoring a terminal status is a completion like any other: refused before
+    // any field lands while a required review is unsatisfied.
+    const statusChange = edit.changes.find((c) => c.field === "status");
+    if (statusChange && isTerminal(String(statusChange.before_value)) && getTask(id)!.status !== statusChange.before_value) {
+      const refusal = await reviewRefusal(id);
+      if (refusal) return NextResponse.json({ error: `${refusal}. Nothing was reverted.`, code: "review_required" }, { status: 409 });
+    }
     const projectChange = edit.changes.find((c) => c.field === "project");
     if (projectChange) {
       const back = typeof projectChange.before_value === "string" ? projectChange.before_value : "";
@@ -227,7 +242,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const prevStatus = getTask(id)!.status;
     const patch: Partial<Task> = {};
     for (const change of edit.changes) foldScalarChange(patch, change);
-    if (Object.keys(patch).length) updateTask(id, patch);
+    try {
+      if (Object.keys(patch).length) updateTask(id, patch);
+    } catch (e) {
+      if (e instanceof ReviewError) return NextResponse.json({ error: e.message, code: e.code }, { status: e.status });
+      throw e;
+    }
 
     markAgentEditReverted(edit.id);
     // Putting a status back can itself be a non-terminal to terminal

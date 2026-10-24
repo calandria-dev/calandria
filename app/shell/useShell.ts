@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LandingMode, Priority, Status, AskQuestion, AskAnswers, PermissionDecision, PermissionOutcome } from "@/lib/types";
 import type { ResolveResult } from "../TaskChanges";
 import { apiFetch, jget, jsend } from "./api";
-import { isAwaiting, needsYou, blockerTitles, formatAnswersText } from "./format";
+import { isAwaiting, blockerTitles, formatAnswersText } from "./format";
 import { nextWake, wasSnoozed } from "./snooze";
 import { loadPersist, readUrlSel, landingSelection, type StoredSel, type UrlSel } from "./persist";
 import { DEFAULT_SETTINGS, EMPTY_AGENTS, type AgentsBundle, type BulkMoveResult, type OnboardingT, type ProjectRow, type RunbookRow, type RunbooksResponse, type SaveAction, type TaskRow, type TagRow } from "./types";
@@ -128,20 +128,6 @@ export function useShell() {
     }
     return m;
   }, [tasks, tasksById]);
-
-  // Cross-project "Needs you" surfacing. The selected project's tasks are live in
-  // state (so its count reflects awaiting_input as it changes mid-turn); other
-  // projects come from the server-computed awaiting_count on the project list.
-  //
-  // `needsYou`, not `isAwaiting`: a task whose open PR went red needs a human
-  // just as much as one parked on a question, and the server's awaiting_count
-  // counts it, so filtering the selected project on the narrower predicate
-  // would make the pill's total jump every time you switched projects.
-  const liveAwaiting = useMemo(() => realTasks.filter((t) => needsYou(t)), [realTasks]);
-  const needsYouTotal = useMemo(
-    () => activeProjects.reduce((n, p) => n + (p.id === selProj ? liveAwaiting.length : p.awaiting_count), 0),
-    [activeProjects, selProj, liveAwaiting]
-  );
 
   const setTaskRunning = (id: string, on: boolean) =>
     setRunning((prev) => { const n = new Set(prev); on ? n.add(id) : n.delete(id); return n; });
@@ -627,16 +613,8 @@ export function useShell() {
   // ---------- actions ----------
   const selectProject = (id: string) => { setSelProj(id); setSelTask(null); setView("workspace"); };
 
-  // Jump to the next task waiting on the user: prefer one in the current project,
-  // else switch to the first other project that has one (its group sits at the top).
-  const jumpToNeedsYou = () => {
-    if (liveAwaiting.length > 0) { setSelTask(liveAwaiting[0].id); return; }
-    const p = activeProjects.find((p) => p.id !== selProj && p.awaiting_count > 0);
-    if (p) selectProject(p.id);
-  };
-
-  // Jump straight to a specific task in any project: the "need you" dropdown's
-  // row action. Setting selProj fires the load-tasks effect with selectFirst=false
+  // Jump straight to a specific task in any project: the Work Center's row
+  // action and a notification click. Setting selProj fires the load-tasks effect with selectFirst=false
   // (useEffect on selProj), so it won't clobber the selTask set here.
   // navEpoch bumps on every jump, including one to the already-selected task:
   // the mobile shell watches selTask changes to snap its tab bar back to the
@@ -688,8 +666,8 @@ export function useShell() {
   // Cheap local patch: a mutation just took a task out of the "needs you" set,
   // so drop it from its project's badge now instead of waiting for the SSE
   // roundtrip (the published lifecycle event re-syncs the exact count moments
-  // later; the selected project's pill reads liveAwaiting, so this only matters
-  // once you navigate away).
+  // later; the Work Center snapshot is the pill's source and refetches on the
+  // same event).
   const decAwaiting = (t: TaskRow) =>
     setProjects((prev) => prev.map((p) => (p.id === t.project_id ? { ...p, awaiting_count: Math.max(0, p.awaiting_count - 1) } : p)));
 
@@ -1124,7 +1102,7 @@ export function useShell() {
     booted, bootError, retryBoot: boot, tasksLoading, transcriptLoading,
     projects, activeProjects, deprecatedProjects, selProj, setSelProj, project,
     tasks, realTasks, suggested, selTask, task, messages, running, runbooks, tags, sparklines,
-    blockedBy, liveAwaiting, needsYouTotal,
+    blockedBy,
     modal, setModal, editId, setEditId, view, setView, taskView, setTaskView,
     appearance, setAppearance, appearanceOpen, setAppearanceOpen,
     settings, setSetting, appDefaults, setAppDefault, setAppDefaultMany, agents, refreshAgents, brokenAgents,
@@ -1134,7 +1112,7 @@ export function useShell() {
     servicesOpen, setServicesOpen, servicesMounted, setServicesMounted, servicesHeight, setServicesHeight,
     // actions
     projectHome, setSelTask, showProjectHome, setProjectHome, goBack, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI, fixCi,
-    selectProject, jumpToNeedsYou, goToTask, navEpoch, clearSession, setStatus, setPriority, setModel, snoozeTask, unsnoozeTask, ackRun, queueStart, cancelQueuedStart,
+    selectProject, goToTask, navEpoch, clearSession, setStatus, setPriority, setModel, snoozeTask, unsnoozeTask, ackRun, queueStart, cancelQueuedStart,
     setReasoning, setPermission, setSandbox, setSendContext, setAutoStart, createTask, createTag, tagTasks, runRunbook, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,
     resetSettings, setProjectDefaultAgent,

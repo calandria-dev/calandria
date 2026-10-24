@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { getTask, getProject } from "@/lib/store";
+import { getTask, getProject, setCiRecovery } from "@/lib/store";
+import { publishGlobal } from "@/lib/events";
+import { withTaskLock } from "@/lib/taskLock";
 import { fetchCheckLog } from "@/lib/github";
 import { buildCiFixPrompt, type CiFailure } from "@/lib/agents/shared";
 import { parseFailingChecks, refreshPrState } from "@/lib/prState";
@@ -22,8 +24,12 @@ export const maxDuration = 180;
 // with a timeout), and the alternative, a detached job the client polls for a
 // prompt it needs before it can do anything, is machinery for a wait the user
 // is already expecting.
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  // A Work Center click names the CI episode it was shown (`episodeId`). The
+  // episode is revalidated after the refresh below; a stale click is a 409.
+  const body = (await req.json().catch(() => null)) as { episodeId?: unknown } | null;
+  const expectedEpisode = typeof body?.episodeId === "string" && body.episodeId ? body.episodeId : null;
   const task = getTask(id);
   if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
   if (task.running)
@@ -51,6 +57,20 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       { error: "GitHub reports failing checks but didn't name any. Open the PR to see them" },
       { status: 409 }
     );
+
+  // The authorized recovery owns the episode it was asked to repair: stamped
+  // under the task lock, cleared when the recovery turn ends or the process
+  // restarts. A different head or episode stays actionable.
+  const stamped = await withTaskLock(id, () => {
+    const cur = getTask(id);
+    if (!cur || cur.pr_checks !== "failing") return false;
+    if (expectedEpisode && cur.pr_ci_episode_id !== expectedEpisode) return false;
+    if (cur.pr_ci_episode_id) setCiRecovery(id, cur.pr_ci_episode_id);
+    return true;
+  });
+  if (!stamped)
+    return NextResponse.json({ error: { code: "source_changed", message: "the failing checks changed since you looked", retryable: false } }, { status: 409 });
+  publishGlobal(id, { type: "task_edited" });
 
   // gh resolves the repo from the origin remote, so the project's checkout is
   // the right cwd. lib/prState.ts makes the same choice for the same reason: a

@@ -611,6 +611,149 @@ export function init(db: Database.Database) {
       last_error      TEXT NOT NULL DEFAULT ''
     );
 
+    -- Work Center review history (contract work-center/1, lib/reviews/). The
+    -- review-owned tables use RESTRICT foreign keys and copy the owner task and
+    -- session identity into TEXT columns, so ordinary task/session retention can
+    -- never remove review history. requests.task_id is the live link only and goes
+    -- NULL when the task row is deleted. Submissions, artifacts and actions are
+    -- immutable once written; supersession is current_submission_id plus revision
+    -- order.
+    CREATE TABLE IF NOT EXISTS review_repositories (
+      id         TEXT PRIMARY KEY,
+      common_dir TEXT NOT NULL UNIQUE,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS review_artifacts (
+      id             TEXT PRIMARY KEY,
+      kind           TEXT NOT NULL CHECK(kind IN ('code','document')),
+      manifest_json  TEXT NOT NULL,
+      manifest_sha256 TEXT NOT NULL,
+      document_bytes BLOB,
+      created_at     INTEGER NOT NULL,
+      CHECK((kind = 'document' AND document_bytes IS NOT NULL) OR (kind = 'code' AND document_bytes IS NULL))
+    );
+    CREATE TABLE IF NOT EXISTS review_requests (
+      id                    TEXT PRIMARY KEY,
+      task_id               TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+      owner_task_id         TEXT NOT NULL,
+      owner_session_id      TEXT NOT NULL,
+      generation            INTEGER NOT NULL,
+      submitter_agent       TEXT NOT NULL,
+      kind                  TEXT NOT NULL CHECK(kind IN ('code','document')),
+      output_key            TEXT NOT NULL CHECK(length(output_key) BETWEEN 1 AND 200),
+      required              INTEGER NOT NULL CHECK(required IN (0,1)),
+      current_submission_id TEXT REFERENCES review_submissions(id) DEFERRABLE INITIALLY DEFERRED,
+      state                 TEXT NOT NULL CHECK(state IN ('pending','changes_requested','accepted','withdrawn','waived')),
+      version               INTEGER NOT NULL CHECK(version >= 1),
+      created_at            INTEGER NOT NULL,
+      updated_at            INTEGER NOT NULL,
+      UNIQUE (owner_task_id, output_key)
+    );
+    CREATE TABLE IF NOT EXISTS review_submissions (
+      id                   TEXT PRIMARY KEY,
+      request_id           TEXT NOT NULL REFERENCES review_requests(id) ON DELETE RESTRICT,
+      revision             INTEGER NOT NULL CHECK(revision >= 1),
+      submitter_session_id TEXT NOT NULL,
+      submitter_generation INTEGER NOT NULL,
+      submitter_agent      TEXT NOT NULL,
+      submitter_model      TEXT,
+      summary              TEXT NOT NULL,
+      requested_decision   TEXT NOT NULL,
+      evidence_json        TEXT NOT NULL,
+      validation_json      TEXT NOT NULL,
+      artifact_id          TEXT NOT NULL UNIQUE REFERENCES review_artifacts(id) ON DELETE RESTRICT,
+      content_epoch        INTEGER NOT NULL,
+      idempotency_key      TEXT NOT NULL,
+      payload_sha256       TEXT NOT NULL,
+      receipt_http_status  INTEGER NOT NULL,
+      receipt_json         TEXT NOT NULL,
+      created_at           INTEGER NOT NULL,
+      UNIQUE (request_id, revision),
+      UNIQUE (request_id, idempotency_key)
+    );
+    CREATE TABLE IF NOT EXISTS review_actions (
+      id                  TEXT PRIMARY KEY,
+      request_id          TEXT NOT NULL REFERENCES review_requests(id) ON DELETE RESTRICT,
+      submission_id       TEXT NOT NULL REFERENCES review_submissions(id) ON DELETE RESTRICT,
+      expected_version    INTEGER NOT NULL,
+      action              TEXT NOT NULL CHECK(action IN ('accept','request_changes','withdraw','waive','merge','retry_feedback')),
+      actor_kind          TEXT NOT NULL CHECK(actor_kind IN ('human','agent')),
+      actor_id            TEXT NOT NULL,
+      reason              TEXT,
+      idempotency_key     TEXT NOT NULL,
+      payload_sha256      TEXT NOT NULL,
+      state               TEXT NOT NULL CHECK(state IN ('pending','succeeded','failed','indeterminate')),
+      decision_applied    INTEGER NOT NULL CHECK(decision_applied IN (0,1)),
+      error_code          TEXT,
+      operation_json      TEXT,
+      receipt_http_status INTEGER NOT NULL,
+      receipt_json        TEXT NOT NULL,
+      created_at          INTEGER NOT NULL,
+      updated_at          INTEGER NOT NULL,
+      UNIQUE (request_id, idempotency_key)
+    );
+    CREATE TABLE IF NOT EXISTS review_applicability_receipts (
+      id            TEXT PRIMARY KEY,
+      submission_id TEXT NOT NULL REFERENCES review_submissions(id) ON DELETE RESTRICT,
+      owner_task_id TEXT NOT NULL,
+      content_epoch INTEGER NOT NULL,
+      kind          TEXT NOT NULL CHECK(kind IN ('landed','retired')),
+      evidence_json TEXT NOT NULL,
+      created_at    INTEGER NOT NULL,
+      UNIQUE (submission_id, content_epoch, kind)
+    );
+    -- Deliberately no foreign keys: a cleanup journal must outlive the task and
+    -- review rows it deletes.
+    CREATE TABLE IF NOT EXISTS review_cleanup_jobs (
+      id                  TEXT PRIMARY KEY,
+      owner_task_ids_json TEXT NOT NULL,
+      disposition_json    TEXT NOT NULL,
+      expected_refs_json  TEXT NOT NULL,
+      progress_json       TEXT NOT NULL,
+      phase               TEXT NOT NULL CHECK(phase IN ('prepared','pins_staged','database_committed','succeeded')),
+      error_code          TEXT,
+      created_at          INTEGER NOT NULL,
+      updated_at          INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_review_requests_task ON review_requests(task_id, required, state);
+    CREATE INDEX IF NOT EXISTS idx_review_requests_updated ON review_requests(updated_at, id);
+    CREATE INDEX IF NOT EXISTS idx_review_submissions_request ON review_submissions(request_id, revision DESC);
+    CREATE INDEX IF NOT EXISTS idx_review_actions_state ON review_actions(state, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_review_actions_submission ON review_actions(submission_id, created_at);
+
+    -- Work Center notification dedupe (contract work-center/1, lib/workCenter/
+    -- notifyReceipts.ts). One active high-water row per (instance, source,
+    -- revision, channel, recipient) records that the source's initial
+    -- notification was claimed and the highest snooze deadline already
+    -- reminded; the receipts table is the history of attempts, one per
+    -- transition. recipient_key is an opaque delivery-target id, never an
+    -- endpoint or credential.
+    CREATE TABLE IF NOT EXISTS work_center_notification_active (
+      instance_id              TEXT NOT NULL,
+      source_id                TEXT NOT NULL,
+      source_revision          TEXT NOT NULL,
+      channel                  TEXT NOT NULL,
+      recipient_key            TEXT NOT NULL,
+      initial_claimed          INTEGER NOT NULL DEFAULT 0 CHECK(initial_claimed IN (0,1)),
+      latest_reminder_deadline INTEGER,
+      source_resolved_at       INTEGER,
+      PRIMARY KEY (instance_id, source_id, source_revision, channel, recipient_key)
+    );
+    CREATE TABLE IF NOT EXISTS work_center_notification_receipts (
+      id              TEXT PRIMARY KEY,
+      instance_id     TEXT NOT NULL,
+      source_id       TEXT NOT NULL,
+      source_revision TEXT NOT NULL,
+      transition      TEXT NOT NULL,
+      channel         TEXT NOT NULL,
+      recipient_key   TEXT NOT NULL,
+      state           TEXT NOT NULL,
+      claimed_at      INTEGER NOT NULL,
+      finished_at     INTEGER,
+      error_code      TEXT,
+      UNIQUE (instance_id, source_id, source_revision, transition, channel, recipient_key)
+    );
+
     -- Persisted service registry (lib/services.ts writes through to this).
     -- Processes never survive a restart; these rows do, so a managed dev server
     -- (desired_state='running') is auto-restarted on boot and its public URL
@@ -774,13 +917,71 @@ function recoverFromCrash(db: Database.Database) {
     // CLI child just like running is, so it resets in the same statement:
     // the work it described died with that process.
     db.prepare("UPDATE tasks SET running = 0, background_pending = 0, background_note = '' WHERE running = 1 OR background_pending = 1").run();
+    // A model turn still marked active never finished: finalize it as
+    // interrupted before clearing it, so the Work Center reads a result
+    // instead of a turn that is live forever. A lingering session whose model
+    // turn already finished has no active turn, so process loss adds no second
+    // result, and a known last successful result is replaced only by a turn
+    // that actually ended after it.
+    finalizeActiveTurnsAsInterrupted(db);
+    // A Fix CI run died with the process; the episode is actionable again.
+    db.prepare("UPDATE tasks SET ci_recovery_episode_id = NULL, ci_recovery_turn_id = NULL").run();
     // Drop any queued follow-ups: the turns they were lined up behind died
     // with the previous process, so there is nothing left to dequeue them into.
     db.prepare("DELETE FROM pending_messages").run();
+    settleReviewEffects(db);
     settleOpenCards(db);
 
     reapInFlightScheduleRuns(db);
   })();
+}
+
+/**
+ * Review effects the dead process left in flight (lib/reviews/). Feedback whose
+ * dispatch intent was recorded without proof of acceptance may or may not have
+ * reached the agent, and a merge that was running may or may not have landed:
+ * both become `indeterminate`, which only a person's explicit retry resolves
+ * (a merge retry reads the actual git or PR state first, never resends blind).
+ * Feedback that was still `queued` never recorded intent, so it is left for the
+ * reconciler to deliver once. The parked-queue wipe above is why: the row that
+ * held it is gone, the action row is not.
+ */
+export function settleReviewEffects(db: Database.Database, now: number = Date.now()): void {
+  db.prepare("UPDATE tasks SET active_review_action_id = NULL WHERE active_review_action_id IS NOT NULL").run();
+  db.prepare(
+    `UPDATE review_actions
+        SET state = 'indeterminate', error_code = 'restart_during_dispatch',
+            operation_json = json_set(operation_json, '$.delivery', 'indeterminate'), updated_at = ?
+      WHERE action IN ('request_changes','retry_feedback') AND state = 'pending'
+        AND json_extract(operation_json, '$.delivery') = 'dispatching'`,
+  ).run(now);
+  db.prepare("UPDATE review_actions SET state = 'indeterminate', error_code = 'restart_during_merge', updated_at = ? WHERE action = 'merge' AND state = 'pending'").run(now);
+}
+
+/**
+ * Finalizes every persisted active model turn as `interrupted` and clears the
+ * active group. Same-turn idempotence holds: only rows with an active turn
+ * are touched, and an already-finalized turn has none.
+ */
+export function finalizeActiveTurnsAsInterrupted(db: Database.Database, now: number = Date.now()): number {
+  return db
+    .prepare(
+      `UPDATE tasks SET
+         latest_turn_id = active_turn_id,
+         latest_turn_session_id = active_turn_session_id,
+         latest_turn_generation = active_turn_generation,
+         latest_turn_started_at = active_turn_started_at,
+         latest_turn_ended_at = MAX(?, COALESCE(active_turn_started_at, 0)),
+         latest_turn_outcome = 'interrupted',
+         latest_turn_terminal_message_id = NULL,
+         latest_turn_schedule_run_id = NULL,
+         latest_turn_failure_code = NULL,
+         latest_turn_failure_resolved_at = NULL,
+         active_turn_id = NULL, active_turn_session_id = NULL,
+         active_turn_started_at = NULL, active_turn_generation = NULL
+       WHERE active_turn_id IS NOT NULL`
+    )
+    .run(now).changes;
 }
 
 /**
@@ -1081,6 +1282,76 @@ export function migrate(db: Database.Database, options: { seedProviders?: boolea
   // Queued-to-start deadline (see the CREATE TABLE note). 0 on every existing
   // row is right for the same reason as snoozed_until: nothing was queued.
   if (!taskCols.includes("start_at")) db.exec("ALTER TABLE tasks ADD COLUMN start_at INTEGER NOT NULL DEFAULT 0");
+  // Model-turn identity and latest-result metadata (lib/workCenter/execution.ts).
+  // All nullable with no default: an old row has no recorded turn, and reads
+  // back as unknown instead of a guessed outcome. The active_* group is the
+  // model turn in progress and is cleared when it is finalized, so a crash
+  // finds exactly the turns that never finished. The latest_* group is the
+  // newest finalized turn. completed_at is the moment of an actual transition
+  // into done; it is never backfilled from updated_at.
+  const turnCols: Array<[string, string]> = [
+    ["active_turn_id", "TEXT"],
+    ["active_turn_session_id", "TEXT"],
+    ["active_turn_started_at", "INTEGER"],
+    ["active_turn_generation", "INTEGER"],
+    ["latest_turn_id", "TEXT"],
+    ["latest_turn_session_id", "TEXT"],
+    ["latest_turn_generation", "INTEGER"],
+    ["latest_turn_started_at", "INTEGER"],
+    ["latest_turn_ended_at", "INTEGER"],
+    ["latest_turn_outcome", "TEXT CHECK (latest_turn_outcome IS NULL OR latest_turn_outcome IN ('ok','failed','stopped','interrupted','unknown'))"],
+    ["latest_turn_terminal_message_id", "TEXT"],
+    ["latest_turn_schedule_run_id", "TEXT"],
+    ["latest_turn_failure_code", "TEXT CHECK (latest_turn_failure_code IS NULL OR latest_turn_failure_code IN ('context_limit','auth','approval','execution'))"],
+    ["latest_turn_failure_resolved_at", "INTEGER"],
+    ["completed_at", "INTEGER"],
+  ];
+  for (const [col, def] of turnCols) {
+    if (!taskCols.includes(col)) db.exec(`ALTER TABLE tasks ADD COLUMN ${col} ${def}`);
+  }
+  // Work Center source identity (lib/workCenter/). All nullable: an old row
+  // reads back as "no episode recorded", never a guessed one.
+  //  - failure_ack_turn_id: the failed turn a person acknowledged.
+  //  - base_rewrite_*: the episode stamped beside base_rewritten_at.
+  //  - pr_*: the head and structured check evidence behind a CI episode.
+  //    pr_synced_at stays the last SUCCESSFUL coherent observation;
+  //    pr_refresh_attempted_at / pr_refresh_error record a failed refresh.
+  //  - ci_recovery_*: the CI episode an authorized Fix CI run owns.
+  const wcCols: Array<[string, string]> = [
+    ["failure_ack_turn_id", "TEXT"],
+    ["base_rewrite_episode_id", "TEXT"],
+    ["base_rewrite_message_id", "TEXT"],
+    ["base_rewrite_base_sha", "TEXT"],
+    ["pr_head_sha", "TEXT"],
+    ["pr_repository_id", "TEXT"],
+    ["pr_ci_episode_id", "TEXT"],
+    ["pr_ci_episode_fingerprint", "TEXT"],
+    ["pr_ci_snapshot_json", "TEXT"],
+    ["pr_ci_episode_started_at", "INTEGER"],
+    ["pr_refresh_attempted_at", "INTEGER"],
+    ["pr_refresh_error", "TEXT"],
+    ["ci_recovery_episode_id", "TEXT"],
+    ["ci_recovery_turn_id", "TEXT"],
+    // Server-owned counter a review submission captures as its content_epoch;
+    // bumped by every operation that can change the reviewed source
+    // (lib/reviews/store.ts bumpReviewContentEpoch).
+    ["review_content_epoch", "INTEGER NOT NULL DEFAULT 0"],
+  ];
+  for (const [col, def] of wcCols) {
+    if (!taskCols.includes(col)) db.exec(`ALTER TABLE tasks ADD COLUMN ${col} ${def}`);
+  }
+  // Review decision ownership (lib/reviews/actions.ts, feedback.ts). The
+  // action id a transcript row or parked follow-up carries is what correlates a
+  // human's request-changes feedback with the exact message that delivered it;
+  // the partial unique indexes make a second insertion for one action
+  // impossible. tasks.active_review_action_id names the one feedback dispatch
+  // that currently owns the task's input.
+  if (!taskCols.includes("active_review_action_id")) db.exec("ALTER TABLE tasks ADD COLUMN active_review_action_id TEXT");
+  for (const table of ["messages", "pending_messages"]) {
+    const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+    if (!cols.includes("review_action_id")) db.exec(`ALTER TABLE ${table} ADD COLUMN review_action_id TEXT`);
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_${table}_review_action ON ${table}(review_action_id) WHERE review_action_id IS NOT NULL`);
+  }
   // The task's own LiteLLM virtual key (docs/AGENTS.md, LiteLLM section),
   // minted on its first gateway turn when CALANDRIA_LITELLM_ADMIN_KEY is set;
   // '' means "use the instance key". Never surfaced by getTask()/listTasks():

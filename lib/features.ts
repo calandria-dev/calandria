@@ -27,12 +27,18 @@ export interface Features {
    *  CALANDRIA_SERVICE_HOSTS (lib/service-host.mjs), so enabling services
    *  exposes nothing publicly on its own. */
   services: boolean;
+  /** Work Center review requests (lib/reviews/): whether an agent can open a
+   *  NEW review request. Gates creation only; reads, decisions, required-review
+   *  guards and retention protection stay active with it off. Default off
+   *  until the Work Center acceptance gate passes. */
+  reviewRequests: boolean;
 }
 
 export const DEFAULT_FEATURES: Features = {
   livePreview: false,
   omniSearch: false,
   services: true,
+  reviewRequests: false,
 };
 
 const truthy = (v: string | undefined) => v === "1" || v === "true" || v === "on";
@@ -47,6 +53,7 @@ export function resolveFeatures(): Features {
     livePreview: flag(readEnv("CALANDRIA_FEATURE_LIVE_PREVIEW"), DEFAULT_FEATURES.livePreview),
     omniSearch: flag(readEnv("CALANDRIA_FEATURE_OMNI_SEARCH"), DEFAULT_FEATURES.omniSearch),
     services: flag(readEnv("CALANDRIA_FEATURE_SERVICES"), DEFAULT_FEATURES.services),
+    reviewRequests: flag(readEnv("CALANDRIA_REVIEW_REQUESTS"), DEFAULT_FEATURES.reviewRequests),
   };
 }
 

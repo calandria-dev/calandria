@@ -23,6 +23,13 @@ function S(children: React.ReactNode, props?: P) {
 }
 
 export const Icon = {
+  // Work Center (design release work-center-design-release/1, A4). The 12-grid
+  // drawings of the design are redrawn here on the 24 grid by doubling every coordinate.
+  work: (p?: P) => S(<><circle cx={12} cy={12} r={8.5} /><path d="M12 7.5V12l3 2" /><circle cx={19} cy={6} r={2.2} fill="currentColor" stroke="none" /></>, p),
+  // Filled speech bubble with a mark: something needs you.
+  needsYou: (p?: P) => S(<><path d="M4.4 3h15.2a3.4 3.4 0 013.4 3.4v8.6a3.4 3.4 0 01-3.4 3.4H12L6.8 22v-3.6H4.4A3.4 3.4 0 011 15V6.4A3.4 3.4 0 014.4 3z" fill="currentColor" stroke="none" /><rect x={10.6} y={5.8} width={2.8} height={6} rx={1.4} fill="var(--bg)" stroke="none" /><circle cx={12} cy={14.2} r={1.5} fill="var(--bg)" stroke="none" /></>, p),
+  // Working ripple: a solid dot plus a ring (.wc-rp) that expands while the working count is changing.
+  working: (p?: P) => S(<><circle className="wc-rp" cx={12} cy={12} r={4.8} strokeWidth={1.8} /><circle cx={12} cy={12} r={4.8} fill="currentColor" stroke="none" /></>, p),
   plus: (p?: P) => S(<><line x1={12} y1={5} x2={12} y2={19} /><line x1={5} y1={12} x2={19} y2={12} /></>, p),
   list: (p?: P) => S(<><line x1={9} y1={6} x2={20} y2={6} /><line x1={9} y1={12} x2={20} y2={12} /><line x1={9} y1={18} x2={20} y2={18} /><circle cx={5} cy={6} r={0.5} /><circle cx={5} cy={12} r={0.5} /><circle cx={5} cy={18} r={0.5} /></>, p),
   board: (p?: P) => S(<><rect x={3} y={4} width={5} height={16} rx={1.5} /><rect x={10} y={4} width={5} height={11} rx={1.5} /><rect x={17} y={4} width={4} height={8} rx={1.5} /></>, p),

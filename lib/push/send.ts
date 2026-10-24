@@ -132,13 +132,38 @@ export function toPushMessage(payload: NotificationPayload): PushMessage {
  * (usePush.ts compares keys); a 5xx or timeout is a transient failure at the
  * push service.
  */
-export async function pushNotification(payload: NotificationPayload, fetchImpl: typeof fetch = fetch): Promise<PushSendResult[]> {
+export async function pushNotification(
+  payload: NotificationPayload,
+  fetchImpl: typeof fetch = fetch,
+  gate?: PushGate,
+): Promise<PushSendResult[]> {
   const subs = listPushSubscriptions();
   if (subs.length === 0) return [];
   const body = Buffer.from(JSON.stringify(toPushMessage(payload)));
   const opts = optionsFor(payload);
-  return Promise.all(subs.map((sub) => deliverTo(sub, body, opts, fetchImpl)));
+  const sends = subs.map(async (sub): Promise<PushSendResult | null> => {
+    // A gate that declines this subscription means its transition was already
+    // claimed (a duplicate event, a restart), so nothing is sent to it.
+    const settle = gate ? gate(sub.id) : undefined;
+    if (settle === null) return null;
+    try {
+      const result = await deliverTo(sub, body, opts, fetchImpl);
+      settle?.(result);
+      return result;
+    } catch (err) {
+      settle?.(null);
+      throw err;
+    }
+  });
+  return (await Promise.all(sends)).filter((r): r is PushSendResult => r !== null);
 }
+
+/**
+ * Per-subscription claim hook. Returns null to skip the subscription, or a
+ * settle callback that receives the send result (null when the outcome is
+ * unknown).
+ */
+export type PushGate = (subscriptionId: string) => ((result: PushSendResult | null) => void) | null;
 
 async function deliverTo(sub: PushSubscriptionRow, body: Buffer, opts: PushSendOptions, fetchImpl: typeof fetch): Promise<PushSendResult> {
   const result = await sendWebPush(sub, body, opts, fetchImpl);
@@ -159,6 +184,6 @@ async function deliverTo(sub: PushSubscriptionRow, body: Buffer, opts: PushSendO
 }
 
 /** The detached form the emitter uses: never rejects, never awaited. */
-export function pushNotificationDetached(payload: NotificationPayload): void {
-  pushNotification(payload).catch((err) => console.error("[push] fan-out failed:", err));
+export function pushNotificationDetached(payload: NotificationPayload, gate?: PushGate): void {
+  pushNotification(payload, fetch, gate).catch((err) => console.error("[push] fan-out failed:", err));
 }

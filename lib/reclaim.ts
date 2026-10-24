@@ -32,6 +32,7 @@ import { hasTurn } from "@/lib/abort";
 import { publishGlobal, subscribeGlobal } from "@/lib/events";
 import { heldHandleHint } from "@/lib/paths";
 import type { Task } from "@/lib/types";
+import { reviewRefusal } from "@/lib/reviews/gate";
 
 /** How a task's work reached the base branch. */
 export type Landing = "pr" | "merge";
@@ -211,6 +212,11 @@ export async function reclaimTask(
     // is the live one. Both, for the same reason the sweep checks both.
     if (task.running || hasTurn(taskId))
       return { ok: false, reason: "a turn is running. Wait for the session to finish" };
+
+    // A required review that is not satisfied for the exact artifact keeps the
+    // checkout: reclaim removes the only copy of what the review is about.
+    const reviewBlock = await reviewRefusal(taskId);
+    if (reviewBlock) return { ok: false, reason: reviewBlock };
 
     const landing = landedVia(task);
     if (!landing)

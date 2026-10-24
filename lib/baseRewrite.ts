@@ -1,5 +1,6 @@
 import type { Project, Task } from "@/lib/types";
-import { listTasks, getTask, updateTask, addMessage } from "@/lib/store";
+import { nanoid } from "nanoid";
+import { listTasks, getTask, updateTask, addMessage, setBaseRewriteEpisode } from "@/lib/store";
 import { resolveBaseBranch } from "@/lib/baseBranch";
 import { baseShaRewritten, fetchBase, remoteBaseStatus } from "@/lib/git";
 import { publishGlobal } from "@/lib/events";
@@ -140,7 +141,7 @@ export async function flagBaseRewrite(opts: {
     // The chip says which tasks; the transcript says who did it and what to
     // run, where there is room for the command. Written at the task's current
     // generation so the note sits at the end of the session that will read it.
-    addMessage(
+    const note = addMessage(
       t.id,
       t.generation,
       "system",
@@ -149,6 +150,8 @@ export async function flagBaseRewrite(opts: {
         `the same work. Rebase instead, from the banner above or with:\n\n` +
         `git rebase --onto ${branch} ${t.base_sha.slice(0, 12)} ${t.work_branch}`
     );
+    // A distinct rewrite is a new Work Center episode, anchored to the note above.
+    setBaseRewriteEpisode(t.id, { episodeId: nanoid(), messageId: note.id, baseSha: t.base_sha });
     publishGlobal(t.id, { type: "task_edited" });
     flagged.push(updated ?? t);
   }

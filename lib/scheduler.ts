@@ -29,6 +29,7 @@ import { describeSpec, formatWallClock } from "@/lib/schedule/time";
 import { dispatchPromptTask } from "@/lib/dispatch";
 import { getRunbook } from "@/lib/runbooks/store";
 import { hasTurn } from "@/lib/abort";
+import { reconcileNotifications } from "@/lib/notifications/reminders";
 import { SCHEDULED_RUN_CONTEXT } from "@/lib/runContext";
 import type { Schedule, ScheduleRun } from "@/lib/types";
 
@@ -94,8 +95,8 @@ export function startScheduler(): void {
   // is not conditional on the sweep: an instance with everything else switched
   // off still wants to be told its worktrees dir is 40 GB. Set
   // CALANDRIA_WORKTREES_DISK_WARN_GB=0 to stop even that.
-  if (s.timer || (!SCHEDULER_ENABLED && !RETENTION_ENABLED && !WORKTREE_SWEEP_ENABLED && WORKTREES_DISK_WARN_BYTES <= 0))
-    return;
+  // Snooze reminders ride it as well and have no off switch of their own.
+  if (s.timer) return;
   // A restart can land mid-slot, and a tzdata update can move a cached
   // next_fire_at. Revalidate every enabled schedule against its spec before the
   // first tick, so boot catch-up adjudicates from a correct position.
@@ -190,6 +191,22 @@ export async function tickSchedules(now = Date.now()): Promise<number> {
       } catch (err) {
         console.error("[gatewayKeys] sweep failed:", err);
       }
+    }
+    // Snooze expiry emits no task event, so this sweep is what reminds the
+    // user. It is not gated on any scheduler flag: notifications have their
+    // own switches, applied where the reminder is delivered.
+    try {
+      reconcileNotifications(Date.now());
+    } catch (err) {
+      console.error("[notifications] reconcile failed:", err);
+    }
+    // Review feedback whose dispatch never started (its parked copy dies with
+    // a restart or a Stop). Intent was never recorded for these, so delivering
+    // them here is their first attempt (lib/reviews/feedback.ts).
+    try {
+      await (await import("./reviews/feedback")).reconcileFeedback();
+    } catch (err) {
+      console.error("[review-feedback] reconcile failed:", err);
     }
     s.lastTickAt = Date.now();
   } finally {

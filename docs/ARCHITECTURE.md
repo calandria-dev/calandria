@@ -63,6 +63,8 @@ announced as a wakeup firing.
 | `lib/turnActivity.ts` | Stamps every persisted event's timestamp; a sweep that runs only while a turn is live marks a turn idle after `CALANDRIA_TURN_IDLE_MS` (default 20 minutes) unless it is parked on the user. | In-memory only, since it describes a turn this process owns and persisting it would move `tasks.updated_at`, the board's sort key, on every idle tick. Publishes the coarse `turn_idle` event on `/api/events`, since an idle turn otherwise produces no transcript detail to publish. `schedulerHealth()`'s "looks stuck" banner reads the same mark. |
 | `app/shell/IdleStop.tsx` | The Stop affordance hung off the idle mark. | Arms on the first press, states what it cannot know, stops on the second. Shown on list and board cards only; the session's own composer already has Stop. |
 | `lib/idleNudge.ts` | Opt-in (`CALANDRIA_TURN_IDLE_NUDGE`, default off) message sent into an idle session. | Can only reach a LINGERING session, since a driver's `send` refuses a message mid-thought. At most once per turn, never on a scheduled run, never ahead of a queued follow-up. What it sends is a user message, the only channel a session has; what it records is a system notice, since the user did not type it. |
+| `lib/workCenter/` | Execution observations and the canonical classifier behind the Work Center (contract `work-center/1`). `execution.ts` holds a lease-keyed registry of each live driver session's observation (foreground phase, background operations, wakeups) and the model-turn identity; `classify.ts` is the pure classifier and the seven-day recent-result paging; `types.ts` is the wire types. | SDK-free. Every model turn (the opening prompt, a message injected into a lingering session, a wakeup firing) gets a server-minted `turnId` and its own result, finalized when the model completes its response, not when the driver session closes. `tasks.active_turn_*` is the turn in progress and `tasks.latest_turn_*` the newest finalized one, written outside `updateTask()` so they never stamp `updated_at`. Boot recovery finalizes any persisted active turn as `interrupted`. Claude reports background operations from its native task events (`lib/agents/claude/executionObserver.ts`); Codex and Gemini declare background coverage `unavailable` and nothing is read from `background_note` prose. A turn ending never completes the task: `completed_at` moves only with an actual transition into `done`. |
+| `lib/workCenter/` (snapshot) | The attention adapters, the snapshot and its transport. `snapshot.ts` assembles `GET /api/work-center` from the sources that own each item: live questions and permissions (the `lib/asks.ts` and mandatory-decision registries joined to their persisted transcript cards), Advanced Settings proposals (`proposals.ts` metadata), failing open PRs as CI episodes, unacknowledged agent edits, base-rewrite stamps, and failed turns. `counts.ts` is the one pure function that computes the global and every per-project summary, including the visible (unsnoozed) counts and the `inlineDecision` rule. `ciEvidence.ts` groups structured check evidence and mints CI episode ids. `bridge.ts` turns each global bus event into a sequence bump and a coalesced `work_center_changed` event. `compat.ts` derives `/api/needs-you` and the project badges from the visible counts. | SDK-free, no network in assembly, no inbox table: a source that settles stops producing its item. One `now` per assembly decides every snooze comparison, and the sequence is read before and after (three attempts, then 503 `snapshot_busy`). `instanceEpoch` is per process, `instanceId` persists in `settings`. An applicable source that cannot be read (an open PR never observed) makes the affected exact totals `null` while `known` keeps the count. `POST /api/tasks/[id]/failure-ack` acknowledges one `execution` failure by turn id; `POST /api/tasks/[id]/answer` accepts optional `{sessionId,messageId,requestId}` preconditions and answers 409 `request_expired` on a mismatch or a request no longer parked. A failed PR refresh keeps the last coherent check evidence and records the attempt in `pr_refresh_attempted_at`/`pr_refresh_error`; `pr_synced_at` stays the last successful observation. |
 
 A task is a lineage of sessions. `/clear` ends generation N, condenses its transcript to a
 summary, and generation N+1 starts fresh, seeded with all prior summaries. The task row
@@ -72,8 +74,9 @@ persists across generations; only the context window resets.
 
 `GET /api/events` is one always-open `EventSource` per browser tab
 (`app/shell/useGlobalEvents.ts`), broadcasting coarse lifecycle events for every task across
-every project. This drives spinners, project badges, and the "N need you" pill without any
-task-list polling. Only the selected task also opens a transcript stream.
+every project. This drives spinners and the live task rows without any task-list polling. The
+Work Center pill, list and project badges read the `work_center_changed` event and refetch
+`GET /api/work-center`. Only the selected task also opens a transcript stream.
 
 Current event types: `turn_started`, `awaiting_input`, `ask_answered`, `suggested`,
 `turn_end`, `task_updated`, `task_edited`, `turn_idle`, `background`, `agent_auth`,
@@ -144,7 +147,7 @@ appended to the system prompt.
 - Auth delegates to `lib/claude-auth.ts`.
 
 Tools mounted in-process: `suggest_task`, `list_tasks`, `list_tags`, `get_task`,
-`update_task`, `move_task`, `withdraw_suggestion`, `set_base_branch`, `report_base_rewrite`,
+`update_task`, `move_task`, `withdraw_suggestion`, `submit_review`, `get_review`, `withdraw_review`, `set_base_branch`, `report_base_rewrite`,
 `create_pr` (conditional), `update_tag`, `list_projects`, `expose_service`, `create_runbook`,
 `list_runbooks`, `update_runbook`.
 
@@ -300,7 +303,7 @@ own `canUseTool` denials never emit this message, so the two paths cannot double
 ## Agent tools (`lib/agentTools.ts`)
 
 The tool roster is the same across drivers: `suggest_task`, `list_tasks`, `get_task`,
-`update_task`, `move_task`, `withdraw_suggestion`, `set_base_branch`, `report_base_rewrite`,
+`update_task`, `move_task`, `withdraw_suggestion`, `submit_review`, `get_review`, `withdraw_review`, `set_base_branch`, `report_base_rewrite`,
 `create_pr`, `list_tags`, `update_tag`, `list_projects`, `expose_service`, `create_runbook`,
 `list_runbooks`, `update_runbook`, `ask_user`.
 

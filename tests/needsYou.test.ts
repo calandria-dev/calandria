@@ -14,6 +14,8 @@ import { subscribeGlobal, publishGlobal, type BusEvent } from "@/lib/events";
 import { PATCH as patchTask, DELETE as deleteTaskRoute } from "@/app/api/tasks/[id]/route";
 import { POST as clearRoute } from "@/app/api/tasks/[id]/clear/route";
 import { GET as eventsRoute } from "@/app/api/events/route";
+import { parkAsk } from "./helpers";
+import { awaitingCountFor } from "@/lib/workCenter/compat";
 import type { Status } from "@/lib/types";
 
 // Collect every bus event published for one task while `fn` runs.
@@ -109,9 +111,11 @@ describe("mutation routes publish lifecycle events", () => {
     const project = createProject({ name: "DelPub" });
     const t = createTask({ project_id: project.id, title: "Doomed" });
     updateTask(t.id, { status: "in_progress", awaiting_input: 1, running: 1 }); // parked on an ask
+    await parkAsk(t.id);
     const other = createTask({ project_id: project.id, title: "Still waiting" });
     updateTask(other.id, { status: "in_progress", awaiting_input: 1 });
-    expect(countAwaiting(project.id)).toBe(2);
+    await parkAsk(other.id);
+    expect(awaitingCountFor(project.id)).toBe(2);
 
     const rowGoneAtPublish: boolean[] = [];
     const unsub = subscribeGlobal((tid, ev) => {
@@ -133,6 +137,7 @@ describe("GET /api/events wire relay", () => {
     const project = createProject({ name: "WireRelay" });
     const t = createTask({ project_id: project.id, title: "T" });
     updateTask(t.id, { status: "in_progress", awaiting_input: 1, running: 1 });
+    await parkAsk(t.id);
 
     const ac = new AbortController();
     const res = await eventsRoute(new Request("http://test/api/events", { signal: ac.signal }));
@@ -146,7 +151,13 @@ describe("GET /api/events wire relay", () => {
         if (idx >= 0) {
           const frame = buf.slice(0, idx);
           buf = buf.slice(idx + 2);
-          if (frame.startsWith("data: ")) return JSON.parse(frame.slice(6));
+          if (frame.startsWith("data: ")) {
+            const data = JSON.parse(frame.slice(6));
+            // The Work Center transport frames (hydration, coalesced bumps) are
+            // asserted in workCenterSnapshot.test.ts.
+            if (data.type === "work_center_changed") continue;
+            return data;
+          }
           continue;
         }
         const { value, done } = await reader.read();

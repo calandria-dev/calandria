@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { reviewRefusal } from "@/lib/reviews/gate";
+import { acceptedCodePins, baseTipBefore, recordLocalLanding } from "@/lib/reviews/landing";
 import { getTask, getProject, updateTask, recordTaskMerge } from "@/lib/store";
 import { completeWorktreeMerge, taskCommitMessage } from "@/lib/git";
 import { resolveBaseBranch } from "@/lib/baseBranch";
@@ -36,21 +38,33 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: "this task has no isolated branch to merge" }, { status: 400 });
     const project = getProject(task.project_id);
     if (!project) return NextResponse.json({ error: "no project" }, { status: 400 });
+    // Required reviews must be accepted for the exact artifact before it lands.
+    const reviewRefusal409 = await reviewRefusal(id);
+    if (reviewRefusal409) return NextResponse.json({ error: reviewRefusal409, code: "review_required" }, { status: 409 });
 
+    const baseBranch = resolveBaseBranch(task, project);
+    const baseBeforeSha = await baseTipBefore(project.repo_path, baseBranch);
+    // An accepted code review pins the landing to the commit a person approved;
+    // mergeTask then commits nothing on the way and refuses with nothing written
+    // if the branch or the base moved. A task without an accepted review passes no pins.
+    const pins = acceptedCodePins(id);
     const result = await completeWorktreeMerge({
       repoPath: project.repo_path,
       worktreePath: task.worktree_path,
       workBranch: task.work_branch,
-      baseBranch: resolveBaseBranch(task, project),
+      baseBranch,
       message: taskCommitMessage(task),
       stashDirty,
       resolveOnly,
+      expectedHeadSha: pins?.headCommitSha,
+      expectedBaseSha: pins?.baseTipSha,
     });
 
     // A resolve-only accept moved the WORK branch, not the base: nothing landed,
     // so nothing is merged and no insight row is owed. Recording either would put
     // a merge on the board that the base branch has never seen.
     if (result.ok && !resolveOnly) {
+      await recordLocalLanding({ taskId: id, repoPath: project.repo_path, baseBranch, baseBeforeSha, mergedSha: result.mergedSha });
       // Record the merge and advance the diff base. Status remains user-owned
       // when auto_reclaim is off. An opted-in project closes the landed task
       // through maybeAutoReclaim below.

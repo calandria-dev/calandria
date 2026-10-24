@@ -10,7 +10,9 @@ import { getProviderRow } from "./providers/rows";
 // the note in that file).
 import { modelContextWindow } from "./agents/capabilities";
 import { SERVICE_PORT_BASE } from "./config";
-import type { Project, Task, Tag, Message, PendingMessage, TaskComment, TaskDocComment, TaskDocDraft, Summary, Session, Priority, Status, MsgRole, LedgerUsage, UsageTotals, PermissionRule, PermissionMatchKind, AgentEditChange, TaskAgentEdit, SettingsSnapshot, IssueReport } from "./types";
+import { recordFeedbackInsertion } from "./reviews/feedbackStore";
+import { assertReviewsSatisfiedSync, bumpEpochIfReviewed, reviewBlockerSync, isTerminalStatus, projectReviewBlockers, waiveRequired } from "./reviews/guard";
+import type { Project, Task, Tag, Message, PendingMessage, TaskComment, TaskDocComment, TaskDocDraft, Summary, Session, Priority, Status, MsgRole, LedgerUsage, UsageTotals, PermissionRule, PermissionMatchKind, AgentEditChange, TaskAgentEdit, SettingsSnapshot, IssueReport, ToolData } from "./types";
 import { isLandingMode, type LandingMode } from "./types";
 export { addInternalUsage, type InternalJob } from "./internalUsage";
 
@@ -274,7 +276,12 @@ export function reorderProjects(ids: string[]) {
   db.transaction((list: string[]) => list.forEach((id, i) => stmt.run(i, id)))(ids);
 }
 
-export function deleteProject(id: string) {
+export function deleteProject(id: string, opts: { reviewDisposition?: "waive_and_delete"; reviewActor?: string } = {}) {
+  // Deleting a project is deleting each of its tasks: same guard, same disposition.
+  for (const { taskId } of projectReviewBlockers(id)) {
+    if (opts.reviewDisposition === "waive_and_delete") waiveRequired(taskId, "waive_and_delete", opts.reviewActor);
+    else assertReviewsSatisfiedSync(taskId);
+  }
   // Cascades to the project's tasks, messages and summaries (FK ON DELETE CASCADE).
   getDb().prepare("DELETE FROM projects WHERE id = ?").run(id);
 }
@@ -647,12 +654,34 @@ export function clearAgentEditFlag(taskId: string): void {
  * in one transaction. Stamping the rows, not just the task flag, is what lets
  * a later Revert decide whether anything is still outstanding.
  */
-export function acknowledgeAgentEdits(taskId: string): void {
+export function acknowledgeAgentEdits(taskId: string, cutoffEditId?: string): boolean {
   const db = getDb();
-  db.transaction(() => {
+  return db.transaction(() => {
+    if (cutoffEditId) {
+      // A cutoff acknowledges only what the person saw: edits at or before the
+      // named edit's (created_at, rowid). A newer edit, including one with an
+      // equal timestamp and a higher rowid, stays outstanding.
+      const cut = db.prepare("SELECT created_at, rowid AS rid FROM task_agent_edits WHERE id = ? AND task_id = ?").get(cutoffEditId, taskId) as { created_at: number; rid: number } | undefined;
+      if (!cut) return false;
+      db.prepare(
+        `UPDATE task_agent_edits SET acknowledged_at = ?
+         WHERE task_id = ? AND reverted_at = 0 AND acknowledged_at = 0
+           AND (created_at < ? OR (created_at = ? AND rowid <= ?))`
+      ).run(Date.now(), taskId, cut.created_at, cut.created_at, cut.rid);
+      if (!hasOutstandingAgentEdits(taskId)) db.prepare("UPDATE tasks SET agent_edited_at = 0 WHERE id = ?").run(taskId);
+      return true;
+    }
     db.prepare("UPDATE task_agent_edits SET acknowledged_at = ? WHERE task_id = ? AND reverted_at = 0 AND acknowledged_at = 0").run(Date.now(), taskId);
     db.prepare("UPDATE tasks SET agent_edited_at = 0 WHERE id = ?").run(taskId);
+    return true;
   })();
+}
+
+/** Unacknowledged, unreverted applied edits for the Work Center, oldest first. */
+export function listOutstandingAgentEdits(): { id: string; task_id: string; created_at: number; actor_title: string }[] {
+  return getDb()
+    .prepare("SELECT id, task_id, created_at, actor_title FROM task_agent_edits WHERE reverted_at = 0 AND acknowledged_at = 0 ORDER BY created_at ASC, rowid ASC")
+    .all() as { id: string; task_id: string; created_at: number; actor_title: string }[];
 }
 
 export function getTask(id: string): Task | undefined {
@@ -793,6 +822,10 @@ export function createTask(input: {
 // way, because a worktree an agent is writing into must not be deleted.
 export function moveTaskBlockedReason(task: Task, opts: { resetCheckout?: boolean } = {}): string | null {
   if (task.running === 1) return "a task with a running turn can't be moved";
+  // A move changes which repository the work belongs to, so it is refused while a
+  // required review is unsatisfied unless the caller named this task in
+  // resetCheckout, the explicit disposition (moveTasks then waives and bumps the epoch).
+  if (!opts.resetCheckout && reviewBlockerSync(task.id)) return "a task with an unsatisfied required review can't be moved";
   if (opts.resetCheckout) return null;
   if (task.started === 1 || task.worktree_path || task.work_branch || task.base_sha)
     return "a started task can't be moved. Its git worktree belongs to the current project's repo";
@@ -900,7 +933,7 @@ export interface MovedTag {
 export function moveTasks(
   ids: string[],
   projectId: string,
-  opts: { resetCheckout?: ReadonlySet<string> } = {}
+  opts: { resetCheckout?: ReadonlySet<string>; reviewActor?: string } = {}
 ): TaskMoveBatch {
   const db = getDb();
   const dest = getProject(projectId);
@@ -978,6 +1011,13 @@ export function moveTasks(
   const now = Date.now();
 
   db.transaction(() => {
+    // The explicit disposition for a source-changing move: waive what is open
+    // (history kept) and invalidate any earlier acceptance.
+    for (const t of movers) {
+      if (!opts.resetCheckout?.has(t.id)) continue;
+      waiveRequired(t.id, "move_reset", opts.reviewActor);
+      bumpEpochIfReviewed(t.id);
+    }
     const unlink = db.prepare("DELETE FROM task_dependencies WHERE task_id = ? AND depends_on_id = ?");
     for (const e of dropped) unlink.run(e.task_id, e.depends_on_id);
     // Re-key the carried tags first, so nothing in between reads a member in
@@ -1047,6 +1087,9 @@ export function moveTasks(
     const clearCheckout = db.prepare(
       `UPDATE tasks SET worktree_path = '', work_branch = '', base_sha = '', merged_at = 0, pr_url = '',
         pr_number = 0, pr_state = '', pr_checks = '', pr_review = '', pr_merged_at = 0, pr_synced_at = 0,
+        pr_head_sha = NULL, pr_repository_id = NULL, pr_ci_episode_id = NULL, pr_ci_episode_fingerprint = NULL,
+        pr_ci_snapshot_json = NULL, pr_ci_episode_started_at = NULL, pr_refresh_attempted_at = NULL, pr_refresh_error = NULL,
+        ci_recovery_episode_id = NULL, ci_recovery_turn_id = NULL,
         session_id = NULL, context_measured = NULL WHERE id = ?`
     );
     // Project-keyed child rows follow their task. These tables denormalize
@@ -1146,6 +1189,14 @@ export function moveTask(taskId: string, projectId: string): TaskMove {
 export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   const cur = getTask(id);
   if (!cur) return undefined;
+  // Required-review guard (lib/reviews/guard.ts): every terminal transition
+  // funnels through here, so a caller cannot complete or cancel a task past an
+  // unsatisfied required review. A task with no review rows pays one indexed read.
+  if (patch.status && patch.status !== cur.status && isTerminalStatus(patch.status)) assertReviewsSatisfiedSync(id);
+  // Reopening is a source-changing event: an earlier acceptance stops being current.
+  if (patch.status && isTerminalStatus(cur.status) && !isTerminalStatus(patch.status)) bumpEpochIfReviewed(id);
+  // So is retargeting the base: the diff an acceptance covered no longer exists.
+  if (patch.base_branch !== undefined && patch.base_branch !== (cur.base_branch ?? "")) bumpEpochIfReviewed(id);
   const n = { ...cur, ...patch, updated_at: Date.now() };
   getDb()
     .prepare(
@@ -1157,6 +1208,13 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
       // normalized, not trusted (docs/AGENTS.md, LiteLLM section).
       n.gateway_mcp == null ? null : serializeGatewayMcp(n.gateway_mcp),
       n.updated_at, id);
+  // completed_at records the actual transition into done and nothing else:
+  // set when the status moves into it, cleared when a done task is reopened.
+  // Written beside the status so no caller can move one without the other.
+  if (cur.status !== n.status) {
+    if (n.status === "done") getDb().prepare("UPDATE tasks SET completed_at = ? WHERE id = ?").run(n.updated_at, id);
+    else if (cur.status === "done") getDb().prepare("UPDATE tasks SET completed_at = NULL WHERE id = ?").run(id);
+  }
   return getTask(id);
 }
 
@@ -1246,8 +1304,8 @@ export function stalePrTasks(staleBefore: number, limit: number, opts: { autoRec
       `SELECT t.* FROM tasks t
        JOIN projects p ON p.id = t.project_id
        WHERE t.pr_url != '' AND t.pr_number > 0 AND t.pr_state NOT IN ('merged', 'closed')
-         AND t.pr_synced_at < ?${autoReclaim}
-       ORDER BY t.pr_synced_at ASC LIMIT ?`
+         AND MAX(t.pr_synced_at, COALESCE(t.pr_refresh_attempted_at, 0)) < ?${autoReclaim}
+       ORDER BY MAX(t.pr_synced_at, COALESCE(t.pr_refresh_attempted_at, 0)) ASC LIMIT ?`
     )
     .all(staleBefore, limit) as Task[];
 }
@@ -1275,7 +1333,14 @@ export function openAutoReclaimPrTaskCount(): number {
   return row.n;
 }
 
-export function deleteTask(id: string) {
+/**
+ * Hard delete. A task holding an unsatisfied required review is refused unless
+ * the caller passes the explicit human disposition `waive_and_delete`, which
+ * waives each request in place before the row goes.
+ */
+export function deleteTask(id: string, opts: { reviewDisposition?: "waive_and_delete"; reviewActor?: string } = {}) {
+  if (opts.reviewDisposition === "waive_and_delete") waiveRequired(id, "waive_and_delete", opts.reviewActor);
+  else assertReviewsSatisfiedSync(id);
   getDb().prepare("DELETE FROM tasks WHERE id = ?").run(id);
 }
 
@@ -1771,13 +1836,22 @@ export function listMessages(taskId: string): Message[] {
     .all(taskId) as Message[];
 }
 
-export function addMessage(taskId: string, generation: number, role: MsgRole, content: string): Message {
+export function addMessage(taskId: string, generation: number, role: MsgRole, content: string, reviewActionId?: string): Message {
   const id = nanoid();
   const now = Date.now();
-  getDb()
-    .prepare("INSERT INTO messages (id, task_id, generation, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(id, taskId, generation, role, content, now);
-  return { id, task_id: taskId, generation, role, content, created_at: now };
+  const db = getDb();
+  if (!reviewActionId) {
+    db.prepare("INSERT INTO messages (id, task_id, generation, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, taskId, generation, role, content, now);
+    return { id, task_id: taskId, generation, role, content, created_at: now };
+  }
+  // Review feedback: the transcript row and the action's `recordedAt` land in
+  // one transaction. The insertion proves the text is on the transcript and
+  // never that the agent received it (lib/reviews/feedback.ts).
+  db.transaction(() => {
+    db.prepare("INSERT INTO messages (id, task_id, generation, role, content, created_at, review_action_id) VALUES (?, ?, ?, ?, ?, ?, ?)").run(id, taskId, generation, role, content, now, reviewActionId);
+    recordFeedbackInsertion(reviewActionId, now);
+  })();
+  return { id, task_id: taskId, generation, role, content, created_at: now, review_action_id: reviewActionId };
 }
 
 /**
@@ -1814,13 +1888,13 @@ export function listPendingMessages(taskId: string): PendingMessage[] {
 }
 
 // Park a follow-up to run after the current turn ends.
-export function addPendingMessage(taskId: string, generation: number, content: string): PendingMessage {
+export function addPendingMessage(taskId: string, generation: number, content: string, reviewActionId?: string): PendingMessage {
   const id = nanoid();
   const now = Date.now();
   getDb()
-    .prepare("INSERT INTO pending_messages (id, task_id, generation, content, created_at) VALUES (?, ?, ?, ?, ?)")
-    .run(id, taskId, generation, content, now);
-  return { id, task_id: taskId, generation, content, created_at: now };
+    .prepare("INSERT INTO pending_messages (id, task_id, generation, content, created_at, review_action_id) VALUES (?, ?, ?, ?, ?, ?)")
+    .run(id, taskId, generation, content, now, reviewActionId ?? null);
+  return { id, task_id: taskId, generation, content, created_at: now, ...(reviewActionId ? { review_action_id: reviewActionId } : {}) };
 }
 
 // Claim and remove the oldest parked follow-up for a task (FIFO). Returns
@@ -2042,6 +2116,242 @@ export function endSession(taskId: string, generation: number): void {
   getDb()
     .prepare("UPDATE sessions SET ended_at = ? WHERE task_id = ? AND generation = ?")
     .run(Date.now(), taskId, generation);
+}
+
+// ---- Model-turn identity and latest result (lib/workCenter/execution.ts) ----
+//
+// Raw queries only. A "model turn" is one response by the model: a driver
+// session can hold several (the opening prompt, a message injected into a
+// lingering session, a wakeup firing). These write the active_turn_* and
+// latest_turn_* columns directly and never through updateTask(), which would
+// stamp `updated_at` (the board's sort key and retention's clock) for a fact
+// nobody edited.
+
+const ACTIVE_TURN_CLEAR = "active_turn_id = NULL, active_turn_session_id = NULL, active_turn_started_at = NULL, active_turn_generation = NULL";
+
+export type TurnResultInput = {
+  outcome: "ok" | "failed" | "stopped" | "interrupted";
+  endedAt: number;
+  terminalMessageId?: string | null;
+  scheduleRunId?: string | null;
+  failureCode?: "context_limit" | "auth" | "approval" | "execution" | null;
+};
+
+// The Calandria session row (one per task generation) a turn belongs to. Null
+// before the driver has reported its first session event.
+export function sessionRowId(taskId: string, generation: number): string | null {
+  const row = getDb().prepare("SELECT id FROM sessions WHERE task_id = ? AND generation = ?").get(taskId, generation) as { id: string } | undefined;
+  return row?.id ?? null;
+}
+
+function writeFinalizedTurn(taskId: string, r: TurnResultInput): boolean {
+  const info = getDb()
+    .prepare(
+      `UPDATE tasks SET
+         latest_turn_id = active_turn_id, latest_turn_session_id = active_turn_session_id,
+         latest_turn_generation = active_turn_generation, latest_turn_started_at = active_turn_started_at,
+         latest_turn_ended_at = ?, latest_turn_outcome = ?, latest_turn_terminal_message_id = ?,
+         latest_turn_schedule_run_id = ?, latest_turn_failure_code = ?, latest_turn_failure_resolved_at = NULL,
+         ci_recovery_episode_id = NULL, ci_recovery_turn_id = NULL,
+         ${ACTIVE_TURN_CLEAR}
+       WHERE id = ? AND active_turn_id IS NOT NULL
+         AND (latest_turn_ended_at IS NULL OR latest_turn_ended_at <= ?)`
+    )
+    .run(r.endedAt, r.outcome, r.terminalMessageId ?? null, r.scheduleRunId ?? null, r.failureCode ?? null, taskId, r.endedAt);
+  if (info.changes > 0) return true;
+  // An older end time never displaces a newer recorded result, but the turn
+  // is over either way, so the active group still clears.
+  getDb().prepare(`UPDATE tasks SET ${ACTIVE_TURN_CLEAR} WHERE id = ?`).run(taskId);
+  return false;
+}
+
+/**
+ * Record the start of a model turn. A turn still marked active under another
+ * id never finalized (its owner died or was replaced), so it is closed as
+ * interrupted first and its result is not lost.
+ */
+export function beginTurnRecord(taskId: string, t: { turnId: string; sessionId: string | null; generation: number; startedAt: number }): void {
+  const db = getDb();
+  db.transaction(() => {
+    const cur = db.prepare("SELECT active_turn_id FROM tasks WHERE id = ?").get(taskId) as { active_turn_id: string | null } | undefined;
+    if (!cur) return;
+    if (cur.active_turn_id && cur.active_turn_id !== t.turnId) writeFinalizedTurn(taskId, { outcome: "interrupted", endedAt: t.startedAt });
+    db.prepare(
+      `UPDATE tasks SET active_turn_id = ?, active_turn_session_id = ?, active_turn_started_at = ?, active_turn_generation = ?,
+         ci_recovery_turn_id = CASE WHEN ci_recovery_episode_id IS NOT NULL THEN ? ELSE ci_recovery_turn_id END
+       WHERE id = ?`
+    ).run(t.turnId, t.sessionId, t.startedAt, t.generation, t.turnId, taskId);
+  })();
+}
+
+/** Fill in the session row once the driver has announced it. */
+export function setActiveTurnSession(taskId: string, turnId: string, sessionId: string): void {
+  getDb().prepare("UPDATE tasks SET active_turn_session_id = ? WHERE id = ? AND active_turn_id = ? AND active_turn_session_id IS NULL").run(sessionId, taskId, turnId);
+}
+
+/**
+ * Finalize one model turn. Idempotent per turn id: only the turn that is
+ * currently active can finalize, so a repeated end event, or a late cleanup
+ * from an outgoing turn after its successor launched, changes nothing and
+ * returns false.
+ */
+export function finalizeTurnRecord(taskId: string, turnId: string, r: TurnResultInput): boolean {
+  const db = getDb();
+  return db.transaction(() => {
+    const cur = db.prepare("SELECT active_turn_id FROM tasks WHERE id = ?").get(taskId) as { active_turn_id: string | null } | undefined;
+    if (!cur || cur.active_turn_id !== turnId) return false;
+    return writeFinalizedTurn(taskId, r);
+  })();
+}
+
+// ---- Work Center source columns (lib/workCenter/) --------------------------
+//
+// Raw reads and writes only; none of them stamps `updated_at`, for the reason
+// setTaskPrState gives. Settlement stays with the source rows: nothing here is
+// an inbox copy.
+
+/**
+ * Acknowledge a generic execution failure for exactly one turn. Under the
+ * caller's task lock: the latest finalized turn must be `turnId` and carry the
+ * `execution` failure code. Returns false on a mismatch; a repeat for the
+ * same turn is a no-op that also returns true.
+ */
+export function acknowledgeTurnFailure(taskId: string, turnId: string, now: number = Date.now()): boolean {
+  const db = getDb();
+  return db.transaction(() => {
+    const cur = db
+      .prepare("SELECT latest_turn_id, latest_turn_failure_code FROM tasks WHERE id = ?")
+      .get(taskId) as { latest_turn_id: string | null; latest_turn_failure_code: string | null } | undefined;
+    if (!cur || cur.latest_turn_id !== turnId || cur.latest_turn_failure_code !== "execution") return false;
+    db.prepare("UPDATE tasks SET failure_ack_turn_id = ?, latest_turn_failure_resolved_at = COALESCE(latest_turn_failure_resolved_at, ?) WHERE id = ?").run(turnId, now, taskId);
+    return true;
+  })();
+}
+
+/** An authorized Fix CI run claims the CI episode it will repair. */
+export function setCiRecovery(taskId: string, episodeId: string): void {
+  getDb().prepare("UPDATE tasks SET ci_recovery_episode_id = ?, ci_recovery_turn_id = NULL WHERE id = ?").run(episodeId, taskId);
+}
+
+export function clearCiRecovery(taskId: string): void {
+  getDb().prepare("UPDATE tasks SET ci_recovery_episode_id = NULL, ci_recovery_turn_id = NULL WHERE id = ?").run(taskId);
+}
+
+/** Stamp a newly recorded base rewrite with its own episode. */
+export function setBaseRewriteEpisode(taskId: string, e: { episodeId: string; messageId: string | null; baseSha: string | null }): void {
+  getDb().prepare("UPDATE tasks SET base_rewrite_episode_id = ?, base_rewrite_message_id = ?, base_rewrite_base_sha = ? WHERE id = ?").run(e.episodeId, e.messageId, e.baseSha, taskId);
+}
+
+export type PrEvidenceWrite = {
+  head_sha: string | null;
+  repository_id: string | null;
+  episode_id: string | null;
+  episode_fingerprint: string | null;
+  snapshot_json: string | null;
+  episode_started_at: number | null;
+};
+
+/** Persist a coherent check observation. Does not touch pr_synced_at. */
+export function setTaskPrEvidence(taskId: string, e: PrEvidenceWrite): void {
+  getDb()
+    .prepare(
+      `UPDATE tasks SET pr_head_sha = ?, pr_repository_id = ?, pr_ci_episode_id = ?, pr_ci_episode_fingerprint = ?,
+         pr_ci_snapshot_json = ?, pr_ci_episode_started_at = ? WHERE id = ?`
+    )
+    .run(e.head_sha, e.repository_id, e.episode_id, e.episode_fingerprint, e.snapshot_json, e.episode_started_at, taskId);
+}
+
+/** Record a refresh attempt. `error` null marks a success and clears the last error. */
+export function setTaskPrAttempt(taskId: string, attemptedAt: number, error: string | null): void {
+  getDb().prepare("UPDATE tasks SET pr_refresh_attempted_at = ?, pr_refresh_error = ? WHERE id = ?").run(attemptedAt, error, taskId);
+}
+
+/** The persistent instance id behind every snapshot (setting `work_center_instance_id`). */
+export function workCenterInstanceId(): string {
+  const cur = getSetting("work_center_instance_id");
+  if (cur) return cur;
+  const id = nanoid();
+  getDb().prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('work_center_instance_id', ?)").run(id);
+  return getSetting("work_center_instance_id") ?? id;
+}
+
+export type WorkCenterTaskRow = Task & { project_name: string; project_deprecated: number };
+
+/** Every real (non-suggested) task with its project's name and deprecation flag. */
+export function listWorkCenterTaskRows(): WorkCenterTaskRow[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT t.*, p.name AS project_name, p.deprecated AS project_deprecated
+       FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.suggested = 0`
+    )
+    .all() as (WorkCenterTaskRow & { gateway_key_spend?: number })[];
+  return rows.map((r) => redactGatewayKey(r) as WorkCenterTaskRow);
+}
+
+/** Inert suggestions still in the tray (not withdrawn), per project. */
+export function suggestedCountsByProject(): Map<string, number> {
+  const rows = getDb()
+    .prepare("SELECT project_id, COUNT(*) AS n FROM tasks WHERE suggested = 1 AND status != 'cancelled' GROUP BY project_id")
+    .all() as { project_id: string; n: number }[];
+  return new Map(rows.map((r) => [r.project_id, r.n]));
+}
+
+export function listProjectsForWorkCenter(): { id: string; name: string; deprecated: number; color: string; icon: string }[] {
+  return getDb().prepare("SELECT id, name, deprecated, color, icon FROM projects").all() as { id: string; name: string; deprecated: number; color: string; icon: string }[];
+}
+
+/** The persisted card for a live ask or permission request, found by its id. */
+export function findCardMessage(taskId: string, cardId: string): Message | undefined {
+  const rows = getDb()
+    .prepare("SELECT * FROM messages WHERE task_id = ? AND role = 'tool' AND instr(content, ?) > 0 ORDER BY created_at DESC, rowid DESC")
+    .all(taskId, JSON.stringify(cardId)) as Message[];
+  for (const m of rows) {
+    try {
+      const d = JSON.parse(m.content) as ToolData;
+      if (d.ask?.id === cardId || d.permission?.request.id === cardId) return m;
+    } catch {
+      // a non-JSON tool row cannot be a card
+    }
+  }
+  return undefined;
+}
+
+/** Raw rows behind the recent-result list: the latest finalized turn, or for a
+ *  row that has none the newest historical `sessions.ended_at`. */
+export type RecentResultRow = {
+  id: string;
+  project_id: string;
+  generation: number;
+  completed_at: number | null;
+  latest_turn_id: string | null;
+  latest_turn_session_id: string | null;
+  latest_turn_generation: number | null;
+  latest_turn_started_at: number | null;
+  latest_turn_ended_at: number | null;
+  latest_turn_outcome: string | null;
+  latest_turn_terminal_message_id: string | null;
+  latest_turn_schedule_run_id: string | null;
+  latest_turn_failure_code: string | null;
+  latest_turn_failure_resolved_at: number | null;
+  historical_ended_at: number | null;
+  result_ended_at: number;
+};
+
+export function listRecentResultRows(since: number, projectId?: string | null): RecentResultRow[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM (
+         SELECT t.id, t.project_id, t.generation, t.completed_at,
+                t.latest_turn_id, t.latest_turn_session_id, t.latest_turn_generation, t.latest_turn_started_at,
+                t.latest_turn_ended_at, t.latest_turn_outcome, t.latest_turn_terminal_message_id,
+                t.latest_turn_schedule_run_id, t.latest_turn_failure_code, t.latest_turn_failure_resolved_at,
+                CASE WHEN t.latest_turn_ended_at IS NULL
+                     THEN (SELECT MAX(s.ended_at) FROM sessions s WHERE s.task_id = t.id) END AS historical_ended_at,
+                COALESCE(t.latest_turn_ended_at, (SELECT MAX(s.ended_at) FROM sessions s WHERE s.task_id = t.id)) AS result_ended_at
+           FROM tasks t WHERE t.suggested = 0 AND (@project IS NULL OR t.project_id = @project)
+       ) WHERE result_ended_at >= @since`
+    )
+    .all({ since, project: projectId ?? null }) as RecentResultRow[];
 }
 
 // The agent thread's last reported cumulative token counters

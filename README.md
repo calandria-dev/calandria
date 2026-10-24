@@ -139,13 +139,20 @@ already queued. The transcript records that it was sent.
   ends before the agent starts. Unattended and scheduled runs always decline.
 - **Web-based and self-hostable:** run Calandria on your own machine or
   server and reach the same workspace from desktop or mobile.
-- **One "Needs you" inbox:** jump to any session waiting for an answer.
+- **Work Center:** a titlebar pill shows how many tasks are working and how many need you. It opens a list
+  of everything that needs a decision, is working, or is waiting, across every project, with Allow once, Deny,
+  Acknowledge and Snooze inline. On a phone it is the Work tab.
+  An agent can also file a review of its code or a Markdown document; a pending review shows up as one item
+  to decide, and the task gets a REVIEW tab (a Review segment on a phone) showing the exact diff or document
+  the agent submitted. You accept it, request changes with feedback the agent receives as its next message,
+  or waive a required review with a reason. Accept never merges: merging stays in the landing controls.
+  Review requests are off by default ([Review submissions](docs/REVIEWS.md)).
 
   ![The Needs you inbox listing sessions waiting on an answer across projects](docs/images/inbox.png)
 
 - **Snooze a task:** park it until an hour from now, tomorrow morning, or a
-  date you pick. It stops counting toward the inbox, then returns to the
-  category it left, marked as snoozed.
+  date you pick. It is hidden from the Work Center and every count until the
+  deadline, then returns to the category it left, marked as snoozed.
 - **Start at the usage-window reset:** when a subscription limit stops your
   turns, queue a task to start (or a stalled session to resume) a minute
   after the reset the plan meter reports. This runs server-side with no tab
@@ -471,6 +478,7 @@ either reader is current.
 - [Agents](docs/AGENTS.md)
 - [Insights and usage](docs/INSIGHTS.md)
 - [Managed services](docs/SERVICES.md)
+- [Review submissions](docs/REVIEWS.md)
 - [Bundled agent skills](skills/README.md)
 - [Self-hosting](docs/SELF_HOSTING.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)

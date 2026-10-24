@@ -9,6 +9,7 @@
 
 import { query, createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { BackgroundTaskSummary, CanUseTool, PermissionMode, PermissionResult, SDKUserMessage, SessionCronSummary, SettingSource } from "@anthropic-ai/claude-agent-sdk";
+import { ClaudeExecutionTracker } from "./executionObserver";
 import { planSessionCrons, cronThatWoke, lingerNote, describeCron, cancelledCronsNotice, wakeTimeLabel, type PlannedCron } from "./sessionCrons";
 import { z } from "zod";
 import type {
@@ -47,7 +48,8 @@ import {
   listEnvironmentSettingsForAgent,
   changeEnvironmentSettingForAgent,
 } from "../../agentTools";
-import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_PROVIDERS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, REPORT_BASE_REWRITE, CREATE_PR, WITHDRAW_SUGGESTION, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK, REPORT_ISSUE, LIST_ENVIRONMENT_SETTINGS, CHANGE_ENVIRONMENT_SETTING } from "../../agentToolDefs.mjs";
+import { submitReviewForAgent, getReviewForAgent, withdrawReviewForAgent } from "../../reviews/tool";
+import { SUGGEST_TASK, EXPOSE_SERVICE, LIST_PROJECTS, LIST_PROVIDERS, LIST_TASKS, LIST_TAGS, GET_TASK, UPDATE_TASK, MOVE_TASK, UPDATE_TAG, SET_BASE_BRANCH, REPORT_BASE_REWRITE, CREATE_PR, WITHDRAW_SUGGESTION, SUBMIT_REVIEW, GET_REVIEW, WITHDRAW_REVIEW, CREATE_RUNBOOK, LIST_RUNBOOKS, UPDATE_RUNBOOK, REPORT_ISSUE, LIST_ENVIRONMENT_SETTINGS, CHANGE_ENVIRONMENT_SETTING } from "../../agentToolDefs.mjs";
 import type { ProposalInput } from "../../advanced-env/proposals";
 import type { EnvScope } from "../../advanced-env/types";
 import { createPrForAgent } from "../../prTools";
@@ -541,6 +543,58 @@ function calandriaServer(
           return { content: [{ type: "text", text }], ...(ok ? {} : { isError: true }) };
         }
       ),
+      // Review tools: the closed-over `task` is the submitter (the server's word);
+      // the review service derives session, generation, agent and model from its
+      // row. None can accept, waive, merge or complete anything.
+      tool(
+        SUBMIT_REVIEW.name,
+        SUBMIT_REVIEW.description,
+        {
+          requestId: z.string().nullable().describe(SUBMIT_REVIEW.params.requestId),
+          expectedVersion: z.number().int().describe(SUBMIT_REVIEW.params.expectedVersion),
+          expectedSubmissionId: z.string().nullable().describe(SUBMIT_REVIEW.params.expectedSubmissionId),
+          outputKey: z.string().describe(SUBMIT_REVIEW.params.outputKey),
+          kind: z.enum(["code", "document"]).describe(SUBMIT_REVIEW.params.kind),
+          required: z.boolean().describe(SUBMIT_REVIEW.params.required),
+          summary: z.string().describe(SUBMIT_REVIEW.params.summary),
+          requestedDecision: z.string().describe(SUBMIT_REVIEW.params.requestedDecision),
+          evidence: z.array(z.object({ url: z.string(), label: z.string() })).describe(SUBMIT_REVIEW.params.evidence),
+          validation: z.array(z.object({ command: z.string(), result: z.string() })).describe(SUBMIT_REVIEW.params.validation),
+          idempotencyKey: z.string().describe(SUBMIT_REVIEW.params.idempotencyKey),
+          artifact: z.union([z.object({ kind: z.literal("code") }), z.object({ kind: z.literal("document"), path: z.string() })]).describe(SUBMIT_REVIEW.params.artifact),
+        },
+        async (args: Record<string, unknown>) => {
+          const { ok, text } = await submitReviewForAgent(task.id, args);
+          return { content: [{ type: "text", text }], ...(ok ? {} : { isError: true }) };
+        }
+      ),
+      tool(
+        GET_REVIEW.name,
+        GET_REVIEW.description,
+        {
+          requestId: z.string().optional().describe(GET_REVIEW.params.requestId),
+          limit: z.number().int().optional().describe(GET_REVIEW.params.limit),
+          cursor: z.string().optional().describe(GET_REVIEW.params.cursor),
+        },
+        async (args: { requestId?: string; limit?: number; cursor?: string }) => {
+          const { ok, text } = await getReviewForAgent(task.id, args);
+          return { content: [{ type: "text", text }], ...(ok ? {} : { isError: true }) };
+        }
+      ),
+      tool(
+        WITHDRAW_REVIEW.name,
+        WITHDRAW_REVIEW.description,
+        {
+          requestId: z.string().describe(WITHDRAW_REVIEW.params.requestId),
+          expectedVersion: z.number().int().describe(WITHDRAW_REVIEW.params.expectedVersion),
+          idempotencyKey: z.string().describe(WITHDRAW_REVIEW.params.idempotencyKey),
+          reason: z.string().describe(WITHDRAW_REVIEW.params.reason),
+        },
+        async (args: { requestId: string; expectedVersion: number; idempotencyKey: string; reason: string }) => {
+          const { ok, text } = await withdrawReviewForAgent(task.id, args);
+          return { content: [{ type: "text", text }], ...(ok ? {} : { isError: true }) };
+        }
+      ),
       tool(
         WITHDRAW_SUGGESTION.name,
         WITHDRAW_SUGGESTION.description,
@@ -1005,6 +1059,15 @@ async function* runTurn(
   // housekeeping tasks).
   let pendingBg: BackgroundTaskSummary[] = [];
   let pendingCrons: SessionCronSummary[] = [];
+  // What the Work Center reads: the CLI's native background-task events folded
+  // into one observation, pushed whenever it changes (including while a
+  // foreground ask is parked, since the events keep arriving). See
+  // ./executionObserver.ts.
+  const exec = new ClaudeExecutionTracker();
+  const emitExec = () => {
+    const o = exec.changed();
+    if (o) queue.push(o);
+  };
   // The crons the current linger is holding the session open for (a subset of
   // pendingCrons on a bounded instance), so a wake init can say which fired.
   let lingerCrons: PlannedCron[] = [];
@@ -1109,6 +1172,8 @@ async function* runTurn(
     // background": the runner drops the flag on its side and this stops the
     // pump reading the injected turn's `init` as a scheduled wakeup firing.
     lingering = false;
+    exec.setForeground("executing");
+    emitExec();
     // The user is demonstrably watching, so the deadline (bounded instances
     // only) starts over instead of counting a wait the user just ended: clear
     // the armed timer and drop the anchor so the next linger re-anchors from
@@ -1321,6 +1386,8 @@ async function* runTurn(
                 const i = input as { background_tasks?: BackgroundTaskSummary[]; session_crons?: SessionCronSummary[] };
                 pendingBg = i.background_tasks ?? [];
                 pendingCrons = i.session_crons ?? [];
+                exec.stopSnapshot(pendingBg);
+                emitExec();
                 return {};
               },
             ],
@@ -1344,6 +1411,8 @@ async function* runTurn(
     try {
       for await (const message of response) {
         if (message.type === "system" && message.subtype === "init") {
+          // Any init, first, injected or a wake, is the model working again.
+          exec.setForeground("executing");
           // A wakeup firing mid-linger arrives as exactly this: a second init
           // on the same session, with no user message and no
           // task_notification, so this is the cron wake signal. Only claimed
@@ -1369,6 +1438,7 @@ async function* runTurn(
           }
           sessionId = message.session_id;
           queue.push({ type: "session", sessionId });
+          emitExec();
           // The composer's "/" menu can't discover MCP prompt commands on its
           // own: they exist only on this message, and getting them any other
           // way means spawning the user's whole MCP fleet on a keystroke
@@ -1538,7 +1608,16 @@ async function* runTurn(
               }
             }
           }
+        } else if (message.type === "system" && message.subtype === "task_started") {
+          exec.taskStarted(message, Date.now());
+          emitExec();
+        } else if (message.type === "system" && message.subtype === "task_updated") {
+          exec.taskUpdated(message);
+          emitExec();
         } else if (message.type === "system" && message.subtype === "task_notification") {
+          exec.taskNotification(message.task_id);
+          if (lingering) exec.setForeground("executing");
+          emitExec();
           // A background task settled. While lingering this is the wake signal:
           // the CLI re-invokes the model with no user message and the new turn
           // streams through this same pump, so surface the transition so the
@@ -1607,6 +1686,9 @@ async function* runTurn(
               lingering = true;
               lingerSince ||= now;
               lingerCrons = plan.linger;
+              exec.setWakeups(plan.linger);
+              exec.setForeground("finished");
+              emitExec();
               // A wakeup that won't be waited for is dead the moment this
               // linger ends, and nothing later will re-plan it (the deadline
               // is fixed from first entry), so say so now, beside the wait.
@@ -1622,6 +1704,12 @@ async function* runTurn(
               });
               armLingerDeadline();
             } else {
+              // Nothing is being waited for: the session closes, and whatever
+              // the CLI still had registered dies with it.
+              exec.stopSnapshot([]);
+              exec.setWakeups([]);
+              exec.setForeground("finished");
+              emitExec();
               endTurn(
                 !BACKGROUND_LINGER_ENABLED
                   ? "lingering is off on this instance (CALANDRIA_BACKGROUND_LINGER), so the session closed at the end of the turn"

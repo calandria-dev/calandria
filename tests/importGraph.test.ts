@@ -21,6 +21,32 @@ const FORBIDDEN = ["@anthropic-ai/claude-agent-sdk", "@openai/codex-sdk"];
 
 // Modules that must stay SDK-free, and why:
 const PINNED = [
+  "lib/workCenter/types.ts", //  Work Center wire types; type-only
+  "lib/workCenter/classify.ts", // the pure execution classifier and recent-result paging
+  "lib/workCenter/execution.ts", // live execution registry + model-turn identity; store + abort + asks only, and the runner imports it
+  "lib/workCenter/ids.ts", // attention source identities; pure
+  "lib/workCenter/counts.ts", // visible counts and inlineDecision; pure
+  "lib/workCenter/ciEvidence.ts", // CI check grouping and episode identity; pure, node:crypto only
+  "lib/workCenter/proposals.ts", // SDK-free Advanced Settings proposal metadata; lib/advanced-env/proposals.ts registers into it
+  "lib/workCenter/bridge.ts", // global-bus to sequence/work_center_changed relay; events + store only
+  "lib/workCenter/snapshot.ts", // the attention adapters and snapshot assembly; store, asks, abort and registries only
+  "lib/workCenter/reviewAdapter.ts", // the review attention source; review store only
+  "lib/reviews/types.ts", //  review wire types, limits and canonical JSON; pure
+  "lib/reviews/store.ts", //  review persistence and the submission transaction; db only
+  "lib/reviews/artifacts.ts", // code pins and exact document capture; git, fs and db only
+  "lib/reviews/read.ts", //  review read models and exact artifact reads
+  "lib/reviews/submit.ts", // the submission service; task and repo locks, no runner or agent registry
+  "lib/reviews/http.ts", //  review route error shaping
+  "lib/reviews/guard.ts", // the required-review eligibility guard; db and review types only
+  "lib/reviews/gate.ts", // async guard over the live checkout; review read model only
+  "lib/reviews/withdraw.ts", // agent withdrawal; task lock and db only
+  "lib/reviews/tool.ts", // agent-tool policy for submit/get/withdraw review
+  "lib/reviews/actor.ts", // human actor resolution for decision routes; auth helpers only
+  "lib/reviews/feedbackStore.ts", // durable feedback delivery state; db only, imported by lib/store.ts
+  "lib/reviews/landing.ts", // landed-receipt minting for the landing routes and the PR poll; store and git only
+  "lib/workCenter/notifyReceipts.ts", // notification claim/receipt tables; db only
+  "lib/workCenter/compat.ts", // /api/needs-you and project-badge adapters over the snapshot
+  "lib/agents/claude/executionObserver.ts", // folds native background events into an observation; pure
   "lib/codexSandbox.ts", // shared sandbox values for settings validation and the browser
   "lib/store.ts", //     imported by nearly everything, so it must stay SDK-free
   "lib/services.ts", //  behind sync-compiled routes (grant, services-restore)
@@ -160,6 +186,12 @@ const DYNAMIC_ONLY = [
   // routes depend on is that nothing here is statically async, which is
   // exactly what this list pins.
   "lib/prState.ts",
+  // Request-changes feedback launches a turn on the submitting task. The
+  // decision service imports it statically and it reaches the runner (and the
+  // auto-start hooks) only through await import(), so the route entries that
+  // import actions.ts stay sync-compiled.
+  "lib/reviews/feedback.ts",
+  "lib/reviews/actions.ts",
 ];
 
 // The other half of the same rule, in the other direction: nothing the driver

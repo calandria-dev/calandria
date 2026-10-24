@@ -86,3 +86,39 @@ export async function makeRepoWithWorktree(
   if (!wt) throw new Error("ensureWorktree returned null in fixture");
   return { repo, taskId, wt };
 }
+
+/**
+ * Park a live ask on a task the way the runner does: a registered waiter in
+ * lib/asks.ts plus its persisted question card. Returns the ask id and the
+ * card's message id. The waiter's promise is swallowed so a later settle or
+ * teardown does not surface as an unhandled rejection.
+ */
+export async function parkAsk(taskId: string, askId = `ask-${uid()}`, question = "Which way?"): Promise<{ askId: string; messageId: string }> {
+  const { waitForAnswer } = await import("@/lib/asks");
+  const { addMessage, getTask } = await import("@/lib/store");
+  const task = getTask(taskId)!;
+  const questions = [{ question, header: "Pick", options: [{ label: "A", description: "a" }, { label: "B", description: "b" }], multiSelect: false }];
+  waitForAnswer(taskId, askId, questions as never).catch(() => {});
+  const m = addMessage(taskId, task.generation, "tool", JSON.stringify({ title: "Question", ask: { id: askId, questions } }));
+  return { askId, messageId: m.id };
+}
+
+/** Park a live permission card the same way (ordinary Bash gate, no scope offer unless given). */
+export async function parkPermission(
+  taskId: string,
+  opts: { requestId?: string; kind?: "settings" | "environment"; scope?: unknown } = {}
+): Promise<{ requestId: string; messageId: string }> {
+  const { waitForAnswer } = await import("@/lib/asks");
+  const { addMessage, getTask } = await import("@/lib/store");
+  const task = getTask(taskId)!;
+  const requestId = opts.requestId ?? `perm:${uid()}`;
+  if (opts.kind === "environment") {
+    const { mandatoryDecisionWaiter } = await import("@/lib/advanced-env/capabilities");
+    mandatoryDecisionWaiter.park(taskId, requestId).catch(() => {});
+  } else {
+    waitForAnswer(taskId, requestId, []).catch(() => {});
+  }
+  const request = { id: requestId, tool: "Bash", title: "Run a command", detail: "ls", expiresAt: 0, ...(opts.kind ? { kind: opts.kind } : {}), ...(opts.scope ? { scope: opts.scope } : {}) };
+  const m = addMessage(taskId, task.generation, "tool", JSON.stringify({ title: "Permission needed", permission: { request } }));
+  return { requestId, messageId: m.id };
+}

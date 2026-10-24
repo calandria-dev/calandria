@@ -29,6 +29,9 @@ import { MessageView, SessionBreak, type LimitResume, type SuggestionActions } f
 import { CollabDoc } from "./CollabDoc";
 import { Composer } from "./Composer";
 import { SessionRail } from "./SessionRail";
+import { ReviewPane, type ReviewFocus } from "./ReviewPane";
+import { needsDecision } from "./reviewModel";
+import { useTaskReviews } from "./useTaskReviews";
 import { ReclaimButton } from "./ReclaimButton";
 import { usePrOpenRefresh } from "./PrChip";
 import { ColResize, ColRail } from "./Layout";
@@ -560,7 +563,7 @@ function useStableAsync<A extends unknown[], R>(fn: (...args: A) => Promise<R>):
   return useCallback((...args: A) => ref.current(...args), []);
 }
 
-export function SessionView({ project, task, tagsById, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSandbox, onSetSendContext, onSetAutoStart, onSnooze, onUnsnooze, onQueueStart, onCancelQueuedStart, onResolveWithAI, onFixCi, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand, diffRequest }: {
+export function SessionView({ project, task, tagsById, agents, messages, running, blockedBy, transcriptLoading, onSend, onStart, onStop, onClear, clearConfirming, onConfirmClear, onCancelClear, onEdit, onReconnect, onSetStatus, onSetPriority, onSetModel, onSetReasoning, onSetPermission, onSetSandbox, onSetSendContext, onSetAutoStart, onSnooze, onUnsnooze, onQueueStart, onCancelQueuedStart, onResolveWithAI, onFixCi, onMerged, onPrCreated, onAnswer, onDecidePermission, onCancelQueued, onStartSuggestion, onAcceptSuggestion, onDismissSuggestion, onBack, mobile, railW, onRailWidth, onRailReset, railCollapsed, onRailCollapse, onRailExpand, diffRequest, reviewRequest }: {
   project: ProjectRow; task: TaskRow; tagsById: Map<string, TagRow>; agents: AgentsBundle; messages: Msg[]; running: boolean; blockedBy?: string[]; transcriptLoading?: boolean;
   onSend: (t: string) => void; onStart: () => void; onStop: () => void; onClear: () => void; onEdit: () => void;
   clearConfirming?: boolean; onConfirmClear?: () => void; onCancelClear?: () => void;
@@ -594,6 +597,8 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   // Bumped by the shell's `d` key to bring the diff forward, the same move the
   // sync banner's "Review" makes. A value already set at mount is ignored.
   diffRequest?: number;
+  // A Work Center review chip opened this task: bring the REVIEW tab (Review segment on phone) forward on one submission.
+  reviewRequest?: ReviewFocus | null;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [statusOpen, setStatusOpen] = useState(false);
@@ -605,7 +610,22 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   const [priOpen, setPriOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [view, setView] = useState<"chat" | "changes">("chat");
+  const [view, setView] = useState<"chat" | "changes" | "review">("chat");
+  // The REVIEW tab and the Review segment exist only for a task with at least one review request.
+  const reviewsLoad = useTaskReviews(task.id, task.updated_at ?? 0);
+  const reviews = reviewsLoad.data?.requests ?? [];
+  // C3: "Ask agent to resubmit" opens the transcript composer, focused and empty (the Chat segment on phone).
+  const [composerFocus, setComposerFocus] = useState(0);
+  const askResubmit = useCallback(() => {
+    if (mobile) setView("chat");
+    setComposerFocus((n) => n + 1);
+  }, [mobile]);
+  const hasReview = reviews.length > 0;
+  useEffect(() => { if (view === "review" && !hasReview) setView("chat"); }, [view, hasReview]);
+  useEffect(() => {
+    if (!reviewRequest || reviewRequest.n === 0) return;
+    if (mobile) setView("review"); else if (railCollapsed) onRailExpand();
+  }, [reviewRequest?.n]); // eslint-disable-line react-hooks/exhaustive-deps
   // Sync banner / Changes tab coupling: both read the worktree's merge state,
   // so an accept/discard/land in Changes bumps `syncTick` to make the banner
   // re-read, and the banner's "Review" bumps `diffFocus` to bring the DIFF
@@ -948,7 +968,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
           </div>
         </div>
       )}
-      <Composer task={task} agentLabel={agentLabel(agents, task.agent)} disabled={task.started !== 1} running={running} onSend={onSend} onStop={onStop} onClear={onClear} />
+      <Composer task={task} agentLabel={agentLabel(agents, task.agent)} disabled={task.started !== 1} running={running} onSend={onSend} onStop={onStop} onClear={onClear} focusSignal={composerFocus} onFocusConsumed={() => setComposerFocus(0)} />
     </>
   );
 
@@ -1000,6 +1020,11 @@ export function SessionView({ project, task, tagsById, agents, messages, running
     <div className="viewseg">
       <button className={`viewseg-btn ${view === "chat" ? "on" : ""}`} onClick={() => setView("chat")}>Chat</button>
       <button className={`viewseg-btn ${view === "changes" ? "on" : ""}`} onClick={() => setView("changes")}>Changes</button>
+      {hasReview && (
+        <button className={`viewseg-btn ${view === "review" ? "on" : ""}`} onClick={() => setView("review")}>
+          Review{needsDecision(reviews) && <span className="wc-rv-tabdot" role="img" aria-label="decision pending" />}
+        </button>
+      )}
     </div>
   );
 
@@ -1290,11 +1315,13 @@ export function SessionView({ project, task, tagsById, agents, messages, running
               />
               <SessionRail
                 project={project} task={task} sessions={sessions} running={running} reportsContext={caps?.reportsContext !== false}
-                onResolveWithAI={onResolveWithAI} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} focusDiff={diffFocus} refreshChanges={changesTick} onClear={onClear} onCollapse={onRailCollapse} onSwitchToChat={() => { /* desktop transcript is always visible */ }}
+                onResolveWithAI={onResolveWithAI} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} focusDiff={diffFocus} refreshChanges={changesTick} reviews={reviews} reviewFocus={reviewRequest ?? null} onOpenDocument={setCollab} onAskResubmit={askResubmit} onReviewChanged={reviewsLoad.reload} onClear={onClear} onCollapse={onRailCollapse} onSwitchToChat={() => { /* desktop transcript is always visible */ }}
                 onSend={onSend}
               />
             </div>
           )
+        ) : view === "review" && hasReview ? (
+          <ReviewPane taskId={task.id} reviews={reviews} focus={reviewRequest ?? null} mobile onOpenDiff={() => setView("changes")} onOpenDocument={setCollab} onAskResubmit={askResubmit} onChanged={reviewsLoad.reload} />
         ) : view === "changes" ? (
           <TaskChanges taskId={task.id} taskTitle={task.title} projectId={project.id} running={running} pr={task} landingMode={project.landing_mode} onMerged={onMerged} onPrCreated={onPrCreated} onSyncChanged={onSyncChanged} refresh={changesTick} onSend={onSend} onResolveWithAI={async (id) => {
             const res = await onResolveWithAI(id);

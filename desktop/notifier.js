@@ -92,8 +92,13 @@ class NeedsYou {
 
   /** Adopt the authoritative list. Projects that vanished are dropped. */
   seed(projects) {
+    const prev = this.counts;
+    // `awaiting_count_exact === false` means the server could not compute the
+    // count right now (its value is a lower bound): keep the last known figure.
     this.counts = new Map(
-      (projects || []).filter((p) => p && !p.deprecated).map((p) => [p.id, Number(p.awaiting_count) || 0]),
+      (projects || [])
+        .filter((p) => p && !p.deprecated)
+        .map((p) => [p.id, p.awaiting_count_exact === false && prev.has(p.id) ? prev.get(p.id) : Number(p.awaiting_count) || 0]),
     );
     return this.total;
   }
@@ -102,11 +107,14 @@ class NeedsYou {
   apply(ev) {
     if (!ev) return null;
     if (ev.type === "tasks_moved") return "reseed";
+    // The Work Center's coalesced change signal: snooze expiry and other
+    // count moves carry no task event, so refetch the authoritative counts.
+    if (ev.type === "work_center_changed") return "reseed";
     if (ev.type !== "task" && ev.type !== "task_deleted") return null;
     // A project never seen before is either brand new or one filtered out as
     // deprecated; only the server can tell those apart.
     if (!this.counts.has(ev.projectId)) return "reseed";
-    this.counts.set(ev.projectId, Number(ev.awaiting_count) || 0);
+    if (ev.awaiting_count_exact !== false) this.counts.set(ev.projectId, Number(ev.awaiting_count) || 0);
     return "ok";
   }
 
@@ -208,9 +216,10 @@ function overlayIconName(count) {
 }
 
 /** What the tray tooltip says. The count is the whole message. */
-function trayTooltip(count) {
-  if (!count) return "Calandria";
-  return `Calandria: ${count} task${count === 1 ? "" : "s"} need${count === 1 ? "s" : ""} you`;
+function trayTooltip(count, offline = false) {
+  const stale = offline ? " (offline, last known)" : "";
+  if (!count) return `Calandria${stale}`;
+  return `Calandria: ${count} task${count === 1 ? "" : "s"} need${count === 1 ? "s" : ""} you${stale}`;
 }
 
 /**
@@ -243,6 +252,7 @@ class AppEvents {
     onEvent = () => {},
     onProjects = () => {},
     onLog = () => {},
+    onStatus = () => {},
     fetchImpl = globalThis.fetch,
     minBackoffMs = 1000,
     maxBackoffMs = 15_000,
@@ -252,6 +262,7 @@ class AppEvents {
     this.onEvent = onEvent;
     this.onProjects = onProjects;
     this.onLog = onLog;
+    this.onStatus = onStatus;
     this.fetch = fetchImpl;
     this.minBackoffMs = minBackoffMs;
     this.maxBackoffMs = maxBackoffMs;
@@ -303,6 +314,8 @@ class AppEvents {
         if (this.stopped) break;
         this.onLog(`[shell] event stream dropped: ${err?.message || err}`);
       }
+      // The counts stay as last known; the status says they may be stale.
+      this.onStatus("disconnected");
       if (this.stopped) break;
       await new Promise((r) => setTimeout(r, backoff));
       backoff = Math.min(backoff * 2, this.maxBackoffMs);
@@ -317,6 +330,7 @@ class AppEvents {
     });
     if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
     this.opens += 1;
+    this.onStatus("connected");
     // The first open is paired with the caller's own initial seed. Every
     // later open has a hole behind it (laptop sleep, a server restart) that
     // only a refetch can close.

@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { reviewRefusal } from "@/lib/reviews/gate";
+import { acceptedCodeHead } from "@/lib/reviews/landing";
 import { getTask, getProject } from "@/lib/store";
 import { mergeTaskPr } from "@/lib/github";
 import { prMergeBlocker } from "@/lib/prMerge";
@@ -53,6 +55,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "this task has no pull request to merge" }, { status: 400 });
     const project = getProject(task.project_id);
     if (!project) return NextResponse.json({ error: "no project" }, { status: 400 });
+    // Required reviews must be accepted for the exact artifact before it lands.
+    const reviewRefusal409 = await reviewRefusal(id);
+    if (reviewRefusal409) return NextResponse.json({ error: reviewRefusal409, code: "review_required" }, { status: 409 });
 
     // The project's repo, not the worktree: gh resolves the repo from origin,
     // and a task's checkout is reclaimable while its PR is still landable.
@@ -68,7 +73,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     const blocked = prMergeBlocker(fresh);
     if (blocked) return NextResponse.json({ ok: false, error: blocked, pr: prView(fresh) }, { status: 409 });
 
-    const result = await mergeTaskPr({ repoPath: cwd, number: fresh.pr_number });
+    // With an accepted code review, GitHub merges only that exact head: a push
+    // after the last read makes the merge fail instead of landing unreviewed work.
+    const result = await mergeTaskPr({ repoPath: cwd, number: fresh.pr_number, expectedHeadSha: acceptedCodeHead(id) ?? undefined });
     if (!result.ok) return NextResponse.json({ ...result, pr: prView(fresh) }, { status: 409 });
 
     // The handoff. An immediate merge is worth waiting one `gh pr view` for,

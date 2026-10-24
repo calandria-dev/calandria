@@ -727,7 +727,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     // bubble but dimmed, tagged "Queued", with an × to drop it before it runs.
     const { text, attachments } = splitAttachments(m.content);
     return (
-      <div className="msg user queued">
+      <div className="msg user queued" data-message-id={m.id} tabIndex={-1}>
         <div className="who"><Avatar who="user" /> You<span className="badge queued-badge">queued</span>{m.ts != null && <span className="msg-time">{clockTime(m.ts)}</span>}</div>
         <div className="msg-body">
           {text && <Markdown links={links}>{text}</Markdown>}
@@ -741,16 +741,16 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     let data: ToolData;
     try { data = JSON.parse(m.content) as ToolData; } catch { data = { title: m.content }; }
     if (data.ask) {
-      return <div className="msg msg-tool"><AskView data={data} agentLabel={agentLabel} onAnswer={(answers) => onAnswer?.(data.ask?.id || m.toolId || "", data.ask?.questions ?? [], answers)} /></div>;
+      return <div className="msg msg-tool" data-message-id={m.id} tabIndex={-1}><AskView data={data} agentLabel={agentLabel} onAnswer={(answers) => onAnswer?.(data.ask?.id || m.toolId || "", data.ask?.questions ?? [], answers)} /></div>;
     }
     if (data.permission) {
-      return <div className="msg msg-tool"><PermissionView data={data} agentLabel={agentLabel} onDecide={(d, note, priv) => onDecidePermission?.(data.permission?.request.id || m.toolId || "", d, note, data.permission?.request.kind, priv)} /></div>;
+      return <div className="msg msg-tool" data-message-id={m.id} tabIndex={-1}><PermissionView data={data} agentLabel={agentLabel} onDecide={(d, note, priv) => onDecidePermission?.(data.permission?.request.id || m.toolId || "", d, note, data.permission?.request.kind, priv)} /></div>;
     }
     // A suggest_task call that actually filed a task carries its card below the
     // ordinary tool row instead of replacing it: the call, its input and its
     // result are still what happened, and the proposal is the artifact it left.
     return (
-      <div className="msg msg-tool">
+      <div className="msg msg-tool" data-message-id={m.id} tabIndex={-1}>
         <ToolView data={data} onCollaborate={onCollaborate} />
         {data.suggestion && <SuggestionView data={data} actions={suggestionActions} />}
         {data.issueReport && <IssueReportView data={data} />}
@@ -764,7 +764,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     // the durable, reconnect-safe channel written by lib/runner.ts.
     if (m.content.includes(CONTEXT_OVERFLOW_NOTICE)) {
       return (
-        <div className="msg system overflow">
+        <div className="msg system overflow" data-message-id={m.id} tabIndex={-1}>
           <div className="msg-body">
             {m.content}
             {onClear && (
@@ -784,7 +784,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     // the in-context copy for whoever is reading the failed task.
     if (m.content.includes(AUTH_EXPIRED_NOTICE)) {
       return (
-        <div className="msg system overflow">
+        <div className="msg system overflow" data-message-id={m.id} tabIndex={-1}>
           <div className="msg-body">
             {m.content}
             {onReconnect && (
@@ -806,7 +806,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     // the same slot says so and offers Cancel.
     if (m.content.includes(USAGE_LIMIT_NOTICE)) {
       return (
-        <div className="msg system overflow">
+        <div className="msg system overflow" data-message-id={m.id} tabIndex={-1}>
           <div className="msg-body">
             {m.content}
             {limitResume && limitResume.queuedAt > 0 && (
@@ -833,7 +833,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     // Agents shows (see lib/budgetFailure.ts).
     if (m.content.includes(BUDGET_EXCEEDED_NOTICE)) {
       return (
-        <div className="msg system overflow">
+        <div className="msg system overflow" data-message-id={m.id} tabIndex={-1}>
           <div className="msg-body">
             {m.content}
             {onRetry && (
@@ -854,7 +854,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     // resending the failed message is the recovery (see lib/approvalFailure.ts).
     if (m.content.includes(APPROVAL_BLOCKED_NOTICE)) {
       return (
-        <div className="msg system overflow">
+        <div className="msg system overflow" data-message-id={m.id} tabIndex={-1}>
           <div className="msg-body">
             {m.content}
             {onRetry && (
@@ -879,7 +879,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     // explanation without this notice, and fall through to the plain ⚠ line.
     if (m.content.includes(WORKTREE_REPAIR_NOTICE)) {
       return (
-        <div className="msg system overflow">
+        <div className="msg system overflow" data-message-id={m.id} tabIndex={-1}>
           <div className="msg-body">
             {m.content}
             {onRepairWorktree && <RepairWorktree msgId={m.id} running={running} onRepair={onRepairWorktree} />}
@@ -895,7 +895,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     // lib/agents/claude/sessionCrons.ts), and anything else is a quiet note:
     // a background command settling, a service URL, a lingered wake-up (⏵).
     const tone = /^[✓ℹ▶]/.test(m.content) ? "info" : /^[⚠⏰]/.test(m.content) ? "" : "note";
-    return <div className={`msg system${tone ? ` ${tone}` : ""}`}><div className="msg-body">{m.content}</div></div>;
+    return <div className={`msg system${tone ? ` ${tone}` : ""}`} data-message-id={m.id} tabIndex={-1}><div className="msg-body">{m.content}</div></div>;
   }
   if (m.streaming) {
     // The live-typing bubble (useTaskStream's LIVE_MSG_ID): the reply as the
@@ -921,7 +921,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
   // Only user messages carry attachment markers; assistant text passes through.
   const { text, attachments } = isUser ? splitAttachments(m.content) : { text: m.content, attachments: [] };
   return (
-    <div className={`msg ${isUser ? "user" : "assistant"} ${initial ? "initial" : ""}`}>
+    <div className={`msg ${isUser ? "user" : "assistant"} ${initial ? "initial" : ""}`} data-message-id={m.id} tabIndex={-1}>
       {!hideWho && (
         <div className="who">
           <Avatar who={isUser ? "user" : "cc"} agent={agent} />

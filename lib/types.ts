@@ -1,3 +1,4 @@
+import type { ExecutionObservation } from "./workCenter/types";
 export type Priority = "hi" | "med" | "lo";
 /** The full set of legal `priority` values. No CHECK constraint backs the column, so this array is the source of truth. */
 export const PRIORITIES: Priority[] = ["hi", "med", "lo"];
@@ -116,6 +117,41 @@ export interface Task {
   awaiting_input: number; // 1 when it's your turn: Claude's turn ended mid-task, or it's parked on an AskUserQuestion
   background_pending: number; // 1 while the turn lingers on background work (model turn ended, run_in_background tasks still running; the turn resumes when they settle). running stays 1 the whole time
   background_note: string; // what the linger is waiting on, phrased for the activity line ("waiting to wake at 12:00"); "" whenever background_pending is 0
+  // Model-turn identity and latest-result metadata (lib/workCenter/execution.ts).
+  // NULL on a row that predates them: unknown, never a guessed outcome. Written
+  // only by the dedicated store helpers, never through updateTask().
+  active_turn_id: string | null; // the model turn in progress; cleared when it finalizes
+  active_turn_session_id: string | null;
+  active_turn_started_at: number | null;
+  active_turn_generation: number | null;
+  latest_turn_id: string | null; // newest finalized model turn
+  latest_turn_session_id: string | null;
+  latest_turn_generation: number | null;
+  latest_turn_started_at: number | null;
+  latest_turn_ended_at: number | null;
+  latest_turn_outcome: "ok" | "failed" | "stopped" | "interrupted" | "unknown" | null;
+  latest_turn_terminal_message_id: string | null;
+  latest_turn_schedule_run_id: string | null;
+  latest_turn_failure_code: "context_limit" | "auth" | "approval" | "execution" | null;
+  latest_turn_failure_resolved_at: number | null; // NULL until recovery succeeds or a generic failure is acknowledged
+  completed_at: number | null; // the actual transition into done; cleared on reopen; NULL on old rows
+  // Work Center source identity (lib/workCenter/); NULL on rows that predate it.
+  failure_ack_turn_id: string | null; // the generic-failure turn a person acknowledged
+  base_rewrite_episode_id: string | null; // episode of the flag in base_rewritten_at
+  base_rewrite_message_id: string | null;
+  base_rewrite_base_sha: string | null;
+  pr_head_sha: string | null; // head the stored check evidence was read against
+  pr_repository_id: string | null;
+  pr_ci_episode_id: string | null; // current failing-CI episode; NULL when not failing
+  pr_ci_episode_fingerprint: string | null;
+  pr_ci_snapshot_json: string | null; // structured check evidence (lib/workCenter/ciEvidence.ts)
+  pr_ci_episode_started_at: number | null;
+  pr_refresh_attempted_at: number | null; // last refresh attempt, successful or not
+  pr_refresh_error: string | null; // why the last attempt failed; NULL after a success
+  ci_recovery_episode_id: string | null; // episode an authorized Fix CI run owns
+  ci_recovery_turn_id: string | null;
+  review_content_epoch: number; // bumped by every operation that can change reviewed source (lib/reviews/)
+  active_review_action_id: string | null; // the one feedback dispatch that currently owns this task's input (lib/reviews/feedback.ts)
   schedule_id: string | null; // the schedule that minted this task (lib/scheduler.ts); null = created by hand
   runbook_id: string | null; // the runbook that dispatched this task (lib/dispatch.ts); null = not from one
   // When a snooze ends (ms epoch; 0 = never snoozed / indicator cleared). Ahead
@@ -238,6 +274,8 @@ export interface Message {
   role: MsgRole;
   content: string;
   created_at: number;
+  /** The review action whose feedback this row delivered, when it did (lib/reviews/feedback.ts). */
+  review_action_id?: string | null;
 }
 
 export interface Summary {
@@ -258,6 +296,8 @@ export interface PendingMessage {
   generation: number;
   content: string;
   created_at: number;
+  /** The review action this parked follow-up carries (lib/reviews/feedback.ts). */
+  review_action_id?: string | null;
 }
 
 // A review comment left on a task's diff (Changes tab), anchored to a file,
@@ -805,6 +845,11 @@ export type StreamEvent =
   // one that never learns a reset time simply doesn't arm the queued resume,
   // and the notice keeps saying the limit has to reset first.
   | { type: "error"; content: string; resetAt?: number }
+  // What the driver can see of the live session: foreground phase, active
+  // background operations, pending wakeups. Emitted on every change and once
+  // for the initial state. The runner attaches the task, generation and turn
+  // id; the registry in lib/workCenter/execution.ts keeps the latest one.
+  | ExecutionObservation
   | { type: "done"; sessionId: string | null };
 
 // Events as delivered over the task event bus and the GET /messages SSE tail.
@@ -879,6 +924,8 @@ export type GlobalTaskEvent = {
   idle_since: number;
   /** In-progress tasks awaiting the user across this task's project. */
   awaiting_count: number;
+  /** False when awaiting_count is only a lower bound (the visible count is unavailable). */
+  awaiting_count_exact?: boolean;
   /**
    * On a "suggested" event only: the project the new task was filed into.
    * Usually the same as `projectId`, but suggest_task can target any project;

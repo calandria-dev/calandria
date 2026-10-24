@@ -6,10 +6,13 @@ import TaskChanges, { type ResolveResult } from "../TaskChanges";
 import { fmtTokens } from "./format";
 import { clientFeatures } from "@/lib/features";
 import type { ServiceInfo } from "@/lib/types";
+import type { ReviewView } from "@/lib/reviews/types";
 import type { ProjectRow, TaskRow } from "./types";
+import { ReviewPane, type ReviewFocus } from "./ReviewPane";
+import { needsDecision } from "./reviewModel";
 import { apiFetch } from "./api";
 
-type Tab = "diff" | "preview" | "context";
+type Tab = "diff" | "preview" | "context" | "review";
 type Session = { n: number; summaryBefore: string | null };
 
 // The live URL a project's dev server is reachable at when no registered
@@ -125,7 +128,7 @@ function ContextPane({ task, sessions, running, onClear, reportsContext }: { tas
   );
 }
 
-export function SessionRail({ project, task, sessions, running, reportsContext = true, onResolveWithAI, onMerged, onPrCreated, onSyncChanged, focusDiff, refreshChanges, onClear, onCollapse, onSwitchToChat, onSend }: {
+export function SessionRail({ project, task, sessions, running, reportsContext = true, onResolveWithAI, onMerged, onPrCreated, onSyncChanged, focusDiff, refreshChanges, onClear, onCollapse, onSwitchToChat, onSend, reviews, reviewFocus, onOpenDocument, onAskResubmit, onReviewChanged }: {
   project: ProjectRow; task: TaskRow; sessions: Session[]; running: boolean;
   reportsContext?: boolean; // the task's agent measures context occupancy (capabilities.reportsContext); decides how an estimate is explained
   onResolveWithAI: (taskId: string) => Promise<ResolveResult>;
@@ -139,6 +142,13 @@ export function SessionRail({ project, task, sessions, running, reportsContext =
   refreshChanges?: number; // bumped when something outside this rail (the sync banner) changed the merge state
   onClear: () => void; onCollapse: () => void; onSwitchToChat: () => void;
   onSend: (t: string) => void; // review comments' "Send to agent", same path chat uses
+  // REVIEW exists only for a task with at least one review request (empty or absent = no tab).
+  // `reviewFocus` is bumped by a Work Center chip and brings the tab forward on one submission.
+  reviews?: ReviewView[];
+  reviewFocus?: ReviewFocus | null;
+  onOpenDocument?: (path: string) => void;
+  onAskResubmit?: () => void;
+  onReviewChanged?: () => void;
 }) {
   // PREVIEW (project live-URL view) rides on the remote-execution backend, which
   // isn't real yet, so it stays behind a flag (default off) until the live URL
@@ -146,8 +156,12 @@ export function SessionRail({ project, task, sessions, running, reportsContext =
   const showPreview = clientFeatures().livePreview;
   const [tab, setTab] = useState<Tab>("diff");
   useEffect(() => { if (focusDiff) setTab("diff"); }, [focusDiff]);
-  const Tab = ({ id, label }: { id: Tab; label: string }) => (
-    <button className={`rail-tab ${tab === id ? "on" : ""}`} onClick={() => setTab(id)}>{label}</button>
+  const hasReview = (reviews?.length ?? 0) > 0;
+  useEffect(() => { if (reviewFocus && reviewFocus.n > 0 && hasReview) setTab("review"); }, [reviewFocus?.n, hasReview]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A task that loses its review requests (switching tasks) must not leave an empty tab selected.
+  useEffect(() => { if (tab === "review" && !hasReview) setTab("diff"); }, [tab, hasReview]);
+  const Tab = ({ id, label, dot }: { id: Tab; label: string; dot?: boolean }) => (
+    <button className={`rail-tab ${tab === id ? "on" : ""}`} onClick={() => setTab(id)}>{label}{dot && <span className="wc-rv-tabdot" role="img" aria-label="decision pending" />}</button>
   );
   return (
     <aside className="sess-rail">
@@ -155,6 +169,7 @@ export function SessionRail({ project, task, sessions, running, reportsContext =
         <Tab id="diff" label="DIFF" />
         {showPreview && <Tab id="preview" label="PREVIEW" />}
         <Tab id="context" label="CONTEXT" />
+        {hasReview && <Tab id="review" label="REVIEW" dot={needsDecision(reviews!)} />}
         <span style={{ flex: 1 }} />
         <button className="rail-collapse" onClick={onCollapse} title="Hide panel">{Icon.chevRight()}</button>
       </div>
@@ -167,6 +182,9 @@ export function SessionRail({ project, task, sessions, running, reportsContext =
           }} />
         )}
         {tab === "preview" && showPreview && <PreviewPane project={project} />}
+        {tab === "review" && hasReview && (
+          <ReviewPane taskId={task.id} reviews={reviews!} focus={reviewFocus ?? null} mobile={false} onOpenDiff={() => setTab("diff")} onOpenDocument={(f) => onOpenDocument?.(f)} onAskResubmit={() => onAskResubmit?.()} onChanged={() => onReviewChanged?.()} />
+        )}
         {tab === "context" && <ContextPane task={task} sessions={sessions} running={running} onClear={onClear} reportsContext={reportsContext} />}
       </div>
     </aside>

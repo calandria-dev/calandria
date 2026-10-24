@@ -47,7 +47,13 @@ const saveDraft = (taskId: string, v: string) => {
 // ordinary send path hands it to the CLI, the same as typing it in full.
 type MenuCommand = { name: string; desc: string; hint?: string; aliases?: string[]; run?: () => void };
 
-export function Composer({ task, agentLabel, disabled, running, onSend, onStop, onClear }: { task: TaskRow; agentLabel: string; disabled: boolean; running: boolean; onSend: (t: string) => void; onStop: () => void; onClear: () => void }) {
+export function Composer({ task, agentLabel, disabled, running, onSend, onStop, onClear, focusSignal = 0, onFocusConsumed }: {
+  task: TaskRow; agentLabel: string; disabled: boolean; running: boolean; onSend: (t: string) => void; onStop: () => void; onClear: () => void;
+  /** Bumped from outside (the Review tab's "Ask agent to resubmit") to focus the message field. */
+  focusSignal?: number;
+  /** The parent clears the signal once consumed so a remount of the Composer does not focus again. */
+  onFocusConsumed?: () => void;
+}) {
   const [val, setVal] = useState(() => loadDraft(task.id));
   // On a touch keyboard, return means "new line" since there is no Shift to
   // hold, and the send button is the one visible affordance for sending.
@@ -85,6 +91,12 @@ export function Composer({ task, agentLabel, disabled, running, onSend, onStop, 
   // Mirror the draft to localStorage so it survives remounts/navigation.
   useEffect(() => { saveDraft(task.id, val); }, [task.id, val]);
   const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!focusSignal) return;
+    // The phone switches to the Chat segment in the same click, so focus waits for that render.
+    const t = setTimeout(() => { ref.current?.focus(); ref.current?.scrollIntoView({ block: "nearest" }); onFocusConsumed?.(); }, 0);
+    return () => clearTimeout(t);
+  }, [focusSignal]);
   // Put the caret after the last character. Needed for the writes the app makes
   // itself, since replacing the field's text drops the selection with it.
   const caretToEnd = (el: HTMLElement) => {
