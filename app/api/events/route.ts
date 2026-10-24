@@ -1,5 +1,5 @@
 import { getTask } from "@/lib/store";
-import { awaitingCountFor } from "@/lib/workCenter/compat";
+import { awaitingCountExactFor, awaitingCountFor } from "@/lib/workCenter/compat";
 import { turnIdleSince } from "@/lib/turnActivity";
 import { subscribeGlobal, type BusEvent, type GlobalTaskWireEvent, type GlobalWireEvent } from "@/lib/events";
 import { ensureNotifier } from "@/lib/notifications/dispatcher";
@@ -196,6 +196,7 @@ export async function GET(req: Request) {
           // event a client receives re-settles the mark.
           idle_since: turnIdleSince(taskId),
           awaiting_count: awaitingCountFor(t.project_id),
+          awaiting_count_exact: awaitingCountExactFor(t.project_id),
           // A suggestion can be filed into a project other than the one the
           // turn runs in, and then every field above describes the WRONG
           // project as far as the tray is concerned. Carry the target too.

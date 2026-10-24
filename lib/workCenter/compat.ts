@@ -44,6 +44,16 @@ export function awaitingCountFor(projectId: string): number {
   return p ? shown(p.summary.visibleNeedsYouTaskCount) : 0;
 }
 
+/**
+ * False when the project's visible count is unavailable (value null): the
+ * number from awaitingCountFor() is then only a lower bound, and a consumer
+ * that kept a last known count (the desktop badge) should keep it.
+ */
+export function awaitingCountExactFor(projectId: string): boolean {
+  const p = globalSnapshot().projects.find((x) => x.projectId === projectId);
+  return p ? p.summary.visibleNeedsYouTaskCount.value !== null : true;
+}
+
 /** Visible counts for every in-scope project, for the project list. */
 export function awaitingCounts(): Map<string, number> {
   return new Map(globalSnapshot().projects.map((p) => [p.projectId, shown(p.summary.visibleNeedsYouTaskCount)]));
@@ -73,4 +83,9 @@ export function needsYouRows(): NeedsYouRow[] {
     });
   }
   return rows.sort((a, b) => a.waiting_since - b.waiting_since);
+}
+
+/** Project ids whose visible count is unavailable right now. */
+export function inexactProjectIds(): Set<string> {
+  return new Set(globalSnapshot().projects.filter((p) => p.summary.visibleNeedsYouTaskCount.value === null).map((p) => p.projectId));
 }

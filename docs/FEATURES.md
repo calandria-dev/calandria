@@ -506,6 +506,13 @@ drops out of the Work Center list, the pill count, and the project badge. When t
 you wake it by hand, or you drag its card out of the column, it returns to exactly the group it
 came from, marked **Was snoozed**; opening the task clears that marker.
 
+When a snooze deadline passes with the item still open, Calandria sends one "Snooze ended"
+notification per device and deadline. It checks on the scheduler's ticker, so it runs even with
+scheduled work switched off, and the desktop badge and every other count pick the task up at the
+same moment. A restart does not repeat a reminder or a notification that was already claimed. A
+send that was in flight when the server stopped counts as sent and is not retried, so a push can
+be lost in that case but is never duplicated by Calandria.
+
 **What it does not do:**
 
 - Nothing sweeps for due snoozes on a timer. One that comes due while the app is closed is

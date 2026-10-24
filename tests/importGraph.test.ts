@@ -30,6 +30,7 @@ const PINNED = [
   "lib/workCenter/proposals.ts", // SDK-free Advanced Settings proposal metadata; lib/advanced-env/proposals.ts registers into it
   "lib/workCenter/bridge.ts", // global-bus to sequence/work_center_changed relay; events + store only
   "lib/workCenter/snapshot.ts", // the attention adapters and snapshot assembly; store, asks, abort and registries only
+  "lib/workCenter/notifyReceipts.ts", // notification claim/receipt tables; db only
   "lib/workCenter/compat.ts", // /api/needs-you and project-badge adapters over the snapshot
   "lib/agents/claude/executionObserver.ts", // folds native background events into an observation; pure
   "lib/codexSandbox.ts", // shared sandbox values for settings validation and the browser

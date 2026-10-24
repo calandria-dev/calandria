@@ -1058,6 +1058,41 @@ function hold(port) {
     assert.equal(n.apply({ type: "tasks_moved", taskIds: ["t"], fromProjectIds: ["p1"], toProjectId: "p2" }), "reseed");
   });
 
+  await test("the badge keeps the last known count when the server cannot compute one, and reseeds on a Work Center change", async () => {
+    const n = new NeedsYou();
+    n.seed([{ id: "p1", awaiting_count: 3, awaiting_count_exact: true }, { id: "p2", awaiting_count: 1 }]);
+    assert.equal(n.total, 4);
+    // visibleNeedsYouTaskCount.value was null for p1: the wire number is a lower bound.
+    n.seed([{ id: "p1", awaiting_count: 0, awaiting_count_exact: false }, { id: "p2", awaiting_count: 1 }]);
+    assert.equal(n.total, 4);
+    assert.equal(n.apply({ type: "task", projectId: "p1", awaiting_count: 0, awaiting_count_exact: false }), "ok");
+    assert.equal(n.total, 4);
+    // A snooze expiring (or any source change) carries no task event; the
+    // coalesced Work Center signal asks for the authoritative counts.
+    assert.equal(n.apply({ type: "work_center_changed", sequence: 9 }), "reseed");
+    // A snoozed task leaves the count the server reports; an exact seed adopts it.
+    n.seed([{ id: "p1", awaiting_count: 2, awaiting_count_exact: true }, { id: "p2", awaiting_count: 1 }]);
+    assert.equal(n.total, 3);
+  });
+
+  await test("an offline instance keeps its last count and the tooltip says so", async () => {
+    assert.equal(trayTooltip(2, true), "Calandria: 2 tasks need you (offline, last known)");
+    assert.equal(trayTooltip(0, true), "Calandria (offline, last known)");
+    const statuses = [];
+    const ev = new AppEvents({
+      origin: "http://x",
+      fetchImpl: async () => { throw new Error("down"); },
+      onStatus: (s) => statuses.push(s),
+      minBackoffMs: 5,
+      maxBackoffMs: 5,
+    });
+    ev.start();
+    await new Promise((r) => setTimeout(r, 30));
+    ev.stop();
+    assert.ok(statuses.includes("disconnected"));
+    assert.ok(!statuses.includes("connected"));
+  });
+
   await test("the shell suppresses exactly one toast: the task you are looking at", async () => {
     const payload = { id: "awaiting_input:t1", taskId: "t1", title: "Waiting for input", body: "…" };
     // Matches shouldDisplay in app/shell/useNotifications.ts.

@@ -62,9 +62,10 @@ async function badge(): Promise<number> {
  * the badge sums. The mock agent raises the card from the description
  * (`e2e/README.md`).
  */
-async function parkOneTask(origin: string, projectId: string, title: string): Promise<void> {
+async function parkOneTask(origin: string, projectId: string, title: string): Promise<string> {
   const task = await createTask(origin, { projectId, title, description: "e2e:permission=npm run lint" });
   await sendMessage(origin, task.id);
+  return task.id;
 }
 
 /** How many tasks a server itself says are waiting. The badge has to agree. */
@@ -146,6 +147,33 @@ test("the badge is the SUM of both instances' awaiting counts", async () => {
   // and the dock shows what they add up to.
   expect(await awaitingOn(shell.origin)).toBe(1);
   expect(await awaitingOn(remote.origin)).toBe(1);
+});
+
+test("a snoozed task leaves the badge and rejoins it at its deadline, with no task event", async () => {
+  // The visible needs-you count (Summary.visibleNeedsYouTaskCount) is what the
+  // dock shows, so a snooze removes the task from the sum and the deadline
+  // passing puts it back. Nothing is published at expiry except the Work
+  // Center change the scheduler's ticker raises, which is what this waits on.
+  const taskId = await parkOneTask(shell.origin, localProjectId, "Local snoozed");
+  await expect.poll(badge, { timeout: 120_000 }).toBe(3);
+  const deadline = Date.now() + 20_000;
+  const res = await fetch(`${shell.origin}/api/tasks/${taskId}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ snoozed_until: deadline }),
+  });
+  expect(res.ok).toBe(true);
+  await expect.poll(badge, { timeout: 30_000, message: "a snoozed task still counted" }).toBe(2);
+  await expect
+    .poll(badge, { timeout: 120_000, message: "the task never rejoined the count at its deadline" })
+    .toBe(3);
+  // Park the extra task out of the way of the sum the next test asserts.
+  await fetch(`${shell.origin}/api/tasks/${taskId}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ snoozed_until: Date.now() + 3_600_000 }),
+  });
+  await expect.poll(badge, { timeout: 30_000 }).toBe(2);
 });
 
 test("switching to the remote adopts the name its server reports, and keeps the sum", async () => {
