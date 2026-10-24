@@ -1,66 +1,48 @@
-# Advance notice for the Dockerfile pins that rot without telling anyone.
+# Keeps the pinned agent tooling current. Four npm packages are bumped by
+# pull request as soon as the registry's `latest` is a newer stable version:
+# `CLAUDE_CODE_VERSION` and `CODEX_VERSION` (Dockerfile ARGs), and the exact
+# `@openai/codex-sdk` and `@anthropic-ai/claude-agent-sdk` dependencies in
+# package.json. The pins stay exact, so every build is reproducible, and the
+# cron runs hourly so a release reaches the image within about an hour.
 #
-# `gh=<version>` and `AGY_VERSION` have upstreams that serve exactly one
-# version, so an upstream release does not make the pin old, it makes it GONE,
-# and the build fails. `gh` is the worse of the two, because publish-image.yml's `type=gha`
-# layer cache keeps reusing the layer that installed the old version: the
-# `Publish image` lane stayed green through a `gh` pin that no cold build could
-# resolve, and it was found only because PR #183 happened to build locally
-# without a cache. Issue #182 was the second time the agy pin fired.
+# The Codex target is `@openai/codex-sdk`'s `latest`, and only when that SDK
+# release depends on the same `@openai/codex` version. The SDK exact-depends on
+# its CLI and tests/cliPins.test.ts holds the two equal, and the CLI is
+# published before its SDK. A run in that gap waits for the next hour instead
+# of opening a PR that fails the test. A Codex bump also moves
+# DEFAULT_CODEX_MODEL in lib/agents/codex/pricing.ts to the new CLI's embedded
+# default, since that constant prices every default turn and
+# tests/cliPins.test.ts holds it equal to embeddedDefault.json. When the new
+# model has no PRICES row of its own the script holds the Codex pin back and the
+# drift issue asks for the price.
 #
-# `CLAUDE_CODE_VERSION` and `CODEX_VERSION` fail the other way. npm keeps old
-# versions, so those still build — what breaks is behaviour, and silently:
-# `@openai/codex` sat seven minors back at 0.146.0 and GPT-6 Astra could not run
-# on it at all ("model requires a newer version of codex"). A new model can
-# require a CLI bump, so being behind is not cosmetic. They are reported on
-# STALENESS (three weeks old, or three newer minors) rather than on difference,
-# because claude-code ships ~25 releases a month and "newer exists" would be a
-# notice a day. Thresholds and the reasoning are in the script.
+# `agy` has no pin. The image installs the version the vendor manifest serves
+# and verifies the manifest's sha512, so there is nothing here to bump.
 #
-# Two behavior checks sit beside those thresholds and ignore them. The pinned
-# and latest CLIs are installed into isolated prefixes and asked what they do:
+# `gh` is pinned by `ARG GH_VERSION` to a GitHub release tarball, which stays
+# downloadable. A newer release is reported in the drift issue and the build
+# keeps working until someone bumps the ARG.
+#
+# Two behavior checks sit beside the bump and run on every pass. The pinned and
+# latest CLIs are installed into isolated prefixes and asked what they do:
 # Claude Code, which model each family alias resolves to; Codex, which model
 # runs with no override, read from the fallback catalog compiled into the
-# binary under an empty CODEX_HOME. A patch release can move either answer
-# with every version-distance rule quiet, so a disagreement is reported in the
-# issue on its own, naming both CLI versions and both model ids.
+# binary under an empty CODEX_HOME. A patch release can move either answer, so
+# a disagreement is reported in the issue on its own, naming both CLI versions
+# and both model ids. A Codex default that has no price is held out of the
+# bump and reported the same way.
 #
-# The pins themselves stay (issue #21, and the comments at the Dockerfile
-# sites). This is the missing half: a check that reads each upstream, compares
-# it with the Dockerfile, and turns a surprise into an issue filed days earlier.
-# The equality this check cannot see — `@openai/codex-sdk` against
-# `CODEX_VERSION` — is repaired in the bump job with npm's lockfile writer and
-# remains guarded by `tests/cliPins.test.ts`.
-#
-# A Codex bump also moves DEFAULT_CODEX_MODEL in lib/agents/codex/pricing.ts to
-# the new CLI's embedded default, since that constant prices every default turn
-# and tests/cliPins.test.ts holds it equal to embeddedDefault.json. When the new
-# model has no PRICES row of its own the script holds the Codex pin back and the
-# drift issue asks for the price instead.
-#
-# THE AGENT CLI PINS ARE A PULL REQUEST, NOT AN ISSUE PARAGRAPH. The AGY vendor
-# manifests and npm's exact CLI versions are sufficient to produce the change:
-# the vendor's manifest is the whole source of truth, it carries the version and
-# the SHA-512 this job already fetched, and the Dockerfile's own guard rejects
-# any pair that does not match what is being served. So the `bump` job below
-# rewrites all three ARGs on one stable bot branch and opens or refreshes one
-# pull request. It queues auto-merge only after the branch head is verified and
-# all required CI contexts are dispatched against it. CI and the branch ruleset
-# are the merge gate; this workflow never bypasses failed checks.
-#
-# WHY NOT A BOT, REVISITED. .github/dependabot.yml covers what Dependabot can
-# see: action SHAs, the base-image digest, website/ npm. Its `docker` ecosystem
-# reads `FROM` lines and rewrites digests; it has no idea what `gh=2.99.0`
-# inside a `RUN` or an `ARG AGY_VERSION` mean. Renovate's regex customManagers
-# CAN see both, and were prototyped against this repo and declined, for the
-# reasons recorded at length in dependabot.yml. Both of those are third-party
-# bots that would have to be trusted with write access to this repo and given a
-# credential that outlives any one run. The `bump` job is neither: it is forty
-# lines in this repo, and it runs on the built-in `GITHUB_TOKEN` except for the
+# The `bump` job rewrites the ARGs and package.json on one stable bot branch and
+# opens or refreshes one pull request. It queues auto-merge only after the
+# branch head is verified and all required CI contexts are dispatched against
+# it. CI and the branch ruleset are the merge gate; this workflow never
+# bypasses failed checks. It runs on the built-in `GITHUB_TOKEN` except for the
 # one call that queues auto-merge, which uses RELEASE_PLEASE_TOKEN so the merge
-# starts release-please (see that step). `gh=` stays a notice because the apt
-# index carries no checksum to write. The Agent SDK remains an issue because it
-# changes the turn contract and needs its own behavioral review.
+# starts release-please (see that step).
+#
+# An hourly run pushes the bot branch only when the proposed pin changes differ
+# from what the branch already carries, so a busy main does not restart CI every
+# hour.
 #
 # WHY THE BUMP JOB DISPATCHES CI. A push made with `GITHUB_TOKEN` fires no
 # `push` workflow. A `pull_request` workflow caused by a PR opened with that
@@ -69,7 +51,7 @@
 # and approval behavior. The fix is neither a PAT nor a weakened ruleset:
 # `workflow_dispatch` supplies deterministic checks, and the job approves only
 # the held `pull_request` runs for the exact PR head after the PR exists. Check
-# runs attach to the head SHA rather than to the PR, and the PR's head SHA is
+# runs attach to the head SHA, not to the PR, and the PR's head SHA is
 # the bot branch's head. The job dispatches `Test`, the desktop release skip
 # check, and `Publish image` against that branch. It refuses to finish until
 # each dispatched workflow has a run whose `headSha` is the commit it pushed,
@@ -80,20 +62,18 @@ name: Pin drift
 
 on:
   schedule:
-    # 08:11 UTC, an hour ahead of `Publish image`'s nightly 09:23, so a pin that
-    # aged out overnight is already an open issue by the time the build it
-    # breaks would have run. Daily rather than weekly because the check is a
-    # handful of GETs against static files — cheaper than the notice being six
-    # days late. The staleness thresholds, not the cron, are what keep the
-    # class-two pins from filing something every morning.
-    - cron: "11 8 * * *"
+    # Hourly, so a new upstream release reaches the image within about an hour.
+    # Each run is a handful of GETs against the registry and the GitHub API,
+    # plus four CLI installs for the behavior probes. The minute is off the
+    # hour to stay clear of the crowd of jobs scheduled at :00.
+    - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:
         # Proves the bump path end to end without putting a pull request in
         # front of anyone: the branch is pushed and both workflows are
         # dispatched and confirmed, and nothing else happens. Cut from the
-        # DISPATCHING ref rather than from main, so a change to this file can
+        # DISPATCHING ref, not from main, so a change to this file can
         # be exercised on its own PR branch before it is merged.
         description: "Push a throwaway branch and dispatch CI, but publish no issue or pull request"
         type: boolean
@@ -127,21 +107,17 @@ jobs:
       contents: read
       # For the drift issue below. Nothing in THIS job writes code: it rewrites
       # the Dockerfile in its own workspace and throws it away, passing the
-      # three values it decided on to the `bump` job as an output instead. That
+      # values it decided on to the `bump` job as an output instead. That
       # is what keeps `contents: write` off the job that talks to the issue
       # tracker.
       issues: write
     outputs:
       drift: ${{ steps.check.outputs.drift }}
-      agy: ${{ steps.agy.outputs.summary }}
-      agy_changed: ${{ steps.agy.outputs.changed }}
-      agy_version: ${{ steps.agy.outputs.version }}
-      agy_from: ${{ steps.agy.outputs.from }}
-      agy_kind: ${{ steps.agy.outputs.kind }}
       npm: ${{ steps.npm.outputs.summary }}
       npm_changed: ${{ steps.npm.outputs.changed }}
       claude_version: ${{ steps.npm.outputs.claude_version }}
       codex_version: ${{ steps.npm.outputs.codex_version }}
+      sdk_version: ${{ steps.npm.outputs.sdk_version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -199,10 +175,19 @@ jobs:
             echo "::error::Dockerfile has no CODEX_VERSION ARG"
             exit 1
           fi
-          latest="$(npm view @openai/codex version)"
+          # The bump target: the Codex SDK's latest, and only when that SDK
+          # release depends on the same CLI version. Otherwise the pinned
+          # version stands in, which makes the comparison a no-op until the SDK
+          # catches up.
+          latest="$(npm view @openai/codex-sdk version)"
           if [ -z "$latest" ]; then
-            echo "::error::npm returned no Codex version"
+            echo "::error::npm returned no Codex SDK version"
             exit 1
+          fi
+          wants="$(npm view "@openai/codex-sdk@$latest" dependencies --json | jq -r '.["@openai/codex"] // empty')"
+          if [ "$wants" != "$latest" ]; then
+            echo "Codex SDK $latest depends on @openai/codex ${wants:-none}; comparing against the pin."
+            latest="$pinned"
           fi
 
           pinned_prefix="$RUNNER_TEMP/codex-default-pinned"
@@ -226,13 +211,14 @@ jobs:
       # prefixes above exist only for the CLI behavior probes.
       - name: Compare pins with upstream
         id: check
+        env:
+          # Lifts the GitHub API rate limit for the `gh` release lookup.
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           status=0
           node scripts/check-pin-drift.mjs \
             --report "$RUNNER_TEMP/drift.md" \
-            --update-agy \
-            --agy-summary "$RUNNER_TEMP/agy.json" \
             --update-npm \
             --npm-summary "$RUNNER_TEMP/npm.json" \
             --claude-alias-pinned-bin "$CLAUDE_ALIAS_PINNED_BIN" \
@@ -242,31 +228,12 @@ jobs:
           case "$status" in
             0) echo "drift=false" >> "$GITHUB_OUTPUT" ;;
             1) echo "drift=true" >> "$GITHUB_OUTPUT" ;;
-            # Exit 2 is the check failing, not a pin failing — an unreachable
-            # upstream, a pin it can no longer find in the Dockerfile because
-            # the ARG was renamed, or an agy manifest pair it refuses to write
-            # a bump from (the two arches disagreeing on the version, a digest
-            # that is not 128 hex characters). Go red instead of reporting an
-            # all-clear; the notify job below is what makes that red visible.
+            # Exit 2 is the check failing, not a pin failing: an unreachable
+            # upstream, or a pin it can no longer find in the Dockerfile because
+            # the ARG was renamed. Go red instead of reporting an all-clear;
+            # the notify job below is what makes that red visible.
             *) exit "$status" ;;
           esac
-
-      - name: Read the agy decision
-        id: agy
-        run: |
-          set -euo pipefail
-          # Compact, because a job output is one line. The digests travel with
-          # the version so the `bump` job writes exactly what was compared
-          # here, rather than asking the manifest a second question and
-          # possibly getting a second answer.
-          {
-            echo "summary=$(jq -c . "$RUNNER_TEMP/agy.json")"
-            echo "changed=$(jq -r .changed "$RUNNER_TEMP/agy.json")"
-            echo "version=$(jq -r .version "$RUNNER_TEMP/agy.json")"
-            echo "from=$(jq -r .from "$RUNNER_TEMP/agy.json")"
-            echo "kind=$(jq -r '.kind // "none"' "$RUNNER_TEMP/agy.json")"
-          } >> "$GITHUB_OUTPUT"
-          jq . "$RUNNER_TEMP/agy.json"
 
       - name: Read the npm decision
         id: npm
@@ -277,6 +244,7 @@ jobs:
             echo "changed=$(jq -r 'length > 0' "$RUNNER_TEMP/npm.json")"
             echo "claude_version=$(jq -r '.claudeCode // empty' "$RUNNER_TEMP/npm.json")"
             echo "codex_version=$(jq -r '.codexVersion // empty' "$RUNNER_TEMP/npm.json")"
+            echo "sdk_version=$(jq -r '.sdkVersion // empty' "$RUNNER_TEMP/npm.json")"
           } >> "$GITHUB_OUTPUT"
           jq . "$RUNNER_TEMP/npm.json"
 
@@ -298,10 +266,10 @@ jobs:
 
           if [ "$DRIFT" = "true" ]; then
             if [ -n "$existing" ]; then
-              # Rewrite the body rather than adding a comment. This runs daily,
-              # and a comment a day would notify everyone subscribed about a
-              # fact they already have; the body is regenerated so a SECOND pin
-              # ageing out still shows up on the same issue.
+              # Rewrite the body instead of adding a comment. This runs hourly,
+              # and a comment an hour would notify everyone subscribed about a
+              # fact they already have; the body is regenerated so a second
+              # finding still shows up on the same issue.
               gh issue edit "$existing" --body-file "$RUNNER_TEMP/drift.md"
               echo "Updated #$existing."
             else
@@ -312,10 +280,9 @@ jobs:
             fi
           elif [ -n "$existing" ]; then
             # Self-closing, so the issue tracks the live state instead of
-            # needing someone to remember it after the bump lands. An agy-only
-            # drift no longer reaches this branch at all: --update-agy drops
-            # those findings, so the issue closes and the pull request carries
-            # the news.
+            # needing someone to remember it after the bump lands. A drift the
+            # bot pull request carries is dropped from the report, so the issue
+            # closes and the pull request carries the news.
             gh issue close "$existing" \
               --comment "Every pin is current again. Closed by \`Pin drift\`."
             echo "Closed #$existing."
@@ -339,15 +306,11 @@ jobs:
       actions: write
     env:
       GH_TOKEN: ${{ github.token }}
-      AGY: ${{ needs.check.outputs.agy }}
-      AGY_CHANGED: ${{ needs.check.outputs.agy_changed }}
-      AGY_VERSION: ${{ needs.check.outputs.agy_version }}
-      AGY_FROM: ${{ needs.check.outputs.agy_from }}
-      AGY_KIND: ${{ needs.check.outputs.agy_kind }}
       NPM: ${{ needs.check.outputs.npm }}
       NPM_CHANGED: ${{ needs.check.outputs.npm_changed }}
       CLAUDE_VERSION: ${{ needs.check.outputs.claude_version }}
       CODEX_VERSION: ${{ needs.check.outputs.codex_version }}
+      SDK_VERSION: ${{ needs.check.outputs.sdk_version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -365,11 +328,11 @@ jobs:
           echo "Dry run: $DRY_RUN"
 
       - name: Retire the bot branch now that the pins are current
-        if: env.AGY_CHANGED != 'true' && env.NPM_CHANGED != 'true'
+        if: env.NPM_CHANGED != 'true'
         run: |
           set -euo pipefail
           # `changed` is computed against the Dockerfile on the ref this
-          # workflow ran from, which on the daily schedule is main. False means
+          # workflow ran from, which on the schedule is main. False means
           # main already carries these pins, so an open bot PR is proposing a
           # change that has landed some other way.
           if [ "$DRY_RUN" = "true" ]; then
@@ -385,20 +348,12 @@ jobs:
           else
             echo "Pins are current and no bot PR is open."
           fi
-          legacy="$(gh pr list --head bot/agy-pin --state open \
-            --json number --jq '.[0].number // empty')"
-          if [ -n "$legacy" ]; then
-            gh pr close "$legacy" --delete-branch \
-              --comment "The agent CLI pins on main are already current. Closed by \`Pin drift\`."
-            echo "Closed legacy PR #$legacy."
-          fi
 
       - name: Cut the branch and apply the bump
         id: branch
-        if: env.AGY_CHANGED == 'true' || env.NPM_CHANGED == 'true'
+        if: env.NPM_CHANGED == 'true'
         run: |
           set -euo pipefail
-          printf '%s' "$AGY" > "$RUNNER_TEMP/agy.json"
           printf '%s' "$NPM" > "$RUNNER_TEMP/npm.json"
           # Copied out before the branch switch: the updater that runs is the
           # one on the ref that dispatched this workflow, applied to the
@@ -412,14 +367,13 @@ jobs:
             git fetch --no-tags origin main
             base="$(git rev-parse FETCH_HEAD)"
           fi
-          # Always cut fresh from the base rather than adding a commit to
+          # Always cut fresh from the base instead of adding a commit to
           # whatever is on the bot branch, so the PR is main plus exactly one
           # commit and never carries a superseded version underneath it.
           git checkout --quiet -B "$BOT_BRANCH" "$base"
-          node "$RUNNER_TEMP/updater.mjs" --apply-agy "$RUNNER_TEMP/agy.json"
           node "$RUNNER_TEMP/updater.mjs" --apply-npm "$RUNNER_TEMP/npm.json"
 
-          if [ "$NPM_CHANGED" = "true" ] && [ -n "$CODEX_VERSION" ]; then
+          if [ -n "$CODEX_VERSION" ] || [ -n "$SDK_VERSION" ]; then
             npm install --package-lock-only --ignore-scripts --no-audit --no-fund
             npm run fix-lockfile
           fi
@@ -429,14 +383,12 @@ jobs:
             exit 1
           fi
 
-          if [ "$AGY_CHANGED" = "true" ] && [ "$NPM_CHANGED" != "true" ] && [ "$AGY_KIND" = "digest" ]; then
-            title="build(deps): refresh the Antigravity CLI $AGY_VERSION checksums"
-          elif [ "$AGY_CHANGED" = "true" ] && [ "$NPM_CHANGED" != "true" ]; then
-            title="build(deps): bump Antigravity CLI to $AGY_VERSION"
-          elif [ "$NPM_CHANGED" = "true" ] && [ "$AGY_CHANGED" != "true" ] && [ -n "$CLAUDE_VERSION" ] && [ -z "$CODEX_VERSION" ]; then
+          if [ -n "$CLAUDE_VERSION" ] && [ -z "$CODEX_VERSION" ] && [ -z "$SDK_VERSION" ]; then
             title="build(deps): bump Claude Code CLI to $CLAUDE_VERSION"
-          elif [ "$NPM_CHANGED" = "true" ] && [ "$AGY_CHANGED" != "true" ] && [ -z "$CLAUDE_VERSION" ] && [ -n "$CODEX_VERSION" ]; then
+          elif [ -z "$CLAUDE_VERSION" ] && [ -n "$CODEX_VERSION" ] && [ -z "$SDK_VERSION" ]; then
             title="build(deps): bump Codex CLI to $CODEX_VERSION"
+          elif [ -z "$CLAUDE_VERSION" ] && [ -z "$CODEX_VERSION" ] && [ -n "$SDK_VERSION" ]; then
+            title="build(deps): bump Claude Agent SDK to $SDK_VERSION"
           else
             title="build(deps): refresh agent CLI pins"
           fi
@@ -448,12 +400,12 @@ jobs:
           {
             echo "$title"
             echo
-            echo "Refresh the stale agent CLI pins selected by the daily pin check."
-            if [ "$AGY_CHANGED" = "true" ]; then
-              echo "Antigravity: $AGY_FROM -> $AGY_VERSION ($AGY_KIND)."
-            fi
+            echo "Move the agent pins to the newest upstream releases found by the pin check."
             if [ -n "$CLAUDE_VERSION" ]; then
               echo "Claude Code: $CLAUDE_VERSION."
+            fi
+            if [ -n "$SDK_VERSION" ]; then
+              echo "Claude Agent SDK: $SDK_VERSION."
             fi
             if [ -n "$CODEX_VERSION" ]; then
               echo "Codex CLI and SDK: $CODEX_VERSION, with DEFAULT_CODEX_MODEL and"
@@ -464,16 +416,28 @@ jobs:
           } > "$RUNNER_TEMP/commit-message.txt"
           git commit --quiet -F "$RUNNER_TEMP/commit-message.txt"
 
-          # A daily no-op force-push would re-dispatch both workflows and
-          # re-notify everyone watching the PR about a fact that has not
-          # changed, so the branch is only pushed when its content or its base
-          # actually moved. The SHA every later step works from is whichever
-          # commit the remote branch ends up at.
+          # A no-op force-push would re-dispatch CI and re-notify everyone
+          # watching the PR about a fact that has not changed, and this runs
+          # hourly on a main that keeps moving. So the branch is pushed only
+          # when the bot commit would change something the branch does not
+          # already change. The proposals are compared as zero-context diffs of
+          # the files a bump writes, with the index and hunk header lines
+          # dropped, so a moved base alone does not count. The SHA every later
+          # step works from is whichever commit the remote branch ends up at.
+          bump_files="Dockerfile package.json lib/agents/codex/embeddedDefault.json lib/agents/codex/pricing.ts"
+          proposal() {
+            # shellcheck disable=SC2086
+            git diff -U0 "$1" "$2" -- $bump_files | grep -v -e '^index ' -e '^@@ ' || true
+          }
           if git rev-parse --verify --quiet "origin/$BOT_BRANCH" >/dev/null \
             && [ "$(git rev-parse "origin/$BOT_BRANCH^{tree}")" = "$(git rev-parse 'HEAD^{tree}')" ] \
             && [ "$(git rev-parse "origin/$BOT_BRANCH^")" = "$base" ]; then
             head="$(git rev-parse "origin/$BOT_BRANCH")"
             echo "$BOT_BRANCH already proposes these pins on this base."
+          elif git rev-parse --verify --quiet "origin/$BOT_BRANCH^" >/dev/null \
+            && [ "$(proposal "origin/$BOT_BRANCH^" "origin/$BOT_BRANCH")" = "$(proposal "$base" HEAD)" ]; then
+            head="$(git rev-parse "origin/$BOT_BRANCH")"
+            echo "$BOT_BRANCH already proposes these pins; leaving its head in place."
           else
             git push --force origin "HEAD:refs/heads/$BOT_BRANCH"
             head="$(git rev-parse HEAD)"
@@ -486,7 +450,7 @@ jobs:
       # half-opened behind.
       - name: Dispatch the checks and confirm they attached to the branch head
         id: dispatch
-        if: env.AGY_CHANGED == 'true' || env.NPM_CHANGED == 'true'
+        if: env.NPM_CHANGED == 'true'
         env:
           SHA: ${{ steps.branch.outputs.head_sha }}
         run: |
@@ -540,11 +504,9 @@ jobs:
           # The one check that actually reviews this change. `publish=false`
           # builds both arches and materializes nothing, so no sha- tag appears
           # in the registry for a commit nobody has read yet. `no_cache=true`
-          # because a cached agy layer is precisely how a rotten pin stays
-          # invisible (publish-image.yml's Sunday leg exists for the same
-          # reason): the ARG change does invalidate that layer on its own, but
-          # this is the build whose whole job is to prove the checksums, and it
-          # is not the place to rely on a cache-key inference.
+          # so the build installs every pinned and unpinned tool from a clean
+          # layer, including whatever the agy vendor manifest serves today
+          # (publish-image.yml's Sunday leg exists for the same reason).
           dispatch_and_confirm publish-image.yml "Publish image" \
             -f no_cache=true -f publish=false
 
@@ -556,31 +518,13 @@ jobs:
 
       - name: Open or refresh the pull request
         id: pr
-        if: (env.AGY_CHANGED == 'true' || env.NPM_CHANGED == 'true') && env.DRY_RUN != 'true'
+        if: env.NPM_CHANGED == 'true' && env.DRY_RUN != 'true'
         env:
           SHA: ${{ steps.branch.outputs.head_sha }}
           TITLE: ${{ steps.branch.outputs.title }}
         run: |
           set -euo pipefail
           {
-            if [ "$AGY_CHANGED" = "true" ] && [ "$AGY_KIND" = "digest" ]; then
-              echo "The Antigravity updater manifests still name \`$AGY_VERSION\`, but they are"
-              echo "serving a different tarball. \`sha512sum -c\` in the Dockerfile fails against"
-              echo "the digests currently pinned, so this refreshes both of them. **A rebuilt"
-              echo "tarball under an unchanged version is the case worth looking at hardest.**"
-            elif [ "$AGY_CHANGED" = "true" ]; then
-              echo "The Antigravity updater manifests moved from \`$AGY_FROM\` to \`$AGY_VERSION\`."
-              echo "They serve exactly one build, so the old pin no longer resolves and every"
-              echo "image build fails on the Dockerfile's own \`AGY_VERSION\` guard until this lands."
-            fi
-            if [ "$AGY_CHANGED" = "true" ]; then
-              echo
-              echo "\`AGY_VERSION\`, \`AGY_SHA512_AMD64\` and \`AGY_SHA512_ARM64\` are copied verbatim"
-              echo "from these two documents, which are also what the build resolves against:"
-              echo
-              echo "- <https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json>"
-              echo "- <https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json>"
-            fi
             echo
             echo "### What reviews this"
             echo
@@ -588,22 +532,20 @@ jobs:
             echo "against this exact head. The image build runs for both architectures with the"
             echo "layer cache off and pushes nothing to the registry. It installs each selected"
             echo "CLI and prints its version, so an unavailable or incompatible pin is a red check."
-            if [ "$AGY_CHANGED" = "true" ]; then
-              echo "It also re-fetches both Antigravity manifests, checks \`AGY_VERSION\`, and"
-              echo "runs \`sha512sum -c\` with the digest for each architecture."
-            fi
             echo
             cat "$RUNNER_TEMP/runs.md"
             echo
-            if [ "$NPM_CHANGED" = "true" ]; then
-              echo "The Dockerfile CLI pins were refreshed from npm's latest versions."
-              if [ -n "$CODEX_VERSION" ]; then
-                echo "Codex's SDK dependency and package lock were regenerated at the same version."
-                echo "\`DEFAULT_CODEX_MODEL\` and \`lib/agents/codex/embeddedDefault.json\` follow the"
-                echo "new CLI's embedded default model, which already has a \`PRICES\` row."
-              fi
-              echo
+            echo "The pins were moved to the newest stable versions on npm."
+            if [ -n "$CODEX_VERSION" ]; then
+              echo "Codex's SDK dependency and package lock were regenerated at the same version."
+              echo "\`DEFAULT_CODEX_MODEL\` and \`lib/agents/codex/embeddedDefault.json\` follow the"
+              echo "new CLI's embedded default model, which already has a \`PRICES\` row."
             fi
+            if [ -n "$SDK_VERSION" ]; then
+              echo "The Claude Agent SDK dependency in \`package.json\` and the package lock moved to"
+              echo "\`$SDK_VERSION\`. It is the turn contract, so \`Test\` is the review of the change."
+            fi
+            echo
             echo "The dispatched CI checks and the branch ruleset are the merge gate."
             echo "This PR merges automatically after every required check passes. A failure leaves"
             echo "it open for diagnosis."
@@ -611,7 +553,7 @@ jobs:
             echo "---"
             echo
             echo "Opened by \`.github/workflows/pin-drift.yml\`, force-pushed on \`$BOT_BRANCH\`."
-            echo "Head \`$SHA\`. Last refreshed $(date -u +%Y-%m-%dT%H:%M:%SZ)."
+            echo "Head \`$SHA\`."
           } > "$RUNNER_TEMP/pr.md"
 
           existing="$(gh pr list --head "$BOT_BRANCH" --state open \
@@ -628,20 +570,8 @@ jobs:
           echo "number=$existing" >> "$GITHUB_OUTPUT"
           echo "Opened or refreshed PR #$existing for head $SHA." >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Retire the legacy AGY-only pull request
-        if: (env.AGY_CHANGED == 'true' || env.NPM_CHANGED == 'true') && env.DRY_RUN != 'true'
-        run: |
-          set -euo pipefail
-          legacy="$(gh pr list --head bot/agy-pin --state open \
-            --json number --jq '.[0].number // empty')"
-          if [ -n "$legacy" ]; then
-            gh pr close "$legacy" --delete-branch \
-              --comment "Superseded by #${{ steps.pr.outputs.number }} on \`$BOT_BRANCH\`. Closed by \`Pin drift\`."
-            echo "Closed legacy PR #$legacy."
-          fi
-
       - name: Approve held pull-request checks for the exact head
-        if: (env.AGY_CHANGED == 'true' || env.NPM_CHANGED == 'true') && env.DRY_RUN != 'true'
+        if: env.NPM_CHANGED == 'true' && env.DRY_RUN != 'true'
         env:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           SHA: ${{ steps.branch.outputs.head_sha }}
@@ -701,7 +631,7 @@ jobs:
       # `Test`. #495 and #496 merged that way and neither started a run. The
       # PAT is used for this one call; every other step keeps GITHUB_TOKEN.
       - name: Queue auto-merge after verifying the PR head
-        if: (env.AGY_CHANGED == 'true' || env.NPM_CHANGED == 'true') && env.DRY_RUN != 'true'
+        if: env.NPM_CHANGED == 'true' && env.DRY_RUN != 'true'
         env:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           SHA: ${{ steps.branch.outputs.head_sha }}
@@ -731,9 +661,9 @@ jobs:
       # commit once their jobs leave the queue, which is the same mechanism a
       # pull request's check list reads; the run-exists assertion above is what
       # this job actually stands on, because runner queue time is not something
-      # to redden a daily cron over.
+      # to redden an hourly cron over.
       - name: Report what has attached to the branch head so far
-        if: env.AGY_CHANGED == 'true' || env.NPM_CHANGED == 'true'
+        if: env.NPM_CHANGED == 'true'
         continue-on-error: true
         env:
           SHA: ${{ steps.branch.outputs.head_sha }}
@@ -760,6 +690,6 @@ jobs:
     steps:
       - uses: jayqi/failed-build-issue-action@940568ce50eeef3f31a920614cefcc6102d2f930 # v1.3.0
         with:
-          # Required, and the action has no default — see the same note in
+          # Required, and the action has no default; see the same note in
           # publish-image.yml's notify job (issue #26).
           github-token: ${{ github.token }}

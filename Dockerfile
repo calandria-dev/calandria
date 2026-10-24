@@ -81,7 +81,7 @@ FROM node:26-bookworm-slim@sha256:298992629d69bbd5b2b03ad57094d8e4fcb3a8eeb7c4e2
 #
 # This depends on the layer actually being rebuilt. Docker keys a layer on the
 # RUN command's text, so a cached build reuses whatever apt resolved the last
-# time the cache was cold, the same hazard the `gh=` pin note below describes.
+# time the cache was cold. The agy layer below has the same property.
 # publish-image.yml's Sunday cron (09:23 UTC) builds with `no-cache` and
 # pushes `:edge`; security-scan.yml reads `:edge` on Monday at 06:00 UTC. The
 # cold build is the one the scan sees, so this repeats every week on its own
@@ -97,26 +97,28 @@ RUN apt-get update \
 # and the git credential helper it configures (~/.gitconfig) live on the home
 # volume, so a login survives container stop/start.
 #
-# Pinned to an exact apt version. Docker's layer cache keys on the RUN
-# command's text, not its result, so an unpinned `apt-get install gh` would
-# let a cached layer keep an old gh version even after apt has a newer,
-# CVE-fixed package. Bump this version string to update gh: check
-# `apt-cache madison gh` (or the cli.github.com Packages index) for the
-# current version, then rebuild uncached to confirm the new layer pulls it.
-# cli.github.com carries only its newest release, so a gh release leaves this
-# pin missing from the index rather than merely old. `Pin drift`
-# (.github/workflows/pin-drift.yml) reads the repo's Packages index daily and
-# files an issue when this line falls behind; publish-image.yml's Sunday cron
-# builds uncached so a rotted pin cannot hide behind a cached layer. Keep the
-# `gh=` spelling on one line: the pin-drift check's regex reads it from here.
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-      -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
-  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-      > /etc/apt/sources.list.d/github-cli.list \
-  && apt-get update \
-  && apt-get install -y --no-install-recommends gh=2.103.2 \
-  && rm -rf /var/lib/apt/lists/* \
-  && gh --version
+# Installed from the GitHub release tarball for GH_VERSION. Release assets on
+# github.com are permanent, so an old pin keeps building after gh ships a new
+# release. The tarball is checked against the release's own checksums file.
+# `Pin drift` (.github/workflows/pin-drift.yml) reads the latest gh release and
+# files an issue when this ARG falls behind; bump it by hand. Keep the ARG on
+# one line: the pin-drift check reads it with a line-anchored regex.
+ARG GH_VERSION=2.103.2
+RUN set -eu; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in amd64|arm64) : ;; \
+      *) echo "unsupported architecture for the gh CLI: $arch" >&2; exit 1 ;; \
+    esac; \
+    base="https://github.com/cli/cli/releases/download/v${GH_VERSION}"; \
+    tarball="gh_${GH_VERSION}_linux_${arch}.tar.gz"; \
+    workdir="$(mktemp -d)"; \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "${workdir}/${tarball}" "${base}/${tarball}"; \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "${workdir}/checksums.txt" "${base}/gh_${GH_VERSION}_checksums.txt"; \
+    (cd "${workdir}" && grep " ${tarball}\$" checksums.txt | sha256sum -c -); \
+    tar -xzf "${workdir}/${tarball}" -C "${workdir}"; \
+    install -m 0755 "${workdir}/gh_${GH_VERSION}_linux_${arch}/bin/gh" /usr/local/bin/gh; \
+    rm -rf "${workdir}"; \
+    gh --version
 
 # The base image's bundled npm (10.9.8) vendors its own tar (7.5.11) and
 # brace-expansion (2.0.2), both flagged by the image scan with HIGH CVEs
@@ -131,23 +133,19 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # revisit policy. Bumping this pin is how those four clear.
 RUN npm install -g npm@12.0.2 && npm --version
 
-# The agent CLIs, pinned. A floating `@latest` install would make a
-# supply-chain decision per build and leave no two images alike; bump these
-# deliberately instead. All three are ARGs so a one-off build can test a
-# candidate without editing this file:
+# The npm agent CLIs, pinned. A floating `@latest` install would make a
+# supply-chain decision per build and leave no two images alike. Both are ARGs
+# so a one-off build can test a candidate without editing this file:
 #   docker build --build-arg CODEX_VERSION=0.147.0 .
 #
-# A stale pin here still builds and fails later instead: 0.146.0 could not run
-# GPT-6 Astra at all ("model requires a newer version of codex"), because a new
-# model can require a CLI bump and not just a catalog entry. `Pin drift`
-# (.github/workflows/pin-drift.yml) owns all three agent CLI pins and opens one
-# bot PR when an upstream version moves. It dispatches the required test,
-# desktop skip and uncached image workflows against the exact branch head. It
-# verifies that head before enabling squash auto-merge, and GitHub merges only
-# after every required check passes.
+# `Pin drift` (.github/workflows/pin-drift.yml) runs hourly and keeps these
+# two ARGs, @openai/codex-sdk and @anthropic-ai/claude-agent-sdk on the newest
+# release. It opens one bot PR as soon as any of them moves, dispatches the
+# required test, desktop skip and uncached image workflows against the exact
+# branch head, and enables squash auto-merge after verifying that head. GitHub
+# merges only after every required check passes.
 ARG CLAUDE_CODE_VERSION=2.1.309
 ARG CODEX_VERSION=0.164.0
-ARG AGY_VERSION=1.4.7
 
 # The `claude` CLI: the Agent SDK spawns it, and login state lives in
 # ~/.claude on the volume. Pinned location via CLAUDE_CLI_PATH; updates ship as
@@ -178,60 +176,45 @@ RUN npm install -g @openai/codex@${CODEX_VERSION} && codex --version
 # The `agy` CLI (Antigravity): the Gemini agent driver spawns it directly,
 # with no SDK in between. Not on npm: the vendor ships a per-platform tarball
 # named by a manifest, and their install.sh reads that manifest, downloads,
-# checks a SHA-512 and drops the single binary in place. Those steps are done
-# here against a pinned version instead of piping the script, so the build is
-# reproducible and the checksum is reviewed in this file rather than fetched.
+# checks a SHA-512 and drops the single binary in place. This step does the
+# same against
+#   https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_{amd64,arm64}.json
+# The manifest serves only the newest build, so the image installs that build:
+# `url`, `sha512` and `version` all come from the manifest, and the tarball is
+# verified against its `sha512`. Docker caches this layer on the RUN text, so a
+# cached build keeps the agy it last fetched; publish-image.yml's Sunday cron
+# builds uncached and picks up the newest.
 #
-# These three ARGs are owned by `Pin drift` (.github/workflows/pin-drift.yml).
-# It reads both manifests daily and, when they have moved, force-pushes the
-# rewritten ARGs to the bot branch and opens or refreshes one conventional-
-# commit pull request. The workflow dispatches the required checks against the
-# exact branch head and verifies it before enabling squash auto-merge. GitHub
-# merges only after every required check passes. Editing the three by hand still
-# works: the next run sees the pins are current, closes the bot PR and deletes
-# its branch.
-#
-# The values come from
-#   curl -fsSL https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json
-# (and .../linux_arm64.json). The `version` field is what AGY_VERSION must
-# match, the `sha512` field is the digest for that arch, and all three move
-# together: the guard below compares the manifest URL against AGY_VERSION, so
-# a version written without its digests fails `sha512sum -c` on both arches.
-# The bot refuses to write anything when the two manifests disagree on the
-# version. Claude Code and Codex updates use the same bot PR and check path.
+# AGY_VERSION is empty by default. Set it to make a one-off build assert a
+# version: the build fails when the manifest serves a different one.
+#   docker build --build-arg AGY_VERSION=1.4.7 .
 #
 # The binary self-updates in the background by default, which would replace
-# this pin mid-turn. AGY_CLI_DISABLE_AUTO_UPDATE below turns that off
-# image-wide, and the driver sets it on every spawn as a second guard.
-ARG AGY_SHA512_AMD64=beda760587589f5827b0b516c3ec2c5bd5cd2e91eb0e2533807ba1e990a27dcd63aef0191e0b76fb60feab0d16eaa8210fb79842c34dd4809e257e1712edd152
-ARG AGY_SHA512_ARM64=6a9fa0df6300633404571f66ec7924098cc70a9f23ac55c3659139bbcbdd2ea5301fe1ef728d4c064fac65104ea14a2b74421f320a82e5bcf218c482b58e3a16
+# the installed build mid-turn. AGY_CLI_DISABLE_AUTO_UPDATE below turns that
+# off image-wide, and the driver sets it on every spawn as a second guard.
+ARG AGY_VERSION=
 RUN set -eu; \
     case "$(dpkg --print-architecture)" in \
-      amd64) manifest=linux_amd64; sha="${AGY_SHA512_AMD64}" ;; \
-      arm64) manifest=linux_arm64; sha="${AGY_SHA512_ARM64}" ;; \
+      amd64) manifest=linux_amd64 ;; \
+      arm64) manifest=linux_arm64 ;; \
       *) echo "unsupported architecture for the agy CLI: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    # Fetched and checked on its OWN, because a network failure here must not be
-    # reported as a stale pin. Written as `url="$(curl … | sed …)"` the status is
-    # the PIPELINE's, which is sed's, and sed exits 0 on empty input — so `set -e`
-    # never saw a dead curl, the empty url fell through to the version guard
-    # below, and the build failed with "manifest no longer serves AGY_VERSION"
-    # and `(got )`, sending the next reader to bump a pin that was fine. Observed
-    # 2026-09-05: curl (35), connection reset, on the amd64 builder while arm64
-    # built the same commit against the same manifest. Retried for the same
-    # reason — it is the one network read in an otherwise hermetic step.
+    # Fetched and checked on its own, so a network failure is reported as one.
+    # In `x="$(curl ... | sed ...)"` the status is sed's, which is 0 on empty
+    # input, so a dead curl would fall through to the empty-field checks below
+    # with a misleading message. Retried because it is the one network read the
+    # rest of this step depends on.
     manifest_json="$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 --max-time 60 \
                        "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/${manifest}.json")" \
-      || { echo "could not fetch the agy ${manifest} manifest: NETWORK failure, not a stale AGY_VERSION" >&2; exit 1; }; \
-    # The download URL carries an opaque build id after the version, so it is
-    # read from the manifest rather than templated from AGY_VERSION alone.
-    url="$(printf '%s' "$manifest_json" \
-            | sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"; \
-    # The manifest always serves the latest build, so a stale pin fails the
-    # build here instead of installing a version whose checksum was never reviewed.
-    case "$url" in *"/${AGY_VERSION}-"*) : ;; \
-      *) echo "manifest no longer serves AGY_VERSION=${AGY_VERSION} (got ${url}); bump the ARG and both SHA-512s" >&2; exit 1 ;; \
-    esac; \
+      || { echo "could not fetch the agy ${manifest} manifest: NETWORK failure" >&2; exit 1; }; \
+    field() { printf '%s' "$manifest_json" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p"; }; \
+    url="$(field url)"; sha="$(field sha512)"; version="$(field version)"; \
+    [ -n "$url" ] || { echo "the agy ${manifest} manifest has no url: ${manifest_json}" >&2; exit 1; }; \
+    [ -n "$sha" ] || { echo "the agy ${manifest} manifest has no sha512: ${manifest_json}" >&2; exit 1; }; \
+    if [ -n "${AGY_VERSION}" ] && [ "$version" != "${AGY_VERSION}" ]; then \
+      echo "the agy ${manifest} manifest serves ${version:-no version}, not AGY_VERSION=${AGY_VERSION}" >&2; exit 1; \
+    fi; \
+    echo "installing agy ${version:-(unversioned)} from ${url}"; \
     workdir="$(mktemp -d)"; \
     curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "${workdir}/agy.tar.gz" "$url"; \
     echo "${sha}  ${workdir}/agy.tar.gz" | sha512sum -c -; \
