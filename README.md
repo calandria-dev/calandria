@@ -146,8 +146,8 @@ already queued. The transcript records that it was sent.
   ![The Needs you inbox listing sessions waiting on an answer across projects](docs/images/inbox.png)
 
 - **Snooze a task:** park it until an hour from now, tomorrow morning, or a
-  date you pick. It stops counting toward the inbox, then returns to the
-  category it left, marked as snoozed.
+  date you pick. It is hidden from the Work Center and every count until the
+  deadline, then returns to the category it left, marked as snoozed.
 - **Start at the usage-window reset:** when a subscription limit stops your
   turns, queue a task to start (or a stalled session to resume) a minute
   after the reset the plan meter reports. This runs server-side with no tab

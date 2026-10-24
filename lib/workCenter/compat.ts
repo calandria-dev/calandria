@@ -24,15 +24,21 @@ export interface NeedsYouRow {
 }
 
 // Global events arrive in bursts and each one asks for a count; reuse a
-// snapshot while neither the sequence nor a second of wall time has moved.
-let cache: { sequence: number; at: number; snap: Snapshot } | null = null;
+// snapshot while the sequence is unchanged and the call stack that built it is
+// still running. A later turn of the event loop always reassembles, because a
+// source can change after the sequence it was stamped with was read, and a
+// count reused past that point stays stale until the next unrelated event.
+let cache: { sequence: number; snap: Snapshot } | null = null;
 
 function globalSnapshot(): Snapshot {
-  const now = Date.now();
   const seq = workCenterSequence();
-  if (cache && cache.sequence === seq && now - cache.at < 1000) return cache.snap;
-  const snap = assembleSnapshot({ now, recentLimit: 1 });
-  cache = { sequence: snap.sequence, at: now, snap };
+  if (cache && cache.sequence === seq) return cache.snap;
+  const snap = assembleSnapshot({ now: Date.now(), recentLimit: 1 });
+  const entry = { sequence: snap.sequence, snap };
+  cache = entry;
+  queueMicrotask(() => {
+    if (cache === entry) cache = null;
+  });
   return snap;
 }
 
