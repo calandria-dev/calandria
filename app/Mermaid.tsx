@@ -2,9 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 
-// A ```mermaid fence rendered as a diagram. Used by <Markdown diagrams>, the
-// collaboration modal, where an agent's design doc gets a real flowchart
-// instead of a code block.
+// A ```mermaid fence rendered as a diagram. Used by <Markdown diagrams>: the
+// collaboration modal and the transcript's persisted messages, where an
+// agent's flowchart shows as a picture instead of a code block.
 //
 // mermaid is large and DOM-only, so it loads on first use with a dynamic
 // import (Turbopack splits it into its own chunk) instead of bundled with
