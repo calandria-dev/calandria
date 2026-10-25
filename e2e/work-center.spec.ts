@@ -68,6 +68,25 @@ test("the pill shows both counts and the popover lists a parked question once", 
   await expect(pill(page)).toBeFocused();
 });
 
+test("a section header collapses its rows and the choice survives a reload", async ({ page, request }) => {
+  await parkOn(request, "Collapse question", "e2e:ask=Pick|Which one?|A,B");
+  await gotoApp(page);
+  await pill(page).click();
+  const head = popover(page).locator("[data-wc-group-head='need']");
+  await expect(head).toHaveAttribute("aria-expanded", "true");
+  await expect(rowOf(page, "Collapse question")).toHaveCount(1);
+  await head.click();
+  await expect(head).toHaveAttribute("aria-expanded", "false");
+  await expect(rowOf(page, "Collapse question")).toHaveCount(0);
+
+  await page.reload();
+  await pill(page).click();
+  await expect(head).toHaveAttribute("aria-expanded", "false");
+  await expect(rowOf(page, "Collapse question")).toHaveCount(0);
+  await head.click();
+  await expect(rowOf(page, "Collapse question")).toHaveCount(1);
+});
+
 test("Enter on the pill focuses the first Needs-you row", async ({ page, request }) => {
   await parkOn(request, "Keyboard question", "e2e:ask=Pick|Which one?|A,B");
   await gotoApp(page);

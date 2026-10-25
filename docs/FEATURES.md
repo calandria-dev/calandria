@@ -1148,8 +1148,9 @@ See [Supported agents](AGENTS.md#litellm-gateway) for setup and current provider
 
 The titlebar pill shows two counts: tasks that are working (a ripple icon) and tasks that need you
 (a speech bubble). Click it, or press Enter on it, to open the Work Center. A task appears once:
-**Needs you** wins over **Working**, and **Working** wins over **Waiting**. **Recently finished**
-lists the last results, four at a time.
+**Needs you** wins over **Working**, and **Working** wins over **Waiting**. The sections stack
+**Working** first, then **Needs you**, **Waiting** and **Recently finished**, which lists the last
+results four at a time. Click a section header to collapse it; the choice persists across reloads.
 
 | What you see | Meaning |
 |-|-|

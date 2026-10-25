@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import type { ReviewView } from "@/lib/reviews/types";
 import type { Attention, WorkRow } from "@/lib/workCenter/types";
 import { Icon } from "../icons";
@@ -12,8 +12,8 @@ import type { ProjectRow } from "./types";
 import type { WorkCenterData } from "./useWorkCenter";
 import {
   ACTION_IND, ACTION_OK, ACTION_PENDING, KINDS, OUTCOME_LABEL, ago, chipMeta, failText, groupRows, headline, inlineActionsFor,
-  isDecidableReview, isStale, isStaleItem, lifecycleLabel, liveItems, partialSources, sheetActionsFor, waitingText,
-  type ActionKey, type CountView, type InlineAction, type ReviewFacts,
+  GROUP_ORDER, groupCollapsedKey, isDecidableReview, isStale, isStaleItem, lifecycleLabel, liveItems, partialSources, sheetActionsFor,
+  waitingText, type ActionKey, type CountView, type GroupKey, type InlineAction, type ReviewFacts,
 } from "./workCenterModel";
 
 // The Work Center (design release work-center-design-release/1): the persistent
@@ -67,6 +67,27 @@ function useRippleActive(key: string): boolean {
     return () => clearTimeout(t);
   }, [key]);
   return on;
+}
+
+/**
+ * Per-section collapsed flags, persisted in localStorage so the choice survives reloads. Every section starts open.
+ * Read in the initializer, so the open-focus layout effect never lands on a row a collapsed section is about to hide.
+ */
+function useCollapsedGroups() {
+  const [collapsed, setCollapsed] = useState<Partial<Record<GroupKey, boolean>>>(() => {
+    const out: Partial<Record<GroupKey, boolean>> = {};
+    if (typeof window === "undefined") return out;
+    for (const g of GROUP_ORDER) {
+      try { if (localStorage.getItem(groupCollapsedKey(g)) === "1") out[g] = true; } catch {}
+    }
+    return out;
+  });
+  const toggle = (g: GroupKey) => setCollapsed((c) => {
+    const shut = !c[g];
+    try { localStorage.setItem(groupCollapsedKey(g), shut ? "1" : "0"); } catch {}
+    return { ...c, [g]: shut };
+  });
+  return { collapsed, toggle };
 }
 
 const Warn = () => (
@@ -280,6 +301,7 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
   const [waive, setWaive] = useState<{ taskId: string } | null>(null);
   const [sheet, setSheet] = useState<{ taskId: string; snooze: boolean } | null>(null);
   const [moreRecent, setMoreRecent] = useState(false);
+  const { collapsed, toggle: toggleGroup } = useCollapsedGroups();
   const [selected, setSelected] = useState<string | null>(viewState.current.selected);
   const retryRef = useRef<Record<string, () => void>>({});
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -669,17 +691,35 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
     );
   };
 
-  const groupHead = (cls: "need" | "work" | "wait" | "rec", label: string, n: CountView | null, hint?: string, nCount?: number) => (
-    <div className={`wc-grp ${cls}`} role="presentation">
-      {cls === "need" && <span className="wc-ico wc-ico-11 need">{Icon.needsYou()}</span>}
-      {cls === "work" && <span className="wc-ico wc-ico-11 run still">{Icon.working()}</span>}
-      {(cls === "wait" || cls === "rec") && <i />}
-      {label}
-      {n ? <span className={`wc-grp-n${n.kind === "unknown" || n.kind === "loading" ? " unk" : ""}`} title={n.title || undefined}>{n.txt}</span>
-        : nCount !== undefined ? <span className="wc-grp-n">{nCount}</span> : null}
-      {hint && <span className="wc-grp-hint">{hint}</span>}
-    </div>
-  );
+  // A loaded section's header is a button that collapses its rows; the loading skeleton's headers are static.
+  const groupHead = (cls: GroupKey, label: string, n: CountView | null, hint?: string, nCount?: number, collapsible = false) => {
+    const shut = collapsible && !!collapsed[cls];
+    const inner = (
+      <>
+        {collapsible && Icon.chevDown({ className: "wc-grp-chev" })}
+        {cls === "need" && <span className="wc-ico wc-ico-11 need">{Icon.needsYou()}</span>}
+        {cls === "work" && <span className="wc-ico wc-ico-11 run still">{Icon.working()}</span>}
+        {(cls === "wait" || cls === "rec") && <i />}
+        {label}
+        {n ? <span className={`wc-grp-n${n.kind === "unknown" || n.kind === "loading" ? " unk" : ""}`} title={n.title || undefined}>{n.txt}</span>
+          : nCount !== undefined ? <span className="wc-grp-n">{nCount}</span> : null}
+        {hint && <span className="wc-grp-hint">{hint}</span>}
+      </>
+    );
+    if (!collapsible) return <div className={`wc-grp ${cls}`} role="presentation">{inner}</div>;
+    return (
+      <button
+        type="button"
+        className={`wc-grp wc-grp-btn ${cls}${shut ? " is-collapsed" : ""}`}
+        aria-expanded={!shut}
+        data-wc-group-head={cls}
+        title={`${shut ? "Show" : "Hide"} ${label.toLowerCase()}`}
+        onClick={() => toggleGroup(cls)}
+      >
+        {inner}
+      </button>
+    );
+  };
 
   const skeleton = (n: number) => Array.from({ length: n }, (_, i) => (
     <div className="wc-sk" key={i} aria-hidden><i className="wc-sk-av" /><div className="wc-sk-l"><i /><i /></div><i /></div>
@@ -750,8 +790,8 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
       >
         {!snap && !data.error && (
           <>
-            {groupHead("need", "Needs you", h.need)}{skeleton(2)}
             {groupHead("work", "Working", h.working)}{skeleton(2)}
+            {groupHead("need", "Needs you", h.need)}{skeleton(2)}
           </>
         )}
         {!snap && data.error && (
@@ -759,24 +799,29 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
         )}
         {snap && groups && (
           <>
-            {(groups.need.length > 0 || h.need.kind === "unknown") && (
-              <>
-                {groupHead("need", "Needs you", needHeadN, itemsAreKnown ? "total unknown" : undefined)}
-                {groups.need.map((r) => renderRow(r, "need"))}
-              </>
-            )}
-            {groups.work.length > 0 && (
-              <>{groupHead("work", "Working", null, "no decision pending", groups.work.length)}{groups.work.map((r) => renderRow(r, "work"))}</>
-            )}
-            {groups.wait.length > 0 && (
-              <>{groupHead("wait", "Waiting", null, undefined, groups.wait.length)}{groups.wait.map((r) => renderRow(r, "wait"))}</>
-            )}
+            {GROUP_ORDER.map((g) => {
+              if (g === "work" && groups.work.length > 0) {
+                return <Fragment key={g}>{groupHead("work", "Working", null, "no decision pending", groups.work.length, true)}{!collapsed.work && groups.work.map((r) => renderRow(r, "work"))}</Fragment>;
+              }
+              if (g === "need" && (groups.need.length > 0 || h.need.kind === "unknown")) {
+                return (
+                  <Fragment key={g}>
+                    {groupHead("need", "Needs you", needHeadN, itemsAreKnown ? "total unknown" : undefined, undefined, true)}
+                    {!collapsed.need && groups.need.map((r) => renderRow(r, "need"))}
+                  </Fragment>
+                );
+              }
+              if (g === "wait" && groups.wait.length > 0) {
+                return <Fragment key={g}>{groupHead("wait", "Waiting", null, undefined, groups.wait.length, true)}{!collapsed.wait && groups.wait.map((r) => renderRow(r, "wait"))}</Fragment>;
+              }
+              return null;
+            })}
             {empty && recent.length === 0 && <div className="wc-empty"><b>Nothing is waiting on you</b>Nothing is working or waiting either.</div>}
             {empty && recent.length > 0 && <div className="wc-empty"><b>Nothing is waiting on you</b></div>}
             {recent.length > 0 && (
               <>
-                {groupHead("rec", "Recently finished", null, "last 7 days")}
-                {showRecent.map((r) => (
+                {groupHead("rec", "Recently finished", null, "last 7 days", recent.length, true)}
+                {!collapsed.rec && showRecent.map((r) => (
                   <button
                     key={r.taskId}
                     className={`wc-rec${phone ? " phone" : ""}${selected === `rec:${r.taskId}` ? " on" : ""}`}
@@ -793,7 +838,7 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
                     </span>
                   </button>
                 ))}
-                {recent.length > 4 && !moreRecent && <button className="wc-more" onClick={() => setMoreRecent(true)}>Show {recent.length - 4} more</button>}
+                {!collapsed.rec && recent.length > 4 && !moreRecent && <button className="wc-more" onClick={() => setMoreRecent(true)}>Show {recent.length - 4} more</button>}
               </>
             )}
           </>
