@@ -3,8 +3,16 @@
 // server tries to install typescript on boot and crashes (read-only /app in
 // the image). JS config loads dependency-free in dev and prod alike.
 
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Pin the workspace root to this checkout. Next otherwise walks up to the
+  // first lockfile it finds, which on a host with a package-lock.json in a
+  // parent directory (a home dir, or the worktree's parent) is the wrong one.
+  outputFileTracingRoot: path.dirname(fileURLToPath(import.meta.url)),
+
   // better-sqlite3 and node-pty are native modules, and the agent SDKs spawn
   // their CLIs (`claude` / `codex`); none should be bundled by Next's server
   // compiler.
