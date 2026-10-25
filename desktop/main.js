@@ -77,6 +77,7 @@ const {
   loadCredentials,
   parseHeaderLines,
   refreshDelay,
+  sameInstanceOrigin,
   saveCredentials,
 } = require("./instance-auth");
 const {
@@ -643,13 +644,7 @@ function armAuthHeaders(inst) {
       callback({ requestHeaders: details.requestHeaders });
       return;
     }
-    const origin = authOriginFor(inst);
-    let same = false;
-    try {
-      same = !!origin && new URL(details.url).origin === new URL(origin).origin;
-    } catch {
-      same = false;
-    }
+    const same = sameInstanceOrigin(details.url, authOriginFor(inst));
     callback({ requestHeaders: same ? { ...details.requestHeaders, ...headers } : details.requestHeaders });
   });
   if (!armedSessions.has(partition)) {
