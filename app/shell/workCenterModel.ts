@@ -87,6 +87,13 @@ export function liveItems(r: WorkRow, now: number, cleared?: ReadonlySet<string>
 
 export type Groups = { need: WorkRow[]; work: WorkRow[]; wait: WorkRow[] };
 
+/** The list's sections in render order: running tasks first, then decisions, then the rest. */
+export type GroupKey = "work" | "need" | "wait" | "rec";
+export const GROUP_ORDER: GroupKey[] = ["work", "need", "wait", "rec"];
+
+/** localStorage key holding one section's collapsed flag. Instance-wide, since the list spans every project. */
+export const groupCollapsedKey = (g: GroupKey) => `calandria_wc_${g}_collapsed`;
+
 /**
  * A task appears once: needs-you wins over working, working over waiting.
  * Needs-you rows sort by their oldest unresolved item, the others by last

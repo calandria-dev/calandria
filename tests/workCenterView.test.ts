@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Attention, Snapshot, Summary, WorkRow } from "@/lib/workCenter/types";
 import {
-  chipMeta, countView, failText, groupRows, headline, inlineActionsFor, isStale, lifecycleLabel, liveItems, sheetActionsFor, waitingText,
+  GROUP_ORDER, chipMeta, countView, failText, groupCollapsedKey, groupRows, headline, inlineActionsFor, isStale, lifecycleLabel, liveItems, sheetActionsFor, waitingText,
 } from "@/app/shell/workCenterModel";
 import { snoozeChoices } from "@/app/shell/WorkCenter";
 import { backoffDelay } from "@/app/shell/useWorkCenter";
@@ -94,6 +94,13 @@ describe("groupRows", () => {
     const w1 = row("w1", { working: true }); w1.execution.lastActivityAt = NOW - 5000;
     const w2 = row("w2", { working: true }); w2.execution.lastActivityAt = NOW - 1000;
     expect(groupRows([w1, w2], NOW).work.map((r) => r.taskId)).toEqual(["w2", "w1"]);
+  });
+  it("renders running tasks first, then decisions, waiting and recently finished", () => {
+    expect(GROUP_ORDER).toEqual(["work", "need", "wait", "rec"]);
+  });
+  it("keys each section's collapsed flag separately", () => {
+    expect(new Set(GROUP_ORDER.map(groupCollapsedKey)).size).toBe(GROUP_ORDER.length);
+    expect(groupCollapsedKey("work")).toBe("calandria_wc_work_collapsed");
   });
 });
 
