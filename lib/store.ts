@@ -2228,6 +2228,24 @@ export function acknowledgeTurnFailure(taskId: string, turnId: string, now: numb
   })();
 }
 
+/**
+ * Acknowledge a finished turn's result: drop `awaiting_input` for exactly the
+ * turn the person saw. Under the caller's task lock, and only while no turn
+ * runs, since a live turn's `awaiting_input` belongs to its open asks. The
+ * latest finalized turn must be `turnId` (empty for a row that predates the
+ * latest_turn columns). Writes the column directly so `updated_at`, and with
+ * it the board order, stays put. A repeat for the same turn returns true.
+ */
+export function acknowledgeTurnResult(taskId: string, turnId: string): boolean {
+  const db = getDb();
+  return db.transaction(() => {
+    const cur = db.prepare("SELECT latest_turn_id, running FROM tasks WHERE id = ?").get(taskId) as { latest_turn_id: string | null; running: number } | undefined;
+    if (!cur || cur.running || (cur.latest_turn_id ?? "") !== turnId) return false;
+    db.prepare("UPDATE tasks SET awaiting_input = 0 WHERE id = ?").run(taskId);
+    return true;
+  })();
+}
+
 /** An authorized Fix CI run claims the CI episode it will repair. */
 export function setCiRecovery(taskId: string, episodeId: string): void {
   getDb().prepare("UPDATE tasks SET ci_recovery_episode_id = ?, ci_recovery_turn_id = NULL WHERE id = ?").run(episodeId, taskId);

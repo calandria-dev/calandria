@@ -30,6 +30,7 @@ import { GET as needsYouRoute } from "@/app/api/needs-you/route";
 import { GET as eventsRoute } from "@/app/api/events/route";
 import { POST as answerRoute } from "@/app/api/tasks/[id]/answer/route";
 import { POST as failureAckRoute } from "@/app/api/tasks/[id]/failure-ack/route";
+import { POST as turnAckRoute } from "@/app/api/tasks/[id]/turn-ack/route";
 import { POST as agentEditsRoute } from "@/app/api/tasks/[id]/agent-edits/route";
 import { POST as fixCiRoute } from "@/app/api/tasks/[id]/pr/fix-ci/route";
 import { PATCH as patchTask } from "@/app/api/tasks/[id]/route";
@@ -80,17 +81,17 @@ describe("attention counts", () => {
     expect(s.visibleNeedsYouTaskCount).toEqual({ value: 2, known: 2 });
   });
 
-  it("counts a done task with a red PR and ignores generic turn-end awaiting", () => {
+  it("counts a done task with a red PR and a finished turn awaiting the next message", () => {
     const { project, task } = fresh();
     const done = task("Done+red", { status: "done" });
     redPr(done.id, { episode: "ep" });
     const idle = task("Idle");
-    updateTask(idle.id, { awaiting_input: 1 }); // the old flag, with no live ask behind it
+    updateTask(idle.id, { awaiting_input: 1 }); // a finished turn, with no live ask behind it
 
     const snap = assembleSnapshot({ projectId: project.id });
-    expect(projectSummary(snap, project.id).needsYouTaskCount.known).toBe(1);
+    expect(projectSummary(snap, project.id).needsYouTaskCount.known).toBe(2);
     expect(rowOf(snap, done.id)?.attention.map((a) => a.kind)).toEqual(["ci"]);
-    expect(rowOf(snap, idle.id)?.attention ?? []).toEqual([]);
+    expect(rowOf(snap, idle.id)?.attention.map((a) => a.kind)).toEqual(["turn_result"]);
   });
 
   it("snoozing subtracts from the visible counts and leaves the unsubtracted ones", async () => {
@@ -499,6 +500,28 @@ describe("agent edits", () => {
     });
   });
 
+  it("collapses a task's edits into one item whose acknowledgement clears them all", async () => {
+    const { project, task } = fresh();
+    const target = task("Target");
+    const actor = task("Actor");
+    const edit = (title: string) => recordAgentEdit({ task_id: target.id, project_id: project.id, actor_task_id: actor.id, actor_title: "Actor", actor_agent: "claude", changes: [{ field: "title", before: "a", after: title } as never] });
+    edit("one");
+    edit("two");
+    const third = edit("three");
+    // Equal timestamps: only the rowid orders them, as in one multi-field update_task.
+    getDb().prepare("UPDATE task_agent_edits SET created_at = 5000 WHERE task_id = ?").run(target.id);
+
+    const items = rowOf(assembleSnapshot({ projectId: project.id }), target.id)!.attention;
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ kind: "agent_edit", sourceRevision: third.id, title: "3 changes by Actor", firstOccurredAt: 5000 });
+
+    const res = await agentEditsRoute(post({ action: "ack", edit_id: items[0].sourceRevision }), params(target.id));
+    expect(res.status).toBe(200);
+    expect(listOutstandingAgentEdits().filter((e) => e.task_id === target.id)).toEqual([]);
+    expect(getTask(target.id)!.agent_edited_at).toBe(0);
+    expect(rowOf(assembleSnapshot({ projectId: project.id }), target.id)?.attention ?? []).toEqual([]);
+  });
+
   it("an outstanding edit on a done or cancelled task is not attention", () => {
     const { project, task } = fresh();
     const actor = task("Actor");
@@ -558,6 +581,77 @@ describe("turn failure source and acknowledgement", () => {
     const res = await failureAckRoute(post({ turnId: authTurn }), params(auth.id));
     expect(res.status).toBe(400);
     expect(rowOf(assembleSnapshot({ projectId: project.id }), auth.id)!.attention).toHaveLength(1);
+  });
+});
+
+describe("turn result source and acknowledgement", () => {
+  function finishedTurn(taskId: string, turnId: string, outcome: "ok" | "failed" = "ok") {
+    const t = getTask(taskId)!;
+    beginTurnRecord(taskId, { turnId, sessionId: null, generation: t.generation, startedAt: Date.now() - 10 });
+    finalizeTurnRecord(taskId, turnId, { outcome, endedAt: Date.now(), ...(outcome === "failed" ? { failureCode: "execution" as const } : {}) });
+    updateTask(taskId, { awaiting_input: 1 });
+  }
+
+  it("a finished interactive turn is one item, with or without edits; other states are not", () => {
+    const { project, task } = fresh();
+    const ended = task("Ended");
+    finishedTurn(ended.id, "t1");
+    const scheduled = task("Scheduled clean");
+    finishedTurn(scheduled.id, "t2");
+    updateTask(scheduled.id, { awaiting_input: 0, unread_run_at: Date.now() });
+    const failed = task("Failed");
+    finishedTurn(failed.id, "t3", "failed");
+    const held = task("Held");
+    finishedTurn(held.id, "t4");
+    updateTask(held.id, { status: "on_hold" });
+
+    const snap = assembleSnapshot({ projectId: project.id });
+    expect(rowOf(snap, ended.id)!.attention).toEqual([
+      expect.objectContaining({ kind: "turn_result", action: "acknowledge_result", sourceRevision: "t1" }),
+    ]);
+    expect(rowOf(snap, scheduled.id)?.attention ?? []).toEqual([]);
+    expect(rowOf(snap, failed.id)!.attention.map((a) => a.kind)).toEqual(["turn_failure"]);
+    expect(rowOf(snap, held.id)?.attention ?? []).toEqual([]);
+  });
+
+  it("an acknowledged failure does not come back as a turn result", async () => {
+    const { project, task } = fresh();
+    const a = task("Failed");
+    finishedTurn(a.id, "f1", "failed");
+    expect((await failureAckRoute(post({ turnId: "f1" }), params(a.id))).status).toBe(200);
+    expect(rowOf(assembleSnapshot({ projectId: project.id }), a.id)?.attention ?? []).toEqual([]);
+  });
+
+  it("turn-ack clears exactly the turn it names and leaves board order alone", async () => {
+    const { project, task } = fresh();
+    const a = task("Ended");
+    finishedTurn(a.id, "r1");
+    const before = getTask(a.id)!.updated_at;
+
+    const stale = await turnAckRoute(post({ turnId: "older" }), params(a.id));
+    expect(stale.status).toBe(409);
+    expect((await stale.json()).error.code).toBe("source_changed");
+    expect(getTask(a.id)!.awaiting_input).toBe(1);
+    expect((await turnAckRoute(post({}), params(a.id))).status).toBe(400);
+    expect((await turnAckRoute(post({ turnId: "r1" }), params("missing"))).status).toBe(404);
+
+    const ok = await turnAckRoute(post({ turnId: "r1" }), params(a.id));
+    expect(ok.status).toBe(200);
+    expect(getTask(a.id)).toMatchObject({ awaiting_input: 0, updated_at: before });
+    expect(rowOf(assembleSnapshot({ projectId: project.id }), a.id)?.attention ?? []).toEqual([]);
+    expect((await turnAckRoute(post({ turnId: "r1" }), params(a.id))).status).toBe(200); // a repeat is a no-op
+
+    finishedTurn(a.id, "r2");
+    expect(rowOf(assembleSnapshot({ projectId: project.id }), a.id)!.attention[0]).toMatchObject({ kind: "turn_result", sourceRevision: "r2" });
+  });
+
+  it("turn-ack refuses while the task is running", async () => {
+    const { task } = fresh();
+    const a = task("Busy");
+    finishedTurn(a.id, "b1");
+    updateTask(a.id, { running: 1 });
+    expect((await turnAckRoute(post({ turnId: "b1" }), params(a.id))).status).toBe(409);
+    expect(getTask(a.id)!.awaiting_input).toBe(1);
   });
 });
 

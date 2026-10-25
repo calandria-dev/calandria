@@ -208,7 +208,7 @@ const toSource = (a: Pick<Attention, "id" | "sourceRevision">): NotifySource => 
 export function awaitingSources(taskId: string): NotifySource[] {
   try {
     const row = assembleSnapshot({ recentLimit: 1 }).tasks.find((t) => t.taskId === taskId);
-    const items = (row?.attention ?? []).filter((a) => a.kind !== "ci" && a.kind !== "turn_failure");
+    const items = (row?.attention ?? []).filter((a) => a.kind !== "ci" && a.kind !== "turn_failure" && a.kind !== "turn_result");
     if (items.length) return items.map(toSource);
   } catch (err) {
     console.error("[notifications] snapshot read failed:", err);

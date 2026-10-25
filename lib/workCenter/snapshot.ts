@@ -239,6 +239,35 @@ function turnFailureItem(row: WorkCenterTaskRow, now: Ms): Attention[] {
   ];
 }
 
+/**
+ * A finished interactive turn waiting on the person's next message: the task
+ * is in progress, `awaiting_input` is up and no turn is live. Keyed on the
+ * latest turn, so acknowledging one turn never clears the next. A failed turn
+ * already carries its own turn_failure item (an acknowledged one stays
+ * settled), and a clean scheduled run rests
+ * on `unread_run_at` with `awaiting_input` at 0, so neither produces one.
+ */
+function turnResultItem(row: WorkCenterTaskRow, now: Ms, live: boolean, failed: boolean): Attention[] {
+  if (row.status !== "in_progress" || !row.awaiting_input || live || failed) return [];
+  const turnId = row.latest_turn_id ?? "";
+  return [
+    {
+      id: sourceId("turn_result", [row.id, turnId]),
+      sourceRevision: turnId,
+      kind: "turn_result",
+      firstOccurredAt: row.latest_turn_ended_at ?? row.updated_at,
+      actionable: true,
+      title: "Turn finished, your move",
+      action: "acknowledge_result",
+      destination: dest(row, { sessionId: row.latest_turn_session_id, messageId: row.latest_turn_terminal_message_id, surface: "transcript" }),
+      freshness: FRESH(now),
+      snoozedUntil: snoozeOf(row, now),
+      recoveryActionId: null,
+      inlineDecision: null,
+    },
+  ];
+}
+
 // ---- assembly ------------------------------------------------------------
 
 function workRow(row: WorkCenterTaskRow, execution: Execution, attention: Attention[], now: Ms): WorkRow {
@@ -283,19 +312,32 @@ function assembleOnce(opts: SnapshotOptions, now: Ms): Snapshot {
   const live = liveRequests(rows, now);
   for (const a of live.attention) add(a.destination.taskId, [a]);
 
-  const edits = listOutstandingAgentEdits();
-  for (const e of edits) {
-    const row = rows.get(e.task_id);
+  // One item per task covers every outstanding edit on it. Its revision is the
+  // newest edit in (created_at, rowid) order, the same order the ack cutoff
+  // uses, so one Acknowledge clears everything the person was shown and an
+  // edit landing after the snapshot stays outstanding.
+  const editsByTask = new Map<string, ReturnType<typeof listOutstandingAgentEdits>>();
+  for (const e of listOutstandingAgentEdits()) {
+    const cur = editsByTask.get(e.task_id) ?? [];
+    cur.push(e);
+    editsByTask.set(e.task_id, cur);
+  }
+  for (const [taskId, list] of editsByTask) {
+    const row = rows.get(taskId);
     // A closed task's edits stay on its board card for review and revert; they are not attention.
     if (!row || isTerminalStatus(row.status)) continue;
+    const first = list[0];
+    const newest = list[list.length - 1];
+    const actors = [...new Set(list.map((e) => e.actor_title || "another task"))];
+    const who = actors.length === 1 ? actors[0] : `${actors.length} tasks`;
     add(row.id, [
       {
-        id: sourceId("agent_edit", [row.id, e.id]),
-        sourceRevision: e.id,
+        id: sourceId("agent_edit", [row.id, newest.id]),
+        sourceRevision: newest.id,
         kind: "agent_edit",
-        firstOccurredAt: e.created_at,
+        firstOccurredAt: first.created_at,
         actionable: true,
-        title: `Changed by ${e.actor_title || "another task"}`.slice(0, 200),
+        title: `${list.length === 1 ? "Changed" : `${list.length} changes`} by ${who}`.slice(0, 200),
         action: "acknowledge_or_revert",
         destination: dest(row, { surface: "agent_edits" }),
         freshness: FRESH(now),
@@ -318,11 +360,13 @@ function assembleOnce(opts: SnapshotOptions, now: Ms): Snapshot {
     const br = baseRewriteItem(row, now);
     add(row.id, br.attention);
     coverage.push(...br.coverage);
-    add(row.id, turnFailureItem(row, now));
+    const failure = turnFailureItem(row, now);
+    add(row.id, failure);
+    add(row.id, turnResultItem(row, now, hasTurn(row.id), failure.length > 0 || !!row.latest_turn_failure_resolved_at));
   }
 
   // The local adapters are always readable; their coverage is complete.
-  for (const source of ["question", "permission", "settings_proposal", "agent_edit", "turn_failure"] as const) {
+  for (const source of ["question", "permission", "settings_proposal", "agent_edit", "turn_failure", "turn_result"] as const) {
     coverage.push({ source, taskId: null, state: "complete", reason: null });
   }
   for (const a of reviewAttention(rows, now)) add(a.destination.taskId, [a]);
