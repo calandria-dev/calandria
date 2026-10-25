@@ -8,6 +8,20 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.24.0](https://github.com/calandria-dev/calandria/compare/v0.23.0...v0.24.0) (2026-10-25)
+
+
+### Features
+
+* **work-center:** list running tasks first and collapse sections ([#574](https://github.com/calandria-dev/calandria/issues/574)) ([7bef943](https://github.com/calandria-dev/calandria/commit/7bef943216b203154293af9b9fbefa19e462a55a))
+
+
+### Bug Fixes
+
+* **desktop:** send the instance credential on the /pty WebSocket upgrade ([#577](https://github.com/calandria-dev/calandria/issues/577)) ([cd9f6dc](https://github.com/calandria-dev/calandria/commit/cd9f6dcb70538fb7e0600f7bf20b3cb2a9d751f7))
+* **pty:** contain PTY startup failures and adopt the ConPTY handle fix ([#578](https://github.com/calandria-dev/calandria/issues/578)) ([2f152bf](https://github.com/calandria-dev/calandria/commit/2f152bf108b396ffca6a0893909d4d57a77a313c))
+* **work-center:** list finished turns as needing you and clear all edits with one acknowledge ([#576](https://github.com/calandria-dev/calandria/issues/576)) ([d8fe154](https://github.com/calandria-dev/calandria/commit/d8fe15462f82b540c8583b67983e0b60ec51b157))
+
 ## [0.23.0](https://github.com/calandria-dev/calandria/compare/v0.22.2...v0.23.0) (2026-10-25)
 
 
