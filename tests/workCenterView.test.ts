@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Attention, Snapshot, Summary, WorkRow } from "@/lib/workCenter/types";
 import {
+  ackTargets,
   GROUP_ORDER, chipMeta, countView, failText, groupCollapsedKey, groupRows, headline, inlineActionsFor, isStale, lifecycleLabel, liveItems, sheetActionsFor, waitingText,
 } from "@/app/shell/workCenterModel";
 import { snoozeChoices } from "@/app/shell/WorkCenter";
@@ -124,7 +125,16 @@ describe("inline actions", () => {
     expect(inlineActionsFor(item("e", "agent_edit"))).toEqual(["ack", "open"]);
     for (const k of ["question", "ci", "base_rewrite", "settings_proposal", "turn_failure"] as const) expect(inlineActionsFor(item("x", k))).toEqual(["open"]);
   });
-  it("puts Acknowledge in the phone sheet only for an agent edit", () => {
+  it("offers Acknowledge on a finished turn's result", () => {
+    expect(inlineActionsFor(item("r", "turn_result"))).toEqual(["ack", "open"]);
+    expect(sheetActionsFor(item("r", "turn_result"))).toEqual(["open", "ack"]);
+  });
+  it("one Acknowledge targets every edit and turn-result item on the row, and nothing else", () => {
+    const r = row("t", { attention: [item("q", "question"), item("e", "agent_edit"), item("r", "turn_result")] });
+    expect(ackTargets(r, NOW).map((a) => a.id)).toEqual(["e", "r"]);
+    expect(ackTargets(r, NOW, new Set(["e"])).map((a) => a.id)).toEqual(["r"]);
+  });
+  it("puts Acknowledge in the phone sheet only for an agent edit or turn result", () => {
     expect(sheetActionsFor(item("e", "agent_edit"))).toEqual(["open", "ack"]);
     expect(sheetActionsFor(item("p", "permission", { inlineDecision: "allow_once_or_deny" }))).toEqual(["open"]);
   });

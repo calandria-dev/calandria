@@ -11,7 +11,7 @@ import { snoozePresets } from "./snooze";
 import type { ProjectRow } from "./types";
 import type { WorkCenterData } from "./useWorkCenter";
 import {
-  ACTION_IND, ACTION_OK, ACTION_PENDING, KINDS, OUTCOME_LABEL, ago, chipMeta, failText, groupRows, headline, inlineActionsFor,
+  ACTION_IND, ACTION_OK, ackTargets, ACTION_PENDING, KINDS, OUTCOME_LABEL, ago, chipMeta, failText, groupRows, headline, inlineActionsFor,
   GROUP_ORDER, groupCollapsedKey, isDecidableReview, isStale, isStaleItem, lifecycleLabel, liveItems, partialSources, sheetActionsFor,
   waitingText, type ActionKey, type CountView, type GroupKey, type InlineAction, type ReviewFacts,
 } from "./workCenterModel";
@@ -458,8 +458,25 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
         requestId,
       })));
   };
-  const acknowledge = (row: WorkRow, item: Attention) =>
-    void run(row, item, "ack", () => fetch(`/api/tasks/${row.taskId}/agent-edits`, jsonInit("POST", { action: "ack", edit_id: item.sourceRevision })));
+  // One Acknowledge settles every acknowledgeable item on the row: the task's
+  // agent edits (one item naming the newest edit, so the cutoff covers them
+  // all) and its finished-turn result. The first failing reply is the one shown.
+  const acknowledge = (row: WorkRow, item: Attention) => {
+    const targets = ackTargets(row, Date.now(), cleared);
+    const list = targets.some((t) => t.id === item.id) ? targets : [item];
+    const ackOne = (a: Attention) =>
+      a.kind === "turn_result"
+        ? fetch(`/api/tasks/${row.taskId}/turn-ack`, jsonInit("POST", { turnId: a.sourceRevision }))
+        : fetch(`/api/tasks/${row.taskId}/agent-edits`, jsonInit("POST", { action: "ack", edit_id: a.sourceRevision }));
+    void run(row, item, "ack", async () => {
+      let last: Response | null = null;
+      for (const a of list) {
+        last = await ackOne(a);
+        if (!last.ok) return last;
+      }
+      return last!;
+    }, () => setCleared((c) => { const n = new Set(c); for (const a of list) n.add(a.id); return n; }));
+  };
   const snooze = (row: WorkRow, c: SnoozeChoice) => {
     setMenu(null);
     setSheet(null);

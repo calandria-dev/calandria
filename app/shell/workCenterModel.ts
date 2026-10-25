@@ -8,7 +8,7 @@ import type { Attention, Count, Lifecycle, Outcome, Snapshot, Summary, WaitingRe
 type Kind = Attention["kind"];
 
 // Chips on a row follow this fixed order; inline actions belong to the first live item.
-export const KIND_ORDER: Kind[] = ["permission", "question", "review", "turn_failure", "base_rewrite", "ci", "settings_proposal", "agent_edit"];
+export const KIND_ORDER: Kind[] = ["permission", "question", "review", "turn_failure", "base_rewrite", "ci", "settings_proposal", "agent_edit", "turn_result"];
 
 export const KINDS: Record<Kind, { label: string; verb: string; role: "decide" | "fail" | "review" }> = {
   permission: { label: "Permission", verb: "Decide", role: "decide" },
@@ -19,6 +19,7 @@ export const KINDS: Record<Kind, { label: string; verb: string; role: "decide" |
   ci: { label: "CI failing", verb: "Open checks", role: "fail" },
   settings_proposal: { label: "Settings proposal", verb: "Decide", role: "decide" },
   agent_edit: { label: "Agent edit", verb: "Acknowledge", role: "decide" },
+  turn_result: { label: "Turn finished", verb: "Open", role: "review" },
 };
 
 export const LIFE_LABEL: Record<Lifecycle, string> = {
@@ -177,6 +178,14 @@ export const isStaleItem = (a: Attention) => a.freshness.state !== "fresh";
 
 // ---------- inline actions ----------
 
+/** Items Acknowledge settles: agent edits and a finished turn's result. */
+export const isAckable = (a: Attention | undefined) => a?.kind === "agent_edit" || a?.kind === "turn_result";
+
+/** Every item on a row that one Acknowledge settles together, in chip order. */
+export function ackTargets(r: WorkRow, now: number, cleared?: ReadonlySet<string>): Attention[] {
+  return liveItems(r, now, cleared).filter(isAckable);
+}
+
 export type InlineAction = "allow" | "deny" | "ack" | "open" | "accept" | "waive";
 
 /**
@@ -196,7 +205,7 @@ export const isDecidableReview = (a: Attention | undefined) => a?.kind === "revi
 export function inlineActionsFor(a: Attention | undefined, facts?: ReviewFacts | null): InlineAction[] {
   if (!a) return [];
   if (a.kind === "permission" && a.inlineDecision === "allow_once_or_deny") return ["allow", "deny"];
-  if (a.kind === "agent_edit") return ["ack", "open"];
+  if (isAckable(a)) return ["ack", "open"];
   if (isDecidableReview(a) && facts?.matches) {
     const out: InlineAction[] = [];
     if (facts.canAccept) out.push("accept");
@@ -208,7 +217,7 @@ export function inlineActionsFor(a: Attention | undefined, facts?: ReviewFacts |
 
 /** Phone action sheet entries for an item, ahead of Snooze. A review offers Accept (release section 4). */
 export function sheetActionsFor(a: Attention | undefined, facts?: ReviewFacts | null): InlineAction[] {
-  if (a?.kind === "agent_edit") return ["open", "ack"];
+  if (isAckable(a)) return ["open", "ack"];
   if (isDecidableReview(a) && facts?.matches && facts.canAccept) return ["open", "accept"];
   return ["open"];
 }

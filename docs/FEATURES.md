@@ -1160,9 +1160,10 @@ results four at a time. Click a section header to collapse it; the choice persis
 | Dashed border with a clock | The numbers are the last good ones; the last fetch failed or the live feed is down. |
 
 A row shows one chip per reason it needs you (permission, question, turn failed, base rewritten, CI
-failing, settings proposal, agent edit). A chip opens the exact card in the task's session, and Back
+failing, settings proposal, agent edit, turn finished). A chip opens the exact card in the task's session, and Back
 returns to the Work Center on the same row. On desktop a permission request that offers only Allow
-once and Deny has both buttons inline, an agent edit has Acknowledge, and every row has Snooze (1
+once and Deny has both buttons inline, an agent edit or a finished turn has Acknowledge, and every
+row has Snooze (1
 hour, until tomorrow, or until Monday). A snoozed task leaves the list and every count until its
 deadline. On a phone, **Work** is the fourth tab (Board, Services, Terminals, Work, Insights) with a
 needs-you badge, and each row's menu opens an action sheet.
@@ -1175,10 +1176,14 @@ needs-you badge, and each row's menu opens an action sheet.
   live session is under **Waiting**, with the reason on its row.
 - **Needs you:** a task with at least one open item that only you can resolve: a question, a
   permission request, a failed turn, a rewritten base branch, failing CI on its open pull
-  request, a settings change proposal, or an agent edit you have not acknowledged. A task counts
+  request, a settings change proposal, an agent edit you have not acknowledged, or a finished
+  turn waiting on your next message. A task counts
   once however many items it has, and the pill counts tasks, not items. A task that is done or
   cancelled still counts while its pull request has failing CI. A scheduled run that finished
-  cleanly is a recent result, not an item. An edit an agent has already applied is listed until
+  cleanly is a recent result, not an item. A finished interactive turn is listed until you
+  acknowledge it, send the task a message, or mark it done. All of a task's applied agent edits
+  share one item, and one Acknowledge on a row clears its edits and its finished turn together.
+  An edit an agent has already applied is listed until
   you acknowledge or revert it, or the task is done or cancelled. The task card keeps the
   edit's diff and Revert after that. A change an agent has only proposed is a permission-style
   request until you allow or deny it.

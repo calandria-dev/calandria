@@ -31,7 +31,7 @@ export type Summary = {
 
 export type Coverage = {
   source: "execution" | "question" | "permission" | "ci" | "agent_edit"
-    | "settings_proposal" | "base_rewrite" | "turn_failure" | "review";
+    | "settings_proposal" | "base_rewrite" | "turn_failure" | "turn_result" | "review";
   taskId: Id | null;
   state: "complete" | "partial" | "unavailable" | "not_applicable";
   reason: string | null;
@@ -47,11 +47,11 @@ export type Destination = {
 export type Attention = {
   id: Id; sourceRevision: string;
   kind: "question" | "permission" | "ci" | "agent_edit"
-    | "settings_proposal" | "base_rewrite" | "turn_failure" | "review";
+    | "settings_proposal" | "base_rewrite" | "turn_failure" | "turn_result" | "review";
   firstOccurredAt: Ms; actionable: true;
   title: string; action: "answer" | "decide_permission" | "fix_ci"
     | "acknowledge_or_revert" | "decide_proposal" | "repair_base"
-    | "recover_turn" | "decide_review" | "recover_review_action";
+    | "recover_turn" | "acknowledge_result" | "decide_review" | "recover_review_action";
   destination: Destination;
   freshness: Freshness;
   snoozedUntil: Ms | null;
