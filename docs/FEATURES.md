@@ -1178,7 +1178,8 @@ needs-you badge, and each row's menu opens an action sheet.
   once however many items it has, and the pill counts tasks, not items. A task that is done or
   cancelled still counts while its pull request has failing CI. A scheduled run that finished
   cleanly is a recent result, not an item. An edit an agent has already applied is listed until
-  you acknowledge or revert it. A change an agent has only proposed is a permission-style
+  you acknowledge or revert it, or the task is done or cancelled. The task card keeps the
+  edit's diff and Revert after that. A change an agent has only proposed is a permission-style
   request until you allow or deny it.
 - **Recently finished:** the latest result for each task in the last seven days. A result from
   before Calandria recorded outcomes shows as an unknown result.

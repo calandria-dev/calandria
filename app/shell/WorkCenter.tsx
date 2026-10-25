@@ -599,7 +599,7 @@ export function WorkCenterSurface({ kind, data, projects, viewState, onOpen, onC
       >
         {avatar(row)}
         <div className="wc-main">
-          <div className="wc-t"><span>{row.title}</span>{life && <span className={`wc-life${life.odd ? " odd" : ""}`}>{life.text}</span>}</div>
+          <div className="wc-t"><span title={row.title}>{row.title}</span>{life && <span className={`wc-life${life.odd ? " odd" : ""}`}>{life.text}</span>}</div>
           <div className="wc-sub">{joined}</div>
           {items.length > 0 && (
             <div className="wc-items">
