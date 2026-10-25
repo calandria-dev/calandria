@@ -180,13 +180,13 @@ const wss = new WebSocketServer({
         const peer = info.req.socket?.remoteAddress;
         if (!localOrigin.isLoopbackPeer(peer)) {
           log.warn("rejected connection: peer is not loopback", { peer });
-          return callback(false, 401, "Unauthorized");
+          return false;
         }
         const headers = { host: info.req.headers.host, origin: info.origin };
         if (!origin.originAuthEnabled()) {
           const allowed = localOrigin.localWebSocketRequestAllowed(headers);
           if (!allowed) log.warn("rejected connection: origin not allowed in local mode", { origin: info.origin || "(none)" });
-          return callback(allowed);
+          return allowed;
         }
         // Access mode: same two checks the app makes. Same-origin proves the
         // handshake wasn't initiated by a hostile page (the Access cookie is
@@ -194,20 +194,25 @@ const wss = new WebSocketServer({
         // the upgrade's headers verbatim, so both are here.
         if (!localOrigin.sameOriginWebSocketRequestAllowed(headers)) {
           log.warn("rejected connection: origin does not match host", { origin: info.origin || "(none)", host: headers.host || "(none)" });
-          return callback(false, 401, "Unauthorized");
+          return false;
         }
         try {
           await origin.verifyOriginNodeRequest(info.req);
         } catch (err) {
           log.warn("rejected connection: no valid Access assertion", { err: err?.message || err });
-          return callback(false, 401, "Unauthorized");
+          return false;
         }
-        callback(true);
+        return true;
       })
-      .catch((err) => {
-        log.error("failed to evaluate the connection gate", { err });
-        callback(false);
-      });
+      // callback(true) upgrades the socket and runs connection listeners.
+      // Only gate failures may send an HTTP rejection before that upgrade.
+      .then(
+        (allowed) => callback(allowed),
+        (err) => {
+          log.error("failed to evaluate the connection gate", { err });
+          callback(false);
+        },
+      );
   },
 });
 
@@ -231,13 +236,20 @@ wss.on("connection", (ws, req) => {
   // cross-platform tooling believe it's talking to a POSIX terminal.
   if (!IS_WINDOWS) env.TERM = "xterm-256color";
   if (port > 0) env.PORT = String(port);
-  const term = pty.spawn(SHELL, [], {
-    name: "xterm-256color",
-    cols: Number(url.searchParams.get("cols")) || 80,
-    rows: Number(url.searchParams.get("rows")) || 24,
-    cwd,
-    env,
-  });
+  let term;
+  try {
+    term = pty.spawn(SHELL, [], {
+      name: "xterm-256color",
+      cols: Number(url.searchParams.get("cols")) || 80,
+      rows: Number(url.searchParams.get("rows")) || 24,
+      cwd,
+      env,
+    });
+  } catch (err) {
+    log.error("failed to start terminal", { err });
+    ws.close(1011, "Terminal startup failed");
+    return;
+  }
 
   let termStopped = false;
   const stopTerm = () => {

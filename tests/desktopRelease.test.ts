@@ -106,7 +106,7 @@ describe("Linux desktop native install", () => {
     const payloadInstall = desktop.indexOf("npm run payload -- --no-build");
 
     expect(desktop).toContain("runs-on: ubuntu-24.04");
-    expect(desktop).toContain("node-pty 1.1.0 ships no Linux prebuild");
+    expect(desktop).toContain("A native module compiles with node-gyp whenever no bundled prebuild");
     expect(desktop).toContain("node_root=$(dirname \"$(dirname \"$(node -p 'process.execPath')\")\")");
     expect(desktop).toContain('"$node_root/include/node/node.h"');
     expect(desktop).toContain('echo "npm_config_nodedir=$node_root" >> "$GITHUB_ENV"');
