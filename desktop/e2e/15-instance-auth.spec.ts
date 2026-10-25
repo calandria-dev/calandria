@@ -266,3 +266,113 @@ test.describe("a header-kind instance sends its stored headers with no sign-in s
     expect(headerStub.log.some((l) => l.includes("GET /api/version auth=ok"))).toBeTruthy();
   });
 });
+
+/* ---- A revoked refresh token: one attempt, then the sign-in screen ------- */
+
+test.describe("a refresh token the provider revoked stops renewing and asks for a sign-in (#477)", () => {
+  // The renewal is armed for this long after launch, which leaves the attach
+  // time to finish on the still-valid access token first, so what the test
+  // observes is the background renewal timer, the path that looped in #477.
+  const RENEW_AFTER_MS = 25_000;
+  // instance-auth.js's REFRESH_SKEW_MS: the timer fires this long before expiry.
+  const SKEW_MS = 60_000;
+  const revokedId = "ef56";
+  let revokedStub: SsoStub;
+  let revokedShell: Shell | undefined;
+  let credsFile: string;
+
+  const refreshGrants = () => revokedStub.log.filter((l) => l.startsWith("token grant=refresh_token")).length;
+
+  test.beforeAll(async () => {
+    revokedStub = await startSsoStub();
+
+    const root = instanceRoot("instance-auth-revoked-config");
+    fs.mkdirSync(root, { recursive: true });
+    credsFile = path.join(root, "credentials.json");
+    // A previous run's sign-in: the access token still works, and the refresh
+    // token is one the stub's token endpoint refuses with `invalid_grant`,
+    // exactly as a provider that rotated or revoked it does.
+    fs.writeFileSync(
+      credsFile,
+      JSON.stringify({
+        version: 1,
+        credentials: {
+          [revokedId]: {
+            enc: "plain",
+            data: {
+              kind: "oauth",
+              tokenType: "Bearer",
+              accessToken: revokedStub.token,
+              refreshToken: "a-refresh-token-the-provider-revoked",
+              obtainedAt: Date.now(),
+              expiresAt: Date.now() + SKEW_MS + RENEW_AFTER_MS,
+            },
+          },
+        },
+      }),
+    );
+    const instancesFile = writeInstancesFile(root, {
+      active: revokedId,
+      instances: [
+        { id: "local", kind: "local", name: "This computer" },
+        {
+          id: revokedId,
+          kind: "url",
+          name: "Revoked stub",
+          url: revokedStub.appOrigin,
+          auth: { kind: "oauth", issuer: revokedStub.idpOrigin, clientId: revokedStub.clientId },
+        },
+      ],
+    });
+
+    revokedShell = await launchShell("instance-auth-revoked", {
+      env: { CALANDRIA_INSTANCES_FILE: instancesFile, CALANDRIA_CREDENTIALS_FILE: credsFile },
+    });
+  });
+
+  test.afterEach(async ({}, testInfo) => {
+    if (revokedShell) await attachShellLog(testInfo, revokedShell);
+  });
+
+  test.afterAll(async () => {
+    await quitShell(revokedShell);
+    await revokedStub?.stop();
+  });
+
+  test("the stored credential attaches before the renewal is due", async () => {
+    await revokedShell!.win.waitForSelector("#app-loaded", { timeout: 20_000 });
+    expect(refreshGrants(), "nothing renewed yet").toBe(0);
+  });
+
+  test("invalid_grant drops the credential and lands on the sign-in screen with the reason", async () => {
+    await expect.poll(refreshGrants, { timeout: RENEW_AFTER_MS + 30_000 }).toBeGreaterThan(0);
+
+    await expect
+      .poll(() => revokedShell!.app.windows().some((p) => p.url().endsWith("/signin.html")), { timeout: 20_000 })
+      .toBe(true);
+    revokedShell!.win = revokedShell!.app.windows().find((p) => p.url().endsWith("/signin.html"))!;
+    await revokedShell!.win.waitForSelector("#signin:not([hidden])", { timeout: 15_000 });
+    await expect(revokedShell!.win.locator("#error")).toContainText("Sign in again");
+
+    await expect
+      .poll(
+        () => {
+          try {
+            return !!JSON.parse(fs.readFileSync(credsFile, "utf8")).credentials?.[revokedId];
+          } catch {
+            return false;
+          }
+        },
+        { message: "the revoked credential was removed from disk", timeout: 15_000 },
+      )
+      .toBe(false);
+    expect(revokedShell!.log.some((l) => l.includes("the provider revoked the sign-in for Revoked stub"))).toBe(true);
+  });
+
+  test("the dead refresh token is never sent again", async () => {
+    // The loop in #477 retried every 5 seconds. Three of those intervals with
+    // no further grant proves the retry is gone, not merely slowed.
+    await new Promise((r) => setTimeout(r, 15_000));
+    expect(refreshGrants(), "exactly one refresh attempt").toBe(1);
+  });
+});

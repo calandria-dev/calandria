@@ -63,12 +63,15 @@ const {
   discover,
   discoveryUrl,
   exchangeCode,
+  isPermanentTokenError,
   parseCallback,
   refreshCredential,
 } = require("./oauth");
 const {
   MAX_REFRESH_DELAY_MS,
   NO_CIPHER,
+  REFRESH_RETRY_BASE_MS,
+  REFRESH_RETRY_MAX_MS,
   REFRESH_SKEW_MS,
   authHeaders,
   credentialExpired,
@@ -78,6 +81,7 @@ const {
   normalizeAuth,
   parseHeaderLines,
   refreshDelay,
+  refreshRetryDelay,
   sameInstanceOrigin,
   saveCredentials,
 } = require("./instance-auth");
@@ -2386,6 +2390,61 @@ function hold(port) {
     }
   });
 
+  await test("a refresh the provider refuses with invalid_grant is permanent; a 5xx or an unreachable endpoint is transient (#477)", async () => {
+    let answer = { status: 400, body: { error: "invalid_grant", error_description: "Token is not valid" } };
+    const server = http.createServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        res.writeHead(answer.status, { "content-type": "application/json" });
+        res.end(JSON.stringify(answer.body));
+      });
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const tokenEndpoint = `http://127.0.0.1:${server.address().port}/token`;
+    const refresh = () =>
+      refreshCredential(
+        { tokenEndpoint, clientId: "cal", credential: { refreshToken: "rt-revoked" } },
+        { fetchImpl: globalThis.fetch },
+      );
+    const failure = async () => {
+      try {
+        await refresh();
+      } catch (err) {
+        return err;
+      }
+      throw new Error("the refresh was expected to fail");
+    };
+    try {
+      let err = await failure();
+      assert.equal(err.oauthError, "invalid_grant");
+      assert.equal(err.status, 400);
+      assert.equal(isPermanentTokenError(err), true, "a revoked refresh token is not retried");
+
+      answer = { status: 400, body: "not an oauth body" };
+      err = await failure();
+      assert.equal(err.oauthError, null);
+      assert.equal(isPermanentTokenError(err), true, "a bare 400 is a refusal on the merits");
+
+      answer = { status: 503, body: { error: "temporarily_unavailable" } };
+      err = await failure();
+      assert.equal(isPermanentTokenError(err), false, "a provider outage is retried");
+
+      answer = { status: 502, body: {} };
+      assert.equal(isPermanentTokenError(await failure()), false);
+    } finally {
+      server.close();
+    }
+
+    const unreachable = await refreshCredential(
+      { tokenEndpoint: "http://127.0.0.1:9/token", clientId: "cal", credential: { refreshToken: "rt" } },
+      { fetchImpl: async () => { throw new Error("ECONNREFUSED"); } },
+    ).catch((e) => e);
+    assert.equal(unreachable.status, null);
+    assert.equal(isPermanentTokenError(unreachable), false, "a network fault is retried");
+    assert.equal(isPermanentTokenError(new Error("plain")), false);
+    assert.equal(isPermanentTokenError(null), false);
+  });
+
   await test("LoopbackReceiver answers the real callback, 404s a wrong path, refuses a non-GET, and never resolves on those", async () => {
     const receiver = new LoopbackReceiver({ timeoutMs: 5000 });
     try {
@@ -2518,6 +2577,16 @@ function hold(port) {
 
     assert.equal(credentialExpired({ expiresAt: now + 1000 }, now), true, "inside the skew window is expired");
     assert.equal(credentialExpired({ expiresAt: now + REFRESH_SKEW_MS + 60000 }, now), false);
+  });
+
+  await test("refreshRetryDelay backs off exponentially from the base to the cap (#477)", async () => {
+    assert.equal(refreshRetryDelay(1), REFRESH_RETRY_BASE_MS);
+    assert.equal(refreshRetryDelay(2), REFRESH_RETRY_BASE_MS * 2);
+    assert.equal(refreshRetryDelay(3), REFRESH_RETRY_BASE_MS * 4);
+    assert.equal(refreshRetryDelay(0), REFRESH_RETRY_BASE_MS, "a missing count is the first failure");
+    assert.equal(refreshRetryDelay(50), REFRESH_RETRY_MAX_MS);
+    assert.equal(refreshRetryDelay(1e9), REFRESH_RETRY_MAX_MS, "a huge count never overflows past the cap");
+    assert.ok(refreshRetryDelay(1) > 5_000, "the first retry is slower than the old fixed 5s loop");
   });
 
   await test("saveCredentials/loadCredentials round-trip through NO_CIPHER at 0600, and a corrupt file loads empty", async () => {
