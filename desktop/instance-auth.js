@@ -206,6 +206,30 @@ function authHeaders(cred, now = Date.now()) {
   return { Authorization: `${cred.tokenType || "Bearer"} ${cred.accessToken}` };
 }
 
+/** The WebSocket schemes and the HTTP scheme each one upgrades from. */
+const WS_SCHEME_FAMILY = { "ws:": "http:", "wss:": "https:" };
+
+/**
+ * Whether a request to `url` goes to the instance at `origin` and so carries
+ * its credential.
+ *
+ * A WebSocket URL counts as its HTTP origin: `wss://host/pty` is the same
+ * server as `https://host`, and the `/pty` upgrade needs the credential as
+ * much as the page load does. `URL.origin` keeps the `wss:` scheme, so the two
+ * are compared by host and normalised scheme. Any unparseable input is a no.
+ */
+function sameInstanceOrigin(url, origin) {
+  if (!url || !origin) return false;
+  try {
+    const a = new URL(url);
+    const b = new URL(origin);
+    const scheme = (u) => WS_SCHEME_FAMILY[u.protocol] || u.protocol;
+    return scheme(a) === scheme(b) && a.host === b.host;
+  } catch {
+    return false;
+  }
+}
+
 /** What the sign-in state reads as in the dialog and the log. */
 function describeCredential(cred, now = Date.now()) {
   if (!cred) return "Not signed in";
@@ -328,4 +352,5 @@ module.exports = {
   parseHeaderLines,
   refreshDelay,
   saveCredentials,
+  sameInstanceOrigin,
 };

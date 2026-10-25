@@ -78,6 +78,7 @@ const {
   normalizeAuth,
   parseHeaderLines,
   refreshDelay,
+  sameInstanceOrigin,
   saveCredentials,
 } = require("./instance-auth");
 const { SshTunnel, pickLocalPort, portAccepts, sshArgs, sshFailureMessage, waitForPort } = require("./ssh-tunnel");
@@ -2492,6 +2493,17 @@ function hold(port) {
     assert.deepEqual(got, { "X-Thing": "1" });
     got.mutated = "yes";
     assert.equal(headerCred.headers.mutated, undefined, "mutating the result must not mutate the credential");
+  });
+
+  await test("sameInstanceOrigin: the /pty WebSocket upgrade carries the credential its page origin does", async () => {
+    assert.equal(sameInstanceOrigin("https://h.example/api/tasks", "https://h.example"), true);
+    assert.equal(sameInstanceOrigin("wss://h.example/pty?cwd=%2F", "https://h.example"), true);
+    assert.equal(sameInstanceOrigin("ws://127.0.0.1:4100/pty", "http://127.0.0.1:4100"), true);
+    assert.equal(sameInstanceOrigin("ws://h.example/pty", "https://h.example"), false, "a downgraded scheme is another origin");
+    assert.equal(sameInstanceOrigin("wss://h.example:8443/pty", "https://h.example"), false, "another port is another origin");
+    assert.equal(sameInstanceOrigin("wss://evil.example/pty", "https://h.example"), false);
+    assert.equal(sameInstanceOrigin("https://h.example/", null), false);
+    assert.equal(sameInstanceOrigin("not a url", "https://h.example"), false);
   });
 
   await test("credentialExpired/refreshDelay: no expiry never expires and never schedules; the floor and ceiling clamp the delay", async () => {
