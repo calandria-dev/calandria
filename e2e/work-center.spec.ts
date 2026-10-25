@@ -165,18 +165,29 @@ test("a permission request is allowed once inline and the turn resumes", async (
   await row.getByRole("button", { name: "Allow once" }).click();
   await expect(row.locator(".wc-out.ok")).toContainText("Allowed once");
   await expect.poll(async () => (await getTask(request, task.id)).awaiting_input).toBe(0);
-  // The resumed turn finishes and leaves its result for the person; settling
-  // it here also keeps later tests' need counts steady.
-  await expect.poll(async () => (await getTask(request, task.id)).running, { timeout: 30_000 }).toBe(0);
+});
+
+test("a finished turn with no edits needs you until Acknowledge clears it", async ({ page, request }) => {
+  const task = await createTask(request, { projectId, title: "Finished turn", description: "plain turn" });
+  await sendMessage(request, task.id);
   await expect.poll(async () => {
-    const r = (await snapshot(request)).tasks.find((t: { taskId: string }) => t.taskId === task.id);
-    return r?.attention.map((a: { kind: string }) => a.kind) ?? [];
-  }).toEqual(["turn_result"]);
+    const t = await getTask(request, task.id);
+    return t.running === 0 && t.awaiting_input === 1;
+  }, { timeout: 30_000, message: `task ${task.id} never finished its turn` }).toBe(true);
+  const kinds = async () =>
+    (await snapshot(request)).tasks.find((r: { taskId: string }) => r.taskId === task.id)?.attention.map((a: { kind: string }) => a.kind) ?? [];
+  await expect.poll(kinds).toEqual(["turn_result"]);
+
+  await gotoApp(page);
+  await pill(page).click();
+  // Needs you renders above Recently finished, which lists the same task again.
+  const row = rowOf(page, "Finished turn").first();
   await expect(row.getByRole("button", { name: /^Turn finished:/ })).toBeVisible();
   await row.hover();
   await row.getByRole("button", { name: "Acknowledge" }).click();
   await expect.poll(async () => (await getTask(request, task.id)).awaiting_input).toBe(0);
-  await expect.poll(async () => (await snapshot(request)).tasks.find((t: { taskId: string }) => t.taskId === task.id)?.attention ?? []).toEqual([]);
+  await expect.poll(kinds).toEqual([]);
+  await expect(rowOf(page, "Finished turn").getByRole("button", { name: /^Turn finished:/ })).toHaveCount(0);
 });
 
 test("Snooze hides the task from the list and from every count", async ({ page, request }) => {
