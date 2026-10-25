@@ -221,7 +221,11 @@ the terminal's connection. An instance with no sign-in configured keeps working 
 before, including the in-window login path (a Cloudflare Access PIN, a password form, an
 OTP); configuring browser-based sign-in is optional and doesn't take those away.
 
-A credential nearing expiry renews itself in the background. Saved credentials live in
+A credential nearing expiry renews itself in the background. If the provider can't be reached
+or answers with a server error, the app retries at a widening interval, from 15 seconds up to
+15 minutes. If the provider refuses the refresh token (`invalid_grant`, as it does after a
+revocation, a logout, or a token rotated by another client), the app forgets the credential
+and shows the sign-in screen with the reason. Saved credentials live in
 `~/.config/calandria/credentials.json` next to the instance list, never inside
 `instances.json` itself, since that file is meant to be hand-edited. They're encrypted where
 your operating system provides a keyring, and written with restricted file permissions and a

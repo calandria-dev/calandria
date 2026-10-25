@@ -208,6 +208,41 @@ function parseCallback(query, expectedState) {
   return { code };
 }
 
+/**
+ * RFC 6749 §5.2 error codes that retrying the same request can never fix.
+ *
+ * `invalid_grant` is the one a revoked or already-rotated refresh token
+ * produces (authentik with `refresh_token_threshold=0`, Keycloak after a
+ * logout, any provider after an admin revokes the session). The rest mean the
+ * client registration or the request itself is wrong, which no amount of
+ * waiting changes either.
+ */
+const PERMANENT_TOKEN_ERRORS = new Set([
+  "invalid_grant",
+  "invalid_client",
+  "unauthorized_client",
+  "unsupported_grant_type",
+  "invalid_scope",
+  "invalid_request",
+]);
+
+/**
+ * Whether a token endpoint failure means the grant is dead and the user has to
+ * sign in again, as opposed to a network fault or a provider outage worth
+ * retrying later.
+ *
+ * Reads the `oauthError` and `status` fields `tokenRequest` puts on what it
+ * throws. A known OAuth error code decides on its own; a 400 or 401 with no
+ * readable code is treated as permanent too, since RFC 6749 reserves both for
+ * a request the server refused on its merits. Anything else (no response at
+ * all, 408, 429, a 5xx) is transient.
+ */
+function isPermanentTokenError(err) {
+  if (!err || typeof err !== "object") return false;
+  if (err.oauthError) return PERMANENT_TOKEN_ERRORS.has(err.oauthError);
+  return err.status === 400 || err.status === 401;
+}
+
 /** POST a form to the token endpoint and return its JSON, or throw the OAuth error. */
 async function tokenRequest(tokenEndpoint, params, { fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_HTTP_TIMEOUT_MS } = {}) {
   const body = new URLSearchParams(params);
@@ -220,7 +255,10 @@ async function tokenRequest(tokenEndpoint, params, { fetchImpl = globalThis.fetc
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
-    throw new Error(`Could not reach the token endpoint: ${err?.message || err}`);
+    const failure = new Error(`Could not reach the token endpoint: ${err?.message || err}`);
+    failure.status = null;
+    failure.oauthError = null;
+    throw failure;
   }
   let doc = null;
   try {
@@ -233,7 +271,10 @@ async function tokenRequest(tokenEndpoint, params, { fetchImpl = globalThis.fetc
     // that says WHICH of the six things was wrong.
     const code = doc?.error ? String(doc.error) : `HTTP ${res.status}`;
     const detail = doc?.error_description ? `: ${doc.error_description}` : "";
-    throw new Error(`The token endpoint refused the request: ${code}${detail}`);
+    const failure = new Error(`The token endpoint refused the request: ${code}${detail}`);
+    failure.status = res.status;
+    failure.oauthError = doc?.error ? String(doc.error) : null;
+    throw failure;
   }
   return doc;
 }
@@ -427,6 +468,7 @@ module.exports = {
   discover,
   discoveryUrl,
   exchangeCode,
+  isPermanentTokenError,
   parseCallback,
   refreshCredential,
   sameIssuer,

@@ -77,6 +77,7 @@ const {
   loadCredentials,
   parseHeaderLines,
   refreshDelay,
+  refreshRetryDelay,
   sameInstanceOrigin,
   saveCredentials,
 } = require("./instance-auth");
@@ -87,6 +88,7 @@ const {
   createState,
   discover,
   exchangeCode,
+  isPermanentTokenError,
   parseCallback,
   refreshCredential,
 } = require("./oauth");
@@ -201,6 +203,12 @@ const refreshTimers = new Map();
 // a 401 at roughly the same moment, and three concurrent refreshes against a
 // provider that ROTATES refresh tokens invalidate each other's.
 const refreshInFlight = new Map();
+// Consecutive transient renewal failures per instance, which sets the backoff
+// of the next retry. Reset by any successful renewal or a fresh sign-in.
+const refreshFailures = new Map();
+// Why an instance's stored credential was dropped, shown once on the next
+// sign-in screen for it. Set when the provider revokes the refresh token.
+const signInNotices = new Map();
 // The loopback receiver of a sign-in currently waiting on the user's browser,
 // or null. At most one: it is a port open on this machine holding an
 // authorization code, and a second one would be a second window in which that
@@ -583,6 +591,8 @@ function persistCredentials() {
 /** Adopt a fresh credential: remember it, persist it, and arm what depends on it. */
 function setCredential(inst, cred) {
   credentials.set(inst.id, cred);
+  refreshFailures.delete(inst.id);
+  signInNotices.delete(inst.id);
   persistCredentials();
   armAuthHeaders(inst);
   scheduleRefresh(inst);
@@ -593,6 +603,7 @@ function clearCredential(id) {
   if (timer) clearTimeout(timer);
   refreshTimers.delete(id);
   refreshInFlight.delete(id);
+  refreshFailures.delete(id);
   if (!credentials.delete(id)) return;
   persistCredentials();
 }
@@ -677,7 +688,22 @@ async function refreshNow(inst) {
     console.log(`[shell] renewed the sign-in for ${inst.name}`);
     return next;
   })().catch((err) => {
-    console.log(`[shell] could not renew the sign-in for ${inst.name}: ${err?.message || err}`);
+    const why = err?.message || err;
+    if (isPermanentTokenError(err)) {
+      // The provider has revoked the grant. Retrying sends a dead refresh
+      // token on every attempt, so the credential goes and the user signs in
+      // again. Only the credential this attempt read is dropped: a sign-in
+      // that finished meanwhile stored a new one that is still good.
+      console.log(`[shell] the provider revoked the sign-in for ${inst.name}, signing in again is required: ${why}`);
+      if (credentials.get(inst.id) === cred) {
+        clearCredential(inst.id);
+        signInNotices.set(inst.id, `Your sign-in to ${inst.name} has expired or was revoked. Sign in again.`);
+      }
+      return null;
+    }
+    const failures = (refreshFailures.get(inst.id) || 0) + 1;
+    refreshFailures.set(inst.id, failures);
+    console.log(`[shell] could not renew the sign-in for ${inst.name} (attempt ${failures}): ${why}`);
     return null;
   });
   refreshInFlight.set(inst.id, run);
@@ -688,23 +714,57 @@ async function refreshNow(inst) {
   }
 }
 
-/** Arm the next renewal, replacing any pending one. */
-function scheduleRefresh(inst) {
+/**
+ * Arm the next renewal, replacing any pending one.
+ *
+ * `retry` arms it off the transient-failure backoff instead of the token's
+ * expiry, so a provider outage is retried at a widening interval and never in
+ * a tight loop. A revoked grant arms nothing: `refreshNow` has dropped the
+ * credential, and the active instance re-attaches onto the sign-in screen.
+ */
+function scheduleRefresh(inst, { retry = false } = {}) {
   const existing = refreshTimers.get(inst.id);
   if (existing) clearTimeout(existing);
   refreshTimers.delete(inst.id);
-  const delay = refreshDelay(credentials.get(inst.id));
+  const cred = credentials.get(inst.id);
+  let delay = refreshDelay(cred);
   if (delay === null) return;
+  if (retry) delay = refreshRetryDelay(refreshFailures.get(inst.id) || 1);
   const timer = setTimeout(() => {
     refreshTimers.delete(inst.id);
     // Off the saved list, not the closed-over row: this fires minutes or hours
     // later, and the instance may have been renamed or re-pointed since.
     const current = findInstance(instancesState, inst.id);
-    if (current) void refreshNow(current).then(() => scheduleRefresh(current));
+    if (!current) return;
+    void refreshNow(current).then((next) => {
+      // A success already re-armed through `setCredential`.
+      if (next) return;
+      if (credentials.has(current.id)) {
+        if (refreshFailures.has(current.id) && !refreshTimers.has(current.id)) scheduleRefresh(current, { retry: true });
+        return;
+      }
+      // Gone with a notice means revoked here. Gone without one is a sign-out,
+      // which re-attached on its own.
+      if (signInNotices.has(current.id)) onCredentialRevoked(current);
+    });
   }, delay);
   // A renewal timer is not a reason to hold the process open on quit.
   timer.unref?.();
   refreshTimers.set(inst.id, timer);
+}
+
+/**
+ * Put the user in front of a sign-in after a background renewal found the
+ * grant revoked.
+ *
+ * The active instance re-attaches, which finds no credential and lands on the
+ * sign-in screen with the notice `refreshNow` left. Any other instance only
+ * loses its badge stream: it shows the same screen the next time it is opened.
+ */
+function onCredentialRevoked(inst) {
+  dropSubscriber(inst.id);
+  if (instancesState.active === inst.id) void applyActiveInstance();
+  else syncSubscribers();
 }
 
 /**
@@ -1696,7 +1756,8 @@ async function resolveSignIn(inst, origin, seq) {
     if (seq !== attachSeq) return "abandoned";
     if (!again.signIn) return again;
   }
-  let error = "";
+  let error = signInNotices.get(inst.id) || "";
+  signInNotices.delete(inst.id);
   for (;;) {
     const answer = await showSignInPrompt(inst, { error });
     if (seq !== attachSeq) return "abandoned";

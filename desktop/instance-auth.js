@@ -32,6 +32,12 @@ const REFRESH_SKEW_MS = 60_000;
 /** Never schedule a renewal further out than this, so a clock jump self-heals. */
 const MAX_REFRESH_DELAY_MS = 6 * 60 * 60 * 1000;
 
+/** The first retry after a renewal failed on a network fault or a provider error. */
+const REFRESH_RETRY_BASE_MS = 15_000;
+
+/** The longest wait between two retries of a renewal that keeps failing transiently. */
+const REFRESH_RETRY_MAX_MS = 15 * 60 * 1000;
+
 /**
  * Headers the app refuses to send on a user's behalf.
  *
@@ -188,6 +194,19 @@ function refreshDelay(cred, now = Date.now(), skewMs = REFRESH_SKEW_MS) {
 }
 
 /**
+ * How long to wait before retrying a renewal that failed transiently, after
+ * `failures` consecutive failures (1 for the first).
+ *
+ * Doubles from `REFRESH_RETRY_BASE_MS` up to `REFRESH_RETRY_MAX_MS`. Only for
+ * failures worth retrying: a provider that answered `invalid_grant` has revoked
+ * the grant, and the caller drops the credential instead of calling this.
+ */
+function refreshRetryDelay(failures) {
+  const n = Math.max(1, Math.floor(Number(failures) || 1));
+  return Math.min(REFRESH_RETRY_MAX_MS, REFRESH_RETRY_BASE_MS * 2 ** Math.min(n - 1, 20));
+}
+
+/**
  * The headers this credential contributes to a request, or `null` for none.
  *
  * An EXPIRED oauth credential contributes nothing rather than its stale token:
@@ -339,6 +358,8 @@ function saveCredentials(credentials, { env = process.env, file = null, cipher =
 module.exports = {
   MAX_REFRESH_DELAY_MS,
   NO_CIPHER,
+  REFRESH_RETRY_BASE_MS,
+  REFRESH_RETRY_MAX_MS,
   REFRESH_SKEW_MS,
   REFUSED_HEADERS,
   authHeaders,
@@ -351,6 +372,7 @@ module.exports = {
   normalizeAuth,
   parseHeaderLines,
   refreshDelay,
+  refreshRetryDelay,
   saveCredentials,
   sameInstanceOrigin,
 };
