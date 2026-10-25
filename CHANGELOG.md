@@ -8,6 +8,28 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.23.0](https://github.com/calandria-dev/calandria/compare/v0.22.2...v0.23.0) (2026-10-25)
+
+
+### Features
+
+* **work-center:** replace the Needs you inbox with Work Center and add agent review submissions ([#572](https://github.com/calandria-dev/calandria/issues/572)) ([ca7a753](https://github.com/calandria-dev/calandria/commit/ca7a753e01cd62d0c2b4936a910dc80e92418f5a))
+* **work-center:** submit-review tools and completion safeguards (WC-13) ([ca7a753](https://github.com/calandria-dev/calandria/commit/ca7a753e01cd62d0c2b4936a910dc80e92418f5a))
+* **work-center:** transition-based notifications and desktop counts ([ca7a753](https://github.com/calandria-dev/calandria/commit/ca7a753e01cd62d0c2b4936a910dc80e92418f5a))
+
+
+### Bug Fixes
+
+* **deps:** resolve remaining production audit findings ([#562](https://github.com/calandria-dev/calandria/issues/562)) ([de22845](https://github.com/calandria-dev/calandria/commit/de22845990401e48cd7901ca0af766b00dbb6e6e))
+* **work-center:** drop closed tasks' agent edits and keep row titles readable ([#573](https://github.com/calandria-dev/calandria/issues/573)) ([53c202c](https://github.com/calandria-dev/calandria/commit/53c202c8fcd305eb13ed831ae62f9afbdccaccf4))
+* **work-center:** stop the project count cache serving a stale zero (WC-11) ([ca7a753](https://github.com/calandria-dev/calandria/commit/ca7a753e01cd62d0c2b4936a910dc80e92418f5a))
+
+
+### Dependencies
+
+* **deps:** bump Claude Code CLI to 2.1.310 and Agent SDK to 0.3.310 ([#459](https://github.com/calandria-dev/calandria/issues/459)) ([#558](https://github.com/calandria-dev/calandria/issues/558)) ([872d862](https://github.com/calandria-dev/calandria/commit/872d862838075c63fa506d63e3f4d686a8814781))
+* **deps:** refresh agent CLI pins ([#560](https://github.com/calandria-dev/calandria/issues/560)) ([61409ee](https://github.com/calandria-dev/calandria/commit/61409eec9dc0beaaa36a9b828b5e270527e7a42d))
+
 ## [0.22.2](https://github.com/calandria-dev/calandria/compare/v0.22.1...v0.22.2) (2026-10-24)
 
 
