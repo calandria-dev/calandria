@@ -367,7 +367,8 @@ describe("rebasing a task onto a base branch that was rewritten under it", { tim
     expect(early.error).toMatch(/conflict markers/);
 
     // Resolve it the way a resolution turn would: edit the file, don't commit.
-    writeFile(fx.wt.path, "shared.txt", "landed on main + deslopped + the task's own work\n");
+    // The `=======` heading underline is content, not a leftover separator.
+    writeFile(fx.wt.path, "shared.txt", "Shared\n=======\n\nlanded on main + deslopped + the task's own work\n");
     const resolvedStatus = await worktreeSyncStatus({
       repoPath: fx.repo, worktreePath: fx.wt.path, workBranch: fx.wt.branch,
       baseBranch: "integration", baseSha: fx.preRewriteTip,

@@ -2494,17 +2494,71 @@ async function unresolvedConflictFiles(worktreePath: string): Promise<string[]> 
 }
 
 // Of the given unmerged files, those whose working-tree content still
-// contains conflict markers. `git diff --check` prints "<path>:<line>:
-// leftover conflict marker" per marker (exiting non-zero) and goes silent
-// for a file once it has been edited marker-free, staged or not.
+// contains conflict markers.
 async function conflictMarkerFiles(worktreePath: string, candidates: string[]): Promise<Set<string>> {
-  const out = await git(worktreePath, ["diff", "--check", "--", ...candidates]).catch((e) => stdoutOf(e));
-  const files = new Set<string>();
-  for (const line of out.split("\n")) {
-    const m = line.match(/^(.+?):\d+: leftover conflict marker/);
-    if (m) files.add(m[1]);
+  const markers = await leftoverConflictMarkers(worktreePath, "worktree", candidates);
+  return new Set(markers.map((m) => m.file));
+}
+
+export interface LeftoverConflictMarker {
+  file: string;
+  line: number;
+  // The two lines `git diff --check` printed for this marker, verbatim.
+  evidence: string;
+}
+
+const CONFLICT_OPEN_OR_CLOSE = /^(<{7}|>{7})(\s|$)/m;
+
+/**
+ * Conflict markers git reports as left over, minus benign separator lines.
+ *
+ * `git diff --check` flags any added line that is exactly `=======`, which is
+ * also how Markdown and RST underline a heading. A separator only belongs to
+ * a conflict when the same file still carries an opening `<<<<<<<` or a
+ * closing `>>>>>>>` marker, so a `=======` line in a file with neither is
+ * dropped. Every other flagged line is kept as reported. `scope` picks the
+ * content checked: the index (`--cached`) or the working tree.
+ */
+export async function leftoverConflictMarkers(
+  worktreePath: string,
+  scope: "index" | "worktree",
+  paths: string[] = [],
+): Promise<LeftoverConflictMarker[]> {
+  const args = ["-c", "core.quotePath=false", "diff", ...(scope === "index" ? ["--cached"] : []), "--check"];
+  const out = await git(worktreePath, paths.length ? [...args, "--", ...paths] : args).catch((e) => stdoutOf(e));
+  const flagged: { file: string; line: number; report: string }[] = [];
+  for (const report of out.split("\n")) {
+    const m = report.match(/^(.+?):(\d+): leftover conflict marker/);
+    if (m) flagged.push({ file: m[1], line: Number(m[2]), report });
   }
-  return files;
+  const files = [...new Set(flagged.map((f) => f.file))];
+  const contents = new Map<string, string | null>();
+  await mapLimit(files, 8, async (file) => {
+    const content =
+      scope === "index"
+        ? await run("git", ["-C", worktreePath, ...PLATFORM_GIT_CONFIG, "show", `:${file}`], { maxBuffer: 64 * 1024 * 1024 })
+            .then((r) => String(r.stdout))
+            .catch(() => null)
+        : await fs.promises.readFile(path.join(worktreePath, file), "utf8").catch(() => null);
+    contents.set(file, content);
+  });
+  const markers: LeftoverConflictMarker[] = [];
+  for (const f of flagged) {
+    const content = contents.get(f.file) ?? null;
+    // `--check` reports the line number only, so the line itself comes from the content.
+    const text = content === null ? null : (content.split(/\r?\n/)[f.line - 1] ?? null);
+    if (text !== null && /^={7}\s*$/.test(text) && !CONFLICT_OPEN_OR_CLOSE.test(content!)) continue;
+    markers.push({ file: f.file, line: f.line, evidence: text === null ? f.report : `${f.report}\n${text}` });
+  }
+  return markers;
+}
+
+// The refusal text for a staged tree that still carries conflict markers:
+// each marker's file and line, then git's own report lines.
+function leftoverMarkersError(markers: LeftoverConflictMarker[], action: string): string {
+  const where = markers.map((m) => `${m.file}:${m.line}`).join(", ");
+  const evidence = markers.map((m) => m.evidence).join("\n");
+  return `conflict markers (<<<<<<< / =======) still remain in ${where}. Resolve them before ${action}\n${evidence}`;
 }
 
 // Of the given unmerged files, those git treats as binary. These can't be
@@ -2878,12 +2932,9 @@ export async function continueWorktreeRebase(worktreePath: string): Promise<Cont
   if (!st.rebaseInProgress) return { ok: false, done: false, ...idle, error: "no rebase is paused in this worktree" };
 
   await git(worktreePath, ["add", "-A"]).catch(() => {});
-  const check = await git(worktreePath, ["diff", "--cached", "--check"]).catch((e) => stdoutOf(e));
-  if (/conflict marker/i.test(check))
-    return {
-      ok: false, done: false, ...idle,
-      error: "conflict markers (<<<<<<< / =======) still remain. Resolve them before continuing the rebase",
-    };
+  const markers = await leftoverConflictMarkers(worktreePath, "index");
+  if (markers.length)
+    return { ok: false, done: false, ...idle, error: leftoverMarkersError(markers, "continuing the rebase") };
 
   const paused = async (): Promise<ContinueRebaseResult | null> => {
     const now = await worktreeRebaseStatus(worktreePath);
@@ -3202,14 +3253,9 @@ export async function completeWorktreeMerge(input: {
   // so a resolved tree commits cleanly, then scan the staged content for
   // stray markers.
   await git(worktreePath, ["add", "-A"]).catch(() => {});
-  const check = await git(worktreePath, ["diff", "--cached", "--check"]).catch((e) => stdoutOf(e));
-  if (/conflict marker/i.test(check))
-    return {
-      ok: false,
-      targetBranch: baseBranch,
-      committed: false,
-      error: "conflict markers (<<<<<<< / =======) still remain. Resolve them before merging",
-    };
+  const markers = await leftoverConflictMarkers(worktreePath, "index");
+  if (markers.length)
+    return { ok: false, targetBranch: baseBranch, committed: false, error: leftoverMarkersError(markers, "merging") };
 
   if (mergeInProgress) {
     try {
