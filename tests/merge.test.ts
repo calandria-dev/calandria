@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   abortWorktreeMerge,
   completeWorktreeMerge,
+  leftoverConflictMarkers,
   ensureWorktree,
   mergeTask,
   prepareWorktreeMerge,
@@ -479,6 +480,58 @@ describe("conflict resolution: complete / abort", () => {
     expect(res.mergedSha).toBe(await git(repo, "rev-parse", wt.branch));
     expect(read(repo, "file.txt")).toBe("resolved version\n");
     expect((await worktreeMergeStatus(wt.path)).mergeInProgress).toBe(false);
+  });
+
+  it("completeWorktreeMerge lands heading underlines that look like a conflict separator (#480)", async () => {
+    const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
+    await commitFile(wt.path, "file.txt", "task version\n", "task edit");
+    await commitFile(repo, "file.txt", "main version\n", "main edit");
+    // The base brings in a license file whose Markdown heading `git diff --check` flags.
+    await commitFile(repo, "LICENSE.md", "License\n=======\n\nApache-2.0\n", "add license");
+    const prep = await prepareWorktreeMerge({ repoPath: repo, worktreePath: wt.path, baseBranch: "main", message: "sync" });
+    expect(prep.conflicts).toEqual(["file.txt"]);
+
+    // The resolution itself carries an RST-style underline too.
+    writeFile(wt.path, "file.txt", "Resolved\n=======\n\nboth versions\n");
+    expect((await worktreeMergeStatus(wt.path)).unresolved).toEqual([]);
+
+    const res = await completeWorktreeMerge({
+      repoPath: repo,
+      worktreePath: wt.path,
+      workBranch: wt.branch,
+      baseBranch: "main",
+      message: "land",
+    });
+    expect(res.error).toBeUndefined();
+    expect(res.ok).toBe(true);
+    expect(read(repo, "LICENSE.md")).toBe("License\n=======\n\nApache-2.0\n");
+    expect(read(repo, "file.txt")).toBe("Resolved\n=======\n\nboth versions\n");
+  });
+
+  it("completeWorktreeMerge names each leftover marker's file and line", async () => {
+    const { repo, wt } = await makeRepoWithWorktree(ensureWorktree);
+    await commitFile(wt.path, "file.txt", "task version\n", "task edit");
+    await commitFile(repo, "file.txt", "main version\n", "main edit");
+    await commitFile(repo, "LICENSE.md", "License\n=======\n", "add license");
+    await prepareWorktreeMerge({ repoPath: repo, worktreePath: wt.path, baseBranch: "main", message: "sync" });
+
+    // A half-done resolution: the opening marker is gone, the rest is not.
+    writeFile(wt.path, "file.txt", "task version\n=======\nmain version\n>>>>>>> main\n");
+    const markers = await leftoverConflictMarkers(wt.path, "worktree", ["file.txt", "LICENSE.md"]);
+    expect(markers.map((m) => `${m.file}:${m.line}`)).toEqual(["file.txt:2", "file.txt:4"]);
+
+    const res = await completeWorktreeMerge({
+      repoPath: repo,
+      worktreePath: wt.path,
+      workBranch: wt.branch,
+      baseBranch: "main",
+      message: "land",
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("file.txt:2, file.txt:4");
+    expect(res.error).toContain("file.txt:4: leftover conflict marker\n>>>>>>> main");
+    expect(res.error).not.toContain("LICENSE.md");
+    expect((await worktreeMergeStatus(wt.path)).mergeInProgress).toBe(true);
   });
 
   it("completeWorktreeMerge after a clean prepare is a plain landing", async () => {
