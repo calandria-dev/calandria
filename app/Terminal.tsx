@@ -5,6 +5,7 @@ import "@xterm/xterm/css/xterm.css";
 import type { Terminal as XTerm, ITheme } from "@xterm/xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 import { recordLifecycleEvent } from "./shell/useLifecycleDiagnostics";
+import { diagnoseTerminalFailure, TERMINAL_MESSAGES } from "./terminalPreflight";
 
 // How long a socket may sit at CONNECTING before the shell is called dead.
 // WebKit bug 308073 (iOS 26.x): after the page has been in the background for
@@ -150,7 +151,12 @@ export function TerminalView({ cwd, port, fontSize = 12.5, monoFontFamily, onRea
         term!.write("\r\n\x1b[33m[connection never opened: press Enter to retry, or reload the app, which always fixes it]\x1b[0m\r\n");
         onClosed?.();
       }, WS_OPEN_TIMEOUT_MS);
+      // Settles once the cause of a pre-open failure has been written, so the
+      // close notice below always lands after it.
+      let diagnosis: Promise<void> | null = null;
+      let opened = false;
       ws.onopen = () => {
+        opened = true;
         if (openTimer !== null) window.clearTimeout(openTimer);
         openTimer = null;
       };
@@ -165,7 +171,19 @@ export function TerminalView({ cwd, port, fontSize = 12.5, monoFontFamily, onRea
           term!.write(new Uint8Array(e.data));
         }
       };
-      ws.onerror = () => { if (!disposed) term!.write(`\r\n\x1b[31m[terminal unreachable: is the pty-server sidecar running?]\x1b[0m\r\n`); };
+      // A socket that fails before it opens was refused or never reached a
+      // listener, and the browser hides which. The preflight route asks the
+      // server's own /pty gate (app/terminalPreflight.ts).
+      ws.onerror = () => {
+        if (disposed) return;
+        if (opened) {
+          term!.write(TERMINAL_MESSAGES.unknown);
+          return;
+        }
+        diagnosis ??= diagnoseTerminalFailure(baseUrl).then((cause) => {
+          if (!disposed) term!.write(TERMINAL_MESSAGES[cause]);
+        });
+      };
       ws.onclose = () => {
         if (openTimer !== null) window.clearTimeout(openTimer);
         openTimer = null;
@@ -174,7 +192,9 @@ export function TerminalView({ cwd, port, fontSize = 12.5, monoFontFamily, onRea
         // has said its piece, so don't say it again.
         if (disposed || dead) return;
         dead = true;
-        term!.write("\r\n\x1b[90m[disconnected: press Enter to start a new shell]\x1b[0m\r\n");
+        void (diagnosis ?? Promise.resolve()).then(() => {
+          if (!disposed) term!.write("\r\n\x1b[90m[disconnected: press Enter to start a new shell]\x1b[0m\r\n");
+        });
         onClosed?.();
       };
 

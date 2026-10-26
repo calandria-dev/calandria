@@ -72,6 +72,7 @@ process.on("uncaughtException", (err) => {
 // shell. jose v6 is ESM-only, so the import is dynamic from this CommonJS file.
 const cfAccessImport = appEnvApplied.then(() => import("./lib/auth/origin.mjs"));
 const localOriginImport = appEnvApplied.then(() => import("./lib/auth/local-origin.mjs"));
+const ptyGateImport = appEnvApplied.then(() => import("./lib/auth/pty-gate.mjs"));
 
 // Host-header router for public service hostnames (<slug>--<appHost>). Opt-in
 // via CALANDRIA_SERVICE_HOSTS; a no-op (requests fall through to Next) when
@@ -233,7 +234,7 @@ const prepared = dbLockImport
   })
   .then(() => app.prepare());
 
-Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, envKeysImport, envImport, storageImport, logImport]).then(([, cfAccess, localOrigin, serviceRouter, envKeys, env, storage, logMod]) => {
+Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, envKeysImport, envImport, storageImport, logImport, ptyGateImport]).then(([, cfAccess, localOrigin, serviceRouter, envKeys, env, storage, logMod, ptyGate]) => {
   // One-line deprecation notice (lib/env.mjs) for any ORCH_* names still in
   // use: the old spellings keep working, and this is the only heads-up an
   // operator gets, so print it before the app starts serving.
@@ -268,8 +269,38 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
     // Service hostnames never reach Next: the router proxies (or answers with
     // its branded status page) and enforces the service's own visibility.
     if (serviceRouter.handleServiceRequest(req, res)) return;
+    if (handlePtyPreflight(req, res)) return;
     handle(req, res);
   });
+
+  const ptyGateDeps = { cfAccess, localOrigin };
+
+  // POST /pty/preflight answers why a /pty upgrade would be refused, since a
+  // browser cannot read the status of a refused WebSocket upgrade. It runs the
+  // upgrade's own gate (lib/auth/pty-gate.mjs) and returns { ok, reason }; it
+  // never reaches the sidecar. POST, because a same-origin GET carries no
+  // Origin header and the gate requires one. Middleware never sees this path,
+  // so this handler is its whole gate.
+  function handlePtyPreflight(req, res) {
+    let pathname = "";
+    try { pathname = new URL(req.url, "http://localhost").pathname; } catch {}
+    if (pathname !== ptyGate.PTY_PREFLIGHT_PATH) return false;
+    const reply = (status, body) => {
+      res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify(body));
+    };
+    if (req.method !== "POST") {
+      res.setHeader("allow", "POST");
+      reply(405, { ok: false, reason: "method" });
+      return true;
+    }
+    req.resume();
+    ptyGate.ptyGateVerdict(req, ptyGateDeps).then(
+      (verdict) => reply(verdict.ok ? 200 : 403, verdict),
+      () => reply(500, { ok: false, reason: "error" }),
+    );
+    return true;
+  }
 
   server.on("upgrade", (req, socket, head) => {
     activity.lastRequestAt = Date.now();
@@ -291,30 +322,21 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
       try { socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"); } catch {}
       socket.destroy();
     };
-    if (!cfAccess.originAuthEnabled()) {
-      // WebSockets bypass the browser's same-origin policy. Local mode rule:
-      // validate both Host (DNS-rebinding defense) and Origin before proxying
-      // /pty to a shell or handing the upgrade to Next dev HMR.
-      if (localOrigin.localWebSocketRequestAllowed({
-        host: req.headers.host,
-        origin: req.headers.origin,
-      })) {
-        return route();
-      }
-      return deny();
-    }
-    // Access mode rule: still check origin, for a different reason than local
-    // mode. The Access cookie is SameSite=None, so a hostile page can open
-    // wss://<tunnel>/pty in the victim's browser and get a valid assertion for
-    // the real user: identity proven, intent not. Same-origin proves intent.
-    // See lib/auth/local-origin.mjs; the sidecar repeats both checks.
-    if (!localOrigin.sameOriginWebSocketRequestAllowed({
-      host: req.headers.host,
-      origin: req.headers.origin,
-    })) {
-      return deny();
-    }
-    cfAccess.verifyOriginNodeRequest(req).then(route).catch(deny);
+    // WebSockets bypass the browser's same-origin policy. Local mode validates
+    // Host (DNS-rebinding defense) and Origin. Access mode checks same-origin
+    // on top of the Access JWT, since the SameSite=None cookie proves identity
+    // and only same-origin proves intent. Rules in lib/auth/pty-gate.mjs and
+    // lib/auth/local-origin.mjs; the sidecar repeats both checks. This gates
+    // every upgrade, Next dev HMR included.
+    ptyGate.ptyGateVerdict(req, ptyGateDeps).then((verdict) => {
+      if (verdict.ok) return route();
+      log.warn(ptyGate.ptyGateRefusalMessage(verdict.reason), {
+        path: pathname,
+        host: req.headers.host || "(none)",
+        origin: req.headers.origin || "(none)",
+      });
+      deny();
+    }, deny);
   });
 
   // Graceful shutdown. docker/entrypoint.sh's trap forwards SIGTERM/SIGINT to
