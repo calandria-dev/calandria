@@ -746,6 +746,11 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
     if (data.permission) {
       return <div className="msg msg-tool" data-message-id={m.id} tabIndex={-1}><PermissionView data={data} agentLabel={agentLabel} onDecide={(d, note, priv) => onDecidePermission?.(data.permission?.request.id || m.toolId || "", d, note, data.permission?.request.kind, priv)} /></div>;
     }
+    // A row written only to carry a report card (its call left no row of its
+    // own to settle onto) shows the card alone.
+    if (data.issueReport?.standalone) {
+      return <div className="msg msg-tool" data-message-id={m.id} tabIndex={-1}><IssueReportView data={data} /></div>;
+    }
     // A suggest_task call that actually filed a task carries its card below the
     // ordinary tool row instead of replacing it: the call, its input and its
     // result are still what happened, and the proposal is the artifact it left.

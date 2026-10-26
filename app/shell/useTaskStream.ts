@@ -22,7 +22,7 @@ const LIVE_MSG_ID = "__live__";
 // permission_decided) only finish rows that are already on screen.
 const ROW_EVENTS = new Set([
   "user", "assistant", "tool", "ask", "permission", "permission_denied",
-  "notice", "suggested", "background_resumed", "turn_end",
+  "notice", "suggested", "issue_report", "background_resumed", "turn_end",
 ]);
 
 // Owns the per-task transcript state (msgsByTask) plus the live SSE consumption:
@@ -334,7 +334,30 @@ export function useTaskStream({ selTask, selProjRef, setTaskRunning, setTasks, s
         : x)));
     } else if (ev.type === "notice") upsertMsg(taskId, { id: ev.msgId ?? `n-${Date.now()}`, role: "system", content: ev.content, generation: gen });
     else if (ev.type === "error") upsertMsg(taskId, { id: ev.msgId ?? `e-${Date.now()}`, role: "system", content: ev.content, generation: gen });
-    else if (ev.type === "suggested") {
+    else if (ev.type === "issue_report") {
+      // Settles a report card onto the row the server matched (`msgId`): the
+      // report_issue call itself, a wrapper row that ran it, or a row written
+      // only to carry the card. Only the id travels; the card re-reads the
+      // report itself.
+      const msgId = ev.msgId;
+      if (msgId) {
+        setMsgsByTask((prev) => {
+          const arr = prev[taskId] ?? [];
+          return {
+            ...prev,
+            [taskId]: arr.map((m) => {
+              if (m.role !== "tool" || m.id !== msgId) return m;
+              try {
+                const d = JSON.parse(m.content) as ToolData;
+                if (d.issueReport?.id === ev.reportId) return m;
+                d.issueReport = ev.standalone ? { id: ev.reportId, standalone: true } : { id: ev.reportId };
+                return { ...m, content: JSON.stringify(d) };
+              } catch { return m; }
+            }),
+          };
+        });
+      }
+    } else if (ev.type === "suggested") {
       // Two things move on one event: the tray gets its refresh, and the
       // transcript settles a suggestion card onto the suggest_task tool row
       // the server matched this to (`msgId`), so the proposal is visible

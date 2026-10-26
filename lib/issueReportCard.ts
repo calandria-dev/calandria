@@ -20,8 +20,8 @@
  * it is reached from the internal agent-tools route, a sync-compiled route entry.
  */
 
-import { recentToolMessages, updateMessage } from "@/lib/store";
-import type { ToolData } from "@/lib/types";
+import { addMessage, recentToolMessages, updateMessage } from "@/lib/store";
+import type { Task, ToolData } from "@/lib/types";
 
 /**
  * Is this the agent's name for a report_issue call?
@@ -41,25 +41,63 @@ export function withIssueReport(data: ToolData, reportId: string): ToolData {
 }
 
 /**
+ * Is this tool row a call that runs report_issue from inside another tool?
+ *
+ * A Codex session can reach the bridge through a wrapper such as
+ * `functions.exec`, whose row carries the wrapper's name and the nested call
+ * only in its title or detail text. Only a row still in flight (no result
+ * yet) qualifies: the bridge call happens while the wrapper runs, and a
+ * finished row that merely mentions the name (a grep, a file read) must not
+ * collect a card.
+ */
+export function isNestedReportIssueCall(data: ToolData): boolean {
+  if (data.result !== undefined) return false;
+  return [data.title, data.detail].some((t) => typeof t === "string" && t.includes("report_issue"));
+}
+
+/** Can a card settle onto this row? The runner's re-read uses the same test. */
+export function mayCarryIssueReport(data: ToolData): boolean {
+  return isReportIssueTool(data.name) || isNestedReportIssueCall(data);
+}
+
+/**
  * Settle a report onto the most recent unclaimed report_issue tool row of
  * `taskId`, returning the message id it landed on (null = no such row).
  *
  * Only the stdio-bridge path needs this; a turn running through the runner
  * holds its own tool rows in memory and settles there. Newest-first with a
  * claimed-row skip makes two reports raised in one turn land one card
- * each rather than stacking on the first row.
+ * each rather than stacking on the first row. A row named report_issue wins;
+ * failing that, an in-flight wrapper row whose text names the call
+ * (`isNestedReportIssueCall`) takes the card.
  */
 export function attachIssueReportToCall(taskId: string, reportId: string): string | null {
+  const rows: { id: string; data: ToolData }[] = [];
   for (const m of recentToolMessages(taskId)) {
-    let data: ToolData;
     try {
-      data = JSON.parse(m.content) as ToolData;
+      rows.push({ id: m.id, data: JSON.parse(m.content) as ToolData });
     } catch {
       continue;
     }
-    if (!isReportIssueTool(data.name) || data.issueReport) continue;
-    updateMessage(m.id, JSON.stringify(withIssueReport(data, reportId)));
-    return m.id;
   }
-  return null;
+  const unclaimed = rows.filter((r) => !r.data.issueReport);
+  const row = unclaimed.find((r) => isReportIssueTool(r.data.name)) ?? unclaimed.find((r) => isNestedReportIssueCall(r.data));
+  if (!row) return null;
+  updateMessage(row.id, JSON.stringify(withIssueReport(row.data, reportId)));
+  return row.id;
+}
+
+/** Title of a row written only to carry a report card. */
+export const STANDALONE_ISSUE_REPORT_TITLE = "⚑ Issue report draft";
+
+/**
+ * Write a transcript row whose only content is the card for `reportId`, for a
+ * report with no tool row to settle onto. The draft stays reachable from the
+ * session that raised it, and the card's own button is still the only way it
+ * gets filed.
+ */
+export function addStandaloneIssueReport(task: Pick<Task, "id" | "generation">, reportId: string): { msgId: string; data: ToolData; ts: number } {
+  const data: ToolData = { title: STANDALONE_ISSUE_REPORT_TITLE, name: "report_issue", issueReport: { id: reportId, standalone: true } };
+  const m = addMessage(task.id, task.generation, "tool", JSON.stringify(data));
+  return { msgId: m.id, data, ts: m.created_at };
 }

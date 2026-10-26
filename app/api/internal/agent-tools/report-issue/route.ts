@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getTask } from "@/lib/store";
 import { draftIssueReport } from "@/lib/issueReports";
 import { publish } from "@/lib/events";
-import { attachIssueReportToCall } from "@/lib/issueReportCard";
+import { addStandaloneIssueReport, attachIssueReportToCall } from "@/lib/issueReportCard";
 
 export const dynamic = "force-dynamic";
 
@@ -39,10 +39,30 @@ export async function POST(req: NextRequest) {
   // report_issue tool row for a driver whose calls ride its event stream, but
   // this endpoint is reached out-of-band by a Codex session's MCP client and
   // never passes through that loop, so the row is found and patched here
-  // instead. `msgId` rides along so an open transcript patches the card in
-  // without refetching.
-  const msgId = attachIssueReportToCall(task.id, report.id);
-  publish(task.id, { type: "issue_report", reportId: report.id, ...(msgId ? { msgId } : {}) });
+  // instead. A call nested inside another tool (Codex's `functions.exec`) may
+  // leave no row to find, so the card gets a row of its own. `msgId` rides
+  // along so an open transcript patches the card in without refetching.
+  let msgId: string | null = null;
+  let standalone = false;
+  try {
+    msgId = attachIssueReportToCall(task.id, report.id);
+    if (!msgId) {
+      const row = addStandaloneIssueReport(task, report.id);
+      msgId = row.msgId;
+      standalone = true;
+      publish(task.id, { type: "tool", id: `issue-report-${report.id}`, name: row.data.name, title: row.data.title, detail: "", msgId, generation: task.generation, ts: row.ts });
+    }
+  } catch (err) {
+    console.error("[report_issue] could not surface the card:", err);
+  }
+  if (!msgId) {
+    return NextResponse.json({
+      ok: true,
+      id: report.id,
+      text: `Drafted report ${report.id}, but its card could not be added to the transcript, so the user cannot see it yet. NOTHING HAS BEEN FILED. Tell the user the draft exists and that the card failed to appear; don't try to file it yourself.`,
+    });
+  }
+  publish(task.id, { type: "issue_report", reportId: report.id, msgId, ...(standalone ? { standalone: true as const } : {}) });
 
   return NextResponse.json({ ok: true, id: report.id, text });
 }

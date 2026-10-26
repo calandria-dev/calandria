@@ -109,6 +109,37 @@ describe("attachIssueReportToCall", () => {
     addMessage(task.id, 1, "tool", JSON.stringify({ name: "Bash", title: "$ ls" } satisfies ToolData));
     expect(attachIssueReportToCall(task.id, "r1")).toBeNull();
   });
+
+  // GH #481: Codex can run report_issue inside functions.exec, so the only row
+  // the call leaves is the wrapper's, named for the wrapper.
+  it("lands on an in-flight wrapper row whose nested call is report_issue", () => {
+    const task = session("Settle-Nested");
+    const exec = addMessage(task.id, 1, "tool", JSON.stringify({
+      name: "functions.exec",
+      title: "❯ exec",
+      detail: 'await tools.calandria__report_issue({ kind: "bug", title: "x", body: "y" })',
+    } satisfies ToolData));
+    expect(attachIssueReportToCall(task.id, "r1")).toBe(exec.id);
+    expect(readData(task.id, exec.id).issueReport).toEqual({ id: "r1" });
+  });
+
+  it("prefers a report_issue row over a wrapper that mentions it", () => {
+    const task = session("Settle-Prefer");
+    const call = reportCall(task.id);
+    addMessage(task.id, 1, "tool", JSON.stringify({ name: "functions.exec", title: "❯ exec", detail: "report_issue(...)" } satisfies ToolData));
+    expect(attachIssueReportToCall(task.id, "r1")).toBe(call.id);
+  });
+
+  it("never lands on a finished row that only mentions the name", () => {
+    const task = session("Settle-Grep");
+    addMessage(task.id, 1, "tool", JSON.stringify({
+      name: "Bash",
+      title: "❯ grep -rn report_issue lib",
+      detail: "grep -rn report_issue lib",
+      result: "lib/issueReportCard.ts:35: ...",
+    } satisfies ToolData));
+    expect(attachIssueReportToCall(task.id, "r1")).toBeNull();
+  });
 });
 
 describe("draftIssueReport", () => {
@@ -291,6 +322,35 @@ describe("the routes the card talks to", () => {
     // The card is on the row the call produced, which is the point of the feature.
     expect(readData(task.id, call.id).issueReport).toEqual({ id: out.id });
     expect(getIssueReport(out.id)!.kind).toBe("feature");
+    expect(createIssueMock).not.toHaveBeenCalled();
+  });
+
+  // GH #481: a nested call whose wrapper row can't be matched still leaves a
+  // card the user can reach, and the tool's answer only claims a card that exists.
+  it("writes a standalone card row when the call left no row to settle onto", async () => {
+    const task = session("Bridge-Standalone");
+    addMessage(task.id, 1, "tool", JSON.stringify({ name: "Bash", title: "❯ ls", result: "ok" } satisfies ToolData));
+    const before = listMessages(task.id).length;
+
+    const res = await reportIssueEp(
+      req("/api/internal/agent-tools/report-issue", {
+        projectId: task.project_id,
+        taskId: task.id,
+        kind: "bug",
+        title: "Cards vanish for nested calls",
+        body: "The card never appeared.",
+      })
+    );
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as { id: string; text: string };
+
+    const msgs = listMessages(task.id);
+    expect(msgs.length).toBe(before + 1);
+    const card = msgs[msgs.length - 1];
+    expect(card.role).toBe("tool");
+    expect(readData(task.id, card.id).issueReport).toEqual({ id: out.id, standalone: true });
+    expect(out.text).toContain("a card in the transcript");
+    expect(getIssueReport(out.id)!.status).toBe("draft");
     expect(createIssueMock).not.toHaveBeenCalled();
   });
 
