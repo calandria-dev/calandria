@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { ensureWorktree, remoteBaseStatus, advanceBaseBranch, pushBaseBranch, prRequiredMessage, baseRemote, fetchBase, mergeTask, prepareWorktreeMerge, worktreeSyncStatus } from "../lib/git";
@@ -6,6 +6,10 @@ import { POST as projectBaseBranchRoute } from "../app/api/projects/[id]/base-br
 import { createProject } from "../lib/store";
 import { git, uid, commitFile, makeRepo, makeRepoWithOrigin, pushFromColleague } from "./helpers";
 import { onPosix } from "./platform";
+
+// Every case builds a bare origin, a colleague clone and a project clone before it asserts anything.
+// The git subprocesses that costs take most of the default 30s on a loaded Windows runner (GH #509).
+vi.setConfig({ testTimeout: 120_000 });
 
 describe("ensureWorktree: remote-aware base", () => {
   it("branches from the fetched remote tip when the local base branch is behind", async () => {
