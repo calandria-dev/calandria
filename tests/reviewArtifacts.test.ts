@@ -173,6 +173,8 @@ describe("code artifacts", () => {
     expect(art.preview.byteLength).toBeLessThanOrEqual(2 * 1024 * 1024);
   });
 
+  // Commits 1,001 files to cross REVIEW_LIMITS.diffPreviewPaths. Staging and committing that many
+  // paths takes most of the default 30s on a loaded Windows runner, so this case gets its own budget.
   it("reports a path-limit preview without a diff body", async () => {
     const f = await reviewTask();
     for (let i = 0; i < 1001; i++) writeFile(f.wt.path, `many/f${i}.txt`, `${i}\n`);
@@ -181,7 +183,7 @@ describe("code artifacts", () => {
     const r = await submitReview(f.ctx, codeBody());
     const art = await readArtifact(f.taskId, r.body.requestId, r.body.submissionId);
     expect(art.preview).toMatchObject({ text: null, truncated: true, reason: "path_limit", pathCount: 1001 });
-  });
+  }, 120_000);
 });
 
 describe("document artifacts", () => {
