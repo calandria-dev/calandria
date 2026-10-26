@@ -286,6 +286,17 @@ export function init(db: Database.Database) {
       created_at            INTEGER NOT NULL
     );
 
+    -- Highest weekly-window utilization seen per agent per week, keyed by the
+    -- window's reset time (lib/planUsageRole.ts). Feeds the primary/occasional
+    -- role inference; no foreign keys, pruned by lib/retention.ts.
+    CREATE TABLE IF NOT EXISTS plan_usage_weeks (
+      agent       TEXT NOT NULL,
+      reset_at    INTEGER NOT NULL,
+      peak        REAL NOT NULL,
+      updated_at  INTEGER NOT NULL,
+      PRIMARY KEY (agent, reset_at)
+    );
+
     -- Agent work performed outside a task chat: summaries, recaps, context
     -- drafts, and connection verification. Deliberately has no foreign keys so
     -- deleting a project/task does not erase historical overhead spend.
