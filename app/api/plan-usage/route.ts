@@ -5,6 +5,13 @@ import { litellmRuntimeFor } from "@/lib/providers/resolve";
 import { GATEWAY_PLAN_ID, type PlanUsageSnapshot } from "@/lib/types";
 import { agentPlanScope } from "@/lib/planScope";
 import { listProjectsPlain } from "@/lib/store";
+import {
+  currentWeekUtilization,
+  lastCompletedWeekPeak,
+  readRolePin,
+  recordWeeklyPeaks,
+  resolvePlanUsageRole,
+} from "@/lib/planUsageRole";
 
 export const dynamic = "force-dynamic";
 
@@ -40,7 +47,14 @@ export async function GET() {
         const snap = await d.planUsage();
         // A mixed instance keeps its numbers, which are true about the plan,
         // and the popover names how much of the instance they cover.
-        return snap ? [d.id, { ...snap, scope }] : null;
+        if (!snap) return null;
+        recordWeeklyPeaks(d.id, snap);
+        const role = resolvePlanUsageRole({
+          pin: readRolePin(d.id),
+          lastWeekPeak: lastCompletedWeekPeak(d.id),
+          currentWeekUtilization: currentWeekUtilization(snap),
+        });
+        return [d.id, { ...snap, scope, role }];
       } catch {
         // One driver's broken usage source must not blank the others' meters.
         return null;

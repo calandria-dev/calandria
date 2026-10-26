@@ -49,6 +49,7 @@ import {
   RETENTION_VACUUM,
   USAGE_RETENTION_MS,
 } from "@/lib/config";
+import { prunePlanUsageWeeks } from "@/lib/planUsageRole";
 import { removeTaskUploads } from "@/lib/uploads";
 
 /** Task statuses that mean "this is over": the only ones a sweep may touch. */
@@ -90,6 +91,7 @@ export interface RetentionCounts {
   task_usage: number;
   task_merges: number;
   internal_usage: number;
+  plan_usage_weeks: number;
   /** Tasks whose upload dir was removed (attachments live outside the DB). */
   uploads: number;
 }
@@ -105,7 +107,7 @@ export interface RetentionResult extends RetentionCounts {
 
 const EMPTY: RetentionCounts = {
   messages: 0, sessions: 0, task_comments: 0, task_doc_comments: 0,
-  task_usage: 0, task_merges: 0, internal_usage: 0, uploads: 0,
+  task_usage: 0, task_merges: 0, internal_usage: 0, plan_usage_weeks: 0, uploads: 0,
 };
 
 /**
@@ -253,8 +255,10 @@ export function sweepRetention(now = Date.now(), opts: SweepOptions = {}): Reten
     })();
   }
 
+  counts.plan_usage_weeks = prunePlanUsageWeeks(now);
+
   const rows =
-    counts.messages + counts.sessions + counts.task_comments + counts.task_doc_comments +
+    counts.plan_usage_weeks + counts.messages + counts.sessions + counts.task_comments + counts.task_doc_comments +
     counts.task_usage + counts.task_merges + counts.internal_usage;
 
   // Logically freeing rows is not reclaiming disk. In WAL mode the deletes land

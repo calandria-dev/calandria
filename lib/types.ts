@@ -706,6 +706,11 @@ export interface PlanUsageSnapshot {
    *  see (lib/agents/types.ts: `planUsage()` takes no arguments on purpose).
    *  Absent, or `kind: "all"`, means every project does. */
   scope?: PlanScope | null;
+  /** Whether the agent is the one the person depends on ("primary", gets
+   *  underuse nudges) or an occasional one. Set by GET /api/plan-usage from the
+   *  weekly peak history and the optional `plan_usage_role:<agent>` pin
+   *  (lib/planUsageRole.ts). Never set on the gateway entry. */
+  role?: { value: "primary" | "occasional"; source: "auto" | "pinned"; lastWeekPeak: number | null } | null;
 }
 
 // One rendered diff line: added (+, green), removed (-, red), or unchanged

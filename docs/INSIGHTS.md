@@ -192,6 +192,13 @@ counts as redirected too, with one exception: Claude with `CALANDRIA_GATEWAY_BIL
 subscription login instead of billing the gateway's key. Deprecated projects aren't counted
 either way.
 
+Each snapshot also carries a `role`, `primary` or `occasional`, which a later titlebar change uses
+to decide which agents get underuse nudges. Calandria records the highest weekly utilization it
+sees per agent per week (table `plan_usage_weeks`, pruned after about 8 weeks by the retention
+sweep). An agent is primary when last week's peak was at least 40%, or on a first week with no
+history, when the current week is at least 40%. Setting `plan_usage_role:<agent>` to `primary` or
+`occasional` pins the role and overrides the inference. The gateway never gets a role.
+
 ## Settings and environment variables
 
 | Name | Default | Effect |
