@@ -793,7 +793,7 @@ export type StreamEvent =
   // re-reads the task (started? accepted? deleted?) instead of freezing a
   // snapshot.
   | { type: "suggested"; title: string; projectId: string; taskId?: string }
-  | { type: "issue_report"; reportId: string }
+  | { type: "issue_report"; reportId: string; standalone?: true }
   // `usage.cost_usd` is 0 when `unpriced` is set, since the client adds this
   // to the task's running total and an unknown price must not inflate it. The
   // flag stops the client from reading that 0 as "this turn was free": it
@@ -986,8 +986,12 @@ export interface ToolData {
   // tool ran. `projectId` is where it was filed, which suggest_task can point
   // at any project, so it is not necessarily the session's own.
   suggestion?: { taskId: string; projectId: string };
-  /** A drafted bug report / feature request; the card re-reads it (lib/issueReportCard.ts). */
-  issueReport?: { id: string };
+  /**
+   * A drafted bug report / feature request; the card re-reads it (lib/issueReportCard.ts).
+   * `standalone` marks a row written only to carry the card, for a call that
+   * left no report_issue tool row to settle onto.
+   */
+  issueReport?: { id: string; standalone?: true };
 }
 
 /**

@@ -11,7 +11,7 @@ import { bumpEpochIfReviewed } from "@/lib/reviews/guard";
 import fs from "node:fs";
 import { updateTask, addMessage, updateMessage, getMessage, recordSession, endSession, addUsage, getTask, getProject, addPendingMessage, popPendingMessage, listPendingMessages, deletePendingMessage, clearPendingMessages, getSetting, setSetting } from "@/lib/store";
 import { isSuggestTaskTool } from "@/lib/suggestionCard";
-import { isReportIssueTool } from "@/lib/issueReportCard";
+import { addStandaloneIssueReport, isReportIssueTool, mayCarryIssueReport } from "@/lib/issueReportCard";
 import { recordedCostUsd } from "@/lib/agentEnv";
 import { resolvedTaskProvider } from "@/lib/providers/resolve";
 import { estimateCostUsd as estimateGatewayCostUsd } from "@/lib/gatewayPricing";
@@ -1053,9 +1053,10 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
           // predates that write, so re-read it before stamping the result
           // over the top; otherwise the card the bridge just attached
           // disappears one event later. Narrowed to suggest_task and
-          // report_issue rows, one read serving both, so an ordinary
-          // tool_result still costs no read.
-          if ((isSuggestTaskTool(t.data.name) && !t.data.suggestion) || (isReportIssueTool(t.data.name) && !t.data.issueReport)) {
+          // report_issue rows (including a wrapper row whose nested call is
+          // report_issue), one read serving both, so an ordinary tool_result
+          // still costs no read.
+          if ((isSuggestTaskTool(t.data.name) && !t.data.suggestion) || (mayCarryIssueReport(t.data) && !t.data.issueReport)) {
             try {
               const fresh = JSON.parse(getMessage(t.dbId)?.content ?? "{}") as ToolData;
               if (fresh.suggestion) t.data.suggestion = fresh.suggestion;
@@ -1274,7 +1275,11 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
           updateMessage(t.dbId, JSON.stringify(t.data));
           publish(id, { ...ev, msgId: t.dbId, generation: gen });
         } else {
-          publish(id, ev);
+          // No call to settle onto: the card gets a row of its own, so the
+          // draft is never saved somewhere the user can't reach it.
+          const row = addStandaloneIssueReport({ id, generation: gen }, ev.reportId);
+          publish(id, { type: "tool", id: `issue-report-${ev.reportId}`, name: row.data.name, title: row.data.title, detail: "", msgId: row.msgId, generation: gen, ts: row.ts });
+          publish(id, { ...ev, standalone: true, msgId: row.msgId, generation: gen });
         }
       } else if (ev.type === "usage" && ev.partial) {
         // Held, not written: see `provisional` above. Nothing is published
