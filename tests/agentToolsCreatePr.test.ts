@@ -86,6 +86,49 @@ describe("create_pr", () => {
     const arg = createTaskPrMock.mock.calls[0][0];
     expect(arg.title).toBe("feat: add a create_pr tool");
     expect(arg.body).toBe("## What\n\nA tool.");
+    // Explicit values are also what an already-open PR gets rewritten with.
+    expect(arg.edit).toEqual({ title: "feat: add a create_pr tool", body: "## What\n\nA tool." });
+  });
+
+  it("asks for no edit of an open PR when the session gives no title or body", async () => {
+    const { task } = await prTask();
+    createTaskPrMock.mockResolvedValue({ ok: true, url: "https://github.com/o/r/pull/8", existing: true });
+
+    const { text } = await createPrForAgent(task, { title: "  ", body: "" });
+    const arg = createTaskPrMock.mock.calls[0][0];
+    // The defaults still describe a new PR, but never overwrite an open one.
+    expect(arg.title).toBe("Give the agent a create_pr tool");
+    expect(arg.edit.title).toBeUndefined();
+    expect(arg.edit.body).toBeUndefined();
+    expect(text).toContain("left as they are");
+  });
+
+  it("reports which fields of the open PR were rewritten", async () => {
+    const { task } = await prTask();
+    createTaskPrMock.mockResolvedValue({
+      ok: true,
+      url: "https://github.com/o/r/pull/8",
+      existing: true,
+      edited: ["body"],
+    });
+    const { text } = await createPrForAgent(task, { body: "## Final CI\n\ngreen" });
+    expect(createTaskPrMock.mock.calls[0][0].edit).toEqual({ title: undefined, body: "## Final CI\n\ngreen" });
+    expect(text).toContain("Its body was updated");
+  });
+
+  it("says so when the push landed but the PR edit failed", async () => {
+    const { task } = await prTask();
+    createTaskPrMock.mockResolvedValue({
+      ok: true,
+      url: "https://github.com/o/r/pull/8",
+      existing: true,
+      editError: "HTTP 403",
+    });
+    const { url, text } = await createPrForAgent(task, { title: "fix: x" });
+    // The PR is still recorded: the push did reach it.
+    expect(url).toBe("https://github.com/o/r/pull/8");
+    expect(getTask(task.id)!.pr_number).toBe(8);
+    expect(text).toContain("NOT updated: HTTP 403");
   });
 
   it("does NOT refuse on the caller's own running turn, unlike the route's 409", async () => {

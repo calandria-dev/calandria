@@ -90,7 +90,9 @@ two sides see different halves of it:
 
 To check whether a session's `create_pr` landed, read the `received` line: absent means the call
 never arrived, present means it did and the PR may exist. Either way it is safe to retry, since
-`create_pr` reports a PR already open for the branch instead of opening a second one.
+`create_pr` reports a PR already open for the branch instead of opening a second one. A retry
+that passes a `title` or `body` rewrites that field on the open PR with `gh pr edit`; an omitted
+field keeps its current value.
 `CALANDRIA_CLAUDE_DEBUG_DIR` adds the CLI's own per-turn debug log for the in-process case.
 
 ## Common boot failures
