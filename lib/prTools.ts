@@ -51,14 +51,17 @@ export async function openTaskPr(
 
   // Latest session summary (generations are ordered; last = most recent /clear).
   const summaries = listSummaries(task.id);
+  const title = overrides.title?.trim() || undefined;
+  const body = overrides.body?.trim() || undefined;
   const result = await createTaskPr({
     worktreePath: task.worktree_path,
     workBranch: task.work_branch,
     baseBranch: resolveBaseBranch(task, project),
-    title: overrides.title?.trim() || task.title,
-    body:
-      overrides.body?.trim() ||
-      buildPrBody({ description: task.description, summary: summaries[summaries.length - 1]?.summary, taskId: task.id }),
+    title: title || task.title,
+    body: body || buildPrBody({ description: task.description, summary: summaries[summaries.length - 1]?.summary, taskId: task.id }),
+    // Only an explicit title or body rewrites a PR that is already open. The
+    // defaults would overwrite whatever the PR's author has since written there.
+    edit: { title, body },
   });
 
   if (result.ok && result.url) {
@@ -130,11 +133,21 @@ export async function createPrForAgent(
   // request" instead of "#0".
   const number = parsePrNumber(result.url);
   const named = number ? `pull request #${number}` : "the pull request";
+  // An existing PR keeps its title and body unless this call supplied them;
+  // the report says which happened, so a failed edit can't read as applied.
+  const metadata = result.editError
+    ? `Its title and body were NOT updated: ${result.editError}\n\n`
+    : result.edited?.length
+      ? `Its ${result.edited.join(" and ")} ${result.edited.length > 1 ? "were" : "was"} updated to the ones you gave.\n\n`
+      : result.existing
+        ? `Its title and body were left as they are, since you gave none.\n\n`
+        : "";
   return {
     url: result.url,
     number: number || null,
     text: result.existing
       ? `Pushed ${task.work_branch}, updating ${named}, which was already open: ${result.url}\n\n` +
+        metadata +
         `The user reviews and merges it. You cannot, and there is no tool that can.`
       : `Pushed ${task.work_branch} and opened ${named} against ${resolveBaseBranch(task, project)}: ${result.url}\n\n` +
         `It is now waiting on review. Merging is the user's call: you cannot merge it, and there is no tool that can.`,

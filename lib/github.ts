@@ -499,6 +499,8 @@ export interface CreatePrResult {
   ok: boolean;
   url?: string;
   existing?: boolean; // an open PR for this branch already existed; the push updated it
+  edited?: Array<"title" | "body">; // fields `gh pr edit` rewrote on the existing PR
+  editError?: string; // the push landed on the existing PR but `gh pr edit` failed
   error?: string;
   detail?: string; // hook/rejection output beyond the one-line push error, if any
 }
@@ -520,6 +522,9 @@ export function buildPrBody(input: { description?: string; summary?: string; tas
  * Push a task's work branch to origin and open a GitHub PR against the base
  * branch via `gh pr create`. Idempotent: if an open PR for the branch already
  * exists, the push just updated it and its URL is returned (`existing: true`).
+ * `edit` names the title and body the caller chose explicitly: on an existing
+ * PR those are applied with `gh pr edit`, and anything left out of `edit`
+ * keeps the PR's current value. A new PR always takes `title` and `body`.
  * Never throws: every failure mode (no gh, not logged in, no remote, push
  * rejected, gh error) comes back as `{ ok: false, error }` with a message that
  * says what to do about it.
@@ -530,8 +535,9 @@ export async function createTaskPr(input: {
   baseBranch: string;
   title: string;
   body: string;
+  edit?: { title?: string; body?: string };
 }): Promise<CreatePrResult> {
-  const { worktreePath, workBranch, baseBranch, title, body } = input;
+  const { worktreePath, workBranch, baseBranch, title, body, edit } = input;
 
   const st = await ghStatus();
   if (!st.installed) return { ok: false, error: ghMissingMessage() };
@@ -563,7 +569,27 @@ export async function createTaskPr(input: {
   try {
     const { stdout } = await run(resolveGhBin(), ["pr", "list", "--head", workBranch, "--state", "open", "--json", "url", "--limit", "1"], opts);
     const found = JSON.parse(stdout || "[]") as { url?: string }[];
-    if (found[0]?.url) return { ok: true, url: found[0].url, existing: true };
+    const url = found[0]?.url;
+    if (url) {
+      const args: string[] = [];
+      const edited: Array<"title" | "body"> = [];
+      // `--flag=value` form so a title/body that begins with "-" can't be read as a flag.
+      if (edit?.title) {
+        args.push(`--title=${edit.title}`);
+        edited.push("title");
+      }
+      if (edit?.body) {
+        args.push(`--body=${edit.body}`);
+        edited.push("body");
+      }
+      if (!edited.length) return { ok: true, url, existing: true };
+      try {
+        await run(resolveGhBin(), ["pr", "edit", url, ...args], opts);
+        return { ok: true, url, existing: true, edited };
+      } catch (e) {
+        return { ok: true, url, existing: true, editError: cliErrorMessage(e, "gh pr edit errored") };
+      }
+    }
   } catch {
     // listing failed: fall through and let `pr create` speak for itself
   }
