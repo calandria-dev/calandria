@@ -8,9 +8,11 @@
 #   npm run test:docker -- tests/merge.test.ts
 #
 # Env knobs:
-#   CALANDRIA_TEST_VOLUME   named volume holding node_modules (default below).
-#                           Shared by every worktree. Newly created volumes use
-#                           the `com.calandria.cache=disposable` label; `docker
+#   CALANDRIA_TEST_VOLUME   named volume holding node_modules. When unset, a
+#                           volume name is derived from package.json,
+#                           package-lock.json and the resolved image ID.
+#                           Newly created volumes use the
+#                           `com.calandria.cache=disposable` label; `docker
 #                           volume rm` resets the cache. Renamed from ORCH_TEST_VOLUME;
 #                           `docker volume rm` any leftover orch-test-node-modules
 #                           and `docker image rm` old orch-test:* tags too.
@@ -18,8 +20,7 @@
 #                           whose bind mounts remap ownership (OrbStack/Docker
 #                           Desktop do; a plain Linux daemon does not, and there
 #                           root leaves you root-owned .next/ and test-results/).
-#   CALANDRIA_TEST_REBUILD  =1 to rebuild the image even though the tag exists
-#                           (needed after editing docker/test/*).
+#   CALANDRIA_TEST_REBUILD  =1 to rebuild the image even though the tag exists.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -37,18 +38,29 @@ fi
 # dependency bump changes the image tag (and forces a rebuild) instead of
 # leaving the two out of sync.
 pw=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")
-image="calandria-test:${target}-pw${pw}"
-volume=${CALANDRIA_TEST_VOLUME:-calandria-test-node-modules}
-
-# Newly created test caches carry a disposable label so a Linux host can clean
-# dangling caches without selecting unrelated Docker volumes. Docker leaves an
-# existing volume unchanged, including its labels.
-docker volume create --label "com.calandria.cache=disposable" --name "$volume" >/dev/null
+harness_hash=$(node -e 'const fs=require("node:fs");const c=require("node:crypto").createHash("sha256");for(const p of process.argv.slice(1))c.update(fs.readFileSync(p));process.stdout.write(c.digest("hex"))' docker/test/Dockerfile docker/test/entrypoint.sh)
+image="calandria-test:${target}-pw${pw}-${harness_hash}"
+volume=${CALANDRIA_TEST_VOLUME:-}
 
 if [ "${CALANDRIA_TEST_REBUILD:-}" = "1" ] || ! docker image inspect "$image" >/dev/null 2>&1; then
   echo "[docker-test] building $image (once; ~a few minutes for the e2e target)" >&2
   docker build --target "$target" --build-arg "PLAYWRIGHT_VERSION=$pw" -t "$image" docker/test
 fi
+
+# Resolve the built image once so concurrent runs cannot share a mutable tag
+# while Docker rebuilds it.
+image_id=$(docker image inspect --format '{{.Id}}' "$image")
+if [ -z "$image_id" ]; then
+  echo "[docker-test] failed to resolve image ID for $image" >&2
+  exit 1
+fi
+cache_id=$(node -e 'const fs=require("node:fs");const c=require("node:crypto").createHash("sha256");c.update(fs.readFileSync("package.json"));c.update(fs.readFileSync("package-lock.json"));c.update(process.argv[1]);process.stdout.write(c.digest("hex"))' "$image_id")
+if [ -z "$volume" ]; then volume="calandria-test-node-modules-$cache_id"; fi
+
+# Newly created test caches carry a disposable label so a Linux host can clean
+# dangling caches without selecting unrelated Docker volumes. Docker leaves an
+# existing volume unchanged, including its labels.
+docker volume create --label "com.calandria.cache=disposable" --name "$volume" >/dev/null
 
 # --init: tini as PID 1. Without it the test process is PID 1, which doesn't
 # reap orphans, and tests/services.test.ts's orphaned-process-group case fails
@@ -61,6 +73,6 @@ if [ -t 0 ] && [ -t 1 ]; then run+=(-it); fi
 # HOME as well as --user: an arbitrary uid has no passwd entry, so npm falls
 # back to writing its cache at /.npm and dies with EACCES before a test runs.
 if [ -n "${CALANDRIA_TEST_USER:-}" ]; then run+=(--user "$CALANDRIA_TEST_USER" -e HOME=/tmp); fi
-run+=(-v "$PWD":/work -v "$volume":/work/node_modules -w /work "$image")
+run+=(-e "CALANDRIA_TEST_IMAGE_ID=$image_id" -e "CALANDRIA_TEST_CACHE_ID=$cache_id" -v "$PWD":/work -v "$volume":/work/node_modules -w /work "$image_id")
 
 exec "${run[@]}" "$@"

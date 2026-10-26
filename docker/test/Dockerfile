@@ -4,8 +4,8 @@
 # the full recipe and its one caveat about git.
 #
 # Nothing of the repo is baked in: the checkout is bind-mounted at /work and
-# node_modules is a named volume, so the image is just a Linux Node 22 with
-# the right browsers, and the install is a one-time cost shared across runs.
+# node_modules is a named volume keyed by the dependency files and image ID.
+# Matching runs share one install; the directory lock coordinates cache changes.
 #
 # Two targets:
 #   base: Node 22 (matches .nvmrc) + git. Unit tests and typecheck.
@@ -37,13 +37,14 @@ FROM ${NODE_IMAGE} AS base
 # from the image directory it covers, including its mode. 0777 so the install
 # works whether the container runs as root (default) or as CALANDRIA_TEST_USER.
 RUN mkdir -p /work/node_modules && chmod 0777 /work/node_modules
+RUN command -v flock >/dev/null
 WORKDIR /work
 
 # CI=1: vitest stays non-interactive, playwright honors forbidOnly.
 ENV CI=1 \
     NEXT_TELEMETRY_DISABLED=1
 
-# Syncs node_modules with the mounted lockfile, then execs the real command.
+# Syncs node_modules with the mounted checkout, then execs the real command.
 COPY --chmod=755 entrypoint.sh /usr/local/bin/docker-test-entrypoint
 ENTRYPOINT ["/usr/local/bin/docker-test-entrypoint"]
 CMD ["npm", "test"]

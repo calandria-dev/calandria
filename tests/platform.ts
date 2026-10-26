@@ -23,9 +23,13 @@ import { it } from "vitest";
 import { hasProcessGroups, killTree } from "../lib/processTree";
 
 export const IS_WIN = process.platform === "win32";
+export const IS_LINUX = process.platform === "linux";
 
 /** `it`, skipped on Windows, for a case that pins POSIX-only semantics. */
 export const onPosix = IS_WIN ? it.skip : it;
+
+/** `it`, skipped outside Linux for behavior that depends on Linux flock. */
+export const onLinux = IS_LINUX ? it : it.skip;
 
 /**
  * The bit bucket, as a path git will accept. `/dev/null` doesn't exist on
