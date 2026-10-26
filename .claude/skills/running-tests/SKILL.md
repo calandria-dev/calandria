@@ -7,7 +7,7 @@ description: Use when running, scoping, rerunning, or debugging this repo's test
 
 Tests run **in a container, through the committed harness**. Don't hand-roll a
 `docker run`: `scripts/docker-test.sh` already encodes the mount layout, the
-shared `node_modules` volume, `--init`, and the Playwright version pin. Each one
+dependency cache volumes, `--init`, and the Playwright version pin. Each one
 fixes a specific failure that shows up without it.
 
 ## Pick the command
@@ -34,14 +34,24 @@ npm run test:docker -- tests/merge.test.ts -t "conflicts"     # ❌ -t swallowed
 npm run test:docker -- -- tests/merge.test.ts -t "conflicts"  # ✅ reaches vitest
 ```
 
-## node_modules is a shared named volume
+## node_modules uses content-keyed cache volumes
 
-The checkout is bind-mounted at `/work`; `node_modules` is the named volume
-`calandria-test-node-modules`, reinstalled only when `package-lock.json` changes. That
-install is a one-time cost: every later run, and every other worktree, inherits it.
-Newly created volumes receive the `com.calandria.cache=disposable` label. An existing
-unlabeled shared cache remains reusable until manually removed. On Linux, clean
-dangling disposable caches with:
+The checkout is bind-mounted at `/work`. The default `node_modules` volume is
+`calandria-test-node-modules-<sha256>`, keyed by `package.json`, `package-lock.json`
+and the resolved test image ID. Worktrees with the same key reuse one install.
+Different dependencies or images use separate volumes. Base and e2e images have
+separate caches. Changes to the Dockerfile or entrypoint change the image tag and
+trigger a build automatically.
+
+Initialization takes an exclusive directory lock. Each running command holds a
+shared lock for its lifetime, so matching runs can execute concurrently and an
+install waits for active commands to finish. `CALANDRIA_TEST_VOLUME` selects an
+exact volume name. Reusing that override across different keys serializes the
+runs and reinstalls between keys. A failed install leaves the cache unready;
+the next run retries it.
+
+Newly created volumes receive the `com.calandria.cache=disposable` label. Existing
+volumes keep their labels. On Linux, clean dangling disposable caches with:
 
 ```bash
 docker volume ls -q --filter dangling=true --filter label=com.calandria.cache=disposable \
@@ -49,11 +59,11 @@ docker volume ls -q --filter dangling=true --filter label=com.calandria.cache=di
 ```
 
 A worktree with no `node_modules` of its own is **normal**. Leave it alone. Run
-`docker volume rm calandria-test-node-modules` only to force a clean install (a
-wedged tree, or proving a dependency change from scratch). It costs a full
-`npm ci` on the next run of every worktree. Set `CALANDRIA_TEST_REBUILD=1` after
-editing anything under `docker/test/`, since the wrapper skips the build when
-the image tag already exists.
+`docker volume rm <cache-volume>` only to force a clean install after all commands
+using it exit. It costs a full `npm ci` on the next run for that key. The old
+`calandria-test-node-modules` volume is unused by default and can be removed when
+no older harness is using it. `CALANDRIA_TEST_REBUILD=1` forces an image rebuild,
+including when refreshing its Node base image.
 
 ## Reading a result
 

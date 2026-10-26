@@ -31,14 +31,24 @@ npm run preflight:docker   # unit + e2e, the pre-push gate
 npm run test:docker -- tests/merge.test.ts   # args pass through
 ```
 
-Nothing is baked into the image: the checkout is bind-mounted at `/work` and
-`node_modules` is a **named volume** (`calandria-test-node-modules`), so the install
-is a one-time cost that the next run, and every other worktree, inherits. The
-container's entrypoint reinstalls only when `package-lock.json` changes; wipe
-the volume (`docker volume rm calandria-test-node-modules`) to force a clean tree.
-The wrapper labels newly created volumes `com.calandria.cache=disposable`. An
-existing unlabeled shared cache remains reusable until you remove it manually.
-On Linux, clean dangling disposable caches with:
+The checkout is bind-mounted at `/work`. Dependencies live in a persistent named
+volume, `calandria-test-node-modules-<sha256>`. Its key includes `package.json`,
+`package-lock.json` and the resolved test image ID. Matching worktrees reuse one
+install. Different dependency revisions and base/e2e images use separate caches.
+The image tag includes a hash of the Dockerfile and entrypoint, so harness edits
+trigger a build automatically.
+
+The entrypoint serializes installation with an exclusive directory lock and
+writes its readiness stamp after `npm ci` succeeds. Commands hold shared locks
+until they exit. Matching commands can run concurrently, and installation waits
+for every active command using that volume. A failed install is retried on the
+next run. The directory lock survives cleanup of the volume's contents.
+
+To force a clean install, remove that cache with `docker volume rm <cache-volume>`
+after its commands exit. The old `calandria-test-node-modules` volume is unused by
+default; remove it once older harness runs finish. The wrapper labels newly
+created volumes `com.calandria.cache=disposable`. Existing volumes keep their
+labels. On Linux, clean dangling disposable caches with:
 
 ```bash
 docker volume ls -q --filter dangling=true --filter label=com.calandria.cache=disposable \
@@ -75,14 +85,14 @@ command run at `/work` prints `fatal: not a git repository`. Neither suite cares
 both build their own fixture repos under a temp root with a pinned gitconfig.
 Don't read it as a broken checkout. Run git on the host.
 
-Knobs (all optional): `CALANDRIA_TEST_VOLUME` to use a different node_modules volume.
-Newly created volumes receive the `com.calandria.cache=disposable` label. An existing
-unlabeled shared cache remains reusable until manually removed.
+Knobs (all optional): `CALANDRIA_TEST_VOLUME` selects an exact node_modules volume
+name. Reusing an override across different keys serializes the runs and reinstalls
+between keys; default keyed volumes let those runs proceed independently.
 `CALANDRIA_TEST_USER=$(id -u):$(id -g)` on a Linux daemon that does not remap bind
 mounts (otherwise `.next/` and `test-results/` come back root-owned; OrbStack
 and Docker Desktop remap, so the default root user is fine there), and
-`CALANDRIA_TEST_REBUILD=1` after editing anything under `docker/test/`, since the wrapper
-skips the build when the tag already exists. These are a hard rename from the old
+`CALANDRIA_TEST_REBUILD=1` forces an image rebuild, including when refreshing the
+Node base image. These are a hard rename from the old
 `ORCH_TEST_*` spellings; there is no fallback, so a stale export just means the
 default is used. The old `orch-test-node-modules` volume and `orch-test:*` images
 can be removed to reclaim disk.
