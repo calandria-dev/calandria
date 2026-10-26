@@ -8,6 +8,20 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.24.1](https://github.com/calandria-dev/calandria/compare/v0.24.0...v0.24.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* **build:** silence the workspace-root and edge-runtime build warnings ([#579](https://github.com/calandria-dev/calandria/issues/579)) ([e9524a4](https://github.com/calandria-dev/calandria/commit/e9524a4c2c4c0cb81ccffe1ce95e45d960f08a81))
+* **desktop:** handle revoked OIDC refresh token and halt retry loop ([#477](https://github.com/calandria-dev/calandria/issues/477)) ([#581](https://github.com/calandria-dev/calandria/issues/581)) ([7408d76](https://github.com/calandria-dev/calandria/commit/7408d76aa28952338f06d146e166843efb28baf0))
+
+
+### Performance Improvements
+
+* **services:** make the win32 boot-restore orphan probe non-blocking ([#583](https://github.com/calandria-dev/calandria/issues/583)) ([27c59ea](https://github.com/calandria-dev/calandria/commit/27c59eadca33e76e969e07d526984049452805b9))
+* **services:** probe orphan command lines asynchronously and concurrently on win32 ([27c59ea](https://github.com/calandria-dev/calandria/commit/27c59eadca33e76e969e07d526984049452805b9))
+
 ## [0.24.0](https://github.com/calandria-dev/calandria/compare/v0.23.0...v0.24.0) (2026-10-25)
 
 
