@@ -706,9 +706,9 @@ export async function restoreServices(): Promise<void> {
   }
   // Reap orphans even when the feature flag is off: a stale process tree from
   // a crashed flag-on run must not survive the flag being flipped.
-  for (const row of rows) {
-    if (row.managed) await reapOrphan(row);
-  }
+  // Concurrent: the win32 probe is a slow async subprocess, so N services
+  // cost one probe's wall time instead of N.
+  await Promise.all(rows.filter((row) => row.managed).map((row) => reapOrphan(row)));
   if (!resolveFeatures().services) return;
   getGateSecret(); // stash for the router (globalThis)
 

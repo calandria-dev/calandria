@@ -40,7 +40,7 @@
 // difference left is whether the pid is negated. See docs/WINDOWS.md,
 // "Platform behavior".
 
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 
 /** What a tree kill can be asked for. On win32 both mean `taskkill /T /F`. */
 export type TreeSignal = "SIGTERM" | "SIGKILL";
@@ -248,21 +248,31 @@ export function probeTreeCommand(
 
   let out: string;
   try {
-    // Single-quoted strings and an interpolated integer: no double quote ever
-    // reaches the argument, which is the one thing Node's win32 argument
-    // escaping and PowerShell's own re-parsing disagree about.
-    out = runner(opts)("powershell.exe", [
-      "-NoProfile",
-      "-NonInteractive",
-      "-Command",
-      `try { $p = Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' -ErrorAction Stop; ` +
-        `if ($p) { '${WIN_PROBE_CMD}' + $p.CommandLine } else { '${WIN_PROBE_GONE}' } } ` +
-        `catch { '${WIN_PROBE_FAIL}' }`,
-    ]);
+    out = runner(opts)("powershell.exe", winProbeArgs(pid));
   } catch {
     return "unknown"; // no PowerShell, or it was killed by the exec timeout
   }
+  return parseWinProbe(out, needle);
+}
 
+/**
+ * Argv for the win32 CommandLine lookup. Single-quoted strings and an
+ * interpolated integer: no double quote ever reaches the argument, which is the
+ * one thing Node's win32 argument escaping and PowerShell's own re-parsing
+ * disagree about.
+ */
+function winProbeArgs(pid: number): string[] {
+  return [
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    `try { $p = Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' -ErrorAction Stop; ` +
+      `if ($p) { '${WIN_PROBE_CMD}' + $p.CommandLine } else { '${WIN_PROBE_GONE}' } } ` +
+      `catch { '${WIN_PROBE_FAIL}' }`,
+  ];
+}
+
+function parseWinProbe(out: string, needle: string): CommandProbe {
   // PowerShell hard-wraps string output at the host width when stdout is a
   // pipe, so a long command line can come back split across lines. The needle
   // never contains a newline, so flattening restores what was written.
@@ -276,6 +286,34 @@ export function probeTreeCommand(
   // a protected one). That is not evidence the pid was recycled.
   if (!line) return "unknown";
   return line.includes(needle) ? "match" : "mismatch";
+}
+
+/**
+ * {@link probeTreeCommand} without blocking the event loop. POSIX answers from
+ * `ps` in milliseconds and stays synchronous; the win32 CIM lookup runs through
+ * an async `execFile`, since it takes 10s or more on a cold PowerShell and
+ * boot restore asks it once per managed service. An injected `exec` (tests)
+ * is still honored synchronously.
+ */
+export async function probeTreeCommandAsync(
+  pid: number,
+  command: string,
+  opts: ProcessTreeOptions = {}
+): Promise<CommandProbe> {
+  if (hasProcessGroups(opts.platform) || opts.exec) return probeTreeCommand(pid, command, opts);
+  if (!usablePid(pid)) return "mismatch";
+  const needle = command.trim();
+  if (!needle) return "mismatch";
+  if (!treeAlive(pid, opts)) return "mismatch";
+  const out = await new Promise<string | null>((resolve) => {
+    execFile(
+      "powershell.exe",
+      winProbeArgs(pid),
+      { encoding: "utf8", timeout: opts.execTimeoutMs ?? EXEC_TIMEOUT_MS, windowsHide: true },
+      (err, stdout) => resolve(err ? null : stdout)
+    );
+  });
+  return out === null ? "unknown" : parseWinProbe(out, needle);
 }
 
 /**
@@ -307,7 +345,7 @@ export async function confirmTreeCommand(
       if (Date.now() >= deadline) break;
       await new Promise((r) => setTimeout(r, opts.retryDelayMs ?? 250));
     }
-    answer = probeTreeCommand(pid, command, { ...opts, execTimeoutMs });
+    answer = await probeTreeCommandAsync(pid, command, { ...opts, execTimeoutMs });
     if (answer !== "unknown") return answer;
   }
   return answer;
