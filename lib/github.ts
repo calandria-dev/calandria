@@ -559,7 +559,8 @@ export async function createTaskPr(input: {
   if (!remote)
     return { ok: false, error: "this repo has no origin remote. Push it to GitHub first (e.g. `gh repo create`), then try again" };
 
-  const repoArg = `--repo=${repoSlug(remote) || remote}`;
+  const slug = repoSlug(remote);
+  const repoArg = `--repo=${slug ? `github.com/${slug}` : remote}`;
   let found: { url: string; baseRefName: string } | undefined;
   try {
     const { stdout } = await run(resolveGhBin(), ["pr", "list", repoArg, "--head", workBranch, "--state", "open", "--json", "url,baseRefName", "--limit", "1"], opts);
