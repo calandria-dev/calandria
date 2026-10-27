@@ -8,7 +8,7 @@
 //                       more than one day elapsed, still under 100% every agent
 //   3 Near limit        a window at 80% or more (95% = limit tone)  every agent
 //   4 Session underused session resets within 60m, >= 50% unused   primary only
-//   5 Week underused    week resets within 36h, >= 30% unused       primary only
+//   5 Week underused    any week resets within 36h, >= 30% unused   primary only
 // Precedence: lower number, then primary before occasional, then soonest reset.
 
 import { GATEWAY_PLAN_ID, type PlanUsageSnapshot, type PlanUsageWindow } from "@/lib/types";
@@ -270,10 +270,12 @@ export function agentSignals(a: UsageAgent, now: number, named: boolean): UsageS
     }));
   }
 
-  // 4 and 5 are about capacity expiring unused: only on the plan relied on, and
-  // only on the headline windows (a per-model week is not a separate budget to fill).
+  // 4 and 5 are about capacity expiring unused, so only on the plan relied on.
+  // Session underuse reads the headline session; week underuse reads every
+  // weekly window (per-model weeks included) and reports the soonest reset,
+  // a tie going to the all-models window.
   if (primary) {
-    const { session, week } = headlineWindows(snap.windows);
+    const { session, week: headWeek } = headlineWindows(snap.windows);
     if (session?.resetsAt != null && session.resetsAt > now && session.resetsAt - now <= SESSION_UNDER_WITHIN && 100 - session.utilization >= SESSION_UNDER_UNUSED) {
       const unused = pct(100 - session.utilization);
       const left = fmtRemaining(session.resetsAt, now);
@@ -284,13 +286,17 @@ export function agentSignals(a: UsageAgent, now: number, named: boolean): UsageS
         spoken: `${a.name} session ${unused}% unused, resets in ${spokenRemaining(session.resetsAt, now)}.`,
       }));
     }
-    if (week?.resetsAt != null && week.resetsAt > now && week.resetsAt - now <= WEEK_UNDER_WITHIN && 100 - week.utilization >= WEEK_UNDER_UNUSED) {
+    const week = snap.windows
+      .filter((w) => isWeekly(w) && w.resetsAt != null && w.resetsAt > now && w.resetsAt - now <= WEEK_UNDER_WITHIN && 100 - w.utilization >= WEEK_UNDER_UNUSED)
+      .sort((x, y) => (x.resetsAt as number) - (y.resetsAt as number) || (x === headWeek ? -1 : y === headWeek ? 1 : 0))[0];
+    if (week?.resetsAt != null) {
       const unused = pct(100 - week.utilization);
+      const noun = windowNoun(week);
       out.push(make({
         kind: "week_under", tone: "opportunity", window: week, at: week.resetsAt,
         what: `wk ${unused}% left · ${fmtDay(week.resetsAt, now)}`,
-        note: `${unused}% of the week unused. Resets ${fmtWhen(week.resetsAt, now)}.`,
-        spoken: `${a.name} week ${unused}% unused, resets ${fmtWhen(week.resetsAt, now)}.`,
+        note: `${unused}% of the ${noun} unused. Resets ${fmtWhen(week.resetsAt, now)}.`,
+        spoken: `${a.name} ${noun} ${unused}% unused, resets ${fmtWhen(week.resetsAt, now)}.`,
       }));
     }
   }
@@ -313,6 +319,12 @@ export interface UsageSummary {
   ring: { agentId: string; window: PlanUsageWindow; tone: Tone } | null;
   /** Any agent's last refresh failed. */
   stale: boolean;
+  /** The readable agents whose last refresh failed. */
+  staleAgents: UsageAgent[];
+  /** Every readable agent is stale. */
+  allStale: boolean;
+  /** The oldest successful read among the stale agents, or null. */
+  staleSince: number | null;
   /** Every listed agent is unreadable. */
   unavailable: boolean;
   /** The accessible name. */
@@ -345,7 +357,12 @@ export function summarizeUsage(agents: UsageAgent[], now: number = Date.now()): 
   const named = agents.length > 1;
   const perAgent = new Map(agents.map((a) => [a.id, agentSignals(a, now, named).sort(compareSignals)] as const));
   const signals = [...perAgent.values()].flat().sort(compareSignals);
-  const stale = agents.some((a) => a.snap.available && a.snap.stale);
+  const live = agents.filter((a) => a.snap.available);
+  const staleAgents = live.filter((a) => a.snap.stale);
+  const stale = staleAgents.length > 0;
+  const allStale = stale && staleAgents.length === live.length;
+  const reads = staleAgents.map((a) => a.snap.fetchedAt).filter((t): t is number => t != null);
+  const staleSince = reads.length ? Math.min(...reads) : null;
   const unavailable = agents.length > 0 && agents.every((a) => !a.snap.available);
 
   const top = signals[0];
@@ -375,8 +392,59 @@ export function summarizeUsage(agents: UsageAgent[], now: number = Date.now()): 
     spoken = `Usage: ${a?.name ?? ""} ${windowNoun(ring.window)} ${pct(ring.window.utilization)}% used${left ? `, resets in ${left}` : ""}. No notices.`;
   } else spoken = "Usage: no windows reported.";
   if (signals.length > 1) spoken += ` ${signals.length - 1} more notice${signals.length === 2 ? "" : "s"}.`;
-  if (stale) spoken += " Some data is stale.";
-  return { signals, ring, stale, unavailable, spoken, order };
+  if (stale) {
+    const since = staleSince != null ? spokenAgo(staleSince, now) : null;
+    spoken += ` Data is stale (${allStale ? "every agent" : staleAgents.map((a) => a.name).join(", ")}${since ? `, last read ${since} ago` : ""}).`;
+  }
+  const down = agents.filter((a) => !a.snap.available);
+  if (!unavailable && down.length) spoken += ` ${down.map((a) => a.name).join(", ")} unavailable.`;
+  return { signals, ring, stale, staleAgents, allStale, staleSince, unavailable, spoken, order };
+}
+
+// ---------------------------------------------------------------- truncation
+
+/** One chip text candidate: the agent name (bold, may be empty) and the message. */
+export interface ChipStep { who: string; what: string }
+
+const dropReset = (what: string) => what.replace(/ · [^·]+$/, "");
+
+/**
+ * The chip's truncation ladder for a signal, widest first: full text, without
+ * the reset suffix, without the agent name, without both. The chip shows the
+ * first step that fits and falls back to the ring alone; it never cuts a word.
+ */
+export function chipLadder(s: UsageSignal): ChipStep[] {
+  const bare = dropReset(s.what);
+  const steps: ChipStep[] = [{ who: s.who, what: s.what }, { who: s.who, what: bare }, { who: "", what: s.what }, { who: "", what: bare }];
+  const seen = new Set<string>();
+  return steps.filter((x) => {
+    const key = `${x.who}\u0000${x.what}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** The stale label's ladder: "stale 47m" (every agent) or "stale · 47m" (some), then "stale". */
+export function staleLadder(since: number | null, allStale: boolean, now: number = Date.now()): ChipStep[] {
+  const ago = since != null ? fmtAgo(since, now) : null;
+  return ago ? [{ who: "", what: `stale${allStale ? "" : " ·"} ${ago}` }, { who: "", what: "stale" }] : [{ who: "", what: "stale" }];
+}
+
+/** Time since a past instant, compact ("47m", "3h", "2d"). */
+export function fmtAgo(at: number, now: number = Date.now()): string {
+  const mins = Math.max(1, Math.round((now - at) / MIN));
+  if (mins < 60) return `${mins}m`;
+  const h = Math.round(mins / 60);
+  return h < 48 ? `${h}h` : `${Math.round(h / 24)}d`;
+}
+
+function spokenAgo(at: number, now: number): string {
+  const mins = Math.max(1, Math.round((now - at) / MIN));
+  const plural = (n: number, u: string) => `${n} ${u}${n === 1 ? "" : "s"}`;
+  if (mins < 60) return plural(mins, "minute");
+  const h = Math.round(mins / 60);
+  return h < 48 ? plural(h, "hour") : plural(Math.round(h / 24), "day");
 }
 
 /** The role row's plain-words reason ("Auto (primary, last week 78%)"). */

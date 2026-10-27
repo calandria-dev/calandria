@@ -843,10 +843,10 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
    name truncates first, then the message. Sibling of the Work Center pill,
    so it shares its heights (26px, 34px tall on the phone). */
 .uc-anchor{position:relative;display:flex;min-width:0;flex:0 1 auto;}
-.uc-chip{position:relative;display:inline-flex;align-items:center;gap:6px;height:26px;max-width:260px;min-width:0;padding:0 9px;border-radius:999px;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;font-weight:500;color:var(--ink-3);background:none;border:1px solid var(--line);cursor:pointer;white-space:nowrap;}
+.uc-chip{position:relative;display:inline-flex;align-items:center;gap:6px;height:26px;max-width:240px;min-width:0;padding:0 9px;border-radius:999px;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;font-weight:500;color:var(--ink-3);background:none;border:1px solid var(--line);cursor:pointer;white-space:nowrap;}
 .uc-chip:hover{color:var(--ink);border-color:var(--line-2);background:var(--panel);}
 .uc-chip.open{border-color:var(--accent);}
-.uc-chip.tall{height:34px;max-width:168px;padding:0 10px;}
+.uc-chip.tall{height:34px;max-width:110px;padding:0 10px;}
 /* 34px plus 5px each side meets the 44px phone touch target. */
 .uc-chip.tall::before{content:"";position:absolute;inset:-5px -2px;}
 .uc-chip.stale{border-style:dashed;}
@@ -858,15 +858,23 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .uc-who{flex:0 1 auto;min-width:1.5em;overflow:hidden;text-overflow:ellipsis;font-weight:600;}
 .uc-what{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
 .uc-who + .uc-what{flex-shrink:0;max-width:100%;}
-.uc-more{flex:0 0 auto;font-size:9.5px;font-weight:700;padding:1px 5px;border-radius:999px;background:color-mix(in oklab,currentColor 16%,transparent);}
+.uc-more{flex:0 0 auto;color:var(--dim);}
+.uc-chip.unavailable{color:var(--dim);}
+/* The truncation ladder's measuring probe (PlanUsage.tsx useLadderFit): every candidate in the chip's own type, out of layout. */
+.uc-probe{position:absolute;left:0;top:0;width:0;height:0;overflow:hidden;visibility:hidden;pointer-events:none;}
+.uc-text.measure{width:max-content;overflow:visible;}
+.uc-text.measure > span{flex:none;overflow:visible;}
 .uc-ring{flex:0 0 auto;display:block;}
 .uc-ring-track{fill:none;stroke:var(--line-strong);stroke-width:2;}
 .uc-ring-fill{fill:none;stroke:var(--ink-2);stroke-width:2;stroke-linecap:round;transition:stroke-dasharray .4s ease;}
 .uc-ring.warn .uc-ring-fill{stroke:var(--warn);}
 .uc-ring.limit .uc-ring-fill{stroke:var(--err);}
 .uc-ring.opportunity .uc-ring-fill{stroke:var(--run);}
-.uc-ring.loading .uc-ring-track{stroke-dasharray:2 2;}
-@media (max-width:900px){ .uc-chip{max-width:190px;} }
+.uc-ring.dashed .uc-ring-track{stroke-dasharray:1.6 1.6;}
+.uc-ring.dashed .uc-ring-fill{stroke-linecap:butt;}
+@media (max-width:900px){ .uc-chip{max-width:180px;} }
+/* At 360 the bar leaves room for the ring and +N only; the text stays in the title and accessible name. */
+@media (max-width:374px){ .uc-chip.tall{max-width:64px;} }
 
 /* The update indicator. Accent-tinted, which no other titlebar pill is, so a
    new release reads as new information and not as trouble. */
@@ -900,8 +908,8 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .uc-agent-head{display:flex;align-items:center;gap:7px;padding:6px 13px 6px;}
 .uc-mark{display:inline-flex;align-items:center;}
 .uc-mark svg{width:13px;height:13px;}
-.uc-agent-name{font-size:13px;font-weight:600;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.uc-role{margin-left:auto;flex:0 0 auto;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:1px 7px;}
+.uc-agent-name{margin-right:auto;font-size:13px;font-weight:600;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.uc-role{flex:0 0 auto;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:1px 7px;}
 .uc-role.primary{color:var(--ink-2);border-color:var(--line-strong);}
 .uc-note{margin:2px 13px 8px;padding:7px 9px;border-radius:var(--r-sm);font-size:11.5px;line-height:1.4;}
 .uc-note.limit{background:var(--red-soft);color:var(--err);}
@@ -917,30 +925,41 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 /* The bar is 6px; the pace tick crosses it top to bottom and the projection
    caret sits under it, so the two stay apart at any position. */
 .uc-track{position:relative;margin:5px 0 6px;}
-.uc-bar{height:6px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
+.uc-bar{height:var(--uc-bar,6px);border-radius:999px;background:var(--surface-2);overflow:hidden;}
+.uc-tail{position:absolute;right:0;top:50%;margin-left:2px;border-top:2px dashed color-mix(in oklab,var(--warn) 70%,transparent);transform:translateY(-1px);}
+.uc-tail.limit{border-top-color:color-mix(in oklab,var(--err) 70%,transparent);}
+.uc-meter.stale .uc-fill{background:repeating-linear-gradient(90deg,var(--dim) 0 3px,transparent 3px 5px);}
 .uc-fill{height:100%;border-radius:999px;background:var(--accent);transition:width .4s ease;}
-.uc-pace{position:absolute;top:-3px;width:2px;height:12px;margin-left:-1px;border-radius:1px;background:var(--ink-2);}
-.uc-proj{position:absolute;top:8px;margin-left:-4px;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-bottom:5px solid var(--ink-3);}
-.uc-proj.over{margin-left:-8px;border-bottom-color:var(--err);}
+.uc-pace{position:absolute;top:-3px;width:2px;height:calc(var(--uc-bar,6px) + 6px);margin-left:-1px;border-radius:1px;background:var(--ink-2);}
+.uc-proj{position:absolute;top:calc((var(--uc-bar,6px) - 8px) / 2);width:8px;height:8px;margin-left:-4px;border-radius:50%;border:1.5px solid var(--dim);background:var(--panel);box-sizing:border-box;}
+.uc-proj.warn{border-color:var(--warn);}
+.uc-proj.limit{border-color:var(--err);}
 .uc-meter.warn .uc-fill{background:var(--warn);}
 .uc-meter.warn .uc-meter-pct{color:var(--warn);}
 .uc-meter.limit .uc-fill{background:var(--err);}
 .uc-meter.limit .uc-meter-pct{color:var(--err);}
 .uc-meter-foot{display:flex;justify-content:space-between;gap:8px;font-size:10.5px;color:var(--ink-3);}
 .uc-over{color:var(--err);}
-.uc-more-rows{margin:0 13px;padding:4px 0;border:0;background:none;color:var(--accent);font-size:11.5px;cursor:pointer;font-family:var(--font-body);}
-.uc-agent-foot{padding:4px 13px 0;font-size:10.5px;color:var(--ink-3);}
+.uc-more-rows{display:flex;gap:8px;width:calc(100% - 26px);margin:0 13px;padding:4px 0;border:0;background:none;color:var(--accent);font-size:11.5px;cursor:pointer;font-family:var(--font-body);}
 .uc-stale{color:var(--warn);}
-.uc-foot{display:flex;padding:8px 13px 4px;border-top:1px solid var(--line);}
-.uc-link{display:inline-flex;align-items:center;gap:6px;border:0;background:none;padding:2px 0;color:var(--ink-2);font-size:12px;cursor:pointer;font-family:var(--font-body);}
+.uc-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 13px 4px;border-top:1px solid var(--line);font-size:10.5px;color:var(--ink-3);}
+.uc-more-pcts{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
+.uc-gear{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-3);cursor:pointer;}
+.uc-gear:hover{color:var(--ink);}
+.uc-gear svg{width:13px;height:13px;}
+.uc-unavailable{display:flex;align-items:center;gap:8px;}
+.uc-unavailable .btn{margin-left:auto;flex:none;}
+.uc-inline-link{border:0;background:none;padding:0;color:var(--accent);font:inherit;cursor:pointer;text-decoration:underline;}
+.uc-link{margin-left:auto;display:inline-flex;align-items:center;gap:6px;border:0;background:none;padding:2px 0;color:var(--ink-2);font-size:12px;cursor:pointer;font-family:var(--font-body);}
 .uc-link:hover{color:var(--ink);}
 .uc-link svg{width:13px;height:13px;}
-.uc-chip:focus-visible,.uc-link:focus-visible,.uc-more-rows:focus-visible,.uc-role-opt:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+.uc-chip:focus-visible,.uc-link:focus-visible,.uc-gear:focus-visible,.uc-inline-link:focus-visible,.uc-more-rows:focus-visible,.uc-role-opt:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
 /* The phone sheet, in Work Center's sheet language (.wc-sheet). */
 .uc-scrim{position:fixed;inset:0;background:rgba(3,8,11,.45);z-index:310;}
-.uc-sheet{position:fixed;left:0;right:0;bottom:0;max-height:min(80dvh,640px);overflow-y:auto;overscroll-behavior:contain;background:var(--panel);border-top:1px solid var(--line);border-radius:16px 16px 0 0;padding:8px 4px max(20px,env(safe-area-inset-bottom));z-index:311;outline:none;}
+/* The sheet draws its meters at 8px. */
+.uc-sheet{--uc-bar:8px;position:fixed;left:0;right:0;bottom:0;max-height:min(80dvh,640px);overflow-y:auto;overscroll-behavior:contain;background:var(--panel);border-top:1px solid var(--line);border-radius:16px 16px 0 0;padding:8px 4px max(20px,env(safe-area-inset-bottom));z-index:311;outline:none;}
 .uc-grab{width:36px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 6px;}
-@media (max-width:760px){ .uc-link,.uc-more-rows,.uc-role-opt{min-height:44px;} }
+@media (max-width:760px){ .uc-link,.uc-more-rows,.uc-role-opt{min-height:44px;} .uc-gear{width:44px;height:44px;margin-right:-10px;} }
 /* The usage-limit notice and the unstarted-task panel carry the binding window's meter. */
 .uc-limit-block{margin:10px 0 4px;padding:9px 11px;border-radius:var(--r-sm);background:var(--red-soft);max-width:420px;}
 /* The role row in Settings → Models. */

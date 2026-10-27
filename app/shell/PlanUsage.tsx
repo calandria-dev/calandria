@@ -11,14 +11,16 @@ import { GATEWAY_PLAN_ID, type PlanUsageSnapshot, type PlanUsageWindow } from "@
 import { deferredStartFor } from "@/lib/usageReset";
 import {
   agentSignals,
+  chipLadder,
   compareSignals,
   fmtWhen,
   headlineWindows,
   isPrimary,
-  NEAR_PCT,
   paceOf,
+  staleLadder,
   summarizeUsage,
   toneFor,
+  type ChipStep,
   type Tone,
   type UsageAgent,
   type UsageSignal,
@@ -34,7 +36,8 @@ export { headlineWindows } from "./usageSignals";
 // Polls GET /api/plan-usage once a minute while the tab is visible. The server
 // answers from an instance-wide cache and reads a provider only when its own
 // fetch floor allows (lib/agents/*/planUsage.ts). No chip renders when no
-// shown agent reports plan usage.
+// shown agent reports anything; an agent that reports only why it can't be
+// read still counts.
 
 const POLL_MS = 60_000;
 
@@ -144,19 +147,22 @@ const toneClass = (t: Tone) => (t ? ` ${t}` : "");
 
 const RING_R = 5.25;
 const RING_C = 2 * Math.PI * RING_R;
+const DASH = 1.6;
 
-/** The chip's ring: a 14px gauge filled to `pct`. Empty and dashed while loading. */
-export function UsageRing({ pct, tone, loading }: { pct: number; tone: Tone; loading?: boolean }) {
-  const fill = loading ? 0 : Math.max(0, Math.min(100, pct));
+/**
+ * The chip's ring: a 14px gauge filled to `pct`. Loading and stale dash it;
+ * hollow draws the track alone (every agent unavailable).
+ */
+export function UsageRing({ pct, tone, loading, dashed, hollow }: { pct: number; tone: Tone; loading?: boolean; dashed?: boolean; hollow?: boolean }) {
+  const fill = loading || hollow ? 0 : Math.max(0, Math.min(100, pct));
+  const len = (RING_C * fill) / 100;
+  // A dashed fill repeats dash/gap pairs up to the filled length, then one gap for the rest.
+  const dashes = dashed ? [...Array(Math.floor(len / (2 * DASH))).fill(`${DASH} ${DASH}`), `0 ${RING_C}`].join(" ") : `${len} ${RING_C}`;
   return (
-    <svg className={`uc-ring${toneClass(tone)}${loading ? " loading" : ""}`} viewBox="0 0 14 14" width="14" height="14" aria-hidden>
+    <svg className={`uc-ring${toneClass(tone)}${loading || dashed ? " dashed" : ""}${hollow ? " hollow" : ""}`} viewBox="0 0 14 14" width="14" height="14" aria-hidden>
       <circle className="uc-ring-track" cx="7" cy="7" r={RING_R} />
       {fill > 0 && (
-        <circle
-          className="uc-ring-fill" cx="7" cy="7" r={RING_R}
-          strokeDasharray={`${(RING_C * fill) / 100} ${RING_C}`}
-          transform="rotate(-90 7 7)"
-        />
+        <circle className="uc-ring-fill" cx="7" cy="7" r={RING_R} strokeDasharray={dashes} transform="rotate(-90 7 7)" />
       )}
     </svg>
   );
@@ -164,28 +170,38 @@ export function UsageRing({ pct, tone, loading }: { pct: number; tone: Tone; loa
 
 // ---------------------------------------------------------------- meter
 
+/** A projection past 100% shrinks the track to 100/projection of the width, up to this projection. */
+const PROJECTION_CLAMP = 160;
+
 /**
  * One window: label, percent used, bar, reset. A window with a known length
  * and reset also carries a pace tick (an even spread now) and, once enough of
- * the window has passed to project, a caret at the projected end point. A
- * projection past 100% pins the caret to the bar's end and says the number.
+ * the window has passed to project, a hollow circle at the projected end
+ * point. A projection past 100% shrinks the track and draws a dashed tail from
+ * its end to the circle, so the overshoot reads at the same height. A stale
+ * agent's fill is hatched.
  */
-export function UsageMeter({ w, tone, now = Date.now(), compact }: { w: PlanUsageWindow; tone?: Tone; now?: number; compact?: boolean }) {
+export function UsageMeter({ w, tone, now = Date.now(), compact, stale }: { w: PlanUsageWindow; tone?: Tone; now?: number; compact?: boolean; stale?: boolean }) {
   const t = tone ?? toneFor(w.utilization);
   const p = paceOf(w, now);
   const projected = p?.projected ?? null;
   const over = projected != null && projected > 100;
+  const scale = over ? 100 / Math.min(projected, PROJECTION_CLAMP) : 1;
+  const at = (v: number) => `${(Math.min(v, PROJECTION_CLAMP) * scale).toFixed(2)}%`;
   return (
-    <div className={`uc-meter${toneClass(t)}${compact ? " compact" : ""}`}>
+    <div className={`uc-meter${toneClass(t)}${compact ? " compact" : ""}${stale ? " stale" : ""}`}>
       <div className="uc-meter-head">
         <span className="uc-meter-label">{w.label}</span>
         <span className="uc-meter-pct">{Math.floor(w.utilization)}% used</span>
       </div>
       <div className="uc-track">
-        <div className="uc-bar"><div className="uc-fill" style={{ width: `${Math.min(100, w.utilization)}%` }} /></div>
-        {p && <span className="uc-pace" style={{ left: `${p.pace}%` }} title={`Even pace: ${Math.round(p.pace)}%`} />}
+        <div className="uc-bar" style={over ? { width: `${(scale * 100).toFixed(2)}%` } : undefined}>
+          <div className="uc-fill" style={{ width: `${Math.min(100, w.utilization)}%` }} />
+        </div>
+        {over && <span className={`uc-tail${t === "limit" ? " limit" : ""}`} style={{ left: `${(scale * 100).toFixed(2)}%` }} aria-hidden />}
+        {p && <span className="uc-pace" style={{ left: at(p.pace) }} title={`Even pace: ${Math.round(p.pace)}%`} />}
         {projected != null && (
-          <span className={`uc-proj${over ? " over" : ""}`} style={{ left: `${Math.min(100, projected)}%` }} title={`Projected at reset: ${Math.round(projected)}%`} />
+          <span className={`uc-proj${over ? " over" : ""}${t === "warn" || t === "limit" ? ` ${t}` : ""}`} style={{ left: at(projected) }} title={`Projected at reset: ${Math.round(projected)}%`} />
         )}
       </div>
       <div className="uc-meter-foot">
@@ -198,22 +214,83 @@ export function UsageMeter({ w, tone, now = Date.now(), compact }: { w: PlanUsag
 
 // ---------------------------------------------------------------- the chip
 
+const px = (v: string) => parseFloat(v) || 0;
+
+/**
+ * The truncation ladder, measured. The probe holds every candidate in the
+ * chip's own styles (so a user-selected mono face measures true); each is
+ * checked against the chip's max width less its border, padding, ring, gaps
+ * and the `+N` count. Returns the first step that fits, or -1 for the ring
+ * alone. Re-measures on resize, on a font load, and on an appearance change
+ * (the mono face is a custom property on the root element).
+ */
+function useLadderFit(chipRef: React.RefObject<HTMLButtonElement | null>, probeRef: React.RefObject<HTMLSpanElement | null>, steps: ChipStep[], more: number): number {
+  const [fit, setFit] = useState(0);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setTick((n) => n + 1);
+    window.addEventListener("resize", bump);
+    document.fonts?.addEventListener?.("loadingdone", bump);
+    const mo = new MutationObserver(bump);
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["style", "class", "data-theme"] });
+    return () => {
+      window.removeEventListener("resize", bump);
+      document.fonts?.removeEventListener?.("loadingdone", bump);
+      mo.disconnect();
+    };
+  }, []);
+  const key = steps.map((x) => `${x.who}|${x.what}`).join("\n");
+  useLayoutEffect(() => {
+    const chip = chipRef.current;
+    const probe = probeRef.current;
+    if (!chip || !probe || steps.length === 0) { setFit(-1); return; }
+    const cs = getComputedStyle(chip);
+    const max = px(cs.maxWidth);
+    if (!max) { setFit(0); return; }
+    const gap = px(cs.columnGap);
+    const ring = chip.querySelector<SVGElement>(".uc-ring")?.getBoundingClientRect().width ?? 14;
+    const moreW = more > 0 ? (chip.querySelector<HTMLElement>(".uc-more")?.getBoundingClientRect().width ?? 0) + gap : 0;
+    // One pixel of slack for sub-pixel advances.
+    const avail = max - px(cs.paddingLeft) - px(cs.paddingRight) - px(cs.borderLeftWidth) - px(cs.borderRightWidth) - ring - gap - moreW - 1;
+    const widths = Array.from(probe.children, (el) => el.getBoundingClientRect().width);
+    setFit(widths.findIndex((w) => w <= avail));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, more, tick]);
+  return fit;
+}
+
+function ChipText({ step, measure }: { step: ChipStep; measure?: boolean }) {
+  return (
+    <span className={`uc-text${measure ? " measure" : ""}`} aria-hidden>
+      {step.who && <span className="uc-who">{step.who}</span>}
+      <span className="uc-what">{step.what}</span>
+    </span>
+  );
+}
+
 /**
  * The titlebar chip. Calm: a quiet ring on the primary agent's session window
  * and no text. Signal: the ring tracks the window the winning signal is about,
  * plus one line of text and a "+N" count when more notices wait in the
- * popover. Stale or unreadable data always carries a word, so it never reads
- * as calm.
+ * popover. Stale data dashes the border and ring and, with no signal, says
+ * "stale" and its age. Every shown agent unreadable: a hollow ring and
+ * "unavailable". The text follows the truncation ladder (useLadderFit) and
+ * may drop to the ring alone; the title and accessible name always carry it
+ * in full.
  */
-export function UsageChip({ agents, appDefaults, isMobile, onOpenSettings }: {
+export function UsageChip({ agents, appDefaults, isMobile, onOpenSettings, onOpenProjects }: {
   agents: AgentsBundle;
   appDefaults: Record<string, string>;
   isMobile: boolean;
-  onOpenSettings: () => void;
+  /** Opens Settings → Models on this agent's provider page, or the section alone. */
+  onOpenSettings: (agentId?: string) => void;
+  /** Opens the project list (the scope note's "Which" link). */
+  onOpenProjects: () => void;
 }) {
   const { map, loaded } = usePlanUsageState();
   const [open, setOpen] = useState(false);
   const chipRef = useRef<HTMLButtonElement>(null);
+  const probeRef = useRef<HTMLSpanElement>(null);
 
   const list = useMemo<UsageAgent[]>(
     () => Object.entries(map)
@@ -221,17 +298,14 @@ export function UsageChip({ agents, appDefaults, isMobile, onOpenSettings }: {
       .map(([id, snap]) => ({ id, name: id === GATEWAY_PLAN_ID ? "Gateway" : agentLabel(agents, id), snap })),
     [map, appDefaults, agents],
   );
-  // An unreadable agent alone is no reason for a chip: the chip appears once
-  // at least one shown agent reports a window, and unreadable ones then list
-  // in the breakdown with their reason.
-  const anyLive = list.some((a) => a.snap.available);
+  const any = list.length > 0;
 
   // Remember that this instance has a chip, so the next page load can hold its
   // place with a loading ring. An instance with none never flashes one.
   useEffect(() => {
     if (!loaded) return;
-    try { if (anyLive) localStorage.setItem("calandria.usageChip", "1"); else localStorage.removeItem("calandria.usageChip"); } catch { /* storage off */ }
-  }, [loaded, anyLive]);
+    try { if (any) localStorage.setItem("calandria.usageChip", "1"); else localStorage.removeItem("calandria.usageChip"); } catch { /* storage off */ }
+  }, [loaded, any]);
   // Read after mount: the server render has no storage, and the first client
   // render must match it.
   const [expectChip, setExpectChip] = useState(false);
@@ -243,6 +317,17 @@ export function UsageChip({ agents, appDefaults, isMobile, onOpenSettings }: {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const now = useMemo(() => Date.now(), [map]);
   const summary = useMemo(() => summarizeUsage(list, now), [list, now]);
+
+  const top = summary.signals[0];
+  const more = summary.unavailable ? 0 : summary.signals.length - 1;
+  const steps = useMemo<ChipStep[]>(
+    () => summary.unavailable ? [{ who: "", what: "unavailable" }]
+      : top ? chipLadder(top)
+      : summary.stale ? staleLadder(summary.staleSince, summary.allStale, now)
+      : [],
+    [summary, top, now],
+  );
+  const fit = useLadderFit(chipRef, probeRef, steps, more);
 
   const close = (refocus: boolean) => {
     setOpen(false);
@@ -259,50 +344,44 @@ export function UsageChip({ agents, appDefaults, isMobile, onOpenSettings }: {
       </div>
     );
   }
-  if (!anyLive) return null;
+  if (!any) return null;
 
-  const top = summary.signals[0];
-  const more = summary.signals.length - 1;
-  // The phone chip has room for the message only: the sheet names the agent
-  // and lists the other notices, and the accessible name counts them.
-  const who = isMobile ? "" : (top?.who ?? "");
-  const full = top?.what ?? (summary.unavailable ? "unavailable" : summary.stale ? "stale" : "");
-  // At 360px the separator is the width that costs the reset time.
-  const what = isMobile ? full.replace(" · ", " ") : full;
   const tone: Tone = top?.tone ?? "";
+  const step = fit >= 0 ? steps[fit] : undefined;
+  const settingsFor = (id?: string) => { close(false); onOpenSettings(id); };
+  const projects = () => { close(false); onOpenProjects(); };
+  const body = (
+    <UsageCenterBody
+      list={summary.order} now={now} named={list.length > 1}
+      staleAgents={summary.staleAgents} allStale={summary.allStale}
+      onOpenSettings={settingsFor} onOpenProjects={projects}
+    />
+  );
 
   return (
     <div className="uc-anchor">
       <button
         ref={chipRef}
-        className={`uc-chip${toneClass(tone)}${isMobile ? " tall" : ""}${summary.stale ? " stale" : ""}${open ? " open" : ""}`}
+        className={`uc-chip${toneClass(tone)}${isMobile ? " tall" : ""}${summary.stale ? " stale" : ""}${summary.unavailable ? " unavailable" : ""}${step ? "" : " bare"}${open ? " open" : ""}`}
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
         aria-label={summary.spoken}
         aria-expanded={open}
         aria-haspopup="dialog"
         title={summary.spoken}
       >
-        <UsageRing pct={summary.ring?.window.utilization ?? 0} tone={summary.ring?.tone ?? ""} />
-        {what && (
-          <span className="uc-text" aria-hidden>
-            {who && <span className="uc-who">{who}</span>}
-            <span className="uc-what">{what}</span>
-          </span>
-        )}
-        {more > 0 && !isMobile && <span className="uc-more" aria-hidden>+{more}</span>}
+        <UsageRing pct={summary.ring?.window.utilization ?? 0} tone={summary.ring?.tone ?? ""} dashed={summary.stale} hollow={summary.unavailable} />
+        {step && <ChipText step={step} />}
+        {more > 0 && <span className="uc-more" aria-hidden>+{more}</span>}
+        <span ref={probeRef} className="uc-probe" aria-hidden>
+          {steps.map((x, i) => <ChipText key={i} step={x} measure />)}
+        </span>
       </button>
       {open && !isMobile && (
         <Popover onClose={() => close(false)}>
-          <UsageDialog onEscape={() => close(true)}>
-            <UsageCenterBody list={summary.order} now={now} named={list.length > 1} onOpenSettings={() => { close(false); onOpenSettings(); }} />
-          </UsageDialog>
+          <UsageDialog onEscape={() => close(true)}>{body}</UsageDialog>
         </Popover>
       )}
-      {open && isMobile && (
-        <UsageSheet onClose={(refocus) => close(refocus)}>
-          <UsageCenterBody list={summary.order} now={now} named={list.length > 1} onOpenSettings={() => { close(false); onOpenSettings(); }} />
-        </UsageSheet>
-      )}
+      {open && isMobile && <UsageSheet onClose={(refocus) => close(refocus)}>{body}</UsageSheet>}
     </div>
   );
 }
@@ -342,19 +421,50 @@ function UsageSheet({ children, onClose }: { children: React.ReactNode; onClose:
 
 // ---------------------------------------------------------------- breakdown
 
-function UsageCenterBody({ list, now, named, onOpenSettings }: { list: UsageAgent[]; now: number; named: boolean; onOpenSettings: () => void }) {
+function UsageCenterBody({ list, now, named, staleAgents, allStale, onOpenSettings, onOpenProjects }: {
+  list: UsageAgent[];
+  now: number;
+  named: boolean;
+  staleAgents: UsageAgent[];
+  allStale: boolean;
+  onOpenSettings: (agentId?: string) => void;
+  onOpenProjects: () => void;
+}) {
+  const reads = list.filter((a) => a.snap.available && !a.snap.stale).map((a) => a.snap.fetchedAt).filter((t): t is number => t != null);
+  const updated = reads.length ? Math.max(...reads) : null;
+  const staleReason = staleAgents.find((a) => a.snap.reason)?.snap.reason ?? "refresh failed";
+  // The footer link lands on the first listed agent's provider page; the gateway has no bundled page.
+  const footAgent = list.find((a) => a.id !== GATEWAY_PLAN_ID)?.id;
   return (
     <div className="uc-body">
       <div className="pop-sec">Plan usage</div>
-      {list.map((a) => <AgentSection key={a.id} a={a} now={now} named={named} />)}
+      {list.map((a) => <AgentSection key={a.id} a={a} now={now} named={named} onOpenSettings={() => onOpenSettings(a.id)} onOpenProjects={onOpenProjects} />)}
       <div className="uc-foot">
-        <button className="uc-link" onClick={onOpenSettings}>{Icon.gear()} Usage settings</button>
+        {updated != null && <span className="uc-updated">Updated {agoText(updated)}</span>}
+        {staleAgents.length > 0 && (
+          <span className="uc-stale">{allStale ? "Stale" : `${staleAgents.map((a) => a.name).join(", ")} stale`} · {staleReason}</span>
+        )}
+        <button className="uc-link" onClick={() => onOpenSettings(footAgent)}>{Icon.gear()} Usage settings</button>
       </div>
     </div>
   );
 }
 
-function AgentSection({ a, now, named }: { a: UsageAgent; now: number; named: boolean }) {
+/** The windows always shown: the session, the first week, a gateway budget. The rest fold. */
+function splitWindows(windows: PlanUsageWindow[]): { shown: PlanUsageWindow[]; folded: PlanUsageWindow[] } {
+  const { session, week } = headlineWindows(windows);
+  const shown = windows.filter((w) => w === session || w === week || w.kind === "gateway_budget");
+  if (shown.length === 0) return { shown: windows.slice(0, 2), folded: windows.slice(2) };
+  return { shown, folded: windows.filter((w) => !shown.includes(w)) };
+}
+
+function AgentSection({ a, now, named, onOpenSettings, onOpenProjects }: {
+  a: UsageAgent;
+  now: number;
+  named: boolean;
+  onOpenSettings: () => void;
+  onOpenProjects: () => void;
+}) {
   const { snap } = a;
   const [showAll, setShowAll] = useState(false);
   const limit = useOpenTaskLimit();
@@ -364,14 +474,11 @@ function AgentSection({ a, now, named }: { a: UsageAgent; now: number; named: bo
   const planName = snap.plan ? snap.plan[0].toUpperCase() + snap.plan.slice(1) : null;
   const role = a.id === GATEWAY_PLAN_ID ? null : snap.role;
 
-  // Headline windows and any window worth a glance stay visible; the rest
-  // (per-model weeks, extra model groups) fold behind one toggle.
-  const { session, week } = headlineWindows(snap.windows);
-  const signalled = new Set(signals.map((s) => s.window).filter(Boolean));
-  const primaryRows = snap.windows.filter((w) => w === session || w === week || signalled.has(w) || w.utilization >= NEAR_PCT || snap.windows.length <= 2);
-  const shownRows = primaryRows.length ? primaryRows : snap.windows.slice(0, 2);
-  const folded = snap.windows.filter((w) => !shownRows.includes(w));
-  const rows = showAll ? snap.windows : shownRows;
+  const { shown, folded } = splitWindows(snap.windows);
+  // A folded window that carries a notice unfolds the group on its own.
+  const forced = folded.some((w) => signals.some((s) => s.window === w));
+  const expanded = forced || showAll;
+  const rows = expanded ? snap.windows : shown;
   const rejectedId = snap.status === "rejected" ? snap.statusWindow : null;
   const offer = top?.kind === "limit" && limit && limit.usageKey === a.id ? limit : null;
 
@@ -385,8 +492,14 @@ function AgentSection({ a, now, named }: { a: UsageAgent; now: number; named: bo
             {role.value === "primary" ? "Primary" : "Occasional"}{role.source === "pinned" ? " · pinned" : ""}
           </span>
         )}
+        <button className="uc-gear" onClick={onOpenSettings} aria-label={`${a.name} settings`} title={`Settings → Models → ${a.name}`}>{Icon.gear()}</button>
       </div>
-      {!snap.available && <div className="uc-note muted">Usage unavailable{snap.reason ? `: ${snap.reason}` : "."}</div>}
+      {!snap.available && (
+        <div className="uc-note muted uc-unavailable">
+          <span>Usage can't be read{snap.reason ? `: ${snap.reason}` : "."}</span>
+          <button className="btn btn-sm" onClick={onOpenSettings}>Sign in</button>
+        </div>
+      )}
       {signals.map((s) => (
         <div key={s.kind} className={`uc-note ${s.tone}`}>
           {s.note}
@@ -400,25 +513,21 @@ function AgentSection({ a, now, named }: { a: UsageAgent; now: number; named: bo
           )}
         </div>
       ))}
-      {snap.scope?.kind === "some" && (
-        <div className="uc-note scoped">
-          {snap.scope.redirected} of {snap.scope.redirected + snap.scope.onPlan} projects point{snap.scope.redirected === 1 ? "s" : ""} {a.name} at
-          another endpoint. Those turns do not draw on this plan.
-        </div>
-      )}
       {snap.available && snap.windows.length === 0 && <div className="uc-note muted">No usage windows reported.</div>}
       {rows.map((w) => (
-        <UsageMeter key={w.id} w={w} now={now} tone={toneFor(w.utilization, rejectedId === w.id)} />
+        <UsageMeter key={w.id} w={w} now={now} tone={toneFor(w.utilization, rejectedId === w.id)} stale={snap.stale} />
       ))}
-      {folded.length > 0 && (
+      {folded.length > 0 && !forced && (
         <button className="uc-more-rows" onClick={() => setShowAll((v) => !v)} aria-expanded={showAll}>
-          {showAll ? "Fewer windows" : `${folded.length} more window${folded.length === 1 ? "" : "s"}`}
+          <span>{showAll ? "Hide" : "Show"} {folded.length} more window{folded.length === 1 ? "" : "s"}</span>
+          {!showAll && <span className="uc-more-pcts">{folded.map((w) => `${Math.floor(w.utilization)}%`).join(" · ")}</span>}
         </button>
       )}
-      {snap.available && (
-        <div className="uc-agent-foot">
-          {snap.fetchedAt != null ? `Updated ${agoText(snap.fetchedAt)}` : "From live session telemetry"}
-          {snap.stale && <span className="uc-stale">{` · stale${snap.reason ? `: ${snap.reason}` : ""}`}</span>}
+      {snap.scope?.kind === "some" && (
+        <div className="uc-note scoped">
+          {snap.scope.redirected} of {snap.scope.redirected + snap.scope.onPlan} projects route {a.name} through
+          another endpoint; their turns don&apos;t draw on this plan.{" "}
+          <button className="uc-inline-link" onClick={onOpenProjects}>Which</button>
         </div>
       )}
     </section>

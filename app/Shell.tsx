@@ -253,7 +253,15 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
   // Which Settings section to land on when opened programmatically (e.g. the
   // "connect another agent" nudge deep-links to Agents). undefined = default.
   const [settingsSection, setSettingsSection] = useState<string | undefined>();
-  const openSettings = (sect?: string) => { setSettingsSection(sect); o.setView("settings"); };
+  // An agent whose provider page Settings → Models opens on arrival (the Usage
+  // Center's gear and Sign in). The nonce remounts Settings on every request,
+  // so a second click reopens the page.
+  const [settingsTarget, setSettingsTarget] = useState<{ agent: string; nonce: number } | undefined>();
+  const openSettings = (sect?: string, agent?: string) => {
+    setSettingsSection(sect);
+    setSettingsTarget(agent ? { agent, nonce: Date.now() } : undefined);
+    o.setView("settings");
+  };
   const closeWc = useCallback((restoreFocus = true) => {
     setWcOpen(false);
     if (restoreFocus) requestAnimationFrame(() => pillRef.current?.focus());
@@ -795,7 +803,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
 
   const settingsColumn = (
     <SettingsView
-      key={settingsSection ?? "default"}
+      key={`${settingsSection ?? "default"}:${settingsTarget?.nonce ?? ""}`}
       settings={o.settings}
       setSetting={o.setSetting}
       appearance={o.appearance}
@@ -809,6 +817,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
       onRerunSetup={o.rerunOnboarding}
       onClose={() => o.setView("workspace")}
       initialSection={settingsSection}
+      initialProviderAgent={settingsTarget?.agent}
       updates={updates}
       currentProjectId={project?.id ?? null}
       projects={o.activeProjects.map((p) => ({ id: p.id, name: p.name }))}
@@ -847,7 +856,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
 
         <div className="tb-right">
           <UpdatePill updates={updates} isMobile={isMobile} />
-          <UsageChip agents={o.agents} appDefaults={o.appDefaults} isMobile={isMobile} onOpenSettings={() => openSettings("models")} />
+          <UsageChip agents={o.agents} appDefaults={o.appDefaults} isMobile={isMobile} onOpenSettings={(agent) => openSettings("models", agent)} onOpenProjects={o.showProjectList} />
           <div className="wc-anchor">
             <WorkCenterPill tall={isMobile}
               data={wc}
