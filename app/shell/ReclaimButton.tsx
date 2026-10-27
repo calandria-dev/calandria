@@ -14,7 +14,8 @@ import type { TaskRow } from "./types";
  *
  * The first click fetches a preview (several git subprocesses) and either
  * finishes the job directly on a clean checkout or arms an acknowledgement
- * naming what would be destroyed. reclaimTask publishes `task_edited`, so the
+ * naming what would be destroyed. A checkout this server can't delete shows
+ * the reason and offers nothing. reclaimTask publishes `task_edited`, so the
  * row refreshes itself over /api/events.
  */
 
@@ -27,6 +28,8 @@ interface Preview {
   running: boolean;
   unsafe: boolean;
   unsafeReason: string | null;
+  blocked: boolean;
+  blockedReason: string | null;
 }
 
 export function ReclaimButton({ task }: { task: TaskRow }) {
@@ -65,6 +68,12 @@ export function ReclaimButton({ task }: { task: TaskRow }) {
       const preview = await jget<Preview>(`/api/tasks/${task.id}/reclaim`);
       if (preview.running) {
         setErr("a turn is running in this task");
+        return;
+      }
+      // Ownership or permissions this server can't get past: discarding would
+      // fail halfway, so name the cause instead of offering the acknowledgement.
+      if (preview.blocked) {
+        setErr(preview.blockedReason);
         return;
       }
       if (preview.unsafe) {

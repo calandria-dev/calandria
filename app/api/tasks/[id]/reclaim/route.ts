@@ -26,6 +26,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 //
 // A refusal from the safety gate answers 409 with `unsafe: true`, which is what
 // tells the client to offer the acknowledgement instead of showing an error.
+// A checkout this server can't delete answers 409 with `blocked: true`; no
+// acknowledgement gets past it, and nothing was deleted.
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const body = (await req.json().catch(() => null)) as { discardUnsafe?: unknown } | null;

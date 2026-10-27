@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // in the repo lock it means two spellings of one repo take two locks and run
 // merges concurrently that this is meant to serialize. Both go through one
 // helper, so the two can't drift.
-import { canonicalPath, heldHandleHint, samePath } from "../lib/paths";
+import { canonicalPath, heldHandleHint, samePath, undeletableEntry, undeletableTreeReason } from "../lib/paths";
 import { repoLockKey } from "../lib/repoLock";
 import { tmpDir } from "./helpers";
 import { onPosix } from "./platform";
@@ -119,5 +119,58 @@ describe("heldHandleHint names the likely holder, on Windows only", () => {
     const dir = tmpDir("own-");
     fs.mkdirSync(path.join(dir, ".next"));
     expect(heldHandleHint(dir)).toBe("");
+  });
+});
+
+describe("undeletableEntry", () => {
+  onPosix("names the topmost foreign-owned entry", () => {
+    const dir = tmpDir("undel-owner-");
+    fs.mkdirSync(path.join(dir, ".next", "types"), { recursive: true });
+    const realUid = fs.statSync(dir).uid;
+    const spy = vi.spyOn(process, "getuid").mockReturnValue(realUid + 1);
+    try {
+      expect(undeletableEntry(dir)).toEqual({ path: path.join(dir, ".next"), kind: "owner", uid: realUid });
+      expect(undeletableTreeReason(dir)).toMatch(/can't be removed: .* is owned by uid/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // Unlinking needs write permission on the parent, whoever owns the child.
+  // Root ignores mode bits, so the case only means anything for another uid.
+  const asNonRoot = process.getuid?.() === 0 ? it.skip : onPosix;
+  asNonRoot("names a non-empty directory this process can't write into", () => {
+    const dir = tmpDir("undel-mode-");
+    const locked = path.join(dir, "locked");
+    fs.mkdirSync(locked);
+    fs.writeFileSync(path.join(locked, "f.txt"), "x");
+    fs.chmodSync(locked, 0o555);
+    try {
+      expect(undeletableEntry(dir)).toMatchObject({ path: locked, kind: "parent" });
+      expect(undeletableTreeReason(dir)).toContain(`${locked} is not writable by this server`);
+    } finally {
+      fs.chmodSync(locked, 0o755);
+    }
+  });
+
+  onPosix("ignores an empty read-only directory, which its parent can still remove", () => {
+    const dir = tmpDir("undel-empty-");
+    const empty = path.join(dir, "empty");
+    fs.mkdirSync(empty);
+    fs.chmodSync(empty, 0o555);
+    try {
+      expect(undeletableEntry(dir)).toBeNull();
+    } finally {
+      fs.chmodSync(empty, 0o755);
+    }
+  });
+
+  it("answers null for a tree we own and for a path that doesn't exist", () => {
+    const dir = tmpDir("undel-own-");
+    fs.mkdirSync(path.join(dir, "a", "b"), { recursive: true });
+    expect(undeletableEntry(dir)).toBeNull();
+    expect(undeletableTreeReason(dir)).toBeNull();
+    expect(undeletableTreeReason(path.join(dir, "missing"))).toBeNull();
+    expect(undeletableTreeReason("")).toBeNull();
   });
 });

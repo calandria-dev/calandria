@@ -30,7 +30,7 @@ import { withTaskLock } from "@/lib/taskLock";
 import { withRepoLock } from "@/lib/repoLock";
 import { hasTurn } from "@/lib/abort";
 import { publishGlobal, subscribeGlobal } from "@/lib/events";
-import { heldHandleHint } from "@/lib/paths";
+import { heldHandleHint, undeletableTreeReason } from "@/lib/paths";
 import type { Task } from "@/lib/types";
 import { reviewRefusal } from "@/lib/reviews/gate";
 
@@ -61,6 +61,12 @@ export interface ReclaimPreview {
   /** Removing this checkout would destroy work; the acknowledgement is required. */
   unsafe: boolean;
   unsafeReason: string | null;
+  /**
+   * This server can't delete the checkout (an entry another user owns, or a
+   * directory it can't write into). `discardUnsafe` doesn't get past this.
+   */
+  blocked: boolean;
+  blockedReason: string | null;
 }
 
 export interface ReclaimResult {
@@ -69,6 +75,8 @@ export interface ReclaimResult {
   reason?: string;
   /** The refusal was the safety gate; `discardUnsafe` would get past it. */
   unsafe?: boolean;
+  /** The refusal was the deletability check; nothing was deleted. */
+  blocked?: boolean;
   landing?: Landing;
   /** Disk freed by removing the checkout. */
   bytes?: number;
@@ -168,6 +176,8 @@ export async function reclaimPreview(taskId: string): Promise<ReclaimPreview | n
     running: task.running === 1 || hasTurn(taskId),
     unsafe: false,
     unsafeReason: null,
+    blocked: false,
+    blockedReason: null,
   };
   if (!landing || !project?.repo_path || (!task.worktree_path && !task.work_branch)) return empty;
 
@@ -178,11 +188,14 @@ export async function reclaimPreview(taskId: string): Promise<ReclaimPreview | n
     baseBranch,
   });
   const blocking = await blockingWork(landing, safety, project.repo_path, task.work_branch, baseBranch);
+  const blockedReason = undeletableTreeReason(task.worktree_path);
   return {
     ...empty,
     bytes: task.worktree_path ? await worktreeDiskUsage(task.worktree_path) : 0,
     unsafe: !!blocking,
     unsafeReason: blocking,
+    blocked: !!blockedReason,
+    blockedReason,
   };
 }
 
@@ -249,6 +262,8 @@ export async function reclaimTask(
         const blocking = await blockingWork(landing, safety, project.repo_path, task.work_branch, baseBranch);
         if (blocking && !opts.discardUnsafe)
           return { ok: false, unsafe: true, landing, reason: `${UNSAFE_DISCARD_REASON}: ${blocking}` };
+        const blockedReason = undeletableTreeReason(task.worktree_path);
+        if (blockedReason) return { ok: false, blocked: true, landing, reason: blockedReason };
 
         const bytes = task.worktree_path ? await worktreeDiskUsage(task.worktree_path) : 0;
         // keepBranch is NOT set: the branch is the task's diff only while the

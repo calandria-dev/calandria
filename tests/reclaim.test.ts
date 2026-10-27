@@ -6,7 +6,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { GET as diffGET } from "../app/api/tasks/[id]/diff/route";
 import { GET, POST } from "../app/api/tasks/[id]/reclaim/route";
 import { mergeTask } from "../lib/git";
@@ -18,6 +18,7 @@ import { publish } from "../lib/events";
 import { registerTurn, unregisterTurn } from "../lib/abort";
 import type { Task } from "../lib/types";
 import { commitFile, git, makeRepo, makeRepoWithOrigin, pushFromColleague, writeFile } from "./helpers";
+import { onPosix } from "./platform";
 
 /**
  * A project clone with a real `origin`, one task on its own worktree carrying
@@ -171,6 +172,60 @@ describe("reclaiming a task whose PR has merged", () => {
     expect(res.unsafe).toBe(true);
     expect(res.reason).toMatch(/the worktree has unsaved work/);
     expect(fs.existsSync(path.join(wt.path, "scratch.txt"))).toBe(true);
+  });
+});
+
+// A root-owned `.next/` left by a container run: `git worktree remove --force`
+// deletes `.git` and every file this server owns, then fails, leaving a
+// half-deleted checkout git no longer knows about. Faking our own uid makes
+// every entry read as foreign without needing root.
+describe("a checkout this server can't delete", () => {
+  async function foreignOwned() {
+    const f = await taskAwaitingItsPr();
+    await f.land();
+    prMerged(f.task.id);
+    fs.mkdirSync(path.join(f.wt.path, ".next"));
+    const realUid = fs.statSync(f.wt.path).uid;
+    const spy = vi.spyOn(process, "getuid").mockReturnValue(realUid + 1);
+    return { ...f, realUid, spy };
+  }
+
+  onPosix("is previewed as blocked, separate from unsafe", async () => {
+    const { task, wt, realUid, spy } = await foreignOwned();
+    try {
+      const preview = await reclaimPreview(task.id);
+      expect(preview).toMatchObject({ landing: "pr", unsafe: false, blocked: true });
+      expect(preview!.blockedReason).toContain(`is owned by uid ${realUid}`);
+      expect(preview!.blockedReason).toContain(wt.path);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  onPosix("refuses before deleting anything, even with the discard acknowledgement", async () => {
+    const { task, wt, spy } = await foreignOwned();
+    try {
+      for (const opts of [{}, { discardUnsafe: true }]) {
+        const res = await reclaimTask(task.id, opts);
+        expect(res).toMatchObject({ ok: false, blocked: true });
+        expect(res.unsafe).toBeUndefined();
+        expect(res.reason).toMatch(/can't be removed/);
+      }
+      const res = await POST(req(task.id, { discardUnsafe: true }), params(task.id));
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ blocked: true });
+    } finally {
+      spy.mockRestore();
+    }
+    // Nothing was touched: the checkout is whole and still registered.
+    expect(fs.existsSync(path.join(wt.path, ".git"))).toBe(true);
+    expect(fs.existsSync(path.join(wt.path, "feature.txt"))).toBe(true);
+    await expect(git(wt.path, "rev-parse", "--is-inside-work-tree")).resolves.toBe("true");
+    expect(getTask(task.id)).toMatchObject({ worktree_path: wt.path, status: "in_progress" });
+
+    // Once the ownership is fixed (here: the fake uid dropped), it goes through.
+    expect((await reclaimTask(task.id)).ok).toBe(true);
+    expect(fs.existsSync(wt.path)).toBe(false);
   });
 });
 
