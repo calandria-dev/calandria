@@ -103,7 +103,7 @@ RUN apt-get update \
 # `Pin drift` (.github/workflows/pin-drift.yml) reads the latest gh release and
 # files an issue when this ARG falls behind; bump it by hand. Keep the ARG on
 # one line: the pin-drift check reads it with a line-anchored regex.
-ARG GH_VERSION=2.103.2
+ARG GH_VERSION=2.103.3
 RUN set -eu; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64|arm64) : ;; \
