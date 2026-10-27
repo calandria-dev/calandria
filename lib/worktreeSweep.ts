@@ -175,7 +175,7 @@ export async function sweepWorktrees(
         if (fs.existsSync(task.worktree_path)) {
           result.skipped.push({
             taskId: id,
-            reason: `the worktree directory could not be removed${heldHandleHint()}`,
+            reason: `the worktree directory could not be removed${heldHandleHint(task.worktree_path)}`,
           });
           return;
         }

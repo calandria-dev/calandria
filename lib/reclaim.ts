@@ -266,7 +266,7 @@ export async function reclaimTask(
           return {
             ok: false,
             landing,
-            reason: `the worktree directory could not be removed${heldHandleHint()}`,
+            reason: `the worktree directory could not be removed${heldHandleHint(task.worktree_path)}`,
           };
         clearTaskWorktreePath(taskId, { branch: true });
         result.bytes = bytes;

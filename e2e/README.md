@@ -88,9 +88,11 @@ Don't read it as a broken checkout. Run git on the host.
 Knobs (all optional): `CALANDRIA_TEST_VOLUME` selects an exact node_modules volume
 name. Reusing an override across different keys serializes the runs and reinstalls
 between keys; default keyed volumes let those runs proceed independently.
-`CALANDRIA_TEST_USER=$(id -u):$(id -g)` on a Linux daemon that does not remap bind
-mounts (otherwise `.next/` and `test-results/` come back root-owned; OrbStack
-and Docker Desktop remap, so the default root user is fine there), and
+`CALANDRIA_TEST_USER` picks the container user as `uid:gid` or `root`. Unset, it
+is your own `uid:gid` on a rootful Linux daemon, which writes bind-mount files
+with the container's uid; root-owned `.next/` and `test-results/` there would
+block a reclaim from deleting the worktree. Unset elsewhere it is root, since
+OrbStack, Docker Desktop and rootless Docker remap ownership. Also,
 `CALANDRIA_TEST_REBUILD=1` forces an image rebuild, including when refreshing the
 Node base image. These are a hard rename from the old
 `ORCH_TEST_*` spellings; there is no fallback, so a stale export just means the
