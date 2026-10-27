@@ -14,7 +14,7 @@ import { USAGE_LIMIT_NOTICE } from "@/lib/usageLimit";
 import { deferredStartFor } from "@/lib/usageReset";
 import { wakeLabel } from "./snooze";
 import { resetClock } from "./queuedStart";
-import { UsageMeter } from "./PlanUsage";
+import { UsageLimitBlock } from "./PlanUsage";
 import { APPROVAL_BLOCKED_NOTICE } from "@/lib/approvalFailure";
 import { BUDGET_EXCEEDED_NOTICE } from "@/lib/budgetFailure";
 import { WORKTREE_REPAIR_NOTICE } from "@/lib/worktreeFailure";
@@ -818,9 +818,7 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
           <div className="msg-body">
             {m.content}
             {limitResume?.window && (
-              <div className="uc-limit-block">
-                <UsageMeter w={limitResume.window} tone="limit" compact />
-              </div>
+              <UsageLimitBlock w={limitResume.window} />
             )}
             {limitResume && limitResume.queuedAt > 0 && (
               <div className="overflow-actions queued">

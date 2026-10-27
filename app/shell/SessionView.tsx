@@ -18,7 +18,7 @@ import { isSnoozed, wakeLabel } from "./snooze";
 import { SnoozeButton } from "./SnoozeMenu";
 import { isQueuedStart, resetClock } from "./queuedStart";
 import { IDLE_TITLE, idleFor, isIdleTurn, useIdleClock } from "./idleTurn";
-import { usePlanUsage, bindingWindow, publishOpenTaskLimit, UsageMeter } from "./PlanUsage";
+import { usePlanUsage, bindingWindow, publishOpenTaskLimit, UsageLimitBlock } from "./PlanUsage";
 import { usageResetAt, deferredStartFor } from "@/lib/usageReset";
 import { capsFor, agentLabel, findAgent } from "./agents";
 import { StatusDot, Avatar, Popover, AgentBadge, ProviderBadge, Skel } from "./shared";
@@ -522,9 +522,7 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoS
       )}
       {/* The window that binds, in the Usage Center's own meter, only while a limit is reached. */}
       {limitWindow && (
-        <div className="uc-limit-block">
-          <UsageMeter w={limitWindow} tone="limit" compact />
-        </div>
+        <UsageLimitBlock w={limitWindow} />
       )}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <button className="btn btn-accent" style={{ height: 38, padding: "0 20px", fontSize: 14 }} onClick={onStart} disabled={running || blocked} title={blockNote}>

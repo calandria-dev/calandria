@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { Popover } from "./shared";
 import { jget } from "./api";
@@ -153,13 +153,13 @@ const DASH = 1.6;
  * The chip's ring: a 14px gauge filled to `pct`. Loading and stale dash it;
  * hollow draws the track alone (every agent unavailable).
  */
-export function UsageRing({ pct, tone, loading, dashed, hollow }: { pct: number; tone: Tone; loading?: boolean; dashed?: boolean; hollow?: boolean }) {
+export function UsageRing({ pct, tone, loading, dashed, hollow, size = 14 }: { pct: number; tone: Tone; loading?: boolean; dashed?: boolean; hollow?: boolean; size?: number }) {
   const fill = loading || hollow ? 0 : Math.max(0, Math.min(100, pct));
   const len = (RING_C * fill) / 100;
   // A dashed fill repeats dash/gap pairs up to the filled length, then one gap for the rest.
   const dashes = dashed ? [...Array(Math.floor(len / (2 * DASH))).fill(`${DASH} ${DASH}`), `0 ${RING_C}`].join(" ") : `${len} ${RING_C}`;
   return (
-    <svg className={`uc-ring${toneClass(tone)}${loading || dashed ? " dashed" : ""}${hollow ? " hollow" : ""}`} viewBox="0 0 14 14" width="14" height="14" aria-hidden>
+    <svg className={`uc-ring${toneClass(tone)}${loading || dashed ? " dashed" : ""}${loading ? " loading" : ""}${hollow ? " hollow" : ""}`} viewBox="0 0 14 14" width={size} height={size} aria-hidden>
       <circle className="uc-ring-track" cx="7" cy="7" r={RING_R} />
       {fill > 0 && (
         <circle className="uc-ring-fill" cx="7" cy="7" r={RING_R} strokeDasharray={dashes} transform="rotate(-90 7 7)" />
@@ -181,7 +181,7 @@ const PROJECTION_CLAMP = 160;
  * its end to the circle, so the overshoot reads at the same height. A stale
  * agent's fill is hatched.
  */
-export function UsageMeter({ w, tone, now = Date.now(), compact, stale }: { w: PlanUsageWindow; tone?: Tone; now?: number; compact?: boolean; stale?: boolean }) {
+export function UsageMeter({ w, tone, now = Date.now(), compact, stale, sep }: { w: PlanUsageWindow; tone?: Tone; now?: number; compact?: boolean; stale?: boolean; sep?: boolean }) {
   const t = tone ?? toneFor(w.utilization);
   const p = paceOf(w, now);
   const projected = p?.projected ?? null;
@@ -189,7 +189,7 @@ export function UsageMeter({ w, tone, now = Date.now(), compact, stale }: { w: P
   const scale = over ? 100 / Math.min(projected, PROJECTION_CLAMP) : 1;
   const at = (v: number) => `${(Math.min(v, PROJECTION_CLAMP) * scale).toFixed(2)}%`;
   return (
-    <div className={`uc-meter${toneClass(t)}${compact ? " compact" : ""}${stale ? " stale" : ""}`}>
+    <div className={`uc-meter${toneClass(t)}${compact ? " compact" : ""}${stale ? " stale" : ""}${sep ? " sep" : ""}`}>
       <div className="uc-meter-head">
         <span className="uc-meter-label">{w.label}</span>
         <span className="uc-meter-pct">{Math.floor(w.utilization)}% used</span>
@@ -208,6 +208,23 @@ export function UsageMeter({ w, tone, now = Date.now(), compact, stale }: { w: P
         {w.resetsAt != null ? <span>Resets {fmtWhen(w.resetsAt, now)}</span> : <span>Reset time unknown</span>}
         {projected != null && <span className={over ? "uc-over" : undefined}>{over ? `on pace for ${Math.round(projected)}%` : `→ ${Math.round(projected)}% by reset`}</span>}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The block under a usage-limit notice and on an unstarted task: the ring at
+ * 100%, the window and its reset in the popover's wording, then the meter.
+ */
+export function UsageLimitBlock({ w, now = Date.now() }: { w: PlanUsageWindow; now?: number }) {
+  return (
+    <div className="uc-limit-block">
+      <div className="uc-limit-head">
+        <UsageRing pct={100} tone="limit" />
+        <span>{w.label} limit is reached</span>
+        <span className="uc-limit-rs">{w.resetsAt != null ? `resets ${fmtWhen(w.resetsAt, now)}` : "reset time unknown"}</span>
+      </div>
+      <UsageMeter w={w} tone="limit" compact />
     </div>
   );
 }
@@ -339,7 +356,7 @@ export function UsageChip({ agents, appDefaults, isMobile, onOpenSettings, onOpe
     return (
       <div className="uc-anchor">
         <button className={`uc-chip loading${isMobile ? " tall" : ""}`} aria-label="Usage: loading" disabled>
-          <UsageRing pct={0} tone="" loading />
+          <UsageRing pct={0} tone="" loading size={isMobile ? 16 : 14} />
         </button>
       </div>
     );
@@ -352,7 +369,8 @@ export function UsageChip({ agents, appDefaults, isMobile, onOpenSettings, onOpe
   const projects = () => { close(false); onOpenProjects(); };
   const body = (
     <UsageCenterBody
-      list={summary.order} now={now} named={list.length > 1}
+      list={summary.order} now={now} named={list.length > 1} notices={summary.signals.length}
+      onClose={isMobile ? () => close(true) : undefined}
       staleAgents={summary.staleAgents} allStale={summary.allStale}
       onOpenSettings={settingsFor} onOpenProjects={projects}
     />
@@ -369,7 +387,7 @@ export function UsageChip({ agents, appDefaults, isMobile, onOpenSettings, onOpe
         aria-haspopup="dialog"
         title={summary.spoken}
       >
-        <UsageRing pct={summary.ring?.window.utilization ?? 0} tone={summary.ring?.tone ?? ""} dashed={summary.stale} hollow={summary.unavailable} />
+        <UsageRing pct={summary.ring?.window.utilization ?? 0} tone={summary.ring?.tone ?? ""} dashed={summary.stale} hollow={summary.unavailable} size={isMobile ? 16 : 14} />
         {step && <ChipText step={step} />}
         {more > 0 && <span className="uc-more" aria-hidden>+{more}</span>}
         <span ref={probeRef} className="uc-probe" aria-hidden>
@@ -377,7 +395,7 @@ export function UsageChip({ agents, appDefaults, isMobile, onOpenSettings, onOpe
         </span>
       </button>
       {open && !isMobile && (
-        <Popover onClose={() => close(false)}>
+        <Popover className="uc-pop" onClose={() => close(true)}>
           <UsageDialog onEscape={() => close(true)}>{body}</UsageDialog>
         </Popover>
       )}
@@ -386,27 +404,53 @@ export function UsageChip({ agents, appDefaults, isMobile, onOpenSettings, onOpe
   );
 }
 
-/** Popover content wrapper: takes focus on open and closes on Escape. */
-function UsageDialog({ children, onEscape }: { children: React.ReactNode; onEscape: () => void }) {
-  const ref = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => { ref.current?.focus(); }, []);
+const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
+/**
+ * Focus handling shared by the popover and the sheet: the first control takes
+ * focus on open, Tab and Shift+Tab cycle inside the container, and Escape
+ * closes with focus returned to the chip.
+ */
+function useDialogKeys(ref: React.RefObject<HTMLDivElement | null>, onEscape: () => void) {
+  // A frame later: the popover is hidden until it has measured its position, and a hidden element cannot take focus.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); onEscape(); } };
+    const id = requestAnimationFrame(() => {
+      const root = ref.current;
+      (root?.querySelector<HTMLElement>(FOCUSABLE) ?? root)?.focus();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [ref]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.stopPropagation(); onEscape(); return; }
+      if (e.key !== "Tab") return;
+      const root = ref.current;
+      if (!root) return;
+      const items = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE));
+      if (items.length === 0) { e.preventDefault(); return; }
+      const first = items[0], last = items[items.length - 1];
+      const active = document.activeElement;
+      if (!root.contains(active)) { e.preventDefault(); first.focus(); }
+      else if (e.shiftKey && (active === first || active === root)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+    };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [onEscape]);
+  }, [ref, onEscape]);
+}
+
+/** Popover content wrapper: takes focus on open, traps Tab, closes on Escape. */
+function UsageDialog({ children, onEscape }: { children: React.ReactNode; onEscape: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useDialogKeys(ref, onEscape);
   return <div ref={ref} className="uc-menu" role="dialog" aria-label="Usage" tabIndex={-1}>{children}</div>;
 }
 
 /** The phone presentation: a bottom sheet with a scrim, in Work Center's sheet language. */
 function UsageSheet({ children, onClose }: { children: React.ReactNode; onClose: (refocus: boolean) => void }) {
   const ref = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => { ref.current?.focus(); }, []);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); onClose(true); } };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
+  const escape = useCallback(() => onClose(true), [onClose]);
+  useDialogKeys(ref, escape);
   return createPortal(
     <>
       <div className="uc-scrim" onClick={() => onClose(true)} />
@@ -421,10 +465,13 @@ function UsageSheet({ children, onClose }: { children: React.ReactNode; onClose:
 
 // ---------------------------------------------------------------- breakdown
 
-function UsageCenterBody({ list, now, named, staleAgents, allStale, onOpenSettings, onOpenProjects }: {
+function UsageCenterBody({ list, now, named, notices, onClose, staleAgents, allStale, onOpenSettings, onOpenProjects }: {
   list: UsageAgent[];
   now: number;
   named: boolean;
+  notices: number;
+  /** Set on the phone sheet, which pins a close button in its header. */
+  onClose?: () => void;
   staleAgents: UsageAgent[];
   allStale: boolean;
   onOpenSettings: (agentId?: string) => void;
@@ -436,9 +483,15 @@ function UsageCenterBody({ list, now, named, staleAgents, allStale, onOpenSettin
   // The footer link lands on the first listed agent's provider page; the gateway has no bundled page.
   const footAgent = list.find((a) => a.id !== GATEWAY_PLAN_ID)?.id;
   return (
-    <div className="uc-body">
-      <div className="pop-sec">Plan usage</div>
-      {list.map((a) => <AgentSection key={a.id} a={a} now={now} named={named} onOpenSettings={() => onOpenSettings(a.id)} onOpenProjects={onOpenProjects} />)}
+    <div className="uc">
+      <div className="uc-top">
+        <h2>Usage</h2>
+        <span className="uc-count">{notices > 0 ? <><b>{notices}</b> notice{notices === 1 ? "" : "s"}</> : "all clear"}</span>
+        {onClose && <button className="uc-close" onClick={onClose} aria-label="Close">{Icon.x()}</button>}
+      </div>
+      <div className="uc-body">
+        {list.map((a) => <AgentSection key={a.id} a={a} now={now} named={named} onOpenSettings={() => onOpenSettings(a.id)} onOpenProjects={onOpenProjects} />)}
+      </div>
       <div className="uc-foot">
         {updated != null && <span className="uc-updated">Updated {agoText(updated)}</span>}
         {staleAgents.length > 0 && (
@@ -487,9 +540,9 @@ function AgentSection({ a, now, named, onOpenSettings, onOpenProjects }: {
       <div className="uc-agent-head">
         {mark && <span className="uc-mark" aria-hidden>{mark()}</span>}
         <span className="uc-agent-name">{a.name}{planName ? ` ${planName}` : ""}</span>
-        {role && (
-          <span className={`uc-role${isPrimary(a) ? " primary" : ""}`} title={role.source === "pinned" ? "Pinned in settings" : "Set automatically from last week's usage"}>
-            {role.value === "primary" ? "Primary" : "Occasional"}{role.source === "pinned" ? " · pinned" : ""}
+        {role && isPrimary(a) && (
+          <span className="uc-role primary" title={role.source === "pinned" ? "Pinned in settings" : "Set automatically from last week's usage"}>
+            Primary{role.source === "pinned" ? " · pinned" : ""}
           </span>
         )}
         <button className="uc-gear" onClick={onOpenSettings} aria-label={`${a.name} settings`} title={`Settings → Models → ${a.name}`}>{Icon.gear()}</button>
@@ -514,8 +567,8 @@ function AgentSection({ a, now, named, onOpenSettings, onOpenProjects }: {
         </div>
       ))}
       {snap.available && snap.windows.length === 0 && <div className="uc-note muted">No usage windows reported.</div>}
-      {rows.map((w) => (
-        <UsageMeter key={w.id} w={w} now={now} tone={toneFor(w.utilization, rejectedId === w.id)} stale={snap.stale} />
+      {rows.map((w, i) => (
+        <UsageMeter key={w.id} sep={i > 0} w={w} now={now} tone={toneFor(w.utilization, rejectedId === w.id)} stale={snap.stale} />
       ))}
       {folded.length > 0 && !forced && (
         <button className="uc-more-rows" onClick={() => setShowAll((v) => !v)} aria-expanded={showAll}>
