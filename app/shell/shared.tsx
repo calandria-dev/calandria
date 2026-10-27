@@ -171,7 +171,7 @@ export function ErrDetail({ detail }: { detail?: string }) {
 // matters on mobile where the trigger can sit inside the horizontally-
 // scrolling `.sh-tools` rail. The trigger is found as the parent of an
 // in-place marker span, so call sites don't need to pass a ref.
-export function Popover({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+export function Popover({ children, onClose, className }: { children: React.ReactNode; onClose: () => void; className?: string }) {
   const markerRef = useRef<HTMLSpanElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const anchorPosRef = useRef<{ top: number; left: number } | null>(null);
@@ -224,7 +224,7 @@ export function Popover({ children, onClose }: { children: React.ReactNode; onCl
       {createPortal(
         <div
           ref={menuRef}
-          className="popover"
+          className={className ? `popover ${className}` : "popover"}
           style={{ position: "fixed", top: pos?.top ?? -9999, left: pos?.left ?? -9999, right: "auto", visibility: pos ? "visible" : "hidden" }}
           onClick={(e) => e.stopPropagation()}
         >
