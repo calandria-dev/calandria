@@ -1604,6 +1604,49 @@ async function resolveBase(worktreePath: string, baseSha: string, baseBranch: st
   }
 }
 
+/** Verify that committing in the checkout updates the task branch. */
+export async function taskBranchCheckoutError(worktreePath: string, workBranch: string): Promise<string | null> {
+  if (!refNameSafe(workBranch)) return "Could not verify PR scope: the task branch name is invalid.";
+  try {
+    const current = await git(worktreePath, ["symbolic-ref", "HEAD"]);
+    if (current === `refs/heads/${workBranch}`) {
+      await git(worktreePath, ["rev-parse", "--verify", `refs/heads/${workBranch}^{commit}`]);
+      return null;
+    }
+  } catch {}
+  return `Could not verify PR scope: the checkout is not on task branch ${workBranch}. Restore that checkout before opening the PR.`;
+}
+
+/** Verify inherited commits against origin, the repository targeted by the PR, independent of branch upstream. */
+export async function taskPrScopeError(input: {
+  worktreePath: string;
+  baseSha: string;
+  baseBranch: string;
+  prBaseBranch?: string;
+  workBranch?: string;
+}): Promise<string | null> {
+  const { worktreePath, baseSha, baseBranch } = input;
+  const target = input.prBaseBranch || baseBranch;
+  const label = `origin/${target}`;
+  if (!refNameSafe(target)) return `Could not verify PR scope: ${label} is not a valid branch name.`;
+  try {
+    if (input.workBranch) {
+      const checkoutError = await taskBranchCheckoutError(worktreePath, input.workBranch);
+      if (checkoutError) return checkoutError;
+    }
+    const ref = `refs/remotes/origin/${target}`;
+    await gitNet(worktreePath, ["fetch", "--no-tags", "--no-recurse-submodules", "--quiet", "origin", `+refs/heads/${target}:${ref}`]);
+    const base = await resolveBase(worktreePath, baseSha, baseBranch);
+    const inherited = await git(worktreePath, ["merge-base", base, "HEAD"]);
+    const count = Number(await git(worktreePath, ["rev-list", "--count", `${ref}..${inherited}`]));
+    if (!Number.isSafeInteger(count) || count < 0) throw new Error("invalid commit count");
+    if (count === 0) return null;
+    return `Cannot open PR against ${label}: the PR would include ${count} inherited base commit${count === 1 ? "" : "s"} outside Changes. Publish the intended base work first, or rebuild only the task commits onto ${label} in a separate checkout and preserve the local work.`;
+  } catch {
+    return `Could not verify PR scope against ${label}. Check that the remote and branch are reachable, then try again.`;
+  }
+}
+
 /**
  * Just the totals, for the board card footer, polled every few seconds
  * alongside the task list. One subprocess (plus resolveBase's own cat-file
