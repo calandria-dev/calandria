@@ -650,7 +650,7 @@ const SETTINGS_SECTIONS: { id: string; label: string; icon: () => React.ReactNod
   { id: "setup", label: "Setup", icon: Icon.bolt },
 ];
 
-export function SettingsView({ settings, setSetting, appearance, setAppearance, appDefaults, setAppDefault, setAppDefaultMany, agents, onAgentsRefresh, onReset, onRerunSetup, onClose, initialSection, updates, currentProjectId, projects }: {
+export function SettingsView({ settings, setSetting, appearance, setAppearance, appDefaults, setAppDefault, setAppDefaultMany, agents, onAgentsRefresh, onReset, onRerunSetup, onClose, initialSection, initialProviderAgent, updates, currentProjectId, projects }: {
   settings: Settings;
   setSetting: <K extends keyof Settings>(k: K, v: Settings[K]) => void;
   appearance: Appearance;
@@ -664,6 +664,8 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
   onRerunSetup: () => void;
   onClose: () => void;
   initialSection?: string;
+  /** An agent whose bundled provider page Settings → Models opens on arrival. */
+  initialProviderAgent?: string;
   updates: Updates;
   /** The project selected in the workspace when Settings was opened, null when none is. Scopes the Codex hooks panel, which needs a working directory. */
   currentProjectId?: string | null;
@@ -1095,7 +1097,7 @@ export function SettingsView({ settings, setSetting, appearance, setAppearance, 
                 <PermissionRules />
               </>
             )}
-            {section === "models" && <ModelsSection appDefaults={appDefaults} setAppDefault={setAppDefault} onChanged={onAgentsRefresh} />}
+            {section === "models" && <ModelsSection appDefaults={appDefaults} setAppDefault={setAppDefault} onChanged={onAgentsRefresh} initialAgent={initialProviderAgent} />}
             {section === "advanced" && <AdvancedSettingsSection />}
             {section === "storage" && <WorktreePrune />}
             {section === "diagnostics" && <Diagnostics settings={settings} setSetting={setSetting} />}

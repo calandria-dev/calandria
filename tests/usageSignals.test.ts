@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   agentSignals,
   calmRing,
+  chipLadder,
+  fmtAgo,
+  staleLadder,
   paceOf,
   roleText,
   summarizeUsage,
@@ -111,6 +114,36 @@ describe("agentSignals", () => {
     expect(kinds(agent("claude", snap([week(50, 37 * HOUR)])))).toEqual([]); // resets past 36h
   });
 
+  it("week underuse reads every weekly window and reports the soonest reset", () => {
+    // The all-models week is busy; the Opus week resets sooner with room left.
+    const windows = [week(75, 30 * HOUR), week(40, 20 * HOUR, "seven_day_opus", "Current week (Opus)")];
+    const [s] = agentSignals(agent("claude", snap(windows)), NOW, false);
+    expect(s).toMatchObject({ kind: "week_under", what: expect.stringMatching(/^wk 60% left · /) });
+    expect(s.window!.id).toBe("seven_day_opus");
+    expect(s.note).toMatch(/^60% of the Opus week unused\./);
+  });
+
+  it("week underuse ties go to the all-models window", () => {
+    const windows = [week(40, 20 * HOUR, "seven_day_opus", "Current week (Opus)"), week(50, 20 * HOUR)];
+    const [s] = agentSignals(agent("claude", snap(windows)), NOW, false);
+    expect(s.window!.id).toBe("seven_day");
+    expect(agentSignals(agent("claude", snap(windows)), NOW, false).filter((x) => x.kind === "week_under")).toHaveLength(1);
+  });
+
+  it("week underuse on a per-model week is primary only", () => {
+    const windows = [week(75, 30 * HOUR), week(40, 20 * HOUR, "seven_day_opus", "Current week (Opus)")];
+    expect(kinds(agent("codex", snap(windows, occasional)))).toEqual([]);
+    expect(kinds(agent("claude", snap(windows)))).toEqual(["week_under"]);
+  });
+
+  it("a gateway budget fires near limit at 80%", () => {
+    const budget = (utilization: number) => win({ id: "budget", label: "Gateway budget", kind: "gateway_budget", utilization });
+    const g = (u: number) => agent("gateway", snap([budget(u)], { role: null }), "Gateway");
+    expect(agentSignals(g(80), NOW, true)[0]).toMatchObject({ kind: "near", tone: "warn", who: "Gateway", what: "budget 80%" });
+    expect(agentSignals(g(96), NOW, true)[0]).toMatchObject({ kind: "near", tone: "limit" });
+    expect(kinds(g(79))).toEqual([]);
+  });
+
   it("the gateway is never primary", () => {
     const g = agent("gateway", snap([win({ id: "budget", label: "Gateway budget", kind: "gateway_budget", utilization: 10, resetsAt: NOW + 30 * MIN })]), "Gateway");
     expect(kinds(g)).toEqual([]);
@@ -156,10 +189,52 @@ describe("summarizeUsage", () => {
     expect(calmRing([g])).toMatchObject({ agentId: "gateway" });
   });
 
-  it("stale data is announced", () => {
-    const s = summarizeUsage([agent("claude", snap([session(10, 2 * HOUR)], { stale: true }))], NOW);
-    expect(s.stale).toBe(true);
-    expect(s.spoken).toContain("stale");
+  it("stale data is announced with the agents and the oldest read", () => {
+    const s = summarizeUsage([agent("claude", snap([session(10, 2 * HOUR)], { stale: true, fetchedAt: NOW - 47 * MIN }))], NOW);
+    expect(s).toMatchObject({ stale: true, allStale: true, staleSince: NOW - 47 * MIN });
+    expect(s.spoken).toContain("Data is stale (every agent, last read 47 minutes ago).");
+    const some = summarizeUsage([
+      agent("claude", snap([session(10, 2 * HOUR)])),
+      agent("codex", snap([session(10, 2 * HOUR)], { ...occasional, stale: true, fetchedAt: NOW - 20 * MIN })),
+      agent("gemini", snap([session(10, 2 * HOUR)], { ...occasional, stale: true, fetchedAt: NOW - 47 * MIN })),
+    ], NOW);
+    expect(some).toMatchObject({ allStale: false, staleSince: NOW - 47 * MIN });
+    expect(some.staleAgents.map((a) => a.id)).toEqual(["codex", "gemini"]);
+  });
+
+  it("unavailable: every agent, or named when only some are", () => {
+    const down = (id: string) => agent(id, snap([], { available: false, reason: "signed out" }));
+    expect(summarizeUsage([down("claude"), down("codex")], NOW)).toMatchObject({ unavailable: true, spoken: "Usage: unavailable." });
+    const s = summarizeUsage([agent("claude", snap([session(10, 2 * HOUR)])), down("gemini")], NOW);
+    expect(s.unavailable).toBe(false);
+    expect(s.signals).toEqual([]);
+    expect(s.spoken).toMatch(/ Gemini unavailable\.$/);
+  });
+});
+
+describe("truncation ladder", () => {
+  it("steps from full text to no reset, no name, then neither", () => {
+    const a = agent("claude", snap([session(100, 18 * MIN)], { status: "rejected", statusWindow: "five_hour", statusResetsAt: NOW + 18 * MIN }));
+    expect(chipLadder(agentSignals(a, NOW, true)[0])).toEqual([
+      { who: "Claude", what: "limit · 18m" },
+      { who: "Claude", what: "limit" },
+      { who: "", what: "limit · 18m" },
+      { who: "", what: "limit" },
+    ]);
+  });
+
+  it("drops duplicate steps when there is no name or no reset", () => {
+    const a = agent("codex", snap([week(30, 5.5 * DAY)], occasional));
+    const pace = agentSignals(a, NOW, false)[0];
+    expect(pace.kind).toBe("pace");
+    expect(chipLadder(pace)).toEqual([{ who: "", what: pace.what }]);
+  });
+
+  it("the stale label: with the age, then the bare word", () => {
+    expect(staleLadder(NOW - 47 * MIN, true, NOW).map((x) => x.what)).toEqual(["stale 47m", "stale"]);
+    expect(staleLadder(NOW - 47 * MIN, false, NOW).map((x) => x.what)).toEqual(["stale · 47m", "stale"]);
+    expect(staleLadder(null, true, NOW).map((x) => x.what)).toEqual(["stale"]);
+    expect(fmtAgo(NOW - 3 * HOUR, NOW)).toBe("3h");
   });
 });
 
