@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { ThreadEvent } from "@openai/codex-sdk";
-import { mapThreadEvent, newState } from "@/lib/agents/codex/events";
+import { mapThreadEvent, mapCodexError, newState } from "@/lib/agents/codex/events";
 import { estimateCostUsd, resolveCodexModel, codexPriceRow, DEFAULT_CODEX_MODEL } from "@/lib/agents/codex/pricing";
 import { codexCapabilities } from "@/lib/agents/codex/capabilities";
 import type { StreamEvent } from "@/lib/types";
@@ -28,6 +28,54 @@ function runFixture(name: string): StreamEvent[] {
 const byType = (evs: StreamEvent[], t: StreamEvent["type"]) => evs.filter((e) => e.type === t);
 
 describe("codex event mapping", () => {
+  it("normalizes and deduplicates a provider outage while retaining diagnostics", () => {
+    const events = runFixture("provider-503.jsonl");
+    const errors = byType(events, "error") as Extract<StreamEvent, { type: "error" }>[];
+    expect(errors).toHaveLength(1);
+    expect(errors[0].content).toContain("Codex provider temporarily unavailable (HTTP 503)");
+    expect(errors[0].content).toMatch(/provider verification unavailable/i);
+    expect(errors[0].content).toContain("unexpected status 503 Service Unavailable");
+    expect(errors[0].content).toContain("req_503");
+    expect(events.filter((e) => e.type === "tool" && e.id === "item_0")).toHaveLength(1);
+  });
+
+  it("deduplicates only matching provider errors and preserves authentication errors", () => {
+    const state = newState();
+    const map = (event: unknown) => mapThreadEvent(event as ThreadEvent, state);
+    const message = (id: string) => `unexpected status 503 Service Unavailable: provider verification unavailable, request_id: ${id}`;
+    expect(map({ type: "error", message: message("req_a") })).toHaveLength(1);
+    expect(map({ type: "turn.failed", error: { message: message("req_b") } })).toHaveLength(1);
+    const noId = "unexpected status 503 Service Unavailable: provider verification unavailable";
+    expect(map({ type: "error", message: noId })).toHaveLength(1);
+    expect(map({ type: "turn.failed", error: { message: noId } })).toHaveLength(0);
+    for (const status of [401, 403]) {
+      const original = `unexpected status ${status}: authentication failed`;
+      expect(map({ type: "error", message: original })).toEqual([{ type: "error", content: original }]);
+    }
+  });
+
+  it("reports a terminal failure after a retry and resets deduplication for the next turn", () => {
+    const message = "unexpected status 503 Service Unavailable: provider verification unavailable, request_id: req_retry";
+    const state = newState();
+    expect(mapCodexError(message, state, true).map((e) => e.type)).toEqual(["notice"]);
+    expect(mapCodexError(message, state, true)).toEqual([]);
+    const failed = { type: "turn.failed", error: { message } } as ThreadEvent;
+    expect(mapThreadEvent(failed, state).filter((e) => e.type === "error")).toHaveLength(1);
+    expect(mapThreadEvent(failed, state)).toEqual([]);
+    expect(mapThreadEvent(failed, newState()).filter((e) => e.type === "error")).toHaveLength(1);
+  });
+
+  it("keeps command tracking across provider errors", () => {
+    const state = newState();
+    const item = { id: "item_0", type: "command_execution", command: "echo hello", aggregated_output: "", exit_code: null, status: "in_progress" };
+    const map = (event: unknown) => mapThreadEvent(event as ThreadEvent, state);
+    expect(map({ type: "item.started", item }).filter((e) => e.type === "tool")).toHaveLength(1);
+    map({ type: "error", message: "unexpected status 503 Service Unavailable: provider verification unavailable, request_id: req_command" });
+    const completed = map({ type: "item.completed", item: { ...item, status: "completed", exit_code: 0, aggregated_output: "hello\n" } });
+    expect(completed.filter((e) => e.type === "tool")).toHaveLength(0);
+    expect(completed).toContainEqual(expect.objectContaining({ type: "tool_result", id: "item_0", content: "hello\n" }));
+  });
+
   it("classifies a recorded pre-dispatch Calandria MCP failure", () => {
     const evs = runFixture("mcp-pre-dispatch-cutoff.jsonl");
 

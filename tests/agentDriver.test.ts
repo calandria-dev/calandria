@@ -30,7 +30,7 @@ vi.mock("@/lib/agents/claude/driver", () => ({
 // replaced by a fake thread that replays recorded JSONL ThreadEvents. This
 // pins both drivers to the same StreamEvent-to-runner contract from opposite
 // ends of the seam.
-const { codexRun } = vi.hoisted(() => ({ codexRun: { events: [] as unknown[] } }));
+const { codexRun } = vi.hoisted(() => ({ codexRun: { events: [] as unknown[], calls: [] as { id: string | null; prompt: unknown }[] } }));
 
 vi.mock("@openai/codex-sdk", () => {
   class FakeThread {
@@ -38,12 +38,14 @@ vi.mock("@openai/codex-sdk", () => {
     constructor(id?: string | null) {
       this.id = id ?? null;
     }
-    async runStreamed() {
+    async runStreamed(prompt: unknown) {
+      codexRun.calls.push({ id: this.id, prompt });
       const self = this;
       const events = codexRun.events;
       return {
         events: (async function* () {
           for (const ev of events) {
+            if (ev instanceof Error) throw ev;
             const e = ev as { type?: string; thread_id?: string };
             // The real SDK populates thread.id from thread.started; mirror that
             // so the driver reads the right id back after the stream drains.
@@ -70,7 +72,8 @@ vi.mock("@openai/codex-sdk", () => {
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { createProject, createTask, getTask, getProject, updateTask, listMessages, getTaskUsage, getTaskContext, listProjectSessions, updateProject, addPendingMessage, deleteProject } from "@/lib/store";
+import { makeRepo } from "./helpers";
+import { createProject, createTask, getTask, getProject, updateTask, listMessages, getTaskUsage, getTaskContext, listProjectSessions, updateProject, addPendingMessage, listPendingMessages, deleteProject, getSetting } from "@/lib/store";
 import { createProvider } from "@/lib/providers/store";
 import { setProviderSecret } from "@/lib/providerSecrets";
 import { getDriver, listDrivers, DEFAULT_AGENT } from "@/lib/agents/registry";
@@ -118,6 +121,7 @@ function loadCodexFixture(name: string): unknown[] {
 beforeEach(() => {
   runTurnMock.mockReset();
   codexRun.events = [];
+  codexRun.calls = [];
 });
 
 describe("agent registry", () => {
@@ -421,6 +425,84 @@ describe("queue drain re-reads the project (no stale snapshot)", () => {
 });
 
 describe("codex driver contract through the runner", () => {
+  it("settles one provider failure and resumes the same session only on a user turn", async () => {
+    const repo = await makeRepo();
+    const project = createProject({ name: "Provider outage", repo_path: repo, context: "Project context stays" });
+    updateProject(project.id, { default_agent: "codex" });
+    const task = createTask({ project_id: project.id, title: "Original task", description: "Original task context" });
+    codexRun.events = loadCodexFixture("provider-503.jsonl");
+    const first = collectEvents(task.id);
+    await startResumeTurn(task, getProject(project.id)!, "first request");
+    await first.done;
+
+    const failed = getTask(task.id)!;
+    expect(failed.session_id).toBe("provider-thread");
+    expect(failed.worktree_path).toBeTruthy();
+    expect(failed.running).toBe(0);
+    expect(codexRun.calls).toHaveLength(1);
+    const messages = listMessages(task.id);
+    expect(messages.filter((m) => m.content.includes("Codex provider temporarily unavailable"))).toHaveLength(1);
+    expect(messages.some((m) => m.role === "tool" && m.content.includes("echo hello"))).toBe(true);
+    expect(messages.some((m) => m.role === "system" && /unconfirmed/i.test(m.content) && m.content.includes("echo hello"))).toBe(true);
+    expect(first.events.filter((e) => e.type === "error")).toHaveLength(1);
+    expect(getSetting("agent_auth_broken_codex")).toBeNull();
+    expect(messages.some((m) => /reconnect/i.test(m.content))).toBe(false);
+
+    codexRun.events = [
+      { type: "turn.started" },
+      { type: "item.completed", item: { id: "item_1", type: "agent_message", text: "Resumed." } },
+    ];
+    const second = collectEvents(task.id);
+    await startResumeTurn(failed, getProject(project.id)!, "continue");
+    await second.done;
+    expect(codexRun.calls).toHaveLength(2);
+    expect(codexRun.calls[1].id).toBe("provider-thread");
+    expect(getTask(task.id)!.worktree_path).toBe(failed.worktree_path);
+    expect(getTask(task.id)).toMatchObject({ title: "Original task", description: "Original task context" });
+    expect(getProject(project.id)!.context).toBe("Project context stays");
+    expect(listMessages(task.id).some((m) => m.content === "first request")).toBe(true);
+    expect(listMessages(task.id).some((m) => m.content === "continue")).toBe(true);
+  });
+
+  it("leaves queued messages parked after a provider failure", async () => {
+    const project = createProject({ name: "Provider queue" });
+    updateProject(project.id, { default_agent: "codex" });
+    const task = createTask({ project_id: project.id, title: "T", description: "" });
+    addPendingMessage(task.id, task.generation, "queued follow-up");
+    const diagnostic = "unexpected status 503 Service Unavailable: authentication failed during provider verification, request_id: req_queue";
+    codexRun.events = [
+      { type: "thread.started", thread_id: "queue-thread" },
+      { type: "error", message: diagnostic },
+      { type: "turn.failed", error: { message: diagnostic } },
+    ];
+    const { done } = collectEvents(task.id);
+    await startResumeTurn(task, getProject(project.id)!, "go");
+    await done;
+    expect(codexRun.calls).toHaveLength(1);
+    expect(listPendingMessages(task.id).map((m) => m.content)).toEqual(["queued follow-up"]);
+    expect(getSetting("agent_auth_broken_codex")).toBeNull();
+    expect(listMessages(task.id).some((m) => /reconnect/i.test(m.content))).toBe(false);
+  });
+
+  it("deduplicates a provider stream error followed by an SDK throw", async () => {
+    const project = createProject({ name: "Provider stream throw" });
+    updateProject(project.id, { default_agent: "codex" });
+    const task = createTask({ project_id: project.id, title: "T", description: "" });
+    const diagnostic = "unexpected status 503 Service Unavailable: provider verification unavailable, request_id: req_503";
+    codexRun.events = [
+      { type: "thread.started", thread_id: "throw-thread" },
+      { type: "error", message: diagnostic },
+      new Error(diagnostic),
+    ];
+    const { events, done } = collectEvents(task.id);
+    await startResumeTurn(task, getProject(project.id)!, "go");
+    await done;
+    expect(codexRun.calls).toHaveLength(1);
+    expect(events.filter((e) => e.type === "error")).toHaveLength(1);
+    expect(listMessages(task.id).filter((m) => m.content.includes("Codex provider temporarily unavailable"))).toHaveLength(1);
+    expect(getTask(task.id)!.session_id).toBe("throw-thread");
+  });
+
   it("normalizes a real codex turn (mocked CLI) into the same runner behavior as any driver", async () => {
     const project = createProject({ name: "CodexContract" });
     updateProject(project.id, { default_agent: "codex" });

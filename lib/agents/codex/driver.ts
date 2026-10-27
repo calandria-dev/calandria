@@ -45,7 +45,7 @@ import { isApprovalDowngrade } from "../../approvalFailure";
 import { currentTurnCapability } from "../../advanced-env/capabilities";
 import { buildProjectContext, buildTagRefreshPrompt } from "../shared";
 import { ATTACHMENT_NUDGE, hasAttachmentMarkers } from "../../uploadTypes";
-import { mapThreadEvent, newState, ZERO_CUM, type CodexCum } from "./events";
+import { mapThreadEvent, mapCodexError, newState, ZERO_CUM, type CodexCum } from "./events";
 import { inheritedServerOverrides, type DisabledMcpServer } from "./mcp";
 import { gatewayMcpServersForCodex, type GatewayMcpCodexServer } from "../../gatewayMcp";
 import { resolveCodexModel } from "./pricing";
@@ -464,7 +464,7 @@ async function* runExecTurn(a: {
     // that's teardown, not an error. The partial transcript is already
     // persisted by the runner. Any other throw is a real failure.
     if (!abortController?.signal.aborted) {
-      yield { type: "error", content: err instanceof Error ? err.message : String(err) };
+      yield* mapCodexError(err, state);
     }
   }
 

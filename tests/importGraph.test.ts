@@ -64,6 +64,7 @@ const PINNED = [
   "lib/agents/codex/catalog.ts", // ~/.codex models_cache.json + config.toml; node:fs only, and ./capabilities.ts reads it on the request path
   "lib/agents/gemini/catalog.ts", // cached agy models discovery shared by capability and provider reads
   "lib/agents/codex/provider.ts", // the override → codex config.toml mapping; pure data, tested without the SDK
+  "lib/agents/codex/providerErrors.ts", // classify provider failures and retain diagnostics; pure, no SDK
   "lib/agents/codex/providerCheck.ts", // proves that mapping took by asking the CLI; subprocess + store, no SDK
   "lib/agents/codex/sandbox.ts", // the bubblewrap health verdict; classifier + a throwaway app-server spawn, no SDK
   "lib/modelEndpoint.ts",

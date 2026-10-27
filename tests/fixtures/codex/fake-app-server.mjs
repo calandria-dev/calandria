@@ -7,9 +7,9 @@
 // emits for codex-cli 0.153.0.
 //
 // Driven by env:
-//   FAKE_CODEX_SCENARIO   command | fileChange | ask | mcpCutoff | interrupt |
-//                         resumeFails | dies | hooks | hooksUntrustedProject |
-//                         hooksManaged
+//   FAKE_CODEX_SCENARIO   command | providerRetry | providerFailure | fileChange |
+//                         ask | mcpCutoff | interrupt | resumeFails | dies |
+//                         hooks | hooksUntrustedProject | hooksManaged
 //   FAKE_CODEX_LOG        JSONL file: every request/notification we received,
 //                         plus {"argv": [...]} first, and {"decision": …} once
 //                         an approval is answered.
@@ -249,7 +249,7 @@ async function runTurn() {
     process.exit(3);
   }
 
-  if (scenario === "command" || scenario === "resumeFails") {
+  if (["command", "resumeFails", "providerRetry", "providerFailure"].includes(scenario)) {
     const item = { type: "commandExecution", id: "item-cmd", command: "npm test", cwd: process.cwd(), status: "inProgress", aggregatedOutput: null, exitCode: null, commandActions: [], source: "agent" };
     notify("item/started", { ...base, item, startedAtMs: Date.now() });
     const answer = await ask("item/commandExecution/requestApproval", {
@@ -274,6 +274,33 @@ async function runTurn() {
     chunk(Buffer.from("step 1\n"));
     chunk(Buffer.concat([Buffer.from("step 2 caf"), Buffer.from([0xc3])]));
     chunk(Buffer.concat([Buffer.from([0xa9]), Buffer.from("\n")]));
+    if (scenario === "providerRetry" || scenario === "providerFailure") {
+      const error = {
+        message: 'unexpected status 503 Service Unavailable: {"detail":"Unable to verify Daybreak Blue access. Please try again."}',
+        codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 503, requestId: "req-calandria-503" } },
+        additionalDetails: "upstream verification service unavailable",
+      };
+      const willRetry = scenario === "providerRetry";
+      notify("error", { ...base, willRetry, requestId: "req-calandria-503", error });
+      if (willRetry) notify("error", { ...base, willRetry, requestId: "req-calandria-503", error });
+    }
+    if (scenario === "providerFailure") {
+      notify("turn/completed", {
+        threadId,
+        turn: {
+          id: turnId,
+          items: [],
+          status: "failed",
+          error: {
+            message: 'unexpected status 503 Service Unavailable: {"detail":"Unable to verify Daybreak Blue access. Please try again."}',
+            codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 503, requestId: "req-calandria-503" } },
+            additionalDetails: "upstream verification service unavailable",
+            requestId: "req-calandria-503",
+          },
+        },
+      });
+      return;
+    }
     notify("item/completed", {
       ...base,
       item: { ...item, status: ok ? "completed" : "declined", aggregatedOutput: `decision=${decision}`, exitCode: ok ? 0 : 1 },

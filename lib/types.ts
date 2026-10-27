@@ -849,7 +849,8 @@ export type StreamEvent =
   // setting, lib/usageReset.ts). Optional because it is the driver's to know:
   // one that never learns a reset time simply doesn't arm the queued resume,
   // and the notice keeps saying the limit has to reset first.
-  | { type: "error"; content: string; resetAt?: number }
+  // A provider outage parks follow-ups without treating upstream diagnostic text as a dead login.
+  | { type: "error"; content: string; resetAt?: number; providerUnavailable?: boolean }
   // What the driver can see of the live session: foreground phase, active
   // background operations, pending wakeups. Emitted on every change and once
   // for the initial state. The runner attaches the task, generation and turn
