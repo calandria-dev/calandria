@@ -8,6 +8,31 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.25.0](https://github.com/calandria-dev/calandria/compare/v0.24.1...v0.25.0) (2026-10-27)
+
+
+### Features
+
+* **usage:** record weekly usage peaks and infer each agent's primary/occasional role ([#591](https://github.com/calandria-dev/calandria/issues/591)) ([dc520a9](https://github.com/calandria-dev/calandria/commit/dc520a927365ba2ecde83746654dedf3acb8ca4e))
+* **usage:** replace per-agent plan pills with one Usage Center chip ([#594](https://github.com/calandria-dev/calandria/issues/594)) ([278bef3](https://github.com/calandria-dev/calandria/commit/278bef3de82ed56dfef35c61e02b05763d177355))
+
+
+### Bug Fixes
+
+* **git:** distinguish legitimate heading underlines from merge conflict markers ([#480](https://github.com/calandria-dev/calandria/issues/480)) ([#585](https://github.com/calandria-dev/calandria/issues/585)) ([f9e6208](https://github.com/calandria-dev/calandria/commit/f9e620800eddaf1ecd53332ebf26c56c826726e6))
+* **pr:** honor explicit metadata when updating an existing PR ([#588](https://github.com/calandria-dev/calandria/issues/588)) ([24284e1](https://github.com/calandria-dev/calandria/commit/24284e158688ead5677fbf497f8504c5d2b3174f))
+* **terminal:** name the real cause when the /pty upgrade is refused ([#587](https://github.com/calandria-dev/calandria/issues/587)) ([bb56852](https://github.com/calandria-dev/calandria/commit/bb568521b085e35a2aa1e299e5a76c6852a8e747))
+* **test:** isolate Docker dependency caches for parallel worktrees ([#590](https://github.com/calandria-dev/calandria/issues/590)) ([c059a9b](https://github.com/calandria-dev/calandria/commit/c059a9b452bb95857c1bfe9d3f9cd9776cc4c962))
+* **test:** isolate Docker dependency caches for parallel worktrees (calandria task nB0poHAdLnON7f4xdsQO4) ([c059a9b](https://github.com/calandria-dev/calandria/commit/c059a9b452bb95857c1bfe9d3f9cd9776cc4c962))
+* **ui:** render fallback bug report cards for nested Codex tool calls ([#481](https://github.com/calandria-dev/calandria/issues/481)) ([#589](https://github.com/calandria-dev/calandria/issues/589)) ([50be81e](https://github.com/calandria-dev/calandria/commit/50be81edad58bee2e28c32feae904b6de3dd9148))
+
+
+### Dependencies
+
+* **deps-dev:** bump http-cache-semantics ([43dbf1a](https://github.com/calandria-dev/calandria/commit/43dbf1a85083feefc94444668824eb41b9eaeecf))
+* **deps-dev:** bump http-cache-semantics from 4.2.0 to 4.3.0 in /desktop in the npm_and_yarn group across 1 directory ([#595](https://github.com/calandria-dev/calandria/issues/595)) ([43dbf1a](https://github.com/calandria-dev/calandria/commit/43dbf1a85083feefc94444668824eb41b9eaeecf))
+* **deps:** refresh agent CLI pins ([#593](https://github.com/calandria-dev/calandria/issues/593)) ([c043b8e](https://github.com/calandria-dev/calandria/commit/c043b8e0ccab0bb38e5e8f34a13331d1364f3595))
+
 ## [0.24.1](https://github.com/calandria-dev/calandria/compare/v0.24.0...v0.24.1) (2026-10-26)
 
 
