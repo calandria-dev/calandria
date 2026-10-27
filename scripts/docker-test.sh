@@ -16,10 +16,12 @@
 #                           volume rm` resets the cache. Renamed from ORCH_TEST_VOLUME;
 #                           `docker volume rm` any leftover orch-test-node-modules
 #                           and `docker image rm` old orch-test:* tags too.
-#   CALANDRIA_TEST_USER     "uid:gid" to run as. Unset (root) is right on a host
-#                           whose bind mounts remap ownership (OrbStack/Docker
-#                           Desktop do; a plain Linux daemon does not, and there
-#                           root leaves you root-owned .next/ and test-results/).
+#   CALANDRIA_TEST_USER     "uid:gid" to run as, or "root". Unset means your own
+#                           uid:gid on a Linux daemon running rootful, so .next/,
+#                           test-results/ and next-env.d.ts stay deletable by
+#                           you (and by a reclaim). Unset means root elsewhere:
+#                           OrbStack, Docker Desktop and rootless Docker remap
+#                           bind-mount ownership, so root writes land as you.
 #   CALANDRIA_TEST_REBUILD  =1 to rebuild the image even though the tag exists.
 set -euo pipefail
 
@@ -55,7 +57,18 @@ if [ -z "$image_id" ]; then
   exit 1
 fi
 cache_id=$(node -e 'const fs=require("node:fs");const c=require("node:crypto").createHash("sha256");c.update(fs.readFileSync("package.json"));c.update(fs.readFileSync("package-lock.json"));c.update(process.argv[1]);process.stdout.write(c.digest("hex"))' "$image_id")
-if [ -z "$volume" ]; then volume="calandria-test-node-modules-$cache_id"; fi
+
+# Rootful Linux daemons write bind-mount files with the container's own uid.
+user=${CALANDRIA_TEST_USER-}
+if [ -z "${CALANDRIA_TEST_USER+set}" ] && [ "$(uname -s)" = Linux ] && [ "$(id -u)" != 0 ] \
+  && ! docker info --format '{{.SecurityOptions}}' 2>/dev/null | grep -q rootless; then
+  user="$(id -u):$(id -g)"
+fi
+[ "$user" = root ] && user=
+
+# The cache key covers the user too: an install made as root leaves files a
+# different uid can't replace when the lockfile changes.
+if [ -z "$volume" ]; then volume="calandria-test-node-modules-$cache_id${user:+-u${user%%:*}}"; fi
 
 # Newly created test caches carry a disposable label so a Linux host can clean
 # dangling caches without selecting unrelated Docker volumes. Docker leaves an
@@ -72,7 +85,7 @@ run=(docker run --rm --init)
 if [ -t 0 ] && [ -t 1 ]; then run+=(-it); fi
 # HOME as well as --user: an arbitrary uid has no passwd entry, so npm falls
 # back to writing its cache at /.npm and dies with EACCES before a test runs.
-if [ -n "${CALANDRIA_TEST_USER:-}" ]; then run+=(--user "$CALANDRIA_TEST_USER" -e HOME=/tmp); fi
+if [ -n "$user" ]; then run+=(--user "$user" -e HOME=/tmp); fi
 run+=(-e "CALANDRIA_TEST_IMAGE_ID=$image_id" -e "CALANDRIA_TEST_CACHE_ID=$cache_id" -v "$PWD":/work -v "$volume":/work/node_modules -w /work "$image_id")
 
 exec "${run[@]}" "$@"

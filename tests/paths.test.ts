@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 // `isLinkedWorktree` (lib/git.ts) and `pathIdentity` (lib/repoLock.ts) each
 // compare `fs.realpathSync` output with `===`. NTFS is case-insensitive but
@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { canonicalPath, heldHandleHint, samePath } from "../lib/paths";
 import { repoLockKey } from "../lib/repoLock";
 import { tmpDir } from "./helpers";
+import { onPosix } from "./platform";
 
 const REAL_PLATFORM = process.platform;
 
@@ -97,5 +98,26 @@ describe("heldHandleHint names the likely holder, on Windows only", () => {
   it("says nothing on POSIX, where an open handle isn't why a delete failed", () => {
     mockPlatform("linux");
     expect(heldHandleHint()).toBe("");
+  });
+
+  // A Docker run as root leaves root-owned `.next/` in the checkout, and a
+  // non-root server can't delete what it contains. The hint names that entry.
+  // Faking our own uid makes every entry read as foreign without needing root.
+  onPosix("names the topmost entry another user owns on POSIX", () => {
+    const dir = tmpDir("foreign-");
+    fs.mkdirSync(path.join(dir, ".next", "types"), { recursive: true });
+    const realUid = fs.statSync(dir).uid;
+    const spy = vi.spyOn(process, "getuid").mockReturnValue(realUid + 1);
+    try {
+      expect(heldHandleHint(dir)).toContain(`${path.join(dir, ".next")} is owned by uid ${realUid}`);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  onPosix("says nothing on POSIX when every leftover entry is ours", () => {
+    const dir = tmpDir("own-");
+    fs.mkdirSync(path.join(dir, ".next"));
+    expect(heldHandleHint(dir)).toBe("");
   });
 });

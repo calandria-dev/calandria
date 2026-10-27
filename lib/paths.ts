@@ -79,11 +79,46 @@ export function rmTree(target: string): void {
 
 /**
  * A trailing clause for a user-facing teardown failure, naming the likely
- * culprit. Empty string off win32, where a held handle isn't why a delete
- * failed and the guess would just be wrong.
+ * culprit. On win32 that is a held handle. On POSIX it is the first entry left
+ * under `dir` that another user owns, since this process can't unlink what a
+ * foreign-owned directory contains. Empty string when neither applies.
  */
-export function heldHandleHint(): string {
-  return isWindows()
-    ? ". On Windows a file can't be deleted while it's open; a terminal or editor still has this checkout open"
-    : "";
+export function heldHandleHint(dir?: string): string {
+  if (isWindows())
+    return ". On Windows a file can't be deleted while it's open; a terminal or editor still has this checkout open";
+  const foreign = dir ? foreignOwnedEntry(dir) : null;
+  if (!foreign) return "";
+  return `. ${foreign.path} is owned by uid ${foreign.uid}, so this server can't delete it. A container that ran as root in this checkout usually leaves files like this; delete the directory as that user, then retry`;
+}
+
+// Breadth-first, so the reported entry is the topmost foreign-owned one: the
+// directory whose ownership blocks everything beneath it. Bounded, since this
+// only decorates an error message.
+function foreignOwnedEntry(dir: string, limit = 2000): { path: string; uid: number } | null {
+  const uid = process.getuid?.();
+  if (uid === undefined || uid === 0) return null;
+  const queue = [dir];
+  let seen = 0;
+  while (queue.length && seen < limit) {
+    const current = queue.shift()!;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (++seen > limit) break;
+      const p = path.join(current, entry.name);
+      let owner: number;
+      try {
+        owner = fs.lstatSync(p).uid;
+      } catch {
+        continue;
+      }
+      if (owner !== uid) return { path: p, uid: owner };
+      if (entry.isDirectory()) queue.push(p);
+    }
+  }
+  return null;
 }

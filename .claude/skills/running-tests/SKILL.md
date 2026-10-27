@@ -105,6 +105,6 @@ discount a test failure once the wrapper has started.**
 
 `e2e/README.md` is the source of truth for the container recipe and its
 reasoning: why a `node:22` base rather than the Playwright image, the browser
-version pin, and `CALANDRIA_TEST_USER` on a daemon that doesn't remap bind
-mounts. It also covers the mock agent's turn directives and the spec inventory.
+version pin, and the `CALANDRIA_TEST_USER` default that keeps a rootful Linux
+daemon from leaving root-owned files in the worktree. It also covers the mock agent's turn directives and the spec inventory.
 Read it before changing the harness or adding e2e coverage.
