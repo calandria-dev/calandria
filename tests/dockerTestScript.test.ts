@@ -40,6 +40,7 @@ if [ "$1" = image ] && [ "$2" = inspect ]; then
   if [ "\${3:-}" = --format ]; then printf '%s\\n' "$DOCKER_IMAGE_ID"; fi
   exit 0
 fi
+if [ "$1" = info ]; then printf '%s\\n' "\${DOCKER_SECURITY_OPTIONS:-[name=seccomp]}"; exit 0; fi
 if [ "$1" = build ] || [ "$1" = run ]; then exit 0; fi
 exit 99
 `,
@@ -55,6 +56,7 @@ exit 99
         ...process.env,
         CALANDRIA_TEST_VOLUME: "",
         CALANDRIA_TEST_REBUILD: "",
+        CALANDRIA_TEST_USER: "root",
         DOCKER_IMAGE_ID: imageId,
         DOCKER_SHIM_LOG: log,
         PATH: `${shimDir}:${process.env.PATH ?? ""}`,
@@ -113,6 +115,36 @@ exit 99
     });
     expect(override.status, override.stderr).toBe(0);
     expect(fs.readFileSync(log, "utf8")).toContain("-v exact-override:/work/node_modules");
+    expect(runA).not.toContain("--user");
+
+    // Unset CALANDRIA_TEST_USER: a rootful Linux daemon writes bind-mount files
+    // as the container's uid, so the run takes the caller's uid:gid and a
+    // volume of its own. Rootless Docker remaps, so it stays root.
+    const defaultUser = (securityOptions: string) => {
+      fs.writeFileSync(log, "");
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        CALANDRIA_TEST_VOLUME: "",
+        CALANDRIA_TEST_REBUILD: "",
+        DOCKER_IMAGE_ID: idA,
+        DOCKER_SHIM_LOG: log,
+        DOCKER_SECURITY_OPTIONS: securityOptions,
+        PATH: `${shimDir}:${process.env.PATH ?? ""}`,
+      };
+      delete env.CALANDRIA_TEST_USER;
+      const result = spawnSync("bash", ["scripts/docker-test.sh", "true"], { cwd: fixture, env, encoding: "utf8" });
+      expect(result.status, result.stderr).toBe(0);
+      return fs.readFileSync(log, "utf8").trim().split("\n").find((call) => call.startsWith("run "))!;
+    };
+    const uid = process.getuid?.();
+    if (process.platform === "linux" && uid !== undefined && uid !== 0) {
+      const rootful = defaultUser("[name=seccomp]");
+      expect(rootful).toContain(`--user ${uid}:${process.getgid!()} -e HOME=/tmp`);
+      expect(rootful).toContain(`-u${uid}:/work/node_modules`);
+      expect(defaultUser("[name=seccomp name=rootless]")).not.toContain("--user");
+    } else {
+      expect(defaultUser("[name=seccomp]")).not.toContain("--user");
+    }
   } finally {
     fs.rmSync(fixture, { recursive: true, force: true });
   }

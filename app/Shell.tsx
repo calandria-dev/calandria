@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, useSyncExternalStore } from "react";
 import { Icon } from "./icons";
 import { Logo } from "./Logo";
 import { TerminalView, type TermApi } from "./Terminal";
@@ -42,6 +42,21 @@ import { useViewportInsets } from "./shell/useViewportInsets";
 // keeps it in sync with rotation/resize. SSR renders the desktop layout (false), and
 // the effect corrects on mount. Selection state alone drives which pane shows.
 const MOBILE_QUERY = "(max-width: 760px)";
+// The OS dark preference. Both the server snapshot and the first client render
+// say dark (the <html> default); a light OS re-renders after hydration.
+const DARK_QUERY = "(prefers-color-scheme: dark)";
+function useSystemDark(): boolean {
+  return useSyncExternalStore(
+    (notify) => {
+      const mq = window.matchMedia?.(DARK_QUERY);
+      mq?.addEventListener("change", notify);
+      return () => mq?.removeEventListener("change", notify);
+    },
+    () => window.matchMedia?.(DARK_QUERY).matches ?? true,
+    () => true,
+  );
+}
+
 function useIsMobile() {
   const [mobile, setMobile] = useState(false);
   useEffect(() => {
@@ -231,16 +246,12 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
   };
 
   const features = clientFeatures();
+  const systemDark = useSystemDark();
   // Resolves "system" against the OS preference for this quick toggle's icon/
   // label; clicking always pins an explicit mode (bypassing "system"), same as
   // the old binary theme field did. The full palette/mode picker lives in the
   // Appearance popover (AppearancePanel.tsx).
-  const resolvedMode =
-    o.appearance.mode === "system"
-      ? typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches
-        ? "dark"
-        : "light"
-      : o.appearance.mode;
+  const resolvedMode = o.appearance.mode === "system" ? (systemDark ? "dark" : "light") : o.appearance.mode;
   const isDark = resolvedMode !== "light";
   // Work Center: one snapshot reader for the pill, the popover, the phone Work
   // tab, the tab badge and the project badges. Its view state (selected row,

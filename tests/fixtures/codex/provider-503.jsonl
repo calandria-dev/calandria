@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"provider-thread"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"echo hello","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"error","message":"unexpected status 503 Service Unavailable: provider verification unavailable, request_id: req_503"}
+{"type":"turn.failed","error":{"message":"unexpected status 503 Service Unavailable: provider verification unavailable, request_id: req_503"}}

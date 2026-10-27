@@ -103,7 +103,7 @@ RUN apt-get update \
 # `Pin drift` (.github/workflows/pin-drift.yml) reads the latest gh release and
 # files an issue when this ARG falls behind; bump it by hand. Keep the ARG on
 # one line: the pin-drift check reads it with a line-anchored regex.
-ARG GH_VERSION=2.103.2
+ARG GH_VERSION=2.103.3
 RUN set -eu; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64|arm64) : ;; \
@@ -144,8 +144,8 @@ RUN npm install -g npm@12.0.2 && npm --version
 # required test, desktop skip and uncached image workflows against the exact
 # branch head, and enables squash auto-merge after verifying that head. GitHub
 # merges only after every required check passes.
-ARG CLAUDE_CODE_VERSION=2.1.311
-ARG CODEX_VERSION=0.164.0
+ARG CLAUDE_CODE_VERSION=2.1.312
+ARG CODEX_VERSION=0.165.0
 
 # The `claude` CLI: the Agent SDK spawns it, and login state lives in
 # ~/.claude on the volume. Pinned location via CLAUDE_CLI_PATH; updates ship as

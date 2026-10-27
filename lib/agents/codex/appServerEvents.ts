@@ -90,6 +90,8 @@ export interface Mapped {
   notice?: string;
   /** Text to run the approval-downgrade classifier over. */
   warning?: string;
+  /** A provider failure the CLI is retrying within the same live turn. */
+  retryError?: unknown;
   /** A fresh context-size reading for the gauge. */
   contextTokens?: number;
   /**
@@ -195,17 +197,17 @@ export function mapNotification(method: string, params: unknown, state: AppServe
       const events: ThreadEvent[] = [];
       if (state.total) events.push({ type: "turn.completed", usage: state.total });
       if (turn.status === "failed") {
-        events.push({ type: "turn.failed", error: { message: turn.error?.message || "Codex turn failed" } });
+        events.push({ type: "turn.failed", error: { ...turn.error, message: turn.error?.message || "Codex turn failed" } });
         return { events, turnEnded: "failed" };
       }
       return { events, turnEnded: turn.status === "interrupted" ? "interrupted" : "completed" };
     }
     case "error": {
       if (!forThisTurn(p, state)) return NONE;
-      // `willRetry` is a transient the CLI is already retrying, so it produces no event.
-      if (p.willRetry) return NONE;
+      // The CLI owns retries; command tracking stays in the current turn.
+      if (p.willRetry) return { events: [], retryError: p.error };
       const err = p.error as { message?: string } | undefined;
-      return { events: [{ type: "error", message: err?.message || "Codex reported an error" }], warning: err?.message };
+      return { events: [{ ...err, type: "error", message: err?.message || "Codex reported an error" }], warning: err?.message };
     }
     // A hook fired. `run` (not `item`, unlike item/started) is the summary
     // ../../codex/hooks.ts parses. A thread-scoped hook (sessionStart,

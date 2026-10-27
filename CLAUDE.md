@@ -243,7 +243,8 @@ Three processes and entrypoints, one origin:
   `lib/reclaim.ts` does, with an open PR accepted and `unpushedCommits()` as the follow-up
   question, since a task marked done has usually landed nothing yet. Run after the no-op return
   and before every write, so a task already done pays no subprocess and a refusal leaves the row,
-  its edges and its tags alone. Does not carry the project; re-parenting is `move_task`.
+  its edges and its tags alone. `done` on another task whose `unread_run_at` is set is refused too,
+  so a scheduled run nobody has read stays in "Ran clean" for the user to acknowledge. Does not carry the project; re-parenting is `move_task`.
 - `update_task` also covers `blocked_by`, the only way an agent can order a plan: `suggest_task`
   can't take it (the ids don't exist yet at filing time), so the recipe is file every task, wait
   for ids, then `update_task` per dependent (`buildProjectContext()` spells this out). Two things

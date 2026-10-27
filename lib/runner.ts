@@ -606,8 +606,8 @@ export async function drainActiveTurns(timeoutMs: number = SHUTDOWN_GRACE_MS): P
  * durable channel: it survives SSE reconnects because the snapshot replays
  * from SQLite.
  */
-export function publishTurnError(id: string, gen: number, errText: string): string | null {
-  const notice = isPromptTooLong(errText)
+export function publishTurnError(id: string, gen: number, errText: string, providerUnavailable = false): string | null {
+  const notice = providerUnavailable ? null : isPromptTooLong(errText)
     ? CONTEXT_OVERFLOW_NOTICE
     : isAuthFailure(errText)
       ? AUTH_EXPIRED_NOTICE
@@ -671,6 +671,8 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // once, and awaiting_input must stay up until the last one is settled.
   const openAsks = new Set<string>();
   let turnError: string | null = null;
+  // Provider outages leave queued work parked until an explicit resume.
+  let providerUnavailable = false;
   // Set when this turn died on authentication rather than on the work: the
   // agent's login is dead instance-wide, so the queue must be parked (every
   // follow-up would fail identically) and the whole app told, not just this
@@ -780,8 +782,13 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
   // same flag and relay a dead login does (lib/agents/connections.ts), but
   // with its own reason text, so the banner doesn't tell someone to
   // reconnect a login that never broke.
-  const failTurn = (text: string): "auth" | "budget" | false => {
-    terminalMessageId = publishTurnError(id, gen, text) ?? terminalMessageId;
+  const failTurn = (text: string, unavailable = false): "auth" | "budget" | false => {
+    terminalMessageId = publishTurnError(id, gen, text, unavailable) ?? terminalMessageId;
+    if (unavailable) {
+      providerUnavailable = true;
+      failureCode = "execution";
+      return false;
+    }
     failureCode = failureCodeOf(text);
     if (isAuthFailure(text)) {
       if (markAgentAuthBroken(task.agent, text, Date.now())) {
@@ -1359,10 +1366,10 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
         // snapshot replays render the identical line (with a recovery hint
         // on context overflow / a dead login).
         turnError = ev.content;
-        const fail = failTurn(ev.content);
+        const fail = failTurn(ev.content, ev.providerUnavailable);
         if (fail === "auth") authFailure = ev.content;
         else if (fail === "budget") budgetFailure = ev.content;
-        else if (isUsageLimit(ev.content)) {
+        else if (!ev.providerUnavailable && isUsageLimit(ev.content)) {
           usageLimitFailure = ev.content;
           if (ev.resetAt) usageLimitResetAt = ev.resetAt;
         }
@@ -1672,18 +1679,10 @@ async function run(task: Task, project: Project, userText: string, syncNote: str
       continued = true;
     } else if (abortController.signal.aborted || generationAdvanced) {
       for (const p of clearPendingMessages(id)) publish(id, { type: "dequeued", msgId: p.id });
-    } else if (authFailure || budgetFailure || usageLimitFailure || unattendedDeny || settingsBlocked) {
-      // The login (or the gateway budget, or the quota, or the absent
-      // human, or an unapproved settings change) is what failed, not the
-      // work: draining now would run each follow-up straight into the same
-      // authentication error / spent budget / spent limit / unanswerable
-      // permission prompt / identical settings card, emptying the queue and
-      // stacking identical walls of red for messages that never actually
-      // ran. Leave them parked (they're rows in pending_messages, so they
-      // survive a reload and still render as queued bubbles) and say so
-      // once. They drain normally at the end of the next turn, after a
-      // reconnect, once the budget resets, once the limit resets, or once
-      // the user is back.
+    } else if (authFailure || budgetFailure || usageLimitFailure || providerUnavailable || unattendedDeny || settingsBlocked) {
+      // Keep queued follow-ups parked while credentials, quotas, provider
+      // availability, attendance or settings prevent progress. These rows
+      // survive reloads and drain at the end of the next successful turn.
       // Opt-in, per agent (Settings → Run defaults, `auto_resume_on_limit`):
       // queue the resume the usage-limit notice otherwise offers as a button.
       // The button needs somebody at the screen when the quota dies, which is

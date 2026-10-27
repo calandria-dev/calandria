@@ -254,7 +254,7 @@ async function discardCheckout(
     // row intact. (A branch that outlives its worktree is only a stale ref in
     // a repo this task no longer belongs to, so it doesn't block anything.)
     if (task.worktree_path && fs.existsSync(task.worktree_path))
-      return { reason: `couldn't remove the task's worktree at ${task.worktree_path}${heldHandleHint()}` };
+      return { reason: `couldn't remove the task's worktree at ${task.worktree_path}${heldHandleHint(task.worktree_path)}` };
 
     return { id, branch: task.work_branch, dirty: safety.isDirty, ahead: safety.ahead };
   });

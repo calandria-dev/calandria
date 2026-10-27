@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { mapNotification, newAppServerTurnState, toSdkItem, diffLinesOf, unwrapShellCommand } from "@/lib/agents/codex/appServerEvents";
+import { mapThreadEvent, newState } from "@/lib/agents/codex/events";
 import { flattenConfigOverrides } from "@/lib/agents/codex/appServerClient";
 
 // The app-server → exec-shape adapter (lib/agents/codex/appServerEvents.ts),
@@ -109,6 +110,71 @@ describe("app-server item respelling", () => {
     const end = mapNotification("turn/completed", { turn: { id: "t1", status: "failed", error: { message: "model failed" } } }, st);
     expect(end.turnEnded).toBe("failed");
     expect(end.events).toEqual([{ type: "turn.failed", error: { message: "model failed" } }]);
+  });
+
+  it("preserves and deduplicates structured provider errors across notification and terminal turn", () => {
+    const app = newAppServerTurnState();
+    app.turnId = "t1";
+    const mapper = newState("gpt-fake");
+    const error = {
+      message: 'unexpected status 503 Service Unavailable: {"detail":"Unable to verify access."}',
+      codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 503, requestId: "req-503-structured" } },
+      additionalDetails: "provider verification endpoint unavailable",
+      requestId: "req-503-structured",
+    };
+
+    const notification = mapNotification("error", { turnId: "t1", willRetry: false, error }, app);
+    expect(notification.events[0]).toMatchObject({
+      type: "error",
+      codexErrorInfo: error.codexErrorInfo,
+      additionalDetails: error.additionalDetails,
+      requestId: error.requestId,
+    });
+    const notificationEvents = notification.events.flatMap((event) => mapThreadEvent(event, mapper));
+    expect(notificationEvents).toHaveLength(1);
+    expect(notificationEvents[0]).toMatchObject({
+      type: "error",
+      content: expect.stringContaining("req-503-structured"),
+      providerUnavailable: true,
+    });
+    expect((notificationEvents[0] as Extract<(typeof notificationEvents)[number], { type: "error" }>).content)
+      .toContain("provider verification endpoint unavailable");
+
+    const terminal = mapNotification("turn/completed", {
+      turn: { id: "t1", status: "failed", error },
+    }, app);
+    expect(terminal.events[0]).toMatchObject({
+      type: "turn.failed",
+      error: {
+        codexErrorInfo: error.codexErrorInfo,
+        additionalDetails: error.additionalDetails,
+        requestId: error.requestId,
+      },
+    });
+    const terminalEvents = terminal.events.flatMap((event) => mapThreadEvent(event, mapper));
+    expect([...notificationEvents, ...terminalEvents].filter((event) => event.type === "error")).toHaveLength(1);
+  });
+
+  it("does not classify an explicit 403 as provider unavailable because its details mention 503", () => {
+    const app = newAppServerTurnState();
+    app.turnId = "t1";
+    const mapper = newState("gpt-fake");
+    const mapped = mapNotification("error", {
+      turnId: "t1",
+      willRetry: false,
+      error: {
+        message: "request failed with HTTP 403",
+        statusCode: 403,
+        codexErrorInfo: { httpConnectionFailed: { statusCode: 403, requestId: "req-403" } },
+        additionalDetails: "the upstream log mentions status 503 for a different request",
+      },
+    }, app);
+    const events = mapped.events.flatMap((event) => mapThreadEvent(event, mapper));
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: "error", content: expect.stringContaining("HTTP 403") });
+    const ordinaryError = events[0] as { type: string; content: string; providerUnavailable?: boolean };
+    expect(ordinaryError.content).not.toContain("Codex provider temporarily unavailable (HTTP 503).");
+    expect(ordinaryError.providerUnavailable).toBeUndefined();
   });
 
   it("surfaces a config warning once per turn and hands every warning to the classifier", () => {

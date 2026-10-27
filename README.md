@@ -41,7 +41,9 @@ covers it. No API key needed.
 - **Start from the latest base.** Calandria fetches the base branch before
   cutting a task's worktree, so a PR merged on GitHub doesn't leave new tasks
   building on stale code. It also tells you when your own checkout has fallen
-  behind.
+  behind. A local base that is ahead or has diverged keeps its unpublished
+  work. PR creation checks that this inherited work is present on the remote
+  base before pushing.
 - **Point a task at any branch.** A task can use its own base branch instead
   of the project default: it's cut from it, synced to it, merged into it, and
   PR'd against it. Several tasks can land on one feature branch while the
@@ -279,6 +281,11 @@ workspace-write Codex turn can still commit from its worktree. On a Linux
 host that blocks the user namespaces Codex's sandbox needs, Settings →
 Models displays the fix when you connect the Codex environment. Calandria blocks the sandboxed
 modes instead of running turns whose every command fails.
+
+Codex provider HTTP 503 failures show as temporary upstream outages, with the provider's
+diagnostics and request ID. Codex retries stay in the current session and retain command
+tracking. If a failure ends the turn, check any command listed with an unconfirmed status
+before resuming the same task. Calandria keeps the session, worktree and queued messages.
 
 Choose **Effort** in the New task or Edit task dialog to override the environment's
 default for that task. The picker offers the same levels as the session controls.
