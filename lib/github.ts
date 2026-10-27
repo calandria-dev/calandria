@@ -6,7 +6,7 @@ import { spawn as ptySpawn, type IPty } from "node-pty";
 import { GH_BIN, PROJECTS_DIR } from "./config";
 import { homeDir } from "./homeDir.mjs";
 import { findInDirs, findOnPath, type BinLookupOptions } from "./binPath";
-import { gitErrorDetail } from "./git";
+import { gitErrorDetail, taskPrScopeError } from "./git";
 import type { IssueMatch, LandingMode } from "./types";
 import { coherent, evidenceComplete, type CheckEvidence } from "./workCenter/ciEvidence";
 
@@ -533,6 +533,7 @@ export async function createTaskPr(input: {
   worktreePath: string;
   workBranch: string;
   baseBranch: string;
+  baseSha?: string;
   title: string;
   body: string;
   edit?: { title?: string; body?: string };
@@ -558,6 +559,24 @@ export async function createTaskPr(input: {
   if (!remote)
     return { ok: false, error: "this repo has no origin remote. Push it to GitHub first (e.g. `gh repo create`), then try again" };
 
+  const slug = repoSlug(remote);
+  const repoArg = `--repo=${slug ? `github.com/${slug}` : remote}`;
+  let found: { url: string; baseRefName: string } | undefined;
+  try {
+    const { stdout } = await run(resolveGhBin(), ["pr", "list", repoArg, "--head", workBranch, "--state", "open", "--json", "url,baseRefName", "--limit", "1"], opts);
+    const rows: unknown = JSON.parse(stdout || "[]");
+    if (!Array.isArray(rows) || (rows.length && (typeof rows[0]?.url !== "string" || !rows[0].url.trim() || typeof rows[0]?.baseRefName !== "string" || !rows[0].baseRefName.trim())))
+      throw new Error("GitHub returned an incomplete PR listing");
+    found = rows[0];
+  } catch (e) {
+    return { ok: false, error: `could not verify existing PR: ${cliErrorMessage(e, "gh pr list errored")}. Nothing was pushed.` };
+  }
+
+  const scopeError = await taskPrScopeError({
+    worktreePath, workBranch, baseSha: input.baseSha || "", baseBranch, prBaseBranch: found?.baseRefName || baseBranch,
+  });
+  if (scopeError) return { ok: false, error: `${scopeError} Nothing was pushed.` };
+
   try {
     await run("git", ["-C", worktreePath, "push", "-u", "origin", workBranch], opts);
   } catch (e) {
@@ -565,40 +584,32 @@ export async function createTaskPr(input: {
     return { ok: false, error: `push failed: ${cliErrorMessage(e, "git push errored")}`, ...(detail ? { detail } : {}) };
   }
 
-  // Already an open PR for this branch? The push above just updated it.
-  try {
-    const { stdout } = await run(resolveGhBin(), ["pr", "list", "--head", workBranch, "--state", "open", "--json", "url", "--limit", "1"], opts);
-    const found = JSON.parse(stdout || "[]") as { url?: string }[];
-    const url = found[0]?.url;
-    if (url) {
-      const args: string[] = [];
-      const edited: Array<"title" | "body"> = [];
-      // `--flag=value` form so a title/body that begins with "-" can't be read as a flag.
-      if (edit?.title) {
-        args.push(`--title=${edit.title}`);
-        edited.push("title");
-      }
-      if (edit?.body) {
-        args.push(`--body=${edit.body}`);
-        edited.push("body");
-      }
-      if (!edited.length) return { ok: true, url, existing: true };
-      try {
-        await run(resolveGhBin(), ["pr", "edit", url, ...args], opts);
-        return { ok: true, url, existing: true, edited };
-      } catch (e) {
-        return { ok: true, url, existing: true, editError: cliErrorMessage(e, "gh pr edit errored") };
-      }
+  if (found) {
+    const url = found.url;
+    const args: string[] = [];
+    const edited: Array<"title" | "body"> = [];
+    if (edit?.title) {
+      args.push(`--title=${edit.title}`);
+      edited.push("title");
     }
-  } catch {
-    // listing failed: fall through and let `pr create` speak for itself
+    if (edit?.body) {
+      args.push(`--body=${edit.body}`);
+      edited.push("body");
+    }
+    if (!edited.length) return { ok: true, url, existing: true };
+    try {
+      await run(resolveGhBin(), ["pr", "edit", url, repoArg, ...args], opts);
+      return { ok: true, url, existing: true, edited };
+    } catch (e) {
+      return { ok: true, url, existing: true, editError: cliErrorMessage(e, "gh pr edit errored") };
+    }
   }
 
   try {
     // `--flag=value` form so a title/body that begins with "-" can't be read as a flag.
     const { stdout } = await run(
       resolveGhBin(),
-      ["pr", "create", `--head=${workBranch}`, `--base=${baseBranch}`, `--title=${title}`, `--body=${body}`],
+      ["pr", "create", repoArg, `--head=${workBranch}`, `--base=${baseBranch}`, `--title=${title}`, `--body=${body}`],
       opts
     );
     const url = stdout.match(/https:\/\/\S+\/pull\/\d+/)?.[0];

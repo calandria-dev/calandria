@@ -11,7 +11,7 @@
  * registry and runner.
  */
 import { getProject, getTask, listSummaries, updateTask } from "./store";
-import { commitWorktree, remoteBranchExists, taskCommitMessage } from "./git";
+import { commitWorktree, remoteBranchExists, taskBranchCheckoutError, taskCommitMessage } from "./git";
 import { resolveBaseBranch } from "./baseBranch";
 import { buildPrBody, createTaskPr, findOpenPrForBranch, parsePrNumber, type CreatePrResult } from "./github";
 import { publishGlobal } from "./events";
@@ -41,6 +41,9 @@ export async function openTaskPr(
   if (!task.worktree_path || !task.work_branch)
     return { ok: false, error: "this task has no isolated branch to open a PR from" };
 
+  const checkoutError = await taskBranchCheckoutError(task.worktree_path, task.work_branch);
+  if (checkoutError) return { ok: false, error: checkoutError };
+
   // Commit whatever's still uncommitted first (same as merge does), so the PR
   // shows the same diff the Changes tab does.
   try {
@@ -57,6 +60,7 @@ export async function openTaskPr(
     worktreePath: task.worktree_path,
     workBranch: task.work_branch,
     baseBranch: resolveBaseBranch(task, project),
+    baseSha: task.base_sha,
     title: title || task.title,
     body: body || buildPrBody({ description: task.description, summary: summaries[summaries.length - 1]?.summary, taskId: task.id }),
     // Only an explicit title or body rewrites a PR that is already open. The

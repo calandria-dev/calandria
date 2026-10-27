@@ -41,7 +41,9 @@ covers it. No API key needed.
 - **Start from the latest base.** Calandria fetches the base branch before
   cutting a task's worktree, so a PR merged on GitHub doesn't leave new tasks
   building on stale code. It also tells you when your own checkout has fallen
-  behind.
+  behind. A local base that is ahead or has diverged keeps its unpublished
+  work. PR creation checks that this inherited work is present on the remote
+  base before pushing.
 - **Point a task at any branch.** A task can use its own base branch instead
   of the project default: it's cut from it, synced to it, merged into it, and
   PR'd against it. Several tasks can land on one feature branch while the

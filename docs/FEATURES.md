@@ -290,6 +290,13 @@ second one. It is registered only on a project set to **Pull request**; on a **M
 there is nothing for it to open, so it is absent instead of present and refusing. There is no
 `merge_pr` tool: opening a PR is available to agents, merging is not.
 
+Before pushing, both **Create PR** and `create_pr` compare the Changes baseline with the remote
+PR base. Updates use the existing PR's actual base. If unpublished local base commits outside
+Changes would enter the PR, the operation stops. Publish the intended base work first, or rebuild
+only this task's commits onto the remote base in a separate checkout. The operation also stops if
+the remote scope cannot be verified. Local base selection and Sync continue to preserve unpublished
+local integration work.
+
 If a session opens a PR by hand instead (falling back to `git push` and `gh pr create` in a
 terminal, which can happen if `create_pr` is cut off before it reaches Calandria), Calandria
 still links it to the task: at the end of every turn on a **Pull request** project, if the task

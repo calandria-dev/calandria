@@ -1,4 +1,6 @@
 import { describe, expect, beforeEach, it, vi } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 
 const { createTaskPrMock } = vi.hoisted(() => ({
   createTaskPrMock: vi.fn(),
@@ -18,7 +20,7 @@ vi.mock("@/lib/prState", () => ({
 import { createProject, createTask, getTask, updateTask } from "@/lib/store";
 import { ensureWorktree } from "@/lib/git";
 import { POST as prRoute } from "@/app/api/tasks/[id]/pr/route";
-import { makeRepo, uid } from "./helpers";
+import { git, makeRepo, uid } from "./helpers";
 
 const post = (id: string, body?: unknown) => new Request("http://localhost/x", {
   method: "POST",
@@ -32,7 +34,7 @@ async function prTask() {
   const task = createTask({ project_id: project.id, title: "Plain task title" });
   const worktree = await ensureWorktree(repo, task.id);
   if (!worktree) throw new Error("ensureWorktree returned null in fixture");
-  updateTask(task.id, { worktree_path: worktree.path, work_branch: worktree.branch });
+  updateTask(task.id, { worktree_path: worktree.path, work_branch: worktree.branch, base_sha: worktree.baseSha });
   return task.id;
 }
 
@@ -48,6 +50,7 @@ describe("POST /api/tasks/[id]/pr", () => {
 
     expect(response.status).toBe(200);
     expect(createTaskPrMock.mock.calls[0][0].title).toBe("feat: add PR title picker");
+    expect(createTaskPrMock.mock.calls[0][0].baseSha).toBe(getTask(id)!.base_sha);
   });
 
   it.each([undefined, "   "])("falls back to the task title for %j", async (title) => {
@@ -57,4 +60,19 @@ describe("POST /api/tasks/[id]/pr", () => {
     expect(response.status).toBe(200);
     expect(createTaskPrMock.mock.calls[0][0].title).toBe(getTask(id)!.title);
   });
+  it("leaves a dirty sibling branch untouched", async () => {
+    const id = await prTask();
+    const worktree = getTask(id)!.worktree_path;
+    await git(worktree, "checkout", "-b", "sibling");
+    const before = await git(worktree, "rev-parse", "HEAD");
+    fs.writeFileSync(path.join(worktree, "dirty.txt"), "unsaved work\n");
+
+    const response = await prRoute(post(id), { params: Promise.resolve({ id }) });
+    expect(response.status).toBe(409);
+    expect(await git(worktree, "rev-parse", "HEAD")).toBe(before);
+    expect(fs.readFileSync(path.join(worktree, "dirty.txt"), "utf8")).toBe("unsaved work\n");
+    expect(await git(worktree, "status", "--porcelain")).toContain("?? dirty.txt");
+    expect(createTaskPrMock).not.toHaveBeenCalled();
+  });
+
 });
