@@ -144,3 +144,28 @@ describe("update_task done gate", () => {
     expect(updated?.status).toBe("on_hold");
   });
 });
+
+describe("update_task done gate: unread scheduled runs", () => {
+  it("refuses done on another task with an unread clean run, then allows it once read", async () => {
+    const repo = await makeRepo();
+    const { task: caller } = await taskOnAWorktree(repo);
+    const { task: target } = await taskOnAWorktree(repo);
+    updateTask(target.id, { unread_run_at: Date.now() });
+
+    const { task: updated, text } = await updateTaskForAgent(actor(caller), target.id, { status: "done" });
+    expect(updated).toBeNull();
+    expect(text).toContain("nobody has reviewed");
+    expect(getTask(target.id)!.status).toBe("in_progress");
+
+    updateTask(target.id, { unread_run_at: 0 });
+    const { task: after } = await updateTaskForAgent(actor(caller), target.id, { status: "done" });
+    expect(after?.status).toBe("done");
+  });
+
+  it("leaves the caller's own row unaffected", async () => {
+    const { task } = await taskOnAWorktree(await makeRepo());
+    updateTask(task.id, { unread_run_at: Date.now() });
+    const { task: updated } = await updateTaskForAgent(actor(task), undefined, { status: "done" });
+    expect(updated?.status).toBe("done");
+  });
+});

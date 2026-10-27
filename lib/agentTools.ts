@@ -1198,6 +1198,13 @@ export async function updateTaskForAgent(
   // is read live here: `cur` is a snapshot from the top of this call, and the
   // session has been committing into that checkout ever since.
   if (patch.status === "done") {
+    // An unattended run nobody has read sits in the board's "Ran clean" group,
+    // which requires status in_progress. Another session closing it would drop
+    // it into plain Done unseen, so only the user acknowledges it.
+    if (!own && cur.unread_run_at > 0)
+      return fail(
+        `Could not update ${what}: it has an unattended run nobody has reviewed yet; leave it for the user to acknowledge. Nothing was changed.`
+      );
     const stranded = await strandedWorkReason(cur);
     if (stranded)
       return fail(
