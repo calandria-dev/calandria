@@ -632,7 +632,7 @@ export interface PlanUsageWindow {
   /**
    * Which of the two windows every metered plan has this is, when the driver
    * can say. The ids are the provider's ("five_hour", "gemini-5h"), and this
-   * is what the pill and lib/usageReset.ts use to pick the session/week rows.
+   * is what the usage chip and lib/usageReset.ts use to pick the session/week rows.
    * Absent on a window that is neither (Claude's per-model weeks) and on
    * older rows.
    *

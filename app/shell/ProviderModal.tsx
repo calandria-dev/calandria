@@ -5,7 +5,9 @@ import { Icon, EnvMark, ProviderMark } from "../icons";
 import { jget, jsend } from "./api";
 import { Modal } from "./Modal";
 import { LoadNote } from "./shared";
-import { usePlanUsage, planUsageShown } from "./PlanUsage";
+import { usePlanUsage, planUsageShown, refreshPlanUsage } from "./PlanUsage";
+import { roleText } from "./usageSignals";
+import type { PlanUsageSnapshot as PlanUsageSnapshotT } from "@/lib/types";
 import type {
   AgentInfoT, ProviderType,
   PresentedProviderT, ProviderProbeResultT, FlatProviderModelT, ProviderModelsResponseT,
@@ -362,6 +364,42 @@ function ModelsTab({ provider, onChanged }: { provider: PresentedProviderT; onCh
   );
 }
 
+// Primary or occasional: whether the Usage Center nudges about capacity this
+// plan is about to leave unused. Automatic from last week's peak unless pinned
+// (`plan_usage_role:<agent>`, read by GET /api/plan-usage, lib/planUsageRole.ts).
+function RoleRow({ agentId, label, snap, setAppDefault }: {
+  agentId: string; label: string; snap: PlanUsageSnapshotT;
+  setAppDefault: (key: string, value: string | null) => void;
+}) {
+  const [pending, setPending] = useState<string | null>(null);
+  const role = snap.role;
+  const current = pending ?? (role?.source === "pinned" ? role.value : "auto");
+  const choose = (v: "auto" | "primary" | "occasional") => {
+    if (v === current) return;
+    setPending(v);
+    Promise.resolve(setAppDefault(`plan_usage_role:${agentId}`, v === "auto" ? null : v) as unknown)
+      .then(refreshPlanUsage)
+      .finally(() => setPending(null));
+  };
+  const opts = [["auto", "Auto"], ["primary", "Primary"], ["occasional", "Occasional"]] as const;
+  return (
+    <div className="mv-rrow">
+      <dt>Usage role</dt>
+      <dd className="uc-role-row">
+        <span>{roleText(snap)}</span>
+        <span className="uc-role-seg" role="radiogroup" aria-label={`${label}'s usage role`}>
+          {opts.map(([v, text]) => (
+            <button key={v} role="radio" aria-checked={current === v} className={`uc-role-opt${current === v ? " on" : ""}`} onClick={() => choose(v)}>
+              {text}
+            </button>
+          ))}
+        </span>
+        <span className="opt">Primary plans get a note when capacity is about to go unused.</span>
+      </dd>
+    </div>
+  );
+}
+
 function BundledConnection({ provider, agents, appDefaults, setAppDefault }: {
   provider: PresentedProviderT; agents: AgentInfoT[];
   appDefaults: Record<string, string>; setAppDefault: (key: string, value: string | null) => void;
@@ -394,6 +432,9 @@ function BundledConnection({ provider, agents, appDefaults, setAppDefault }: {
             ><span /></button>
           </dd>
         </div>
+      )}
+      {showToggle && env && planUsage[env.id].role && (
+        <RoleRow agentId={env.id} label={env.label} snap={planUsage[env.id]} setAppDefault={setAppDefault} />
       )}
       <p className="mv-fine">
         There is nothing to edit here: the endpoint and credential belong to {env?.label ?? provider.bundled}. Sign out

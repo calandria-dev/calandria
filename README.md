@@ -240,8 +240,9 @@ already queued. The transcript records that it was sent.
   Insights tab bar, a full-screen terminal sheet, and a project screen
   (recap, tags, runbooks, schedules) one tap from the task list.
 - **A complete workspace:** chat, terminal, managed services, live logs, and
-  token and usage insights in one place, including a live session/week
-  plan-usage meter for a Claude Pro/Max or ChatGPT login.
+  token and usage insights in one place, including a titlebar Usage Center
+  that warns before a Claude, ChatGPT or Antigravity plan limit and flags
+  capacity about to expire unused.
 - **External MCP endpoint:** let agents outside Calandria file and edit tasks
   over MCP with a bearer token. Tool annotations identify reads, writes,
   destructive effects and retry safety for MCP clients. External edits cannot
