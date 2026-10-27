@@ -405,9 +405,9 @@ path; Calandria watches it as a precaution.
   does not treat a `CANCELED` status alone as confirmation the user stopped it.
 
 Plan usage works here the way it does for Claude: the CLI's own `/usage` reports the weekly and
-5-hour quota remaining without spending any, so the titlebar meter works on this agent too. It
+5-hour quota remaining without spending any, so the titlebar usage chip works on this agent too. It
 lists two pairs of windows, because an Antigravity subscription meters the Gemini models and the
-Claude/GPT models it also serves against separate limits; the pill itself shows the Gemini pair.
+Claude/GPT models it also serves against separate limits; the chip's calm ring follows the busier session window.
 
 ## Local models
 
@@ -679,9 +679,9 @@ remembers its verdict against this base URL separately from the local endpoint's
   available yet.
 - A plan-usage meter. Codex's rate-limit snapshot is empty behind a gateway, and the key's spend is
   not a plan window, so a gateway Codex task offers no "resume when your window resets". The
-  titlebar meter still reports the ChatGPT login while at least one project still runs Codex on
-  it; once every project routes Codex through the gateway or another endpoint, the Codex pill
-  disappears (see [Plan usage meter](INSIGHTS.md#plan-usage-meter)).
+  usage chip still reports the ChatGPT login while at least one project still runs Codex on
+  it; once every project routes Codex through the gateway or another endpoint, Codex
+  leaves the chip (see [Usage Center](INSIGHTS.md#usage-center)).
 
 Codex retries a failed request several times on its own, so the cooldown behavior above hits it
 hardest: one upstream error can turn every retry into `429 No deployments available` until the CLI
@@ -709,9 +709,9 @@ itself for a gateway task; there is nothing to set up beyond picking a LiteLLM p
   session immediately" is disabled and the reason is stated.
 - A plan-usage meter. `agy -p "/usage"` reports Google's own plan windows, which a gateway turn
   never spends, so a gateway Antigravity task offers no "resume when your window resets". The
-  titlebar meter still reports the Google account while at least one project still runs
+  usage chip still reports the Google account while at least one project still runs
   Antigravity on it; once every project routes Antigravity through the gateway or another
-  endpoint, the Antigravity pill disappears (see [Plan usage meter](INSIGHTS.md#plan-usage-meter)).
+  endpoint, Antigravity leaves the chip (see [Usage Center](INSIGHTS.md#usage-center)).
 
 **The health card names a missing side model.** `agy` calls a flash-lite side model on every turn
 in addition to whichever model the task picked, and a turn whose side model is absent from the

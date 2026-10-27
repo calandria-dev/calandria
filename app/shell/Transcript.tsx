@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useState } from "react";
-import type { ToolData, ToolPeek, AskQuestion, AskAnswers, PermissionDecision, SuggestionCard, IssueReportCard } from "@/lib/types";
+import type { PlanUsageWindow, ToolData, ToolPeek, AskQuestion, AskAnswers, PermissionDecision, SuggestionCard, IssueReportCard } from "@/lib/types";
 import { Icon } from "../icons";
 import { Markdown, type MarkdownLinks } from "../Markdown";
 import { jget } from "./api";
@@ -14,6 +14,7 @@ import { USAGE_LIMIT_NOTICE } from "@/lib/usageLimit";
 import { deferredStartFor } from "@/lib/usageReset";
 import { wakeLabel } from "./snooze";
 import { resetClock } from "./queuedStart";
+import { UsageMeter } from "./PlanUsage";
 import { APPROVAL_BLOCKED_NOTICE } from "@/lib/approvalFailure";
 import { BUDGET_EXCEEDED_NOTICE } from "@/lib/budgetFailure";
 import { WORKTREE_REPAIR_NOTICE } from "@/lib/worktreeFailure";
@@ -524,6 +525,8 @@ function SuggestionView({ data, actions }: { data: ToolData; actions?: Suggestio
 export interface LimitResume {
   queuedAt: number;
   resetAt: number | null;
+  /** The window that binds, for the notice's meter; null when none is at its limit. */
+  window?: PlanUsageWindow | null;
   onQueue: (at: number) => void;
   onCancel: () => void;
 }
@@ -814,6 +817,11 @@ export const MessageView = memo(function MessageView({ m, initial, hideWho, runn
         <div className="msg system overflow" data-message-id={m.id} tabIndex={-1}>
           <div className="msg-body">
             {m.content}
+            {limitResume?.window && (
+              <div className="uc-limit-block">
+                <UsageMeter w={limitResume.window} tone="limit" compact />
+              </div>
+            )}
             {limitResume && limitResume.queuedAt > 0 && (
               <div className="overflow-actions queued">
                 <span className="queued-note">{Icon.clock()} Queued: resumes {wakeLabel(limitResume.queuedAt)}.</span>

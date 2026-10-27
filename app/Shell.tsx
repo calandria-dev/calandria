@@ -30,7 +30,7 @@ import { WorkCenterPill, WorkCenterSurface, newWcViewState, type WcOpen } from "
 import { useWorkCenter } from "./shell/useWorkCenter";
 import { countView, isStale } from "./shell/workCenterModel";
 import { pushWorkCenterDestination, type WcReturn } from "./shell/navHistory";
-import { PlanUsagePill } from "./shell/PlanUsage";
+import { UsageChip } from "./shell/PlanUsage";
 import { CommandPalette, type PaletteCommand } from "./shell/CommandPalette";
 import { MobileTabBar, type MobileTabId } from "./shell/MobileTabBar";
 import { isMacDesktopShell } from "./shell/useNotifications";
@@ -847,7 +847,7 @@ export default function Shell({ instanceName = "" }: { instanceName?: string }) 
 
         <div className="tb-right">
           <UpdatePill updates={updates} isMobile={isMobile} />
-          <PlanUsagePill agents={o.agents} appDefaults={o.appDefaults} />
+          <UsageChip agents={o.agents} appDefaults={o.appDefaults} isMobile={isMobile} onOpenSettings={() => openSettings("models")} />
           <div className="wc-anchor">
             <WorkCenterPill tall={isMobile}
               data={wc}

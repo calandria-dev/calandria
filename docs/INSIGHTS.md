@@ -154,19 +154,64 @@ from the model requests it actually made, not the end-of-turn total it never pro
 carries no dollar figure, the same way a turn against a custom, unpriced endpoint doesn't.
 Its tokens still count toward the task and the project; the dollar figure beside them is a floor.
 
-## Plan usage meter
+## Usage Center
 
-On a Claude Pro/Max, ChatGPT, or Antigravity subscription login, the titlebar shows a compact
-meter: current session (5-hour) and week utilization, plus time left before the session window
-resets. Click it for the full breakdown: every window the provider reports (including per-model
-weeks for Claude), reset times, and how fresh the data is. It tints amber at 80% utilization and
-red at 95% or once a limit is actually reached. Connect more than one metered agent and you get a
-pill each, distinguished by its brand mark; the tooltip and breakdown name the agent in full. If
-your LiteLLM gateway key has a budget configured, its spend-to-budget ratio gets its own
-"Gateway" pill using the same meter.
+On a Claude Pro/Max, ChatGPT, or Antigravity subscription login, the titlebar shows one usage chip
+for every metered agent. If your LiteLLM gateway key has a budget configured, the gateway's
+spend-to-budget ratio is part of the same chip.
 
-Each metered bundled provider in Settings → Models has a **Titlebar usage** switch on its
-Connection tab. Hiding one only affects the titlebar. The server still reads and records its usage.
+The chip has two states:
+
+- **Calm:** a small ring and no text. The ring fills to the session (5-hour) utilization of your
+  primary agent, or of the busiest primary agent when you have several. With no primary agent, it
+  follows the busiest session window of any agent.
+- **Signal:** the ring plus one line of text about the most pressing notice. A `+N` count means
+  more notices wait in the breakdown.
+
+Five signals exist, in this order of precedence:
+
+| Signal | Fires when | Applies to | Tone |
+|-|-|-|-|
+| At limit | A limit is in force, or a window is at 100% | Every agent | Red |
+| On pace to cap | A weekly window's linear projection reaches 100% before its reset, after the first day of the week | Every agent | Amber |
+| Near limit | A window is at 80% or more (red from 95%) | Every agent | Amber |
+| Session underused | The session window resets within 60 minutes with 50% or more unused | Primary agents | Green |
+| Week underused | The weekly window resets within 36 hours with 30% or more unused | Primary agents | Green |
+
+When several fire at once, the lower row wins, then a primary agent over an occasional one, then
+the soonest reset. With one agent shown, the chip leaves out the agent name. The chip stays on one
+line at every width: the agent name truncates first, then the message. On the phone it shows the
+message only, without the agent name or the `+N` count. Stale data adds a dashed
+outline and the word "stale", so it never reads as calm. The chip's accessible name states the full
+state in words.
+
+Click the chip for the breakdown: a popover on desktop, a bottom sheet on the phone. Each agent gets
+a section with its plan, its role, its notices, and one meter per window with the reset time. A
+window with a known length and reset carries two markers:
+
+- a **pace tick** across the bar at the utilization an even spread would show now;
+- a **projection caret** under the bar at the utilization the current rate reaches by the reset.
+  A projection past 100% pins the caret to the end of the bar in red and states the number.
+
+Per-model weeks and extra model groups fold behind a "more windows" toggle unless one of them is
+worth a glance. When the open task is waiting on the at-limit agent, its note offers **Resume when
+the limit resets**. The usage-limit notice in a transcript and the unstarted-task panel show the
+binding window's meter while a limit is reached.
+
+### Primary and occasional
+
+An agent's role decides whether underuse signals apply to it. Calandria records the highest weekly
+utilization it sees per agent per week (table `plan_usage_weeks`, pruned after about 8 weeks by the
+retention sweep). An agent is primary when last week's peak was at least 40%, or on a first week
+with no history, when the current week is at least 40%. The gateway is always occasional.
+
+Each metered bundled provider in Settings → Models has two rows on its Connection tab:
+
+- **Titlebar usage** hides that agent from the chip. The server still reads and records its usage.
+- **Usage role** shows the current role and why, and pins it to Primary or Occasional. Auto
+  returns it to the inference. The pin is the `plan_usage_role:<agent>` setting.
+
+### How usage is read
 
 Percentages are read conservatively: only while a tab is open, and only refetched from the
 provider at the floor in the table below, serving the cached value in between and backing off on
@@ -174,16 +219,16 @@ failure. For Claude that read rides the same usage endpoint the CLI's own `/usag
 topped up for free by the rate-limit telemetry every turn already carries, so an approaching or
 reached limit can show up before the next scheduled poll. Codex's turn stream carries no such
 telemetry, so its figures come only from that periodic read and can be one interval old. The
-meter doesn't render at all under API-key auth, since there's no plan to meter.
+chip doesn't render at all under API-key auth, since there's no plan to meter.
 
 A project can also point one agent's turns at a different endpoint instead of its own login, with
 an `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`/`CODEX_OSS_BASE_URL`, or `GOOGLE_GEMINI_BASE_URL`
 override, and the meter accounts for that, counted per agent across your non-deprecated projects.
-If every project redirects an agent, its pill disappears entirely: every percentage in it would
+If every project redirects an agent, it leaves the chip entirely: every percentage in it would
 describe turns the instance never runs, and the per-task "resume when your usage window resets"
 offer goes with it, since it reads the same snapshot. If only some projects redirect the agent,
-the pill keeps its numbers, which stay true about the plan, and its popover adds a line naming how
-many projects point the agent elsewhere. If no project redirects the agent, the meter is
+its section keeps its numbers, which stay true about the plan, and adds a line naming how many
+projects point the agent elsewhere. If no project redirects the agent, the meter is
 unchanged. Settings → Agents shows the same split as a line under the connected account, so
 Settings and the meter never disagree; the login itself still reports as connected and Reconnect
 still works, since a project override doesn't invalidate your credentials. A gateway endpoint
@@ -192,13 +237,6 @@ counts as redirected too, with one exception: Claude with `CALANDRIA_GATEWAY_BIL
 subscription login instead of billing the gateway's key. Deprecated projects aren't counted
 either way.
 
-Each snapshot also carries a `role`, `primary` or `occasional`, which a later titlebar change uses
-to decide which agents get underuse nudges. Calandria records the highest weekly utilization it
-sees per agent per week (table `plan_usage_weeks`, pruned after about 8 weeks by the retention
-sweep). An agent is primary when last week's peak was at least 40%, or on a first week with no
-history, when the current week is at least 40%. Setting `plan_usage_role:<agent>` to `primary` or
-`occasional` pins the role and overrides the inference. The gateway never gets a role.
-
 ## Settings and environment variables
 
 | Name | Default | Effect |
@@ -206,8 +244,9 @@ history, when the current week is at least 40%. Setting `plan_usage_role:<agent>
 | Settings → Background jobs → "Let Calandria use your agent for background work" | On | Off stops unattended recap, context-draft, and tag-refresh jobs; explicit `/clear`, Refresh with AI, and a manual recap refresh still run |
 | Settings → Background jobs → Project recaps | Automatic | Automatic / Only when I open a project / Off |
 | Settings → Background jobs → Utility agent | Falls back through the app default agent | Which connected agent runs Calandria's own convenience jobs |
-| Settings → Models → bundled provider → Titlebar usage | On | Off hides that environment's meter pill only |
-| `CALANDRIA_PLAN_USAGE` | on | Set to `off` to hide the plan usage meter entirely and stop polling every provider for it |
+| Settings → Models → bundled provider → Titlebar usage | On | Off hides that environment from the usage chip only |
+| Settings → Models → bundled provider → Usage role | Auto | Pins the agent to Primary or Occasional; Auto infers it from last week's peak |
+| `CALANDRIA_PLAN_USAGE` | on | Set to `off` to hide the usage chip entirely and stop polling every provider for it |
 | `CALANDRIA_PLAN_USAGE_MIN_FETCH_MS` | `300000` (5 minutes) | Minimum time between live plan-usage reads per provider; cached value serves requests in between |
 
 ## Data handling

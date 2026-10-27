@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { GATEWAY_PLAN_ID, type Status, type Priority, type AskQuestion, type AskAnswers, type PermissionDecision } from "@/lib/types";
+import { GATEWAY_PLAN_ID, type PlanUsageWindow, type Status, type Priority, type AskQuestion, type AskAnswers, type PermissionDecision } from "@/lib/types";
 import { Icon } from "../icons";
 import TaskChanges, { type ResolveResult } from "../TaskChanges";
 import { Markdown, type MarkdownLinks } from "../Markdown";
@@ -18,7 +18,7 @@ import { isSnoozed, wakeLabel } from "./snooze";
 import { SnoozeButton } from "./SnoozeMenu";
 import { isQueuedStart, resetClock } from "./queuedStart";
 import { IDLE_TITLE, idleFor, isIdleTurn, useIdleClock } from "./idleTurn";
-import { usePlanUsage } from "./PlanUsage";
+import { usePlanUsage, bindingWindow, publishOpenTaskLimit, UsageMeter } from "./PlanUsage";
 import { usageResetAt, deferredStartFor } from "@/lib/usageReset";
 import { capsFor, agentLabel, findAgent } from "./agents";
 import { StatusDot, Avatar, Popover, AgentBadge, ProviderBadge, Skel } from "./shared";
@@ -26,6 +26,7 @@ import { ModelPicker, useModelTree, resolveModelLabel, type ModelPickerValue, ty
 import type { PresentedProvider } from "@/lib/providers/present";
 import { taskProvider } from "@/lib/agentEnv";
 import { MessageView, SessionBreak, type LimitResume, type SuggestionActions } from "./Transcript";
+import { USAGE_LIMIT_NOTICE } from "@/lib/usageLimit";
 import { CollabDoc } from "./CollabDoc";
 import { Composer } from "./Composer";
 import { SessionRail } from "./SessionRail";
@@ -435,7 +436,7 @@ function CiBanner({ task, running, onFixCi, onSwitchToChat }: {
   );
 }
 
-function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoStart, running, blockedBy, resetAt, onQueueStart, onCancelQueuedStart, links }: { task: TaskRow; project: ProjectRow; links?: MarkdownLinks; onStart: () => void; onEdit: () => void; onSetSendContext: (v: boolean) => void; onSetAutoStart: (v: boolean) => void; running: boolean; blockedBy?: string[]; resetAt: number | null; onQueueStart: (at: number) => void; onCancelQueuedStart: () => void }) {
+function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoStart, running, blockedBy, resetAt, limitWindow, onQueueStart, onCancelQueuedStart, links }: { task: TaskRow; project: ProjectRow; links?: MarkdownLinks; onStart: () => void; onEdit: () => void; onSetSendContext: (v: boolean) => void; onSetAutoStart: (v: boolean) => void; running: boolean; blockedBy?: string[]; resetAt: number | null; limitWindow: PlanUsageWindow | null; onQueueStart: (at: number) => void; onCancelQueuedStart: () => void }) {
   const carried = task.generation > 1;
   const blockNote = task.started ? undefined : blockedNote(blockedBy);
   const blocked = !!blockNote;
@@ -517,6 +518,12 @@ function TaskHero({ task, project, onStart, onEdit, onSetSendContext, onSetAutoS
         <div className="hero-blocked auto" title={`Starts on its own ${wakeLabel(task.start_at)}, a minute after the usage window resets`}>
           {Icon.clock()} <span>Queued: starts <strong>{wakeLabel(task.start_at)}</strong> when the usage window resets.</span>
           <button className="btn btn-line btn-sm" onClick={onCancelQueuedStart} title="Leave it for you to start by hand">Cancel</button>
+        </div>
+      )}
+      {/* The window that binds, in the Usage Center's own meter, only while a limit is reached. */}
+      {limitWindow && (
+        <div className="uc-limit-block">
+          <UsageMeter w={limitWindow} tone="limit" compact />
         </div>
       )}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -697,12 +704,21 @@ export function SessionView({ project, task, tagsById, agents, messages, running
     return effectiveProvider.bundled === task.agent ? task.agent : null;
   }, [effectiveProvider, effectiveProviderId, task.agent]);
   const resetAt = resetKey ? usageResetAt(planUsage[resetKey] ?? null) : null;
+  const limitWindow = resetKey ? bindingWindow(planUsage[resetKey]) : null;
   const stableQueueStart = useStableHandler(onQueueStart);
   const stableCancelQueuedStart = useStableHandler(onCancelQueuedStart);
   const limitResume = useMemo<LimitResume>(
-    () => ({ queuedAt: task.start_at, resetAt, onQueue: stableQueueStart, onCancel: stableCancelQueuedStart }),
-    [task.start_at, resetAt, stableQueueStart, stableCancelQueuedStart],
+    () => ({ queuedAt: task.start_at, resetAt, window: limitWindow, onQueue: stableQueueStart, onCancel: stableCancelQueuedStart }),
+    [task.start_at, resetAt, limitWindow, stableQueueStart, stableCancelQueuedStart],
   );
+  // While this task's newest message is the usage-limit notice, the Usage
+  // Center's at-limit note for the same plan offers the same resume action.
+  const waitingOnLimit = !!messages.at(-1)?.content.includes(USAGE_LIMIT_NOTICE);
+  useEffect(() => {
+    if (!waitingOnLimit || !resetKey) return;
+    publishOpenTaskLimit({ usageKey: resetKey, ...limitResume });
+    return () => publishOpenTaskLimit(null);
+  }, [waitingOnLimit, resetKey, limitResume]);
   // Retry for an approval-blocked failure (Transcript's APPROVAL_BLOCKED_NOTICE
   // branch): resend the user message that preceded the failure line. The Codex
   // driver has since negotiated a working approval policy, so the same message
@@ -1294,7 +1310,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
         )}
 
         {!hasSession ? (
-          <TaskHero task={task} project={project} onStart={onStart} onEdit={onEdit} onSetSendContext={onSetSendContext} onSetAutoStart={onSetAutoStart} running={running} blockedBy={blockedBy} resetAt={resetAt} onQueueStart={onQueueStart} onCancelQueuedStart={onCancelQueuedStart} links={links} />
+          <TaskHero task={task} project={project} onStart={onStart} onEdit={onEdit} onSetSendContext={onSetSendContext} onSetAutoStart={onSetAutoStart} running={running} blockedBy={blockedBy} resetAt={resetAt} limitWindow={limitWindow} onQueueStart={onQueueStart} onCancelQueuedStart={onCancelQueuedStart} links={links} />
         ) : !mobile ? (
           // Desktop: transcript beside the DIFF / PREVIEW / CONTEXT rail. The
           // zero-width seam between them holds the drag handle (a 0px grid track),

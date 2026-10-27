@@ -306,7 +306,7 @@ field and caches nothing under `$CODEX_HOME/sessions`: `codex/planUsage.ts` read
 `account/rateLimits/read` from a throwaway `codex app-server` (`codex/appServer.ts`), behind that
 same floor. Field names come from `codex app-server generate-json-schema` and are camelCase
 (`usedPercent`, `windowDurationMins`, `resetsAt` in seconds), with windows named by rank
-(`primary`/`secondary`), which is why `PlanUsagePill` matches two id vocabularies.
+(`primary`/`secondary`), which is why `headlineWindows()` (`app/shell/usageSignals.ts`) matches two id vocabularies.
 
 ### Transport, permission modes and writable roots
 

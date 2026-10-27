@@ -838,18 +838,35 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 /* sidebar per-project badge, pinned to the project glyph */
 .proj-await{position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--rev);color:var(--bg);font-size:10px;font-weight:700;line-height:16px;text-align:center;box-shadow:0 0 0 2px var(--surface);}
 
-/* subscription plan-usage meter (titlebar): quiet by default, tinted only
-   when a window is worth glancing at (≥80% warn, ≥95%/rejected limit) */
-.plan-pill{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 10px;border-radius:999px;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;font-weight:500;color:var(--ink-3);background:none;border:1px solid var(--line);cursor:pointer;transition:filter .12s;}
-.plan-pill:hover{color:var(--ink);border-color:var(--line-2);background:var(--panel);}
-.plan-pill .pp-div{opacity:.5;}
-/* The agent's brand mark, shown only when two agents' meters share the bar. */
-.plan-pill .pp-mark{display:inline-flex;align-items:center;}
-.plan-pill .pp-mark svg{width:11px;height:11px;}
-/* only rendered when a second agent reports usage, so the two pills say who */
-.plan-pill .pp-left{opacity:.7;}
-.plan-pill.warn{color:var(--warn);border-color:var(--warn);background:var(--amber-soft);}
-.plan-pill.limit{color:var(--err);border-color:var(--err);background:var(--red-soft);}
+/* Usage Center chip (titlebar, app/shell/PlanUsage.tsx). Calm: a quiet ring,
+   no text. A signal adds one line in its tone. One line always: the agent
+   name truncates first, then the message. Sibling of the Work Center pill,
+   so it shares its heights (26px, 34px tall on the phone). */
+.uc-anchor{position:relative;display:flex;min-width:0;flex:0 1 auto;}
+.uc-chip{position:relative;display:inline-flex;align-items:center;gap:6px;height:26px;max-width:260px;min-width:0;padding:0 9px;border-radius:999px;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;font-weight:500;color:var(--ink-3);background:none;border:1px solid var(--line);cursor:pointer;white-space:nowrap;}
+.uc-chip:hover{color:var(--ink);border-color:var(--line-2);background:var(--panel);}
+.uc-chip.open{border-color:var(--accent);}
+.uc-chip.tall{height:34px;max-width:168px;padding:0 10px;}
+/* 34px plus 5px each side meets the 44px phone touch target. */
+.uc-chip.tall::before{content:"";position:absolute;inset:-5px -2px;}
+.uc-chip.stale{border-style:dashed;}
+.uc-chip.loading{cursor:default;border-style:dashed;}
+.uc-chip.warn{color:var(--warn);border-color:var(--warn);background:var(--amber-soft);}
+.uc-chip.limit{color:var(--err);border-color:var(--err);background:var(--red-soft);}
+.uc-chip.opportunity{color:var(--run);border-color:var(--run);background:var(--green-soft);}
+.uc-text{display:flex;gap:.5em;min-width:0;overflow:hidden;}
+.uc-who{flex:0 1 auto;min-width:1.5em;overflow:hidden;text-overflow:ellipsis;font-weight:600;}
+.uc-what{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.uc-who + .uc-what{flex-shrink:0;max-width:100%;}
+.uc-more{flex:0 0 auto;font-size:9.5px;font-weight:700;padding:1px 5px;border-radius:999px;background:color-mix(in oklab,currentColor 16%,transparent);}
+.uc-ring{flex:0 0 auto;display:block;}
+.uc-ring-track{fill:none;stroke:var(--line-strong);stroke-width:2;}
+.uc-ring-fill{fill:none;stroke:var(--ink-2);stroke-width:2;stroke-linecap:round;transition:stroke-dasharray .4s ease;}
+.uc-ring.warn .uc-ring-fill{stroke:var(--warn);}
+.uc-ring.limit .uc-ring-fill{stroke:var(--err);}
+.uc-ring.opportunity .uc-ring-fill{stroke:var(--run);}
+.uc-ring.loading .uc-ring-track{stroke-dasharray:2 2;}
+@media (max-width:900px){ .uc-chip{max-width:190px;} }
 
 /* The update indicator. Accent-tinted, which no other titlebar pill is, so a
    new release reads as new information and not as trouble. */
@@ -875,22 +892,62 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .update-menu .um-note{font-size:12px;width:100%;}
 .update-menu .um-nv{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.06em;color:var(--ink-3);margin-bottom:4px;}
 .update-menu .um-foot{padding:9px 13px;border-top:1px solid var(--line);display:flex;gap:8px;align-items:center;}
-.pu-menu{width:270px;padding-bottom:8px;}
-.pu-note{margin:2px 13px 8px;padding:7px 9px;border-radius:var(--r-sm);font-size:11.5px;line-height:1.4;}
-.pu-note.limit{background:var(--red-soft);color:var(--err);}
-.pu-note.scoped{background:var(--surface-2);color:var(--ink-2);border:1px solid var(--line);}
-.pu-row{padding:5px 13px 7px;}
-.pu-row-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;}
-.pu-label{font-size:12px;font-weight:600;color:var(--ink);}
-.pu-pct{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
-.pu-bar{margin-top:4px;height:5px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
-.pu-fill{height:100%;border-radius:999px;background:var(--accent);}
-.pu-row.warn .pu-fill{background:var(--warn);}
-.pu-row.warn .pu-pct{color:var(--warn);}
-.pu-row.limit .pu-fill{background:var(--err);}
-.pu-row.limit .pu-pct{color:var(--err);}
-.pu-reset{margin-top:3px;font-size:10.5px;color:var(--ink-3);}
-.pu-foot{margin-top:6px;padding:6px 13px 0;border-top:1px solid var(--line);font-size:10.5px;color:var(--ink-3);}
+/* Usage Center breakdown: the desktop popover and the phone sheet share it. */
+.uc-menu{width:330px;max-width:calc(100vw - 24px);outline:none;}
+.uc-body{padding-bottom:4px;}
+.uc-agent{padding:4px 0 8px;border-bottom:1px solid var(--line);}
+.uc-agent:last-of-type{border-bottom:0;}
+.uc-agent-head{display:flex;align-items:center;gap:7px;padding:6px 13px 6px;}
+.uc-mark{display:inline-flex;align-items:center;}
+.uc-mark svg{width:13px;height:13px;}
+.uc-agent-name{font-size:13px;font-weight:600;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.uc-role{margin-left:auto;flex:0 0 auto;font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:1px 7px;}
+.uc-role.primary{color:var(--ink-2);border-color:var(--line-strong);}
+.uc-note{margin:2px 13px 8px;padding:7px 9px;border-radius:var(--r-sm);font-size:11.5px;line-height:1.4;}
+.uc-note.limit{background:var(--red-soft);color:var(--err);}
+.uc-note.warn{background:var(--amber-soft);color:var(--warn);}
+.uc-note.opportunity{background:var(--green-soft);color:var(--run);}
+.uc-note.scoped,.uc-note.muted{background:var(--surface-2);color:var(--ink-2);border:1px solid var(--line);}
+.uc-note-act{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;color:var(--ink-2);}
+.uc-meter{padding:5px 13px 7px;}
+.uc-meter.compact{padding:0;}
+.uc-meter-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;}
+.uc-meter-label{font-size:12px;font-weight:600;color:var(--ink);}
+.uc-meter-pct{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);white-space:nowrap;}
+/* The bar is 6px; the pace tick crosses it top to bottom and the projection
+   caret sits under it, so the two stay apart at any position. */
+.uc-track{position:relative;margin:5px 0 6px;}
+.uc-bar{height:6px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
+.uc-fill{height:100%;border-radius:999px;background:var(--accent);transition:width .4s ease;}
+.uc-pace{position:absolute;top:-3px;width:2px;height:12px;margin-left:-1px;border-radius:1px;background:var(--ink-2);}
+.uc-proj{position:absolute;top:8px;margin-left:-4px;width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-bottom:5px solid var(--ink-3);}
+.uc-proj.over{margin-left:-8px;border-bottom-color:var(--err);}
+.uc-meter.warn .uc-fill{background:var(--warn);}
+.uc-meter.warn .uc-meter-pct{color:var(--warn);}
+.uc-meter.limit .uc-fill{background:var(--err);}
+.uc-meter.limit .uc-meter-pct{color:var(--err);}
+.uc-meter-foot{display:flex;justify-content:space-between;gap:8px;font-size:10.5px;color:var(--ink-3);}
+.uc-over{color:var(--err);}
+.uc-more-rows{margin:0 13px;padding:4px 0;border:0;background:none;color:var(--accent);font-size:11.5px;cursor:pointer;font-family:var(--font-body);}
+.uc-agent-foot{padding:4px 13px 0;font-size:10.5px;color:var(--ink-3);}
+.uc-stale{color:var(--warn);}
+.uc-foot{display:flex;padding:8px 13px 4px;border-top:1px solid var(--line);}
+.uc-link{display:inline-flex;align-items:center;gap:6px;border:0;background:none;padding:2px 0;color:var(--ink-2);font-size:12px;cursor:pointer;font-family:var(--font-body);}
+.uc-link:hover{color:var(--ink);}
+.uc-link svg{width:13px;height:13px;}
+.uc-chip:focus-visible,.uc-link:focus-visible,.uc-more-rows:focus-visible,.uc-role-opt:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+/* The phone sheet, in Work Center's sheet language (.wc-sheet). */
+.uc-scrim{position:fixed;inset:0;background:rgba(3,8,11,.45);z-index:310;}
+.uc-sheet{position:fixed;left:0;right:0;bottom:0;max-height:min(80dvh,640px);overflow-y:auto;overscroll-behavior:contain;background:var(--panel);border-top:1px solid var(--line);border-radius:16px 16px 0 0;padding:8px 4px max(20px,env(safe-area-inset-bottom));z-index:311;outline:none;}
+.uc-grab{width:36px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 6px;}
+@media (max-width:760px){ .uc-link,.uc-more-rows,.uc-role-opt{min-height:44px;} }
+/* The usage-limit notice and the unstarted-task panel carry the binding window's meter. */
+.uc-limit-block{margin:10px 0 4px;padding:9px 11px;border-radius:var(--r-sm);background:var(--red-soft);max-width:420px;}
+/* The role row in Settings → Models. */
+.uc-role-row{display:flex;flex-direction:column;align-items:flex-start;gap:6px;}
+.uc-role-seg{display:inline-flex;gap:2px;border:1px solid var(--line);border-radius:99px;background:var(--surface-2);padding:2px;}
+.uc-role-opt{height:24px;padding:0 11px;border-radius:99px;font-size:12px;font-weight:600;color:var(--ink-2);background:transparent;border:none;cursor:pointer;}
+.uc-role-opt.on{background:var(--accent);color:var(--on-accent);}
 
 /* priority pill */
 .pri{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:2px 6px;border-radius:5px;flex:0 0 auto;line-height:1.35;}
@@ -2250,22 +2307,15 @@ button.tpeek-more:hover{color:var(--accent-ink);}
      the status bar / notch. */
   /* Flex, not the desktop's 1fr·auto·1fr grid: grid tracks let over-wide
      content in one column paint OVER the neighbor (the logo landed on top of
-     the plan-usage pill), where flex lays the two groups out sequentially.
+     the usage chip), where flex lays the two groups out sequentially.
      The center omni-search is desktop-only, so nothing needs the middle track.
      The wordmark goes too: the glyph carries the brand and the freed width is
-     what the usage pill + needs-you pill actually need. */
+     what the usage chip + needs-you pill actually need. */
   .app.mobile .titlebar{display:flex;justify-content:space-between;gap:10px;padding-top:env(safe-area-inset-top);height:calc(56px + env(safe-area-inset-top));padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env(safe-area-inset-right));}
   .app.mobile .tb-word{display:none;}
   .app.mobile .tb-logo svg{height:22px;width:auto;}
   .app.mobile .tb-left{flex:0 1 auto;}
   .app.mobile .tb-right{flex:0 1 auto;gap:8px;}
-  /* The plan-usage pill reads as two clean lines: "5h 65% (57m)" over
-     "wk 57%", instead of one cramped run with the divider dot orphaned
-     wherever the wrap happened to fall. The taller bar above is what gives
-     it (and the 34px needs-you pill) room. */
-  .app.mobile .plan-pill{height:auto;min-height:36px;padding:4px 11px;flex-wrap:wrap;justify-content:center;line-height:1.35;text-align:center;}
-  .app.mobile .plan-pill .pp-seg{flex:1 1 100%;white-space:nowrap;}
-  .app.mobile .plan-pill .pp-div{display:none;}
   /* Installed to the home screen, iOS 26 paints its own "scroll edge effect"
      (a progressive blur over the status-bar strip) on top of the page. Its fade
      reaches a little past env(safe-area-inset-top), so titlebar icons sitting
