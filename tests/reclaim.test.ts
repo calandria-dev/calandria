@@ -7,7 +7,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { GET as diffGET } from "../app/api/tasks/[id]/diff/route";
 import { GET, POST } from "../app/api/tasks/[id]/reclaim/route";
+import { mergeTask } from "../lib/git";
 import { ensureWorktree, unpushedCommits } from "../lib/git";
 import { getDb } from "../lib/db";
 import { landedVia, maybeAutoReclaim, reclaimPreview, reclaimTask } from "../lib/reclaim";
@@ -497,5 +499,51 @@ describe("reclaiming against a base branch with no local ref", () => {
     expect(res.baseError).toContain("gone");
     expect(fs.existsSync(wt.path)).toBe(false);
     expect(await branchExists(repo, wt.branch)).toBe(false);
+  });
+});
+
+describe("empty task branch", () => {
+  async function emptyTask() {
+    const repo = await makeRepo();
+    const project = createProject({ name: `empty-${Math.random()}`, repo_path: repo, branch: "main" });
+    updateProject(project.id, { auto_reclaim: 1 });
+    const task = createTask({ project_id: project.id, title: "no commits" });
+    const wt = await ensureWorktree(repo, task.id, "main");
+    if (!wt) throw new Error("worktree fixture failed");
+    updateTask(task.id, {
+      status: "in_progress",
+      started: 1,
+      worktree_path: wt.path,
+      work_branch: wt.branch,
+      base_sha: wt.baseSha,
+    });
+    return { repo, task, wt };
+  }
+  const view = (id: string) => diffGET(new Request("http://x"), { params: Promise.resolve({ id }) });
+
+  it("viewing the diff does not stamp merged_at, and auto-reclaim leaves it alone", async () => {
+    const { task, wt } = await emptyTask();
+    await view(task.id);
+    expect(getTask(task.id)!.merged_at).toBeFalsy();
+
+    maybeAutoReclaim(task.id);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(fs.existsSync(wt.path)).toBe(true);
+    expect(getTask(task.id)!.worktree_path).not.toBe("");
+  });
+
+  it("still stamps merged_at once the branch's commits are fast-forwarded into base", async () => {
+    const { repo, task, wt } = await emptyTask();
+    await commitFile(wt.path, "done.txt", "done\n", "task commit");
+    const merged = await mergeTask({
+      repoPath: repo,
+      worktreePath: wt.path,
+      workBranch: wt.branch,
+      baseBranch: "main",
+      message: "land task",
+    });
+    expect(merged.ok).toBe(true);
+    await view(task.id);
+    expect(getTask(task.id)!.merged_at).toBeGreaterThan(0);
   });
 });
