@@ -22,8 +22,8 @@ describe("taskDiff", () => {
     expect(diff.files).toEqual([]);
     expect(diff.isDirty).toBe(false);
     expect(diff.ahead).toBe(0);
-    // HEAD == main tip, so technically already reachable from main.
-    expect(diff.alreadyMerged).toBe(true);
+    // HEAD is the cut point: reachable from main, but nothing was merged.
+    expect(diff.alreadyMerged).toBe(false);
   });
 
   it("captures modified, deleted and untracked files with stats and patches", async () => {
