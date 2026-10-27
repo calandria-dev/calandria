@@ -24,6 +24,22 @@ test.beforeAll(async ({ request }) => {
 const listRow = (page: import("@playwright/test").Page, title: string) =>
   page.locator(".ttitle").filter({ hasText: title });
 
+// A fresh profile (no calandria_ui_v1) must hydrate cleanly: any browser-only
+// read in the first client render shows up as React error #418 on a pageerror.
+for (const [label, viewport, scheme] of [["desktop", { width: 1440, height: 900 }, "dark"], ["phone", { width: 390, height: 844 }, "light"]] as const) {
+  test(`first load without saved prefs hydrates cleanly (${label}, ${scheme} OS)`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.setViewportSize(viewport);
+    // The default "system" mode resolves against the OS scheme, which the server can't see.
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto("/");
+    await expect(page.locator(".ttitle, .pill, button").first()).toBeVisible();
+    await page.waitForTimeout(1000); // hydration errors surface right after first paint
+    expect(errors).toEqual([]);
+  });
+}
+
 test("list view shows every task grouped by status", async ({ page }) => {
   await gotoApp(page);
   await page.getByText(PROJECT).first().click();
