@@ -218,6 +218,51 @@ describe("codex app-server transport", () => {
     expect(evs.filter((e) => e.type === "notice" && e.content.includes("fake warning"))).toHaveLength(1);
   });
 
+  it("keeps the running command and its output when the provider retries a 503", async () => {
+    process.env.FAKE_CODEX_SCENARIO = "providerRetry";
+    const { project, task } = fixture("default");
+    const evs = await turn(task, project, { answer: ["allow_once"] });
+
+    const providerNotices = evs.filter((e) => e.type === "notice" && e.content.startsWith("Codex provider temporarily unavailable (HTTP 503)."));
+    expect(providerNotices).toHaveLength(1);
+    expect((providerNotices[0] as Ev<"notice">).content).toContain("Codex is retrying in the current session.");
+    expect(evs.some((e) => e.type === "error")).toBe(false);
+    expect(evs.some((e) => e.type === "notice" && e.content.includes("These commands had no recorded completion"))).toBe(false);
+    expect(evs.filter((e) => e.type === "session")).toHaveLength(1);
+    expect(readLog().filter((l) => l.method === "thread/start")).toHaveLength(1);
+    expect(readLog().filter((l) => l.method === "turn/start")).toHaveLength(1);
+
+    const commands = evs.filter((e) => e.type === "tool" && e.id === "item-cmd");
+    expect(commands).toHaveLength(1);
+    const result = evs.find((e) => e.type === "tool_result" && e.id === "item-cmd") as Ev<"tool_result">;
+    expect(result.isError).toBe(false);
+    expect(result.content).toContain('decision="accept"');
+    expect(evs.filter((e) => e.type === "tool_output_delta" && e.id === "item-cmd").map((e) => (e as Ev<"tool_output_delta">).delta).join(""))
+      .toBe("step 1\nstep 2 café\n");
+  });
+
+  it("fails once on a terminal provider 503 and retains structured diagnostics", async () => {
+    process.env.FAKE_CODEX_SCENARIO = "providerFailure";
+    const { project, task } = fixture("default");
+    const evs = await turn(task, project, { answer: ["allow_once"] });
+
+    const errors = evs.filter((e) => e.type === "error") as Ev<"error">[];
+    expect(errors).toHaveLength(1);
+    expect(errors[0].content).toContain("Codex provider temporarily unavailable (HTTP 503).");
+    expect(errors[0].content).toContain("req-calandria-503");
+    expect(errors[0].content).toContain("upstream verification service unavailable");
+    expect(evs.filter((e) => e.type === "session")).toHaveLength(1);
+    expect(readLog().filter((l) => l.method === "thread/start")).toHaveLength(1);
+    expect(readLog().filter((l) => l.method === "turn/start")).toHaveLength(1);
+    expect(evs.filter((e) => e.type === "tool" && e.id === "item-cmd")).toHaveLength(1);
+    const uncertain = evs.find((e) => e.type === "notice" && e.content.includes("These commands had no recorded completion"));
+    expect(uncertain?.type).toBe("notice");
+    expect((uncertain as Ev<"notice">).content).toContain("npm test");
+    expect((uncertain as Ev<"notice">).content).toContain("step 1");
+    expect((uncertain as Ev<"notice">).content).toContain("step 2 café");
+    expect(evs.some((e) => e.type === "tool_result" && e.id === "item-cmd")).toBe(false);
+  });
+
   it("a resolved advanced-settings snapshot overrides the approval policy for a never-asking mode", async () => {
     // acceptEdits never asks by default (CODEX_APPROVAL_POLICY defaults to
     // "never"); a saved CODEX_APPROVAL_POLICY agent-scope row must reach this

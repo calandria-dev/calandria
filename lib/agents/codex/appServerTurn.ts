@@ -18,7 +18,7 @@ import type { ModelReasoningEffort } from "@openai/codex-sdk";
 import type { Project, Task, StreamEvent, AskQuestion, PermissionOutcome } from "../../types";
 import { AppServerClient, flattenConfigOverrides, type ConfigObject } from "./appServerClient";
 import { mapNotification, newAppServerTurnState, diffLinesOf, unwrapShellCommand, type V2Item } from "./appServerEvents";
-import { mapThreadEvent, type CodexMapState } from "./events";
+import { mapThreadEvent, mapCodexError, rememberCommandOutput, type CodexMapState } from "./events";
 import { makeQueue } from "../shared";
 import { promptPermission, type PromptDecision } from "../../permissionPrompt";
 import { ingestRateLimits } from "./planUsage";
@@ -97,6 +97,7 @@ export async function* runAppServerTurn(args: AppServerTurnArgs): AsyncGenerator
     if (method === "account/rateLimits/updated") ingestRateLimits(params);
     const mapped = mapNotification(method, params, tstate, args.codex?.hookTrace);
     for (const ev of mapped.events) for (const out of mapThreadEvent(ev, state)) push(out);
+    if (mapped.retryError) for (const out of mapCodexError(mapped.retryError, state, true)) push(out);
     // Live typing, straight onto the queue: the runner publishes it without
     // persisting, so it costs the transcript nothing and reaches whoever has
     // the task open right now (../../types.ts, StreamEvent.assistant_delta).
@@ -104,7 +105,10 @@ export async function* runAppServerTurn(args: AppServerTurnArgs): AsyncGenerator
     // The same deal for a running command's output, except that it reaches
     // INTO the tool row `item/started` already produced and grows its peek
     // (../../types.ts, StreamEvent.tool_output_delta).
-    if (mapped.outputDelta) push({ type: "tool_output_delta", id: mapped.outputDelta.id, delta: mapped.outputDelta.text });
+    if (mapped.outputDelta) {
+      rememberCommandOutput(state, mapped.outputDelta.id, mapped.outputDelta.text);
+      push({ type: "tool_output_delta", id: mapped.outputDelta.id, delta: mapped.outputDelta.text });
+    }
     if (mapped.contextTokens != null) push({ type: "context", tokens: mapped.contextTokens });
     if (mapped.notice) push({ type: "notice", content: mapped.notice });
     if (mapped.warning) args.onWarning?.(mapped.warning);
@@ -127,7 +131,7 @@ export async function* runAppServerTurn(args: AppServerTurnArgs): AsyncGenerator
     onExit: ({ stderrTail }) => {
       if (ended) return;
       ended = true;
-      if (!abort?.signal.aborted) push({ type: "error", content: stderrTail ? `codex app-server exited: ${stderrTail}` : "codex app-server exited before the turn finished" });
+      if (!abort?.signal.aborted) for (const out of mapCodexError(stderrTail ? `codex app-server exited: ${stderrTail}` : "codex app-server exited before the turn finished", state)) push(out);
       queue.close();
     },
   });
@@ -357,7 +361,7 @@ export async function* runAppServerTurn(args: AppServerTurnArgs): AsyncGenerator
 
     for await (const ev of queue.drain()) yield ev;
   } catch (err) {
-    if (!abort?.signal.aborted) push({ type: "error", content: messageOf(err) });
+    if (!abort?.signal.aborted) for (const out of mapCodexError(err, state)) push(out);
     ended = true;
     queue.close();
     for await (const ev of queue.drain()) yield ev;

@@ -30,6 +30,7 @@ import { isCodexPreDispatchToolCutoff, toolCutoffNotice } from "../../agentToolG
 import { logAgentToolCutoff } from "../../agentToolLog";
 import { DEFAULT_CODEX_MODEL } from "./pricing";
 import { codexUsage } from "./usage";
+import { codexProviderError } from "./providerErrors";
 
 // Codex's raw cumulative token counters for a thread, exactly as `turn.completed`
 // reports them. Persisted per thread (sessions.usage_cum) so the next turn can
@@ -58,10 +59,43 @@ export interface CodexMapState {
   taskId?: string;
   /** Completed Calandria MCP calls Codex rejected before bridge dispatch. */
   toolCutoffs: number;
+  /** Errors already surfaced in this turn, keyed by provider request id when available. */
+  reportedErrors: Set<string>;
+  /** Commands without a completion event; retain their last output on provider failure. */
+  activeCommands: Map<string, { command: string; output: string }>;
 }
 
 export function newState(model: string = DEFAULT_CODEX_MODEL, cum: CodexCum = ZERO_CUM, taskId?: string): CodexMapState {
-  return { emittedTool: new Set<string>(), model, cum, cumDirty: false, taskId, toolCutoffs: 0 };
+  return {
+    emittedTool: new Set<string>(), model, cum, cumDirty: false, taskId,
+    toolCutoffs: 0, reportedErrors: new Set(), activeCommands: new Map(),
+  };
+}
+
+/** Retry notices keep the CLI, item ids and command tracking in the current turn intact. */
+export function mapCodexError(error: unknown, state: CodexMapState, retrying = false): StreamEvent[] {
+  const provider = codexProviderError(error);
+  if (retrying && !provider.unavailable) return [];
+  const key = `${retrying ? "retry" : "error"}:${provider.requestId ?? provider.message}`;
+  if (state.reportedErrors.has(key)) return [];
+  state.reportedErrors.add(key);
+  if (retrying) return [{
+    type: "notice",
+    content: `${provider.message}\n\nCodex is retrying in the current session. Calandria is keeping its command tracking intact.`,
+  }];
+  const events: StreamEvent[] = [{ type: "error", content: provider.message, ...(provider.unavailable ? { providerUnavailable: true } : {}) }];
+  if (provider.unavailable && state.activeCommands.size) {
+    const commands = [...state.activeCommands].map(([id, c]) =>
+      `Command ${id}: ${c.command}${c.output ? `\nLast observed output:\n${c.output}` : ""}`,
+    ).join("\n\n");
+    events.push({ type: "notice", content: `These commands had no recorded completion when the provider failed. Their status is unconfirmed. Check the existing processes before resuming and avoid starting a second copy.\n\n${commands}` });
+  }
+  return events;
+}
+
+export function rememberCommandOutput(state: CodexMapState, id: string, delta: string): void {
+  const command = state.activeCommands.get(id);
+  if (command) command.output = (command.output + delta).slice(-6000);
 }
 
 const ITEM_PHASES = new Set(["item.started", "item.updated", "item.completed"]);
@@ -118,10 +152,10 @@ export function mapThreadEvent(ev: ThreadEvent, state: CodexMapState): StreamEve
     case "turn.failed":
       // A model/turn failure (distinct from a Stop, which kills the process and
       // never reaches here; see the driver's abort handling).
-      return [{ type: "error", content: ev.error.message }];
+      return mapCodexError(ev.error, state);
     case "error":
       // A fatal, unrecoverable stream error.
-      return [{ type: "error", content: ev.message }];
+      return mapCodexError(ev, state);
     default:
       if (ITEM_PHASES.has(ev.type)) {
         const phase = ev.type.slice("item.".length) as ItemPhase;
@@ -157,7 +191,7 @@ function mapItem(phase: ItemPhase, item: ThreadItem, state: CodexMapState): Stre
       return mapTodo(phase, item, state);
     case "error":
       // A non-fatal error surfaced as an item.
-      return [{ type: "error", content: item.message }];
+      return mapCodexError(item.message, state);
     default:
       return [];
   }
@@ -183,6 +217,14 @@ const nonEmpty = (ev: StreamEvent): boolean => !(ev.type === "notice" && ev.cont
 
 function mapCommand(phase: ItemPhase, item: CommandExecutionItem, state: CodexMapState): StreamEvent[] {
   const out: StreamEvent[] = [];
+  if (phase === "completed") state.activeCommands.delete(item.id);
+  else {
+    const previous = state.activeCommands.get(item.id);
+    state.activeCommands.set(item.id, {
+      command: item.command,
+      output: item.aggregated_output ? item.aggregated_output.slice(-6000) : previous?.output ?? "",
+    });
+  }
   const tool = toolOnce(state, item.id, { title: `❯ ${firstLine(item.command)}`, detail: clip(item.command) });
   if (nonEmpty(tool)) out.push(tool);
   if (phase === "completed") {

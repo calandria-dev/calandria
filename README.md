@@ -280,6 +280,11 @@ host that blocks the user namespaces Codex's sandbox needs, Settings →
 Models displays the fix when you connect the Codex environment. Calandria blocks the sandboxed
 modes instead of running turns whose every command fails.
 
+Codex provider HTTP 503 failures show as temporary upstream outages, with the provider's
+diagnostics and request ID. Codex retries stay in the current session and retain command
+tracking. If a failure ends the turn, check any command listed with an unconfirmed status
+before resuming the same task. Calandria keeps the session, worktree and queued messages.
+
 Choose **Effort** in the New task or Edit task dialog to override the environment's
 default for that task. The picker offers the same levels as the session controls.
 Agents can select a level when calling `suggest_task` with `reasoning`.
