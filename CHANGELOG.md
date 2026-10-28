@@ -8,6 +8,30 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.26.0](https://github.com/calandria-dev/calandria/compare/v0.25.0...v0.26.0) (2026-10-28)
+
+
+### Features
+
+* **usage:** match the Usage Center design return ([#609](https://github.com/calandria-dev/calandria/issues/609)) ([341f2ca](https://github.com/calandria-dev/calandria/commit/341f2ca3463bbf11646793926fe8c7757eb17b11))
+
+
+### Bug Fixes
+
+* **agent-tools:** refuse update_task status=done on another task with an unread clean scheduled run ([#598](https://github.com/calandria-dev/calandria/issues/598)) ([3450a9a](https://github.com/calandria-dev/calandria/commit/3450a9ae33dd7ac7368ae5e519b9d734b10ce7b9))
+* **codex:** handle provider 503 errors and preserve running command context ([#491](https://github.com/calandria-dev/calandria/issues/491)) ([#600](https://github.com/calandria-dev/calandria/issues/600)) ([9d9916b](https://github.com/calandria-dev/calandria/commit/9d9916b0d1e9a7c841206d717c78832d77f3f9f1))
+* **git:** guard task PRs against inherited local base work ([#604](https://github.com/calandria-dev/calandria/issues/604)) ([0de1616](https://github.com/calandria-dev/calandria/commit/0de16167b3ebdc248147bb0cf142c4c2c584ed1f))
+* **git:** stop treating a zero-commit task branch as already merged ([#597](https://github.com/calandria-dev/calandria/issues/597)) ([287f1f0](https://github.com/calandria-dev/calandria/commit/287f1f071b018da7d839d58e1be494df77ef1fb1))
+* **reclaim:** refuse to tear down a checkout this server can't delete ([#608](https://github.com/calandria-dev/calandria/issues/608)) ([d549016](https://github.com/calandria-dev/calandria/commit/d549016a8fadfe9f0aa8f2fc3f6324e7bd106fcd))
+* **shell:** read the OS color scheme through useSyncExternalStore ([#599](https://github.com/calandria-dev/calandria/issues/599)) ([a14de36](https://github.com/calandria-dev/calandria/commit/a14de368d0eaecec51aa9b92d29d830dadf5d0ef))
+* **test:** run Docker tests as the host user so reclaim can delete worktrees ([#606](https://github.com/calandria-dev/calandria/issues/606)) ([e436d30](https://github.com/calandria-dev/calandria/commit/e436d3021bde4862b2552b704b7bafa449dcfb54))
+
+
+### Dependencies
+
+* **deps:** refresh agent CLI pins ([#607](https://github.com/calandria-dev/calandria/issues/607)) ([7845bee](https://github.com/calandria-dev/calandria/commit/7845bee5390fcdc342a8d83821f882d5cb445741))
+* **docker:** bump pinned gh CLI to 2.103.3 ([#592](https://github.com/calandria-dev/calandria/issues/592)) ([#603](https://github.com/calandria-dev/calandria/issues/603)) ([b1855d1](https://github.com/calandria-dev/calandria/commit/b1855d1d1eb631ca52369f67f4453158df8fa7b7))
+
 ## [0.25.0](https://github.com/calandria-dev/calandria/compare/v0.24.1...v0.25.0) (2026-10-27)
 
 
