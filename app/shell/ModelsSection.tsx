@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { EnvMark, ProviderMark } from "../icons";
 import { jget, jsend } from "./api";
 import { Modal } from "./Modal";
@@ -8,6 +8,7 @@ import { AgentConnect } from "./AgentConnect";
 import { LoadNote } from "./shared";
 import { ProviderModal, EnvDots, StatusChip, providerTypeLine, envLabel } from "./ProviderModal";
 import { invalidateModelPickerData } from "./ModelPicker";
+import { GATEWAY_PLAN_ID } from "@/lib/types";
 import type { AgentInfoT, AgentsResponseT, PresentedProviderT, DetectedProviderT, ProviderType } from "./types";
 
 function envStatusChip(status: "connected" | "installed" | "absent") {
@@ -99,9 +100,16 @@ function DetectedRow({ server, agents, onDismiss, onAdd }: {
 // environment brought in by signing in. Replaces the old Settings → Agents
 // section (AgentsSection): the local-endpoint status line and the LiteLLM gateway
 // health card are gone, folded into a provider row and its detail modal.
-export function ModelsSection({ appDefaults, setAppDefault, onChanged }: {
+export function ModelsSection({ appDefaults, setAppDefault, onChanged, initialAgent }: {
   appDefaults: Record<string, string>;
   setAppDefault: (key: string, value: string | null) => void;
+  /**
+   * An agent (or GATEWAY_PLAN_ID) whose provider page opens once the lists
+   * load: the bundled provider's detail, on its Connection tab, or the sign-in
+   * dialog when the agent has no bundled row yet. The gateway opens the LiteLLM
+   * provider.
+   */
+  initialAgent?: string;
   /** Tells the shell-level agents bundle (titlebar, task pickers) to refetch too. */
   onChanged?: () => void;
 }) {
@@ -123,6 +131,21 @@ export function ModelsSection({ appDefaults, setAppDefault, onChanged }: {
     onChanged?.();
   };
   useEffect(() => { reload(); }, []);
+  const arrived = useRef(false);
+  useEffect(() => {
+    if (arrived.current || !initialAgent || agents == null || providers == null) return;
+    arrived.current = true;
+    if (initialAgent === GATEWAY_PLAN_ID) {
+      const gw = providers.find((p) => p.type === "litellm");
+      if (gw) setModal({ providerId: gw.id });
+      return;
+    }
+    const agent = agents.find((a) => a.id === initialAgent);
+    if (!agent) return;
+    const bundled = agent.providers.find((p) => p.type === agent.bundledProvider);
+    if (bundled) setModal({ providerId: bundled.id });
+    else setSignIn(agent);
+  }, [initialAgent, agents, providers]);
   // The environments/providers lists keep their own fetch of GET /api/agents
   // (the shared AgentsBundle SettingsView already has drops the fields
   // AgentConnect needs), so a shell-level agent_auth refresh can't reach them

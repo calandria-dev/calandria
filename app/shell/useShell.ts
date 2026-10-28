@@ -612,6 +612,11 @@ export function useShell() {
 
   // ---------- actions ----------
   const selectProject = (id: string) => { setSelProj(id); setSelTask(null); setView("workspace"); };
+  // The project list: the workspace's first column on desktop, its own pane on a phone (no project selected).
+  const showProjectList = () => {
+    if (window.matchMedia("(max-width: 760px)").matches) { setSelProj(null); setSelTask(null); }
+    setView("workspace");
+  };
 
   // Jump straight to a specific task in any project: the Work Center's row
   // action and a notification click. Setting selProj fires the load-tasks effect with selectFirst=false
@@ -1112,7 +1117,7 @@ export function useShell() {
     servicesOpen, setServicesOpen, servicesMounted, setServicesMounted, servicesHeight, setServicesHeight,
     // actions
     projectHome, setSelTask, showProjectHome, setProjectHome, goBack, fetchRecap, runTurn, answerQuestion, decidePermission, stopTurn, cancelQueued, resolveConflictsWithAI, fixCi,
-    selectProject, goToTask, navEpoch, clearSession, setStatus, setPriority, setModel, snoozeTask, unsnoozeTask, ackRun, queueStart, cancelQueuedStart,
+    selectProject, showProjectList, goToTask, navEpoch, clearSession, setStatus, setPriority, setModel, snoozeTask, unsnoozeTask, ackRun, queueStart, cancelQueuedStart,
     setReasoning, setPermission, setSandbox, setSendContext, setAutoStart, createTask, createTag, tagTasks, runRunbook, saveTask, removeTask, moveTask, moveTaskToProject, moveTasksToProject, startSuggestion, acceptSuggestion,
     dismissSuggestion, saveContext, createProject, reorderProjects, removeProject, setDeprecated,
     resetSettings, setProjectDefaultAgent,

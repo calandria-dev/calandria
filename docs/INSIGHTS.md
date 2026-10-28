@@ -160,13 +160,21 @@ On a Claude Pro/Max, ChatGPT, or Antigravity subscription login, the titlebar sh
 for every metered agent. If your LiteLLM gateway key has a budget configured, the gateway's
 spend-to-budget ratio is part of the same chip.
 
-The chip has two states:
+The chip has these states:
 
 - **Calm:** a small ring and no text. The ring fills to the session (5-hour) utilization of your
   primary agent, or of the busiest primary agent when you have several. With no primary agent, it
   follows the busiest session window of any agent.
-- **Signal:** the ring plus one line of text about the most pressing notice. A `+N` count means
-  more notices wait in the breakdown.
+- **Signal:** the ring plus one line of text about the most pressing notice. A dimmed `+N` count
+  means more notices wait in the breakdown.
+- **Stale:** an agent's last read failed. The border and ring are dashed. With no signal, the chip
+  reads `stale 47m` (`stale · 47m` when only some agents are stale), the time since the oldest
+  stale read. With a signal, the chip keeps the signal text.
+- **Unavailable:** every shown agent's usage can't be read. The chip shows a hollow ring and the
+  word `unavailable`. When only some agents are unreadable, the chip ignores them and their
+  sections in the breakdown say why.
+
+No chip renders when no shown agent reports anything, not even a reason it can't be read.
 
 Five signals exist, in this order of precedence:
 
@@ -174,28 +182,49 @@ Five signals exist, in this order of precedence:
 |-|-|-|-|
 | At limit | A limit is in force, or a window is at 100% | Every agent | Red |
 | On pace to cap | A weekly window's linear projection reaches 100% before its reset, after the first day of the week | Every agent | Amber |
-| Near limit | A window is at 80% or more (red from 95%) | Every agent | Amber |
+| Near limit | A window, including a gateway budget, is at 80% or more (red from 95%) | Every agent | Amber |
 | Session underused | The session window resets within 60 minutes with 50% or more unused | Primary agents | Green |
-| Week underused | The weekly window resets within 36 hours with 30% or more unused | Primary agents | Green |
+| Week underused | Any weekly window, per-model weeks included, resets within 36 hours with 30% or more unused | Primary agents | Green |
 
 When several fire at once, the lower row wins, then a primary agent over an occasional one, then
-the soonest reset. With one agent shown, the chip leaves out the agent name. The chip stays on one
-line at every width: the agent name truncates first, then the message. On the phone it shows the
-message only, without the agent name or the `+N` count. Stale data adds a dashed
-outline and the word "stale", so it never reads as calm. The chip's accessible name states the full
-state in words.
+the soonest reset. When several weekly windows are underused, the chip reports the one that resets
+first, and a tie goes to the all-models week. With one agent shown, the chip leaves out the agent
+name.
+
+The chip stays on one line at every width and never cuts a word. Its widest size is 240px on
+desktop, 180px between 761 and 900px, 110px on the phone and 64px at 360px. It measures the text in
+its own font, so a different mono face in Appearance re-measures, and uses the first of these that
+fits:
+
+1. the full text, such as `Claude limit · 18m`;
+2. the text without the reset suffix;
+3. the text without the agent name;
+4. the text without both;
+5. the ring alone, in its tone.
+
+The `+N` count stays at every step. The stale label follows the same ladder: `stale · 47m`, then
+`stale`, then the ring alone. At 360px the chip is the ring and `+N`. The chip's title and
+accessible name always state the full state in words.
 
 Click the chip for the breakdown: a popover on desktop, a bottom sheet on the phone. Each agent gets
 a section with its plan, its role, its notices, and one meter per window with the reset time. A
 window with a known length and reset carries two markers:
 
 - a **pace tick** across the bar at the utilization an even spread would show now;
-- a **projection caret** under the bar at the utilization the current rate reaches by the reset.
-  A projection past 100% pins the caret to the end of the bar in red and states the number.
+- a **projection marker**, an 8px hollow circle, at the utilization the current rate reaches by the
+  reset. A projection past 100% shrinks the bar to `100 / projection` of its width (the projection
+  is capped at 160%) and draws a dashed tail from the bar's end to the marker.
 
-Per-model weeks and extra model groups fold behind a "more windows" toggle unless one of them is
-worth a glance. When the open task is waiting on the at-limit agent, its note offers **Resume when
-the limit resets**. The usage-limit notice in a transcript and the unstarted-task panel show the
+Bars are 6px in the popover and 8px on the phone sheet. A stale agent's bars are hatched, and the
+footer names the stale agents and the reason. Each section always shows the session window, the
+first weekly window and a gateway budget. Per-model weeks and extra model groups fold behind a
+"Show N more windows" row that lists their percentages; a folded window that carries a notice
+unfolds the group. An unreadable agent's section states the reason and offers **Sign in**. When the
+open task is waiting on the at-limit agent, its note offers **Resume when the limit resets**.
+
+The gear in each section header, **Sign in**, and the footer's **Usage settings** open that agent's
+bundled provider page in Settings → Models, on its Connection tab. The gateway's gear opens the
+LiteLLM provider. When the agent has no bundled provider yet, the sign-in dialog opens instead. The usage-limit notice in a transcript and the unstarted-task panel show the
 binding window's meter while a limit is reached.
 
 ### Primary and occasional
@@ -228,7 +257,7 @@ If every project redirects an agent, it leaves the chip entirely: every percenta
 describe turns the instance never runs, and the per-task "resume when your usage window resets"
 offer goes with it, since it reads the same snapshot. If only some projects redirect the agent,
 its section keeps its numbers, which stay true about the plan, and adds a line naming how many
-projects point the agent elsewhere. If no project redirects the agent, the meter is
+projects point the agent elsewhere. Its **Which** link opens the project list. If no project redirects the agent, the meter is
 unchanged. Settings → Agents shows the same split as a line under the connected account, so
 Settings and the meter never disagree; the login itself still reports as connected and Reconnect
 still works, since a project override doesn't invalidate your credentials. A gateway endpoint
