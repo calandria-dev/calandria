@@ -86,15 +86,47 @@ export function rmTree(target: string): void {
 export function heldHandleHint(dir?: string): string {
   if (isWindows())
     return ". On Windows a file can't be deleted while it's open; a terminal or editor still has this checkout open";
-  const foreign = dir ? foreignOwnedEntry(dir) : null;
-  if (!foreign) return "";
-  return `. ${foreign.path} is owned by uid ${foreign.uid}, so this server can't delete it. A container that ran as root in this checkout usually leaves files like this; delete the directory as that user, then retry`;
+  const entry = dir ? undeletableEntry(dir) : null;
+  return entry ? `. ${undeletableReason(entry)}` : "";
 }
 
-// Breadth-first, so the reported entry is the topmost foreign-owned one: the
-// directory whose ownership blocks everything beneath it. Bounded, since this
-// only decorates an error message.
-function foreignOwnedEntry(dir: string, limit = 2000): { path: string; uid: number } | null {
+/** An entry under a directory that this process can't delete. */
+export interface UndeletableEntry {
+  path: string;
+  /** `owner`: another user owns it. `parent`: its directory isn't writable by this process. */
+  kind: "owner" | "parent";
+  uid: number;
+}
+
+/** One user-facing sentence naming the entry and how to clear it. */
+export function undeletableReason(entry: UndeletableEntry): string {
+  if (entry.kind === "owner")
+    return `${entry.path} is owned by uid ${entry.uid}, so this server can't delete it. A container that ran as root in this checkout usually leaves files like this; delete the directory as that user, then retry`;
+  return `${entry.path} is not writable by this server, so it can't delete what that directory contains. Restore write permission on it or delete the directory as uid ${entry.uid}, then retry`;
+}
+
+/**
+ * Why this process can't delete the tree at `dir`, as one sentence, or null
+ * when nothing blocks it or `dir` doesn't exist. `git worktree remove --force`
+ * deletes `.git` and every file it can before failing on the rest, so callers
+ * run this first and delete nothing when it answers.
+ */
+export function undeletableTreeReason(dir: string): string | null {
+  if (!dir || !fs.existsSync(dir)) return null;
+  const entry = undeletableEntry(dir);
+  return entry ? `the worktree can't be removed: ${undeletableReason(entry)}` : null;
+}
+
+/**
+ * The topmost entry under `dir` that a recursive delete by this process would
+ * fail on, or null when none is found. Two causes count: an entry another user
+ * owns, and a non-empty directory this process can't write into.
+ *
+ * Breadth-first, so the reported entry is the one whose ownership or mode
+ * blocks everything beneath it. Bounded by `limit` entries. POSIX only: null
+ * on win32 and for root.
+ */
+export function undeletableEntry(dir: string, limit = 2000): UndeletableEntry | null {
   const uid = process.getuid?.();
   if (uid === undefined || uid === 0) return null;
   const queue = [dir];
@@ -107,6 +139,15 @@ function foreignOwnedEntry(dir: string, limit = 2000): { path: string; uid: numb
     } catch {
       continue;
     }
+    if (entries.length && !writable(current)) {
+      let owner = uid;
+      try {
+        owner = fs.statSync(current).uid;
+      } catch {
+        // Keep our own uid; the path is still the one to name.
+      }
+      return { path: current, kind: "parent", uid: owner };
+    }
     for (const entry of entries) {
       if (++seen > limit) break;
       const p = path.join(current, entry.name);
@@ -116,9 +157,19 @@ function foreignOwnedEntry(dir: string, limit = 2000): { path: string; uid: numb
       } catch {
         continue;
       }
-      if (owner !== uid) return { path: p, uid: owner };
+      if (owner !== uid) return { path: p, kind: "owner", uid: owner };
       if (entry.isDirectory()) queue.push(p);
     }
   }
   return null;
+}
+
+// Unlinking a child needs write and search permission on its directory.
+function writable(dir: string): boolean {
+  try {
+    fs.accessSync(dir, fs.constants.W_OK | fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }

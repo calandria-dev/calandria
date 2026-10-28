@@ -19,7 +19,7 @@ import { taskHasPendingOperation } from "./reviews/store";
 import { resolveBaseBranch } from "./baseBranch";
 import { withTaskLocks } from "./taskLock";
 import { withRepoLock } from "./repoLock";
-import { heldHandleHint } from "./paths";
+import { heldHandleHint, undeletableTreeReason } from "./paths";
 import { hasTurn } from "./abort";
 import { publishGlobal } from "./events";
 
@@ -244,6 +244,8 @@ async function discardCheckout(
     const review = await taskReviewBlocker(id);
     if (review && !opts.discardUnsafe) return { reason: `${UNSAFE_DISCARD_REASON}: ${reviewDiscardReason(review.reason)}` };
     if (review && !opts.reviewActor) return { reason: "human_required: a person has to waive this review from the browser" };
+    const blocked = undeletableTreeReason(task.worktree_path);
+    if (blocked) return { reason: blocked };
 
     await removeWorktree(project.repo_path, task.worktree_path, task.work_branch);
     // removeWorktree is best-effort and never throws, and a surviving directory

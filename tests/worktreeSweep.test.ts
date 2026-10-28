@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { getDb } from "@/lib/db";
 import { createProject, createTask, getTask, updateTask } from "@/lib/store";
 import { ensureWorktree } from "@/lib/git";
@@ -8,6 +8,7 @@ import { registerTurn, unregisterTurn } from "@/lib/abort";
 import { sweepWorktrees } from "@/lib/worktreeSweep";
 import { taskUploadsDir } from "@/lib/uploads";
 import { commitFile, git, makeRepo, writeFile } from "./helpers";
+import { onPosix } from "./platform";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -125,6 +126,29 @@ describe("scheduled worktree sweep", () => {
       { taskId, reason: "the worktree has unsaved work: uncommitted changes not saved to any branch" },
     ]);
     expect(fs.existsSync(wt.path)).toBe(true);
+    expect(getTask(taskId)?.worktree_path).toBe(wt.path);
+  });
+
+  // A root-owned `.next/` from a container run: `git worktree remove --force`
+  // would delete `.git` and everything this server owns before failing.
+  // Faking our own uid makes every entry read as foreign without needing root.
+  onPosix("skips a checkout this server can't delete, before deleting any of it", async () => {
+    const { taskId, wt } = await coldTask();
+    fs.mkdirSync(path.join(wt.path, ".next"));
+    const spy = vi.spyOn(process, "getuid").mockReturnValue(fs.statSync(wt.path).uid + 1);
+    let result;
+    try {
+      result = await sweep(taskId);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(result.reclaimed).toEqual([]);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0].reason).toMatch(/can't be removed: .* is owned by uid/);
+    expect(fs.existsSync(path.join(wt.path, ".git"))).toBe(true);
+    // Still a working checkout git knows about.
+    await expect(git(wt.path, "rev-parse", "--is-inside-work-tree")).resolves.toBe("true");
     expect(getTask(taskId)?.worktree_path).toBe(wt.path);
   });
 

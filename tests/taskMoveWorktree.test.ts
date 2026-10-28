@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { GET as previewRoute, POST as moveRoute } from "@/app/api/tasks/[id]/move/route";
 import {
   addUsage,
@@ -18,6 +18,7 @@ import { claimTurn, unregisterTurn } from "@/lib/abort";
 import { getDb } from "@/lib/db";
 import { commitFile, git, makeRepo, writeFile } from "./helpers";
 import { canonicalPath } from "@/lib/paths";
+import { onPosix } from "./platform";
 
 // Pins moving a task that has already run.
 //
@@ -118,6 +119,27 @@ describe("moving a started task by discarding its worktree", () => {
     // Reported, so the caller can say what it cost instead of leaving the user
     // to notice.
     expect(body.discarded).toMatchObject({ id: task.id, branch: wt.branch, dirty: false, ahead: 0 });
+  });
+
+  // A root-owned .next/ from a container run would leave `git worktree remove --force` half-done.
+  // Faking our uid makes every entry foreign without needing root.
+  onPosix("refuses to move when the worktree holds an entry this process can't delete", async () => {
+    const { from, to, task, wt } = await startedTask("Foreign");
+    fs.mkdirSync(path.join(wt.path, ".next"));
+    const spy = vi.spyOn(process, "getuid").mockReturnValue(fs.statSync(wt.path).uid + 1);
+    let res: Response;
+    try {
+      res = await move(task.id, { project_id: to.id, discard_worktree: true });
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/can't be removed: .* is owned by uid/);
+    expect(getTask(task.id)?.project_id).toBe(from.id);
+    expect(getTask(task.id)?.worktree_path).toBe(wt.path);
+    expect(fs.existsSync(path.join(wt.path, ".git"))).toBe(true);
+    expect(await git(wt.path, "rev-parse", "--is-inside-work-tree")).toBe("true");
   });
 
   it("re-points the project-keyed child rows, so spend follows the task", async () => {

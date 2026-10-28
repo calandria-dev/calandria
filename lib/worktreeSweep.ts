@@ -74,7 +74,7 @@ import { resolveBaseBranch } from "@/lib/baseBranch";
 import { UNSAFE_DISCARD_REASON } from "@/lib/taskMove";
 import { withTaskLock } from "@/lib/taskLock";
 import { withRepoLock } from "@/lib/repoLock";
-import { heldHandleHint } from "@/lib/paths";
+import { heldHandleHint, undeletableTreeReason } from "@/lib/paths";
 import { hasTurn } from "@/lib/abort";
 import { reviewRefusal } from "@/lib/reviews/gate";
 import { removeTaskUploads, taskUploadsDir } from "@/lib/uploads";
@@ -161,6 +161,11 @@ export async function sweepWorktrees(
         });
         if (!safety.safe) {
           result.skipped.push({ taskId: id, reason: `${UNSAFE_DISCARD_REASON}: ${safety.reason}` });
+          return;
+        }
+        const blocked = undeletableTreeReason(task.worktree_path);
+        if (blocked) {
+          result.skipped.push({ taskId: id, reason: blocked });
           return;
         }
         const bytes = await worktreeDiskUsage(task.worktree_path);
