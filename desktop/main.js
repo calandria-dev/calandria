@@ -108,6 +108,7 @@ const {
   parseDesktopCommand,
   quitAction,
   restartNotice,
+  supersedesReady,
   updateMenuItem,
   updaterDisposition,
 } = require("./updater");
@@ -3013,13 +3014,27 @@ async function startUpdater() {
   // quitAndInstall() as the last act of the drain instead.
   updater.autoInstallOnAppQuit = false;
 
-  updater.on("checking-for-update", () => setUpdateState({ phase: "checking" }));
-  updater.on("update-available", (info) => setUpdateState({ phase: "downloading", version: info?.version || null }));
+  // A downloaded update stays installable while the periodic check runs
+  // again; only a newer release replaces it (see supersedesReady()).
+  const holdsReady = (event, info) =>
+    updateState.phase === "ready" &&
+    !supersedesReady(event, { readyVersion: updateState.version, version: info?.version || null });
+
+  updater.on("checking-for-update", () => {
+    if (holdsReady("checking-for-update")) return;
+    setUpdateState({ phase: "checking" });
+  });
+  updater.on("update-available", (info) => {
+    if (holdsReady("update-available", info)) return;
+    setUpdateState({ phase: "downloading", version: info?.version || null });
+  });
   updater.on("update-not-available", () => {
+    if (holdsReady("update-not-available")) return;
     setUpdateState({ phase: "none" });
     answerManualCheck("Calandria is up to date", `You are running ${app.getVersion()}.`);
   });
   updater.on("update-downloaded", (info) => {
+    if (holdsReady("update-downloaded", info)) return;
     setUpdateState({ phase: "ready", version: info?.version || null });
     manualCheck = false;
     announceUpdate();
@@ -3032,6 +3047,7 @@ async function startUpdater() {
     if (quitting) return;
     const { message, fatal } = classifyUpdaterError(err);
     console.log(`[shell] update check failed: ${message}`);
+    if (holdsReady("error")) return;
     setUpdateState({ phase: "error", error: message });
     const wasManual = manualCheck;
     answerManualCheck("Could not check for updates", message);
@@ -3140,9 +3156,10 @@ async function checkForUpdates(manual) {
     return;
   }
   // Already downloaded: the button the user just pressed means "get on
-  // with it", not "check again".
-  if (updateState.phase === "ready") {
-    if (manual) await requestInstall();
+  // with it", not "check again". The periodic check still runs, so a
+  // release newer than the downloaded one replaces it before the install.
+  if (updateState.phase === "ready" && manual) {
+    await requestInstall();
     return;
   }
   if (updateState.phase === "checking" || updateState.phase === "downloading") return;
@@ -3154,6 +3171,7 @@ async function checkForUpdates(manual) {
     // answers, and the classifier makes both say the same thing.
     const { message } = classifyUpdaterError(err);
     console.log(`[shell] update check failed: ${message}`);
+    if (updateState.phase === "ready") return;
     setUpdateState({ phase: "error", error: message });
     answerManualCheck("Could not check for updates", message);
   }
