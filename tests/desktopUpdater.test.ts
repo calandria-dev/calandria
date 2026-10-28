@@ -106,6 +106,7 @@ const updater = require(path.join(DESKTOP, "updater.js")) as {
     error: string | null;
   };
   parseDesktopCommand: (url: string) => { command: "install" | "check" } | null;
+  supersedesReady: (event: string, s?: { readyVersion?: string | null; version?: string | null }) => boolean;
 };
 
 // The structural assertions below read main.js as text, so they have to read
@@ -662,6 +663,39 @@ describe("the clocks", () => {
   it("checks well after launch, and rarely after that", () => {
     expect(updater.FIRST_CHECK_DELAY_MS).toBeGreaterThanOrEqual(30_000);
     expect(updater.CHECK_INTERVAL_MS).toBeGreaterThanOrEqual(60 * 60 * 1000);
+  });
+});
+
+describe("a downloaded update does not stop the check", () => {
+  // A shell left running for weeks can see several releases land before
+  // anyone presses Restart. The periodic check keeps asking, so the install
+  // is the newest release, never the first one that happened to download.
+  it("lets a newer release replace the one waiting", () => {
+    expect(updater.supersedesReady("update-available", { readyVersion: "0.25.0", version: "0.26.0" })).toBe(true);
+    expect(updater.supersedesReady("update-downloaded", { readyVersion: "0.25.0", version: "0.26.0" })).toBe(true);
+  });
+
+  it("keeps the waiting update installable through everything else", () => {
+    const ready = { readyVersion: "0.25.0" };
+    expect(updater.supersedesReady("checking-for-update", ready)).toBe(false);
+    expect(updater.supersedesReady("update-not-available", ready)).toBe(false);
+    expect(updater.supersedesReady("error", ready)).toBe(false);
+    expect(updater.supersedesReady("update-available", { ...ready, version: "0.25.0" })).toBe(false);
+    expect(updater.supersedesReady("update-downloaded", { ...ready, version: "0.25.0" })).toBe(false);
+    expect(updater.supersedesReady("update-available", ready)).toBe(false);
+  });
+
+  it("main.js re-checks from the ready phase instead of returning early", () => {
+    const check = mainSource.slice(
+      mainSource.indexOf("async function checkForUpdates("),
+      mainSource.indexOf("function answerManualCheck("),
+    );
+    expect(check).not.toHaveLength(0);
+    expect(check).toMatch(/updateState\.phase === "ready" && manual/);
+    expect(check).not.toMatch(/if \(updateState\.phase === "ready"\) \{/);
+    for (const event of ["checking-for-update", "update-available", "update-not-available", "update-downloaded", "error"]) {
+      expect(mainSource).toContain(`holdsReady("${event}"`);
+    }
   });
 });
 

@@ -298,6 +298,24 @@ function quitAction({ installRequested = false, phase = "idle" } = {}) {
 }
 
 /**
+ * Whether an electron-updater event that arrives while an update is already
+ * downloaded moves the state off "ready".
+ *
+ * The periodic check keeps running after a download, because a shell left
+ * running for weeks can see several releases land before anyone presses
+ * Restart. electron-updater compares the feed against the running app's
+ * version, so every re-check reports the same pending release again, or a
+ * newer one. Only a newer one counts: `update-available` (or
+ * `update-downloaded`) naming a version other than the one waiting. Everything
+ * else (the check starting, the pending version found again, nothing found, a
+ * failed check) leaves the downloaded update installable.
+ */
+function supersedesReady(event, { readyVersion = null, version = null } = {}) {
+  if (event !== "update-available" && event !== "update-downloaded") return false;
+  return !!version && version !== readyVersion;
+}
+
+/**
  * The tray/menu entry. One function so the two menus cannot disagree, and pure
  * so the disabled-with-a-reason cases are testable.
  *
@@ -476,6 +494,7 @@ module.exports = {
   parseDesktopCommand,
   quitAction,
   restartNotice,
+  supersedesReady,
   updateMenuItem,
   updaterDisposition,
 };
