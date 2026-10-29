@@ -8,6 +8,13 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.26.1](https://github.com/calandria-dev/calandria/compare/v0.26.0...v0.26.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **desktop:** keep checking for updates after one has downloaded ([#610](https://github.com/calandria-dev/calandria/issues/610)) ([a3d9296](https://github.com/calandria-dev/calandria/commit/a3d9296e4472217aaca812410e78d06b7cff7a8a))
+
 ## [0.26.0](https://github.com/calandria-dev/calandria/compare/v0.25.0...v0.26.0) (2026-10-28)
 
 
