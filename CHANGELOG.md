@@ -8,6 +8,13 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.26.2](https://github.com/calandria-dev/calandria/compare/v0.26.1...v0.26.2) (2026-10-29)
+
+
+### Dependencies
+
+* **deps:** bump @hono/node-server from 2.1.0 to 2.1.5 in the npm_and_yarn group across 1 directory ([#613](https://github.com/calandria-dev/calandria/issues/613)) ([c958df7](https://github.com/calandria-dev/calandria/commit/c958df7b786984eec479d775445b807d5445c409))
+
 ## [0.26.1](https://github.com/calandria-dev/calandria/compare/v0.26.0...v0.26.1) (2026-10-28)
 
 
