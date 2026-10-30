@@ -144,7 +144,7 @@ RUN npm install -g npm@12.0.2 && npm --version
 # required test, desktop skip and uncached image workflows against the exact
 # branch head, and enables squash auto-merge after verifying that head. GitHub
 # merges only after every required check passes.
-ARG CLAUDE_CODE_VERSION=2.1.312
+ARG CLAUDE_CODE_VERSION=2.1.314
 ARG CODEX_VERSION=0.166.0
 
 # The `claude` CLI: the Agent SDK spawns it, and login state lives in
