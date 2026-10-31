@@ -316,4 +316,22 @@ describe("GET /api/tasks/[id]/file/raw", () => {
     expect((await get(task.id, "shots")).status).toBe(400);
     expect((await get("nope", "shots/a.png")).status).toBe(404);
   });
+
+  it("serves an image from a gitignored build directory", async () => {
+    const wt = await makeRepo();
+    writeFile(wt, ".gitignore", "build/\n");
+    const png = fs.readFileSync(path.join(__dirname, "fixtures", "button-module-back.png"));
+    fs.mkdirSync(path.join(wt, "build", "checks"), { recursive: true });
+    fs.writeFileSync(path.join(wt, "build", "checks", "back.png"), png);
+    expect((await git(wt, "check-ignore", "build/checks/back.png")).trim()).toBe("build/checks/back.png");
+
+    const project = createProject({ name: "RawIgnored" });
+    const task = createTask({ project_id: project.id, title: "T" });
+    updateTask(task.id, { worktree_path: wt });
+
+    const res = await get(task.id, "build/checks/back.png");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    expect(Buffer.from(await res.arrayBuffer()).equals(png)).toBe(true);
+  });
 });

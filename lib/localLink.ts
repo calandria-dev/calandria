@@ -122,3 +122,30 @@ export function localLinkTarget(href: string, roots: string[], baseDir = ""): Lo
 export function rawFileUrl(taskId: string, rel: string): string {
   return `/api/tasks/${encodeURIComponent(taskId)}/file/raw?path=${encodeURIComponent(rel)}`;
 }
+
+/** Where a markdown image loads from. `remote`: a web or inline image, used
+ *  as written. `local`: an image file inside the checkout, served by the raw
+ *  route. `blocked`: anything else (a path outside every root, a `..` above
+ *  the worktree, a non-image file, an unknown scheme), shown as a placeholder
+ *  and never requested. */
+export type ImageSource =
+  | { kind: "remote"; src: string }
+  | { kind: "local"; src: string; rel: string }
+  | { kind: "blocked" };
+
+/**
+ * Map a markdown image's `src` to what the transcript loads. With no `links`
+ * context (no task to serve from) every local path is blocked, since the
+ * browser would resolve it against the app origin and 404.
+ */
+export function imageSource(
+  src: string,
+  links?: { taskId: string; roots: string[]; baseDir?: string },
+): ImageSource {
+  const s = src.trim();
+  if (/^https?:\/\//i.test(s) || /^data:image\//i.test(s) || /^blob:/i.test(s)) return { kind: "remote", src: s };
+  if (!links) return { kind: "blocked" };
+  const hit = localLinkTarget(s, links.roots, links.baseDir);
+  if (!hit || !isImageExt(extensionOf(hit.rel))) return { kind: "blocked" };
+  return { kind: "local", src: rawFileUrl(links.taskId, hit.rel), rel: hit.rel };
+}
