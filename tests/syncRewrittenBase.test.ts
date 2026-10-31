@@ -385,6 +385,33 @@ describe("rebasing a task onto a base branch that was rewritten under it", { tim
     await expect(git(fx.repo, "merge-base", "--is-ancestor", "integration", fx.wt.branch)).resolves.toBeDefined();
   });
 
+  it("finishes a stopped replay when the environment sets GIT_EDITOR=false", async () => {
+    const fx = await cutTaskWithWork({ touches: "shared.txt" });
+    await rebaseAndForcePush(fx.colleague);
+    await catchLocalRefUp(fx.repo);
+    const res = await rebaseWorktreeOntoBase({
+      repoPath: fx.repo, worktreePath: fx.wt.path, workBranch: fx.wt.branch,
+      baseBranch: "integration", baseSha: fx.preRewriteTip,
+    });
+    expect(res.clean).toBe(false);
+    writeFile(fx.wt.path, "shared.txt", "landed on main + deslopped + the task's own work\n");
+
+    // GIT_EDITOR outranks `-c core.editor`, so an ambient `false` would fail
+    // `rebase --continue` unless the call pins its own editor.
+    const prev = process.env.GIT_EDITOR;
+    process.env.GIT_EDITOR = "false";
+    try {
+      const done = await continueWorktreeRebase(fx.wt.path);
+      expect(done.error).toBeUndefined();
+      expect(done.ok).toBe(true);
+      expect(done.done).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.GIT_EDITOR;
+      else process.env.GIT_EDITOR = prev;
+    }
+    expect(await worktreeRebaseStatus(fx.wt.path)).toMatchObject({ rebaseInProgress: false });
+  });
+
   it("aborts a stopped replay back to the pre-rebase tip", async () => {
     const fx = await cutTaskWithWork({ touches: "shared.txt" });
     await rebaseAndForcePush(fx.colleague);
