@@ -334,8 +334,16 @@ remote tip, but it never moves your own checkout without asking.
 - Calandria fetches the base branch (best-effort) when you open a project and again before
   cutting a new task's worktree.
 - When your local base branch is behind the remote, the project header offers a one-click
-  fast-forward. When it is ahead, it offers a push. When the two have diverged, it tells you and
-  leaves the resolution to you.
+  fast-forward. When it is ahead, it offers a push. When the two have diverged, it offers **Fix
+  with AI**: a new task on the utility agent that checks which local commits are already on the
+  remote (squash-merged pull requests are the usual cause), carries the rest to a pull request,
+  and then moves your local base branch to match. It never force-pushes, and it stops and asks
+  when the main checkout has uncommitted changes.
+- Turn on **Fetch in the background** in the project's settings to fetch its base branch every
+  five minutes (`CALANDRIA_BACKGROUND_FETCH_MS`) on the scheduler's ticker. When the local base
+  branch is only behind and the checkout holding it has no uncommitted changes, it is also
+  fast-forwarded. A diverged or ahead branch is left for the banner. The `background_jobs`
+  setting and `CALANDRIA_GIT_FETCH=off` both switch it off.
 - After a merge lands, the same push offer appears inline, except on a **Pull request** project,
   where it can only be rejected (there is nothing to push, since the merge was local only).
 - Set `CALANDRIA_GIT_FETCH=off` to keep an instance entirely offline.

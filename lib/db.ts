@@ -61,6 +61,7 @@ export function init(db: Database.Database) {
       -- only a disposal signal in a repo whose landing discipline the user has
       -- actually set up. See lib/reclaim.ts.
       auto_reclaim INTEGER NOT NULL DEFAULT 0,
+      background_fetch INTEGER NOT NULL DEFAULT 0,
       -- Per-project managed services: the dev server command (long-running) plus
       -- optional one-shot setup/test commands, supervised by lib/services.ts.
       -- port is the project's stable, deterministic port (see lib/config.ts),
@@ -1124,6 +1125,8 @@ export function migrate(db: Database.Database, options: { seedProviders?: boolea
   // every pre-existing project: an unattended reclaim deletes a local branch,
   // and no upgrade may start doing that on the strength of a default.
   add("auto_reclaim", "INTEGER NOT NULL DEFAULT 0");
+  // 1 = fetch the base branch on the scheduler's ticker and fast-forward it when that is safe (lib/backgroundFetch.ts)
+  add("background_fetch", "INTEGER NOT NULL DEFAULT 0");
   add("recap", "TEXT NOT NULL DEFAULT ''");
   add("recap_at", "INTEGER NOT NULL DEFAULT 0");
   add("recap_covers_at", "INTEGER NOT NULL DEFAULT 0");

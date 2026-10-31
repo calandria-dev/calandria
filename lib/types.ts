@@ -34,6 +34,7 @@ export interface Project {
   branch: string; // the project's DEFAULT base branch: what a task is cut from, syncs to and merges into unless the task names its own (lib/baseBranch.ts)
   landing_mode: LandingMode; // how work lands on the base branch: "merge" (local merge) or "pr" (base is protected, finish by opening a PR)
   auto_reclaim: number; // 1 = reclaim a task's checkout + local branch by itself once its work lands (lib/reclaim.ts)
+  background_fetch: number; // 1 = fetch the base branch in the background and fast-forward it when safe (lib/backgroundFetch.ts)
   dev_command: string; // long-running dev server command supervised by lib/services.ts ("" = none)
   setup_command: string; // optional one-shot setup command (install/migrate/etc.)
   test_command: string; // optional one-shot test command

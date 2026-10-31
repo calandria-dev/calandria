@@ -1210,6 +1210,10 @@ waits on that walk once, right after a restart.
   lands during a turn, the reclaim retries after `turn_end`. Dirty worktrees
   and commits never pushed to the merged pull request remain for manual
   acknowledgement.
+  The project's `background_fetch` setting (off by default) fetches the
+  base branch on the same ticker every `CALANDRIA_BACKGROUND_FETCH_MS`
+  (5 minutes) and fast-forwards it when it is only behind and its
+  checkout is clean.
   See [Features](FEATURES.md).
   **The disk warning** runs whether or not the sweep does: see
   `CALANDRIA_WORKTREES_DISK_WARN_GB` in the Configuration table above.

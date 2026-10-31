@@ -47,7 +47,7 @@ describe("review schema migration", () => {
     const row = db.prepare("SELECT * FROM tasks WHERE id = 't1'").get() as Record<string, unknown>;
     expect(row).toEqual({ ...before, review_content_epoch: 0 });
     expect(db.pragma("user_version", { simple: true })).toBe(SCHEMA_VERSION);
-    expect(SCHEMA_VERSION).toBe(11);
+    expect(SCHEMA_VERSION).toBe(12);
     for (const t of REVIEW_TABLES) expect(db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get()).toEqual({ n: 0 });
     db.close();
   });

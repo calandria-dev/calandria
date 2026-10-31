@@ -442,7 +442,6 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .bb-msg{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .bb-spacer{flex:1;}
 .bb-err{min-width:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--red);font-weight:500;}
-.bb-hint{font-weight:500;opacity:.85;white-space:nowrap;}
 .bb-banner .tc-btn{padding:3px 9px;font-size:11px;}
 
 .task-scroll{padding:10px 10px 4px;}

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getProject } from "@/lib/store";
 import { fetchBase, remoteBaseStatus, advanceBaseBranch, pushBaseBranch } from "@/lib/git";
 import { jsonGuard } from "@/lib/apiGuard";
+import { buildDivergencePrompt, divergenceTaskTitle } from "@/lib/baseDivergence";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -32,7 +33,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 // POST: the banner's one-click actions.
 //   fast-forward: move local <base> up to the fetched remote tip
 //   push: publish local <base> commits to the remote
-// Both are forward-only and refuse when that isn't possible; see lib/git.ts.
+//   fix-with-ai: mint a task on the utility agent that reconciles a diverged
+//     <base> with its remote, and launch its first turn
+// The first two are forward-only and refuse when that isn't possible; see
+// lib/git.ts. The third changes nothing itself; the session it starts asks
+// before anything it can't prove is safe (lib/baseDivergence.ts).
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   return jsonGuard(`base-branch action ${id}`, async () => {
@@ -64,6 +69,39 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (status.behind === 0) return NextResponse.json({ ok: true, upToDate: true });
       const res = await advanceBaseBranch(project.repo_path, project.branch, status.remoteTip);
       return NextResponse.json({ ...res, behind: status.behind }, { status: res.ok ? 200 : 409 });
+    }
+
+    if (action === "fix-with-ai") {
+      await fetchBase(project.repo_path, project.branch);
+      const status = await remoteBaseStatus(project.repo_path, project.branch);
+      if (!(status.ahead > 0 && status.behind > 0))
+        return NextResponse.json({ ok: false, error: `${project.branch} has not diverged from ${status.label || "its remote"}` }, { status: 409 });
+      // Both modules reach the agent registry or the runner, so they load
+      // dynamically to keep this route entry free of the SDK's async graph.
+      const { resolveUtilityAgent } = await import("@/lib/agents/oneshots");
+      const agent = resolveUtilityAgent().id;
+      if (!agent) return NextResponse.json({ ok: false, error: "no agent is connected. Connect one in Settings" }, { status: 409 });
+      const facts = {
+        label: status.label || `origin/${project.branch}`,
+        ahead: status.ahead,
+        behind: status.behind,
+        localTip: status.localTip,
+        remoteTip: status.remoteTip,
+      };
+      const { dispatchPromptTask } = await import("@/lib/dispatch");
+      const result = await dispatchPromptTask({
+        project_id: project.id,
+        title: divergenceTaskTitle(project, facts),
+        description: `Started from the base-branch banner: local ${project.branch} and ${facts.label} had diverged (${facts.ahead} here, ${facts.behind} there).`,
+        prompt: buildDivergencePrompt(project, facts),
+        agent,
+        permission_mode: null,
+        send_context: project.send_context !== 0,
+        priority: "hi",
+        note: `▶ Fix with AI: ${project.branch} diverged from ${facts.label}.`,
+      });
+      if (!result.ok) return NextResponse.json({ ok: false, error: result.error, task: result.task ?? null }, { status: 400 });
+      return NextResponse.json({ ok: true, task: result.task }, { status: 201 });
     }
 
     return NextResponse.json({ error: `unknown action ${action ?? "(none)"}` }, { status: 400 });

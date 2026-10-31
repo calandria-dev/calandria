@@ -20,6 +20,7 @@ import {
 } from "@/lib/config";
 import { maybeSweepRetention, retentionHealth } from "@/lib/retention";
 import { maybeSweepWorktrees, worktreeSweepHealth } from "@/lib/worktreeSweep";
+import { sweepBackgroundFetch } from "@/lib/backgroundFetch";
 import { gatewayKeysEnabled, sweepPrunableGatewayKeys } from "@/lib/gatewayKeys";
 import { adjudicate } from "@/lib/schedule/due";
 import {
@@ -177,6 +178,12 @@ export async function tickSchedules(now = Date.now()): Promise<number> {
     } catch (err) {
       console.error("[worktrees] sweep failed:", err);
     }
+    // Per-project background fetch. Not awaited: it waits on the network, and
+    // a slow remote must not hold up the next minute's schedule firings. It is
+    // single-flight on its own, so overlapping ticks skip it.
+    void sweepBackgroundFetch(Date.now()).catch((err) => {
+      console.error("[background-fetch] sweep failed:", err);
+    });
     // The retention backstop for per-task LiteLLM keys (docs/AGENTS.md,
     // "Per-task virtual keys"): lib/autoStart.ts's maybeAutoStartDependents()
     // deletes a task's key the instant it goes terminal, but that call can
