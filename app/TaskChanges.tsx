@@ -27,6 +27,7 @@ interface DiffFile {
 }
 interface DiffResp {
   isolated: boolean;
+  pending?: boolean; // no worktree yet; the first turn will cut one
   reason?: string;
   branch?: string;
   baseLabel?: string;
@@ -653,7 +654,10 @@ export default function TaskChanges({
     try {
       const r = await apiFetch(`/api/tasks/${taskId}/diff`, { cache: "no-store" });
       const j: DiffResp = await r.json();
-      if (!j.error) diffCache.set(taskId, j); // errors are worth retrying, not replaying
+      // Errors are worth retrying, not replaying. A pending (not yet isolated)
+      // answer is transient, so it is never replayed either.
+      if (!j.error && !j.pending) diffCache.set(taskId, j);
+      else diffCache.delete(taskId);
       setData(j);
     } catch (e) {
       setData({ isolated: false, files: [], isDirty: false, ahead: 0, error: e instanceof Error ? e.message : String(e) });
@@ -682,10 +686,11 @@ export default function TaskChanges({
 
   // The diff moves while the agent works. Refetch when a turn finishes so a
   // just-written change appears without a manual Refresh (same trigger the
-  // SyncBanner uses). Only on the running→idle transition; mount already loads.
+  // SyncBanner uses), and when a turn starts, since the first turn cuts the
+  // worktree. Only on transitions; mount already loads.
   const wasRunning = useRef(running);
   useEffect(() => {
-    if (wasRunning.current && !running) load();
+    if (wasRunning.current !== running) load();
     wasRunning.current = running;
   }, [running, load]);
 
