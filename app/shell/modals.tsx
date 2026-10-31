@@ -1400,7 +1400,7 @@ function GatewayMcpField({ projectId, value, onChange }: { projectId: string; va
   );
 }
 
-export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; dev_command: string; setup_command: string; test_command: string; default_provider_id: string | null; gateway_max_budget: number | null; gateway_key_duration: string; gateway_mcp: string[] }) => void; onDelete: () => void; onDeprecate: () => void }) {
+export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSave, onDelete, onDeprecate }: { project: ProjectRow; agents: AgentsBundle; onSetDefaultAgent: (agent: string) => void; onClose: () => void; onSave: (p: { name: string; context: string; send_context: number; repo_path: string; branch: string; landing_mode: LandingMode; auto_reclaim: number; background_fetch: number; dev_command: string; setup_command: string; test_command: string; default_provider_id: string | null; gateway_max_budget: number | null; gateway_key_duration: string; gateway_mcp: string[] }) => void; onDelete: () => void; onDeprecate: () => void }) {
   const [name, setName] = useState(project.name);
   const [context, setContext] = useState(project.context);
   const [sendContext, setSendContext] = useState(project.send_context !== 0);
@@ -1414,6 +1414,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
   // a real configuration). Applying it is one click, spelled out below.
   const [landing, setLanding] = useState<LandingMode>(project.landing_mode === "pr" ? "pr" : "merge");
   const [autoReclaim, setAutoReclaim] = useState(project.auto_reclaim === 1);
+  const [backgroundFetch, setBackgroundFetch] = useState(project.background_fetch === 1);
   // Which model provider this project's turns run against
   // (docs/superpowers/specs/2026-09-06-model-providers-design.md).
   // default_provider_id names a model_providers row, and the row's own
@@ -1588,7 +1589,7 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
     }
     onSave({
       name, context, send_context: sendContext ? 1 : 0, repo_path: repo, branch, landing_mode: landing,
-      auto_reclaim: autoReclaim ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd,
+      auto_reclaim: autoReclaim ? 1 : 0, background_fetch: backgroundFetch ? 1 : 0, dev_command: devCmd, setup_command: setupCmd, test_command: testCmd,
       default_provider_id: providerId,
       gateway_max_budget: gatewayMaxBudget.trim() === "" ? null : Number(gatewayMaxBudget) || null,
       gateway_key_duration: gatewayKeyDuration.trim(), gateway_mcp: gatewayMcp,
@@ -1718,6 +1719,15 @@ export function ContextModal({ project, agents, onSetDefaultAgent, onClose, onSa
             {landing === "pr"
               ? "When its pull request reports merged, this closes the task, catches " + (branch || "the base branch") + " up with origin, removes the task's checkout, and deletes its local branch once no turn is executing. It never touches dirty or never-pushed work; that still needs your say-so."
               : "When it merges into " + (branch || "the base branch") + ", this closes the task, removes its checkout, and deletes its local branch once no turn is executing. It never touches dirty or never-pushed work; that still needs your say-so."}
+          </span>
+        </span>
+      </label>
+      <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 12, fontSize: 12.5, color: "var(--ink-2)", cursor: "pointer" }}>
+        <input type="checkbox" checked={backgroundFetch} onChange={(e) => setBackgroundFetch(e.target.checked)} />
+        <span>
+          Fetch in the background
+          <span className="hlp" style={{ display: "block", marginTop: 2 }}>
+            Fetches the base branch from its remote every few minutes, so new tasks and the base-branch banner see what landed elsewhere. When the base branch is only behind and nothing is uncommitted in your checkout, it also fast-forwards it.
           </span>
         </span>
       </label>

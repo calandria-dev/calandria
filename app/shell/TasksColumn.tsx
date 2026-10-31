@@ -492,7 +492,7 @@ export function TasksColumn({ project, agents, tasks, suggested, tags, selTaskId
           </div>
           <div className="ctx-edit">{Icon.edit()} Context</div>
         </button>
-        <BaseBranchBanner projectId={project.id} refreshKey={baseBranchTick} />
+        <BaseBranchBanner projectId={project.id} refreshKey={baseBranchTick} onOpenTask={onSelectTask} />
       </div>
       {canSearch && <SearchBar value={query} onChange={setQuery} placeholder="Search tasks…" />}
       <TagChips tags={tags} filter={tagFilter} onToggle={toggleTag} onSet={setTagFilter} />

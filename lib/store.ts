@@ -299,12 +299,12 @@ export function updateProject(id: string, patch: Partial<Omit<Project, "id" | "c
   getDb()
     .prepare(
       `UPDATE projects SET name = ?, icon = ?, sub = ?, color = ?, context = ?, repo_path = ?, branch = ?, landing_mode = ?,
-        auto_reclaim = ?, dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, send_context = ?, deprecated = ?, default_provider_id = ?,
+        auto_reclaim = ?, background_fetch = ?, dev_command = ?, setup_command = ?, test_command = ?, default_agent = ?, send_context = ?, deprecated = ?, default_provider_id = ?,
         gateway_max_budget = ?, gateway_key_duration = ?, gateway_mcp = ? WHERE id = ?`
     )
     // landing_mode is normalized, not trusted as given: the column has no CHECK
     // constraint and this is reached straight from PATCH /api/projects/[id].
-    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.auto_reclaim ? 1 : 0, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0, n.default_provider_id ?? null,
+    .run(n.name, (n.icon || "?").toUpperCase().slice(0, 1), n.sub, n.color, n.context, n.repo_path, branch, isLandingMode(n.landing_mode) ? n.landing_mode : "merge", n.auto_reclaim ? 1 : 0, n.background_fetch ? 1 : 0, n.dev_command ?? "", n.setup_command ?? "", n.test_command ?? "", n.default_agent || "claude", n.send_context ? 1 : 0, n.deprecated ? 1 : 0, n.default_provider_id ?? null,
       // A budget of 0 is a legitimate (if pointless) cap, so only null/undefined
       // clear it, matching gateway_max_budget's own null-is-unlimited contract.
       n.gateway_max_budget ?? null, n.gateway_key_duration?.trim() ?? "",

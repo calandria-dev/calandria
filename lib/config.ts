@@ -695,6 +695,17 @@ export const GIT_FETCH_COOLDOWN_MS = num(
   15_000,
 );
 
+/**
+ * How often a project with "Fetch in the background" on has its base branch
+ * fetched (lib/backgroundFetch.ts), in ms. Rides the scheduler's ticker, so
+ * the effective period is rounded up to the next tick. Floored at one minute.
+ * 0 turns the background fetch off for every project.
+ */
+export const BACKGROUND_FETCH_INTERVAL_MS = (() => {
+  const n = num("CALANDRIA_BACKGROUND_FETCH_MS", readEnv("CALANDRIA_BACKGROUND_FETCH_MS"), 300_000);
+  return n <= 0 ? 0 : Math.max(60_000, n);
+})();
+
 /*
  * PR state (lib/prState.ts). The same shape as the fetch cooldown above and for
  * the same reason: every trigger is cheap only because a recent answer is

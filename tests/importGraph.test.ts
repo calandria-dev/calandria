@@ -48,6 +48,7 @@ const PINNED = [
   "lib/workCenter/compat.ts", // /api/needs-you and project-badge adapters over the snapshot
   "lib/agents/claude/executionObserver.ts", // folds native background events into an observation; pure
   "lib/codexSandbox.ts", // shared sandbox values for settings validation and the browser
+  "lib/backgroundFetch.ts", // the per-project background fetch on the scheduler's ticker; store, config and git only
   "lib/store.ts", //     imported by nearly everything, so it must stay SDK-free
   "lib/services.ts", //  behind sync-compiled routes (grant, services-restore)
   "lib/db.ts",

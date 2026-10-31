@@ -15,11 +15,14 @@ import { ErrDetail } from "./shared";
  * worktrees are cut from the fetched remote tip, but the local branch is
  * only ever advanced by an explicit action here, never automatically.
  *
+ * A diverged branch gets "Fix with AI", which starts a task on the utility
+ * agent to reconcile the two and opens it (`onOpenTask`).
+ *
  * Renders nothing when there is no remote or the branch is in sync.
  */
-export function BaseBranchBanner({ projectId, refreshKey }: { projectId: string; refreshKey?: number }) {
+export function BaseBranchBanner({ projectId, refreshKey, onOpenTask }: { projectId: string; refreshKey?: number; onOpenTask?: (taskId: string) => void }) {
   const [st, setSt] = useState<BaseBranchResp | null>(null);
-  const [busy, setBusy] = useState<"" | "ff" | "push">("");
+  const [busy, setBusy] = useState<"" | "ff" | "push" | "ai">("");
   const [err, setErr] = useState("");
   const [detail, setDetail] = useState<string | undefined>(undefined);
 
@@ -40,8 +43,8 @@ export function BaseBranchBanner({ projectId, refreshKey }: { projectId: string;
     void load();
   }, [load, refreshKey]);
 
-  const act = async (action: "fast-forward" | "push") => {
-    setBusy(action === "push" ? "push" : "ff");
+  const act = async (action: "fast-forward" | "push" | "fix-with-ai") => {
+    setBusy(action === "push" ? "push" : action === "fix-with-ai" ? "ai" : "ff");
     setErr("");
     setDetail(undefined);
     try {
@@ -55,6 +58,9 @@ export function BaseBranchBanner({ projectId, refreshKey }: { projectId: string;
         setErr(j?.error || `${r.status} ${r.statusText}`);
         setDetail(j?.detail);
       }
+      // A launch that failed after the task was minted still names the task,
+      // so it opens either way and the retry is one click away.
+      if (j?.task?.id) onOpenTask?.(j.task.id);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -112,9 +118,10 @@ export function BaseBranchBanner({ projectId, refreshKey }: { projectId: string;
           </button>
         )}
         {diverged && (
-          <span className="bb-hint" title={`Merge or rebase ${base} yourself. The app only ever fast-forwards it.`}>
-            resolve this in your checkout
-          </span>
+          <button className="tc-btn primary" onClick={() => act("fix-with-ai")} disabled={!!busy}
+            title={`Start a task on the utility agent that reconciles ${base} with ${label}. It checks which local commits are already on ${label}, carries the rest to a pull request, then moves ${base} to match.`}>
+            {busy === "ai" ? "Starting…" : "Fix with AI"}
+          </button>
         )}
       </div>
       {err && detail && <ErrDetail detail={detail} />}
