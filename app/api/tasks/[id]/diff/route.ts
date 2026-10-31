@@ -32,16 +32,23 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const project = getProject(task.project_id);
   if (!project) return NextResponse.json({ error: "no project" }, { status: 400 });
 
-  // Tasks without an isolated worktree ran directly in the repo, so there is
-  // nothing branch-scoped to diff.
+  // No worktree means nothing branch-scoped to diff. Every launch path cuts
+  // the worktree before it sets `running`, so a task that has never run is
+  // `pending` (the panel refetches when its first turn starts). A running or
+  // started task with no worktree fell back to repo_path (ensureWorktree
+  // returned null) and really is unisolated.
   if (!task.worktree_path) {
+    const pending = !task.started && !task.running;
     return NextResponse.json({
       isolated: false,
+      pending,
       files: [],
       patch: "",
       isDirty: false,
       ahead: 0,
-      reason: "This task runs in the main repo (no isolated branch).",
+      reason: pending
+        ? "No isolated branch yet. Calandria cuts one when the task's first turn starts."
+        : "This task runs in the main repo (no isolated branch).",
     });
   }
 

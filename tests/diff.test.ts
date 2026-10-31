@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { GET as diffGET } from "../app/api/tasks/[id]/diff/route";
 import { ensureWorktree, mergeTask, taskDiff, taskDiffStat } from "../lib/git";
+import { createProject, createTask, updateTask } from "../lib/store";
 import { commitFile, git, makeRepo, makeRepoWithOrigin, makeRepoWithWorktree, pushFromColleague, uid, writeFile } from "./helpers";
 import { onPosix } from "./platform";
 
@@ -313,5 +315,31 @@ describe("taskDiff against a base branch known through its remote-tracking ref",
     const diff = await taskDiff(repo, wt.path, wt.baseSha, "feature");
     expect(diff.base).toBe(wt.baseSha);
     expect(diff.files.map((f) => f.path)).toEqual(["own.txt"]);
+  });
+});
+
+describe("GET /api/tasks/[id]/diff without a worktree (issue #612)", () => {
+  const view = async (id: string) =>
+    (await diffGET(new Request("http://x"), { params: Promise.resolve({ id }) })).json();
+
+  it("reports an unstarted task as pending, never as running in the main repo", async () => {
+    const repo = await makeRepo();
+    const project = createProject({ name: `diff-${uid()}`, repo_path: repo, branch: "main" });
+    const task = createTask({ project_id: project.id, title: "not started" });
+    const body = await view(task.id);
+    expect(body.isolated).toBe(false);
+    expect(body.pending).toBe(true);
+    expect(body.reason).not.toMatch(/main repo/);
+  });
+
+  it("reports a started task that fell back to repo_path as unisolated", async () => {
+    const repo = await makeRepo();
+    const project = createProject({ name: `diff-${uid()}`, repo_path: repo, branch: "main" });
+    const task = createTask({ project_id: project.id, title: "fell back" });
+    updateTask(task.id, { started: 1, running: 1 });
+    const body = await view(task.id);
+    expect(body.isolated).toBe(false);
+    expect(body.pending).toBe(false);
+    expect(body.reason).toMatch(/main repo/);
   });
 });
