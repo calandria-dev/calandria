@@ -33,12 +33,13 @@ const PLATFORM_GIT_CONFIG: string[] = process.platform === "win32" ? ["-c", "cor
 // because a nested checkout under the Next app would be picked up by
 // tsc/eslint and would trigger the dev watcher on every file an agent writes.
 
-async function git(repoPath: string, args: string[]): Promise<string> {
+async function git(repoPath: string, args: string[], env?: Record<string, string>): Promise<string> {
   // execFile's default maxBuffer is 1MB, which a whole-tree `git diff`
   // (taskDiff) or a busy log can exceed. It's a cap on output size, not a
-  // pre-allocation, so raise it.
+  // pre-allocation, so raise it. `env` is layered over the process's own.
   const { stdout } = await run("git", ["-C", repoPath, ...PLATFORM_GIT_CONFIG, ...args], {
     maxBuffer: 64 * 1024 * 1024,
+    ...(env ? { env: { ...process.env, ...env } } : {}),
   });
   return stdout.trim();
 }
@@ -3003,7 +3004,13 @@ export async function continueWorktreeRebase(worktreePath: string): Promise<Cont
     try {
       // `--continue` reopens the commit message in an editor there is nobody
       // to answer, so the editor is a no-op that exits 0 and keeps the message.
-      await git(worktreePath, [...identity, "-c", "core.editor=true", "rebase", "--continue"]);
+      // GIT_EDITOR and GIT_SEQUENCE_EDITOR outrank `core.editor`, and an
+      // ambient GIT_EDITOR=false fails the continue, so both are pinned too.
+      await git(
+        worktreePath,
+        [...identity, "-c", "core.editor=true", "rebase", "--continue"],
+        { GIT_EDITOR: "true", GIT_SEQUENCE_EDITOR: "true" },
+      );
     } catch (e) {
       const stopped = await paused();
       if (stopped) return stopped;

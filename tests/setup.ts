@@ -213,6 +213,8 @@ for (const v of [
   "GIT_DIR",
   "GIT_WORK_TREE",
   "GIT_INDEX_FILE",
+  "GIT_EDITOR",
+  "GIT_SEQUENCE_EDITOR",
 ]) {
   delete process.env[v];
 }
