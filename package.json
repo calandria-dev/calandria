@@ -1,6 +1,6 @@
 {
   "name": "calandria",
-  "version": "0.26.4",
+  "version": "0.26.5",
   "engines": {
     "node": ">=22.12"
   },
