@@ -28,6 +28,10 @@ describe("localLinkTarget", () => {
     const win = ["C:\\wt\\t1"];
     expect(localLinkTarget("C:\\wt\\t1\\docs\\x.md", win)).toEqual({ rel: "docs/x.md", open: "collab" });
     expect(localLinkTarget("file:///C:/wt/t1/docs/x.md", win)).toEqual({ rel: "docs/x.md", open: "collab" });
+    // react-markdown hands the href over percent-encoded.
+    expect(localLinkTarget("C:%5Cwt%5Ct1%5Cdocs%5Cx.md", win)).toEqual({ rel: "docs/x.md", open: "collab" });
+    expect(imageSource("C:%5Cwt%5Ct1%5Cbuild%5Cb.png", { taskId: "t1", roots: win })).toEqual({ kind: "local", src: rawFileUrl("t1", "build/b.png"), rel: "build/b.png" });
+    expect(imageSource("C:%5Cother%5Cb.png", { taskId: "t1", roots: win })).toEqual({ kind: "blocked" });
     expect(localLinkTarget("D:\\elsewhere\\x.md", win)).toBeNull();
   });
 
@@ -78,6 +82,7 @@ describe("isFileLink", () => {
   it("names the hrefs react-markdown's default filter would blank", () => {
     expect(isFileLink("file:///home/u/x.md")).toBe(true);
     expect(isFileLink("C:\\wt\\x.md")).toBe(true);
+    expect(isFileLink("C:%5Cwt%5Cx.md")).toBe(true);
     expect(isFileLink("c:/wt/x.md")).toBe(true);
     expect(isFileLink("README.md:3")).toBe(true);
     expect(isFileLink("lib/a.ts:42:7")).toBe(true);
