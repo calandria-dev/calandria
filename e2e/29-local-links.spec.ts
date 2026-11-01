@@ -2,9 +2,14 @@
 // with `links`, `lib/localLink.ts`). A text file opens in the collaboration
 // modal in place; an image points at the raw file route in a new tab; a web
 // link is left alone. Only a browser can say what a click does with an anchor.
+// A markdown image naming a checkout file renders inline from the raw route,
+// including from a gitignored build directory; one escaping the checkout
+// renders a placeholder and is never requested.
 
+import fs from "node:fs";
+import path from "node:path";
 import { expect, test } from "@playwright/test";
-import { ensureOnboarded, gotoApp, runTaskToCompletion, sendMessage, uid, waitForIdle } from "./helpers";
+import { ensureOnboarded, getTask, gotoApp, runTaskToCompletion, sendMessage, uid, waitForIdle } from "./helpers";
 
 const MESSAGE = [
   "e2e:write=docs/guide.md:# Guide heading",
@@ -12,6 +17,9 @@ const MESSAGE = [
   "Read [the guide](docs/guide.md), see [the shot](shots/a.png),",
   "or visit [the site](https://example.com/docs/guide.md).",
 ].join("\n");
+
+const FIXTURE = path.join(__dirname, "..", "tests", "fixtures", "button-module-back.png");
+const SHOT = "build/checks/button-module-back.png";
 
 let projectId: string;
 let taskId: string;
@@ -24,6 +32,23 @@ test.beforeAll(async ({ request }) => {
   // A follow-up: the opening user turn is the fixed initial prompt. The user
   // bubble renders through the same Markdown component the agent's does.
   await sendMessage(request, taskId, MESSAGE);
+  await waitForIdle(request, taskId);
+
+  // An agent's render output, gitignored like any build product.
+  const worktree: string = (await getTask(request, taskId)).worktree_path;
+  fs.mkdirSync(path.join(worktree, "build", "checks"), { recursive: true });
+  fs.copyFileSync(FIXTURE, path.join(worktree, SHOT));
+  fs.appendFileSync(path.join(worktree, ".gitignore"), "\nbuild/\n");
+  fs.writeFileSync(path.join(path.dirname(worktree), "outside.png"), fs.readFileSync(FIXTURE));
+  await sendMessage(request, taskId, [
+    `Relative: ![back render](${SHOT})`,
+    "",
+    `Absolute: ![abs render](${path.join(worktree, SHOT)})`,
+    "",
+    "Escape: ![escape render](../outside.png)",
+    "",
+    `Outside: ![outside render](${path.join(path.dirname(worktree), "outside.png")})`,
+  ].join("\n"));
   await waitForIdle(request, taskId);
 });
 
@@ -56,4 +81,29 @@ test("an image link targets the raw file route and a web link is untouched", asy
   await expect(web).toHaveAttribute("href", "https://example.com/docs/guide.md");
   await expect(web).toHaveAttribute("target", "_blank");
   await expect(web).not.toHaveClass(/md-file/);
+});
+
+test("a worktree image renders inline and an escaping one never loads", async ({ page }) => {
+  const requested: string[] = [];
+  page.on("request", (r) => { if (r.url().includes("/file/raw")) requested.push(decodeURIComponent(r.url())); });
+  await gotoApp(page);
+  await page.goto(`/?project=${projectId}&task=${taskId}`);
+
+  const src = `/api/tasks/${taskId}/file/raw?path=${encodeURIComponent(SHOT)}`;
+  for (const alt of ["back render", "abs render"]) {
+    const img = page.locator(`.msg .md img[alt="${alt}"]`).first();
+    await expect(img).toBeVisible();
+    await expect(img).toHaveAttribute("src", src);
+    await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBe(1568);
+    // A click opens the full size in a new tab.
+    await expect(img.locator("xpath=..")).toHaveAttribute("href", src);
+  }
+
+  for (const alt of ["escape render", "outside render"]) {
+    const missing = page.locator(".msg .md .md-img-missing", { hasText: alt }).first();
+    await expect(missing).toBeVisible();
+    await expect(missing).toContainText("image not found");
+  }
+  await expect(page.locator(".msg .md img[alt='escape render'], .msg .md img[alt='outside render']")).toHaveCount(0);
+  expect(requested.filter((u) => u.includes("outside.png"))).toEqual([]);
 });

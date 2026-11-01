@@ -29,7 +29,15 @@ const LINE_REF = /^[^:?#]*[./][^:?#]*(:\d+)+$/;
  *  filter would otherwise blank: a `file:` URL, a Windows drive path, a path
  *  with a `:line` citation. Plain relative and absolute paths already pass. */
 export function isFileLink(href: string): boolean {
-  return /^file:/i.test(href) || DRIVE.test(href) || LINE_REF.test(href);
+  const h = unescapeBackslashes(href);
+  return /^file:/i.test(h) || DRIVE.test(h) || LINE_REF.test(h);
+}
+
+/** react-markdown percent-encodes every URL before this module sees it, so a
+ *  Windows path arrives as `C:%5CUsers%5C…`. Restore the separators first,
+ *  so the drive test matches what the agent wrote. */
+function unescapeBackslashes(s: string): string {
+  return s.replace(/%5c/gi, "\\");
 }
 
 /** Extensions that never open as a document: shown or downloaded by the
@@ -85,7 +93,7 @@ function joinRelative(baseDir: string, p: string): string | null {
  * `#L42` forms agents use to cite a location.
  */
 export function localLinkTarget(href: string, roots: string[], baseDir = ""): LocalLink | null {
-  let p = href.trim();
+  let p = unescapeBackslashes(href.trim());
   if (!p || p.startsWith("#") || p.startsWith("//")) return null;
   const isFile = /^file:/i.test(p);
   // Query and fragment are never part of a file name in a link, and a
@@ -121,4 +129,31 @@ export function localLinkTarget(href: string, roots: string[], baseDir = ""): Lo
 /** The route that serves a worktree file's bytes with a browser-safe type. */
 export function rawFileUrl(taskId: string, rel: string): string {
   return `/api/tasks/${encodeURIComponent(taskId)}/file/raw?path=${encodeURIComponent(rel)}`;
+}
+
+/** Where a markdown image loads from. `remote`: a web or inline image, used
+ *  as written. `local`: an image file inside the checkout, served by the raw
+ *  route. `blocked`: anything else (a path outside every root, a `..` above
+ *  the worktree, a non-image file, an unknown scheme), shown as a placeholder
+ *  and never requested. */
+export type ImageSource =
+  | { kind: "remote"; src: string }
+  | { kind: "local"; src: string; rel: string }
+  | { kind: "blocked" };
+
+/**
+ * Map a markdown image's `src` to what the transcript loads. With no `links`
+ * context (no task to serve from) every local path is blocked, since the
+ * browser would resolve it against the app origin and 404.
+ */
+export function imageSource(
+  src: string,
+  links?: { taskId: string; roots: string[]; baseDir?: string },
+): ImageSource {
+  const s = src.trim();
+  if (/^https?:\/\//i.test(s) || /^data:image\//i.test(s) || /^blob:/i.test(s)) return { kind: "remote", src: s };
+  if (!links) return { kind: "blocked" };
+  const hit = localLinkTarget(s, links.roots, links.baseDir);
+  if (!hit || !isImageExt(extensionOf(hit.rel))) return { kind: "blocked" };
+  return { kind: "local", src: rawFileUrl(links.taskId, hit.rel), rel: hit.rel };
 }

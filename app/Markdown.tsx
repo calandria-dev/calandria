@@ -9,11 +9,11 @@ import type { ExtraProps } from "react-markdown";
 import { Mermaid } from "./Mermaid";
 import { mermaidSourceOf } from "@/lib/mermaid";
 import { codeBlockTextOf } from "@/lib/codeBlock";
-import { isFileLink, localLinkTarget, rawFileUrl } from "@/lib/localLink";
+import { imageSource, isFileLink, localLinkTarget, rawFileUrl } from "@/lib/localLink";
 import { Icon } from "./icons";
 
 // Renders an agent's markdown output: headings, lists, tables, fenced code blocks
-// (syntax-highlighted), inline code, links. Used for assistant + user messages.
+// (syntax-highlighted), inline code, links, images. Used for assistant + user messages.
 //
 // `detect: false`: only fenced blocks with an explicit language get
 // highlighted; hljs auto-detection over every bare code block is expensive
@@ -60,10 +60,41 @@ function fileAwareLink(links: MarkdownLinks) {
   };
 }
 
+// An image the agent names by path loads from the task's checkout through the
+// raw file route; a web or data: image loads as written. A path that resolves
+// nowhere, or a file the route can't serve, renders as a labelled placeholder
+// in place of a broken-image icon. A loaded local image links to its full size.
+function MarkdownImage({ src, alt, title, links }: { src: string; alt: string; title?: string; links?: MarkdownLinks }) {
+  const source = useMemo(() => imageSource(src, links), [src, links]);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [source]);
+  if (source.kind === "blocked" || failed) {
+    return (
+      <span className="md-img-missing" title={src}>
+        {alt ? `${alt} (image not found: ${src})` : `image not found: ${src}`}
+      </span>
+    );
+  }
+  const img = <img src={source.src} alt={alt} title={title} loading="lazy" onError={() => setFailed(true)} />;
+  if (source.kind === "remote") return img;
+  return <a href={source.src} className="md-img" title={title ?? source.rel} target="_blank" rel="noreferrer">{img}</a>;
+}
+
+function markdownImage(links?: MarkdownLinks) {
+  return function Img({ src, alt, title }: ComponentProps<"img"> & ExtraProps) {
+    return <MarkdownImage src={typeof src === "string" ? src : ""} alt={alt ?? ""} title={title} links={links} />;
+  };
+}
+
+const plainImg = markdownImage();
+
 // react-markdown blanks any href whose scheme it doesn't know, which takes
 // `file:///…`, `C:\…` and `lib/a.ts:42` with it. Those are the links this
-// component wants to see; everything else keeps the default filter.
-const urlTransform = (url: string) => (isFileLink(url) ? url : defaultUrlTransform(url));
+// component wants to see. An inline `data:image/` source is kept for an
+// image only, where it cannot run script. Everything else keeps the default
+// filter.
+const urlTransform = (url: string, key: string) =>
+  isFileLink(url) || (key === "src" && /^data:image\//i.test(url)) ? url : defaultUrlTransform(url);
 
 const COPIED_MS = 1400;
 
@@ -112,15 +143,15 @@ const diagramPre = (props: ComponentProps<"pre"> & ExtraProps) => {
   return source === null ? codePre(props) : <Mermaid source={source} />;
 };
 
-const PLAIN = { a: link, pre: codePre };
-const WITH_DIAGRAMS = { a: link, pre: diagramPre };
+const PLAIN = { a: link, pre: codePre, img: plainImg };
+const WITH_DIAGRAMS = { a: link, pre: diagramPre, img: plainImg };
 
 export const Markdown = memo(function Markdown({ children, diagrams = false, links }: { children: string; diagrams?: boolean; links?: MarkdownLinks }) {
   // The components map is identity-compared by react-markdown, so it is
   // built once per `links` value; callers keep that object stable (useMemo).
   const components = useMemo(() => {
     if (!links) return diagrams ? WITH_DIAGRAMS : PLAIN;
-    return { a: fileAwareLink(links), pre: diagrams ? diagramPre : codePre };
+    return { a: fileAwareLink(links), pre: diagrams ? diagramPre : codePre, img: markdownImage(links) };
   }, [links, diagrams]);
   return (
     <div className="md">

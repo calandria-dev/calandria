@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extensionOf, isFileLink, localLinkTarget, rawFileUrl } from "../lib/localLink";
+import { extensionOf, imageSource, isFileLink, localLinkTarget, rawFileUrl } from "../lib/localLink";
 
 const WT = "/home/u/.calandria/worktrees/abc";
 const REPO = "/home/u/repos/proj";
@@ -28,6 +28,10 @@ describe("localLinkTarget", () => {
     const win = ["C:\\wt\\t1"];
     expect(localLinkTarget("C:\\wt\\t1\\docs\\x.md", win)).toEqual({ rel: "docs/x.md", open: "collab" });
     expect(localLinkTarget("file:///C:/wt/t1/docs/x.md", win)).toEqual({ rel: "docs/x.md", open: "collab" });
+    // react-markdown hands the href over percent-encoded.
+    expect(localLinkTarget("C:%5Cwt%5Ct1%5Cdocs%5Cx.md", win)).toEqual({ rel: "docs/x.md", open: "collab" });
+    expect(imageSource("C:%5Cwt%5Ct1%5Cbuild%5Cb.png", { taskId: "t1", roots: win })).toEqual({ kind: "local", src: rawFileUrl("t1", "build/b.png"), rel: "build/b.png" });
+    expect(imageSource("C:%5Cother%5Cb.png", { taskId: "t1", roots: win })).toEqual({ kind: "blocked" });
     expect(localLinkTarget("D:\\elsewhere\\x.md", win)).toBeNull();
   });
 
@@ -78,6 +82,7 @@ describe("isFileLink", () => {
   it("names the hrefs react-markdown's default filter would blank", () => {
     expect(isFileLink("file:///home/u/x.md")).toBe(true);
     expect(isFileLink("C:\\wt\\x.md")).toBe(true);
+    expect(isFileLink("C:%5Cwt%5Cx.md")).toBe(true);
     expect(isFileLink("c:/wt/x.md")).toBe(true);
     expect(isFileLink("README.md:3")).toBe(true);
     expect(isFileLink("lib/a.ts:42:7")).toBe(true);
@@ -98,5 +103,44 @@ describe("extensionOf / rawFileUrl", () => {
   });
   it("encodes the task id and path", () => {
     expect(rawFileUrl("t1", "shots/my pic.png")).toBe("/api/tasks/t1/file/raw?path=shots%2Fmy%20pic.png");
+  });
+});
+
+describe("imageSource", () => {
+  const LINKS = { taskId: "t1", roots: ROOTS };
+  const raw = (rel: string) => rawFileUrl("t1", rel);
+
+  it("serves a relative worktree image from the raw route", () => {
+    const rel = "projects/panel-controls/button-module/build/checks/button-module-back.png";
+    expect(imageSource(rel, LINKS)).toEqual({ kind: "local", src: raw(rel), rel });
+  });
+  it("re-roots an absolute path inside the worktree or the repo", () => {
+    expect(imageSource(`${WT}/build/a.png`, LINKS)).toEqual({ kind: "local", src: raw("build/a.png"), rel: "build/a.png" });
+    expect(imageSource(`${REPO}/shots/b.jpg`, LINKS)).toEqual({ kind: "local", src: raw("shots/b.jpg"), rel: "shots/b.jpg" });
+    expect(imageSource(`file://${WT}/c.webp`, LINKS)).toEqual({ kind: "local", src: raw("c.webp"), rel: "c.webp" });
+  });
+  it("resolves against the document's directory", () => {
+    expect(imageSource("../img/d.gif", { ...LINKS, baseDir: "docs/guide" })).toEqual({ kind: "local", src: raw("docs/img/d.gif"), rel: "docs/img/d.gif" });
+  });
+  it("blocks a path that escapes the worktree", () => {
+    expect(imageSource("../secret.png", LINKS)).toEqual({ kind: "blocked" });
+    expect(imageSource("docs/../../secret.png", LINKS)).toEqual({ kind: "blocked" });
+    expect(imageSource("/etc/secret.png", LINKS)).toEqual({ kind: "blocked" });
+    expect(imageSource(`${WT}-other/a.png`, LINKS)).toEqual({ kind: "blocked" });
+    expect(imageSource("//evil.example/a.png", LINKS)).toEqual({ kind: "blocked" });
+  });
+  it("blocks a file that is not an image and an unknown scheme", () => {
+    expect(imageSource("docs/guide.md", LINKS)).toEqual({ kind: "blocked" });
+    expect(imageSource("javascript:alert(1)", LINKS)).toEqual({ kind: "blocked" });
+    expect(imageSource("", LINKS)).toEqual({ kind: "blocked" });
+  });
+  it("leaves web and inline images alone", () => {
+    expect(imageSource("https://example.com/a.png", LINKS)).toEqual({ kind: "remote", src: "https://example.com/a.png" });
+    expect(imageSource("data:image/png;base64,AAAA", LINKS)).toEqual({ kind: "remote", src: "data:image/png;base64,AAAA" });
+    expect(imageSource("http://example.com/a.png")).toEqual({ kind: "remote", src: "http://example.com/a.png" });
+  });
+  it("blocks every local path without a task to serve it", () => {
+    expect(imageSource("shots/a.png")).toEqual({ kind: "blocked" });
+    expect(imageSource(`${WT}/shots/a.png`)).toEqual({ kind: "blocked" });
   });
 });

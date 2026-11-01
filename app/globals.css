@@ -1696,6 +1696,9 @@ button.tpeek-more:hover{color:var(--accent-ink);}
 .md p{margin:0 0 10px;}
 .md strong{font-weight:700;}
 .md a{color:var(--accent-ink);text-decoration:underline;text-underline-offset:2px;}
+.md img{max-width:100%;height:auto;border-radius:6px;}
+.md a.md-img{display:inline-block;max-width:100%;cursor:zoom-in;}
+.md-img-missing{display:inline-block;padding:2px 8px;border:1px dashed var(--line-strong);border-radius:6px;color:var(--ink-3);font-size:12px;}
 .md ul,.md ol{margin:8px 0;padding-left:22px;}
 .md li{margin-bottom:4px;}
 .md li::marker{color:var(--ink-3);}
