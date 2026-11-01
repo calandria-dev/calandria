@@ -8,6 +8,20 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.27.0](https://github.com/calandria-dev/calandria/compare/v0.26.5...v0.27.0) (2026-11-01)
+
+
+### Features
+
+* background fetch per project and Fix with AI for a diverged base ([#625](https://github.com/calandria-dev/calandria/issues/625)) ([e040b76](https://github.com/calandria-dev/calandria/commit/e040b76d9f6be518348fb59294f2a2d7cd61f79b))
+* **transcript:** render inline images from worktree paths ([#627](https://github.com/calandria-dev/calandria/issues/627)) ([8dbd4f5](https://github.com/calandria-dev/calandria/commit/8dbd4f5488aed92a574028dff05b378448f50e12))
+
+
+### Bug Fixes
+
+* **git:** override GIT_EDITOR during continueWorktreeRebase ([#623](https://github.com/calandria-dev/calandria/issues/623)) ([32067a9](https://github.com/calandria-dev/calandria/commit/32067a94367b77311ce4d503c5f6d467ad9e5762))
+* **ui:** do not report running or unstarted task as running in main repo ([#612](https://github.com/calandria-dev/calandria/issues/612)) ([#624](https://github.com/calandria-dev/calandria/issues/624)) ([58d9370](https://github.com/calandria-dev/calandria/commit/58d9370c501f6457e7e546fac575dcda155af5c0))
+
 ## [0.26.5](https://github.com/calandria-dev/calandria/compare/v0.26.4...v0.26.5) (2026-10-31)
 
 
