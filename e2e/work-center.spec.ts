@@ -123,6 +123,29 @@ test("a chip opens the exact card and Back restores the popover on the same row"
   await expect(rowOf(page, "Anchor question")).toBeFocused();
 });
 
+test("a chip clicked while the project list is still loading keeps its destination", async ({ page, request }) => {
+  const task = await parkOn(request, "Boot race question", "e2e:ask=Mode|Which mode?|Fast,Safe");
+  // Hold the boot fetch open so the click is guaranteed to land first. A loaded
+  // runner produces this ordering on its own.
+  let release = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/projects", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    await held;
+    await route.continue();
+  });
+
+  await gotoApp(page);
+  await pill(page).click();
+  await rowOf(page, "Boot race question").getByRole("button", { name: /^Question:/ }).click();
+  await expect(popover(page)).toHaveCount(0);
+  release();
+
+  const snap = await snapshot(request);
+  const item = snap.tasks.find((r: { taskId: string }) => r.taskId === task.id).attention[0];
+  await expect(page.locator(`[data-message-id="${item.destination.messageId}"]`)).toBeVisible();
+});
+
 test("Recover on a context-limit failure focuses the notice and does not report it gone", async ({ page, request }) => {
   const task = await createTask(request, { projectId, title: "Overflow failure", description: "e2e:fail=prompt is too long: 210000 tokens > 200000 maximum" });
   await sendMessage(request, task.id);

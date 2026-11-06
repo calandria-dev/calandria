@@ -353,10 +353,14 @@ export function useShell() {
       // to, and ?home=1 restores the project-home pane (Runbooks/Schedules), which
       // on mobile is a route of its own. Task validity within the project is
       // checked once its tasks load, below.
-      const land = landingSelection(ps.filter((p) => !p.deprecated), urlSelRef.current ?? {}, storedSelRef.current ?? {});
-      setSelProj(land.proj);
-      if (land.task) setSelTask(land.task);
-      else if (land.home && land.proj) setHomeProj(land.proj);
+      // The top bar renders during boot, so a Work Center chip can already have
+      // picked a project by now; that choice stands over the landing selection.
+      if (!selProjRef.current) {
+        const land = landingSelection(ps.filter((p) => !p.deprecated), urlSelRef.current ?? {}, storedSelRef.current ?? {});
+        setSelProj(land.proj);
+        if (land.task) setSelTask(land.task);
+        else if (land.home && land.proj) setHomeProj(land.proj);
+      }
       setBooted(true);
     }).catch((e) => {
       setBootError(e instanceof Error ? e.message : String(e));
