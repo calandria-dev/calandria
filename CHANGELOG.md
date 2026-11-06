@@ -8,6 +8,13 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.27.5](https://github.com/calandria-dev/calandria/compare/v0.27.4...v0.27.5) (2026-11-06)
+
+
+### Dependencies
+
+* **deps:** refresh agent CLI pins ([#638](https://github.com/calandria-dev/calandria/issues/638)) ([83ba16c](https://github.com/calandria-dev/calandria/commit/83ba16c2e68e6da610fa1878c76c001bd3b0ea8c))
+
 ## [0.27.4](https://github.com/calandria-dev/calandria/compare/v0.27.3...v0.27.4) (2026-11-06)
 
 
