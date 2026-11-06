@@ -8,6 +8,13 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.27.4](https://github.com/calandria-dev/calandria/compare/v0.27.3...v0.27.4) (2026-11-06)
+
+
+### Bug Fixes
+
+* **shell:** keep a Work Center chip's destination through boot ([#636](https://github.com/calandria-dev/calandria/issues/636)) ([6046a06](https://github.com/calandria-dev/calandria/commit/6046a06f1397721f50d8e1162f6066a7050ed04a))
+
 ## [0.27.3](https://github.com/calandria-dev/calandria/compare/v0.27.2...v0.27.3) (2026-11-06)
 
 
