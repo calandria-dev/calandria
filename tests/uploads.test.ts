@@ -354,11 +354,18 @@ describe("sweepStaleDrafts", () => {
     oldForm.append("file", new File(["old"], "old.txt", { type: "" }), "old.txt");
     oldForm.append("draft", "d-old");
     await uploadDraft(new Request("http://local/upload", { method: "POST", body: oldForm }));
+    // The kernel stamps mtimes from the real clock while Date.now() follows the
+    // process clock, and under a faked clock (.github/workflows/test-clock.yml)
+    // the two differ by months. The next upload runs the sweep itself, so each
+    // dir is stamped with the process clock to read as fresh to it.
+    const justNow = new Date();
+    fs.utimesSync(draftUploadsDir("d-old"), justNow, justNow);
 
     const freshForm = new FormData();
     freshForm.append("file", new File(["fresh"], "fresh.txt", { type: "" }), "fresh.txt");
     freshForm.append("draft", "d-fresh");
     await uploadDraft(new Request("http://local/upload", { method: "POST", body: freshForm }));
+    fs.utimesSync(draftUploadsDir("d-fresh"), justNow, justNow);
 
     const oldTime = new Date(Date.now() - 2 * 60 * 60 * 1000);
     fs.utimesSync(draftUploadsDir("d-old"), oldTime, oldTime);
