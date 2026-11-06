@@ -8,6 +8,13 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.27.3](https://github.com/calandria-dev/calandria/compare/v0.27.2...v0.27.3) (2026-11-06)
+
+
+### Dependencies
+
+* **deps:** bump Codex CLI to 0.167.0 ([#634](https://github.com/calandria-dev/calandria/issues/634)) ([411d3e2](https://github.com/calandria-dev/calandria/commit/411d3e2e7b0ba15faf6681458a5a61bb63393805))
+
 ## [0.27.2](https://github.com/calandria-dev/calandria/compare/v0.27.1...v0.27.2) (2026-11-04)
 
 
