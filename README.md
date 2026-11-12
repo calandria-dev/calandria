@@ -253,6 +253,12 @@ already queued. The transcript records that it was sent.
   destructive effects and retry safety for MCP clients. External edits cannot
   release auto-start dependents or rewrite prompts queued for automatic start; see
   [External MCP endpoint](docs/FEATURES.md#external-mcp-endpoint).
+- **Command-line access:** the REST API accepts an opt-in bearer token
+  (`CALANDRIA_API_TOKEN`) for clients outside a browser, such as the
+  [`calandria` CLI](https://github.com/calandria-dev/calandria-cli). A local
+  client finds a running instance, including the desktop app, through the URL
+  the server records beside its database; see
+  [Exposing the REST API to command-line clients](docs/SELF_HOSTING.md#exposing-the-rest-api-to-command-line-clients).
 - **Update notifications:** a titlebar pill when a newer release exists, with
   the release notes behind it and the upgrade steps for how this instance was
   installed. The server does the checking, six-hourly, so no browser tab calls

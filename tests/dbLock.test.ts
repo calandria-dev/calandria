@@ -18,6 +18,7 @@ import {
   consumeDbRecoveryAuthorization,
   dbLockMode,
   readDbLockHolder,
+  recordDbLockUrl,
   releaseDbLock,
 } from "../lib/db-lock.mjs";
 import { init } from "../lib/db";
@@ -69,6 +70,26 @@ describe("db boot lock", () => {
     expect(state.mode).toBe("owner");
     expect(dbLockMode(dir)).toBe("owner");
     expect(readDbLockHolder(dir)).toMatchObject({ pid: process.pid });
+  });
+
+  it("adds the serving URL to the holder record, for local clients to discover", async () => {
+    const dir = freshDir();
+    await acquireDbLock({ dir, waitMs: 0 });
+
+    recordDbLockUrl("http://127.0.0.1:3007");
+
+    expect(readDbLockHolder(dir)).toMatchObject({ pid: process.pid, url: "http://127.0.0.1:3007" });
+    releaseDbLock();
+    expect(readDbLockHolder(dir)).toBeNull();
+  });
+
+  it("records no URL for a process that bypassed the lock", async () => {
+    const dir = freshDir();
+    await acquireDbLock({ dir, waitMs: 0, lock: "off" });
+
+    recordDbLockUrl("http://127.0.0.1:3007");
+
+    expect(readDbLockHolder(dir)).toBeNull();
   });
 
   it("refuses a second process and names the holder", async () => {

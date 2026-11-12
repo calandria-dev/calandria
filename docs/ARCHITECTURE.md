@@ -326,6 +326,9 @@ The tool roster is the same across drivers: `suggest_task`, `list_tasks`, `get_t
   `lib/externalMcp.ts` is pinned SDK-free, so the route injects `maybeAutoStartDependents` as
   `onBlockerCleared`. `middleware.ts` gates `/api/mcp` on `CALANDRIA_MCP_TOKEN` (404 when unset,
   401 on a bad bearer) ahead of the origin rules in both auth modes; the route repeats the check.
+  `CALANDRIA_API_TOKEN` is the same shape for the REST API: a matching bearer skips the origin
+  rules on every path except the `SERVICE_TOKEN` ones, a wrong one is a 401, and unset it is
+  ignored.
 - Both in-session paths share the same logic in `lib/agentTools.ts` and the same tool definitions in
   `lib/agentToolDefs.mjs`, so the two paths cannot drift.
 - `ask_user` is asynchronous: the endpoint persists and publishes the same interactive
