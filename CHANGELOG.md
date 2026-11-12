@@ -8,6 +8,18 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.28.0](https://github.com/calandria-dev/calandria/compare/v0.27.8...v0.28.0) (2026-11-12)
+
+
+### Features
+
+* **auth:** add CALANDRIA_API_TOKEN and record the server URL for CLI clients ([#649](https://github.com/calandria-dev/calandria/issues/649)) ([0696627](https://github.com/calandria-dev/calandria/commit/069662783802211825069b0085b45c5c865a8a28))
+
+
+### Bug Fixes
+
+* **agents:** pin Fable 5.2 in the Claude model picker ([#648](https://github.com/calandria-dev/calandria/issues/648)) ([d6cdf24](https://github.com/calandria-dev/calandria/commit/d6cdf249bc3832446fba998fc0d4573fa7947a20))
+
 ## [0.27.8](https://github.com/calandria-dev/calandria/compare/v0.27.7...v0.27.8) (2026-11-12)
 
 
