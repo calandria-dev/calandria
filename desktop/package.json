@@ -23,6 +23,9 @@
     "electron": "^44.9.1",
     "electron-builder": "^26.15.3"
   },
+  "overrides": {
+    "minimatch@>=7.0.0 <11.0.1": "^11.0.1"
+  },
   "author": "Calandria contributors",
   "homepage": "https://github.com/calandria-dev/calandria",
   "license": "Apache-2.0"
