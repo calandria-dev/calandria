@@ -16,6 +16,8 @@ import {
   externalMcpEnabled,
   externalMcpRefusal,
   logExternalMcpRefusal,
+  apiTokenEnabled,
+  apiTokenOk,
   verifyOriginRequest,
 } from "@/lib/auth/origin.mjs";
 import {
@@ -89,6 +91,29 @@ export async function middleware(req: NextRequest) {
     return new NextResponse(`Unauthorized: ${refusal}.\n`, {
       status: 401,
       headers: { "content-type": "text/plain", "www-authenticate": 'Bearer realm="calandria-mcp"' },
+    });
+  }
+
+  // REST clients outside a browser (the calandria CLI, scripts) present
+  // `Authorization: Bearer <CALANDRIA_API_TOKEN>` and skip the browser-origin
+  // rules in both modes, the same contract as the MCP endpoint above. A
+  // browser cannot attach that header cross-origin without a CORS preflight,
+  // and a preflight carries no Authorization, so it falls through to the
+  // ordinary rules below. The internal service-token paths keep their own
+  // stricter credential. A wrong token is a 401, so a stale CLI config is
+  // told apart from an origin refusal; with the token unset the header is
+  // ignored and the request is judged like any other.
+  const authorization = req.headers.get("authorization");
+  if (
+    apiTokenEnabled() &&
+    /^Bearer\s/i.test(authorization || "") &&
+    !isAgentToolPath(pathname) &&
+    !isInstanceOnlyServiceTokenPath(pathname)
+  ) {
+    if (apiTokenOk(authorization)) return NextResponse.next();
+    return new NextResponse("Unauthorized: bearer token does not match CALANDRIA_API_TOKEN.\n", {
+      status: 401,
+      headers: { "content-type": "text/plain", "www-authenticate": 'Bearer realm="calandria-api"' },
     });
   }
 

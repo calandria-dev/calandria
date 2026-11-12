@@ -375,6 +375,11 @@ Promise.all([prepared, cfAccessImport, localOriginImport, serviceRouterImport, e
   }
 
   server.listen(port, hostname, () => {
+    // Local clients find this instance through the lock sidecar (lib/db-lock.mjs).
+    const wildcard = ["0.0.0.0", "::", "[::]"].includes(hostname);
+    const bareV6 = hostname.includes(":") && !hostname.startsWith("[");
+    const connectHost = wildcard ? "127.0.0.1" : bareV6 ? `[${hostname}]` : hostname;
+    dbLockImport.then((dbLock) => dbLock.recordDbLockUrl(`http://${connectHost}:${port}`)).catch(() => {});
     // Managed dev servers with desired_state='running' restart with the box.
     bootPing("services", "/api/instance/services-restore");
     // Scheduled tasks fire with the server, not with a browser. The same ping
