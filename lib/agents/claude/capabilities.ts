@@ -25,7 +25,7 @@ import { gatewayModelOptions, lastGatewayModelCatalog } from "../../gatewayModel
 // the label would be a guess about what that CLI picks, and the guess goes
 // stale the next time a family moves. Aliases read "(latest)" instead, and
 // `modelLabel()` parses the actual version out of the id a turn billed, so the
-// picker offers "Fable (latest)" and the badge reports "Fable 5.1".
+// picker offers "Fable (latest)" and the badge reports "Fable 5.2".
 //
 // The resolution is readable locally: ./modelProbe.ts asks the installed CLI
 // once per CLI version, out of band, and leaves the answer in ./modelIds.ts for
@@ -48,8 +48,9 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
     // Pinned ahead of an alias because the alias may not reach it. An alias
     // resolves through the installed CLI's own catalog, so an older CLI can
     // resolve it to an earlier version than the pin names. `fable` is one
-    // measured case. `opus` is another: Claude Code 2.1.278 maps it to
-    // `claude-opus-5`. Starting with 2.1.280, it maps to `claude-opus-5-5`.
+    // measured case: Claude Code 2.1.301 still maps it to `claude-fable-5-1`
+    // and does not recognize `claude-fable-5-2`, so only the pin reaches 5.2.
+    // `opus` is another: Claude Code 2.1.278 maps it to `claude-opus-5`. Starting with 2.1.280, it maps to `claude-opus-5-5`.
     // `sonnet` too: 2.1.280 maps it to `claude-sonnet-5`, and starting with
     // 2.1.284 it maps to `claude-sonnet-5-5`. The pin says which version was meant regardless of
     // what the installed CLI knows. An id the CLI doesn't recognize logs
@@ -57,7 +58,7 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
     // turn still runs and bills under that id; a genuinely bogus id errors
     // instead, so an unrecognized pin is a pass-through, not a silent
     // fallback.
-    { value: "claude-fable-5-1", label: "Fable 5.1", sub: "newest Fable · 1M context", contextWindow: M1, group: "Latest" },
+    { value: "claude-fable-5-2", label: "Fable 5.2", sub: "newest Fable · 1M context", contextWindow: M1, group: "Latest" },
     { value: "fable", label: "Fable (latest)", sub: "most capable · 1M context", contextWindow: M1, group: "Latest" },
     { value: "claude-opus-5-5", label: "Opus 5.5", sub: "newest Opus", contextWindow: K200, group: "Latest" },
     { value: "opus", label: "Opus (latest)", sub: "everyday complex work", contextWindow: K200, group: "Latest" },
@@ -70,6 +71,7 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
     { value: "claude-sonnet-5-5[1m]", label: "Sonnet 5.5 (1M)", sub: "newest Sonnet, 1M context", contextWindow: M1, group: "1M context" },
     { value: "sonnet[1m]", label: "Sonnet (1M)", sub: "long sessions, large codebases", contextWindow: M1, group: "1M context" },
     { value: "opusplan[1m]", label: "Opus Plan Mode (1M)", sub: "plan on Opus, run on Sonnet 1M", contextWindow: M1, group: "1M context" },
+    { value: "claude-fable-5-1", label: "Fable 5.1", sub: "previous Fable · 1M context", contextWindow: M1, group: "Pinned versions" },
     { value: "claude-opus-5", label: "Opus 5", sub: "previous Opus", contextWindow: K200, group: "Pinned versions" },
     { value: "claude-opus-5[1m]", label: "Opus 5 (1M)", sub: "previous Opus, 1M context", contextWindow: M1, group: "Pinned versions" },
     { value: "claude-sonnet-5", label: "Sonnet 5", sub: "previous Sonnet", contextWindow: K200, group: "Pinned versions" },

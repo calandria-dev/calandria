@@ -114,7 +114,7 @@ describe("claudeCapabilities on Vertex", () => {
   // Spelled out instead of derived from the same predicate the implementation
   // uses, so a filter that widens by accident fails here instead of agreeing
   // with itself.
-  const DROPPED_ON_VERTEX = ["fable", "claude-fable-5-1"];
+  const DROPPED_ON_VERTEX = ["fable", "claude-fable-5-2", "claude-fable-5-1"];
 
   it("drops only the Fable rows: every other value that works is still offered", () => {
     expect(caps.models.map((m) => m.value)).toEqual(
@@ -205,6 +205,7 @@ describe("claudeCapabilities on Vertex", () => {
     // Still offered on the plain Anthropic path, where they work: the alias
     // names its resolver, and the pin names the version it pins.
     expect(optionFor(CLAUDE_CAPABILITIES, "fable").label).toBe("Fable (latest)");
+    expect(optionFor(CLAUDE_CAPABILITIES, "claude-fable-5-2").label).toBe("Fable 5.2");
     expect(optionFor(CLAUDE_CAPABILITIES, "claude-fable-5-1").label).toBe("Fable 5.1");
   });
 

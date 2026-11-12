@@ -209,7 +209,7 @@ An id the installed CLI doesn't recognize is a pass-through, not a silent fallba
 **No alias label names a version, on either catalog.** A version in an alias's label would be a
 guess about what the CLI's resolver picks. Default-catalog aliases read "(latest)"; Vertex's read
 "(provider default)". The version is stated only once known, by `modelLabel()` parsing the id a
-turn actually billed: picker says "Fable (latest)", badge says "Fable 5.1" once a turn has run.
+turn actually billed: picker says "Fable (latest)", badge says "Fable 5.2" once a turn has run.
 `tests/modelLabel.test.ts` and `tests/claudeVertexModels.test.ts` pin both ends.
 
 **`lib/agents/claude/modelProbe.ts` reads the resolution with no API call.**
@@ -248,8 +248,8 @@ derivation; `contextWindow` follows the resolved id too.
   to.
 - `settings.json`'s `env` block beats the process env for these variables.
 - `fable` 403s on Vertex (no `anthropic` publisher data sharing on the GCP project) and is dropped
-  from the Vertex catalog with its whole family (`claude-fable-5-1` included; the filter is per
-  publisher, not per version). It stays on the default catalog, where it works.
+  from the Vertex catalog with its whole family (`claude-fable-5-2` and `claude-fable-5-1`
+  included; the filter is per publisher, not per version). It stays on the default catalog, where it works.
 
 Bedrock stays on the default catalog; no Bedrock instance exists to correct against.
 

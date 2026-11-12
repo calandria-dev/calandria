@@ -23,9 +23,10 @@ describe("modelLabel", () => {
     expect(modelLabel("claude-sonnet-5", claude)).toBe("Sonnet 5");
     expect(modelLabel("claude-sonnet-5-5", claude)).toBe("Sonnet 5.5");
     expect(modelLabel("claude-fable-5", claude)).toBe("Fable 5");
-    // The pinned 5.1 id must not be shadowed by the shorter `claude-fable-5`
+    // The pinned 5.x ids must not be shadowed by the shorter `claude-fable-5`
     // reading, and must not drag the plain 5 id up to it either.
     expect(modelLabel("claude-fable-5-1", claude)).toBe("Fable 5.1");
+    expect(modelLabel("claude-fable-5-2", claude)).toBe("Fable 5.2");
     expect(modelLabel("claude-haiku-4-5", claude)).toBe("Haiku 4.5");
   });
 
