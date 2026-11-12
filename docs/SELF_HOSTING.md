@@ -461,6 +461,31 @@ In Access mode, the Cloudflare edge in front of your tunnel still applies its ow
 `/api/mcp`. Give the client a path that Access lets through, such as an Access service token
 or a bypass policy for `/api/mcp`, or have it reach the instance directly on the LAN.
 
+### Exposing the REST API to command-line clients
+
+`CALANDRIA_API_TOKEN` lets a client outside a browser, such as the
+[`calandria` CLI](https://github.com/calandria-dev/calandria-cli), call the REST API from any
+host. Unset (the default), it grants nothing, and a client on the same machine needs no token at
+all: local mode admits loopback requests that carry no `Origin` header.
+
+1. Generate a token: `openssl rand -hex 32`.
+2. Set it as `CALANDRIA_API_TOKEN` and restart.
+3. Send it on every request as `Authorization: Bearer <token>`.
+
+A request carrying the token skips the browser-origin rules in both modes, so a client on another
+host works without adding its `Host` to `CALANDRIA_ALLOWED_ORIGINS`. A wrong token gets a 401. The
+token covers every route under the app except the internal paths that take `SERVICE_TOKEN`, and
+it does not open the `/pty` terminal WebSocket. It grants the same control a browser session has,
+so treat it like a password.
+
+In Access mode, the Cloudflare edge still applies its own policy. Give the client an Access
+service token (`CF-Access-Client-Id` and `CF-Access-Client-Secret` headers) or reach the instance
+directly on the LAN.
+
+A running server also records its URL in the `url` field of `calandria.lock.json` in
+`CALANDRIA_DB_DIR`, beside the database. Local clients read it to find an instance whose port was
+picked at runtime, such as the desktop app's. The file is removed when the server exits.
+
 ## Connecting the desktop app
 
 The desktop app ([`docs/DESKTOP_APP.md`](DESKTOP_APP.md)) keeps a list of
@@ -608,6 +633,7 @@ input.
 | `CF_ACCESS_AUD` | *(empty)* | The Access application's `aud` tag the JWT must carry (comma-separable) |
 | `SERVICE_TOKEN` | *(empty)* | Shared secret for the health/version/usage/metrics routes and the in-container callers (health probe, service restore, agent-tool bridge); see above. The image mints a per-boot one under Access if empty |
 | `CALANDRIA_FLEET_TOKEN` | *(empty)* | Optional fleet-wide read token for the same read-only routes (`/api/version`, `/api/instance/usage`, `/api/instance/metrics`, `GET /api/instance/scheduler`), so one dashboard can scrape many instances with one secret. Never accepted on mutating endpoints |
+| `CALANDRIA_API_TOKEN` | *(empty)* | Bearer token for REST API clients such as the `calandria` CLI; every such request sends it as `Authorization: Bearer <token>` and skips the browser-origin rules. Unset, no token is accepted. See "Exposing the REST API to command-line clients" above |
 | `CALANDRIA_MCP_TOKEN` | *(empty)* | Turns on the external MCP endpoint at `/api/mcp`; every request must send it as `Authorization: Bearer <token>`. Separate from `SERVICE_TOKEN`. Unset, the endpoint answers 404. See "Exposing the MCP endpoint" above |
 | `CALANDRIA_DB_DIR` | `~/.calandria` | Directory holding `calandria.db` (SQLite app data). Absolute path; created on first run |
 | `CALANDRIA_DB_LOCK` | `on` | The single-instance boot lock. `off` lets a second process start against a database another one already owns; unsupported, and exactly the corruption the lock exists to prevent. See **One process per database** below |
