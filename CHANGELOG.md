@@ -8,6 +8,22 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.28.2](https://github.com/calandria-dev/calandria/compare/v0.28.1...v0.28.2) (2026-11-14)
+
+
+### Bug Fixes
+
+* **docker:** bump pinned gh CLI to 2.104.0 ([#660](https://github.com/calandria-dev/calandria/issues/660)) ([2497b1a](https://github.com/calandria-dev/calandria/commit/2497b1ae10ffbccdf354f00611a9ba4b7b0e54e2)), closes [#652](https://github.com/calandria-dev/calandria/issues/652)
+
+
+### Dependencies
+
+* **deps:** bump @hono/node-server from 2.1.5 to 2.1.8 in the npm_and_yarn group across 1 directory ([#655](https://github.com/calandria-dev/calandria/issues/655)) ([197556f](https://github.com/calandria-dev/calandria/commit/197556fb2c8622b9b9676a9eadb91307a9f1c67a))
+* **deps:** bump Codex CLI to 0.168.0 ([#658](https://github.com/calandria-dev/calandria/issues/658)) ([210c327](https://github.com/calandria-dev/calandria/commit/210c327f5b2e875327c3c00c6fd3f9034a666a2c))
+* **deps:** bump Codex CLI to 0.169.0 ([#661](https://github.com/calandria-dev/calandria/issues/661)) ([723f2f4](https://github.com/calandria-dev/calandria/commit/723f2f486e81923bc40bffd9ce15e6255c6d6d98))
+* **deps:** clear Dependabot alert [#108](https://github.com/calandria-dev/calandria/issues/108) (minimatch in desktop) ([#651](https://github.com/calandria-dev/calandria/issues/651)) ([3e1bdfb](https://github.com/calandria-dev/calandria/commit/3e1bdfbf1fe5cd39a3ccf35209692dbc578b7fd6))
+* **deps:** refresh agent CLI pins ([#663](https://github.com/calandria-dev/calandria/issues/663)) ([9e0f2e7](https://github.com/calandria-dev/calandria/commit/9e0f2e77e5ef8d76496110a6d3eba7926a691c3e))
+
 ## [0.28.1](https://github.com/calandria-dev/calandria/compare/v0.28.0...v0.28.1) (2026-11-13)
 
 
