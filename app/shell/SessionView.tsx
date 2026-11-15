@@ -614,7 +614,8 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   const [toolsOpen, setToolsOpen] = useState(false);
   const [priOpen, setPriOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [effortOpen, setEffortOpen] = useState(false);
+  const [permOpen, setPermOpen] = useState(false);
   const [view, setView] = useState<"chat" | "changes" | "review">("chat");
   // The REVIEW tab and the Review segment exist only for a task with at least one review request.
   const reviewsLoad = useTaskReviews(task.id, task.updated_at ?? 0);
@@ -1009,7 +1010,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   // rule that keeps it on a desktop.
   const statusCtl = (
     <div style={{ position: "relative" }}>
-      <button className={`status-ctl ${awaiting ? "awaiting" : ""}`} onClick={(e) => { e.stopPropagation(); setStatusOpen((o) => !o); setPriOpen(false); setModelOpen(false); setSettingsOpen(false); }}>
+      <button className={`status-ctl ${awaiting ? "awaiting" : ""}`} onClick={(e) => { e.stopPropagation(); setStatusOpen((o) => !o); setPriOpen(false); setModelOpen(false); setEffortOpen(false); setPermOpen(false); }}>
         <StatusDot status={task.status} running={running} awaiting={awaiting} background={!awaiting && running && !!task.background_pending} />
         <span className="cv">{awaiting ? AWAIT_LABEL : SLABEL[task.status]}</span>
         {Icon.chevDown()}
@@ -1044,7 +1045,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
 
   const modelCtl = (
     <div style={{ position: "relative" }}>
-      <button className="status-ctl" title={`Model this task's ${agentLabel(agents, task.agent)} session uses`} onClick={(e) => { e.stopPropagation(); setModelOpen((o) => !o); setStatusOpen(false); setPriOpen(false); setSettingsOpen(false); }}>
+      <button className="status-ctl" title={`Model this task's ${agentLabel(agents, task.agent)} session uses`} onClick={(e) => { e.stopPropagation(); setModelOpen((o) => !o); setStatusOpen(false); setPriOpen(false); setEffortOpen(false); setPermOpen(false); }}>
         {Icon.spark()}
         {/*
          * The chip says INHERIT_LABEL, never "Default": the same word the
@@ -1073,30 +1074,46 @@ export function SessionView({ project, task, tagsById, agents, messages, running
     </div>
   );
 
-  const settingsCtl = (
+  // Effort and permissions are two chips so each shows its own current value.
+  // The effort chip is absent when the agent offers no reasoning levels, since
+  // its only option would be the inherit head.
+  const effortCtl = reasoningOpts.length > 1 && (
     <div style={{ position: "relative" }}>
-      <button className="status-ctl" title="Reasoning level & permission mode for this task" onClick={(e) => { e.stopPropagation(); setSettingsOpen((o) => !o); setModelOpen(false); setStatusOpen(false); setPriOpen(false); }}>
-        {Icon.gear()}
+      <button className="status-ctl" title="Reasoning effort for this task" onClick={(e) => { e.stopPropagation(); setEffortOpen((o) => !o); setPermOpen(false); setModelOpen(false); setStatusOpen(false); setPriOpen(false); }}>
+        {Icon.bolt()}
         <span className="cv">{reasoningOpts.find((r) => r.value === task.reasoning)?.label ?? INHERIT_LABEL}</span>
         {Icon.chevDown()}
       </button>
-      {settingsOpen && (
-        <Popover onClose={() => setSettingsOpen(false)}>
+      {effortOpen && (
+        <Popover onClose={() => setEffortOpen(false)}>
           <div className="pop-sec">Reasoning</div>
           {reasoningOpts.map((r) => (
             <Fragment key={r.label}>
-              <div className="pop-item" onClick={() => { onSetReasoning(r.value); setSettingsOpen(false); }}>
+              <div className="pop-item" onClick={() => { onSetReasoning(r.value); setEffortOpen(false); }}>
                 <div><div>{r.label}</div><div className="pi-sub">{r.sub}</div></div>
                 {(task.reasoning ?? null) === r.value && <span className="pi-check">{Icon.check()}</span>}
               </div>
               {r.value === null && <div className="divider" />}
             </Fragment>
           ))}
-          <div className="divider" />
+        </Popover>
+      )}
+    </div>
+  );
+
+  const permCtl = (
+    <div style={{ position: "relative" }}>
+      <button className="status-ctl" title="Permission mode for this task" onClick={(e) => { e.stopPropagation(); setPermOpen((o) => !o); setEffortOpen(false); setModelOpen(false); setStatusOpen(false); setPriOpen(false); }}>
+        {Icon.lock()}
+        <span className="cv">{permissionOpts.find((p) => p.value === task.permission_mode)?.label ?? INHERIT_LABEL}</span>
+        {Icon.chevDown()}
+      </button>
+      {permOpen && (
+        <Popover onClose={() => setPermOpen(false)}>
           <div className="pop-sec">Permission</div>
           {permissionOpts.map((p) => (
             <Fragment key={p.label}>
-              <div className="pop-item" onClick={() => { onSetPermission(p.value); setSettingsOpen(false); }}>
+              <div className="pop-item" onClick={() => { onSetPermission(p.value); setPermOpen(false); }}>
                 <div><div>{p.label}</div><div className="pi-sub">{p.sub}</div></div>
                 {(task.permission_mode ?? null) === p.value && <span className="pi-check">{Icon.check()}</span>}
               </div>
@@ -1110,7 +1127,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
             <div className="pop-sec">Sandbox</div>
             {sandboxOpts.map((s) => (
               <Fragment key={s.label}>
-                <div className="pop-item" onClick={() => { onSetSandbox(s.value); setSettingsOpen(false); }}>
+                <div className="pop-item" onClick={() => { onSetSandbox(s.value); setPermOpen(false); }}>
                   <div><div>{s.label}</div><div className="pi-sub">{s.sub}</div></div>
                   {(task.sandbox_mode ?? null) === s.value && <span className="pi-check">{Icon.check()}</span>}
                 </div>
@@ -1125,7 +1142,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
 
   const priCtl = (
     <div style={{ position: "relative" }}>
-      <button className="status-ctl" onClick={(e) => { e.stopPropagation(); setPriOpen((o) => !o); setStatusOpen(false); setModelOpen(false); setSettingsOpen(false); }}>
+      <button className="status-ctl" onClick={(e) => { e.stopPropagation(); setPriOpen((o) => !o); setStatusOpen(false); setModelOpen(false); setEffortOpen(false); setPermOpen(false); }}>
         {Icon.flag()} <span className="cv">{PLABEL[task.priority]}</span>
       </button>
       {priOpen && (
@@ -1210,18 +1227,19 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   // a one-shot action on a task that is finished with, not a standing control.
   railItems.push({ key: "reclaim", node: <ReclaimButton task={task} /> });
   if (showUsage) railItems.push({ key: "usage", node: usageChip, drop: 1 });
-  railItems.push({ key: "model", node: modelCtl, drop: 7 });
-  railItems.push({ key: "settings", node: settingsCtl, drop: 3 });
+  railItems.push({ key: "model", node: modelCtl, drop: 8 });
+  if (effortCtl) railItems.push({ key: "effort", node: effortCtl, drop: 3 });
+  railItems.push({ key: "perm", node: permCtl, drop: 4 });
   railItems.push({ key: "pri", node: priCtl, drop: 2 });
   railItems.push({ key: "status", node: statusCtl });
-  railItems.push({ key: "snooze", node: snoozeCtl, drop: 5 });
+  railItems.push({ key: "snooze", node: snoozeCtl, drop: 6 });
   if (hasSession && isQueuedStart(task) && !running) railItems.push({ key: "queued", node: queuedCtl });
   // Ahead of Snooze in the collapse, and only just behind the model picker: on
   // a task that has run, this modal is the ONLY surface left showing the
   // description (see its comment above), so it is the last read-only route to
   // "what did I actually ask for?" rather than one more control.
-  if (hasSession) railItems.push({ key: "edit", node: editBtn, drop: 6 });
-  if (hasSession && task.started === 1) railItems.push({ key: "clear", node: clearBtn, drop: 4 });
+  if (hasSession) railItems.push({ key: "edit", node: editBtn, drop: 7 });
+  if (hasSession && task.started === 1) railItems.push({ key: "clear", node: clearBtn, drop: 5 });
 
   const dropOrder = railItems.filter((i) => i.drop !== undefined).sort((a, b) => a.drop! - b.drop!);
   // What the rail is currently rendering, at the granularity that changes its
@@ -1231,7 +1249,7 @@ export function SessionView({ project, task, tagsById, agents, messages, running
   // useOverflowRail measured against.
   const railSig = [
     railItems.map((i) => i.key).join(","), task.status, awaiting, task.model ?? "", task.resolved_model ?? "",
-    task.reasoning ?? "", task.priority, isSnoozed(task) && wakeLabel(task.snoozed_until),
+    task.reasoning ?? "", task.permission_mode ?? "", task.priority, isSnoozed(task) && wakeLabel(task.snoozed_until),
     isQueuedStart(task) && wakeLabel(task.start_at), fmtTokens(usage.fresh), fmtTokens(usage.cacheRead),
     cost.show && fmtCostTotal(task.cost_usd, task.unpriced_turns), task.pr_state ?? "", task.pr_checks ?? "", task.pr_review ?? "",
   ].join("|");

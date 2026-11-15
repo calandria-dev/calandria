@@ -37,14 +37,14 @@ test.describe.serial("Codex sandbox settings", () => {
     await page.getByRole("button", { name: "Back to workspace", exact: true }).click();
     await page.getByText(projectName, { exact: true }).first().click();
     await page.getByText(/Idle Codex/).first().click();
-    await page.getByTitle("Reasoning level & permission mode for this task", { exact: true }).click();
+    await page.getByTitle("Permission mode for this task", { exact: true }).click();
     await page.getByText("Sandbox", { exact: true }).locator("..").getByText("Full access", { exact: true }).click();
     await expect.poll(async () => (await (await request.get(`/api/tasks/${task.id}`)).json()).sandbox_mode).toBe("danger-full-access");
 
     await page.reload();
     await page.getByText(projectName, { exact: true }).first().click();
     await page.getByText(/Idle Codex/).first().click();
-    await page.getByTitle("Reasoning level & permission mode for this task", { exact: true }).click();
+    await page.getByTitle("Permission mode for this task", { exact: true }).click();
     const fullAccess = page.locator(".pop-item").filter({ hasText: "Full access" });
     await expect(fullAccess.locator(".pi-check")).toBeVisible();
     await page.locator(".pop-item").filter({ hasText: "Inherit default" }).click();
