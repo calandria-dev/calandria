@@ -14,7 +14,7 @@ import {
 import { clearEndpointProbeCache, endpointModels } from "../modelEndpoint";
 import { getProviderSecret } from "../providerSecrets";
 import type { ModelProvider } from "./rows";
-import { modelFamilies, placeModel, type ModelPlacement } from "./families";
+import { ACCESS_GATED_FAMILIES, modelFamilies, placeModel, type ModelPlacement } from "./families";
 import { pinnedModelsForProvider, providersForEnvironment, updateProvider } from "./store";
 import type { EnvironmentId, ModelPolicy, ProviderType } from "./types";
 
@@ -277,7 +277,9 @@ export function applyModelPolicy(
   const pinned = new Set(pinnedIds);
   const initialAllow =
     policy.mode === "allow" && policy.known.length === 0
-      ? fresh.filter((model) => model.chat && model.family !== "other" && !model.duplicate_of).map((model) => model.id)
+      ? fresh
+        .filter((model) => model.chat && model.family !== "other" && !ACCESS_GATED_FAMILIES.has(model.family) && !model.duplicate_of)
+        .map((model) => model.id)
       : policy.ids;
   const missing = [...new Set([...policy.known, ...policy.unavailable])].filter(
     (id) => !freshIds.has(id) && pinned.has(id),

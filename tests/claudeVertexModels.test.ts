@@ -114,9 +114,9 @@ describe("claudeCapabilities on Vertex", () => {
   // Spelled out instead of derived from the same predicate the implementation
   // uses, so a filter that widens by accident fails here instead of agreeing
   // with itself.
-  const DROPPED_ON_VERTEX = ["fable", "claude-fable-5-2", "claude-fable-5-1"];
+  const DROPPED_ON_VERTEX = ["fable", "claude-fable-5-2", "claude-fable-5-1", "claude-mythos-5-2", "claude-mythos-5-1"];
 
-  it("drops only the Fable rows: every other value that works is still offered", () => {
+  it("drops only the Fable and Mythos rows: every other value that works is still offered", () => {
     expect(caps.models.map((m) => m.value)).toEqual(
       CLAUDE_CAPABILITIES.models.map((m) => m.value).filter((v) => !DROPPED_ON_VERTEX.includes(v))
     );

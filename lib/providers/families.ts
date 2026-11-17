@@ -18,6 +18,7 @@ interface FamilySpec {
 
 const FAMILIES: FamilySpec[] = [
   { id: "fable", label: "Fable", vendor: "anthropic", re: /^(?:claude-)?fable(?:-|$)/i },
+  { id: "mythos", label: "Mythos", vendor: "anthropic", re: /^(?:claude-)?mythos(?:-|$)/i },
   { id: "opus", label: "Opus", vendor: "anthropic", re: /^(?:claude-)?opus(?:-|$)/i },
   { id: "sonnet", label: "Sonnet", vendor: "anthropic", re: /^(?:claude-)?sonnet(?:-|$)/i },
   { id: "haiku", label: "Haiku", vendor: "anthropic", re: /^(?:claude-)?haiku(?:-|$)/i },
@@ -32,6 +33,11 @@ const FAMILIES: FamilySpec[] = [
   { id: "mistral", label: "Mistral", vendor: "open", re: /^mistral(?:-|\d|$)/i },
   { id: "devstral", label: "Devstral", vendor: "open", re: /^devstral(?:-|\d|$)/i },
 ];
+
+/** Families an account reaches only after an access grant. A first-run policy
+ *  lists their models as off, so a turn on an account without the grant never
+ *  picks one by default. */
+export const ACCESS_GATED_FAMILIES: ReadonlySet<string> = new Set(["mythos"]);
 
 const GATEWAY_PREFIX = /^(?:anthropic|openai|together|moonshot|zai)\//i;
 const DATED = /-(\d{8})(?=(?:\[1m\])?$)/i;
@@ -51,7 +57,7 @@ function title(s: string): string {
 }
 
 function contextFor(family: string, id: string): number {
-  if (family === "fable" || /\[1m\]/i.test(id)) return 1_000_000;
+  if (family === "fable" || family === "mythos" || /\[1m\]/i.test(id)) return 1_000_000;
   if ((family === "opus" || family === "sonnet") && /(?:opus|sonnet)-5(?:-|$)/i.test(id)) return 1_000_000;
   if (family === "llama" && /llama-?4(?:-|$)/i.test(id)) return 1_000_000;
   if (family === "qwen" || family === "kimi" || family === "llama" || family === "mistral" || family === "devstral") return 256_000;

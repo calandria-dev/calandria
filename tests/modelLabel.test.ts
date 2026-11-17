@@ -27,6 +27,8 @@ describe("modelLabel", () => {
     // reading, and must not drag the plain 5 id up to it either.
     expect(modelLabel("claude-fable-5-1", claude)).toBe("Fable 5.1");
     expect(modelLabel("claude-fable-5-2", claude)).toBe("Fable 5.2");
+    expect(modelLabel("claude-mythos-5-1", claude)).toBe("Mythos 5.1");
+    expect(modelLabel("claude-mythos-5-2", claude)).toBe("Mythos 5.2");
     expect(modelLabel("claude-haiku-4-5", claude)).toBe("Haiku 4.5");
   });
 
@@ -83,6 +85,7 @@ describe("claude model list", () => {
     expect(contextWindowOf("opus[1m]", claude)).toBe(1_000_000);
     expect(contextWindowOf("fable", claude)).toBe(1_000_000);
     expect(contextWindowOf("claude-fable-5-1", claude)).toBe(1_000_000);
+    expect(contextWindowOf("claude-mythos-5-2", claude)).toBe(1_000_000);
   });
 
   // Issue #39: the two misses are different questions. An inherited (null)

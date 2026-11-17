@@ -203,6 +203,12 @@ Two kinds of entry:
   release can need a pinned row even when the alias already exists.
 - **Pinned ids** (e.g. `claude-opus-4-8`): a literal id handed to `--model`, immune to that drift.
 
+Mythos (`claude-mythos-5-2`, `claude-mythos-5-1`) is pinned-only: the CLI resolves no `mythos`
+alias. It sits in the "Restricted access" group because an account reaches it only through
+Anthropic's Cyber Verification Program. `ACCESS_GATED_FAMILIES` (`lib/providers/families.ts`)
+keeps it off a first-run provider policy, so the user switches it on in Settings → Models. The
+CLI's catalog lists no Vertex or Bedrock id for it, so the Vertex catalog drops it.
+
 An id the installed CLI doesn't recognize is a pass-through, not a silent fallback: the CLI logs
 `[claude-code:unrecognized_model]` and runs the string unchanged, billing as asked.
 

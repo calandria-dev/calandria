@@ -205,7 +205,7 @@ export function modelLabel(id: string | null, caps?: AgentCapabilities): string 
   if (!id) return "";
   const s = id.toLowerCase();
   const long = s.includes("[1m]") ? " (1M)" : "";
-  const fam = ["fable", "opus", "sonnet", "haiku"].find((f) => s.includes(f));
+  const fam = ["fable", "mythos", "opus", "sonnet", "haiku"].find((f) => s.includes(f));
   if (fam) {
     const cap = fam[0].toUpperCase() + fam.slice(1);
     const v = s.match(new RegExp(`${fam}-(\\d+)(?:-(\\d+))?`));

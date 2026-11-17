@@ -5,6 +5,7 @@ describe("model family placement", () => {
   it("covers every current driver catalog id", () => {
     const cases: Record<string, string[]> = {
       fable: ["claude-fable-5-1", "fable"],
+      mythos: ["claude-mythos-5-1", "claude-mythos-5-2"],
       opus: ["opus", "opusplan", "opus[1m]", "claude-opus-4-8", "claude-opus-4-8[1m]", "claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-6-thinking"],
       sonnet: ["sonnet", "sonnet[1m]", "claude-sonnet-4-6", "claude-sonnet-4-6[1m]"],
       haiku: ["haiku"],
@@ -35,6 +36,7 @@ describe("model family placement", () => {
       family: "opus", version: "opus-4.8-1m", label: "Opus 4.8 (1M)", ctx: 1_000_000,
     });
     expect(placeModel("claude-opus-5", "litellm").ctx).toBe(1_000_000);
+    expect(placeModel("claude-mythos-5-2", "anthropic")).toMatchObject({ family: "mythos", version: "mythos-5.2", label: "Mythos 5.2", ctx: 1_000_000 });
     expect(placeModel("deepseek-r2:14b", "ollama").ctx).toBe(64_000);
     expect(placeModel("gemma-4:27b", "ollama").ctx).toBe(128_000);
     expect(placeModel("together/llama-4-maverick", "litellm").ctx).toBe(1_000_000);
