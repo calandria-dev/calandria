@@ -71,6 +71,12 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
     { value: "claude-sonnet-5-5[1m]", label: "Sonnet 5.5 (1M)", sub: "newest Sonnet, 1M context", contextWindow: M1, group: "1M context" },
     { value: "sonnet[1m]", label: "Sonnet (1M)", sub: "long sessions, large codebases", contextWindow: M1, group: "1M context" },
     { value: "opusplan[1m]", label: "Opus Plan Mode (1M)", sub: "plan on Opus, run on Sonnet 1M", contextWindow: M1, group: "1M context" },
+    // Mythos is access-gated (Anthropic's Cyber Verification Program) and has no
+    // family alias: the CLI resolves no `--model mythos`, so only pinned ids
+    // reach it. 1M natively, like Fable. First-party only: the CLI's catalog
+    // lists no Bedrock or Vertex id for either version.
+    { value: "claude-mythos-5-2", label: "Mythos 5.2", sub: "verified access · 1M context", contextWindow: M1, group: "Restricted access" },
+    { value: "claude-mythos-5-1", label: "Mythos 5.1", sub: "verified access · 1M context", contextWindow: M1, group: "Restricted access" },
     { value: "claude-fable-5-1", label: "Fable 5.1", sub: "previous Fable · 1M context", contextWindow: M1, group: "Pinned versions" },
     { value: "claude-opus-5", label: "Opus 5", sub: "previous Opus", contextWindow: K200, group: "Pinned versions" },
     { value: "claude-opus-5[1m]", label: "Opus 5 (1M)", sub: "previous Opus, 1M context", contextWindow: M1, group: "Pinned versions" },
@@ -195,15 +201,20 @@ export const CLAUDE_CAPABILITIES: AgentCapabilities = {
 // every turn is a trap. The filter matches the whole family rather than the
 // single value `fable`, since the gate is per publisher and any pinned Fable
 // id fails the same way. Restoring them is deleting one line from the filter
-// below.
+// below. Mythos rows are dropped too: the CLI's catalog has no Vertex id for
+// the family.
 
 /** Whether a picker value or resolved id names the Fable family: the alias
  *  `fable` or any pinned `claude-fable-*`, with or without a `[1m]` suffix. */
 const isFable = (id: string): boolean => /fable/i.test(id);
 
+/** Whether a picker value or resolved id names the Mythos family. */
+const isMythos = (id: string): boolean => /mythos/i.test(id);
+
 /** The window Claude Code runs for a resolved model id: `[1m]` opts into the 1M
- *  beta, everything else gets the standard window. Fable is 1M natively. */
-const windowFor = (id: string): number => (/\[1m\]/i.test(id) || isFable(id) ? M1 : K200);
+ *  beta, everything else gets the standard window. Fable and Mythos are 1M
+ *  natively. */
+const windowFor = (id: string): number => (/\[1m\]/i.test(id) || isFable(id) || isMythos(id) ? M1 : K200);
 
 function vertexModels(env: Record<string, string | undefined>): AgentModelOption[] {
   const mapped = claudeDefaultModels(env);
@@ -233,7 +244,7 @@ function vertexModels(env: Record<string, string | undefined>): AgentModelOption
     sonnet: "Sonnet (provider default)",
     haiku: "Haiku (provider default)",
   };
-  return CLAUDE_CAPABILITIES.models.filter((m) => !isFable(m.value)).map((m) => {
+  return CLAUDE_CAPABILITIES.models.filter((m) => !isFable(m.value) && !isMythos(m.value)).map((m) => {
     const base = family[m.value];
     if (!base) return m; // a pinned id, or a family this instance doesn't map
 

@@ -48,6 +48,15 @@ describe("applyModelPolicy", () => {
     expect(result.nextPolicy.known).toEqual(models.map((m) => m.id));
   });
 
+  it("starts access-gated Mythos models off and leaves them selectable", () => {
+    const result = applyModelPolicy(
+      { mode: "allow", ids: [], known: [], unavailable: [] },
+      [placed("claude-fable-5-2"), placed("claude-mythos-5-2"), placed("claude-mythos-5-1")],
+    );
+    expect(result.on.map((m) => m.id)).toEqual(["claude-fable-5-2"]);
+    expect(result.off.map((m) => m.id)).toEqual(["claude-mythos-5-2", "claude-mythos-5-1"]);
+  });
+
   it("keeps newly discovered allow-list models off after the first read", () => {
     const result = applyModelPolicy(
       { mode: "allow", ids: ["claude-sonnet-5"], known: ["claude-sonnet-5"], unavailable: [] },
