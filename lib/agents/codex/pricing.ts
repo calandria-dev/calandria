@@ -78,7 +78,7 @@ const PRICES: { prefix: string; input: number; cachedInput: number; output: numb
 // binary is one the fallback has never heard of. probeCodexEmbeddedDefault()
 // in scripts/check-pin-drift.mjs does exactly this for an installed shim.
 
-export const DEFAULT_CODEX_MODEL = "gpt-6.1-sol";
+export const DEFAULT_CODEX_MODEL = "gpt-6.2-sol";
 
 /**
  * The model a codex turn effectively runs: the task's choice, else whatever the
