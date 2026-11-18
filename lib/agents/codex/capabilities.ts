@@ -65,9 +65,10 @@ export function codexCapabilities(): AgentCapabilities {
     // `@openai/codex-sdk` in package.json and CODEX_VERSION in the Dockerfile
     // together, since the SDK exact-pins the CLI it speaks JSONL to.
     models: markDefault([
-      { value: "gpt-6.1-sol", label: "GPT-6.1 Sol", sub: "latest workhorse model for coding and everyday work", contextWindow: ctx("gpt-6.1-sol"), group: "Latest" },
+      { value: "gpt-6.2-sol", label: "GPT-6.2 Sol", sub: "latest workhorse model for coding and everyday work", contextWindow: ctx("gpt-6.2-sol"), group: "Latest" },
       { value: "gpt-6-astra", label: "GPT-6 Astra", sub: "most capable model for complex, demanding work", contextWindow: ctx("gpt-6-astra"), group: "Latest" },
       { value: "gpt-6-luna", label: "GPT-6 Luna", sub: "fast and affordable", contextWindow: ctx("gpt-6-luna"), group: "Latest" },
+      { value: "gpt-6.1-sol", label: "GPT-6.1 Sol", sub: "previous workhorse model", contextWindow: ctx("gpt-6.1-sol"), group: "Previous versions" },
       { value: "gpt-6-sol", label: "GPT-6 Sol", sub: "previous generation workhorse model", contextWindow: ctx("gpt-6-sol"), group: "Previous versions" },
       { value: "gpt-5.6-sol", label: "GPT-5.6 Sol", sub: "previous frontier agentic coding model", contextWindow: ctx("gpt-5.6-sol"), group: "Previous versions" },
       { value: "gpt-5.6-terra", label: "GPT-5.6 Terra", sub: "balanced agentic coding for everyday work", contextWindow: ctx("gpt-5.6-terra"), group: "Previous versions" },
