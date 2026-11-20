@@ -97,10 +97,15 @@ async function fetchNode({
     fs.writeFileSync(archivePath, blob);
     const inner = platform === "win32" ? `${name}/node.exe` : `${name}/bin/node`;
     if (platform === "win32") {
+      // Windows PowerShell 5.1 must load its own Archive module. A PSModulePath
+      // inherited from PowerShell 7 resolves Expand-Archive to the PS7 module,
+      // whose .NET Core ExtractToDirectory overload does not exist on .NET Framework.
+      const env = { ...process.env };
+      for (const k of Object.keys(env)) if (k.toLowerCase() === "psmodulepath") delete env[k];
       execFileSync(
         "powershell.exe",
         ["-NoProfile", "-Command", `Expand-Archive -LiteralPath '${archivePath}' -DestinationPath '${tmp}' -Force`],
-        { stdio: "inherit" }
+        { stdio: "inherit", env }
       );
     } else {
       // xz, so GNU tar needs the `xz` binary on PATH; bsdtar (macOS) is fine.
