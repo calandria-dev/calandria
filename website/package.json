@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "calandria.dev — the project's public site. Built and deployed to Cloudflare Pages by .github/workflows/website.yml; shares nothing with the app build.",
+  "description": "calandria.dev \u2014 the project's public site. Built and deployed to Cloudflare Pages by .github/workflows/website.yml; shares nothing with the app build.",
   "engines": {
     "node": ">=22.19"
   },
@@ -19,5 +19,8 @@
     "playwright": "^1.65.1",
     "rehype-mermaid": "^3.0.0",
     "unist-util-visit": "^5.2.0"
+  },
+  "overrides": {
+    "katex": "^0.18.2"
   }
 }
