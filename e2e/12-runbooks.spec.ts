@@ -144,7 +144,17 @@ test("deleting a runbook removes it from the card", async ({ page }) => {
   // Nothing links this one, so the confirmation is the plain can't-be-undone
   // dialog, not the schedule-detach explanation.
   page.once("dialog", (d) => void d.accept());
-  await row.getByRole("button", { name: "Delete" }).click();
+  // The click opens a synchronous confirm() and the handler then removes the
+  // row, so on a slow Windows runner the click action can still be
+  // re-checking actionability ("not stable", then "detached") against a row
+  // the delete already took out, and run out the 60s test budget. The server
+  // response is the proof the click landed, and noWaitAfter stops the click
+  // from waiting on what the dialog and re-render do to the page.
+  const deleted = page.waitForResponse(
+    (r) => r.request().method() === "DELETE" && /\/api\/runbooks\/[^/]+$/.test(r.url()),
+  );
+  await row.getByRole("button", { name: "Delete" }).click({ noWaitAfter: true });
+  expect((await deleted).ok()).toBe(true);
   await expect(row).toBeHidden();
 });
 
