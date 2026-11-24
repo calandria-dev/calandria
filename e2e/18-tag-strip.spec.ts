@@ -213,9 +213,15 @@ test("the landing card leads back to the chip, and the palette's feed carries ta
 
   await openProject(page);
   // Project home: the Tags card sits between the recap and Runbooks.
-  await page.getByTitle(/Project home/).click();
+  // useRecaps auto-selects the first task once tasks load, and a click that
+  // lands before or during that pass can be overtaken on a slow runner
+  // (Windows CI), leaving the session view up. Re-click until the landing
+  // pane's card is actually there instead of trusting one click.
   const card = page.locator(".tags-card");
-  await expect(card.locator("h3")).toHaveText("Tags");
+  await expect(async () => {
+    await page.getByRole("button", { name: "Project home" }).click();
+    await expect(card.locator("h3")).toHaveText("Tags", { timeout: 3_000 });
+  }).toPass({ timeout: 30_000 });
   const cardRow = card.locator(".tag-row").filter({ hasText: name });
   await expect(cardRow).toContainText("Installable + offline.");
   await expect(cardRow.locator(".tag-frac")).toHaveText("0/1");
