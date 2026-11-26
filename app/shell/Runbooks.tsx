@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Icon } from "../icons";
 import { jget, jsend } from "./api";
 import { agentEnvOptions, agentLabel, capsFor, defaultAgentFor } from "./agents";
@@ -380,11 +380,19 @@ export function Runbooks({ project, projects, agents, onOpenTask }: {
   const [runningId, setRunningId] = useState<string | null>(null);
   const [copyingId, setCopyingId] = useState<string | null>(null);
 
+  // The card is reused across projects, so a slow response for the project
+  // selected before can land after the current one's. Only the newest load
+  // may write state.
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     try {
-      setData(await jget<RunbooksResponse>(`/api/projects/${projectId}/runbooks`));
+      const next = await jget<RunbooksResponse>(`/api/projects/${projectId}/runbooks`);
+      if (seq !== loadSeq.current) return;
+      setData(next);
       setError("");
     } catch (e) {
+      if (seq !== loadSeq.current) return;
       setError(e instanceof Error ? e.message : String(e));
     }
   }, [projectId]);
