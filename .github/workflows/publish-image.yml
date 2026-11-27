@@ -829,7 +829,7 @@ jobs:
       contents: read
       issues: write
     steps:
-      - uses: jayqi/failed-build-issue-action@940568ce50eeef3f31a920614cefcc6102d2f930 # v1.3.0
+      - uses: jayqi/failed-build-issue-action@20c082d7b8ad9e32464211b83fe07b1175164335 # v1.4.0
         with:
           # Required, and the action has no default for it: without this it
           # throws "Parameter token or opts.auth is required" before making any
