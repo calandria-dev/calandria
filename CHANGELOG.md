@@ -8,6 +8,31 @@ detached from the upstream fork network, with the codebase renamed end to end.
 Upstream's copyright and license are retained in [NOTICE](NOTICE) and credited
 in README's "Name and lineage" section; this changelog only covers Calandria.
 
+## [0.29.2](https://github.com/calandria-dev/calandria/compare/v0.29.1...v0.29.2) (2026-11-27)
+
+
+### Bug Fixes
+
+* **codex:** offer GPT-6.2 Sol in the Codex model picker ([#673](https://github.com/calandria-dev/calandria/issues/673)) ([e582705](https://github.com/calandria-dev/calandria/commit/e5827059776433a235b3c1cee5db9920fb696ff7))
+* **codex:** price gpt-6.2-sol and bump the gh CLI to 2.105.0 ([#670](https://github.com/calandria-dev/calandria/issues/670)) ([9b38451](https://github.com/calandria-dev/calandria/commit/9b38451338a15ea9c83eda0088f6bb1613d67b27))
+* **desktop:** unpack the bundled Windows node with PowerShell 5.1's own Archive module ([#679](https://github.com/calandria-dev/calandria/issues/679)) ([975b578](https://github.com/calandria-dev/calandria/commit/975b5789883ab4ad64cbf2eb1cbc81360ca72c6e))
+* **runbooks:** drop a stale runbook list that lands after a project switch ([#689](https://github.com/calandria-dev/calandria/issues/689)) ([24eb8d4](https://github.com/calandria-dev/calandria/commit/24eb8d45d55027925a13c6057795b9a7c89c99b4))
+
+
+### Dependencies
+
+* **deps:** bump Codex CLI to 0.170.0 ([#672](https://github.com/calandria-dev/calandria/issues/672)) ([ef09dd9](https://github.com/calandria-dev/calandria/commit/ef09dd94a5533b6efedb33ae4c557f030370c4fa))
+* **deps:** bump hono from 4.13.13 to 4.13.19 in the npm_and_yarn group across 1 directory ([#676](https://github.com/calandria-dev/calandria/issues/676)) ([7e98945](https://github.com/calandria-dev/calandria/commit/7e989453b1a0172ffbbd0464b34a744f38497cd2))
+* **deps:** bump next from 15.5.28 to 15.5.29 in the npm_and_yarn group across 1 directory ([#681](https://github.com/calandria-dev/calandria/issues/681)) ([b052e6c](https://github.com/calandria-dev/calandria/commit/b052e6c876e39e933c5b42924a82468d1a487f7e))
+* **deps:** bump node ([53f6ef7](https://github.com/calandria-dev/calandria/commit/53f6ef7f63cc0315debfd684026fb3ebef5f6961))
+* **deps:** bump node from `2989926` to `5df7998` in the base-image group ([#677](https://github.com/calandria-dev/calandria/issues/677)) ([53f6ef7](https://github.com/calandria-dev/calandria/commit/53f6ef7f63cc0315debfd684026fb3ebef5f6961))
+* **deps:** bump the gh CLI to 2.106.0 ([#688](https://github.com/calandria-dev/calandria/issues/688)) ([a215c8f](https://github.com/calandria-dev/calandria/commit/a215c8fbc8d1cc5a3349c34f0f1f69422a81384b))
+* **deps:** refresh agent CLI pins ([#674](https://github.com/calandria-dev/calandria/issues/674)) ([d7979fa](https://github.com/calandria-dev/calandria/commit/d7979fa18710c54abba6254cef6c5b7f7631ec71))
+* **deps:** refresh agent CLI pins ([#675](https://github.com/calandria-dev/calandria/issues/675)) ([5879fde](https://github.com/calandria-dev/calandria/commit/5879fdeed011c30e1ba1164f3f41aa9284c95837))
+* **deps:** refresh agent CLI pins ([#680](https://github.com/calandria-dev/calandria/issues/680)) ([82ca06e](https://github.com/calandria-dev/calandria/commit/82ca06e66f273ecf76d75fc4b44012522c82043d))
+* **deps:** refresh agent CLI pins ([#685](https://github.com/calandria-dev/calandria/issues/685)) ([3c2194c](https://github.com/calandria-dev/calandria/commit/3c2194c5fed0304e88b2a3d8054696c1e4df148d))
+* **deps:** refresh agent CLI pins ([#686](https://github.com/calandria-dev/calandria/issues/686)) ([1c0c9d9](https://github.com/calandria-dev/calandria/commit/1c0c9d96db0c1f19627e477f433c5556727a8db7))
+
 ## [0.29.1](https://github.com/calandria-dev/calandria/compare/v0.29.0...v0.29.1) (2026-11-18)
 
 
